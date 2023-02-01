@@ -1,0 +1,26 @@
+{
+  "startTime": 1674249416469,
+  "endTime": 1674249417880,
+  "originalSmells": [
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 45,
+        "lineEnd": 45,
+        "columnStart": 4,
+        "columnEnd": 102
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 61,
+        "lineEnd": 61,
+        "columnStart": 4,
+        "columnEnd": 18
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "ARG ALPINE_VERSION\nARG GO_VERSION\nARG DOCKER_VERSION\nARG DOCKER_COMPOSE_VERSION\n\nFROM docker:${DOCKER_VERSION} AS docker-cli\n\nFROM docker/compose:${DOCKER_COMPOSE_VERSION}-alpine AS docker-compose\n\n\n# See https://github.com/golang/go/issues/14481\nFROM golang:${GO_VERSION}-alpine${ALPINE_VERSION} AS race\nWORKDIR /tmp/race\nRUN apk --update -q --progress --no-cache add git g++\nRUN git clone --single-branch https://github.com/llvm-mirror/compiler-rt.git . &> /dev/null\nRUN git reset --hard fe2c72c59aa7f4afa45e3f65a5d16a374b6cce26 && \\\n    wget -q https://github.com/golang/go/files/3615484/0001-hack-to-make-Go-s-race-flag-work-on-Alpine.patch.gz -O patch.gz && \\\n    gunzip patch.gz && \\\n    patch -p1 -i patch\nRUN cd lib/tsan/go && \\\n    ./buildgo.sh &> /dev/null\n\nFROM golang:${GO_VERSION}-alpine${ALPINE_VERSION} AS golang-vscode\nARG BUILD_DATE\nARG VCS_REF\nARG VERSION=local\nARG USERNAME=vscode\nARG USER_UID=1000\nARG USER_GID=1000\nWORKDIR /home/${USERNAME}\nENTRYPOINT [ \"/bin/zsh\" ]\n\n# Patch for go test -race on Alpine\nCOPY --from=race /tmp/race/lib/tsan/go/race_linux_amd64.syso /usr/local/go/src/runtime/race/race_linux_amd64.syso\n\n# Setup user\nRUN adduser $USERNAME -s /bin/sh -D -u $USER_UID $USER_GID && \\\n    mkdir -p /etc/sudoers.d && \\\n    echo $USERNAME ALL=\\(root\\) NOPASSWD:ALL > /etc/sudoers.d/$USERNAME && \\\n    chmod 0440 /etc/sudoers.d/$USERNAME\n\n# Ownership of Go empty directories\nRUN chown ${USERNAME}:${USER_GID} /go/bin /go/src\n\n# Install Alpine packages\nRUN apk add --no-cache -q --update --progress libstdc++ g++ zsh sudo ca-certificates git openssh-client bash nano\n\n# Setup Docker TODO: replace `COPY --chown=vscode` with `COPY --chown=${USER_UID}:${USER_GID}`\nCOPY --from=docker-cli --chown=vscode /usr/local/bin/docker /usr/local/bin/docker\nCOPY --from=docker-compose --chown=vscode /usr/local/bin/docker-compose /usr/local/bin/docker-compose\nENV DOCKER_BUILDKIT=1\n# All possible docker host groups\nRUN ([ ${USER_GID} = 1000 ] || (addgroup -g 1000 docker1000 && addgroup ${USERNAME} docker1000)) && \\\n    addgroup -g 976 docker976 && \\\n    addgroup -g 102 docker102 && \\\n    addgroup ${USERNAME} docker976 && \\\n    addgroup ${USERNAME} docker102\n\n# Setup shells\nENV EDITOR=nano \\\n    LANG=en_US.UTF-8\nRUN apk add --no-cache shadow && \\\n    usermod --shell /bin/zsh root && \\\n    usermod --shell /bin/zsh ${USERNAME} && \\\n    apk del shadow\nCOPY --chown=vscode shell/.p10k.zsh shell/.zshrc shell/.welcome.sh /home/${USERNAME}/\nRUN ln -s /home/${USERNAME}/.p10k.zsh /root/.p10k.zsh && \\\n    cp /home/${USERNAME}/.zshrc /root/.zshrc && \\\n    cp /home/${USERNAME}/.welcome.sh /root/.welcome.sh && \\\n    sed -i \"s/HOMEPATH/home\\/${USERNAME}/\" /home/${USERNAME}/.zshrc && \\\n    sed -i \"s/HOMEPATH/root/\" /root/.zshrc\nRUN git clone --single-branch --depth 1 https://github.com/robbyrussell/oh-my-zsh.git /home/${USERNAME}/.oh-my-zsh &> /dev/null && \\\n    rm -rf /home/${USERNAME}/.oh-my-zsh/.git && \\\n    git clone --single-branch --depth 1 https://github.com/romkatv/powerlevel10k.git /home/${USERNAME}/.oh-my-zsh/custom/themes/powerlevel10k &> /dev/null && \\\n    rm -rf /home/${USERNAME}/.oh-my-zsh/custom/themes/powerlevel10k/.git && \\\n    chown -R ${USERNAME}:${USER_GID} /home/${USERNAME}/.oh-my-zsh && \\\n    chmod -R 700 /home/${USERNAME}/.oh-my-zsh && \\\n    cp -r /home/${USERNAME}/.oh-my-zsh /root/.oh-my-zsh && \\\n    chown -R root:root /root/.oh-my-zsh\n\n# Install Go packages\nENV GO111MODULE=on\nRUN go get -v \\\n    # Base Go tools needed for VS code Go extension\n    golang.org/x/tools/gopls@v0.2.0 \\\n    github.com/ramya-rao-a/go-outline \\\n    github.com/acroca/go-symbols \\\n    github.com/uudashr/gopkgs/cmd/gopkgs@latest \\\n    golang.org/x/tools/cmd/guru \\\n    golang.org/x/tools/cmd/gorename \\\n    golang.org/x/lint/golint \\\n    github.com/go-delve/delve/cmd/dlv \\\n    # Extra tools integrating with VS code\n    github.com/fatih/gomodifytags \\\n    github.com/haya14busa/goplay/cmd/goplay \\\n    github.com/josharian/impl \\\n    github.com/tylerb/gotype-live \\\n    github.com/cweill/gotests/... \\\n    github.com/davidrjenni/reftools/cmd/fillstruct \\\n    # Terminal tools\n    github.com/vektra/mockery/... \\\n    github.com/kyoh86/scopelint \\\n    2>&1 && \\\n    chown ${USERNAME}:${USER_GID} /go/bin/* && \\\n    chmod 500 /go/bin/* && \\\n    rm -rf /go/pkg /go/src/* /root/.cache/go-build\n\nUSER ${USERNAME}\n"
+}

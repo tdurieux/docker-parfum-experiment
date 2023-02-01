@@ -1,0 +1,1 @@
+# Minimal release image containing just the pgcm binary

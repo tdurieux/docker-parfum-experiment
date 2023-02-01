@@ -1,0 +1,26 @@
+{
+  "startTime": 1674249450441,
+  "endTime": 1674249451092,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 27,
+        "lineEnd": 28,
+        "columnStart": 22,
+        "columnEnd": 6
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 27,
+        "lineEnd": 28,
+        "columnStart": 22,
+        "columnEnd": 6
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Setup rust build environment\nFROM rust:1.41.1 AS build-context\n\nRUN rustup component add rustfmt\n\nWORKDIR /usr/src/adapter-istio\n\nCOPY Cargo.toml .\nCOPY Cargo.lock .\n\n# Layer hack: Build an empty program to compile dependencies and place on their own layer.\n# This cuts down build time\n\n# it was borrowed from here:\n# https://github.com/deislabs/krustlet/blob/master/Dockerfile#L7\nRUN mkdir -p ./src/ && \\\n  echo 'fn main() {}' > ./src/main.rs && \\\n  echo '' > ./src/lib.rs\n\nRUN cargo fetch\n\nRUN cargo build --release && \\\n  rm -rf ./target/release/.fingerprint/adapter-istio-*\n\n# Setup debian release environment\nFROM debian:buster-slim AS release-context\n\nRUN apt-get update && apt-get install --no-install-recommends -y \\\n  tini \\\n  ; rm -rf /var/lib/apt/lists/*;\n\nRUN useradd svc\n\nENV PORT=50051\n\n# Build real binaries now, as late as possible\nFROM build-context AS build\n\nCOPY Makefile .\nCOPY ./src ./src\nCOPY ./template ./template\nCOPY ./build.rs .\n\nRUN make release\n\n# Create the release\nFROM release-context AS release\n\nCOPY --from=build /usr/src/adapter-istio/target/release/adapter-istio /\n\nRUN chown -R svc /adapter-istio\n\nUSER svc\n\nENTRYPOINT [\"/usr/bin/tini\", \"--\"]\n\nCMD [\"/adapter-istio\"]\n"
+}

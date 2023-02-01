@@ -1,0 +1,17 @@
+{
+  "startTime": 1674248005802,
+  "endTime": 1674248006685,
+  "originalSmells": [
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 54,
+        "lineEnd": 54,
+        "columnStart": 4,
+        "columnEnd": 16
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# The version of Alpine to use for the final image\nARG ALPINE_VERSION=3.9\n\nFROM elixir:1.9.0-alpine AS builder\n\n# The following are build arguments used to change variable parts of the image.\n# The name of your application/release (required)\nARG APP_NAME\n# The version of the application we are building (required)\nARG APP_VSN\n# The environment to build with\nARG MIX_ENV=prod\n# Set this to true if this release is not a Phoenix app\nARG SKIP_PHOENIX=false\n# If you are using an umbrella project, you can change this\n# argument to the directory the Phoenix app is in so that the assets\n# can be built\nARG PHOENIX_SUBDIR=apps/{{cookiecutter.phoenix_app_slug}}_web\n\nENV SKIP_PHOENIX=${SKIP_PHOENIX} \\\n    APP_NAME=${APP_NAME} \\\n    APP_VSN=${APP_VSN} \\\n    MIX_ENV=${MIX_ENV}\n\n# By convention, /opt is typically used for applications\nRUN mkdir -p /opt/app\nWORKDIR /opt/app\n\n# This step installs all the build tools we'll need\nRUN apk update && \\\n    apk upgrade --no-cache && \\\n    apk add --no-cache \\\n    nodejs \\\n    yarn \\\n    git \\\n    build-base && \\\n    mix local.rebar --force && \\\n    mix local.hex --force\n\n# install mix dependencies\nCOPY mix.exs mix.lock ./\nCOPY config config\nCOPY apps apps\n\nRUN mix deps.get --only production\n\n# This step builds assets for the Phoenix app (if there is one)\n# If you aren't building a Phoenix app, pass `--build-arg SKIP_PHOENIX=true`\n# This is mostly here for demonstration purposes\nRUN if [ ! \"$SKIP_PHOENIX\" = \"true\" ]; then \\\n    mix deps.clean --all && \\\n    mix deps.get --only prod && \\\n    cd ${PHOENIX_SUBDIR}/assets && \\\n    yarn install && \\\n    yarn deploy && \\\n    cd .. && \\\n    mix phx.digest.clean; yarn cache clean; \\\n    fi\n\nCOPY rel rel\nRUN MIX_ENV=${MIX_ENV} mix release\n\n# From this line onwards, we're in a new image, which will be the image used in production\nFROM alpine:${ALPINE_VERSION}\n\n# The name of your application/release (required)\nARG APP_NAME\n# The environment to build with\nARG MIX_ENV=prod\n\n# The time zone (needed by Timex)\nARG TZ=Asia/Manila\n\nEXPOSE 4000\n\nRUN apk update && \\\n    apk add --no-cache \\\n    bash \\\n    openssl-dev\n\nENV TZ=${TZ} \\\n    APP_NAME=${APP_NAME} \\\n    HOSTNAME=localhost \\\n    PORT=4000 \\\n    HOME=/app\n\nWORKDIR /opt/app\n\nCOPY --from=builder /opt/app/_build/${MIX_ENV}/rel/${APP_NAME} .\nRUN chown -R nobody: /opt/app\nUSER nobody\n\nENV HOME=/opt/app\n\nCMD trap 'exit' INT; /opt/app/bin/${APP_NAME} start\n"
+}

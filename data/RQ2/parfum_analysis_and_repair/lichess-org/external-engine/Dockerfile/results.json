@@ -1,0 +1,80 @@
+{
+  "startTime": 1674246165807,
+  "endTime": 1674246167129,
+  "originalSmells": [
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 6,
+        "lineEnd": 6,
+        "columnStart": 4,
+        "columnEnd": 51
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 7,
+        "lineEnd": 7,
+        "columnStart": 4,
+        "columnEnd": 39
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 1,
+        "lineEnd": 1,
+        "columnStart": 22,
+        "columnEnd": 54
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 42,
+        "lineEnd": 42,
+        "columnStart": 22,
+        "columnEnd": 48
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 49,
+        "lineEnd": 49,
+        "columnStart": 22,
+        "columnEnd": 48
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 1,
+        "lineEnd": 1,
+        "columnStart": 22,
+        "columnEnd": 54
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 42,
+        "lineEnd": 42,
+        "columnStart": 22,
+        "columnEnd": 48
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 49,
+        "lineEnd": 49,
+        "columnStart": 22,
+        "columnEnd": 48
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM debian:bullseye-slim AS stockfish\nRUN apt-get update && apt-get install --no-install-recommends -y xz-utils make && rm -rf /var/lib/apt/lists/*;\nWORKDIR /stockfish\nCOPY stockfish .\nRUN cd vendor && \\\n    sha256sum -c SHA256SUM && \\\n    tar xf sde-external-9.0.0-2021-11-07-lin.tar.xz && \\\n    tar xf x86_64-linux-musl-native.tgz && \\\n    mv nn-6877cd24400e.nnue Stockfish/src && rm sde-external-9.0.0-2021-11-07-lin.tar.xz\nENV SDE_PATH /stockfish/vendor/sde-external-9.0.0-2021-11-07-lin/sde64\nENV CXX /stockfish/vendor/x86_64-linux-musl-native/bin/x86_64-linux-musl-g++\nENV STRIP /stockfish/vendor/x86_64-linux-musl-native/bin/strip\nRUN mkdir -p usr/lib/stockfish && \\\n    cd vendor/Stockfish/src && \\\n    cp nn-*.nnue ../../../usr/lib/stockfish/ && \\\n    for arch in \"x86-64-vnni512\" \"x86-64-avx512\" \"x86-64-bmi2\" \"x86-64-avx2\" \"x86-64-sse41-popcnt\" \"x86-64-ssse3\" \"x86-64-sse3-popcnt\" \"x86-64\"; do \\\n        LDFLAGS=-static CXXFLAGS=-DNNUE_EMBEDDING_OFF make -B -j2 profile-build COMP=gcc CXX=${CXX} ARCH=${arch} EXE=stockfish-${arch} && \\\n        ${STRIP} stockfish-${arch} && \\\n        cp stockfish-${arch} ../../../usr/lib/stockfish/; \\\n    done\nWORKDIR /stockfish_15-1_amd64\nRUN cp -R /stockfish/DEBIAN /stockfish/usr . && \\\n    md5sum $(find * -type f -not -path 'DEBIAN/*') > DEBIAN/md5sums && \\\n    cat DEBIAN/md5sums && \\\n    cd / && \\\n    dpkg-deb --build stockfish_*\n\nFROM rust:1.62.0-slim AS remote-uci\nRUN rustup target add x86_64-unknown-linux-musl\nWORKDIR /remote-uci\nCOPY remote-uci .\nRUN cargo build --release --target x86_64-unknown-linux-musl\nWORKDIR /remote-uci_1-1_amd64\nRUN mkdir -p usr/bin && \\\n    cp -R /remote-uci/DEBIAN /remote-uci/usr . && \\\n    cp /remote-uci/target/x86_64-unknown-linux-musl/release/remote-uci usr/bin/ && \\\n    md5sum $(find * -type f -not -path 'DEBIAN/*') > DEBIAN/md5sums && \\\n    cat DEBIAN/md5sums && \\\n    cd / && \\\n    dpkg-deb --build remote-uci_*\n\nFROM debian:bullseye-slim AS linter\nRUN apt-get update && apt-get install --no-install-recommends -y lintian && rm -rf /var/lib/apt/lists/*;\nCOPY --from=stockfish /stockfish_15-1_amd64.deb .\nRUN lintian -I /stockfish_*_amd64.deb\nCOPY --from=remote-uci /remote-uci_1-1_amd64.deb .\nRUN lintian -I /remote-uci_*_amd64.deb\n\nFROM debian:bullseye-slim\nRUN apt-get update && apt-get install --no-install-recommends -y openssl && rm -rf /var/lib/apt/lists/*;\nCOPY --from=stockfish /stockfish_15-1_amd64.deb .\nRUN dpkg -i /stockfish_*_amd64.deb\nCOPY --from=remote-uci /remote-uci_1-1_amd64.deb .\nRUN dpkg -i /remote-uci_*_amd64.deb\nEXPOSE 9670/tcp\nENV REMOTE_UCI_LOG info\nCMD /usr/bin/remote-uci --bind 0.0.0.0:9670 stockfish\n"
+}

@@ -1,0 +1,17 @@
+{
+  "startTime": 1674215307676,
+  "endTime": 1674215308576,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 27,
+        "lineEnd": 27,
+        "columnStart": 4,
+        "columnEnd": 72
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Copyright 2019 The Kubernetes Authors.\n#\n# Licensed under the Apache License, Version 2.0 (the \"License\");\n# you may not use this file except in compliance with the License.\n# You may obtain a copy of the License at\n#\n#     http://www.apache.org/licenses/LICENSE-2.0\n#\n# Unless required by applicable law or agreed to in writing, software\n# distributed under the License is distributed on an \"AS IS\" BASIS,\n# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.\n# See the License for the specific language governing permissions and\n# limitations under the License.\n\n# Run this with docker build --build-arg builder_image=<golang:x.y.z>\nARG builder_image\nFROM ${builder_image} as builder\n\n# Run this with docker build --build-arg goproxy=$(go env GOPROXY) to override the goproxy\nARG goproxy=https://proxy.golang.org\nENV GOPROXY=$goproxy\n\n# Gets additional CAPD dependencies\nWORKDIR /tmp\n\nRUN curl -f -LO https://dl.k8s.io/release/v1.24.0/bin/linux/${ARCH}/kubectl && \\\n    chmod +x ./kubectl && \\\n    mv ./kubectl /usr/bin/kubectl\n\nWORKDIR /workspace\nCOPY go.mod go.mod\nCOPY go.sum go.sum\n\n# Essentially, change directories into the test go module\nWORKDIR /workspace/test\n# Copy the Go Modules manifests\nCOPY test/go.mod go.mod\nCOPY test/go.sum go.sum\n\n# Cache deps before building and copying source so that we don't need to re-download as much\n# and so that source changes don't invalidate our downloaded layer\nRUN --mount=type=cache,target=/go/pkg/mod \\\n    go mod download\n\n# This needs to build with the entire Cluster API context\nWORKDIR /workspace\n# Copy in cluster-api (which includes the test/infrastructure/docker subdirectory)\nCOPY . .\n\n# Essentially, change directories into CAPD\nWORKDIR /workspace/test/infrastructure/docker\n\n# Build the CAPD manager using the compiler cache folder\nRUN --mount=type=cache,target=/root/.cache/go-build \\\n    --mount=type=cache,target=/go/pkg/mod \\\n    CGO_ENABLED=0 GOOS=linux GOARCH=${ARCH} go build -trimpath -a -o /workspace/manager main.go\n\n# NOTE: CAPD can't use non-root because docker requires access to the docker socket\nFROM gcr.io/distroless/static:latest\n\nWORKDIR /\nCOPY --from=builder /workspace/manager .\nCOPY --from=builder /usr/bin/kubectl /usr/bin/kubectl\n\nENTRYPOINT [\"/manager\"]\n"
+}

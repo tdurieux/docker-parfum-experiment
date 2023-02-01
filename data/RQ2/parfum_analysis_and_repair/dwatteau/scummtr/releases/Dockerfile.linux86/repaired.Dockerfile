@@ -1,0 +1,34 @@
+# Linux x86 and x86-64 builds, with glibc 2.12 and g++ 4.4 for maximum
+# compatibility.  Also uses CMake 3.6.1.
+#
+# note: this Dockerfile requires a Linux kernel with vsyscall=emulate
+
+FROM --platform=linux/amd64 centos:6.10 AS scummtr-linux86-base
+
+# CentOS 6 is EOLd, so we need to use Vault mirrors
+RUN sed -i -e 's/enabled=1/enabled=0/' /etc/yum/pluginconf.d/fastestmirror.conf \
+	&& sed -i -E -e '/^mirrorlist=/d' -e 's|^#baseurl=http://mirror\.centos\.org/centos/\$releasever/(.*)|baseurl=http://vault.centos.org/6.10/\1|g' /etc/yum.repos.d/*.repo \
+	&& rm -f /etc/yum.repos.d/CentOS-Vault.repo
+
+RUN yum makecache \
+	&& yum install -y epel-release \
+	&& yum install -y cmake3 gcc-c++ glibc-devel glibc-devel.i686 libgcc libgcc.i686 libstdc++-devel libstdc++-devel.i686 make \
+	&& yum clean all && rm -rf /var/cache/yum
+
+FROM scummtr-linux86-base
+
+RUN mkdir -p /scummtr/project /scummtr/build /scummtr/output
+WORKDIR /scummtr
+
+COPY . /scummtr/project
+
+CMD cd /scummtr/build \
+	&& cmake3 -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_CXX_FLAGS="-m64" /scummtr/project \
+	&& make VERBOSE=1 \
+	&& make install DESTDIR=/scummtr/output/linux-x64 \
+	\
+	&& rm -rf /scummtr/build/* \
+	\
+	&& cmake3 -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_CXX_FLAGS="-m32" /scummtr/project \
+	&& make VERBOSE=1 \
+	&& make install DESTDIR=/scummtr/output/linux-x86

@@ -1,0 +1,269 @@
+# This file was generated using a Jinja2 template.
+# Please make your changes in `Dockerfile.j2` and then `make` the individual Dockerfiles.
+
+{% set build_stage_base_image = "rust:1.61-bullseye" %}
+{% if "alpine" in target_file %}
+{%   if "amd64" in target_file %}
+{%     set build_stage_base_image = "blackdex/rust-musl:x86_64-musl-stable-1.61.0" %}
+{%     set runtime_stage_base_image = "alpine:3.15" %}
+{%     set package_arch_target = "x86_64-unknown-linux-musl" %}
+{%   elif "armv7" in target_file %}
+{%     set build_stage_base_image = "blackdex/rust-musl:armv7-musleabihf-stable-1.61.0" %}
+{%     set runtime_stage_base_image = "balenalib/armv7hf-alpine:3.15" %}
+{%     set package_arch_target = "armv7-unknown-linux-musleabihf" %}
+{%   elif "armv6" in target_file %}
+{%     set build_stage_base_image = "blackdex/rust-musl:arm-musleabi-stable-1.61.0" %}
+{%     set runtime_stage_base_image = "balenalib/rpi-alpine:3.15" %}
+{%     set package_arch_target = "arm-unknown-linux-musleabi" %}
+{%   elif "arm64" in target_file %}
+{%     set build_stage_base_image = "blackdex/rust-musl:aarch64-musl-stable-1.61.0" %}
+{%     set runtime_stage_base_image = "balenalib/aarch64-alpine:3.15" %}
+{%     set package_arch_target = "aarch64-unknown-linux-musl" %}
+{%   endif %}
+{% elif "amd64" in target_file %}
+{%   set runtime_stage_base_image = "debian:bullseye-slim" %}
+{% elif "arm64" in target_file %}
+{%   set runtime_stage_base_image = "balenalib/aarch64-debian:bullseye" %}
+{%   set package_arch_name = "arm64" %}
+{%   set package_arch_target = "aarch64-unknown-linux-gnu" %}
+{%   set package_cross_compiler = "aarch64-linux-gnu" %}
+{% elif "armv6" in target_file %}
+{%   set runtime_stage_base_image = "balenalib/rpi-debian:bullseye" %}
+{%   set package_arch_name = "armel" %}
+{%   set package_arch_target = "arm-unknown-linux-gnueabi" %}
+{%   set package_cross_compiler = "arm-linux-gnueabi" %}
+{% elif "armv7" in target_file %}
+{%   set runtime_stage_base_image = "balenalib/armv7hf-debian:bullseye" %}
+{%   set package_arch_name = "armhf" %}
+{%   set package_arch_target = "armv7-unknown-linux-gnueabihf" %}
+{%   set package_cross_compiler = "arm-linux-gnueabihf" %}
+{% endif %}
+{% if package_arch_name is defined %}
+{%   set package_arch_prefix = ":" + package_arch_name %}
+{% else %}
+{%   set package_arch_prefix = "" %}
+{% endif %}
+{% if package_arch_target is defined %}
+{%   set package_arch_target_param = " --target=" + package_arch_target %}
+{% else %}
+{%   set package_arch_target_param = "" %}
+{% endif %}
+{% if "buildx" in target_file %}
+{%   set mount_rust_cache = "--mount=type=cache,target=/root/.cargo/git --mount=type=cache,target=/root/.cargo/registry " %}
+{% else %}
+{%   set mount_rust_cache = "" %}
+{% endif %}
+# Using multistage build:
+# 	https://docs.docker.com/develop/develop-images/multistage-build/
+# 	https://whitfin.io/speeding-up-rust-docker-builds/
+####################### VAULT BUILD IMAGE  #######################
+{% set vault_version = "v2022.6.0" %}
+{% set vault_image_digest = "sha256:caa9fc0a514110f1c815179658d2e3c4e924c187fd2886a99d1dd8129c404472" %}
+# The web-vault digest specifies a particular web-vault build on Docker Hub.
+# Using the digest instead of the tag name provides better security,
+# as the digest of an image is immutable, whereas a tag name can later
+# be changed to point to a malicious image.
+#
+# To verify the current digest for a given tag name:
+# - From https://hub.docker.com/r/vaultwarden/web-vault/tags,
+#   click the tag name to view the digest of the image it currently points to.
+# - From the command line:
+#     $ docker pull vaultwarden/web-vault:{{ vault_version }}
+#     $ docker image inspect --format "{{ '{{' }}.RepoDigests}}" vaultwarden/web-vault:{{ vault_version }}
+#     [vaultwarden/web-vault@{{ vault_image_digest }}]
+#
+# - Conversely, to get the tag name from the digest:
+#     $ docker image inspect --format "{{ '{{' }}.RepoTags}}" vaultwarden/web-vault@{{ vault_image_digest }}
+#     [vaultwarden/web-vault:{{ vault_version }}]
+#
+FROM vaultwarden/web-vault@{{ vault_image_digest }} as vault
+
+########################## BUILD IMAGE  ##########################
+FROM {{ build_stage_base_image }} as build
+
+
+
+# Build time options to avoid dpkg warnings and help with reproducible builds.
+ENV DEBIAN_FRONTEND=noninteractive \
+    LANG=C.UTF-8 \
+    TZ=UTC \
+    TERM=xterm-256color \
+    CARGO_HOME="/root/.cargo" \
+    USER="root"
+
+
+# Create CARGO_HOME folder and don't download rust docs
+RUN {{ mount_rust_cache -}} mkdir -pv "${CARGO_HOME}" \
+    && rustup set profile minimal
+
+{% if "alpine" in target_file %}
+{%   if "armv6" in target_file %}
+# To be able to build the armv6 image with mimalloc we need to specifically specify the libatomic.a file location
+ENV RUSTFLAGS='-Clink-arg=/usr/local/musl/{{ package_arch_target }}/lib/libatomic.a'
+{%   endif %}
+{% elif "arm" in target_file %}
+#
+# Install required build libs for {{ package_arch_name }} architecture.
+# hadolint ignore=DL3059
+RUN dpkg --add-architecture {{ package_arch_name }} \
+    && apt-get update \
+    && apt-get install -y \
+        --no-install-recommends \
+        libssl-dev{{ package_arch_prefix }} \
+        libc6-dev{{ package_arch_prefix }} \
+        libpq5{{ package_arch_prefix }} \
+        libpq-dev{{ package_arch_prefix }} \
+        libmariadb3{{ package_arch_prefix }} \
+        libmariadb-dev{{ package_arch_prefix }} \
+        libmariadb-dev-compat{{ package_arch_prefix }} \
+        gcc-{{ package_cross_compiler }} \
+    #
+    # Make sure cargo has the right target config
+    && echo '[target.{{ package_arch_target }}]' >> "${CARGO_HOME}/config" \
+    && echo 'linker = "{{ package_cross_compiler }}-gcc"' >> "${CARGO_HOME}/config" \
+    && echo 'rustflags = ["-L/usr/lib/{{ package_cross_compiler }}"]' >> "${CARGO_HOME}/config" && rm -rf /var/lib/apt/lists/*;
+
+# Set arm specific environment values
+ENV CC_{{ package_arch_target | replace("-", "_") }}="/usr/bin/{{ package_cross_compiler }}-gcc" \
+    CROSS_COMPILE="1" \
+    OPENSSL_INCLUDE_DIR="/usr/include/{{ package_cross_compiler }}" \
+    OPENSSL_LIB_DIR="/usr/lib/{{ package_cross_compiler }}"
+
+{% elif "amd64" in target_file %}
+# Install DB packages
+RUN apt-get update \
+    && apt-get install -y \
+        --no-install-recommends \
+        libmariadb-dev{{ package_arch_prefix }} \
+        libpq-dev{{ package_arch_prefix }} \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+{% endif %}
+
+# Creates a dummy project used to grab dependencies
+RUN USER=root cargo new --bin /app
+WORKDIR /app
+
+# Copies over *only* your manifests and build files
+COPY ./Cargo.* ./
+COPY ./rust-toolchain ./rust-toolchain
+COPY ./build.rs ./build.rs
+
+{% if package_arch_target is defined %}
+RUN {{ mount_rust_cache -}} rustup target add {{ package_arch_target }}
+{% endif %}
+
+# Configure the DB ARG as late as possible to not invalidate the cached layers above
+{% if "alpine" in target_file %}
+# Enable MiMalloc to improve performance on Alpine builds
+ARG DB=sqlite,mysql,postgresql,enable_mimalloc
+{% else %}
+ARG DB=sqlite,mysql,postgresql
+{% endif %}
+
+# Builds your dependencies and removes the
+# dummy project, except the target folder
+# This folder contains the compiled dependencies
+RUN {{ mount_rust_cache -}} cargo build --features ${DB} --release{{ package_arch_target_param }} \
+    && find . -not -path "./target*" -delete
+
+# Copies the complete project
+# To avoid copying unneeded files, use .dockerignore
+COPY . .
+
+# Make sure that we actually build the project
+RUN touch src/main.rs
+
+# Builds again, this time it'll just be
+# your actual source files being built
+# hadolint ignore=DL3059
+RUN {{ mount_rust_cache -}} cargo build --features ${DB} --release{{ package_arch_target_param }}
+
+# Create a special empty file which we check within the application.
+# If this file exists, then we exit Vaultwarden to prevent data loss when someone forgets to use volumes.
+# If you really really want to use volatile storage you can set the env `I_REALLY_WANT_VOLATILE_STORAGE=true`
+# This file should disappear if a volume is mounted on-top of this using a docker volume.
+# We run this in the build image and copy it over, because the runtime image could be missing some executables.
+# hadolint ignore=DL3059
+RUN touch /vaultwarden_docker_persistent_volume_check
+
+######################## RUNTIME IMAGE  ########################
+# Create a new stage with a minimal image
+# because we already have a binary built
+FROM {{ runtime_stage_base_image }}
+
+ENV ROCKET_PROFILE="release" \
+    ROCKET_ADDRESS=0.0.0.0 \
+    ROCKET_PORT=80
+{%- if "alpine" in runtime_stage_base_image %} \
+    SSL_CERT_DIR=/etc/ssl/certs
+{% endif %}
+
+
+{% if "amd64" not in target_file %}
+# hadolint ignore=DL3059
+RUN [ "cross-build-start" ]
+{% endif %}
+
+# Create data folder and Install needed libraries
+RUN mkdir /data \
+{% if "alpine" in runtime_stage_base_image %}
+    && apk add --no-cache \
+        openssl \
+        tzdata \
+        curl \
+        dumb-init \
+        ca-certificates
+{% else %}
+    && apt-get update && apt-get install -y \
+    --no-install-recommends \
+    openssl \
+    ca-certificates \
+    curl \
+    dumb-init \
+    libmariadb-dev-compat \
+    libpq5 \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+{% endif %}
+
+{% if "armv6" in target_file and "alpine" not in target_file %}
+# In the Balena Bullseye images for armv6/rpi-debian there is a missing symlink.
+# This symlink was there in the buster images, and for some reason this is needed.
+# hadolint ignore=DL3059
+RUN ln -v -s /lib/ld-linux-armhf.so.3 /lib/ld-linux.so.3
+
+{% endif -%}
+
+{% if "amd64" not in target_file %}
+# hadolint ignore=DL3059
+RUN [ "cross-build-end" ]
+{% endif %}
+
+VOLUME /data
+EXPOSE 80
+EXPOSE 3012
+
+# Copies the files from the context (Rocket.toml file and web-vault)
+# and the binary from the "build" stage to the current stage
+WORKDIR /
+COPY --from=vault /web-vault ./web-vault
+COPY --from=build /vaultwarden_docker_persistent_volume_check /data/vaultwarden_docker_persistent_volume_check
+{% if package_arch_target is defined %}
+COPY --from=build /app/target/{{ package_arch_target }}/release/vaultwarden .
+{% else %}
+COPY --from=build /app/target/release/vaultwarden .
+{% endif %}
+
+COPY docker/healthcheck.sh /healthcheck.sh
+COPY docker/start.sh /start.sh
+
+HEALTHCHECK --interval=60s --timeout=10s CMD ["/healthcheck.sh"]
+
+# Configures the startup!
+# We should be able to remove the dumb-init now with Rocket 0.5
+# But the balenalib images have some issues with there entry.sh
+# See: https://github.com/balena-io-library/base-images/issues/735
+# Lets keep using dumb-init for now, since that is working fine.
+ENTRYPOINT ["/usr/bin/dumb-init", "--"]
+CMD ["/start.sh"]

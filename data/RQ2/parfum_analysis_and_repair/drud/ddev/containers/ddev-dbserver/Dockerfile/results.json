@@ -1,0 +1,53 @@
+{
+  "startTime": 1674255437660,
+  "endTime": 1674255438390,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 33,
+        "lineEnd": 33,
+        "columnStart": 4,
+        "columnEnd": 146
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 28,
+        "lineEnd": 28,
+        "columnStart": 26,
+        "columnEnd": 175
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 39,
+        "lineEnd": 39,
+        "columnStart": 26,
+        "columnEnd": 81
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 28,
+        "lineEnd": 28,
+        "columnStart": 26,
+        "columnEnd": 175
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 39,
+        "lineEnd": 39,
+        "columnStart": 26,
+        "columnEnd": 81
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "ARG BASE_IMAGE\nARG DB_PINNED_VERSION\nFROM ${BASE_IMAGE}:${DB_PINNED_VERSION}\n\n# This must be reiterated because everything is emptied on FROM\nARG BASE_IMAGE\nARG DB_VERSION\n\nENV LANG=C.UTF-8\nENV MYSQL_DATABASE db\nENV MYSQL_USER db\nENV MYSQL_PASSWORD db\nENV MYSQL_ROOT_PASSWORD root\n\nSHELL [\"/bin/bash\", \"-c\"]\n\n# Remove obsolete MySQL 5.5/5.6 Jessie and before keys so they don't make expiration key test stumble\nRUN for item in \"75DD C3C4 A499 F1A1 8CB5  F3C8 CBF8 D6FD 518E 17E1\" \"126C 0D24 BD8A 2942 CC7D  F8AC 7638 D044 2B90 D010\" \"D211 6914 1CEC D440 F2EB  8DDA 9D6D 8F6B C857 C906\" \"A1BD 8E9D 78F7 FE5C 3E65  D8AF 8B48 AD62 4692 5553\" \"ED6D 6527 1AAC F0FF 15D1  2303 6FB2 A1C2 65FF B764\"; do \\\n    apt-key remove \"${item}\" || true; \\\n  done;\n\n# Older versions of mariadb have been removed from\n# the mariadb apt repository, so we don't want to\n# look there when doing apt-get update. And we don't use new packages from there.\n# And we're going to install our own percona.list if needed, so get that if needed\n# and remove it here\nRUN rm -f /etc/apt/sources.list.d/mariadb.list /etc/apt/sources.list.d/percona.list\n\nRUN apt-get -qq update && DEBIAN_FRONTEND=noninteractive apt-get --no-install-recommends -qq install -y -o Dpkg::Options::=\"--force-confold\" curl gnupg2 less lsb-release pv tzdata vim wget >/dev/null && rm -rf /var/lib/apt/lists/*;\n\n# If on 14.04 Ubuntu the percona repositories won't allow TLS apparently, so\n# Use http when connecting. This currently only affects MariaDB 5.5\nRUN set -x;if ( ! command -v xtrabackup && ! command -v mariabackup && [ $(arch) != \"aarch64\" ] ); then \\\n    curl -f -sSL https://repo.percona.com/apt/percona-release_latest.$(lsb_release -sc)_all.deb -o percona-release_latest.$(lsb_release -sc)_all.deb; \\\n    dpkg -i percona-release_latest.$(lsb_release -sc)_all.deb >/dev/null; \\\n    rm percona-release*.deb ; \\\n    xtrabackup_version=percona-xtrabackup-24 ; \\\n    if [ \"$(lsb_release -i -s)\" = \"Ubuntu\" ] && \"$(lsb_release -r -s)\" <= \"16.04\" ]; then sed -i s/https:/http:/g /etc/apt/sources.list.d/percona.list; fi; \\\n    if [ \"$DB_VERSION\" = \"8.0\" ]; then xtrabackup_version=percona-xtrabackup-80; fi ; \\\n    apt-get -qq update && apt-get -qq --no-install-recommends install -y ${xtrabackup_version} >/dev/null; rm -rf /var/lib/apt/lists/*; \\\nfi\nRUN apt-get -qq autoclean\n\nRUN rm -rf /var/lib/mysql /etc/mysql\nRUN mkdir -p /var/lib/mysql\n\nADD files /\n\n# Build a starter base db\nRUN /create_base_db.sh\n\nRUN chmod ugo+x /healthcheck.sh\n\n# But make sure these are right\nRUN chmod ugo+wx /mnt /var/tmp\n\nRUN mkdir -p /var/log /var/tmp/mysqlbase /etc/mysql/conf.d && chmod -R ugo+wx /var/log /var/tmp/mysqlbase /etc/mysql/conf.d\nRUN ln -s -f /dev/stderr /var/log/mysqld.err\n\nRUN rm -rf /var/lib/mysql/*\nRUN chmod -R ugo+rw /var/lib/mysql /etc/mysql/conf.d /mysqlbase && find /mysqlbase -type d | xargs chmod ugo+rwx\n\nRUN /sbin/mkhomedir_helper www-data\n\n# Remove the /etc/apt entry so that if they don't renew the key\n# apt-get update will continue to function\n# Remove MySQL published key that expires 2022-02-15\n# Have requested them to update this in https://bugs.mysql.com/bug.php?id=105632\n# But they haven't done it, and it will break things when it expires.\nRUN rm -f /etc/apt/sources.list.d/mysql.list && \\\n  for item in \"A4A9 4068 76FC BD3C 4567  70C8 8C71 8D3B 5072 E1F5\" ; do \\\n    apt-key remove \"${item}\" || true; \\\n  done;\n\n\nENTRYPOINT [\"/docker-entrypoint.sh\"]\n\nEXPOSE 3306\n# The following line overrides any cmd entry\nCMD []\nHEALTHCHECK --interval=1s --retries=30 --timeout=120s CMD [\"/healthcheck.sh\"]\n"
+}

@@ -1,0 +1,25 @@
+FROM DISTRIBUTION:MINOR
+MAINTAINER packager@ntop.org
+
+RUN yum -y update && \
+    yum -y -q install wget mysql-libs && \
+    wget -q https://packages.ntop.org/centosSTABLE/ntop.repo -O ntop.repo && \
+    mv ntop.repo /etc/yum.repos.d/ && rm -rf /var/cache/yum
+RUN CENTOS7 yum -y -q install epel-release
+RUN CENTOS8 yum -y -q install epel-release && rpm -ivh http://rpms.remirepo.net/enterprise/remi-release-8.rpm && yum -y -q install dnf-plugins-core && dnf config-manager --set-enabled PowerTools && dnf config-manager --set-enabled remi && rm -rf /var/cache/yum
+RUN ROCKYLINUX8 dnf -y install dnf-plugins-core && dnf -y install epel-release && dnf config-manager --set-enabled powertools
+
+SALTSTACK
+
+RUN yum -y -q erase zeromq3 ; \
+    yum clean all && \
+    yum -y update
+
+RUN yum -y install PACKAGES_LIST && rm -rf /var/cache/yum
+RUN yum -y erase PACKAGES_LIST
+
+RUN yum -y install PACKAGES_LIST && rm -rf /var/cache/yum
+
+COPY ENTRYPOINT_PATH /tmp
+ENTRYPOINT ["/tmp/ENTRYPOINT_SH"]
+

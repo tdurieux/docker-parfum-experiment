@@ -1,0 +1,1 @@
+# Docker image for building the Go app

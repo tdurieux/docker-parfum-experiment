@@ -1,0 +1,14 @@
+FROM golang:1.18-alpine
+
+RUN apk add --no-cache git inotify-tools g++ && \
+    rm -rf /var/cache/apk/* && \
+    go install -v github.com/rubenv/sql-migrate/sql-migrate@latest
+
+RUN mkdir /typescript-dtos
+RUN mkdir /app
+WORKDIR /app
+
+COPY go.mod go.sum ./
+RUN go mod download
+
+CMD ["backend/run-dev.sh"]

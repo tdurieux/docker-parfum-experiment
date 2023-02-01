@@ -1,0 +1,26 @@
+{
+  "startTime": 1674254060602,
+  "endTime": 1674254061771,
+  "originalSmells": [
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 14,
+        "lineEnd": 14,
+        "columnStart": 4,
+        "columnEnd": 39
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 16,
+        "lineEnd": 16,
+        "columnStart": 4,
+        "columnEnd": 43
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM registry.access.redhat.com/ubi8/ubi:latest AS build\nARG TNF_PARTNER_DIR=/usr/tnf-partner\n\nENV TNF_PARTNER_SRC_DIR=$TNF_PARTNER_DIR/src\n\nENV OPENSHIFT_VERSION=4.7.7\n\nENV TNF_DIR=/usr/tnf\nENV TNF_SRC_DIR=${TNF_DIR}/tnf-src\nENV TNF_BIN_DIR=${TNF_DIR}/test-network-function\n\nENV TEMP_DIR=/tmp\n\n# Install dependencies\nRUN yum install -y gcc git jq make wget && rm -rf /var/cache/yum\nRUN wget https://get.helm.sh/helm-v3.8.2-linux-amd64.tar.gz && \\\n    tar -xvf helm-v3.8.2-linux-amd64.tar.gz && \\\n    cp linux-amd64/helm /usr/bin/helm && rm helm-v3.8.2-linux-amd64.tar.gz\n# Install Go binary\nENV GO_DL_URL=\"https://golang.org/dl\"\nENV GO_BIN_TAR=\"go1.17.9.linux-amd64.tar.gz\"\nENV GO_BIN_URL_x86_64=${GO_DL_URL}/${GO_BIN_TAR}\nENV GOPATH=\"/root/go\"\nRUN if [[ \"$(uname -m)\" -eq \"x86_64\" ]] ; then \\\n        wget --directory-prefix=${TEMP_DIR} ${GO_BIN_URL_x86_64} && \\\n            rm -rf /usr/local/go && \\\n            tar -C /usr/local -xzf ${TEMP_DIR}/${GO_BIN_TAR}; \\\n     else \\\n         echo \"CPU architecture not supported\" && exit 1; \\\n     fi\n\n# Install oc binary\nENV OC_BIN_TAR=\"openshift-client-linux.tar.gz\"\nENV OC_DL_URL=\"https://mirror.openshift.com/pub/openshift-v4/clients/ocp\"/${OPENSHIFT_VERSION}/${OC_BIN_TAR}\nENV OC_BIN=\"/usr/local/oc/bin\"\nRUN wget --directory-prefix=${TEMP_DIR} ${OC_DL_URL} && \\\n    mkdir -p ${OC_BIN} && \\\n    tar -C ${OC_BIN} -xzf ${TEMP_DIR}/${OC_BIN_TAR} && \\\n    chmod a+x ${OC_BIN}/oc\n\n# Add go and oc binary directory to $PATH\nENV PATH=${PATH}:\"/usr/local/go/bin\":${GOPATH}/\"bin\"\n\n# Git identifier to checkout\nARG TNF_VERSION\nARG TNF_SRC_URL=$TNF_SRC_URL\nARG GIT_CHECKOUT_TARGET=$TNF_VERSION\n\n# Git identifier to checkout for partner\nARG TNF_PARTNER_VERSION\nARG TNF_PARTNER_SRC_URL=https://github.com/test-network-function/cnf-certification-test-partner\nARG GIT_PARTNER_CHECKOUT_TARGET=$TNF_PARTNER_VERSION\n\n# Clone the TNF source repository and checkout the target branch/tag/commit\nRUN git clone --no-single-branch --depth=1 ${TNF_SRC_URL} ${TNF_SRC_DIR}\nRUN git -C ${TNF_SRC_DIR} fetch origin ${GIT_CHECKOUT_TARGET}\nRUN git -C ${TNF_SRC_DIR} checkout ${GIT_CHECKOUT_TARGET}\n\n# Clone the partner source repository and checkout the target branch/tag/commit\nRUN git clone --no-single-branch --depth=1 ${TNF_PARTNER_SRC_URL} ${TNF_PARTNER_SRC_DIR}\nRUN git -C ${TNF_PARTNER_SRC_DIR} fetch origin ${GIT_PARTNER_CHECKOUT_TARGET}\nRUN git -C ${TNF_PARTNER_SRC_DIR} checkout ${GIT_PARTNER_CHECKOUT_TARGET}\n\n# Build TNF binary\nWORKDIR ${TNF_SRC_DIR}\n\n# golangci-lint\nRUN make install-lint\n\n# TODO: RUN make install-tools\nRUN make install-tools && \\\n\tmake mocks && \\\n\tmake update-deps && \\\n\tmake build-cnf-tests-debug\n\n#  Extract what's needed to run at a seperate location\nRUN mkdir ${TNF_BIN_DIR} && \\\n\tcp run-cnf-suites.sh ${TNF_DIR} && \\\n    mkdir ${TNF_DIR}/script && \\\n    cp script/results.html ${TNF_DIR}/script && \\\n\t# copy all JSON files to allow tests to run\n\tcp --parents `find -name \\*.json*` ${TNF_DIR} && \\\n  # copy all go template files to allow tests to run\n\tcp --parents `find -name \\*.gotemplate*` ${TNF_DIR} && \\\n\tcp test-network-function/test-network-function.test ${TNF_BIN_DIR}\n\nWORKDIR ${TNF_DIR}\n\nRUN ln -s ${TNF_DIR}/config/testconfigure.yml ${TNF_DIR}/test-network-function/testconfigure.yml\n\n# Remove most of the build artefacts\nRUN yum remove -y gcc git wget && \\\n\tyum clean all && \\\n\trm -rf ${TNF_SRC_DIR} && \\\n\trm -rf ${TEMP_DIR} && \\\n\trm -rf /root/.cache && \\\n\trm -rf /root/go/pkg && \\\n\trm -rf /root/go/src && \\\n\trm -rf /usr/lib/golang/pkg && \\\n\trm -rf /usr/lib/golang/src\n\n# Copy the state into a new flattened image to reduce size.\n# TODO run as non-root\nFROM scratch\nARG TNF_PARTNER_DIR=/usr/tnf-partner\nCOPY --from=build / /\nENV TNF_CONFIGURATION_PATH=/usr/tnf/config/tnf_config.yml\nENV KUBECONFIG=/usr/tnf/kubeconfig/config\nENV TNF_PARTNER_SRC_DIR=$TNF_PARTNER_DIR/src\nENV PATH=\"/usr/local/oc/bin:${PATH}\"\nWORKDIR /usr/tnf\nENV SHELL=/bin/bash\nCMD [\"./run-cnf-suites.sh\", \"-o\", \"claim\", \"-f\", \"diagnostic\"]\n"
+}

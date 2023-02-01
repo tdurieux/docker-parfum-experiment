@@ -1,0 +1,4 @@
+ARG NODE_IMAGES
+FROM ${NODE_IMAGES}
+
+WORKDIR /var/www/html

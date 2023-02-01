@@ -1,0 +1,1 @@
+# Docker image for build manylinux wheels for libqif

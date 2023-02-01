@@ -1,0 +1,44 @@
+{
+  "startTime": 1674239688942,
+  "endTime": 1674239689262,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 17,
+        "lineEnd": 18,
+        "columnStart": 7,
+        "columnEnd": 16
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 19,
+        "lineEnd": 27,
+        "columnStart": 7,
+        "columnEnd": 16
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 17,
+        "lineEnd": 18,
+        "columnStart": 7,
+        "columnEnd": 16
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 19,
+        "lineEnd": 27,
+        "columnStart": 7,
+        "columnEnd": 16
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM phusion/baseimage:latest\nMAINTAINER Miloš Kozák <milos.kozak@lejmr.com>\n\n# Suporting software versions\nARG IREDMAIL_VERSION=0.9.8\n\n# Default values changable at startup\nARG DOMAIN=DOMAIN\nARG HOSTNAME=HOSTNAME\n\n### Installation\n# Prerequisites\nENV DEBIAN_FRONTEND noninteractive\nRUN echo \"APT::Install-Recommends 0;\" >> /etc/apt/apt.conf.d/01-no-recommends \\\n    && echo \"APT::Install-Suggests 0;\" >> /etc/apt/apt.conf.d/01-no-recommends \\\n    && apt-get -q update \\\n    && apt-get upgrade -y \\\n    && apt-get install --no-install-recommends -y -q \\\n       apt-utils \\\n    && apt-get install --no-install-recommends -y -q \\\n       wget \\\n       bzip2 \\\n       iptables \\\n       openssl \\\n       mysql-server \\\n       netcat \\\n       memcached \\\n       tmpreaper \\\n    && apt-get autoremove -y -q \\\n    && apt-get clean -y -q && rm -rf /var/lib/apt/lists/*;\n\n# Install of iRedMail from sources\nWORKDIR /opt/iredmail\nRUN wget -O - https://bitbucket.org/zhb/iredmail/downloads/iRedMail-\"${IREDMAIL_VERSION}\".tar.bz2 | \\\n    tar xvj --strip-components=1\n\n# Generate configuration file\nCOPY ./config-gen /opt/iredmail/config-gen\nRUN sh ./config-gen HOSTNAME DOMAIN > ./config\n\n# Initiate automatic installation process\nRUN sed s/$(hostname_)/$(cat /opt/hostname | xargs echo -n).$(cat /etc/mailname | xargs echo -n)/ /etc/hosts > /tmp/hosts_ \\\n    && cat /tmp/hosts_ > /etc/hosts \\\n    && rm /tmp/hosts_ \\\n    && echo $HOSTNAME > /etc/hostname \\\n    && sleep 5;service mysql start \\\n    && IREDMAIL_DEBUG='NO' \\\n       IREDMAIL_HOSTNAME=\"HOSTNAME.DOMAIN\" \\\n       CHECK_NEW_IREDMAIL='NO' \\\n       AUTO_USE_EXISTING_CONFIG_FILE=y \\\n       AUTO_INSTALL_WITHOUT_CONFIRM=y \\\n       AUTO_CLEANUP_REMOVE_SENDMAIL=y \\\n       AUTO_CLEANUP_REMOVE_MOD_PYTHON=y \\\n       AUTO_CLEANUP_REPLACE_FIREWALL_RULES=n \\\n       AUTO_CLEANUP_RESTART_IPTABLES=n \\\n       AUTO_CLEANUP_REPLACE_MYSQL_CONFIG=y \\\n       AUTO_CLEANUP_RESTART_POSTFIX=n \\\n       bash iRedMail.sh \\\n    && apt-get autoremove -y -q \\\n    && apt-get clean -y -q\n\n### Final configuration\nRUN sed -i '/^Foreground /c Foreground true' /etc/clamav/clamd.conf \\\n    && sed -i '/init.d/c pkill -sighup clamd' /etc/logrotate.d/clamav-daemon \\\n    && sed -i '/^Foreground /c Foreground true' /etc/clamav/freshclam.conf \\\n    && sed -i 's/^bind-address/#bind-address/' /etc/mysql/mysql.conf.d/mysqld.cnf \\\n    && sed -i 's/SHOWWARNING[ \\t]*=.*/SHOWWARNING=false/g' /etc/tmpreaper.conf \\\n    && install -o amavis -g amavis -m 750 -d /var/lib/amavis/.spamassassin \\\n    && install -o amavis -g amavis -m 640 -T /usr/share/spamassassin/user_prefs.template /var/lib/amavis/.spamassassin/user_prefs \\\n    && rm -f /etc/ssl/private/iRedMail.key \\\n    && rm -f /etc/ssl/certs/iRedMail.crt \\\n    && rm -f /var/lib/dkim/DOMAIN.pem\n\n# Prepare for the first run\nRUN tar jcf /root/mysql.tar.bz2 /var/lib/mysql && rm -rf /var/lib/mysql \\\n    && tar jcf /root/vmail.tar.bz2 /var/vmail && rm -rf /var/vmail \\\n    && rm -rf /var/lib/clamav/*\n\nADD update.sh /sbin/update-iredmail\n\n\n### Startup services\n# Core Services\nADD rc.local /etc/rc.local\nADD services/mysql.sh /etc/service/mysql/run\nADD services/postfix.sh /etc/service/postfix/run\nADD services/amavis.sh /etc/service/amavis/run\nADD services/iredapd.sh /etc/service/iredapd/run\nADD services/dovecot.sh /etc/service/dovecot/run\n\n# Frontend\nADD services/memcached.sh /etc/service/memcached/run\nADD services/sogo.sh /etc/service/sogo/run\nADD services/iredadmin.sh /etc/service/iredadmin/run\nADD services/php7-fpm.sh /etc/service/php7-fpm/run\nADD services/nginx.sh /etc/service/httpd/run\n\n# Enhancement\nADD services/fail2ban.sh /etc/service/fail2ban/run\nADD services/clamav-daemon.sh /etc/service/clamav-daemon/run\nADD services/clamav-freshclam.sh /etc/service/clamav-freshclam/run\nADD services/netdata.sh /etc/service/netdata/run\nADD services/mlmmjadmin.sh /etc/service/mlmmjadmin/run\n\n\n### Purge some packets and save disk space\nRUN apt-get purge -y -q dialog apt-utils augeas-tools \\\n    && apt-get autoremove -y -q \\\n    && apt-get clean -y -q \\\n    && rm -rf /var/lib/apt/lists/*\n\n# Open Ports:\n# Apache: 80/tcp, 443/tcp Postfix: 25/tcp, 587/tcp\n# Dovecot: 110/tcp, 143/tcp, 993/tcp, 995/tcp\nEXPOSE 80 443 25 587 110 143 993 995\n\n# Default values changable at startup\nENV SOGO_WORKERS=2\nENV TZ=Etc/UTC\n"
+}

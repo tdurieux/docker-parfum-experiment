@@ -1,0 +1,20 @@
+FROM python:3.9-slim
+
+ENV DAGSTER_HOME=/opt/dagster/dagster_home/
+
+RUN mkdir -p /opt/dagster/dagster_home /opt/dagster/app /tmp/packages && \
+    useradd -s /bin/bash -d /opt/dagster/dagster_home/ dagster && \
+    chown -R dagster:dagster /opt/dagster/dagster_home /opt/dagster/app && \
+    apt-get update && \
+    apt-get install --no-install-recommends -y wget gnupg2 && \
+    wget -qO - https://www.mongodb.org/static/pgp/server-5.0.asc | apt-key add - && \
+    echo "deb http://repo.mongodb.org/apt/debian buster/mongodb-org/5.0 main" > /etc/apt/sources.list.d/mongodb-org-5.0.list && \
+    apt-get update && \
+    apt-get install --no-install-recommends -y mongodb-org-tools && rm -rf /var/lib/apt/lists/*;
+
+COPY *.whl /tmp/packages/
+RUN pip install --no-cache-dir /tmp/packages/* && rm -r /tmp/packages/
+COPY --chown=dagster:dagster src/ol_dbt /opt/dbt/
+WORKDIR /opt/dagster/dagster_home
+USER dagster
+ENTRYPOINT ["dagster", "api", "grpc", "-h", "0.0.0.0", "-p", "4000"]

@@ -1,0 +1,42 @@
+FROM centos:6.10
+
+# Update as we need to use the vault now.
+RUN sed -i -e 's/^mirrorlist/#mirrorlist/g' -e 's/^#baseurl=http:\/\/mirror.centos.org\/centos\/$releasever\//baseurl=https:\/\/linuxsoft.cern.ch\/centos-vault\/\/6.10\//g' /etc/yum.repos.d/CentOS-Base.repo
+
+# install dependencies
+RUN yum install -y \
+ apr-devel \
+ autoconf \
+ automake \
+ git \
+ glibc-devel \
+ libtool \
+ lsb-core \
+ make \
+ tar \
+ unzip \
+ wget \
+ zip && rm -rf /var/cache/yum
+
+# Downloading and installing SDKMAN!
+RUN curl -f -s "https://get.sdkman.io" | bash
+
+ARG java_version="8.0.322-zulu"
+ENV JAVA_VERSION $java_version
+
+# Installing Java removing some unnecessary SDKMAN files
+RUN bash -c "source $HOME/.sdkman/bin/sdkman-init.sh && \
+    yes | sdk install java $JAVA_VERSION && \
+    rm -rf $HOME/.sdkman/archives/* && \
+    rm -rf $HOME/.sdkman/tmp/*"
+
+RUN echo 'export JAVA_HOME="/root/.sdkman/candidates/java/current"' >> ~/.bashrc
+RUN echo 'PATH=/root/.sdkman/candidates/java/current/bin:$PATH' >> ~/.bashrc
+
+WORKDIR /opt
+RUN curl -f https://downloads.apache.org/maven/maven-3/3.6.3/binaries/apache-maven-3.6.3-bin.tar.gz | tar -xz
+RUN echo 'PATH=/opt/apache-maven-3.6.3/bin/:$PATH' >> ~/.bashrc
+
+# Prepare our own build
+ENV PATH /opt/apache-maven-3.6.3/bin/:$PATH
+ENV JAVA_HOME /root/.sdkman/candidates/java/current/

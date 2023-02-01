@@ -1,0 +1,16 @@
+FROM debian:jessie
+
+MAINTAINER Giuseppe Maxia <gmax@cpan.org>
+
+RUN apt-get update \
+    && apt-get install --no-install-recommends -y make sudo libaio1 vim-tiny libnuma1 bash-completion wget perl libkeyutils1 libncurses5 \
+    && rm -rf /var/lib/apt/lists/* \
+    && export USER=root \
+    && export HOME=/root \
+    && echo "source /etc/bash_completion" >> /root/.bashrc
+
+EXPOSE 3306
+COPY dbdeployer /usr/bin/dbdeployer
+COPY dbdeployer_completion.sh /etc/bash_completion.d/
+COPY docker-entrypoint.sh /entrypoint.sh
+ENTRYPOINT ["/entrypoint.sh"]

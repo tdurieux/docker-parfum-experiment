@@ -1,0 +1,17 @@
+{
+  "startTime": 1674252125926,
+  "endTime": 1674252126467,
+  "originalSmells": [
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 37,
+        "lineEnd": 37,
+        "columnStart": 4,
+        "columnEnd": 45
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "#\n# Two step Dockerfile\n#   - first build step: check hash and unpack archive\n#   - second build step: install dependencies, move files around, adjust config\n#\n# Unpacking in a separate build step makes sure the archive that is COPY-d does\n# not become a layer in the final image.\n#\nFROM library/openjdk:11-jre-slim as intermediate\n\nARG RTRSERVER_GENERIC_BUILD_ARCHIVE\n\nCOPY ${RTRSERVER_GENERIC_BUILD_ARCHIVE} /tmp/\n\nRUN mkdir -p /opt/rtr-server \\\n    && tar -zxf /tmp/$(basename $RTRSERVER_GENERIC_BUILD_ARCHIVE) -C /opt/rtr-server/ --strip-components=1\n\n# Second build step: Move files into place\nFROM library/openjdk:11-jre-slim\n# Keep the file name and sha256 in the metadata\nARG RTRSERVER_GENERIC_BUILD_ARCHIVE\nLABEL validation.archive.file=\"$(basename ${RTRSERVER_GENERIC_BUILD_ARCHIVE})\"\n\n# Webserver on 8081\nEXPOSE 8081\n# RTR protocol on 8323\nEXPOSE 8323\n\n# Used by `rpki-rtr-server.sh`\nENV CONFIG_DIR=\"/config\"\nENV RPKI_VALIDATOR_VALIDATED_OBJECTS_URI=\"https://rpki-validator.ripe.net/api/objects/validated\"\n\nCOPY --from=intermediate /opt/rtr-server /opt/rtr-server\nWORKDIR /opt/rtr-server\n\n# S6 init-like system for proper <C-c>\nADD https://github.com/just-containers/s6-overlay/releases/download/v1.21.8.0/s6-overlay-amd64.tar.gz /tmp/\nRUN tar xzf /tmp/s6-overlay-amd64.tar.gz -C / && rm /tmp/s6-overlay-amd64.tar.gz\n\n# UseContainerSupport: important\nRUN sed -i '/MEM_OPTIONS=/c\\MEM_OPTIONS=\"-Xms$JVM_XMS -Xmx$JVM_XMX -XX:+ExitOnOutOfMemoryError -XX:+UseContainerSupport\"' /opt/rtr-server/rpki-rtr-server.sh  \\\n    # Move about config and set defaults (creates /config)\n    && mv /opt/rtr-server/conf /config \\\n    # Listen to 0.0.0.0 instead of just localhost\n    && sed -i 's/server.address=localhost/server.address=0.0.0.0/g' ${CONFIG_DIR}/application.properties \\\n    && sed -i 's/rtr.server.address=localhost/rtr.server.address=0.0.0.0/g' ${CONFIG_DIR}/application.properties \\\n    && useradd -M -d /opt/rtr-server rpki\n\n# https://github.com/just-containers/s6-overlay functionality\nRUN echo \"/config true rpki,32768:32768 0666 0777\\n\" > /etc/fix-attrs.d/01-rtr-server\n\n# rtr-server process in container runs as daemon user\nENTRYPOINT [\"/init\"]\nCMD s6-setuidgid rpki /opt/rtr-server/rpki-rtr-server.sh\n# Volumes are initialized with the files in them from container build time\nVOLUME /config\n"
+}

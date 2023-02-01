@@ -1,0 +1,26 @@
+{
+  "startTime": 1674251516855,
+  "endTime": 1674251518424,
+  "originalSmells": [
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 46,
+        "lineEnd": 46,
+        "columnStart": 5,
+        "columnEnd": 18
+      }
+    },
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 67,
+        "lineEnd": 67,
+        "columnStart": 5,
+        "columnEnd": 18
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM umputun/baseimage:buildgo-v1.9.1 as build-backend\n\nARG CI\nARG GITHUB_REF\nARG GITHUB_SHA\nARG GIT_BRANCH\nARG SKIP_BACKEND_TEST\nARG BACKEND_TEST_TIMEOUT\n\nADD backend /build/backend\nWORKDIR /build/backend\n\nENV GOFLAGS=\"-mod=vendor\"\n\n# install gcc in order to be able to go test package with -race\nRUN apk --no-cache add gcc libc-dev\n\nRUN echo go version: `go version`\n\n# run tests\nRUN \\\n    cd app && \\\n    if [ -z \"$SKIP_BACKEND_TEST\" ] ; then \\\n        CGO_ENABLED=1 go test -race -p 1 -timeout=\"${BACKEND_TEST_TIMEOUT:-300s}\" -covermode=atomic -coverprofile=/profile.cov_tmp ./... && \\\n        cat /profile.cov_tmp | grep -v \"_mock.go\" > /profile.cov ; \\\n        golangci-lint run --config ../.golangci.yml ./... ; \\\n    else \\\n    \techo \"skip backend tests and linter\" \\\n    ; fi\n\nRUN \\\n    version=\"$(/script/version.sh)\" && \\\n    echo \"version=$version\" && \\\n    go build -o remark42 -ldflags \"-X main.revision=${version} -s -w\" ./app\n\nFROM --platform=$BUILDPLATFORM node:16.15.1-alpine as build-frontend-deps\n\nARG CI\nARG SKIP_FRONTEND_BUILD\nENV HUSKY_SKIP_INSTALL=true\n\nWORKDIR /srv/frontend\nCOPY frontend/package.json frontend/pnpm-lock.yaml /srv/frontend/\nRUN \\\n   if [[ -z \"$SKIP_FRONTEND_BUILD\" || -z \"$SKIP_FRONTEND_TEST\" ]]; then \\\n     apk add --no-cache --update git && \\\n     npm i -g pnpm; npm cache clean --force; \\\n   fi\n\n RUN --mount=type=cache,id=pnpm,target=/root/.pnpm-store/v3 \\\n   if [[ -z \"$SKIP_FRONTEND_BUILD\" || -z \"$SKIP_FRONTEND_TEST\" ]]; then \\\n     pnpm i; \\\n   fi\n\nFROM --platform=$BUILDPLATFORM node:16.15.1-alpine as build-frontend\n\nARG CI\nARG SKIP_FRONTEND_TEST\nARG SKIP_FRONTEND_BUILD\nARG NODE_ENV=production\n\nCOPY --from=build-frontend-deps /srv/frontend/node_modules /srv/frontend/node_modules\nCOPY ./frontend /srv/frontend\nWORKDIR /srv/frontend\nRUN \\\n   if [[ -z \"$SKIP_FRONTEND_BUILD\" || -z \"$SKIP_FRONTEND_TEST\" ]]; then \\\n     apk add --no-cache --update git && \\\n     npm i -g pnpm; npm cache clean --force; \\\n   fi\n\nRUN \\\n  if [ -z \"$SKIP_FRONTEND_TEST\" ]; then \\\n    echo 'Skip frontend test'; \\\n  else \\\n    pnpm lint test check; \\\n  fi\n\nRUN \\\n  if [ -z \"$SKIP_FRONTEND_BUILD\" ]; then \\\n    mkdir public; \\\n    echo 'Skip frontend build'; \\\n  else \\\n    pnpm build; \\\n  fi\n\nFROM umputun/baseimage:app-v1.9.1\n\nWORKDIR /srv\n\nADD docker-init.sh /entrypoint.sh\nADD backend/scripts/backup.sh /usr/local/bin/backup\nADD backend/scripts/restore.sh /usr/local/bin/restore\nADD backend/scripts/import.sh /usr/local/bin/import\nRUN chmod +x /entrypoint.sh /usr/local/bin/backup /usr/local/bin/restore /usr/local/bin/import\n\nCOPY --from=build-backend /build/backend/remark42 /srv/remark42\nCOPY --from=build-backend /build/backend/templates /srv\nCOPY --from=build-frontend /srv/frontend/public/ /srv/web\nCOPY docker-init.sh /srv/init.sh\nRUN chown -R app:app /srv\nRUN ln -s /srv/remark42 /usr/bin/remark42\n\nEXPOSE 8080\nHEALTHCHECK --interval=30s --timeout=3s CMD curl --fail http://localhost:8080/ping || exit 1\n\n\nRUN chmod +x /srv/init.sh\nCMD [\"/srv/remark42\", \"server\"]\n"
+}

@@ -1,0 +1,53 @@
+FROM golang:1.17 as builder
+ARG EXTENSION_VERSION
+ARG AGENT_VERSION
+ARG CMD_PATH
+RUN mkdir -p /tmp/dd/datadog-agent
+
+# cache dependencies
+COPY ./scripts/.cache/go.mod /tmp/dd/datadog-agent
+COPY ./scripts/.cache/go.sum /tmp/dd/datadog-agent
+WORKDIR /tmp/dd/datadog-agent
+
+# copy source files (/tgz gets unzip automatically by Docker)
+ADD ./scripts/.src/datadog-agent.tgz /tmp/dd
+
+# build the extension
+WORKDIR /tmp/dd/datadog-agent/"${CMD_PATH}"
+# add the current version number to the tags package before compilation
+
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \ 
+    if [ -z "$AGENT_VERSION" ]; then \
+        go build -ldflags="-w \
+        -X github.com/DataDog/datadog-agent/pkg/serverless/tags.currentExtensionVersion=$EXTENSION_VERSION" \
+        -tags serverless -o datadog-agent; \
+    else \
+        go build -ldflags="-w \
+        -X github.com/DataDog/datadog-agent/pkg/serverless/tags.currentExtensionVersion=$EXTENSION_VERSION \
+        -X github.com/DataDog/datadog-agent/pkg/version.agentVersionDefault=$AGENT_VERSION" \
+        -tags serverless -o datadog-agent; \
+    fi
+
+RUN go tool nm datadog-agent | grep -w 'github.com/DataDog/datadog-agent/pkg/version.agentVersionDefault' || \
+    (echo "agentVersionDefault variable doesn't exist" && exit 1)
+
+# zip the extension
+FROM ubuntu:latest as compresser
+ARG CMD_PATH
+ARG DATADOG_WRAPPER=datadog_wrapper
+
+RUN apt-get update && apt-get install --no-install-recommends -y zip binutils && rm -rf /var/lib/apt/lists/*;
+RUN mkdir /extensions
+WORKDIR /extensions
+COPY --from=builder /tmp/dd/datadog-agent/"${CMD_PATH}"/datadog-agent /extensions/datadog-agent
+RUN strip /extensions/datadog-agent
+
+COPY ./scripts/$DATADOG_WRAPPER /$DATADOG_WRAPPER
+RUN chmod +x /$DATADOG_WRAPPER
+RUN  zip -r datadog_extension.zip /extensions /$DATADOG_WRAPPER
+
+# keep the smallest possible docker image
+FROM scratch
+COPY --from=compresser /extensions/datadog_extension.zip /
+ENTRYPOINT ["/datadog_extension.zip"]

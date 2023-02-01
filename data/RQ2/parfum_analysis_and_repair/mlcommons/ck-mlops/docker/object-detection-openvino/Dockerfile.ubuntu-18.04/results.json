@@ -1,0 +1,44 @@
+{
+  "startTime": 1674215493193,
+  "endTime": 1674215493824,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 17,
+        "lineEnd": 17,
+        "columnStart": 4,
+        "columnEnd": 28
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 19,
+        "lineEnd": 23,
+        "columnStart": 4,
+        "columnEnd": 4
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 17,
+        "lineEnd": 17,
+        "columnStart": 4,
+        "columnEnd": 28
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 19,
+        "lineEnd": 23,
+        "columnStart": 4,
+        "columnEnd": 4
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM ubuntu:18.04\n\n# News:\n#  * 20210525: Grigori updated this container to support the latest CK framework\n#              with the latest CK components from ctuning@ai repo\nLABEL maintainer=\"Grigori Fursin <grigori@octoml.ai>\"\n\n# Use the Bash shell.\nSHELL [\"/bin/bash\", \"-c\"]\n\n# Allow stepping into the Bash shell interactively.\nENTRYPOINT [\"/bin/bash\", \"-c\"]\n\n# Install known system dependencies and immediately clean up to make the image smaller.\n# CK needs: git, wget, zip.\n# OpenVINO needs: CMake.\nRUN DEBIAN_FRONTEND=noninteractive apt update -y \\\n && apt install --no-install-recommends -y apt-utils \\\n && apt upgrade -y \\\n && apt install --no-install-recommends -y \\\n git wget zip libz-dev \\\n cmake \\\n python3 python3-pip \\\n vim \\\n && apt clean && rm -rf /var/lib/apt/lists/*;\n\n# Create a non-root user with a fixed group id 1500 and a fixed user id 2000\n# (hopefully distinct from any host user id for security reasons).\n# See the README for the gory details.\nRUN groupadd -g 1500 dvdtg\nRUN useradd -u 2000 -g dvdtg --create-home --shell /bin/bash dvdt\nUSER dvdt:dvdtg\nWORKDIR /home/dvdt\n\n# Install Collective Knowledge (CK). Make it group-executable.\nENV CK_REPOS=/home/dvdt/CK_REPOS \\\n    CK_TOOLS=/home/dvdt/CK_TOOLS \\\n    PATH=/home/dvdt/.local/bin:${PATH} \\\n    CK_CC=gcc \\\n    CK_PYTHON=python3 \\\n    LANG=C.UTF-8\n\nRUN mkdir -p ${CK_REPOS} ${CK_TOOLS}\n\n# Install CK (CK automation f49f20744aba90e2)\n# We need to install new pip and setuptools otherwise there is a conflict\n# with the local CK installation of Python packages ...\nRUN export DUMMY_CK=A\nRUN ${CK_PYTHON} --version\nRUN ${DUMMY_CK} ${CK_PYTHON} -m pip install --ignore-installed pip setuptools wheel --user\nRUN ${DUMMY_CK} ${CK_PYTHON} -m pip install pyyaml virtualenv --user\nRUN ${DUMMY_CK} ${CK_PYTHON} -m pip install ck --user\n\n# Explicitly create a CK experiment entry, a folder that will be mounted\n# (with '--volume=<folder_for_results>:/home/dvdt/CK_REPOS/local/experiment').\n# as a shared volume between the host and the container, and make it group-writable.\n# For consistency, use the \"canonical\" uid from ck-analytics:module:experiment.\nRUN ck create_entry --data_uoa=experiment --data_uid=bc0409fb61f0aa82 --path=${CK_REPOS}/local\\\n && chmod -R g+w ${CK_REPOS}/local/experiment\n\n# Pull CK repositories\nRUN ck pull repo:mlcommons@ck-mlops\n\n# Use generic Linux settings with dummy frequency setting scripts.\nRUN ck detect platform.os --platform_init_uoa=generic-linux-dummy\n\n# Detect C/C++ compiler (gcc).\nRUN ck detect soft:compiler.gcc --full_path=`which ${CK_CC}`\n\n# Detect CMake build tool.\nRUN ck detect soft --tags=cmake --full_path=`which cmake`\n\n# Detect Python.\nRUN ck detect soft --tags=compiler,python --full_path=`which ${CK_PYTHON}`\n\n#-----------------------------------------------------------------------------#\n# Step 1. Install Python dependencies (for Model Optimizer and LoadGen).\n#-----------------------------------------------------------------------------#\n# OpenVINO pre-release strictly requires TensorFlow < 2.0 and NetworkX < 2.4.\nRUN ck install package --tags=lib,python-package,tensorflow --force_version=1.15.2\nRUN ck install package --tags=lib,python-package,networkx --force_version=2.3.0\nRUN ck install package --tags=lib,python-package,defusedxml\n# Cython is an implicit dependency of NumPy.\nRUN ck install package --tags=lib,python-package,cython\nRUN ck install package --tags=lib,python-package,numpy\n# test-generator is an implicit dependency of Model Optimizer (not in requirements.txt).\nRUN ck install package --tags=lib,python-package,test-generator\n# Abseil is a LoadGen dependency.\nRUN ck install package --tags=lib,python-package,absl\n\n\n#-----------------------------------------------------------------------------#\n# Step 2. Install C++ dependencies (for Inference Engine and MLPerf program).\n#-----------------------------------------------------------------------------#\nRUN ck install package --tags=lib,opencv,v3.4.3\nRUN ck install package --tags=boost,v1.67.0,from-sourceforge --no_tags=min-for-caffe\n# Install LoadGen from a branch reconstructed according to Intel's README.\nRUN ck install package --tags=mlperf,inference,source,dividiti.v0.5-intel\nRUN ck install package --tags=lib,loadgen,static\n#-----------------------------------------------------------------------------#\n\n\n#-----------------------------------------------------------------------------#\n# Step 3. Install the OpenVINO \"pre-release\" used for MLPerf Inference v0.5.\n#-----------------------------------------------------------------------------#\nRUN ck install package --tags=lib,intel,open-model-zoo,2019_R3\nRUN ck install package --tags=lib,openvino,2019_R3\nRUN ck compile program:mlperf-inference-v0.5\n#-----------------------------------------------------------------------------#\n\n\n#-----------------------------------------------------------------------------#\n# Step 4. Install the official SSD-MobileNet model for MLPerf Inference v0.5\n# and convert it into the OpenVINO format.\n#-----------------------------------------------------------------------------#\nRUN ck install package --tags=model,tf,ssd-mobilenet,quantized,for.openvino\nRUN ck install package --tags=model,openvino,ssd-mobilenet\n#-----------------------------------------------------------------------------#\n\n\n#-----------------------------------------------------------------------------#\n# Step 5. Install the COCO 2017 validation dataset (5,000 images).\n#-----------------------------------------------------------------------------#\n# Download the dataset to the default path. Remove all training annotations (~765 MB).\nRUN echo | ck install package --tags=object-detection,dataset,coco.2017,val,original,full\\\n && ck virtual env --tags=object-detection,dataset,coco.2017,val,original,full --shell_cmd=\\\n'rm $CK_ENV_DATASET_COCO_LABELS_DIR/*train2017.json'\n# Install Python COCO API.\n#RUN ck install package --tags=lib,python-package,cython # already installed\n#RUN ck install package --tags=lib,python-package,numpy # already installed\nRUN ck install package --tags=lib,python-package,matplotlib\nRUN ck install package --tags=tool,coco,api\n#-----------------------------------------------------------------------------#\n\n\n#-----------------------------------------------------------------------------#\n# Step 6. Make final preparations to run the OpenVINO program.\n#-----------------------------------------------------------------------------#\n# Allow the program create tmp files when running under an external user.\nRUN chmod -R g+rwx `ck find program:mlperf-inference-v0.5`\n#-----------------------------------------------------------------------------#\n\n\n#-----------------------------------------------------------------------------#\n# Run the OpenVINO program that Intel prepared for MLPerf Inference v0.5\n# with the symmetrically quantized SSD-MobileNet model\n# on the first 50 images of the COCO 2017 validation dataset\n# using all (virtual) CPU cores.\n#-----------------------------------------------------------------------------#\nCMD [\"export NPROCS=`grep -c processor /proc/cpuinfo` \\\n && ck run program:mlperf-inference-v0.5 --cmd_key=object-detection --skip_print_timers \\\n    --env.CK_LOADGEN_SCENARIO=Offline --env.CK_LOADGEN_MODE=Accuracy --env.CK_LOADGEN_DATASET_SIZE=50 \\\n    --env.CK_OPENVINO_NTHREADS=$NPROCS --env.CK_OPENVINO_NSTREAMS=$NPROCS --env.CK_OPENVINO_NIREQ=$NPROCS \\\n && cat /home/dvdt/CK_REPOS/ck-mlops/program/mlperf-inference-v0.5/tmp/accuracy.txt\"]\n"
+}

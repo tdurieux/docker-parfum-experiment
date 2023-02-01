@@ -1,0 +1,1 @@
+#FROM registry.cn-hangzhou.aliyuncs.com/aliware2018/debian-jdk8-devel

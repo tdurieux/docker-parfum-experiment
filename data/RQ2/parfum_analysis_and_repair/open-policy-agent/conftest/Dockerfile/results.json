@@ -1,0 +1,17 @@
+{
+  "startTime": 1674251355104,
+  "endTime": 1674251355706,
+  "originalSmells": [
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 30,
+        "lineEnd": 30,
+        "columnStart": 4,
+        "columnEnd": 23
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM golang:1.18.3-alpine as base\nARG ARCH=amd64\nARG VERSION\nARG COMMIT\nARG DATE\nENV GOOS=linux \\\n    CGO_ENABLED=0 \\\n    GOARCH=${ARCH}\nRUN apk add --no-cache git\nWORKDIR /app\n\nCOPY go.mod .\nCOPY go.sum .\nRUN go mod download\n\nCOPY . .\n\n## BUILDER STAGE ##\nFROM base as builder\nRUN go build -o conftest -ldflags=\"-w -s -X github.com/open-policy-agent/conftest/internal/commands.version=${VERSION}\" main.go\n\n## TEST STAGE ##\nFROM base as test\nRUN go test -v ./...\n\n## ACCEPTANCE STAGE ##\nFROM base as acceptance\nCOPY --from=builder /app/conftest /app/conftest\n\nRUN apk add --no-cache npm bash\nRUN npm install -g bats && npm cache clean --force;\n\nRUN bats acceptance.bats\n\n## EXAMPLES STAGE ##\nFROM base as examples\nENV TERRAFORM_VERSION=0.12.28 \\\n    KUSTOMIZE_VERSION=2.0.3\n\nCOPY --from=builder /app/conftest /usr/local/bin\nCOPY examples /examples\n\nWORKDIR /tmp\nRUN apk add --no-cache npm make git jq ca-certificates openssl unzip wget && \\\n    wget \"https://releases.hashicorp.com/terraform/${TERRAFORM_VERSION}/terraform_${TERRAFORM_VERSION}_linux_amd64.zip\" && \\\n    unzip \"terraform_${TERRAFORM_VERSION}_linux_amd64.zip\" -d /usr/local/bin\n\nRUN wget -O /usr/local/bin/kustomize \"https://github.com/kubernetes-sigs/kustomize/releases/download/v${KUSTOMIZE_VERSION}/kustomize_${KUSTOMIZE_VERSION}_linux_amd64\" && \\\n    chmod +x /usr/local/bin/kustomize\n\nRUN go install cuelang.org/go/cmd/cue@latest\n\nWORKDIR /examples\n\n## RELEASE ##\nFROM alpine:3.16.0\n\n# Install git for protocols that depend on it when using conftest pull\nRUN apk add --no-cache git\n\nCOPY --from=builder /app/conftest /\nRUN ln -s /conftest /usr/local/bin/conftest\nWORKDIR /project\n\nENTRYPOINT [\"/conftest\"]\nCMD [\"--help\"]\n"
+}

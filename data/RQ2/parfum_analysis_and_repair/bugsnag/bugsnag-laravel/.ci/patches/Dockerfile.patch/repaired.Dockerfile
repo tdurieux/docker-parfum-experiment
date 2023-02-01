@@ -1,0 +1,23 @@
+diff --git a/Dockerfile b/Dockerfile
+new file mode 100644
+index 0000000..ecc7d44
+--- /dev/null
++++ b/Dockerfile
+@@ -0,0 +1,17 @@
++ARG PHP_VERSION
++FROM php:$PHP_VERSION
++
++RUN apt-get update && \
++  apt-get install -y --no-install-recommends \
++  git \
++  unzip \
++  wget \
++  zip
++
++WORKDIR /app
++
++COPY . .
++
++RUN php artisan key:generate
++
++CMD php -S 0.0.0.0:8000 -t public/

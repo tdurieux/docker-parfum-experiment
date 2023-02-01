@@ -1,0 +1,1 @@
+# Run from pnpm workspace root (e.g. docker build -t ebook-reader -f apps/web/Dockerfile .)

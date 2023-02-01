@@ -1,0 +1,52 @@
+FROM ros:foxy
+
+SHELL ["/bin/bash", "-c"]
+
+COPY . /opt/package
+WORKDIR /opt/package
+
+RUN (apt-get update || true) && apt-get install --no-install-recommends --yes curl && rm -rf /var/lib/apt/lists/*;
+RUN curl --fail --show-error --silent --location https://raw.githubusercontent.com/ros/rosdistro/master/ros.asc | apt-key add -
+
+# install packages
+RUN apt-get update && apt-get upgrade -y && apt-get install --no-install-recommends -q -y \
+    bash-completion \
+    dirmngr \
+    gnupg2 \
+    python3-pip \
+    python3-apt \
+    wget \
+    enchant \
+    sudo \
+    wget && rm -rf /var/lib/apt/lists/*;
+
+RUN wget https://packages.osrfoundation.org/gazebo.key -O - | apt-key add - && \
+	echo "yaml https://s3-us-west-2.amazonaws.com/rosdep/base.yaml" > /etc/ros/rosdep/sources.list.d/19-aws-sdk.list
+
+RUN useradd builduser
+RUN adduser builduser sudo
+RUN mkdir -p /home/builduser
+RUN chown builduser /home/builduser
+RUN sh -c "echo 'builduser ALL=NOPASSWD: ALL' >> /etc/sudoers"
+
+# NOTE: This is a workaround for setuptools 50.* (see https://github.com/pypa/setuptools/issues/2352)
+ENV SETUPTOOLS_USE_DISTUTILS=stdlib
+
+RUN pip3 install --no-cache-dir --upgrade pip setuptools
+# RUN pip3 install -r requirements.txt
+
+RUN pip3 install --no-cache-dir -U pytest colcon-common-extensions
+ARG CACHE_DATE=not_a_date
+RUN pip3 install --no-cache-dir git+https://github.com/colcon/colcon-ros-bundle.git
+RUN pip3 install --no-cache-dir -e .
+
+WORKDIR /opt/package/integration/ros2_workspace
+RUN chown -R builduser /opt/package
+
+USER builduser
+
+RUN	source /opt/ros/foxy/setup.sh; rosdep update && \
+	sudo rosdep install --from-paths /opt/package/integration/ros2_workspace --rosdistro foxy --ignore-src -r -y
+
+RUN source /opt/ros/foxy/setup.sh; colcon build
+RUN source /opt/ros/foxy/setup.sh; colcon bundle --bundle-version 2 --bundle-base v2

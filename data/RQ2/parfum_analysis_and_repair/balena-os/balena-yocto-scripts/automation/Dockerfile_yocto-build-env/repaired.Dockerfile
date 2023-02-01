@@ -1,0 +1,48 @@
+FROM ubuntu:18.04
+
+ARG DEBIAN_FRONTEND=noninteractive
+
+# Install the following utilities (required by poky)
+RUN apt-get update && apt-get install --no-install-recommends -y build-essential chrpath curl diffstat gcc-multilib gawk git-core locales zstd liblz4-tool \
+                                         texinfo unzip wget xterm cpio file python python3 openssh-client iputils-ping iproute2 \
+                                         python3-distutils python3-pip python3-pexpect python3-git python3-jinja2 python3-subunit \
+                                         gawk socat xz-utils libegl1-mesa libsdl1.2-dev pylint3 mesa-common-dev debianutils \
+                                         && rm -rf /var/lib/apt/lists/*
+
+# Set the locale to UTF-8 for bulding with poky morty
+RUN locale-gen en_US.UTF-8
+ENV LANG en_US.UTF-8
+
+# Additional host packages required by balena
+RUN apt-get update && apt-get install --no-install-recommends -y apt-transport-https iptables iproute2 procps uidmap && rm -rf /var/lib/apt/lists/*
+RUN curl -f --silent https://deb.nodesource.com/gpgkey/nodesource.gpg.key | apt-key add -
+ENV NODE_VERSION node_8.x
+ENV DISTRO bionic
+RUN echo "deb https://deb.nodesource.com/$NODE_VERSION $DISTRO main" | tee /etc/apt/sources.list.d/nodesource.list &&\
+  echo "deb-src https://deb.nodesource.com/$NODE_VERSION $DISTRO main" | tee -a /etc/apt/sources.list.d/nodesource.list
+RUN apt-get update && apt-get install --no-install-recommends -y jq nodejs sudo && rm -rf /var/lib/apt/lists/*
+
+# Additional host packages required by various BSP layers
+RUN apt-get update && apt-get install --no-install-recommends -y dos2unix && rm -rf /var/lib/apt/lists/*
+
+# Install docker matching the balena-engine version
+# https://docs.docker.com/engine/install/ubuntu/
+RUN apt-get update && apt-get install --no-install-recommends -y iptables procps e2fsprogs xfsprogs xz-utils git kmod apt-transport-https ca-certificates curl gnupg lsb-release && rm -rf /var/lib/apt/lists/*
+RUN curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --batch --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg && \
+echo "deb [arch=amd64 signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu \
+  $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+ENV DOCKER_VERSION="5:19.03.13~3-0~ubuntu-bionic"
+RUN apt-get update && apt-get install --no-install-recommends -y docker-ce=${DOCKER_VERSION} docker-ce-cli=${DOCKER_VERSION} containerd.io && rm -rf /var/lib/apt/lists/*
+VOLUME /var/lib/docker
+
+# Install balena-cli
+ENV BALENA_CLI_VERSION 13.4.0
+RUN curl -f -sSL https://github.com/balena-io/balena-cli/releases/download/v$BALENA_CLI_VERSION/balena-cli-v$BALENA_CLI_VERSION-linux-x64-standalone.zip > balena-cli.zip && \
+  unzip balena-cli.zip && \
+  mv balena-cli/* /usr/bin && \
+  rm -rf balena-cli.zip balena-cli
+
+COPY include/balena-docker.inc /
+COPY entry_scripts/prepare-and-start.sh /
+
+WORKDIR /work

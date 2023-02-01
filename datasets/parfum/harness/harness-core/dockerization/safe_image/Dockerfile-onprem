@@ -1,0 +1,28 @@
+FROM adoptopenjdk/openjdk8:x86_64-alpine-jdk8u242-b08
+
+# replace insecure repositories with TLS repo
+RUN sed -i 's|http://dl-cdn.alpinelinux.org|https://alpine.global.ssl.fastly.net|g' /etc/apk/repositories
+
+# update vulnerable package
+RUN set -x \
+    && apk update --no-cache \
+    && apk upgrade --no-cache \
+# install bash for scripting
+    && apk add --no-cache bash
+
+# install yq for yaml editing scripts
+RUN set -x \
+    && wget https://github.com/mikefarah/yq/releases/download/3.3.2/yq_linux_amd64 -O /usr/bin/yq \
+    && chmod +x /usr/bin/yq
+
+# create application user and working directory
+RUN set -x \
+    && addgroup -S 65534 \
+    && adduser -S 65534 -G 65534 \
+    && mkdir -p /opt/harness/plugins \
+    && chown -R 65534:65534 /opt/harness \
+    && chmod -R 700 /opt/harness
+
+WORKDIR /opt/harness
+
+USER 65534

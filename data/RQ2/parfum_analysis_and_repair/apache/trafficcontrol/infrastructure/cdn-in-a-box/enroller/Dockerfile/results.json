@@ -1,0 +1,63 @@
+{
+  "startTime": 1674220909399,
+  "endTime": 1674220910343,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 66,
+        "lineEnd": 69,
+        "columnStart": 22,
+        "columnEnd": 18
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 52,
+        "lineEnd": 52,
+        "columnStart": 8,
+        "columnEnd": 71
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 20,
+        "lineEnd": 23,
+        "columnStart": 4,
+        "columnEnd": 12
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 52,
+        "lineEnd": 52,
+        "columnStart": 8,
+        "columnEnd": 71
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 66,
+        "lineEnd": 69,
+        "columnStart": 22,
+        "columnEnd": 18
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 52,
+        "lineEnd": 52,
+        "columnStart": 8,
+        "columnEnd": 71
+      }
+    }
+  ],
+  "repairedDockerfile": "# Licensed to the Apache Software Foundation (ASF) under one\n# or more contributor license agreements.  See the NOTICE file\n# distributed with this work for additional information\n# regarding copyright ownership.  The ASF licenses this file\n# to you under the Apache License, Version 2.0 (the\n# \"License\"); you may not use this file except in compliance\n# with the License.  You may obtain a copy of the License at\n#\n#   http://www.apache.org/licenses/LICENSE-2.0\n#\n# Unless required by applicable law or agreed to in writing,\n# software distributed under the License is distributed on an\n# \"AS IS\" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY\n# KIND, either express or implied.  See the License for the\n# specific language governing permissions and limitations\n# under the License.\n\nFROM debian:bullseye AS enroller-dependencies\n\nRUN apt-get update && \\\n    apt-get install -y --no-install-recommends \\\n        ca-certificates \\\n        git \\\n        wget && \\\n    apt-get clean && rm -rf /var/lib/apt/lists/*;\n\nCOPY GO_VERSION /\nRUN go_version=$(cat /GO_VERSION) && \\\n    wget -O go.tar.gz https://dl.google.com/go/go${go_version}.linux-amd64.tar.gz && \\\n    tar -C /usr/local -xvzf go.tar.gz && \\\n    ln -s /usr/local/go/bin/go /usr/bin/go && \\\n    rm go.tar.gz\nENV GOPATH=/go \\\n    CGO_ENABLED=0\n\nFROM enroller-dependencies AS enroller-builder\nARG ENROLLER_DEBUG_BUILD=false\n\n# enroller source and dependencies\nCOPY ./lib/ /go/src/github.com/apache/trafficcontrol/lib/\nCOPY ./go.mod ./go.sum /go/src/github.com/apache/trafficcontrol/\nCOPY ./vendor/ /go/src/github.com/apache/trafficcontrol/vendor/\nCOPY ./traffic_ops/toclientlib/ /go/src/github.com/apache/trafficcontrol/traffic_ops/toclientlib/\nCOPY ./traffic_ops/v4-client/ /go/src/github.com/apache/trafficcontrol/traffic_ops/v4-client/\nCOPY ./infrastructure/cdn-in-a-box/ /go/src/github.com/apache/trafficcontrol/infrastructure/cdn-in-a-box/\n\nWORKDIR /go/src/github.com/apache/trafficcontrol/infrastructure/cdn-in-a-box/enroller\nRUN set -o errexit -o nounset; \\\n    go clean; \\\n    go mod vendor -v; \\\n    gcflags= ldflags=; \\\n    if [ \"$ENROLLER_DEBUG_BUILD\" = true ]; then \\\n        apt-get install -y --no-install-recommends gcc libstdc++-9-dev; rm -rf /var/lib/apt/lists/*; \\\n        echo 'Building Enroller without optimization or inlining'; \\\n        gcflags='all=-N -l'; \\\n    else \\\n        echo 'Optimizing Enroller build'; \\\n        ldflags='-s -w'; \\\n    fi; \\\n    go build -ldflags \"$ldflags\" -gcflags \"$gcflags\"\n\nFROM enroller-dependencies as get-delve\nRUN go install github.com/go-delve/delve/cmd/dlv@latest\n\nFROM debian:bullseye AS enroller\n\nRUN apt-get update && apt-get install --no-install-recommends -y \\\n        netcat curl dnsutils net-tools \\\n        #to-access dependencies\n        jq gettext && \\\n    apt-get clean && rm -rf /var/lib/apt/lists/*;\nCOPY --from=enroller-builder \\\n   /go/src/github.com/apache/trafficcontrol/infrastructure/cdn-in-a-box/enroller/enroller \\\n   /go/src/github.com/apache/trafficcontrol/infrastructure/cdn-in-a-box/enroller/run.sh \\\n   /go/src/github.com/apache/trafficcontrol/infrastructure/cdn-in-a-box/enroller/server_template.json \\\n   /go/src/github.com/apache/trafficcontrol/infrastructure/cdn-in-a-box/traffic_ops/to-access.sh \\\n   /\n\nCOPY infrastructure/cdn-in-a-box/dns/set-dns.sh \\\n     infrastructure/cdn-in-a-box/dns/insert-self-into-dns.sh \\\n     /usr/local/sbin/\n\nWORKDIR /shared/enroller\nCMD /run.sh\n\nFROM enroller AS enroller-debug\nCOPY --from=get-delve /go/bin /usr/bin\n\n# Makes the default target skip the enroller-debug stage\nFROM enroller\n"
+}

@@ -1,0 +1,35 @@
+{
+  "startTime": 1674252515516,
+  "endTime": 1674252517402,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 20,
+        "lineEnd": 20,
+        "columnStart": 4,
+        "columnEnd": 58
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 28,
+        "lineEnd": 28,
+        "columnStart": 4,
+        "columnEnd": 30
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 12,
+        "lineEnd": 12,
+        "columnStart": 4,
+        "columnEnd": 71
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM docker:20.10.3-dind\n\nARG BESU_VERSION=21.1.2\nARG QUORUM_VERSION=21.4.1\nARG QUORUM_TESSERA_VERSION=21.1.1\nARG CA_VERSION=1.4.9\n\nWORKDIR /\n\nRUN apk update\n\n# Install dependencies of Docker Compose\nRUN apk add --no-cache py-pip python3-dev libffi-dev openssl-dev gcc libc-dev make\n\n# Install python/pip - We need this because DinD 18.x has Python 2\n# And we cannot upgrade to DinD 19 because of\n# https://github.com/docker-library/docker/issues/170\nENV PYTHONUNBUFFERED=1\nRUN apk add --update --no-cache python3 && ln -sf python3 /usr/bin/python\nRUN python3 -m ensurepip\nRUN pip3 install --no-cache-dir --no-cache --upgrade \"pip>=21\" setuptools\n\n# Without this the docker-compose installation crashes, complaining about\n# a lack of rust compiler...\n# RUN pip install setuptools_rust\nENV CRYPTOGRAPHY_DONT_BUILD_RUST=1\n\n# Install Docker Compose which is a dependency of Fabric Samples\nRUN pip install --no-cache-dir docker-compose\n\n# Need git to clone the sources of the Fabric Samples repository from GitHub\nRUN apk add --no-cache git\n\n# Fabric Samples needs bash, sh is not good enough here\nRUN apk add --no-cache bash\n\n# The file binary is used to inspect exectubles when debugging container image issues\nRUN apk add --no-cache file\n\n# Need NodeJS tooling for the Typescript contracts\nRUN apk add --no-cache npm nodejs\n\n# Needed because the Fabric binaries need the GNU libc dynamic linker to be executed\n# and alpine does not have that by default\n# @see https://askubuntu.com/a/1035037/1008695\n# @see https://github.com/gliderlabs/docker-alpine/issues/219#issuecomment-254741346\nRUN apk add --no-cache libc6-compat\n\nRUN apk add --no-cache --update chromium\n\nENV CACTUS_CFG_PATH=/etc/hyperledger/cactus\nRUN mkdir -p $CACTUS_CFG_PATH\n# OpenSSH - need to have it so we can shell in and install/instantiate contracts\nRUN apk add --no-cache openssh augeas\n\n# Configure the OpenSSH server we just installed\nRUN augtool 'set /files/etc/ssh/sshd_config/AuthorizedKeysFile \".ssh/authorized_keys /etc/authorized_keys/%u\"'\nRUN augtool 'set /files/etc/ssh/sshd_config/PermitRootLogin yes'\nRUN augtool 'set /files/etc/ssh/sshd_config/PasswordAuthentication no'\nRUN augtool 'set /files/etc/ssh/sshd_config/PermitEmptyPasswords no'\nRUN augtool 'set /files/etc/ssh/sshd_config/Port 22'\nRUN augtool 'set /files/etc/ssh/sshd_config/LogLevel DEBUG2'\nRUN augtool 'set /files/etc/ssh/sshd_config/LoginGraceTime 10'\n# Create the server's key - without this sshd will refuse to start\nRUN ssh-keygen -A\n\n# Generate an RSA keypair on the fly to avoid having to hardcode one in the image\n# which technically does not pose a security threat since this is only a development\n# image, but we do it like this anyway.\nRUN mkdir ~/.ssh\nRUN chmod 700 ~/.ssh/\nRUN touch ~/.ssh/authorized_keys\nRUN [\"/bin/bash\", \"-c\", \"ssh-keygen -t rsa -N '' -f $CACTUS_CFG_PATH/besu-aio-image <<< y\"]\nRUN mv $CACTUS_CFG_PATH/besu-aio-image $CACTUS_CFG_PATH/besu-aio-image.key\nRUN cp $CACTUS_CFG_PATH/besu-aio-image.pub ~/.ssh/authorized_keys\n\nRUN apk add --no-cache util-linux\n\n# FIXME - make it so that SSHd does not need this to work\nRUN echo \"root:$(uuidgen)\" | chpasswd\n\nRUN git clone https://github.com/petermetz/quorum-dev-quickstart.git\n\nWORKDIR /quorum-dev-quickstart\n\nRUN git checkout programmatically-accept-start-args\n\nRUN npm i\n\nRUN npm run build\n\nRUN npm run start -- --elk false --privacy true --clientType besu\n\nRUN apk add --no-cache supervisor\nRUN apk add --no-cache ncurses\n\nCOPY healthcheck.sh /healthcheck.sh\nCOPY supervisord.conf /etc/supervisord.conf\n\n# # Extend the parent image's entrypoint\n# # https://superuser.com/questions/1459466/can-i-add-an-additional-docker-entrypoint-script\nENTRYPOINT [\"/usr/bin/supervisord\"]\nCMD [\"--configuration\", \"/etc/supervisord.conf\", \"--nodaemon\"]\n\nHEALTHCHECK --interval=1s --timeout=5s --start-period=60s --retries=300 CMD /healthcheck.sh\n\n# OpenSSH Server\nEXPOSE 22\n\n# Grafana\nEXPOSE 3000\n\n# RPC Node: HTTP, WebSocket Providers\nEXPOSE 8545 8546\n\n# supervisord web ui/dashboard\nEXPOSE 9001\n\n# Prometheus\nEXPOSE 9090\n\n# ETH signer proxy\nEXPOSE 18545\n\n# Besu member 1: HTTP; WebSocket Providers; Tessera\nEXPOSE 20000 20001 9081\n\n# Besu member 2: HTTP; WebSocket Providers; Tessera\nEXPOSE 20002 20003 9082\n\n# Besu member 3: HTTP; WebSocket Providers; Tessera\nEXPOSE 20004 20005 9083\n\n# Web block explorer\nEXPOSE 25000\n"
+}

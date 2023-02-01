@@ -1,0 +1,1 @@
+# docker build -t deepfenceio/alpine-node:10 -f Dockerfile.node .

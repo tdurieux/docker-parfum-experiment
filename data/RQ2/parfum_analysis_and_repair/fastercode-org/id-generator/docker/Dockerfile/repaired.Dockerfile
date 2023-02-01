@@ -1,0 +1,1 @@
+# sudo docker build --no-cache -t id-generator-app:v1 -f ./Dockerfile .

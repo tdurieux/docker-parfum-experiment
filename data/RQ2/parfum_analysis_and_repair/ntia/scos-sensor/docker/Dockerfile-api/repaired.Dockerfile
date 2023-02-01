@@ -1,0 +1,44 @@
+ARG BASE_IMAGE
+FROM $BASE_IMAGE
+
+RUN apt-get update -q && \
+    DEBIAN_FRONTEND=noninteractive \
+                   apt-get install -qy --no-install-recommends \
+                   libboost-date-time1.65.1 libboost-filesystem1.65.1 \
+                   libboost-python1.65.1 libboost-regex1.65.1 \
+                   libboost-serialization1.65.1 libboost-system1.65.1 \
+                   libboost-thread1.65.1 libusb-1.0-0 libpython3.7 \
+                   libboost-program-options1.65.1 \
+                   git python3-pip python3-setuptools python3.7 \
+		   swig gcc python3.7-dev && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
+
+ENV PYTHONUNBUFFERED 1
+RUN mkdir -p /src
+WORKDIR /src
+COPY ./src/requirements.txt /src
+COPY ./src/requirements-dev.txt /src
+
+ARG DOCKER_GIT_CREDENTIALS
+RUN git config --global credential.helper store && echo "${DOCKER_GIT_CREDENTIALS}" > ~/.git-credentials
+RUN python3.7 -m pip install --upgrade pip
+ARG DEBUG
+RUN if [ "$DEBUG" = true ]; then python3.7 -m pip install --no-cache-dir -r requirements-dev.txt ; else python3.7 -m pip install --no-cache-dir -r requirements.txt ; fi
+
+COPY ./src /src
+COPY ./gunicorn /gunicorn
+
+RUN mkdir -p /entrypoints
+COPY ./entrypoints/api_entrypoint.sh /entrypoints
+
+RUN mkdir -p /scripts
+COPY ./scripts/create_superuser.py /scripts
+
+RUN chmod +x /entrypoints/api_entrypoint.sh
+
+COPY ./configs /configs
+
+# Args are passed in via docker-compose during build time
+ARG DOMAINS
+ARG IPS
+ARG SECRET_KEY

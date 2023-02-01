@@ -1,0 +1,5 @@
+MAINTAINER Klaus Ma <klaus1982.cn@gmail.com>
+
+RUN mkdir -p /opt/work /opt/log
+
+ENTRYPOINT ["mesos-slave", "--containerizers=docker,mesos", "--docker_socket=/var/run/docker.sock", "--work_dir=/opt/work", "--log_dir=/opt/log"]

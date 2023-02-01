@@ -1,0 +1,53 @@
+{
+  "startTime": 1674246443887,
+  "endTime": 1674246444615,
+  "originalSmells": [
+    {
+      "rule": "rmRecursiveAfterMktempD",
+      "position": {
+        "lineStart": 30,
+        "lineEnd": 30,
+        "columnStart": 12,
+        "columnEnd": 21
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 3,
+        "lineEnd": 11,
+        "columnStart": 44,
+        "columnEnd": 30
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 15,
+        "lineEnd": 15,
+        "columnStart": 7,
+        "columnEnd": 35
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 26,
+        "lineEnd": 26,
+        "columnStart": 22,
+        "columnEnd": 65
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 26,
+        "lineEnd": 26,
+        "columnStart": 22,
+        "columnEnd": 65
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "ARG CIPD_ROOT=\"/cipd\"\n\nFROM debian:bullseye as base\nRUN apt-get update && apt-get upgrade -y && apt-get install --no-install-recommends -y \\\n    apt-transport-https \\\n    ca-certificates \\\n    clang-11 \\\n    curl \\\n    gnupg2 \\\n    make \\\n    patch \\\n    software-properties-common \\\n    && curl -fsSL https://download.docker.com/linux/debian/gpg | apt-key add - \\\n    && add-apt-repository \"deb [arch=amd64] https://download.docker.com/linux/debian bullseye stable\" \\\n    && apt-get update \\\n    && apt-get install --no-install-recommends -y docker-ce \\\n    && rm -rf /var/lib/apt/lists/* \\\n    && apt-get remove -y git \\\n    && ln -s /usr/bin/python3 /usr/bin/python\nENV CC=clang-11\n\n# Install the CIPD client by syncing depot_tools to the revision specified in\n# recipes.cfg (we're not a recipe, but it's conveniently pinned there and auto-\n# rolled) and running the wrapper script. This process requires temporarily\n# installing some packages that we prefer to obtain via CIPD.\nFROM base AS install_cipd\nRUN apt-get update && apt-get install --no-install-recommends -y git curl python3-minimal && rm -rf /var/lib/apt/lists/*;\nCOPY ./recipes.cfg /tmp/recipes.cfg\nRUN cat /tmp/recipes.cfg | \\\n    python3 -c \"import json; import sys; print(json.load(sys.stdin)['deps']['depot_tools']['revision'])\" > /tmp/depot_tools_rev \\\n    && cd $(mktemp -d) \\\n    && git clone https://chromium.googlesource.com/chromium/tools/depot_tools.git \\\n    && cd depot_tools \\\n    && git reset --hard \"$(cat /tmp/depot_tools_rev)\" \\\n    && ./cipd --version \\\n    && cp ./.cipd_client /tmp/cipd && rm -rf -d\n\n# This stage brings us back to the base image, plus the CIPD binary.\nFROM base AS cipd\nCOPY --from=install_cipd /tmp/cipd /usr/local/bin/cipd\n\n# Now install the desired packages.\nFROM cipd AS install_pkgs\nARG CIPD_ROOT\nENV CIPD_ROOT=$CIPD_ROOT\nRUN mkdir -p ${CIPD_ROOT}\nENV CIPD_CACHE_DIR=\"/tmp/.cipd_cache\"\nRUN cipd init ${CIPD_ROOT} -force \\\n    && cipd install skia/bots/bazelisk version:0 -root /cipd \\\n    && cipd install infra/3pp/tools/git/linux-amd64 version:2@2.36.0-rc2.chromium.8 -root /cipd \\\n    && cipd install skia/bots/go version:16 -root /cipd\n\n# The final stage brings us back to the base image with the installed CIPD packages.\nFROM base AS final\nARG CIPD_ROOT\nENV CIPD_ROOT=$CIPD_ROOT\nCOPY --from=install_pkgs ${CIPD_ROOT} ${CIPD_ROOT}\nENV GOPATH=/go\nRUN mkdir -p ${GOPATH}\nENV PATH=\"${CIPD_ROOT}/bin:${CIPD_ROOT}/go/bin:${CIPD_ROOT}:${GOPATH}/bin:${PATH}\"\n"
+}

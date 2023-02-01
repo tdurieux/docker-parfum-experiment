@@ -1,0 +1,26 @@
+FROM ruby:3.1
+LABEL maintainer "@tdtds <t@tdtds.jp>"
+
+RUN mkdir -p /usr/src/app && rm -rf /usr/src/app
+WORKDIR /usr/src/app
+
+COPY [ "Gemfile", "Gemfile.lock", "/usr/src/app/" ]
+RUN apt update && apt install --no-install-recommends -y apt-utils libidn11-dev; rm -rf /var/lib/apt/lists/*; \
+    echo 'gem "puma" \n\
+    gem "tdiary-contrib" \n\
+    gem "tdiary-style-gfm" \n\
+    gem "tdiary-style-rd" \n'\
+    > Gemfile.local; \
+    gem install bundler && \
+    bundle --path=vendor/bundle --without=development:test --jobs=4 --retry=3
+
+COPY . /usr/src/app/
+RUN if [ ! -e tdiary.conf ]; then cp tdiary.conf.beginner tdiary.conf; fi && \
+    bundle && \
+    bundle exec rake assets:copy
+
+VOLUME [ "/usr/src/app/data", "/usr/src/app/public" ]
+EXPOSE 9292
+ENV PORT=9292
+ENV HTPASSWD=data/.htpasswd
+CMD bundle exec rackup -o 0.0.0.0 -p ${PORT}

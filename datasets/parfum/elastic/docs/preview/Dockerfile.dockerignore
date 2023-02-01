@@ -1,0 +1,9 @@
+*
+!build_docs.pl
+!conf.yaml
+!lib
+!preview
+!template
+!resources/web
+resources/web/.cache
+resources/web/tests

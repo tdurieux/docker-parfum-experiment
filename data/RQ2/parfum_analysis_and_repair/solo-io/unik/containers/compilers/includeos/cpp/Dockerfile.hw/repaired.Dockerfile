@@ -1,0 +1,5 @@
+FROM projectunik/compilers-includeos-cpp-common:df3f9b52570fb7d9
+MAINTAINER includeos.org
+VOLUME /opt/code
+WORKDIR /opt/code
+CMD make

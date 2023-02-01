@@ -1,0 +1,36 @@
+{
+  "startTime": 1674219597663,
+  "endTime": 1674219598771,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 40,
+        "lineEnd": 40,
+        "columnStart": 4,
+        "columnEnd": 70
+      }
+    },
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 89,
+        "lineEnd": 89,
+        "columnStart": 4,
+        "columnEnd": 41
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 89,
+        "lineEnd": 89,
+        "columnStart": 45,
+        "columnEnd": 61
+      }
+    }
+  ],
+  "repairedDockerfile": "FROM ruby:<%= RUBY_VERSION %>-slim\n\nARG BUILD_ENV=development\nARG RUBY_ENV=development\nARG APP_HOME=/<%= APP_NAME %>\n<%- if WEB_VARIANT -%>\nARG NODE_ENV=development\nARG ASSET_HOST=http://localhost\n<%- end -%>\n\n# Define all the envs here\nENV BUILD_ENV=$BUILD_ENV \\\n    RACK_ENV=$RUBY_ENV \\\n    RAILS_ENV=$RUBY_ENV \\\n    PORT=80 \\\n    BUNDLE_JOBS=4 \\\n    BUNDLE_PATH=\"/bundle\" \\\n    <%- if WEB_VARIANT -%>\n    ASSET_HOST=$ASSET_HOST \\\n    NODE_ENV=$NODE_ENV \\\n    NODE_SOURCE_VERSION=<%= NODE_SOURCE_VERSION %> \\\n    <%- end -%>\n    LANG=\"en_US.UTF-8\" \\\n    LC_ALL=\"en_US.UTF-8\" \\\n    LANGUAGE=\"en_US:en\"\n\nRUN apt-get update -qq && \\\n    apt-get install -y --no-install-recommends apt-transport-https curl gnupg net-tools && \\\n    apt-get install -y --no-install-recommends build-essential libpq-dev && \\\n    apt-get install -y --no-install-recommends rsync locales chrpath pkg-config libfreetype6 libfontconfig1 git cmake wget unzip && \\\n    apt-get clean && \\\n    rm -rf /var/lib/apt/lists/*\n\n<%- if WEB_VARIANT -%>\n# Add Yarn repository\n# Add the PPA (personal package archive) maintained by NodeSource\n# This will have more up-to-date versions of Node.js than the official Debian repositories\nADD https://dl.yarnpkg.com/debian/pubkey.gpg /tmp/yarn-pubkey.gpg\nRUN apt-key add /tmp/yarn-pubkey.gpg && rm /tmp/yarn-pubkey.gpg && \\\n    echo \"deb http://dl.yarnpkg.com/debian/ stable main\" > /etc/apt/sources.list.d/yarn.list && \\\n    curl -f -sL https://deb.nodesource.com/setup_\"$NODE_SOURCE_VERSION\".x | bash - && \\\n    apt-get update -qq && \\\n    apt-get install -y --no-install-recommends nodejs yarn && \\\n    apt-get clean && \\\n    rm -rf /var/lib/apt/lists/*\n\n# Set up the Chrome PPA and install Chrome Headless\nRUN if [ \"$BUILD_ENV\" = \"test\" ]; then \\\n      wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | apt-key add - && \\\n      echo 'deb http://dl.google.com/linux/chrome/deb/ stable main' >> /etc/apt/sources.list.d/google-chrome.list && \\\n      apt-get update -qq && \\\n      apt-get install -y --no-install-recommends google-chrome-stable && \\\n      rm /etc/apt/sources.list.d/google-chrome.list && \\\n      apt-get clean && \\\n      rm -rf /var/lib/apt/lists/* ; \\\n    fi\n\n<%- end -%>\nWORKDIR $APP_HOME\n\n# Skip installing gem documentation\nRUN mkdir -p /usr/local/etc \\\n\t&& { \\\n    echo '---'; \\\n    echo ':update_sources: true'; \\\n    echo ':benchmark: false'; \\\n    echo ':backtrace: true'; \\\n    echo ':verbose: true'; \\\n    echo 'gem: --no-ri --no-rdoc'; \\\n\t\techo 'install: --no-document'; \\\n\t\techo 'update: --no-document'; \\\n\t} >> /usr/local/etc/gemrc\n\n# Copy all denpendencies from app and engines into tmp/docker to install\nCOPY tmp/docker ./\n\n# Install Ruby gems\nRUN gem install bundler && \\\n    bundle config set jobs $BUNDLE_JOBS && \\\n    bundle config set path $BUNDLE_PATH && \\\n    if [ \"$BUILD_ENV\" = \"production\" ]; then \\\n      bundle config set deployment yes && \\\n      bundle config set without 'development test' ; \\\n    fi && \\\n    bundle install\n\n<%- if WEB_VARIANT -%>\n# Install JS dependencies\nCOPY package.json yarn.lock ./\nRUN yarn install --network-timeout 100000 && yarn cache clean;\n\n<%- end -%>\n# Copying the app files must be placed after the dependencies setup\n# since the app files always change thus cannot be cached\nCOPY . ./\n\n# Remove tmp/docker in the final image\nRUN rm -rf tmp/docker\n\n<%- if WEB_VARIANT -%>\n# Compile assets\nRUN bin/docker-assets-precompile\n\n<%- end -%>\nEXPOSE $PORT\n\nCMD ./bin/start.sh\n"
+}

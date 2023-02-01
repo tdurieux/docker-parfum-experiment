@@ -1,0 +1,94 @@
+FROM alpine:3.15 AS build
+
+RUN apk --no-cache add \
+    curl \
+    unzip
+
+# Dapper/Drone/CI environment
+FROM rancher/hardened-build-base:v1.18.1b7 AS dapper
+ENV DAPPER_ENV GODEBUG REPO TAG DRONE_TAG PAT_USERNAME PAT_TOKEN KUBERNETES_VERSION DOCKER_BUILDKIT DRONE_BUILD_EVENT IMAGE_NAME GCLOUD_AUTH ENABLE_REGISTRY
+ARG DAPPER_HOST_ARCH
+ENV ARCH $DAPPER_HOST_ARCH
+ENV DAPPER_OUTPUT ./dist ./bin ./build
+ENV DAPPER_DOCKER_SOCKET true
+ENV DAPPER_TARGET dapper
+ENV DAPPER_RUN_ARGS "--privileged --network host -v /tmp:/tmp -v rke2-pkg:/go/pkg -v rke2-cache:/root/.cache/go-build"
+RUN apk update
+RUN set -x \
+    && apk add --no-cache \
+    mingw-w64-gcc \
+    libarchive-tools \
+    gcc \
+    bsd-compat-headers \
+    zstd \
+    jq \
+    python2 \
+    git \
+    libseccomp-dev \
+    rsync \
+    file \
+    bash \
+    py-pip
+RUN curl -f -sL https://storage.googleapis.com/kubernetes-release/release/$( curl -f -s https://storage.googleapis.com/kubernetes-release/release/stable.txt) \
+    /bin/linux/${ARCH}/kubectl -o /usr/local/bin/kubectl && \
+    chmod a+x /usr/local/bin/kubectl; \
+    pip install --no-cache-dir codespell
+RUN curl -f -sL https://raw.githubusercontent.com/golangci/golangci-lint/v1.45.2/install.sh | sh -s;
+WORKDIR /source
+# End Dapper stuff
+
+FROM build as windows-runtime-collect
+ARG KUBERNETES_VERSION=dev
+
+# windows runtime image
+ENV CRICTL_VERSION="v1.24.0"
+ENV CONTAINERD_VERSION="1.6.6"
+ENV CALICO_VERSION="v3.23.1"
+ENV CNI_PLUGIN_VERSION="v1.0.1"
+
+RUN mkdir -p rancher
+RUN curl -f -sLO https://github.com/containerd/containerd/releases/download/v${CONTAINERD_VERSION}/containerd-${CONTAINERD_VERSION}-windows-amd64.tar.gz
+RUN curl -f -sLO https://github.com/containerd/containerd/releases/download/v${CONTAINERD_VERSION}/containerd-${CONTAINERD_VERSION}-windows-amd64.tar.gz.sha256sum
+RUN sha256sum -c containerd-${CONTAINERD_VERSION}-windows-amd64.tar.gz.sha256sum
+
+RUN curl -f -sLO https://github.com/kubernetes-sigs/cri-tools/releases/download/${CRICTL_VERSION}/crictl-${CRICTL_VERSION}-windows-amd64.tar.gz
+# cri-tools artifact sha256sums are currently broken
+#RUN curl -SLO https://github.com/kubernetes-sigs/cri-tools/releases/download/${CRICTL_VERSION}/crictl-${CRICTL_VERSION}-windows-amd64.tar.gz.sha256
+#RUN sha256sum -c ./crictl-${CRICTL_VERSION}-windows-amd64.tar.gz.sha256
+
+RUN curl -f -sLO https://github.com/containernetworking/plugins/releases/download/${CNI_PLUGIN_VERSION}/cni-plugins-windows-amd64-${CNI_PLUGIN_VERSION}.tgz
+RUN curl -f -sLO https://github.com/containernetworking/plugins/releases/download/${CNI_PLUGIN_VERSION}/cni-plugins-windows-amd64-${CNI_PLUGIN_VERSION}.tgz.sha256
+RUN sha256sum -c cni-plugins-windows-amd64-${CNI_PLUGIN_VERSION}.tgz.sha256
+
+RUN curl -f -sLO https://dl.k8s.io/release/${KUBERNETES_VERSION}/bin/windows/amd64/kubectl.exe
+RUN curl -f -sLO https://dl.k8s.io/${KUBERNETES_VERSION}/bin/windows/amd64/kubectl.exe.sha256
+RUN echo "  kubectl.exe" >> kubectl.exe.sha256
+RUN sha256sum -c kubectl.exe.sha256
+RUN mv kubectl.exe rancher/
+
+RUN curl -f -sLO https://dl.k8s.io/release/${KUBERNETES_VERSION}/bin/windows/amd64/kubelet.exe
+RUN curl -f -sLO https://dl.k8s.io/${KUBERNETES_VERSION}/bin/windows/amd64/kubelet.exe.sha256
+RUN echo "  kubelet.exe" >> kubelet.exe.sha256
+RUN sha256sum -c kubelet.exe.sha256
+RUN mv kubelet.exe rancher/
+
+RUN curl -f -sLO https://dl.k8s.io/release/${KUBERNETES_VERSION}/bin/windows/amd64/kube-proxy.exe
+RUN curl -f -sLO https://dl.k8s.io/${KUBERNETES_VERSION}/bin/windows/amd64/kube-proxy.exe.sha256
+RUN echo "  kube-proxy.exe" >> kube-proxy.exe.sha256
+RUN sha256sum -c kube-proxy.exe.sha256
+RUN mv kube-proxy.exe rancher/
+
+RUN curl -f -sLO https://github.com/projectcalico/calico/releases/download/${CALICO_VERSION}/calico-windows-${CALICO_VERSION}.zip
+RUN curl -f -sL https://github.com/Microsoft/SDN/raw/master/Kubernetes/windows/hns.psm1 -o rancher/hns.psm1
+
+RUN tar xzvf crictl-${CRICTL_VERSION}-windows-amd64.tar.gz crictl.exe -C rancher/
+RUN tar xvzf containerd-${CONTAINERD_VERSION}-windows-amd64.tar.gz -C rancher/ && rm containerd-${CONTAINERD_VERSION}-windows-amd64.tar.gz
+RUN tar xzvf cni-plugins-windows-amd64-${CNI_PLUGIN_VERSION}.tgz ./win-overlay.exe ./host-local.exe -C rancher/
+
+RUN unzip calico-windows-${CALICO_VERSION}.zip
+RUN mv CalicoWindows/calico-node.exe rancher/
+RUN mv CalicoWindows/cni/calico.exe rancher/
+RUN mv CalicoWindows/cni/calico-ipam.exe rancher/
+
+FROM scratch AS windows-runtime
+COPY --from=windows-runtime-collect ./rancher/* /bin/

@@ -1,0 +1,35 @@
+{
+  "startTime": 1674246217665,
+  "endTime": 1674246218829,
+  "originalSmells": [
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 13,
+        "lineEnd": 13,
+        "columnStart": 7,
+        "columnEnd": 18
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 30,
+        "lineEnd": 30,
+        "columnStart": 7,
+        "columnEnd": 26
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 33,
+        "lineEnd": 50,
+        "columnStart": 7,
+        "columnEnd": 18
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM node:14.18.0-alpine3.12 as node-base\n\nWORKDIR /data\n\nFROM node-base AS node\n\nENV NODE_ENV production\n\nCOPY package.json package-lock.json ./\n\nRUN --mount=type=cache,target=/var/cache/npm \\\n    set -ex \\\n    && npm config set cache /var/cache/npm --global \\\n    && npm install && npm cache clean --force;\n\nCOPY public public\nCOPY src src\n\nRUN set -ex \\\n    && npm run build\n\n#\n# nginx\n#\nFROM nginx:1.21.6-alpine as nginx-base\n\nWORKDIR /usr/local/app/public\n\nRUN --mount=type=cache,target=/var/cache/apk \\\n    set -ex \\\n    && apk add --no-cache gzip brotli \\\n    && tempDir=\"$(mktemp -d)\" \\\n    && chown nobody:nobody $tempDir \\\n    && apk add --no-cache --virtual .build-deps \\\n        gcc \\\n        libc-dev \\\n        make \\\n        openssl-dev \\\n        pcre-dev \\\n        zlib-dev \\\n        linux-headers \\\n        libxslt-dev \\\n        gd-dev \\\n        geoip-dev \\\n        perl-dev \\\n        libedit-dev \\\n        mercurial \\\n        bash \\\n        alpine-sdk \\\n        findutils \\\n        brotli-dev \\\n    && su nobody -s /bin/sh -c \" \\\n        export HOME=${tempDir} \\\n        && cd ${tempDir} \\\n        && curl -L https://nginx.org/download/nginx-${NGINX_VERSION}.tar.gz | tar xz \\\n        && curl -L https://github.com/google/ngx_brotli/archive/v1.0.0rc.tar.gz | tar xz \\\n        && curl -L https://github.com/openresty/headers-more-nginx-module/archive/v0.33.tar.gz | tar xz \\\n        && cd nginx-${NGINX_VERSION} \\\n        && ./configure `2>&1 nginx -V | grep _module | awk -F ':' ' { print $2 }'` --with-compat \\\n            --add-dynamic-module=${tempDir}/ngx_brotli-1.0.0rc \\\n            --add-dynamic-module=${tempDir}/headers-more-nginx-module-0.33 \\\n        && make modules \\\n        \" \\\n    && cp ${tempDir}/nginx-${NGINX_VERSION}/objs/ngx_http_brotli_filter_module.so /etc/nginx/modules/ \\\n    && cp ${tempDir}/nginx-${NGINX_VERSION}/objs/ngx_http_brotli_static_module.so /etc/nginx/modules/ \\\n    && cp ${tempDir}/nginx-${NGINX_VERSION}/objs/ngx_http_headers_more_filter_module.so /etc/nginx/modules/ \\\n    && rm -rf ${tempDir} \\\n    && apk del .build-deps\n\nFROM nginx-base AS nginx\n\nENV NGINX_ENTRYPOINT_QUIET_LOGS 1\n\nCOPY --from=node /data/build .\n\nCOPY etc/nginx.conf /etc/nginx/nginx.conf\n\nRUN find . \\\n    -type f \\\n    \\( \\\n        -name \"*.css\" \\\n        -or -name \"*.eot\" \\\n        -or -name \"*.html\" \\\n        -or -name \"*.js\" \\\n        -or -name \"*.json\" \\\n        -or -name \"*.otf\" \\\n        -or -name \"*.svg\" \\\n        -or -name \"*.ttf\" \\\n        -or -name \"*.woff\" \\\n     \\) \\\n    -exec gzip -9 --name --suffix=.gz --keep {} \\; \\\n    -exec brotli --best --suffix=.br --keep {} \\; \\\n    -exec echo Compressed: {} \\;\n\nHEALTHCHECK --interval=5s --timeout=3s --start-period=5s CMD curl --fail http://127.0.0.1/healthcheck || exit 1\n"
+}

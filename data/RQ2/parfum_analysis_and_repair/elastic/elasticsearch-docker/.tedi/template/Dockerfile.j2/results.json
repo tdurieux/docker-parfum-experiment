@@ -1,0 +1,35 @@
+{
+  "startTime": 1674219766639,
+  "endTime": 1674219768143,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 20,
+        "lineEnd": 20,
+        "columnStart": 4,
+        "columnEnd": 25
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 27,
+        "lineEnd": 27,
+        "columnStart": 4,
+        "columnEnd": 30
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 57,
+        "lineEnd": 57,
+        "columnStart": 4,
+        "columnEnd": 38
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "################################################################################\n# This Dockerfile was generated from the template at .tedi/Dockerfile.j2\n#\n# Beginning of multi stage Dockerfile\n################################################################################\n\n{% set tarball = 'elasticsearch-%s-%s.tar.gz' % (image_flavor, elastic_version) -%}\n\n################################################################################\n# Build stage 0 `prep_files`:\n# Extract elasticsearch artifact\n# Install required plugins\n# Set gid=0 and make group perms==owner perms\n################################################################################\n\nFROM centos:7 AS prep_files\n\nENV PATH /usr/share/elasticsearch/bin:$PATH\nENV JAVA_HOME /opt/jdk-{{ jdk_version }}\n\nRUN curl -f -s {{ jdk_url }} | tar -C /opt -zxf -\n\n# Replace OpenJDK's built-in CA certificate keystore with the one from the OS\n# vendor. The latter is superior in several ways.\n# REF: https://github.com/elastic/elasticsearch-docker/issues/171\nRUN ln -sf /etc/pki/ca-trust/extracted/java/cacerts /opt/jdk-{{ jdk_version }}/lib/security/cacerts\n\nRUN yum install -y unzip which && rm -rf /var/cache/yum\n\nRUN groupadd -g 1000 elasticsearch && \\\n    adduser -u 1000 -g 1000 -d /usr/share/elasticsearch elasticsearch\n\nWORKDIR /usr/share/elasticsearch\n\nCOPY {{ tarball }} ingest-user-agent.zip ingest-geoip.zip /opt/\nRUN tar zxf /opt/{{ tarball }} --strip-components=1\nRUN elasticsearch-plugin install --batch file:///opt/ingest-user-agent.zip\nRUN elasticsearch-plugin install --batch file:///opt/ingest-geoip.zip\nRUN mkdir -p config data logs\nRUN chmod 0775 config data logs\nCOPY elasticsearch.yml log4j2.properties config/\n\n\n################################################################################\n# Build stage 1 (the actual elasticsearch image):\n# Copy elasticsearch from stage 0\n# Add entrypoint\n################################################################################\n\nFROM centos:7\n\nENV ELASTIC_CONTAINER true\nENV JAVA_HOME /opt/jdk-{{ jdk_version }}\n\nCOPY --from=prep_files /opt/jdk-{{ jdk_version }} /opt/jdk-{{ jdk_version }}\n\nRUN yum update -y && \\\n    yum install -y nc unzip wget which && \\\n    yum clean all && rm -rf /var/cache/yum\n\nRUN groupadd -g 1000 elasticsearch && \\\n    adduser -u 1000 -g 1000 -G 0 -d /usr/share/elasticsearch elasticsearch && \\\n    chmod 0775 /usr/share/elasticsearch && \\\n    chgrp 0 /usr/share/elasticsearch\n\nWORKDIR /usr/share/elasticsearch\nCOPY --from=prep_files --chown=1000:0 /usr/share/elasticsearch /usr/share/elasticsearch\nENV PATH /usr/share/elasticsearch/bin:$PATH\n\nCOPY --chown=1000:0 bin/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh\n\n# Openshift overrides USER and uses ones with randomly uid>1024 and gid=0\n# Allow ENTRYPOINT (and ES) to run even with a different user\nRUN chgrp 0 /usr/local/bin/docker-entrypoint.sh && \\\n    chmod g=u /etc/passwd && \\\n    chmod 0775 /usr/local/bin/docker-entrypoint.sh\n\nEXPOSE 9200 9300\n\nLABEL org.label-schema.schema-version=\"1.0\" \\\n  org.label-schema.vendor=\"Elastic\" \\\n  org.label-schema.name=\"elasticsearch\" \\\n  org.label-schema.version=\"{{ elastic_version }}\" \\\n  org.label-schema.url=\"https://www.elastic.co/products/elasticsearch\" \\\n  org.label-schema.vcs-url=\"https://github.com/elastic/elasticsearch-docker\" \\\n{% if image_flavor == 'oss' -%}\n  license=\"Apache-2.0\"\n{% else -%}\n  license=\"Elastic License\"\n{% endif -%}\n\nENTRYPOINT [\"/usr/local/bin/docker-entrypoint.sh\"]\n# Dummy overridable parameter parsed by entrypoint\nCMD [\"eswrapper\"]\n\n################################################################################\n# End of multi-stage Dockerfile\n################################################################################\n"
+}

@@ -1,0 +1,8 @@
+FROM jinaai/jina:1.2.1
+
+COPY . /workspace
+WORKDIR /workspace
+
+RUN pip install --no-cache-dir pytest && pytest
+
+ENTRYPOINT ["jina", "pod", "--uses", "config.yml"]

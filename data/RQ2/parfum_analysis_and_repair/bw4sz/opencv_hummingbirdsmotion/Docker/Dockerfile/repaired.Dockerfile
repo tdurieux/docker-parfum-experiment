@@ -1,0 +1,42 @@
+FROM ubuntu:16.04
+MAINTAINER Chenna Varri
+
+RUN apt-get update
+RUN apt-get install --no-install-recommends -y build-essential apt-utils && rm -rf /var/lib/apt/lists/*;
+
+RUN apt-get install --no-install-recommends -y cmake git libgtk2.0-dev pkg-config libavcodec-dev \
+  libavformat-dev libswscale-dev && rm -rf /var/lib/apt/lists/*;
+RUN apt-get update && apt-get install --no-install-recommends -y python-dev python-numpy \
+  python3 python3-pip python3-dev libtbb2 libtbb-dev \
+  libjpeg-dev libjasper-dev libdc1394-22-dev \
+  python-opencv libopencv-dev libav-tools python-pycurl \
+  libatlas-base-dev gfortran webp qt5-default libvtk6-dev zlib1g-dev && rm -rf /var/lib/apt/lists/*;
+
+RUN pip3 install --no-cache-dir numpy
+
+RUN apt-get install --no-install-recommends -y python-pip && rm -rf /var/lib/apt/lists/*;
+RUN pip install --no-cache-dir --upgrade pip
+
+RUN cd ~/ &&\
+    git clone https://github.com/Itseez/opencv.git --depth 1 &&\
+    git clone https://github.com/Itseez/opencv_contrib.git --depth 1 &&\
+    cd opencv && mkdir build && cd build && cmake  -DWITH_QT=ON -DWITH_OPENGL=ON -DFORCE_VTK=ON -DWITH_TBB=ON -DWITH_GDAL=ON -DWITH_XINE=ON -DBUILD_EXAMPLES=ON .. && \
+    make -j4 && make install && ldconfig
+
+#install python modules
+#tkinter is easier by apt-get
+RUN apt-get -y --no-install-recommends install python-tk && rm -rf /var/lib/apt/lists/*;
+
+#Clone MotionMeerkat at the end, cache everything else
+RUN cd ~/ && \
+    git clone https://github.com/bw4sz/OpenCV_HummingbirdsMotion.git --depth 1 --single-branch -b dev
+
+#install the rest of python modules
+RUN cd ~/OpenCV_HummingbirdsMotion/Docker && \
+    pip install --no-cache-dir -r requirements.txt
+
+# Set the appropriate link
+RUN ln /dev/null /dev/raw1394
+
+#start at home
+RUN cd ~

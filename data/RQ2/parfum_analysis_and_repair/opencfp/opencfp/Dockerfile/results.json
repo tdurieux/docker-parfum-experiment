@@ -1,0 +1,26 @@
+{
+  "startTime": 1674248515350,
+  "endTime": 1674248516557,
+  "originalSmells": [
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 26,
+        "lineEnd": 26,
+        "columnStart": 4,
+        "columnEnd": 22
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 25,
+        "lineEnd": 25,
+        "columnStart": 4,
+        "columnEnd": 38
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "ARG PHP_VERSION=7.4.1\nARG OPENRESTY_VERSION=1.17.8.2\n\nFROM php:${PHP_VERSION}-fpm-alpine AS php\n\nARG CFP_ENV\nENV CFP_ENV=${CFP_ENV}\n\nLABEL Description=\"This is the docker image for OpenCFP, a PHP-based conference talk submission system.\" \\\n      org.label-schema.name=opencfp_php   \\\n      org.label-schema.description=\"This is the docker image for OpenCFP, a PHP-based conference talk submission system.\" \\\n      org.label-schema.vcs-url=\"https://github.com/opencfp/opencfp.git\" \\\n      org.label-schema.vendor=\"OpenCFP\" \\\n      org.label-schema.schema-version=\"1.0.0\"\n\n# Adding the utilities tools to create the container\nRUN apk add --no-cache \\\n    acl \\\n    fcgi \\\n    gettext \\\n    git \\\n    ttf-freefont \\\n    yarn \\\n   ;\nRUN apk add --no-cache --update nodejs nodejs-npm\nRUN npm i -g cross-env && npm cache clean --force;\n\nARG ACPU_VERSION=5.1.17\nENV TRUST_PROXIES true\n\n\nRUN set -eux ;\\\n    apk add --no-cache --virtual .build-deps \\\n    $PHPIZE_DEPS \\\n    icu-dev \\\n    libzip-dev \\\n    zlib-dev \\\n    ; \\\n    docker-php-ext-configure zip ; \\\n    docker-php-ext-install -j$(nproc) \\\n    intl \\\n    pdo_mysql \\ \n    zip \\\n    ;\\\n    pecl install \\\n        apcu-${ACPU_VERSION} \\\n    ;\\\n    pecl clear-cache; \\\n    docker-php-ext-enable \\\n        apcu \\\n        opcache \\\n    ;\\\n    runDeps=\"$( \\\n        scanelf --needed --nobanner --format '%n#p' --recursive /usr/local/lib/php/extensions \\\n        | tr ',' '\\n' \\\n        | sort -u \\\n        | awk 'system(\"[ -e /usr/local/lib\" $1 \"]\") == 0 { next } { print \"so:\" $1 }' \\\n        )\";\\\n    apk add --no-cache --virtual .api-phpexts-rundeps $runDeps; \\\n    apk del .build-deps\n\n# Copy the composer command to this images by using the composer images with latest tag\nCOPY --from=composer:latest /usr/bin/composer /usr/bin/composer\nRUN chmod +x /usr/bin/composer\n\n# https://getcomposer.org/doc/03-cli.md#composer-allow-superuser\nENV COMPOSER_ALLOW_SUPERUSER=1\n\n# Clear cache before the installation to avoid conflict\nRUN composer clear-cache\n# Prevent the reinstallation of vendors at every changes in the source code\nCOPY composer.json composer.lock ./\n\n# Install Symfony Flex globally to speed up download of Composer packages (parallelized prefetching)\nRUN set -eux; \\\n    COMPOSER_MEMORY_LIMIT=-1 composer require \"symfony/flex\" --prefer-dist --no-progress --classmap-authoritative; \\\n    composer clear-cache\nENV PATH=\"${PATH}:/root/.composer/vendor/bin\"\n\n\nVOLUME /srv/app/log\nWORKDIR /srv/app/\n\n# Copy only specifically what we need\nCOPY bin bin/\nRUN chmod +x bin/console\nCOPY config config/\nCOPY factories factories/\nCOPY migrations migrations/\nCOPY resources resources/\nCOPY src src/\nCOPY tests tests/\nCOPY web web/\nCOPY .php_cs.dist \\\n    app.json \\\n    migrations.php \\\n    mix-manifest.json \\\n    package.json \\\n    Procfile \\\n    tailwind.js \\\n    webpack.mix.js \\\n    yarn.lock \\\n    ./\n\nCOPY docker/php/conf.d/www.conf /usr/local/etc/php-fpm.d/www.conf\nRUN mkdir -p /usr/local/log/ && chmod +x /usr/local/log;\nCOPY docker/php/conf.d/opencfp.${CFP_ENV}.ini /usr/local/etc/php/php.ini\n\nCOPY /docker/php/docker-healtcheck.sh /usr/local/bin/docker-healtcheck\nRUN chmod +x /usr/local/bin/docker-healtcheck\n\n\nHEALTHCHECK --interval=10s --timeout=3s --retries=3 CMD [ \"docker-healtcheck\" ]\n\nCOPY /docker/php/docker-entrypoint.sh /usr/local/bin/docker-entrypoint\nRUN chmod +x /usr/local/bin/docker-entrypoint\nENTRYPOINT [ \"docker-entrypoint\" ]\nCMD [\"php-fpm\"]\n\n\n# \"nginx\" stage\n# depends on the \"php\" stage above\n# The OpenResty distribution of NGINX is only needed for Kubernetes compatiblity (dynamic upstream resolution)\nFROM openresty/openresty:${OPENRESTY_VERSION}-alpine AS nginx\n\n\nRUN echo -e \"env UPSTREAM;\\n$(cat /usr/local/openresty/nginx/conf/nginx.conf)\" >  /usr/local/openresty/nginx/conf/nginx.conf\n\n\n# Copy the default configuration of the nginx server to the default location\nCOPY docker/nginx/conf.d/default.conf /etc/nginx/conf.d/default.conf\n\n# Creation of the log dir to avoid nginx throw an error of directories not found and adding the write right to all\nRUN mkdir -p /var/log/nginx && chmod +x /var/log/nginx;\n\n# Set the working directory to the root of the OpenCfp project and copy the files from the php stage above\nWORKDIR /srv/app\nCOPY --from=php /srv/app ./\n"
+}

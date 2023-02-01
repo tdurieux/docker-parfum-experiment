@@ -1,0 +1,35 @@
+{
+  "startTime": 1674256105682,
+  "endTime": 1674256106541,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 25,
+        "lineEnd": 25,
+        "columnStart": 7,
+        "columnEnd": 29
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 25,
+        "lineEnd": 25,
+        "columnStart": 7,
+        "columnEnd": 29
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 46,
+        "lineEnd": 46,
+        "columnStart": 4,
+        "columnEnd": 36
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Copyright 2020 Google LLC\n#\n# Licensed under the Apache License, Version 2.0 (the \"License\");\n# you may not use this file except in compliance with the License.\n# You may obtain a copy of the License at\n#\n#     https://www.apache.org/licenses/LICENSE-2.0\n#\n# Unless required by applicable law or agreed to in writing, software\n# distributed under the License is distributed on an \"AS IS\" BASIS,\n# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.\n# See the License for the specific language governing permissions and\n# limitations under the License.\n\n# Used https://medium.com/@chemidy/create-the-smallest-and-secured-golang-docker-image-based-on-scratch-4752223b7324\n# as a guide.\n\n# Use an official Go runtime as a parent image\nFROM golang:1.16 as builder\n\nENV GO111MODULE=on\n\n# Install git.\n# Git is required for fetching the dependencies.\nRUN apt-get update \\\n    && apt-get install --no-install-recommends -y git && rm -rf /var/lib/apt/lists/*;\n\nWORKDIR /data\n\n# Run this if you clone from main branch.\nRUN git clone -b main https://github.com/ampproject/amppackager.git /data/amppackager\n# RUN git clone https://github.com/ampproject/amppackager.git /data/amppackager\n\nWORKDIR /data/amppackager/cmd/amppkg\n\n# Build the binary.\n# See: https://medium.com/on-docker/use-multi-stage-builds-to-inject-ca-certs-ad1e8f01de1b\n#      https://github.com/kelseyhightower/contributors\n# Avoid \"x509: failed to load system roots and no roots provided\" by bundling root certificates.\n# Avoid dynamic linking by using the pure Go net package (-tags netgo)\n# Avoid dynamic linking by disabling cgo (CGO_ENABLED=0)\n# Reduce binary size by omitting dwarf information (-ldflags '-w')\nRUN CGO_ENABLED=0 GOOS=linux go build -a -tags netgo -ldflags '-w' -o /go/bin/amppkg\n\nFROM alpine:latest as certs\n\nRUN apk --update --no-cache add ca-certificates\n\n# Build a small executable from docker alpine. Docker alpine is needed because\n# bash is required to be present by the deployer as it prints the env variables\n# listed below for verifiying the docker image\nFROM alpine:latest\n\nENV PATH=/bin\n\n# Copy the certs from the certs image.\nCOPY --from=certs /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt\n\n# Copy the AMP packager binary into our app dir inside the container.\nCOPY --from=builder /go/bin/amppkg .\n\n# Make port 8080 available to the world outside this container. This\n# port must match the AMP Packager port configured in the toml file.\nEXPOSE 8080\n\nENV PATH=$PATH:.\n\n# This env var is used by click-to-deploy deployer, right now needs to be\n# manually synced with C2D_RELEASE in the other Docker images for AMP Packager\n# Deployer currently in https://github.com/banaag/click-to-deploy but will move\n# to https://github.com/GoogleCloudPlatform/click-to-deploy.\nENV C2D_RELEASE=0.0.1\n\n# Start the AMP Packager\nENTRYPOINT [\"amppkg\"]\n\n# Set default flags to run in autorenew cert mode.\nCMD [\"-autorenewcert\", \"-config=/renewer/amppkg_renewer.toml\"]\n\n"
+}

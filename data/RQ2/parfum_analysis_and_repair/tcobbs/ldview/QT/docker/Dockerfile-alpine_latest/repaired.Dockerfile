@@ -1,0 +1,13 @@
+FROM alpine:latest
+MAINTAINER Peter Bartfai pbartfai@stardust.hu
+
+ADD install-devel-packages.sh /
+RUN ./install-devel-packages.sh
+
+VOLUME /mnt/lego
+
+CMD cd ldview/QT ; \
+	git pull; \
+	abuild-keygen -a -n ;\
+	abuild -F ; \
+	cp -f /root/packages/ldview/*/ldview*.apk /mnt/lego

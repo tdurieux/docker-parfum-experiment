@@ -1,0 +1,107 @@
+{
+  "startTime": 1674251112393,
+  "endTime": 1674251113352,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 21,
+        "lineEnd": 21,
+        "columnStart": 4,
+        "columnEnd": 59
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 56,
+        "lineEnd": 56,
+        "columnStart": 4,
+        "columnEnd": 76
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 66,
+        "lineEnd": 66,
+        "columnStart": 5,
+        "columnEnd": 34
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 100,
+        "lineEnd": 100,
+        "columnStart": 4,
+        "columnEnd": 203
+      }
+    },
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 34,
+        "lineEnd": 34,
+        "columnStart": 4,
+        "columnEnd": 23
+      }
+    },
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 35,
+        "lineEnd": 38,
+        "columnStart": 4,
+        "columnEnd": 48
+      }
+    },
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 39,
+        "lineEnd": 39,
+        "columnStart": 4,
+        "columnEnd": 24
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 22,
+        "lineEnd": 22,
+        "columnStart": 4,
+        "columnEnd": 54
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 41,
+        "lineEnd": 41,
+        "columnStart": 4,
+        "columnEnd": 60
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 20,
+        "lineEnd": 20,
+        "columnStart": 18,
+        "columnEnd": 92
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 20,
+        "lineEnd": 20,
+        "columnStart": 18,
+        "columnEnd": 92
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM golang:latest as builder\n\n# create a working directory\nCOPY . /nucleus\nWORKDIR /nucleus\n\n\n# Build binary\nRUN GOARCH=amd64 GOOS=linux go build -ldflags=\"-w -s\" -o nucleus cmd/nucleus/*.go\n# Uncomment only when build is highly stable. Compress binary.\n# RUN strip --strip-unneeded ts\n# RUN upx ts\n\n# use a minimal alpine image\nFROM nikolaik/python-nodejs:python3.10-nodejs16-slim\n\nARG VERSION\nENV VERSION=$VERSION\n\n# Installing chromium so that all linux libs get automatically installed for running puppeteer tests\nRUN apt update && apt install --no-install-recommends -y git zstd chromium curl unzip zip xmlstarlet build-essential && rm -rf /var/lib/apt/lists/*;\nRUN curl -f -LJO https://go.dev/dl/go1.18.3.linux-amd64.tar.gz\nRUN tar -C /usr/local -xzf go1.18.3.linux-amd64.tar.gz && rm go1.18.3.linux-amd64.tar.gz\n\nCOPY bundle /usr/local/bin/bundle\nRUN chmod +x /usr/local/bin/bundle\nENV SMART_BINARY=/usr/local/bin/bundle\n\n# Install Custom Runners\nRUN mkdir /custom-runners\nRUN mkdir /tmp/custom-runners\n\nWORKDIR /tmp/custom-runners\nRUN npm init -y\nRUN npm install -g pnpm && npm cache clean --force;\nRUN npm i --global-style --legacy-peer-deps \\\n    @lambdatest/test-at-scale-jasmine-runner@~0.3.0 \\\n    @lambdatest/test-at-scale-mocha-runner@~0.3.0 \\\n    @lambdatest/test-at-scale-jest-runner@~0.3.0 && npm cache clean --force;\nRUN npm i -g nyc@^15.1.0 && npm cache clean --force;\n\nRUN tar -zcf /custom-runners/custom-runners.tgz node_modules && rm /custom-runners/custom-runners.tgz\nRUN rm -rf /tmp/custom-runners\nRUN mkdir /home/nucleus\nRUN mkdir /home/nucleus/.nvm\nENV NVM_DIR=/home/nucleus/.nvm\n\nENV GOROOT /usr/local/go\nENV GOPATH /home/nucleus\nENV PATH /usr/local/go/bin:/home/nucleus/bin:$PATH\n\nCOPY ./build/nucleus/golang/server /home/nucleus\n\nRUN chmod 744 /home/nucleus/server\n\n# install nvm for nucleus user\nRUN curl -f -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.1/install.sh | /bin/bash\n\nWORKDIR /home/nucleus\n# copy the binary from builder\nCOPY --from=builder /nucleus/nucleus /usr/local/bin/\n# run the binary\nCOPY ./build/nucleus/entrypoint.sh /\n\nRUN apt update -y && apt upgrade -y\n\nRUN curl -f -s https://get.sdkman.io | bash\nRUN /bin/bash -c \"source $HOME/.sdkman/bin/sdkman-init.sh;sdk install java 18.0.1-oracle\"\n\nENV JAVA_HOME=\"/root/.sdkman/candidates/java/current\"\nENV PATH=$JAVA_HOME:$PATH\nENV PATH=$JAVA_HOME/bin:$PATH\n\nARG MAVEN_VERSION=3.6.3\n\n# Define a constant with the working directory\nARG USER_HOME_DIR=\"/root\"\n# Define the URL where maven can be downloaded from\nARG BASE_URL=https://apache.osuosl.org/maven/maven-3/${MAVEN_VERSION}/binaries\n\n# Create the directories, download maven, validate the download, install it, remove downloaded file and set links\nRUN mkdir -p /usr/share/maven /usr/share/maven/ref \\\n  && echo \"Downlaoding maven\" \\\n  && curl -fsSL -o /tmp/apache-maven.tar.gz ${BASE_URL}/apache-maven-${MAVEN_VERSION}-bin.tar.gz \\\n  \\\n  && echo \"Unziping maven\" \\\n  && tar -xzf /tmp/apache-maven.tar.gz -C /usr/share/maven --strip-components=1 \\\n  \\\n  && echo \"Cleaning and setting links\" \\\n  && rm -f /tmp/apache-maven.tar.gz \\\n  && ln -s /usr/share/maven/bin/mvn /usr/bin/mvn\n\n# Define environmental variables required by Maven, like Maven_Home directory and where the maven repo is located\nENV MAVEN_HOME /usr/share/maven\nRUN mkdir -p /home/nucleus/.m2\n\n#update settings.xml file for new maven local repo location\nRUN xmlstarlet ed -O --inplace -N a='http://maven.apache.org/SETTINGS/1.0.0' -s /a:settings --type elem --name \"localRepository\" -v /home/nucleus/.m2/repository /usr/share/maven/conf/settings.xml\n\nCOPY ./build/nucleus/java/test-at-scale-java.jar /\nRUN curl -f -o /home/nucleus/junit-platform-console-standalone-1.8.2.jar https://repo1.maven.org/maven2/org/junit/platform/junit-platform-console-standalone/1.8.2/junit-platform-console-standalone-1.8.2.jar\nCOPY ./build/nucleus/entrypoint.sh /\nENTRYPOINT  [\"/bin/sh\", \"/entrypoint.sh\"]"
+}

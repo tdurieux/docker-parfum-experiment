@@ -1,0 +1,53 @@
+{
+  "startTime": 1674247125370,
+  "endTime": 1674247128328,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 95,
+        "lineEnd": 95,
+        "columnStart": 4,
+        "columnEnd": 72
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 5,
+        "lineEnd": 5,
+        "columnStart": 4,
+        "columnEnd": 52
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 7,
+        "lineEnd": 7,
+        "columnStart": 4,
+        "columnEnd": 35
+      }
+    },
+    {
+      "rule": "gpgUseHaPools",
+      "position": {
+        "lineStart": 64,
+        "lineEnd": 64,
+        "columnStart": 9,
+        "columnEnd": 84
+      }
+    },
+    {
+      "rule": "gpgUseHaPools",
+      "position": {
+        "lineStart": 65,
+        "lineEnd": 65,
+        "columnStart": 9,
+        "columnEnd": 86
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "#################\n#  Build Image  #\n#################\nFROM python:3.8-buster AS builder\nWORKDIR /app\nRUN pip install --no-cache-dir pyinstaller staticx patchelf-wrapper\nCOPY ./src ./requirements.txt ./\nRUN pip install --no-cache-dir -r requirements.txt\nRUN \\\n  pyinstaller -F -n tmp-build --distpath ./dist --hidden-import='pkg_resources.py2_warn' ./main.py \\\n  && staticx ./dist/tmp-build ./dist/build\n\n#################\n#  Final Image  #\n#################\nFROM ruby:2.7-slim\n\nRUN \\\n  apt-get update && apt-get install -y --no-install-recommends \\\n    curl \\\n    git \\\n    gnupg \\\n    dirmngr \\\n    wget \\\n    sudo \\\n    gawk bison sqlite3 patch g++ gcc autoconf automake libgdbm-dev \\\n    libncurses5-dev libsqlite3-dev libtool make patch pkg-config \\\n    libreadline-dev \\\n  && rm -rf /var/lib/apt/lists/*\n\n# Install headless chrome\nRUN \\\n  wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | apt-key add - \\\n  && sh -c 'echo \"deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main\" >> /etc/apt/sources.list.d/google.list' \\\n  && apt-get update \\\n  && apt-get install -y google-chrome-unstable --no-install-recommends \\\n  && rm -rf /var/lib/apt/lists/*\n\nSHELL [\"/bin/bash\", \"-c\"]\n\n# Disable ipv6 to enable fetching gpg keys for rvm\n# http://rvm.io/rvm/security#ipv6-issues\nRUN mkdir -p /root/.gnupg \\\n  && echo 'disable-ipv6' >> /root/.gnupg/dirmngr.conf \\\n  && echo 'rvm_silence_path_mismatch_check_flag=1' >> /etc/rvmrc \\\n  && echo 'install: --no-document\\nupdate: --no-document' >> /etc/.gemrc\n\nRUN useradd --no-log-init --system --create-home --groups sudo system \\\n  && echo 'system ALL=(ALL:ALL) NOPASSWD:ALL' >> /etc/sudoers.d/system\n\nRUN useradd --no-log-init --system --create-home customer\n\n###############################################################\n# Run these steps as the 'system' user\n#\nUSER system\n\n# Install rvm\nRUN set -ex \\\n  && for key in \\\n    7D2BAF1CF37B13E2069D6956105BD0E739499BDB \\\n    409B6B1796C275462A1703113804BB82D39DC0E3; \\\n  do \\\n    sudo gpg --batch --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys \"$key\" || \\\n    sudo gpg --batch --keyserver hkp://ha.pool.sks-keyservers.net:80 --recv-keys \"$key\" || \\\n    sudo gpg --batch --keyserver hkp://ipv4.ha.pool.sks-keyservers.net --recv-keys \"$key\" || \\\n    sudo gpg --batch --keyserver hkp://pgp.mit.edu:80 --recv-keys \"$key\" || \\\n    sudo gpg --batch --keyserver hkp://keyserver.pgp.com --recv-keys \"$key\"; \\\n  done \\\n  # We use 'sudo' here to support multi-user install\n  # http://rvm.io/rvm/install#1-download-and-run-the-rvm-installation-script\n  && \\curl -sSL https://get.rvm.io | sudo -n bash -s stable\n\n# Add 'customer' user to rvm group\nRUN sudo usermod --append --groups rvm customer\n\n\n###############################################################\n# Run these steps as the customer user\n#\nUSER customer\n\n# Configure rvm and install default Ruby\nENV RUBY_VERSION 2.7.5\nENV RUBY_VERSION_MIN 2.6.6\nRUN source /usr/local/rvm/scripts/rvm \\\n  # Fail if deps are missing, won't prompt for sudo\n  && rvm autolibs read-fail \\\n  && rvm install --no-docs $RUBY_VERSION \\\n  && rvm use --default $RUBY_VERSION \\\n  # Make rvm available in non-login bash shells\n  && echo 'source /usr/local/rvm/scripts/rvm' >> ~/.bashrc\n\n# Default to Node 16\nENV NODE_VERSION lts/gallium\nRUN curl -f https://raw.githubusercontent.com/nvm-sh/nvm/v0.37.2/install.sh | bash \\\n  && \\. \"$HOME/.nvm/nvm.sh\" \\\n  && nvm install $NODE_VERSION\n\n\n###############################################################\n# Run these steps and the container as the 'root' user\n#\n# This is necessary because the build code needs to have\n# rights to switch to 'customer' user\n#\nUSER root\n\nWORKDIR /app\n\nCOPY --from=builder /app/dist/build .\n\nCMD [\"./build\"]\n"
+}

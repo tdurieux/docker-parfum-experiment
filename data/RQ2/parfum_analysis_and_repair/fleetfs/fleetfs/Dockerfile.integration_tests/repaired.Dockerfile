@@ -1,0 +1,25 @@
+FROM ubuntu:20.04
+
+ARG DEBIAN_FRONTEND=noninteractive
+
+RUN apt update && apt install --no-install-recommends -y git build-essential autoconf curl cmake fuse bc libtool \
+  uuid-dev xfslibs-dev libattr1-dev libacl1-dev libaio-dev attr acl quota bsdmainutils dbench psmisc \
+  flatbuffers-compiler && rm -rf /var/lib/apt/lists/*;
+
+RUN adduser --disabled-password --gecos '' fsgqa
+
+RUN echo 'user_allow_other' >> /etc/fuse.conf
+
+RUN mkdir -p /code/pjdfstest && cd /code && git clone https://github.com/fleetfs/pjdfstest && cd pjdfstest \
+  && git checkout d3beed6f5f15c204a8af3df2f518241931a42e94 && autoreconf -ifs && ./configure --build="$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)" && make pjdfstest
+
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain=1.61.0
+
+ENV PATH=/root/.cargo/bin:$PATH
+
+RUN mkdir -p /code && cd /code && git clone https://github.com/fleetfs/fuse-xfstests && cd fuse-xfstests \
+  && git checkout c123d014fcca48cf340be78d6712eff80ee4e8d6 && make
+
+ADD . /code/fleetfs/
+
+RUN cd /code/fleetfs && cargo build --release && cp target/release/fleetfs /bin/fleetfs

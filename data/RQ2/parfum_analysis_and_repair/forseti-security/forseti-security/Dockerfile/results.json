@@ -1,0 +1,26 @@
+{
+  "startTime": 1674255898241,
+  "endTime": 1674255899125,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 42,
+        "lineEnd": 46,
+        "columnStart": 4,
+        "columnEnd": 49
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 42,
+        "lineEnd": 46,
+        "columnStart": 4,
+        "columnEnd": 49
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Copyright 2020 Google LLC\n#\n# Licensed under the Apache License, Version 2.0 (the \"License\");\n# you may not use this file except in compliance with the License.\n# You may obtain a copy of the License at\n#\n#    http://www.apache.org/licenses/LICENSE-2.0\n#\n# Unless required by applicable law or agreed to in writing, software\n# distributed under the License is distributed on an \"AS IS\" BASIS,\n# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.\n# See the License for the specific language governing permissions and\n# limitations under the License.\n\n##### BEGIN BASE IMAGE #####\nFROM python:3.6.9-slim-buster as base\n\nARG UID=1000\nARG GID=1000\n\nENV HOME=/home/forseti \\\n    WORK_DIR=/home/forseti/forseti-security \\\n    PATH=/home/forseti/.local/bin:$PATH\n\nRUN groupadd -g $GID forseti && \\\n    useradd -d ${HOME} -u $UID -g forseti forseti && \\\n    mkdir -p ${HOME}/forseti-security && \\\n    chown -R forseti:forseti ${HOME}\n\nWORKDIR ${WORK_DIR}\n\nUSER forseti\n##### END BASE IMAGE #####\n\n##### BEGIN PRE-BUILD IMAGE #####\nFROM base AS pre-build\n\nUSER root\n# Install Forseti Security dependencies.\n# This should stay in sync with the deployment script used on the host machine in\n#   deployment-templates/compute-engine/forseti-instance.py\nRUN apt-get update && \\\n    apt-get install --no-install-recommends -y build-essential \\\n                       libffi-dev \\\n                       libssl-dev \\\n                       libgmp-dev \\\n                       default-libmysqlclient-dev && rm -rf /var/lib/apt/lists/*;\n\nUSER forseti\n##### END PRE-BUILD IMAGE #####\n\n##### BEGIN BUILD IMAGE #####\nFROM pre-build AS build\n\n# Expose our source so we can install Forseti Security.\nCOPY --chown=forseti:forseti . ${WORK_DIR}\n\nCOPY requirements.txt /\nRUN pip install --no-cache-dir --upgrade  --user -r /requirements.txt\n\nRUN pip install --no-cache-dir --upgrade --user google-cloud-profiler\n\n# Install Forseti Security.\nRUN python setup.py install --user\n##### END BUILD IMAGE #####\n\n##### BEGIN FORSETI-TEST IMAGE #####\nFROM build AS forseti-test\n\nCOPY requirements-test.txt /\nRUN pip install --no-cache-dir --upgrade --user -r /requirements-test.txt\n\nENTRYPOINT /bin/bash\n##### END FORSETI-TEST IMAGE #####\n\n##### BEGIN RUNTIME IMAGE #####\nFROM base AS runtime\n\nUSER forseti\n\nENV PORT 50051\n\nCOPY --from=build --chown=forseti:forseti \\\n    /home/forseti/.local \\\n    /home/forseti/.local\n\nCOPY --from=build --chown=forseti:forseti \\\n    /home/forseti/forseti-security/.eggs \\\n    /home/forseti/forseti-security/.eggs\n\nCOPY --from=build --chown=forseti:forseti \\\n    /home/forseti/forseti-security/install/scripts/docker_entrypoint.sh \\\n    /home/forseti/.local/bin/\n\nRUN chmod u+x /home/forseti/.local/bin/docker_entrypoint.sh\n\nENTRYPOINT [\"docker_entrypoint.sh\"]\n##### END RUNTIME IMAGE #####\n\n##### BEGIN FORSETI-SERVER IMAGE #####\nFROM runtime AS forseti-server\n\nENV SERVER_HOST 0.0.0.0\nENV SERVICES \"scanner model inventory explain notifier\"\nENV CONFIG_FILE_PATH /forseti-security/forseti_conf_server.yaml\nENV LOG_LEVEL info\n\nEXPOSE $PORT\n\nENTRYPOINT forseti_server \\\n           --endpoint $SERVER_HOST:$PORT \\\n           # The SQL_DB_CONNECTION_STRING connection string should be set in Kubernetes\n           --forseti_db $SQL_DB_CONNECTION_STRING \\\n           --services $SERVICES \\\n           --config_file_path $CONFIG_FILE_PATH \\\n           --log_level=$LOG_LEVEL \\\n           --enable_console_log\n##### END FORSETI-SERVER IMAGE #####\n\n##### BEGIN FORSETI-ORCHESTRATOR IMAGE #####\nFROM runtime AS forseti-orchestrator\n\nENV PORT=50051\n\nENTRYPOINT forseti \\\n           --endpoint $SERVER_HOST:$PORT \\\n           server \\\n           run\n##### END FORSETI-ORCHESTRATOR IMAGE #####\n"
+}

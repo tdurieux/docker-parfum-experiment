@@ -1,0 +1,62 @@
+{
+  "startTime": 1674255906527,
+  "endTime": 1674255907736,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 86,
+        "lineEnd": 86,
+        "columnStart": 9,
+        "columnEnd": 29
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 14,
+        "lineEnd": 19,
+        "columnStart": 4,
+        "columnEnd": 15
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 24,
+        "lineEnd": 25,
+        "columnStart": 4,
+        "columnEnd": 83
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 32,
+        "lineEnd": 33,
+        "columnStart": 9,
+        "columnEnd": 23
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 90,
+        "lineEnd": 92,
+        "columnStart": 9,
+        "columnEnd": 38
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 107,
+        "lineEnd": 108,
+        "columnStart": 9,
+        "columnEnd": 59
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM ubuntu:18.04\n\n# avoid questions from debconf\nENV DEBIAN_FRONTEND noninteractive\n\n# create the group hnn_group and user hnn_user\n# add hnn_user to the sudo group\nRUN groupadd hnn_group && useradd -m -b /home/ -g hnn_group hnn_user && \\\n    adduser hnn_user sudo && \\\n    echo '%sudo ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers && \\\n    chsh -s /bin/bash hnn_user\n\n# Qt prerequisites packages\nRUN apt-get update && \\\n    apt-get install --no-install-recommends -y \\\n        libfontconfig libxext6 libx11-xcb1 libxcb-glx0 \\\n        libxcb-icccm4 libxcb-util1 libxcb-image0 libxcb-keysyms1 \\\n        libxcb-render0 libxcb-shape0 libxcb-randr0 libxcb-render-util0 \\\n        libxcb-xinerama0 \\\n        libegl1 && \\\n    apt-get clean && rm -rf /var/lib/apt/lists/*;\n\n# base prerequisites packages\nRUN apt-get update && \\\n    apt-get install --no-install-recommends -y \\\n        python3-pip python3-setuptools openssh-server openmpi-bin lsof netcat xauth && \\\n    apt-get clean && rm -rf /var/lib/apt/lists/*;\n\n# get HNN python dependencies\n# python3-dev and gcc needed for building psutil\nRUN sudo pip3 install --no-cache-dir --upgrade pip && \\\n    sudo apt-get update && \\\n    sudo apt-get install --no-install-recommends -y \\\n        gcc python3-dev && \\\n    sudo pip install --no-cache-dir matplotlib \\\n        pyqt5 scipy numpy nlopt psutil && \\\n    sudo apt-get -y remove --purge \\\n        gcc python3-dev && \\\n    sudo apt-get autoremove -y --purge && \\\n    sudo apt-get clean && rm -rf /var/lib/apt/lists/*;\n\nCOPY date_base_install.sh /usr/local/bin\nRUN chmod +x /usr/local/bin/date_base_install.sh && \\\n    /usr/local/bin/date_base_install.sh\n\nRUN mkdir /var/run/sshd\n\n# SSH login fix. Otherwise user is kicked off after login\nRUN sed 's@session\\s*required\\s*pam_loginuid.so@session optional pam_loginuid.so@g' -i /etc/pam.d/sshd\nRUN sed 's/AcceptEnv.*/AcceptEnv LANG LC_* DISPLAY XAUTHORITY SYSTEM_USER_DIR TRAVIS_TESTING/' -i /etc/ssh/sshd_config\n\n# if users open up a shell, they should go to the hnn repo checkout\nENV HOME /home/hnn_user\nWORKDIR $HOME/hnn_source_code\nRUN chown -R hnn_user:hnn_group $HOME\n\nCMD sleep infinity\n\nUSER hnn_user\n\nRUN mkdir $HOME/.ssh\n\n# get rid of warning about XDG_RUNTIME_DIR\nENV XDG_RUNTIME_DIR=/tmp/runtime-hnn_user\nRUN mkdir /tmp/runtime-hnn_user && \\\n    chmod 700 /tmp/runtime-hnn_user\n\n# use environment variables from hnn_envs\nRUN echo \"source $HOME/hnn_envs\" >> ~/.bashrc\n\n# run sudo to get rid of message on first login about using sudo\nRUN sudo -l\n\n# use args to avoid caching\nARG BUILD_DATE\nARG VCS_REF\nARG VCS_TAG\nARG SOURCE_REPO=\"https://github.com/jonescompneurolab/hnn.git\"\nARG SOURCE_BRANCH=\"master\"\n\nLABEL org.label-schema.build-date=$BUILD_DATE \\\n      org.label-schema.vcs-url=$SOURCE_REPO \\\n      org.label-schema.vcs-ref=$VCS_REF \\\n      org.label-schema.schema-version=$VCS_TAG\n\n# install hnn-core\nRUN sudo pip install --no-cache-dir hnn-core\n\n# install HNN\nRUN sudo apt-get update && \\\n    sudo apt-get install --no-install-recommends -y \\\n        make gcc libc6-dev libtinfo-dev libncurses-dev \\\n        libx11-dev libreadline-dev g++ && \\\n    git clone --single-branch --branch maint/pre-hnn-core \\\n    ${SOURCE_REPO} \\\n      --depth 1 --single-branch --branch $SOURCE_BRANCH \\\n      $HOME/hnn_source_code && \\\n    cd $HOME/hnn_source_code && \\\n    make && \\\n    sudo apt-get -y remove --purge \\\n        make gcc libc6-dev libtinfo-dev libncurses-dev \\\n        libx11-dev libreadline-dev g++ && \\\n    sudo apt-get autoremove -y --purge && \\\n    sudo apt-get clean && rm -rf /var/lib/apt/lists/*;\n\n# NEURON runtime prerequisites\nRUN sudo apt-get update && \\\n    sudo apt-get install --no-install-recommends -y \\\n        libncurses5 libreadline5 libdbus-1-3 libopenmpi-dev && \\\n    sudo apt-get clean && rm -rf /var/lib/apt/lists/*;\n\nCOPY QtProject.conf $HOME/.config/\nCOPY check_hnn_out_perms.sh $HOME/\nCOPY start_hnn.sh $HOME/\nCOPY hnn_envs $HOME\nCOPY start_ssh.sh /\nCOPY check_sshd_port.sh /\nCOPY check_x_port.sh /\n\nRUN sudo chown -R hnn_user:hnn_group $HOME && \\\n    sudo chmod +x $HOME/start_hnn.sh $HOME/check_hnn_out_perms.sh && \\\n    sudo chmod +x /check_sshd_port.sh /start_ssh.sh /check_x_port.sh && \\\n    sudo chown root:root /check_sshd_port.sh /start_ssh.sh /check_x_port.sh && \\\n    sudo chmod 666 $HOME/.config/QtProject.conf\n"
+}

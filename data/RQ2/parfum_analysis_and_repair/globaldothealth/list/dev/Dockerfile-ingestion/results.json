@@ -1,0 +1,26 @@
+{
+  "startTime": 1674255033381,
+  "endTime": 1674255034026,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 36,
+        "lineEnd": 36,
+        "columnStart": 4,
+        "columnEnd": 89
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 31,
+        "lineEnd": 33,
+        "columnStart": 7,
+        "columnEnd": 23
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# `python-base` sets up all our shared environment variables\nFROM python:3.8-slim as python-base\n\nENV PYTHONUNBUFFERED=1 \\\n    # prevents python creating .pyc files\n    PYTHONDONTWRITEBYTECODE=1 \\\n    \\\n    PIP_NO_CACHE_DIR=off \\\n    PIP_DISABLE_PIP_VERSION_CHECK=on \\\n    PIP_DEFAULT_TIMEOUT=100 \\\n    \\\n    # https://python-poetry.org/docs/configuration/#using-environment-variables\n    POETRY_VERSION=1.1.5 \\\n    # make poetry install to this location\n    POETRY_HOME=\"/opt/poetry\" \\\n    # make poetry create the virtual environment in the project's root\n    # it gets named `.venv`\n    POETRY_VIRTUALENVS_IN_PROJECT=true \\\n    # do not ask any interactive question\n    POETRY_NO_INTERACTION=1 \\\n    \\\n    # this is where our requirements + virtual environment will live\n    PYSETUP_PATH=\"/opt/pysetup\" \\\n    VENV_PATH=\"/opt/pysetup/.venv\"\n\n# prepend poetry and venv to path\nENV PATH=\"$POETRY_HOME/bin:$VENV_PATH/bin:$PATH\"\n\n# `builder-base` stage is used to build deps + create our virtual environment\nFROM python-base as builder-base\nRUN apt-get update \\\n    && apt-get install --no-install-recommends -y \\\n        curl \\\n        build-essential && rm -rf /var/lib/apt/lists/*;\n\n# install poetry - respects $POETRY_VERSION & $POETRY_HOME\nRUN curl -f -sSL https://raw.githubusercontent.com/python-poetry/poetry/master/get-poetry.py | python\n\n# copy project requirement files here to ensure they will be cached.\nWORKDIR $PYSETUP_PATH\nCOPY poetry.lock pyproject.toml ./\n\nENV PATH=\"${PATH}:/root/.poetry/bin\"\n\n# install runtime deps - uses $POETRY_VIRTUALENVS_IN_PROJECT internally\nRUN poetry install --no-dev\n\n# `development` image is used during development / testing\nFROM python-base as development\n\nRUN apt-get update && apt-get upgrade -y curl \\\n      awscli\n\nWORKDIR $PYSETUP_PATH\n\n# copy in our built poetry + venv\nCOPY --from=builder-base $POETRY_HOME $POETRY_HOME\nCOPY --from=builder-base $PYSETUP_PATH $PYSETUP_PATH\nENV PATH=\"${PATH}:/root/.poetry/bin\"\n\nARG NOTIFY_WEBHOOK_URL\nENV NOTIFY_WEBHOOK_URL=${NOTIFY_WEBHOOK_URL}\nENV EPID_INGESTION_ENV \"XXXXXXXXXXX\"\nENV EPID_INGESTION_SOURCE_ID \"XXXXXXXXXXX\"\n\n# will become mountpoint of our code\nWORKDIR /app\n\nCOPY ./setup_ingestion.py ./\nCOPY poetry.lock pyproject.toml ./\n\n# quicker install as runtime deps are already installed\nRUN poetry install --no-dev\n\nCMD [ \"python\", \"./setup_ingestion.py\" ]\n"
+}

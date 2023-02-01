@@ -1,0 +1,53 @@
+{
+  "startTime": 1674253752427,
+  "endTime": 1674253753400,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 100,
+        "lineEnd": 100,
+        "columnStart": 16,
+        "columnEnd": 51
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 101,
+        "lineEnd": 101,
+        "columnStart": 16,
+        "columnEnd": 55
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 103,
+        "lineEnd": 103,
+        "columnStart": 16,
+        "columnEnd": 44
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 30,
+        "lineEnd": 30,
+        "columnStart": 4,
+        "columnEnd": 31
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 31,
+        "lineEnd": 57,
+        "columnStart": 4,
+        "columnEnd": 10
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "############################################\n# This Dockerfile builds a docker image\n# suitable to boot a CBRAIN BrainPortal\n# where tests can be run. It is meant\n# to be run within a Travis Continuous\n# Integration virtual machine,\n# although invoking its entry point manually\n# from docker is also a possibility.\n#\n# Do not use the resulting docker container\n# as a CBRAIN installation, it won't work,\n# and you'll have no persistent data because\n# the SQL server is completely inside the\n# container fileystem.\n############################################\n\n# We use CentOS 7; CentOS 8 needs further adjustments, as it's new (Oct 2019)\nFROM centos:7\n\n\n\n#####################################\n# Package updates and installations #\n#####################################\n\n# Note: keep the package list alphabetically\n#       ordered to facilitate parsing\n\nRUN yum update -y\nRUN yum install -y epel-release && rm -rf /var/cache/yum\nRUN yum install -y \\\n      autoconf \\\n      automake \\\n      make \\\n      bzip2 \\\n      bison \\\n      gcc-c++ \\\n      git \\\n      glibc-devel \\\n      glibc-headers \\\n      gpg \\\n      libffi-devel \\\n      libmysqlclient-dev \\\n      libsodium \\\n      libtool \\\n      libxml2 \\\n      libxml2-devel \\\n      libyaml-devel \\\n      mariadb-devel \\\n      mariadb-server \\\n      openssl-devel \\\n      patch \\\n      readline-devel \\\n      sqlite-devel \\\n      zlib-devel \\\n      which \\\n      wget && rm -rf /var/cache/yum\n\n# The following UID and GID are chosen\n# to match what is usually the unprivileged user\n# that runs inside the Travis CI virtual machines,\n# but that should not make much difference.\nRUN groupadd -g 500        cbrain\nRUN useradd  -u 500 -g 500 cbrain\n\n# Environment variables for the MYSQL DB\nENV MYSQL_ROOT_PASSWORD=\"my-secret-pw\" MYSQL_USER=\"cb_user\" MYSQL_DATABASE=\"cb_db_test\" MYSQL_PASSWORD=\"cbpw12345\"\n\n\n\n#############################################\n# MySQL server installation and configuration\n#############################################\n\nRUN mysql_install_db --force # we need --force so it ignores the fake hostname\nRUN mkdir -p /var/lib/mysql /var/run/mysqld\nRUN chown -R mysql:mysql /var/lib/mysql /var/run/mysqld && \\\n    chmod 777 /var/run/mysqld\nRUN rm -f /var/lib/mysql/aria_log_control\n\nRUN mysqld_safe & sleep 3 && \\\n    /usr/bin/mysqladmin -u root password \"$MYSQL_ROOT_PASSWORD\"\n\nRUN mysqld_safe & sleep 3 && \\\n    /usr/bin/mysql -u root --password=\"$MYSQL_ROOT_PASSWORD\" -e \"create database $MYSQL_DATABASE;\"\n\nRUN mysqld_safe & sleep 3 && \\\n    /usr/bin/mysql -u root --password=\"$MYSQL_ROOT_PASSWORD\" -e \"grant all on $MYSQL_DATABASE.* to '$MYSQL_USER'@'localhost' identified by '$MYSQL_PASSWORD';\"\n\n\n\n#############################\n# Ruby and rvm installation #\n#############################\n\nUSER cbrain\n\nENV RUBY_VERSION=2.6.3\n\nRUN cd $HOME && curl -f -sSL https://rvm.io/mpapis.asc | gpg2 --import -\nRUN cd $HOME && curl -f -sSL https://rvm.io/pkuczynski.asc | gpg2 --import -\n\nRUN cd $HOME && curl -f -sSL https://get.rvm.io | bash -s stable\n\nRUN cd $HOME && echo \"source $HOME/.rvm/scripts/rvm\" >> $HOME/.bashrc\n\nRUN bash --login -c 'rvm install $RUBY_VERSION --autolibs=read'\n\nRUN bash --login -c 'rvm --default $RUBY_VERSION'\n\n\n\n################################\n# Rails application bundling   #\n################################\n\n# These four statements is a way for the\n# people building the container to specify\n# variations on what base CBRAIN installation\n# to use.\nARG CBRAIN_REPO=https://github.com/aces/cbrain.git\nARG CBRAIN_BRANCH=dev\nENV CBRAIN_REPO=$CBRAIN_REPO\nENV CBRAIN_BRANCH=$CBRAIN_BRANCH\n\n# Edit manually the following line to have your docker installation\n# skip its cache of the previous container build, if necessary.\n# Just having a different commit number in the echo statement will do.\n# This can be necessary if you know that the code on the GitHub\n# repo has changed since that last build.\nRUN echo Force install using CBRAIN at commit c1e59cb4ac72a9ff66e76a42c607a269a043ee4d\n\n# Extract initial CBRAIN source (will be replaced at test time)\n# but having an initial installation speeds up bundling,\n# migrations, etc.\n# I would use --single-branch in the git clone command below, but\n# it seems not all git packages support it.\nRUN cd $HOME && \\\n    git clone --branch \"$CBRAIN_BRANCH\" --depth 2 \"$CBRAIN_REPO\" cbrain_base\n\n# Install and configure the portal\nENV RAILS_ENV=test\n\nRUN bash --login -c 'cd $HOME/cbrain_base/BrainPortal && gem install bundler'\n\nRUN bash --login -c 'cd $HOME/cbrain_base/BrainPortal && bundle install'\n\nRUN bash --login -c 'cd $HOME/cbrain_base/Bourreau && bundle install'\n\nRUN bash --login -c 'cd $HOME/cbrain_base/BrainPortal && cd $(bundle show sys-proctable) && rake install'\n\nCOPY ./templates/database.yml.TEST     /home/cbrain/cbrain_base/BrainPortal/config/database.yml\n\nCOPY ./templates/config_portal.rb.TEST /home/cbrain/cbrain_base/BrainPortal/config/initializers/config_portal.rb\n\n# Seed the DB\nUSER root\n\nRUN  chown cbrain /home/cbrain/cbrain_base/BrainPortal/config/database.yml && \\\n     chown cbrain /home/cbrain/cbrain_base/BrainPortal/config/initializers/config_portal.rb\n\nRUN su -c \"bash --login -c 'cd \\$HOME/cbrain_base/BrainPortal && rake cbrain:plugins:install:plugins'\" cbrain\n\nRUN mysqld_safe & sleep 2 && \\\n    su -c \"bash --login -c 'cd \\$HOME/cbrain_base/BrainPortal && rake db:schema:load'\" cbrain\n\nRUN mysqld_safe & sleep 2 && \\\n    su -c \"bash --login -c 'cd \\$HOME/cbrain_base/BrainPortal && rake db:seed'\" cbrain\n\nRUN mysqld_safe & sleep 2 && \\\n    su -c \"bash --login -c 'cd \\$HOME/cbrain_base/BrainPortal && rake db:seed:test:bourreau'\" cbrain\n\nRUN mysqld_safe & sleep 2 && \\\n    su -c \"bash --login -c 'cd \\$HOME/cbrain_base/BrainPortal && rake db:sanity:check'\" cbrain\n\n\n\n########################################################\n# Cleanup files to make the image as small as possible #\n########################################################\n\nUSER cbrain\n\nRUN bash --login -c 'rvm cleanup all'\n\nUSER root\n\nRUN yum clean all\n\n# Not sure if next line won't interfere with future bundle updates...\n# but then it saves just a few dozen megabytes.\nRUN rm -rf /home/cbrain/.rvm/gems/ruby*/bundler/gems/*/.git\n\n\n\n#########################\n# Ports and entry point #\n#########################\n\n# This command will copy the code freshly extracted by travis\n# and perform the rest of the setup needed to run the tests\n# (migrate the DB, run rake tasks, run rspec); the path\n# /home/cbrain/cbrain_travis is a mounted volume from the\n# VM side.\nCMD [ \"/home/cbrain/cbrain_travis/Travis/bootstrap.sh\" ]\n\n###########\n# Volumes #\n###########\n#\n# Only one volume is needed, it is Travis CI's own\n# copy of the cbrain project to be tested.\n#\n# Note that this is distinct from\n#\n#   /home/cbrain/cbrain_base\n#\n# which is where we did the initial installation here\n# in this image, as a way to speed up the tests.\n\nVOLUME /home/cbrain/cbrain_travis\n\n"
+}

@@ -1,0 +1,63 @@
+{
+  "startTime": 1674217418309,
+  "endTime": 1674217419519,
+  "originalSmells": [
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 23,
+        "lineEnd": 23,
+        "columnStart": 4,
+        "columnEnd": 50
+      }
+    },
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 24,
+        "lineEnd": 24,
+        "columnStart": 4,
+        "columnEnd": 19
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 55,
+        "lineEnd": 55,
+        "columnStart": 4,
+        "columnEnd": 29
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 13,
+        "lineEnd": 13,
+        "columnStart": 22,
+        "columnEnd": 44
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 13,
+        "lineEnd": 13,
+        "columnStart": 22,
+        "columnEnd": 44
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 25,
+        "lineEnd": 25,
+        "columnStart": 60,
+        "columnEnd": 76
+      }
+    }
+  ],
+  "repairedDockerfile": "########################################################################\n#\n# pgAdmin 4 - PostgreSQL Tools\n#\n# Copyright (C) 2013 - 2018, The pgAdmin Development Team\n# This software is released under the PostgreSQL Licence\n#\n#########################################################################\n\n# First of all, build frontend with NodeJS in a separate builder container\n# Node-8 is supported by all needed C++ packages\nFROM node:8 AS node-builder\n\nRUN apt-get update && apt-get install --no-install-recommends -y git && rm -rf /var/lib/apt/lists/*;\n\nRUN git clone -b REL-3_6 https://github.com/postgres/pgadmin4 /pgadmin4-source \\\n && mkdir -p /pgadmin4 \\\n && cd /pgadmin4-source \\\n && git archive HEAD -- docs web requirements.txt | tar xvf - -C /pgadmin4 \\\n && rm -fr /pgadmin4-source\n\nWORKDIR /pgadmin4/web\n\nRUN yarn install --cache-folder ./ycache --verbose && \\\n    yarn run bundle && \\\n    rm -rf ./ycache ./pgadmin/static/js/generated/.cache && yarn cache clean;\n\n# Build Sphinx documentation in separate container\nFROM python:3.6-alpine3.7 as docs-builder\n\n# Install only dependencies absolutely required for documentation building\nRUN apk add --no-cache make\nRUN pip install --no-cache-dir \\\n    sphinx flask_security flask_paranoid python-dateutil flask_sqlalchemy \\\n    flask_gravatar simplejson\n\nCOPY --from=node-builder /pgadmin4 /pgadmin4\nRUN LC_ALL=en_US.UTF-8 LANG=en_US.UTF-8 make -C /pgadmin4/docs/en_US -f Makefile.sphinx html\n\n# Then install backend, copy static files and set up entrypoint\n# Need alpine3.7 to get pg_dump and friends in postgresql-client package\nFROM python:3.6-alpine3.7\n\nRUN pip --no-cache-dir install gunicorn\nRUN apk add --no-cache postfix postgresql-client postgresql-libs\n\nCOPY --from=node-builder /pgadmin4 /pgadmin4\n\nWORKDIR /pgadmin4\nENV PYTHONPATH=/pgadmin4\n\n# Install build-dependencies, build & install C extensions and purge deps in one RUN step\n# so that deps do not increase the size of resulting image by remaining in layers\nRUN set -ex && \\\n    apk add --no-cache --virtual build-deps build-base postgresql-dev libffi-dev linux-headers && \\\n    pip install --no-cache-dir --upgrade pip && \\\n    pip install --no-cache-dir -r requirements.txt && \\\n    apk del --no-cache build-deps\n\nCOPY --from=node-builder /pgadmin4/web/pgadmin/static/js/generated/ /pgadmin4/pgadmin/static/js/generated/\nCOPY --from=docs-builder /pgadmin4/docs/en_US/_build/html/ /pgadmin4/docs/\n\nCOPY --from=node-builder /pgadmin4/web/ /pgadmin4\nCOPY run_pgadmin.py /pgadmin4\nCOPY config_distro.py /pgadmin4\n\nRUN pip install --no-cache-dir -r requirements.txt\n\n# Precompile and optimize python code to save time and space on startup\nRUN rm -fr /pgadmin4/node_modules/ /pgadmin4/web/node_modules/\nRUN python -O -m compileall /pgadmin4\n\nCOPY ./entrypoint.sh /entrypoint.sh\n\nVOLUME /var/lib/pgadmin\nEXPOSE 80 443\n\nENTRYPOINT [\"/entrypoint.sh\"]\n"
+}

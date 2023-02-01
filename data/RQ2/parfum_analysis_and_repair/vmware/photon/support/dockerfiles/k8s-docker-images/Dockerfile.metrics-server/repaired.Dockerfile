@@ -1,0 +1,5 @@
+FROM k8s-base-image:4.0
+
+COPY tmp/k8smetserv/usr/bin/metrics-server /
+
+ENTRYPOINT ["/metrics-server"]

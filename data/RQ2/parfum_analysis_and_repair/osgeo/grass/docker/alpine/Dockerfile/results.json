@@ -1,0 +1,44 @@
+{
+  "startTime": 1674219038821,
+  "endTime": 1674219040080,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 65,
+        "lineEnd": 65,
+        "columnStart": 4,
+        "columnEnd": 55
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 185,
+        "lineEnd": 185,
+        "columnStart": 4,
+        "columnEnd": 71
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 195,
+        "lineEnd": 195,
+        "columnStart": 4,
+        "columnEnd": 20
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 209,
+        "lineEnd": 209,
+        "columnStart": 4,
+        "columnEnd": 28
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM alpine:3.15 as common\n\n# Based on:\n# https://github.com/mundialis/docker-grass-gis/blob/master/Dockerfile\nLABEL authors=\"Carmen Tawalika,Pietro Zambelli,Markus Neteler\"\nLABEL maintainer=\"neteler@osgeo.org\"\n\n# PACKAGES VERSIONS\nARG PYTHON_VERSION=3\n\n# List of packages to be installed\nENV PACKAGES=\"\\\n      attr \\\n      bash \\\n      bison \\\n      bzip2 \\\n      cairo \\\n      curl \\\n      fftw \\\n      flex \\\n      freetype \\\n      gdal \\\n      gdal-tools \\\n      gettext \\\n      geos \\\n      gnutls \\\n      jsoncpp \\\n      laszip \\\n      libbz2 \\\n      libexecinfo \\\n      libgeotiff \\\n      libjpeg-turbo \\\n      libpng \\\n      libunwind \\\n      musl \\\n      musl-utils \\\n      ncurses \\\n      openjpeg \\\n      openblas \\\n      py3-numpy \\\n      py3-pillow \\\n      py3-six \\\n      pdal \\\n      pdal-dev \\\n      postgresql \\\n      proj-util \\\n      sqlite \\\n      sqlite-libs \\\n      subversion \\\n      tiff \\\n      zstd \\\n      zstd-libs \\\n    \"\n# ====================\n# INSTALL DEPENDENCIES\n# ====================\n\nWORKDIR /src\n\nENV PYTHONBIN=python$PYTHON_VERSION\n\nRUN echo \"Install Python\"; \\\n    apk add --no-cache $PYTHONBIN && \\\n    $PYTHONBIN -m ensurepip && \\\n    rm -r /usr/lib/python*/ensurepip && \\\n    pip$PYTHON_VERSION install --no-cache-dir --upgrade pip setuptools && \\\n    if [ ! -e /usr/bin/pip ]; then ln -s pip$PYTHON_VERSION /usr/bin/pip ; fi && \\\n    if [[ ! -e /usr/bin/python ]]; then ln -sf /usr/bin/$PYTHONBIN /usr/bin/python; fi && \\\n    rm -r /root/.cache\n\n# Add the packages\nRUN echo \"Install main packages\";\\\n    apk update; \\\n    apk add --no-cache $PACKAGES\n\n\nFROM common as build\n\n# ================\n# CONFIG VARIABLES\n# ================\n\n# set configuration options, without wxGUI\nENV GRASS_CONFIG=\"\\\n      --enable-largefile \\\n      --with-cxx \\\n      --with-proj-share=/usr/share/proj \\\n      --with-gdal \\\n      --with-pdal \\\n      --with-geos \\\n      --with-sqlite \\\n      --with-bzlib \\\n      --with-zstd \\\n      --with-cairo --with-cairo-ldflags=-lfontconfig \\\n      --with-fftw \\\n      --with-postgres --with-postgres-includes=/usr/include/postgresql \\\n      --with-openmp \\\n      --without-freetype \\\n      --without-opengl \\\n      --without-nls \\\n      --without-mysql \\\n      --without-odbc \\\n      \"\n\n# Set environmental variables for GRASS GIS compilation, without debug symbols\nENV MYCFLAGS=\"-O2 -std=gnu99 -m64\" \\\n    MYLDFLAGS=\"-s -Wl,--no-undefined -lblas\" \\\n    # CXX stuff:\n    LD_LIBRARY_PATH=\"/usr/local/lib\" \\\n    LDFLAGS=\"$MYLDFLAGS\" \\\n    CFLAGS=\"$MYCFLAGS\" \\\n    CXXFLAGS=\"$MYCXXFLAGS\" \\\n    NUMTHREADS=2\n\n# These packages are required to compile GRASS GIS.\nENV GRASS_BUILD_PACKAGES=\"\\\n      build-base \\\n      bzip2-dev \\\n      cairo-dev \\\n      fftw-dev \\\n      freetype-dev \\\n      g++ \\\n      gcc \\\n      gdal-dev \\\n      geos-dev \\\n      git \\\n      gnutls-dev \\\n      libc6-compat \\\n      libjpeg-turbo-dev \\\n      libpng-dev \\\n      make \\\n      openjpeg-dev \\\n      openblas-dev \\\n      pdal \\\n      pdal-dev \\\n      postgresql-dev \\\n      proj-dev \\\n      python3-dev \\\n      py3-numpy-dev \\\n      sqlite-dev \\\n      tar \\\n      tiff-dev \\\n      unzip \\\n      vim \\\n      wget \\\n      zip \\\n      zstd-dev \\\n    \"\n\n# Add the packages\nRUN echo \"Install main packages\";\\\n    # Add packages just for the GRASS build process\n    apk add --no-cache --virtual .build-deps $GRASS_BUILD_PACKAGES\n    # echo LANG=\"en_US.UTF-8\" > /etc/default/locale;\n\n# Copy and install GRASS GIS\nCOPY . /src/grass_build/\nWORKDIR /src/grass_build/\n\n# Configure compile and install GRASS GIS\nRUN echo \"  => Configure and compile grass\" && \\\n    /src/grass_build/configure $GRASS_CONFIG && \\\n    make -j $NUMTHREADS && \\\n    make install && \\\n    ldconfig /etc/ld.so.conf.d\n\n# Reduce the image size - Remove unnecessary grass files\nRUN cp /usr/local/grass83/gui/wxpython/xml/module_items.xml module_items.xml; \\\n    rm -rf /usr/local/grass83/demolocation; \\\n    rm -rf /usr/local/grass83/fonts; \\\n    rm -rf /usr/local/grass83/gui; \\\n    rm -rf /usr/local/grass83/share; \\\n    mkdir -p /usr/local/grass83/gui/wxpython/xml/; \\\n    mv module_items.xml /usr/local/grass83/gui/wxpython/xml/module_items.xml;\n\n\nFROM common as grass\n\nENV LC_ALL=\"en_US.UTF-8\"\n\n# Copy GRASS GIS from build image\nCOPY --from=build /usr/local/bin/grass /usr/local/bin/grass\nCOPY --from=build /usr/local/grass* /usr/local/grass/\n\n# install external Python API\nRUN pip3 install --no-cache-dir --upgrade pip six grass-session --ignore-installed six\n\nRUN ln -sf /usr/local/grass `grass --config path`\nRUN grass --tmp-location XY --exec g.version -rge && \\\n    pdal --version && \\\n    python3 --version\n\n\nFROM grass as test\n\nRUN apk add --no-cache make gcc\n\n## run simple LAZ test\nCOPY docker/testdata/simple.laz /tmp/simple.laz\nCOPY docker/testdata/test_grass_session.py /scripts/test_grass_session.py\nENV GRASSBIN=grass\n\n# Test grass-session\n# Not yet ready for GRASS GIS 8:\nRUN /usr/bin/python3 /scripts/test_grass_session.py\n# Test PDAL\nRUN grass --tmp-location EPSG:25832 --exec r.in.pdal input=\"/tmp/simple.laz\" output=\"count_1\" method=\"n\" resolution=1 -g\n\n# Test addon installation\nRUN apk add --no-cache py3-scikit-learn\nRUN grass --tmp-location XY --exec g.extension extension=r.learn.ml2\n\n\nFROM grass as final\n\n# GRASS GIS specific\n# allow work with MAPSETs that are not owned by current user\nENV GRASSBIN=\"/usr/local/bin/grass\" \\\n    GRASS_SKIP_MAPSET_OWNER_CHECK=1 \\\n    SHELL=\"/bin/bash\"\nENV PROJ_NETWORK=\"ON\"\n\n\n# show installed version\nRUN grass --tmp-location XY --exec g.version -rge && \\\n    pdal --version && \\\n    python3 --version\n\n# Data workdir\nWORKDIR /grassdb\nVOLUME /grassdb\n\nCMD $GRASSBIN --version\n"
+}

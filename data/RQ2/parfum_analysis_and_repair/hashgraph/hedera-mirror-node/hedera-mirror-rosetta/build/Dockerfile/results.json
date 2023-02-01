@@ -1,0 +1,44 @@
+{
+  "startTime": 1674248095244,
+  "endTime": 1674248096305,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 6,
+        "lineEnd": 6,
+        "columnStart": 22,
+        "columnEnd": 72
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 36,
+        "lineEnd": 36,
+        "columnStart": 7,
+        "columnEnd": 64
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 40,
+        "lineEnd": 40,
+        "columnStart": 7,
+        "columnEnd": 117
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 6,
+        "lineEnd": 6,
+        "columnStart": 22,
+        "columnEnd": 72
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# This Dockerfile configuration is used to build\n# Importer, Rosetta and PostgreSQL into one image\n# and run the services using supervisord\n\nFROM ubuntu:20.04 as builder\nARG DEBIAN_FRONTEND=noninteractive\nRUN apt-get update && apt-get install --no-install-recommends -y gcc git openjdk-17-jdk-headless && rm -rf /var/lib/apt/lists/*;\n# GIT_REF can be a branch, a tag, or a 40-charater git commit hash\nARG GIT_REF=main\nARG REPO_URL=https://github.com/hashgraph/hedera-mirror-node\nRUN git clone --depth 1 -n \"${REPO_URL}\" hedera-mirror-node \\\n    && cd hedera-mirror-node \\\n    && git fetch --depth 1 origin \"${GIT_REF}\" \\\n    && git reset --hard FETCH_HEAD\nWORKDIR /hedera-mirror-node\nRUN ./mvnw clean package -DskipTests -pl hedera-mirror-importer,hedera-mirror-rosetta\nWORKDIR /app\nRUN mkdir importer rosetta scripts \\\n    && cp /hedera-mirror-node/hedera-mirror-rosetta/build/* . \\\n    && cp /hedera-mirror-node/hedera-mirror-importer/target/hedera-mirror-importer*.jar ./importer/hedera-mirror-importer.jar \\\n    && cp /hedera-mirror-node/hedera-mirror-rosetta/bin/hedera-mirror-rosetta ./rosetta \\\n    && cp /hedera-mirror-node/hedera-mirror-importer/src/main/resources/db/scripts/init.sh ./scripts\n\n# ######################################################################## #\n# --------------------------- Runner Container --------------------------- #\n# ######################################################################## #\n\nFROM ubuntu:20.04 as runner\n\n# ---------------------- Install Deps & PostgreSQL ------------------------ #\n# Add the PostgreSQL PGP key to verify their Debian packages.\n# It should be the same key as https://www.postgresql.org/media/keys/ACCC4CF8.asc\nARG DEBIAN_FRONTEND=noninteractive\nENV PG_CLUSTER_NAME=rosetta\nENV PG_VERSION=14\nRUN apt-get update \\\n    && apt-get install --no-install-recommends -y ca-certificates curl gnupg lsb-release \\\n    && apt-key adv --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys B97B0AFCAA1A47F044F244A07FCC7D46ACCC4CF8 \\\n    && echo \"deb https://apt.postgresql.org/pub/repos/apt/ $(lsb_release -cs)-pgdg main\" > /etc/apt/sources.list.d/pgdg.list \\\n    && apt-get update \\\n    && apt-get install --no-install-recommends -y postgresql-${PG_VERSION} postgresql-client-${PG_VERSION} supervisor openjdk-17-jre-headless \\\n    && rm -rf /var/lib/apt/lists/*\n\n# Create users for importer and rosetta\nRUN useradd -s /bin/bash importer && useradd -s /bin/bash rosetta\n\nENV PATH=\"/usr/lib/postgresql/${PG_VERSION}/bin:${PATH}\"\nENV PGDATA=\"/data/pgdata\"\nENV PGCONF=${PGDATA}\nRUN rm -fr /etc/postgresql/${PG_VERSION}/main\nVOLUME /data\n\n# Set stats_temp_directory to the default, i.e., \"pg_stat_tmp\" relative to the postgresql.conf file\nRUN sed -i 's/^stats_temp_directory/#stats_temp_directory/g' /etc/postgresql-common/createcluster.conf\n\nUSER root\nWORKDIR /app\n\n# Expose the ports (DB)(Rosetta)\nEXPOSE 5432 5700\nCOPY --from=builder /app /app\nENTRYPOINT [ \"./entrypoint.sh\" ]\n"
+}

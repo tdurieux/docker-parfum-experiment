@@ -1,0 +1,26 @@
+{
+  "startTime": 1674252816827,
+  "endTime": 1674252818009,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 20,
+        "lineEnd": 23,
+        "columnStart": 4,
+        "columnEnd": 92
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 20,
+        "lineEnd": 23,
+        "columnStart": 4,
+        "columnEnd": 92
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Take the official valhalla runner image,\n# remove a few superfluous things and\n# create a new runner image from ubuntu:20.04\n# with the previous runner's artifacts\n\nFROM valhalla/valhalla:run-latest as builder\nMAINTAINER Nils Nolde <nils@gis-ops.com>\n\n# remove some stuff from the original image\nRUN cd /usr/local/bin && \\\n  preserve=\"valhalla_service valhalla_build_tiles valhalla_build_config valhalla_build_admins valhalla_build_timezones valhalla_build_elevation valhalla_ways_to_edges valhalla_build_extract\" && \\\n  mv $preserve .. && \\\n  for f in valhalla*; do rm $f; done && \\\n  cd .. && mv $preserve ./bin\n\nFROM ubuntu:20.04 as runner_base\nMAINTAINER Nils Nolde <nils@gis-ops.com>\n\nRUN apt-get update > /dev/null && \\\n    export DEBIAN_FRONTEND=noninteractive && \\\n    apt-get install --no-install-recommends -y libluajit-5.1-2 \\\n      libzmq5 libczmq4 spatialite-bin libprotobuf-lite17 sudo locales \\\n      libsqlite3-0 libsqlite3-mod-spatialite libgeos-3.8.0 libcurl4 \\\n      python3.8-minimal python3-distutils curl unzip moreutils jq spatialite-bin > /dev/null && \\\n    ln -sf /usr/bin/python3.8 /usr/bin/python && \\\n    ln -sf /usr/bin/python3.8 /usr/bin/python3 && rm -rf /var/lib/apt/lists/*;\n\nCOPY --from=builder /usr/local /usr/local\nCOPY --from=builder /usr/bin/prime_* /usr/bin/\nCOPY --from=builder /usr/lib/x86_64-linux-gnu/libprime* /usr/lib/x86_64-linux-gnu/\nCOPY --from=builder /usr/lib/python3/dist-packages/valhalla/* /usr/lib/python3/dist-packages/valhalla/\n\nENV LD_LIBRARY_PATH=\"/usr/local/lib:${LD_LIBRARY_PATH}\"\n# export the True defaults\nENV use_tiles_ignore_pbf=True\nENV build_tar=True\nENV serve_tiles=True\n\n# what this does:\n# if the docker user specified a UID/GID (other than 0, would be a ludicrous instruction anyways) in the image build, we will use that to create the valhalla linux user in the image. that ensures that the docker user can edit the created files on the host without sudo and with 664/775 permissions, so that users of that group can also write. the default is to give the valhalla user passwordless sudo. that also means that all commands creating files in the entrypoint script need to be executed with sudo when built with defaults..\n# based on https://jtreminio.com/blog/running-docker-containers-as-current-host-user/, but this use case needed a more customized approach\n\n# with that we can properly test if the default was used or not\nARG VALHALLA_UID=59999\nARG VALHALLA_GID=59999\n\nRUN groupadd -g ${VALHALLA_GID} valhalla && \\\n  useradd -lmu ${VALHALLA_UID} -g valhalla valhalla && \\\n  mkdir /custom_files && \\\n  if [ $VALHALLA_UID != 59999 ] || [ $VALHALLA_GID != 59999 ]; then chmod 0775 custom_files && chown valhalla:valhalla /custom_files; else usermod -aG sudo valhalla && echo \"ALL            ALL = (ALL) NOPASSWD: ALL\" >> /etc/sudoers; fi\n\nCOPY scripts/. /valhalla/scripts\n\nUSER valhalla\n\nWORKDIR /custom_files\n\n# Smoke tests\nRUN    python3 -c \"import valhalla,sys; print (sys.version, valhalla)\" \\\n    && valhalla_build_config | jq type \\\n    && cat /usr/local/src/valhalla_version \\\n    && valhalla_build_tiles -v \\\n    && ls -la /usr/local/bin/valhalla*\n\n# Expose the necessary port\nEXPOSE 8002\nENTRYPOINT [\"/valhalla/scripts/run.sh\"]\nCMD [\"build_tiles\"]\n"
+}

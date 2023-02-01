@@ -1,0 +1,71 @@
+{
+  "startTime": 1674220319456,
+  "endTime": 1674220321055,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 30,
+        "lineEnd": 30,
+        "columnStart": 4,
+        "columnEnd": 27
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 89,
+        "lineEnd": 89,
+        "columnStart": 4,
+        "columnEnd": 241
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 101,
+        "lineEnd": 101,
+        "columnStart": 4,
+        "columnEnd": 287
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 5,
+        "lineEnd": 22,
+        "columnStart": 4,
+        "columnEnd": 8
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 64,
+        "lineEnd": 72,
+        "columnStart": 4,
+        "columnEnd": 37
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 5,
+        "lineEnd": 22,
+        "columnStart": 4,
+        "columnEnd": 8
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 64,
+        "lineEnd": 72,
+        "columnStart": 4,
+        "columnEnd": 37
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM ubuntu:20.04\n\n# Install common dependencies\nENV DEBIAN_FRONTEND=noninteractive\nRUN apt-get -y update && \\\n    apt-get -y --no-install-recommends install sudo \\\n    apt-utils \\\n    build-essential \\\n    openssl \\\n    clang \\\n    graphviz-dev \\\n    git \\\n    autoconf \\\n    libgnutls28-dev \\\n    llvm \\\n    python3-pip \\\n    nano \\\n    net-tools \\\n    vim \\\n    gdb \\\n    netcat \\\n    strace \\\n    wget && rm -rf /var/lib/apt/lists/*;\n\n# Add a new user ubuntu, pass: ubuntu\nRUN groupadd ubuntu && \\\n    useradd -rm -d /home/ubuntu -s /bin/bash -g ubuntu -G sudo -u 1000 ubuntu -p \"$(openssl passwd -1 ubuntu)\"\n\nRUN chmod 777 /tmp\n\nRUN pip3 install --no-cache-dir gcovr==4.2\n\n# Use ubuntu as default username\nUSER ubuntu\nWORKDIR /home/ubuntu\n\n# Import environment variable to pass as parameter to make (e.g., to make parallel builds with -j)\nARG MAKE_OPT\n\n# Set up fuzzers\nRUN git clone https://github.com/profuzzbench/aflnet.git && \\\n    cd aflnet && \\\n    make clean all $MAKE_OPT && \\\n    cd llvm_mode && make $MAKE_OPT\n\nRUN git clone https://github.com/profuzzbench/aflnwe.git && \\\n    cd aflnwe && \\\n    make clean all $MAKE_OPT && \\\n    cd llvm_mode && make $MAKE_OPT\n\n# Set up environment variables for AFLNet\nENV WORKDIR=\"/home/ubuntu/experiments\"\nENV AFLNET=\"/home/ubuntu/aflnet\"\nENV PATH=\"${PATH}:${AFLNET}:/home/ubuntu/.local/bin:${WORKDIR}\"\nENV AFL_PATH=\"${AFLNET}\"\nENV AFL_I_DONT_CARE_ABOUT_MISSING_CRASHES=1 \\\n    AFL_SKIP_CPUFREQ=1 \\\n    AFL_NO_AFFINITY=1\n\n\nRUN mkdir $WORKDIR\n\nUSER root\nRUN apt-get -y update && \\\n    apt-get -y --no-install-recommends install \\\n    bison \\\n    flex \\\n    autotools-dev autoconf automake libtool gettext gawk \\\n    gperf antlr3 libantlr3c-dev libconfuse-dev libunistring-dev libsqlite3-dev \\\n    libavcodec-dev libavformat-dev libavfilter-dev libswscale-dev libavutil-dev \\\n    libasound2-dev libmxml-dev libgcrypt20-dev libavahi-client-dev zlib1g-dev \\\n    libevent-dev libplist-dev libsodium-dev libjson-c-dev libwebsockets-dev \\\n    libcurl4-openssl-dev avahi-daemon && rm -rf /var/lib/apt/lists/*;\nUSER ubuntu\n\nCOPY --chown=ubuntu:ubuntu forked-daapd.patch ${WORKDIR}/forked-daapd.patch\nCOPY --chown=ubuntu:ubuntu forked-daapd-gcov.patch ${WORKDIR}/forked-daapd-gcov.patch\n\n\n# Set up environment variables for ASAN\nenv ASAN_OPTIONS='abort_on_error=1:symbolize=0:detect_leaks=0:detect_stack_use_after_return=1:detect_container_overflow=0:poison_array_cookie=0:malloc_fill_byte=0:max_malloc_fill_size=16777216'\n\n# Download and compile forked-daapd for fuzzing\nRUN cd $WORKDIR && \\\n    git clone https://github.com/ejurgensen/forked-daapd.git && \\\n    cd forked-daapd && \\\n    git checkout 2ca10d9 && \\\n    patch -p1 < $WORKDIR/forked-daapd.patch && \\\n    autoreconf -i && \\\n    CC=$AFLNET/afl-clang-fast CFLAGS=\"-DSQLITE_CORE\" ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" --prefix=/usr --sysconfdir=/etc --localstatedir=/var --disable-mpd --disable-itunes --disable-lastfm --disable-spotify --disable-verification --disable-shared --enable-static && \\\n    AFL_USE_ASAN=1 make -C src/ SMARTPL2SQL.c SMARTPL.c DAAP2SQL.c DAAPLexer.c RSPLexer.c RSP2SQL.c && \\\n    AFL_USE_ASAN=1 make clean all $MAKE_OPT\n\n# Download and compile forked-daapd for code coverage analysis\nRUN cd $WORKDIR && \\\n    git clone https://github.com/ejurgensen/forked-daapd.git forked-daapd-gcov && \\\n    cd forked-daapd-gcov && \\\n    git checkout 2ca10d9 && \\\n    patch -p1 < $WORKDIR/forked-daapd.patch && \\\n    patch -p1 < $WORKDIR/forked-daapd-gcov.patch && \\\n    autoreconf -i && \\\n    CFLAGS=\"-DSQLITE_CORE -fprofile-arcs -ftest-coverage\" LDFLAGS=\"-fprofile-arcs -ftest-coverage\" ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" --prefix=/usr --sysconfdir=/etc --localstatedir=/var --disable-mpd --disable-itunes --disable-lastfm --disable-spotify --disable-verification --disable-shared --enable-static && \\\n    make -C src/ SMARTPL2SQL.c SMARTPL.c DAAP2SQL.c DAAPLexer.c RSPLexer.c RSP2SQL.c && \\\n    make clean all $MAKE_OPT\n\n\n# Setting up the environment using root account\nUSER root\n\nRUN touch /var/log/forked-daapd.log && \\\n    chown ubuntu.root /var/log/forked-daapd.log\n\nRUN touch /var/run/forked-daapd.pid && \\\n    chown ubuntu.root /var/run/forked-daapd.pid\n\nRUN update-rc.d avahi-daemon defaults\n\nRUN mkdir /usr/share/forked-daapd/ && \\\n    cp -R $WORKDIR/forked-daapd/htdocs /usr/share/forked-daapd/htdocs\n\nRUN ln -s $WORKDIR/MP3 /tmp/MP3\n\n#The script needs to launch dbus and avahi-daemon using sudo\nRUN echo \"ALL ALL=(ALL) NOPASSWD: ALL\" >> /etc/sudoers\n\n# Switch back to ubuntu account\nUSER ubuntu\nRUN mkdir ${WORKDIR}/db\n\nCOPY --chown=ubuntu:ubuntu in-daap ${WORKDIR}/in-daap\nCOPY --chown=ubuntu:ubuntu cov_script.sh ${WORKDIR}/cov_script\nCOPY --chown=ubuntu:ubuntu run.sh ${WORKDIR}/run\nCOPY --chown=ubuntu:ubuntu MP3 ${WORKDIR}/MP3\nCOPY --chown=ubuntu:ubuntu forked-daapd.conf ${WORKDIR}/forked-daapd.conf\n"
+}

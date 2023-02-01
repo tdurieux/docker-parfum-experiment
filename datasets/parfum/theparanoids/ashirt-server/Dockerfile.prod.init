@@ -1,0 +1,5 @@
+FROM golang
+RUN go install github.com/rubenv/sql-migrate/sql-migrate@latest
+COPY backend/ /app/backend/
+WORKDIR /app
+ENTRYPOINT ["sql-migrate", "up", "-config=backend/dbconfig.yml"]

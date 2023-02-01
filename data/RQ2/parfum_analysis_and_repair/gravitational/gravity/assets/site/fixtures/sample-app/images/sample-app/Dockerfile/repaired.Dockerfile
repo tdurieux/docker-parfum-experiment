@@ -1,0 +1,1 @@
+# Docker image for the sample app

@@ -1,0 +1,35 @@
+{
+  "startTime": 1674244141780,
+  "endTime": 1674244141965,
+  "originalSmells": [
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 21,
+        "lineEnd": 22,
+        "columnStart": 4,
+        "columnEnd": 24
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 23,
+        "lineEnd": 28,
+        "columnStart": 7,
+        "columnEnd": 18
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 39,
+        "lineEnd": 43,
+        "columnStart": 7,
+        "columnEnd": 39
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM centos:6\n\n\nARG TERM=linux\n\nARG SCIDB_NAME=scidb\nARG SCIDB_LOG_LEVEL=WARN\nARG SCIDB_SCRIPT_URL=\"https://downloads.paradigm4.com/community/18.1/install-scidb-ce.sh\"\n\nARG SHIM_SHA1=ceec9f5f92d869d052f2654aa113238b59e11a42\n\n\nENV SCIDB_VER=18.1   \\\n    SCIDB_NAME=scidb\n\nENV SCIDB_INSTALL_PATH=/opt/scidb/$SCIDB_VER\n\nENV PATH=$PATH:$SCIDB_INSTALL_PATH/bin\n\n\n## Install dependencies\nRUN yum install --assumeyes    \\\n      centos-release-scl       \\\n    && yum install --assumeyes \\\n        devtoolset-3-runtime   \\\n        devtoolset-3-toolchain \\\n        openssl-devel          \\\n        wget                   \\\n        zlib-devel \\\n    && yum clean all && rm -rf /var/cache/yum\n\n\n## Get SciDB install script\nRUN wget --no-verbose --output-document /install-scidb-ce.sh $SCIDB_SCRIPT_URL\n\n\n## Run SciDB install script\nRUN yes                                 \\\n    |  bash -x /install-scidb-ce.sh     \\\n    && yum install --assumeyes          \\\n        log4cxx-devel                   \\\n        protobuf-devel                  \\\n        scidb-$SCIDB_VER-dev            \\\n        scidb-$SCIDB_VER-libboost-devel \\\n    && yum clean all && rm -rf /var/cache/yum\n\n\n## Setup SSH\nRUN echo 'StrictHostKeyChecking no'                        \\\n    >> /etc/ssh/ssh_config                                 \\\n    && ssh-keygen -f /root/.ssh/id_rsa -q -N \"\"            \\\n    && cp /root/.ssh/id_rsa.pub /root/.ssh/authorized_keys\n\n\n## Setup SciDB \"config.ini\"\nCOPY config.deb.ini $SCIDB_INSTALL_PATH/etc/config.ini\n\n\n## Setup PostgreSQL and SciDB\nRUN echo \"127.0.0.1:5432:$SCIDB_NAME:$SCIDB_NAME:`                   \\\n            date +%s | sha256sum | base64 | head -c 32`\"             \\\n    >  /root/.pgpass                                                 \\\n    && chmod go-r /root/.pgpass                                      \\\n    && chmod a+r $SCIDB_INSTALL_PATH/etc/config.ini                  \\\n    && service sshd start                                            \\\n    && service postgresql-9.3 start                                  \\\n    && sleep 3                                                       \\\n    && su --command=\"                                                \\\n            $SCIDB_INSTALL_PATH/bin/scidb.py init-syscat $SCIDB_NAME \\\n                --db-password `                                      \\\n                    cut --delimiter : --fields 5  /root/.pgpass`\"    \\\n        postgres                                                     \\\n    && $SCIDB_INSTALL_PATH/bin/scidb.py init-all --force $SCIDB_NAME \\\n    && service postgresql-9.3 stop                                   \\\n    && sed --in-place                                                \\\n        s/log4j.rootLogger=INFO/log4j.rootLogger=$SCIDB_LOG_LEVEL/   \\\n        $SCIDB_INSTALL_PATH/share/scidb/log4cxx.properties\n\n\nRUN wget --no-verbose --output-document -                           \\\n        https://github.com/Paradigm4/shim/archive/$SHIM_SHA1.tar.gz \\\n    |  tar --extract --gzip --directory=/usr/local/src              \\\n    && cd /usr/local/src/shim-$SHIM_SHA1                            \\\n    && make service                                                 \\\n    && openssl req                                                  \\\n        -new                                                        \\\n        -newkey rsa:4096                                            \\\n        -days 3650                                                  \\\n        -nodes                                                      \\\n        -x509                                                       \\\n        -subj \"/C=US/ST=MA/L=Waltham/O=Paradigm4/CN=$(hostname)\"    \\\n        -keyout /var/lib/shim/ssl_cert.pem                          \\\n    2> /dev/null                                                    \\\n    >> /var/lib/shim/ssl_cert.pem\n\n\n## Setup container entrypoint\nCOPY docker-entrypoint.sh /\nENTRYPOINT [\"/docker-entrypoint.sh\"]\n\n\n## Port | App\n## -----+-----\n## 1239 | SciDB iquery\n## 8080 | SciDB Shim (HTTP)\n## 8083 | SciDB Shim (HTTPS)\nEXPOSE 1239 8080 8083\n"
+}

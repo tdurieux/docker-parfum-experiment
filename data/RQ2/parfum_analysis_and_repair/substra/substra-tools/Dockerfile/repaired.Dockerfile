@@ -1,0 +1,16 @@
+FROM nvidia/cuda:9.2-base-ubuntu18.04
+
+RUN apt-get update; apt-get install --no-install-recommends -y build-essential libssl-dev python3 python3-dev python3-pip && rm -rf /var/lib/apt/lists/*;
+
+RUN pip3 install --no-cache-dir --upgrade pip
+RUN pip3 install --no-cache-dir pillow==6.1.0 pandas==0.24.2 numpy==1.16.4 scikit-learn==0.21.2 lifelines==0.22.1 scipy==1.2.1
+
+ADD ./setup.py /tmp
+ADD ./README.md /tmp
+ADD ./substratools /tmp/substratools
+RUN cd /tmp && pip install --no-cache-dir .
+
+RUN mkdir -p /sandbox
+ENV PYTHONPATH /sandbox
+
+WORKDIR /sandbox

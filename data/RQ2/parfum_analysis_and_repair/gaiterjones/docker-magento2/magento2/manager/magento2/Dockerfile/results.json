@@ -1,0 +1,62 @@
+{
+  "startTime": 1674217260372,
+  "endTime": 1674217261309,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 41,
+        "lineEnd": 41,
+        "columnStart": 7,
+        "columnEnd": 107
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 102,
+        "lineEnd": 102,
+        "columnStart": 7,
+        "columnEnd": 97
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 45,
+        "lineEnd": 45,
+        "columnStart": 7,
+        "columnEnd": 62
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 8,
+        "lineEnd": 8,
+        "columnStart": 25,
+        "columnEnd": 57
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 31,
+        "lineEnd": 33,
+        "columnStart": 22,
+        "columnEnd": 9
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 39,
+        "lineEnd": 39,
+        "columnStart": 25,
+        "columnEnd": 106
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM gaiterjones/phusion2204-apache2-php8-1:5\nLABEL maintainer=\"paj@gaiterjones.com\"\nLABEL service \"Magento 2 MANAGER Production Service\"\n\nENV CREATION_DATE 01072022\n\n# dependencies\nRUN requirements=\"libsodium-dev libonig-dev libzip-dev libpng-dev libcurl3-dev zlib1g-dev libpng-dev libjpeg-turbo8 libjpeg-turbo8-dev libfreetype6 libfreetype6-dev libicu-dev libxslt1-dev msmtp nano git\" \\\n    && apt-get update && apt-get install --no-install-recommends -y $requirements && rm -rf /var/lib/apt/lists/* \\\n    && docker-php-ext-configure gd \\\n      --enable-gd \\\n      --with-jpeg \\\n      --with-freetype \\\n    && docker-php-ext-install -j$(nproc) gd \\\n    && docker-php-ext-install -j$(nproc) pdo_mysql \\\n    && docker-php-ext-install -j$(nproc) bcmath \\\n    && docker-php-ext-install -j$(nproc) mbstring \\\n    && docker-php-ext-install -j$(nproc) zip \\\n    && docker-php-ext-install -j$(nproc) intl \\\n    && docker-php-ext-install -j$(nproc) xsl \\\n    && docker-php-ext-install -j$(nproc) soap \\\n    && docker-php-ext-install -j$(nproc) opcache \\\n    && docker-php-ext-install -j$(nproc) sockets \\\n    && docker-php-ext-install -j$(nproc) sodium \\\n    && requirementsToRemove=\"libcurl3-dev libfreetype6-dev libpng-dev libjpeg-turbo8-dev\" \\\n    && apt-get purge --auto-remove -y $requirementsToRemove\n\n# MYSQLI for PAJ/APPLICATIONS\nRUN docker-php-ext-install mysqli\n\n# manager utils / deps\nRUN apt-get update && apt-get -yq --no-install-recommends install \\\n    jpegoptim \\\n\tpngcrush \\\n    && apt-get clean && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*\n\n# Install memcache extension for PHP8\n#\nRUN set -x \\\n    && apt-get update && apt-get install -y --no-install-recommends unzip libssl-dev libpcre3 libpcre3-dev \\\n    && cd /tmp \\\n    && curl -f -sSL -o php8.zip https://github.com/websupport-sk/pecl-memcache/archive/refs/tags/8.0-fixed.zip \\\n    && unzip php8.zip \\\n    && cd pecl-memcache-8.0-fixed \\\n    && /usr/local/bin/phpize \\\n    && ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" --with-php-config=/usr/local/bin/php-config \\\n    && make \\\n    && make install \\\n    && echo \"extension=memcache.so\" > /usr/local/etc/php/conf.d/ext-memcache.ini \\\n    && rm -rf /tmp/pecl-memcache-8.0-fixed php8.zip && rm -rf /var/lib/apt/lists/*;\n\n# prepare user/s\n#\nRUN set -x \\\n    && usermod -u 33 www-data \\\n    && adduser --disabled-password --gecos '' magento \\\n    && usermod -u 1000 magento \\\n    && usermod -a -G www-data magento\n\n# configure apache env\n#\nENV APACHE_RUN_USER www-data\nENV APACHE_RUN_GROUP www-data\nENV APACHE_LOG_DIR /var/log/apache2\nENV APACHE_PID_FILE /var/run/apache2.pid\nENV APACHE_RUN_DIR /var/run/apache2\nENV APACHE_LOCK_DIR /var/lock/apache2\n# Ensure old PID due to previous usage killed\nRUN rm -f /var/run/apache2/apache2.pid\n\n# configs\n#\nCOPY ./php/php.ini /usr/local/etc/php/conf.d/php.ini\nCOPY ./apache/apache2.conf /etc/apache2/apache2.conf\nCOPY ./apache/000-default.conf /etc/apache2/sites-available/000-default.conf\nCOPY ./apache/remoteip.conf /etc/apache2/conf-available/remoteip.conf\nCOPY ./apache/.htpasswd /etc/apache2/.htpasswd\nCOPY ./phpRedisAdmin_config.inc.php /var/www/dev/phpRedisAdmin/includes/config.inc.php\n\n# msmtprc smtp config\n#\nCOPY ./php/msmtprc /usr/local/etc/msmtprc\nARG APPDOMAIN\nARG SMTP\nRUN set -x \\\n\t&& sed -i \"s/XMAILHOSTX/$SMTP/g\" /usr/local/etc/msmtprc \\\n\t&& sed -i \"s/XMAILDOMAINX/$APPDOMAIN/g\" /usr/local/etc/msmtprc \\\n\t&& cat /usr/local/etc/msmtprc\n\n# enable mods and sites\n#\nRUN a2enmod rewrite \\\n\t&& a2enmod expires \\\n\t&& a2enmod headers \\\n\t&& a2enmod remoteip \\\n\t&& a2enconf remoteip \\\n\t&& a2ensite 000-default.conf\n\n# >>> DOCKER IN DOCKER\nRUN set -x \\\n    && cd /tmp \\\n    && groupmod -g 997 runit-log \\\n    && curl -f -L -o docker-latest.tgz https://get.docker.com/builds/Linux/x86_64/docker-latest.tgz \\\n    && gzip -d docker-latest.tgz \\\n    && tar -xvf docker-latest.tar \\\n    && mv /tmp/docker/docker /usr/local/bin \\\n    && rm -rf /tmp/docker docker-latest.tar \\\n    && addgroup --gid 999 docker \\\n    && usermod -aG docker www-data \\\n    && usermod -aG docker magento\n\n# Uncomment for Magepack\n#RUN set -x \\\n#    && cd /tmp \\\n#    && curl -sL https://deb.nodesource.com/setup_16.x | bash - \\\n#    && apt-get install -y nodejs gconf-service libasound2 libatk1.0-0 libatk-bridge2.0-0 libc6 libcairo2 libcups2 libdbus-1-3 libexpat1 libfontconfig1 libgcc1 libgconf-2-4 libgdk-pixbuf2.0-0 libglib2.0-0 libgtk-3-0 libnspr4 libpango-1.0-0 libpangocairo-1.0-0 libstdc++6 libx11-6 libx11-xcb1 libxcb1 libxcomposite1 libxcursor1 libxdamage1 libxext6 libxfixes3 libxi6 libxrandr2 libxrender1 libxss1 libxtst6 ca-certificates fonts-liberation libappindicator1 libnss3 lsb-release xdg-utils wget \\\n#    && npm install -g magepack  --unsafe-perm=true --allow-root \\\n#    && apt-get clean && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*\n\n# log rotate for Magento2\nCOPY ./logrotate /etc/logrotate.d/magento2\n\n# https://devdocs.magento.com/guides/v2.3/config-guide/cli/config-cli.html#config-install-cli-first\nRUN export PATH=$PATH:/var/www/dev/magento2/bin\n\n# cleanup\n#\nRUN apt-get clean && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*\n\n# cron job\n#\nADD crontab /etc/cron.d/magento2-cron\nRUN chmod 0644 /etc/cron.d/magento2-cron\nRUN crontab -u magento /etc/cron.d/magento2-cron\n\nWORKDIR /var/www/dev/magento2\n\n# Manager STARTUP script\nCOPY start.sh /usr/local/bin/startmanager.sh\nRUN chmod +x /usr/local/bin/startmanager.sh\nCMD [\"/usr/local/bin/startmanager.sh\"]\n"
+}

@@ -1,0 +1,25 @@
+FROM registry.fedoraproject.org/fedora
+
+# Adjust system defaults
+RUN set -x && \
+    sed -i '/tsflags=nodocs/d' /etc/dnf/dnf.conf && \
+    echo "Set disable_coredump false" >> /etc/sudo.conf
+
+# Install necessary packages
+RUN set -x && \
+    dnf install -y dnf-plugins-core && \
+    dnf copr enable -y psss/tmt && \
+    dnf install -y tmt-all beakerlib && \
+    dnf autoremove -y && \
+    dnf clean all
+
+# Prepare files for experimenting
+RUN mkdir /tmt
+COPY .fmf /tmt/.fmf
+COPY tests /tmt/tests
+COPY plans /tmt/plans
+COPY stories /tmt/stories
+
+# Run all plans under the regular user by default
+WORKDIR /tmt
+CMD tmt run -av provision -h local

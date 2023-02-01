@@ -1,0 +1,21 @@
+FROM openstatefoundation/open-raadsinformatie-backend
+MAINTAINER Joep Meindertsma <joep@argu.co>
+
+# Change to root for installing
+USER root
+
+RUN apk --update --no-cache add nano
+
+# Install backend testing dependencies
+RUN pip install --no-cache-dir --no-warn-conflicts pylint==2.4.4 nose2==0.9.2 coverage==5.0.3
+
+# Copy backend testing files
+COPY  .pylintrc /opt/ori/.pylintrc
+COPY tests/__init__.py  /opt/ori/tests/__init__.py
+COPY tests/ocd_backend /opt/ori/tests/ocd_backend
+COPY version.py /opt/ori/version.py
+
+RUN chown -R celery:celery tests
+
+# Switching back to celery user
+USER celery

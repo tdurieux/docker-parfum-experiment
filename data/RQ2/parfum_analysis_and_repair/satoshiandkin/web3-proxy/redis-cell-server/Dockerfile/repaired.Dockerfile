@@ -1,0 +1,1 @@
+# A redis server with the libredis_cell module installed

@@ -1,0 +1,62 @@
+{
+  "startTime": 1674250478124,
+  "endTime": 1674250478512,
+  "originalSmells": [
+    {
+      "rule": "wgetUseHttpsUrl",
+      "position": {
+        "lineStart": 165,
+        "lineEnd": 165,
+        "columnStart": 4,
+        "columnEnd": 90
+      }
+    },
+    {
+      "rule": "wgetUseHttpsUrl",
+      "position": {
+        "lineStart": 171,
+        "lineEnd": 171,
+        "columnStart": 4,
+        "columnEnd": 80
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 66,
+        "lineEnd": 66,
+        "columnStart": 25,
+        "columnEnd": 46
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 29,
+        "lineEnd": 64,
+        "columnStart": 2,
+        "columnEnd": 9
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 80,
+        "lineEnd": 81,
+        "columnStart": 4,
+        "columnEnd": 24
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 160,
+        "lineEnd": 161,
+        "columnStart": 4,
+        "columnEnd": 21
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "#\n# Copyright 2015 Google Inc. All Rights Reserved.\n#\n# Licensed under the Apache License, Version 2.0 (the \"License\");\n# you may not use this file except in compliance with the License.\n# You may obtain a copy of the License at\n#\n#     http://www.apache.org/licenses/LICENSE-2.0\n#\n# Unless required by applicable law or agreed to in writing, software\n# distributed under the License is distributed on an \"AS IS\" BASIS,\n# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.\n# See the License for the specific language governing permissions and\n# limitations under the License.\n#\nFROM debian:jessie\n\nENV DEBIAN_FRONTEND noninteractive\nENV MAVEN_VERSION 3.2.2\nENV GRADLE_VERSION 2.3\n# Set an environment variable to configure which container server to use.\n# We use the Google Container Registry:\n#     https://cloud.google.com/tools/container-registry/.\nENV GCLOUD_CONTAINER_SERVER gcr.io\n# Eagerly run this authorization script upon startup.\nENV ONRUN $ONRUN \"/google/scripts/gcloud_docker_auth.sh\"\n\n# Install common packages\nRUN apt-get update && apt-get upgrade -y && \\\n  apt-get install -y -qq --no-install-recommends \\\n      apparmor \\\n      apt-transport-https \\\n      ca-certificates-java \\\n      cron \\\n      curl \\\n      rsyslog \\\n      emacs-nox \\\n      gcc \\\n      git \\\n      initramfs-tools \\\n      iptables \\\n      jq \\\n      less \\\n      locales \\\n      lxc \\\n      make \\\n      man-db \\\n      manpages \\\n      mercurial \\\n      mysql-client \\\n      nano \\\n      nginx \\\n      openjdk-7-jre-headless \\\n      openssh-server \\\n      python \\\n      python3 \\\n      python-dev \\\n      python-setuptools \\\n      sudo \\\n      supervisor \\\n      symlinks \\\n      unzip \\\n      vim \\\n      wget \\\n      zip && \\\n  apt-get clean && \\\n  easy_install -U pip && pip install --no-cache-dir -U crcmod && rm -rf /var/lib/apt/lists/*;\n\n# Install a UTF-8 locale by default.\nRUN echo \"en_US.UTF-8 UTF-8\" >/etc/locale.gen && \\\n    locale-gen && \\\n    update-locale LANG=en_US.UTF-8\n\n# Install Docker.\nRUN echo deb https://get.docker.io/ubuntu docker main \\\n        > /etc/apt/sources.list.d/docker.list\nRUN apt-key adv \\\n        --keyserver hkp://keyserver.ubuntu.com:80 \\\n        --recv-keys 36A1D7869245C8950F966E92D8576A8BA88D21E9\nRUN apt-get update && \\\n    apt-get install -y --no-install-recommends \\\n        lxc-docker-1.9.1 && \\\n    apt-get clean && rm -rf /var/lib/apt/lists/*;\n\n# Add jpetazzo's magic wrapper.\n# This has been modified to start docker using 'service',\n# which means setting DOCKER_DAEMON_ARGS does nothing.\n# Instead, you can set DOCKER_SETTINGS_FILE to change\n# /etc/default/docker prior to starting the docker service.\nADD third_party/jpetazzo/dind/wrapdocker /google/scripts/wrapdocker.sh\nRUN chmod +x /google/scripts/wrapdocker.sh\n\n# Must be excluded from aufs.\nVOLUME /var/lib/docker\n\n# Make the docker daemon log to a file, so we can realistically use the shell.\nENV LOG file\n\nENV DOCKER_HOST unix:///var/run/docker.sock\n\n# Add our onrun utility, which allows commands to be run on startup\n# by adding them to the ONRUN environment variable. For example:\n#     ENV ONRUN $ONRUN \"echo running my command\"\nADD onrun.sh /google/scripts/onrun.sh\nRUN chmod +x /google/scripts/onrun.sh\n\n# Now run the wrapdocker script on startup.\nENV ONRUN $ONRUN \"/google/scripts/wrapdocker.sh\"\n\n# Configure sshd to be used for Devshell connections.\nRUN rm -fv /etc/ssh/ssh_host_*\nRUN mkdir /var/run/sshd\nADD sshd_config /etc/ssh/\n\n# Add devshell startup logic.\nADD devshell/startup.sh         /google/devshell/startup.sh\nADD devshell/authorized_keys.sh /google/devshell/authorized_keys.sh\nADD devshell/bashrc.google      /google/devshell/bashrc.google\nRUN chmod -R 644 /google/devshell/bashrc.google\nRUN mkdir /google/devshell/bashrc.google.d\nENV ONRUN $ONRUN \"/google/devshell/startup.sh\"\n\n# Git credential helpers for source.developers.google.com and Gerrit.\nADD gitconfig /etc/gitconfig\nRUN chmod -R 644 /etc/gitconfig\n\n# Make it so the user does not need to type in their password for sudo\nRUN echo \"%sudo ALL=NOPASSWD: ALL\" >> /etc/sudoers\n\n# Start the cron daemon.\nENV ONRUN $ONRUN \"cron\"\n\n# Add cron job to run \"gcloud preview docker --authorize_only\" every 5 minutes.\nADD gcloud_docker_auth.sh /google/scripts/gcloud_docker_auth.sh\nRUN chmod +x /google/scripts/gcloud_docker_auth.sh\nRUN (crontab -l 2>/dev/null; \\\n        echo '*/5 * * * * /google/scripts/gcloud_docker_auth.sh') \\\n    | crontab\n\n# Install the Google Cloud SDK.\nRUN wget https://dl.google.com/dl/cloudsdk/release/google-cloud-sdk.zip && \\\n    unzip google-cloud-sdk.zip -d /google/ && \\\n    rm google-cloud-sdk.zip\nENV CLOUD_SDK /google/google-cloud-sdk\nRUN $CLOUD_SDK/install.sh \\\n        --usage-reporting=true \\\n        --rc-path=/etc/bash.bashrc \\\n        --bash-completion=true \\\n        --path-update=true \\\n        --disable-installation-options\nENV PATH $CLOUD_SDK/bin:$PATH\n\n# Install the gcloud preview app support and Managed VMs.\nRUN yes | \\\n    gcloud components update \\\n        core \\\n        gcloud\n\n# Install the Java 7 JDK.\nRUN apt-get update && \\\n    apt-get install -y --no-install-recommends \\\n        openjdk-7-jdk && \\\n    apt-get clean && rm -rf /var/lib/apt/lists/*;\n\n# Install Maven $MAVEN_VERSION\nRUN wget https://archive.apache.org/dist/maven/binaries/apache-maven-$MAVEN_VERSION-bin.zip && \\\n    unzip apache-maven-$MAVEN_VERSION-bin.zip && \\\n    rm apache-maven-$MAVEN_VERSION-bin.zip\nENV PATH /apache-maven-$MAVEN_VERSION/bin:$PATH\n\n# Install Gradle $GRADLE_VERSION\nRUN wget https://services.gradle.org/distributions/gradle-$GRADLE_VERSION-bin.zip && \\\n    unzip gradle-$GRADLE_VERSION-bin.zip && \\\n    rm gradle-$GRADLE_VERSION-bin.zip\nENV PATH /gradle-$GRADLE_VERSION/bin:$PATH\n\nENTRYPOINT [\"/bin/bash\", \"/google/scripts/onrun.sh\"]\n"
+}

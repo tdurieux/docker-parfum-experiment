@@ -1,0 +1,61 @@
+FROM bobanetwork/builder AS builder
+FROM node:14-alpine
+
+RUN apk add --no-cache git curl bash jq
+WORKDIR /opt/optimism/
+
+COPY --from=builder /optimism/*.json /optimism/yarn.lock ./
+COPY --from=builder /optimism/node_modules ./node_modules
+
+# copy deps (would have been nice if docker followed the symlinks required)
+COPY --from=builder /optimism/packages/sdk/package.json ./packages/sdk/package.json
+COPY --from=builder /optimism/packages/sdk/dist ./packages/sdk/dist
+
+COPY --from=builder /optimism/packages/core-utils/package.json ./packages/core-utils/package.json
+COPY --from=builder /optimism/packages/core-utils/dist ./packages/core-utils/dist
+
+# copy Turing
+COPY --from=builder /optimism/packages/boba/turing ./packages/boba/turing
+
+# get the needed built artifacts
+WORKDIR /opt/optimism/packages/contracts
+COPY --from=builder /optimism/packages/contracts/dist ./dist
+COPY --from=builder /optimism/packages/contracts/*.json ./
+COPY --from=builder /optimism/packages/contracts/node_modules ./node_modules
+COPY --from=builder /optimism/packages/contracts/artifacts ./artifacts
+COPY --from=builder /optimism/packages/contracts/deployments ./deployments
+
+# get non-build static artifacts from the host
+COPY packages/contracts/bin ./bin
+COPY packages/contracts/contracts ./contracts
+COPY packages/contracts/hardhat.config.ts ./
+COPY packages/contracts/deploy ./deploy
+COPY packages/contracts/tasks ./tasks
+COPY packages/contracts/src ./src
+COPY packages/contracts/test/helpers/constants.ts ./test/helpers/constants.ts
+COPY packages/contracts/scripts ./scripts
+
+# get the built artifacts
+WORKDIR /opt/optimism/packages/boba/contracts
+COPY --from=builder /optimism/packages/boba/contracts/tsconfig.json ./tsconfig.json
+COPY --from=builder /optimism/packages/boba/contracts/package.json ./package.json
+COPY --from=builder /optimism/packages/boba/contracts/node_modules ./node_modules
+COPY --from=builder /optimism/packages/boba/contracts/artifacts ./artifacts
+
+# Copy solc compilers
+COPY --from=builder /root/.cache/hardhat-nodejs/compilers/linux-amd64/solc-linux-amd64-v0.4.11+commit.68ef5810 /root/.cache/hardhat-nodejs/compilers/linux-amd64/
+COPY --from=builder /root/.cache/hardhat-nodejs/compilers/linux-amd64/solc-linux-amd64-v0.5.17+commit.d19bba13 /root/.cache/hardhat-nodejs/compilers/linux-amd64/
+COPY --from=builder /root/.cache/hardhat-nodejs/compilers/linux-amd64/solc-linux-amd64-v0.8.9+commit.e5eed63a /root/.cache/hardhat-nodejs/compilers/linux-amd64/
+COPY --from=builder /root/.cache/hardhat-nodejs/compilers/linux-amd64/solc-linux-amd64-v0.6.6+commit.6c089d02 /root/.cache/hardhat-nodejs/compilers/linux-amd64/
+
+# get static artifacts from the host
+COPY packages/boba/contracts/bin ./bin
+COPY packages/boba/contracts/contracts ./contracts
+COPY packages/boba/contracts/hardhat.config.ts ./
+COPY packages/boba/contracts/deploy ./deploy
+COPY packages/boba/contracts/tasks ./tasks
+COPY packages/boba/contracts/scripts ./scripts
+COPY packages/boba/contracts/preSupportedTokens.json ./
+COPY packages/boba/contracts/preSupportedNFTs.json ./
+
+ENTRYPOINT ["./scripts/wait-for-l1-and-l2.sh", "./scripts/deployer.sh"]

@@ -1,0 +1,27 @@
+FROM golang:1.16-buster AS builder
+
+RUN set -eux \
+	&& apk --update add --no-cache \
+		bash \
+		git \
+		make
+
+RUN echo "" > ~/.gitconfig \
+    && git config --global url."https://github.com".insteadOf git://github.com \
+    && git config --global http.https://gopkg.in.followRedirects true
+
+WORKDIR /go/src/github.com/oinume/lekcije
+Add . /go/src/github.com/oinume/lekcije
+RUN make build/server
+
+
+FROM alpine
+COPY --from=builder /go/src/github.com/oinume/lekcije/bin/lekcije_server /lekcije_server
+
+RUN set -eux \
+	&& apk --update add --no-cache ca-certificates
+
+EXPOSE ${PORT:-4001}
+EXPOSE ${GRPC_PORT:-4002}
+
+ENTRYPOINT ["/lekcije_server"]

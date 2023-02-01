@@ -1,0 +1,1 @@
+# Docker to serve Django's static files via Nginx

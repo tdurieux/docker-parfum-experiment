@@ -1,0 +1,44 @@
+{
+  "startTime": 1674253338681,
+  "endTime": 1674253339485,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseY",
+      "position": {
+        "lineStart": 87,
+        "lineEnd": 88,
+        "columnStart": 4,
+        "columnEnd": 55
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 38,
+        "lineEnd": 38,
+        "columnStart": 4,
+        "columnEnd": 90
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 38,
+        "lineEnd": 38,
+        "columnStart": 4,
+        "columnEnd": 90
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 13,
+        "lineEnd": 13,
+        "columnStart": 4,
+        "columnEnd": 24
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "ARG BUILDPLATFORM=linux/amd64\nARG DEBIAN_VERSION=buster-slim\nARG ALPINE_VERSION=3.16\nARG GO_VERSION=1.17\nARG GOLANGCI_LINT_VERSION=v1.46.2\nARG XCPUTRANSLATE_VERSION=v0.6.0\n\nFROM --platform=${BUILDPLATFORM} qmcgaw/xcputranslate:${XCPUTRANSLATE_VERSION} AS xcputranslate\nFROM --platform=${BUILDPLATFORM} qmcgaw/binpot:golangci-lint-${GOLANGCI_LINT_VERSION} AS golangci-lint\n\nFROM --platform=${BUILDPLATFORM} golang:${GO_VERSION}-alpine${ALPINE_VERSION} AS entrypoint\nENV CGO_ENABLED=0\nWORKDIR /tmp/gobuild\nRUN apk --update --no-cache add git\nCOPY --from=xcputranslate /xcputranslate /usr/local/bin/xcputranslate\nCOPY --from=golangci-lint /bin /go/bin/golangci-lint\nCOPY .golangci.yml .\nCOPY go.mod go.sum ./\nRUN go mod download 2>&1\nCOPY cmd/main.go .\nCOPY internal/ ./internal/\nRUN go test ./...\nRUN golangci-lint run --timeout=10m\nARG VERSION=unknown\nARG BUILD_DATE=\"an unknown date\"\nARG COMMIT=unknown\nARG TARGETPLATFORM\nRUN GOARCH=\"$(xcputranslate translate -field arch -targetplatform ${TARGETPLATFORM})\" \\\r\n    GOARM=\"$(xcputranslate translate -field arm -targetplatform ${TARGETPLATFORM})\" \\\r\n    go build -trimpath -ldflags=\"-s -w \\\r\n    -X 'main.version=$VERSION' \\\r\n    -X 'main.buildDate=$BUILD_DATE' \\\r\n    -X 'main.commit=$COMMIT' \\\r\n    \" -o entrypoint main.go\n\nFROM debian:${DEBIAN_VERSION} AS builder\nRUN dpkg --add-architecture i386 && \\\r\n    apt-get -qq update && \\\n    apt-get -qq --no-install-recommends install -y nasm:i386 build-essential gcc-multilib g++-multilib paxctl wget && rm -rf /var/lib/apt/lists/*;\nWORKDIR /cod4\nARG COD4X_VERSION=20.1\nRUN wget -qO- https://github.com/callofduty4x/CoD4x_Server/archive/${COD4X_VERSION}.tar.gz | \\\r\n    tar -xz --strip-components=1 && \\\r\n    # sed -i 's/LINUX_LFLAGS=/LINUX_LFLAGS=-static /' makefile && \\\r\n    make\n\nFROM --platform=${BUILDPLATFORM} alpine:${ALPINE_VERSION} AS downloader\nWORKDIR /tmp\nARG COD4X_VERSION=20.1\nRUN apk add --update --no-cache -q --progress unzip && \\\r\n    wget -qO cod4x_server-linux.zip https://cod4x.me/downloads/cod4x_server-linux_${COD4X_VERSION}.zip && \\\r\n    unzip -q cod4x_server-linux.zip -d . && \\\r\n    rm cod4x_server-linux.zip && \\\r\n    apk del unzip && \\\r\n    dirname=\"cod4x_server-linux_20.0\" && \\\r\n    mv \\\r\n    ${dirname}/cod4x-linux-server/main/xbase_00.iwd \\\r\n    ${dirname}/cod4x-linux-server/main/jcod4x_00.iwd \\\r\n    ${dirname}/cod4x-linux-server/zone/cod4x_patchv2.ff \\\r\n    ${dirname}/cod4x-linux-server/steam_api.so \\\r\n    ${dirname}/cod4x-linux-server/steamclient.so \\\r\n    ./ && \\\r\n    rm -r ${dirname}\n\nFROM --platform=${BUILDPLATFORM} alpine:${ALPINE_VERSION} AS files\nWORKDIR /tmp\nCOPY --from=downloader \\\r\n    /tmp/xbase_00.iwd \\\r\n    /tmp/jcod4x_00.iwd \\\r\n    /tmp/cod4x_patchv2.ff \\\r\n    /tmp/steam_api.so \\\r\n    /tmp/steamclient.so \\\r\n    ./\nCOPY --from=builder /cod4/bin/cod4x18_dedrun .\nCOPY server.cfg .\nCOPY --from=entrypoint /tmp/gobuild/entrypoint .\nRUN touch autoupdate.lock cod4x18_dedrun.new steam_api.so.new\nARG UID=1000\nARG GID=1000\nRUN chown ${UID}:${GID} * && \\\r\n    chmod 600 cod4x18_dedrun.new steam_api.so.new && \\\r\n    chmod 500 entrypoint cod4x18_dedrun steam_api.so steamclient.so && \\\r\n    chmod 400 xbase_00.iwd jcod4x_00.iwd cod4x_patchv2.ff server.cfg\n\nFROM debian:${DEBIAN_VERSION}\nRUN dpkg --add-architecture i386 && \\\r\n    apt-get update -qq && \\\n    apt-get install -y -qq --no-install-recommends \\\n    libc6 libgcc1:i386 libstdc++6:i386 ca-certificates && \\\n    apt-get autoremove -qq && \\\n    rm -rf /var/lib/apt/lists/*\nARG UID=1000\nARG GID=1000\nRUN mkdir -p /home/user/.callofduty4/main && \\\r\n    addgroup --gid 1000 cod4 && \\\r\n    adduser --system user --home /home/user --uid ${UID} --gid ${GID} && \\\r\n    chown -R user /home/user && \\\r\n    chmod -R 700 /home/user\nWORKDIR /home/user/cod4\nRUN chown ${UID}:${GID} /home/user/cod4\nENTRYPOINT [ \"/home/user/cod4/entrypoint\" ]\nCMD +set dedicated 2+set sv_cheats \"1\"+set sv_maxclients \"64\"+exec server.cfg+map_rotate\nEXPOSE 28960/udp 28960/tcp 8000/tcp\nENV \\\r\n    HTTP_SERVER=on \\\r\n    ROOT_URL=/\nUSER user\nCOPY --from=files --chown=${UID}:${GID} /tmp/ ./\nARG VERSION=unknown\nARG BUILD_DATE=\"an unknown date\"\nARG COMMIT=unknown\nLABEL \\\r\n    org.opencontainers.image.authors=\"quentin.mcgaw@gmail.com\" \\\r\n    org.opencontainers.image.created=$BUILD_DATE \\\r\n    org.opencontainers.image.version=$VERSION \\\r\n    org.opencontainers.image.revision=$COMMIT \\\r\n    org.opencontainers.image.url=\"https://github.com/qdm12/cod4-docker\" \\\r\n    org.opencontainers.image.documentation=\"https://github.com/qdm12/cod4-docker/blob/master/README.md\" \\\r\n    org.opencontainers.image.source=\"https://github.com/qdm12/cod4-docker\" \\\r\n    org.opencontainers.image.title=\"cod4\" \\\r\n    org.opencontainers.image.description=\"Call of duty 4X Modern Warfare dedicated server\"\n"
+}

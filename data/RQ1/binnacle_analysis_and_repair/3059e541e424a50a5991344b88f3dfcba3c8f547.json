@@ -1,0 +1,44 @@
+{
+  "startTime": 1674243465298,
+  "endTime": 1674243465445,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 15,
+        "lineEnd": 15,
+        "columnStart": 4,
+        "columnEnd": 28
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 17,
+        "lineEnd": 20,
+        "columnStart": 4,
+        "columnEnd": 27
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 15,
+        "lineEnd": 15,
+        "columnStart": 4,
+        "columnEnd": 28
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 17,
+        "lineEnd": 20,
+        "columnStart": 4,
+        "columnEnd": 27
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM debian:9\n\nLABEL maintainer=\"Anton Lokhmotov <anton@dividiti.com>\"\n\n# Use the Bash shell.\nSHELL [\"/bin/bash\", \"-c\"]\n\n# Allow stepping into the Bash shell interactively.\nENTRYPOINT [\"/bin/bash\", \"-c\"]\n\n# Install known system dependencies and immediately clean up to make the image smaller.\n# CK needs: git, wget, zip.\n# TF needs: curl.\n# TF-C++ needs: autoconf, autogen, libtool.\nRUN apt update -y \\\n && apt install --no-install-recommends -y apt-utils \\\n && apt upgrade -y \\\n && apt install --no-install-recommends -y \\\n        git wget zip libz-dev curl vim \\\n        autoconf autogen libtool \\\n        python3 python3-pip \\\n && apt clean && rm -rf /var/lib/apt/lists/*;\n\n# Upgrade pip.\nRUN python3 -m pip install --upgrade pip\n\n# Create non-root user.\nRUN useradd --create-home --user-group --shell /bin/bash dvdt\nUSER dvdt:dvdt\nWORKDIR /home/dvdt\n\n# Install Collective Knowledge (CK).\nENV CK_ROOT=/home/dvdt/CK \\\n    CK_REPOS=/home/dvdt/CK_REPOS \\\n    CK_TOOLS=/home/dvdt/CK_TOOLS \\\n    PATH=${CK_ROOT}/bin:/home/dvdt/.local/bin:${PATH} \\\n    CK_PYTHON=python3 \\\n    CK_CC=gcc \\\n    GIT_USER=\"dividiti\" \\\n    GIT_EMAIL=\"info@dividiti.com\" \\\n    LANG=C.UTF-8\nRUN mkdir -p ${CK_ROOT} ${CK_REPOS} ${CK_TOOLS}\nRUN git config --global user.name ${GIT_USER} && git config --global user.email ${GIT_EMAIL}\nRUN git clone https://github.com/ctuning/ck.git ${CK_ROOT}\nRUN cd ${CK_ROOT} \\\n && ${CK_PYTHON} setup.py install --user \\\n && ${CK_PYTHON} -c \"import ck.kernel as ck; print ('Collective Knowledge v%s' % ck.__version__)\"\n\n# Pull CK repositories (including ck-env, ck-autotuning and ck-tensorflow).\nRUN ck pull repo:ck-mlperf\n\n# Use generic Linux settings with dummy frequency setting scripts.\nRUN ck detect platform.os --platform_init_uoa=generic-linux-dummy\n\n# Install Python dependencies.\nRUN ${CK_PYTHON} -m pip install --ignore-installed pip setuptools --user\nRUN ck detect soft:compiler.python --full_path=`which ${CK_PYTHON}`\n\nRUN ck install package --tags=lib,python-package,numpy\nRUN ck install package --tags=lib,python-package,scipy --force_version=1.2.1\nRUN ck install package --tags=lib,python-package,pillow\n\n# Install C/C++ dependencies.\nRUN ck detect soft:compiler.gcc --full_path=`which ${CK_CC}`\nRUN ck install package --tags=lib,tensorflow,vstatic,v1.13.1 --no_tags=lite\n\n# Download and preprocess the first 500 images of the ImageNet 2012 validation dataset.\nRUN ck install package --tags=dataset,imagenet,aux\nRUN ck install package --tags=dataset,imagenet,val,original,min --no_tags=resized\nRUN ck install package --tags=dataset,imagenet,val,preprocessed\n\n# Download the MobileNet TF/TFLite models (non-quantized and quantized).\n# https://github.com/mlperf/inference/tree/master/edge/object_classification/mobilenets/tf-cpp#install-the-mobilenet-model-for-tensorflow-c\nRUN ck install package --tags=image-classification,model,tf,tflite,mlperf,mobilenet,non-quantized,from-zenodo\nRUN ck install package --tags=image-classification,model,tf,tflite,mlperf,mobilenet,quantized,from-google\n# Download the ResNet TF model.\n# https://github.com/mlperf/inference/tree/master/edge/object_classification/mobilenets/tf-cpp#install-the-resnet-model\nRUN ck install package --tags=image-classification,model,tf,mlperf,resnet,downloaded,from-zenodo\n\n# Compile the Image Classification TF-C++ program.\nRUN ck compile program:image-classification-tf-cpp\n\n# Run the Image Classification TF-C++ program once with the non-quantized MobileNet model.\nCMD [\"ck run program:image-classification-tf-cpp --dep_add_tags.weights=mobilenet,non-quantized --env.CK_BATCH_COUNT=2\"]\n"
+}

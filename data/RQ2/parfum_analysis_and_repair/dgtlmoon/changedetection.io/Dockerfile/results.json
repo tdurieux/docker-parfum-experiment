@@ -1,0 +1,44 @@
+{
+  "startTime": 1674249311554,
+  "endTime": 1674249312476,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 20,
+        "lineEnd": 20,
+        "columnStart": 4,
+        "columnEnd": 59
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 24,
+        "lineEnd": 24,
+        "columnStart": 4,
+        "columnEnd": 55
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 6,
+        "lineEnd": 13,
+        "columnStart": 22,
+        "columnEnd": 7
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 35,
+        "lineEnd": 42,
+        "columnStart": 22,
+        "columnEnd": 7
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# pip dependencies install stage\nFROM python:3.8-slim as builder\n\n# rustc compiler would be needed on ARM type devices but theres an issue with some deps not building..\nARG CRYPTOGRAPHY_DONT_BUILD_RUST=1\n\nRUN apt-get update && apt-get install -y --no-install-recommends \\\n    libssl-dev \\\n    libffi-dev \\\n    gcc \\\n    libc-dev \\\n    libxslt-dev \\\n    zlib1g-dev \\\n    g++ && rm -rf /var/lib/apt/lists/*;\n\nRUN mkdir /install\nWORKDIR /install\n\nCOPY requirements.txt /requirements.txt\n\nRUN pip install --no-cache-dir --target=/dependencies -r /requirements.txt\n\n# Playwright is an alternative to Selenium\n# Excluded this package from requirements.txt to prevent arm/v6 and arm/v7 builds from failing\nRUN pip install --no-cache-dir --target=/dependencies playwright~=1.20 \\\n    || echo \"WARN: Failed to install Playwright. The application can still run, but the Playwright option will be disabled.\"\n\n# Final image stage\nFROM python:3.8-slim\n\n# Actual packages needed at runtime, usually due to the notification (apprise) backend\n# rustc compiler would be needed on ARM type devices but theres an issue with some deps not building..\nARG CRYPTOGRAPHY_DONT_BUILD_RUST=1\n\n# Re #93, #73, excluding rustc (adds another 430Mb~)\nRUN apt-get update && apt-get install -y --no-install-recommends \\\n    libssl-dev \\\n    libffi-dev \\\n    gcc \\\n    libc-dev \\\n    libxslt-dev \\\n    zlib1g-dev \\\n    g++ && rm -rf /var/lib/apt/lists/*;\n\n# https://stackoverflow.com/questions/58701233/docker-logs-erroneously-appears-empty-until-container-stops\nENV PYTHONUNBUFFERED=1\n\nRUN [ ! -d \"/datastore\" ] && mkdir /datastore\n\n# Re #80, sets SECLEVEL=1 in openssl.conf to allow monitoring sites with weak/old cipher suites\nRUN sed -i 's/^CipherString = .*/CipherString = DEFAULT@SECLEVEL=1/' /etc/ssl/openssl.cnf\n\n# Copy modules over to the final image and add their dir to PYTHONPATH\nCOPY --from=builder /dependencies /usr/local\nENV PYTHONPATH=/usr/local\n\nEXPOSE 5000\n\n# The actual flask app\nCOPY changedetectionio /app/changedetectionio\n# The eventlet server wrapper\nCOPY changedetection.py /app/changedetection.py\n\nWORKDIR /app\n\nCMD [ \"python\", \"./changedetection.py\" , \"-d\", \"/datastore\"]\n"
+}

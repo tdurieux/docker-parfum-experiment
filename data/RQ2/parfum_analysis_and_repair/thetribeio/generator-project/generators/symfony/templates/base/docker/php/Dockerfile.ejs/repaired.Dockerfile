@@ -1,0 +1,29 @@
+FROM php:8.1.3-fpm
+
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+
+RUN curl --fail --location --output /usr/local/bin/wait-for-it https://raw.githubusercontent.com/vishnubob/wait-for-it/81b1373f17855a4dc21156cfe1694c31d7d1792e/wait-for-it.sh && \
+    echo "b7a04f38de1e51e7455ecf63151c8c7e405bd2d45a2d4e16f6419db737a125d6  /usr/local/bin/wait-for-it" | sha256sum -c - && \
+    chmod 755 /usr/local/bin/wait-for-it
+
+# Install extensions
+ADD https://raw.githubusercontent.com/mlocati/docker-php-extension-installer/572050a69b646d596b93b421abdff4426a4a679b/install-php-extensions /usr/local/bin/
+RUN chmod uga+x /usr/local/bin/install-php-extensions
+RUN install-php-extensions intl pdo_pgsql
+
+# Install composer
+# hadolint ignore=DL3008
+RUN apt-get update && \
+    apt-get install --yes --no-install-recommends git unzip && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+RUN curl -f -L "https://getcomposer.org/download/2.2.6/composer.phar" -o /usr/local/bin/composer && \
+    echo "1d58486b891e59e9e064c0d54bb38538f74d6014f75481542c69ad84d4e97704  /usr/local/bin/composer" | sha256sum -c - && \
+    chmod 755 /usr/local/bin/composer
+
+# Configure permissions
+ARG UID
+RUN useradd --non-unique --uid $UID --create-home user
+USER user
+
+WORKDIR /usr/src/project/<%= packagePath %>

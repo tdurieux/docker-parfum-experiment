@@ -1,0 +1,94 @@
+FROM ubuntu:20.04
+
+RUN apt-get update -qq
+RUN apt-get install --no-install-recommends -y software-properties-common && rm -rf /var/lib/apt/lists/*;
+RUN add-apt-repository ppa:apt-fast/stable
+RUN apt-get update -qq
+RUN apt-get -y --no-install-recommends install apt-fast && rm -rf /var/lib/apt/lists/*;
+
+# Prevent tzdata from prompting us for a timezone and hanging the build.
+ENV DEBIAN_FRONTEND=noninteractive
+
+# The packages related to R are somewhat weird, see the README for more details.
+
+COPY workers/CRAN.gpg .
+RUN \
+  apt-fast update -qq && \
+  apt-get install --no-install-recommends -y apt-transport-https && \
+  apt-fast install -y lsb-release && \
+  echo "deb https://cloud.r-project.org/bin/linux/ubuntu bionic-cran35/" \
+      >> /etc/apt/sources.list.d/added_repos.list && \
+  apt-key add CRAN.gpg && \
+  apt-fast update -qq && \
+  apt-fast install -y \
+  ed \
+  git \
+  mercurial \
+  libcairo-dev \
+  libedit-dev \
+  lsb-release \
+  python3 \
+  python3-pip \
+  python3-dev \
+  r-base-core \
+  r-base-dev \
+  libpq-dev \
+  libxml2-dev \
+  libssl-dev \
+  libcurl4-openssl-dev \
+  curl \
+  wget && \
+  rm -rf /var/lib/apt/lists/*
+RUN rm CRAN.gpg
+
+RUN groupadd user && useradd --create-home --home-dir /home/user -g user user
+WORKDIR /home/user
+
+ENV R_LIBS "/usr/local/lib/R/site-library"
+
+COPY common/install_devtools.R .
+
+RUN Rscript install_devtools.R
+
+COPY workers/R_dependencies/affymetrix/dependencies.R .
+RUN Rscript dependencies.R
+
+COPY workers/affymetrix_dependencies.R .
+COPY workers/install_ensg_pkgs.R .
+
+RUN Rscript affymetrix_dependencies.R
+
+# Source: https://github.com/thisbejim/Pyrebase/issues/87#issuecomment-354452082
+# For whatever reason this worked and 'en_US.UTF-8' did not.
+ENV LANG C.UTF-8
+
+RUN pip3 install --no-cache-dir pip --upgrade
+
+RUN pip3 install --no-cache-dir setuptools --upgrade && \
+  rm -rf /root/.cache
+
+COPY config/ config/
+COPY .boto .boto
+
+COPY common/dist/data-refinery-common-* common/
+
+# Get the latest version from the dist directory.
+RUN pip3 install --no-cache-dir common/$(ls common -1 | sort --version-sort | tail -1)
+
+COPY workers/data_refinery_workers/processors/requirements.txt .
+
+RUN pip3 install --no-cache-dir -r requirements.txt
+
+# Install this one here instead of via requirements.txt because not
+# all processors need it.
+RUN pip3 install --no-cache-dir rpy2==3.4.5
+
+ARG SYSTEM_VERSION
+
+ENV SYSTEM_VERSION $SYSTEM_VERSION
+
+USER user
+
+COPY workers/ .
+
+ENTRYPOINT []

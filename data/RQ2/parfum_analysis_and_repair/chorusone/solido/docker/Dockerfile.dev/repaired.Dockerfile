@@ -1,0 +1,53 @@
+FROM chorusone/solido-base
+
+ENV SOLVERSION=1.8.16
+ENV SOLINSTALLCHECKSUM=08c092af36706e0556a0516e270171d9ea3683965246ee81d979e0c157a3864e
+ENV SOLPATH="/root/.local/share/solana/install/active_release/bin"
+ENV SOLIDOBUILDPATH="$SOLPATH/solido-build"
+ENV SOLIDORELEASEPATH="$SOLPATH/solido"
+
+# Install Solana tools
+RUN curl -sSfLO https://release.solana.com/v$SOLVERSION/install \
+    && echo "$SOLINSTALLCHECKSUM install" | sha256sum -c - \
+    && /bin/sh install
+
+ENV PATH="$SOLPATH:$PATH"
+
+
+RUN echo $(solana --version | awk '{print $2}') >> $SOLPATH/instsolversion
+
+# Make dirs for build artefacts
+RUN mkdir -p $SOLIDOBUILDPATH \
+    && mkdir -p $SOLIDORELEASEPATH/deploy \
+    && mkdir -p $SOLIDORELEASEPATH/cli \
+    && mkdir -p $SOLIDORELEASEPATH/tests
+
+COPY . $SOLIDOBUILDPATH/
+
+# Build packages
+RUN cd $SOLIDOBUILDPATH \
+    && cargo build-bpf \
+    && cargo build --release
+
+# Copy artefacts and remove build dirs
+RUN cd $SOLIDOBUILDPATH \
+    && cp -rf $SOLIDOBUILDPATH/target/deploy $SOLIDORELEASEPATH \
+    && cp -rf $SOLIDOBUILDPATH/target/release/* $SOLIDORELEASEPATH/cli \
+    && cp -rf $SOLIDOBUILDPATH/tests/* $SOLIDORELEASEPATH/tests
+#\
+#    && rm -rf $SOLIDOBUILDPATH
+
+# Hash on-chain programs
+RUN cd $SOLIDORELEASEPATH/deploy \
+    && sha256sum lido.so >> lido.hash \
+    && sha256sum anker.so >> anker.hash \
+    && sha256sum serum_multisig.so >> serum_multisig.hash
+
+
+# Hash CLI
+RUN cd $SOLIDORELEASEPATH/cli \
+    && sha256sum solido >> solido.hash \
+    && sha256sum listener >> listener.hash
+
+WORKDIR $SOLPATH
+

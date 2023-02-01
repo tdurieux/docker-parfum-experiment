@@ -1,0 +1,44 @@
+{
+  "startTime": 1674248169845,
+  "endTime": 1674248170463,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 23,
+        "lineEnd": 23,
+        "columnStart": 4,
+        "columnEnd": 29
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 56,
+        "lineEnd": 56,
+        "columnStart": 4,
+        "columnEnd": 39
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 4,
+        "lineEnd": 12,
+        "columnStart": 22,
+        "columnEnd": 7
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 34,
+        "lineEnd": 38,
+        "columnStart": 22,
+        "columnEnd": 13
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM python:3.9-slim-bullseye@sha256:daf74cd7c4a6d420c2979b1fc74a3000489b69a330cbc15d0ab7b4721697945a as compile\n\nRUN apt-get update && apt-get install -y --no-install-recommends \\\n    # Needed to download Rust\n    curl \\\n    # Needed to build psycopg and uWSGI \n    build-essential \\\n    python-dev \\\n    libpq-dev \\\n    # Needed to build uwsgi-dogstatsd plugin\n    git && rm -rf /var/lib/apt/lists/*;\n\n# Get rustup https://rustup.rs/ for canonicaljson-rs\n# minimal profile https://rust-lang.github.io/rustup/concepts/profiles.html\nRUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- --profile minimal -y\n# Add cargo to PATH\nENV PATH=\"/root/.cargo/bin:$PATH\"\n\nRUN python -m venv /opt/venv\nENV PATH=\"/opt/venv/bin:$PATH\"\n\nRUN pip install --no-cache-dir --upgrade pip\n\nCOPY requirements.txt .\n\n# Python packages\nRUN pip install --no-cache-dir -r requirements.txt\nRUN uwsgi --build-plugin https://github.com/Datadog/uwsgi-dogstatsd\n\n\nFROM python:3.9-slim-bullseye@sha256:daf74cd7c4a6d420c2979b1fc74a3000489b69a330cbc15d0ab7b4721697945a AS build\n\nRUN apt-get update && apt-get install -y --no-install-recommends \\\n    # Needed for UWSGI \n    libxml2-dev \\\n    # Needed for psycopg2\n    libpq-dev && rm -rf /var/lib/apt/lists/*;\n\nWORKDIR /app\n\nCOPY --from=compile /opt/venv /opt/venv\nCOPY --from=compile /dogstatsd_plugin.so .\n\nENV PYTHONUNBUFFERED=1 \\\n    PORT=8888 \\\n    PATH=\"/opt/venv/bin:$PATH\"\n\n# add a non-privileged user for installing and running\n# the application\nRUN chown 10001:10001 /app && \\\n    groupadd --gid 10001 app && \\\n    useradd --no-create-home --uid 10001 --gid 10001 --home-dir /app app\n\nCOPY . .\nRUN pip install --no-cache-dir ./kinto-remote-settings\n\n# Drop down to unprivileged user\nRUN chown -R 10001:10001 /app\n\nUSER 10001\n\nEXPOSE $PORT\n\n# Run uwsgi by default\nENTRYPOINT [\"/bin/bash\", \"/app/bin/run.sh\"]\nCMD [\"uwsgi\", \"--ini\", \"/etc/kinto.ini\"]\n"
+}

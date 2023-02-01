@@ -1,0 +1,1 @@
+# This Dockerfile will build HBCI Sandbox and contain it inside, so that no Java is needed on build host

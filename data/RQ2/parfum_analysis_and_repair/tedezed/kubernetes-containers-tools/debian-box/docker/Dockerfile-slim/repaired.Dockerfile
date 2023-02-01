@@ -1,0 +1,25 @@
+FROM debian:10
+LABEL maintainer="juanmanuel.torres@aventurabinaria.es"
+
+ENV KUSTOMIZE_VER="2.0.3" \
+	KUBECTL_VER="1.18.18" \
+	GITHUB_CLIENT_VER="2.2.0"
+
+RUN apt-get update \
+	&& apt-get install -y --no-install-recommends \
+		ca-certificates \
+		curl \
+		git && rm -rf /var/lib/apt/lists/*;
+
+RUN curl -f -o  /usr/bin/kubectl \
+		-SL https://storage.googleapis.com/kubernetes-release/release/v${KUBECTL_VER}/bin/linux/amd64/kubectl \
+    && chmod +x  /usr/bin/kubectl
+
+RUN curl -f -o /usr/bin/kustomize \
+		-SL https://github.com/kubernetes-sigs/kustomize/releases/download/v${KUSTOMIZE_VER}/kustomize_${KUSTOMIZE_VER}_linux_amd64 \
+    && chmod +x /usr/bin/kustomize
+
+RUN curl -f -o /tmp/gh_linux_amd64.deb \
+		-SL https://github.com/cli/cli/releases/download/v${GITHUB_CLIENT_VER}/gh_${GITHUB_CLIENT_VER}_linux_amd64.deb \
+	&& dpkg -i /tmp/gh_linux_amd64.deb \
+	&& rm -f /tmp/gh_linux_amd64.deb

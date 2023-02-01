@@ -1,0 +1,71 @@
+{
+  "startTime": 1674252362415,
+  "endTime": 1674252363619,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 69,
+        "lineEnd": 69,
+        "columnStart": 4,
+        "columnEnd": 34
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 84,
+        "lineEnd": 84,
+        "columnStart": 4,
+        "columnEnd": 35
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 85,
+        "lineEnd": 85,
+        "columnStart": 4,
+        "columnEnd": 26
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 87,
+        "lineEnd": 87,
+        "columnStart": 4,
+        "columnEnd": 34
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 56,
+        "lineEnd": 56,
+        "columnStart": 4,
+        "columnEnd": 50
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 54,
+        "lineEnd": 54,
+        "columnStart": 4,
+        "columnEnd": 32
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 11,
+        "lineEnd": 32,
+        "columnStart": 22,
+        "columnEnd": 18
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM nvidia/cuda:10.0-cudnn7-devel-ubuntu18.04 AS base\n\nLABEL maintainer=\"admin@blueoil.org\"\n\n# TensorBoard\nEXPOSE 6006\n\nENV LD_LIBRARY_PATH=/usr/local/cuda/extras/CUPTI/lib64:${LD_LIBRARY_PATH} \\\n    CUDA_HOME=/usr/local/cuda-10.0 \\\n    DEBIAN_FRONTEND=noninteractive\n\nRUN apt-get update && apt-get install --no-install-recommends -y \\\n    cmake \\\n    fonts-dejavu \\\n    locales \\\n    python3 \\\n    python3-dev \\\n    python3-pip \\\n    python3-wheel \\\n    python3-pil \\\n    libjpeg8-dev \\\n    libpng-dev \\\n    zlib1g-dev \\\n    liblapack-dev \\\n    git \\\n    make \\\n    build-essential \\\n    wget \\\n    g++-8 \\\n    g++-8-aarch64-linux-gnu \\\n    g++-8-arm-linux-gnueabihf \\\n    openssh-client \\\n    openssh-server \\\n    && \\\n    apt-get clean && \\\n    rm -rf /var/lib/apt/lists/*\n\nRUN update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-8 80 --slave /usr/bin/g++ g++ /usr/bin/g++-8 --slave /usr/bin/gcov gcov /usr/bin/gcov-8\nRUN ln -s /usr/bin/arm-linux-gnueabihf-g++-8 /usr/bin/arm-linux-gnueabihf-g++\nRUN ln -s /usr/bin/aarch64-linux-gnu-g++-8 /usr/bin/aarch64-linux-gnu-g++\n\n# Install OpenSSH for MPI to communicate between containers\nRUN mkdir -p /var/run/sshd\n\n# Locale setting\nRUN locale-gen en_US.UTF-8\nENV LANG=en_US.UTF-8 \\\n    LANGUAGE=en_US:en \\\n    LC_ALL=en_US.UTF-8\n\n# Install OpenMPI\nRUN mkdir /tmp/openmpi && \\\n    cd /tmp/openmpi && \\\n    wget https://www.open-mpi.org/software/ompi/v4.0/downloads/openmpi-4.0.1.tar.gz && \\\n    tar zxf openmpi-4.0.1.tar.gz && \\\n    cd openmpi-4.0.1 && \\\n    ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" --enable-orterun-prefix-by-default && \\\n    make -j $(nproc) all && \\\n    make install && \\\n    ldconfig && \\\n    rm -rf /tmp/openmpi && rm openmpi-4.0.1.tar.gz\n\n# Configure OpenMPI to run good defaults:\n#   --bind-to none --map-by slot --mca btl_tcp_if_exclude lo,docker0 --mca btl_vader_single_copy_mechanism none\nRUN echo \"hwloc_base_binding_policy = none\" >> /usr/local/etc/openmpi-mca-params.conf && \\\n    echo \"rmaps_base_mapping_policy = slot\" >> /usr/local/etc/openmpi-mca-params.conf && \\\n    echo \"btl_tcp_if_exclude = lo,docker0\" >> /usr/local/etc/openmpi-mca-params.conf\n\nWORKDIR /home/blueoil\nRUN pip3 install --no-cache-dir -U pip setuptools\n\nFROM base AS blueoil-base\n\n# COPY resources required for blueoil installation\nCOPY setup.* /home/blueoil/\nCOPY blueoil /home/blueoil/blueoil\nCOPY output_template /home/blueoil/output_template\n\n# Set env to install horovod with nccl and tensorflow option\nENV HOROVOD_GPU_ALLREDUCE=NCCL \\\n    HOROVOD_WITH_TENSORFLOW=1\n\n# Install requirements for distributed training temporarily using CUDA stubs\nRUN ldconfig /usr/local/cuda-10.0/targets/x86_64-linux/lib/stubs && \\\n    pip install --no-cache-dir -e .[gpu,test,docs] && \\\n    pip install --no-cache-dir -e .[dist] && \\\n    ldconfig\nRUN pip install --no-cache-dir pycocotools==2.0.0\n\n# we cannot customize the path of this temporal directory...\nRUN mkdir /.horovod && chmod 777 /.horovod\n\nFROM blueoil-base AS blueoil-dev\n\n# Copy blueoil test code to docker image\nCOPY tests /home/blueoil/tests\n\n# Add permission for all users\nRUN chmod 777 /home/blueoil\nRUN chmod 777 /home/blueoil/tests\n\n# Setup entrypoint\nCOPY docker/docker-entrypoint.sh /\nENTRYPOINT [\"/docker-entrypoint.sh\"]\n\nWORKDIR /home/blueoil\n"
+}

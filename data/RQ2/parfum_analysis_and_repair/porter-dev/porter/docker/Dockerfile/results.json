@@ -1,0 +1,26 @@
+{
+  "startTime": 1674252137837,
+  "endTime": 1674252138841,
+  "originalSmells": [
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 54,
+        "lineEnd": 54,
+        "columnStart": 4,
+        "columnEnd": 26
+      }
+    },
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 56,
+        "lineEnd": 56,
+        "columnStart": 4,
+        "columnEnd": 28
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Base Go environment\n# -------------------\nFROM golang:1.18-alpine as base\nWORKDIR /porter\n\nRUN apk update && apk add --no-cache gcc musl-dev git protoc\n\nCOPY go.mod go.sum ./\nCOPY /cmd ./cmd\nCOPY /internal ./internal\nCOPY /api ./api\nCOPY /scripts ./scripts\nCOPY /provisioner ./provisioner\nCOPY /pkg ./pkg\n\nRUN go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.26\nRUN go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.1\n\nRUN --mount=type=cache,target=$GOPATH/pkg/mod \\\n    go mod download\n\n# Go build environment\n# --------------------\nFROM base AS build-go\n\nARG version=production\n\n\n# build proto files\nRUN sh ./scripts/build/proto.sh\n\nRUN --mount=type=cache,target=/root/.cache/go-build \\\n    --mount=type=cache,target=$GOPATH/pkg/mod \\\n    go build -ldflags=\"-w -s -X 'main.Version=${version}'\" -a -o ./bin/app ./cmd/app && \\\n    go build -ldflags '-w -s' -a -o ./bin/migrate ./cmd/migrate && \\\n    go build -ldflags '-w -s' -a -o ./bin/ready ./cmd/ready\n\n# Go test environment\n# -------------------\nFROM base AS porter-test\n\nRUN --mount=type=cache,target=/root/.cache/go-build \\\n    --mount=type=cache,target=$GOPATH/pkg/mod \\\n    go test ./...\n\n# Webpack build environment\n# -------------------------\nFROM node:16 as build-webpack\nWORKDIR /webpack\n\nCOPY ./dashboard ./\n\nRUN npm install -g npm@8.1 && npm cache clean --force;\n\nRUN npm i --legacy-peer-deps && npm cache clean --force;\n\nENV NODE_ENV=production\n\nRUN npm run build\n\n# Deployment environment\n# ----------------------\nFROM alpine\nRUN apk update\n\nCOPY --from=build-go /porter/bin/app /porter/\nCOPY --from=build-go /porter/bin/migrate /porter/\nCOPY --from=build-go /porter/bin/ready /porter/\nCOPY --from=build-webpack /webpack/build /porter/static\n\nENV DEBUG=false\nENV STATIC_FILE_PATH=/porter/static\nENV SERVER_PORT=8080\nENV SERVER_TIMEOUT_READ=5s\nENV SERVER_TIMEOUT_WRITE=10s\nENV SERVER_TIMEOUT_IDLE=15s\n\nENV COOKIE_SECRETS=secret\n\nENV SQL_LITE=true\nENV ADMIN_INIT=false\n\nEXPOSE 8080\nCMD /porter/migrate && /porter/app\n"
+}

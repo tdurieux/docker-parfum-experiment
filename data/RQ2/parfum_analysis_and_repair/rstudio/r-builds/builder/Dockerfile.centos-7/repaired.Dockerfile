@@ -1,0 +1,75 @@
+FROM centos:centos7
+
+ENV OS_IDENTIFIER centos-7
+
+RUN yum -y update \
+    && yum -y install \
+    autoconf \
+    automake \
+    bzip2-devel \
+    cairo-devel \
+    gcc-c++ \
+    gcc-gfortran \
+    gcc-objc \
+    java-1.8.0-openjdk-devel \
+    java-1.8.0-openjdk-headless \
+    libICE-devel \
+    libSM-devel \
+    libX11-devel \
+    libXmu-devel \
+    libXt-devel \
+    libcurl-devel \
+    libicu-devel \
+    libjpeg-devel \
+    libpng-devel \
+    libtiff-devel \
+    libtool \
+    make \
+    ncurses-devel \
+    pango-devel \
+    pcre-devel \
+    pcre2-devel \
+    python3 \
+    python3-pip \
+    readline-devel \
+    rpm-build \
+    ruby \
+    ruby-devel \
+    tcl-devel \
+    tex \
+    texinfo-tex \
+    texlive-collection-latexrecommended \
+    tk-devel \
+    valgrind-devel \
+    which \
+    wget \
+    xz-devel \
+    zlib-devel \
+    && yum clean all && rm -rf /var/cache/yum
+
+# Install AWS CLI.
+RUN pip3 install --no-cache-dir awscli --upgrade --user && \
+    ln -s /root/.local/bin/aws /usr/bin/aws
+
+# Pin fpm for compatibility with Ruby < 2.3
+RUN gem install ffi:1.12.2 fpm:1.11.0
+
+RUN chmod 0777 /opt
+
+# Configure flags for CentOS 7 that don't use the defaults in build.sh
+ENV CONFIGURE_OPTIONS="\
+    --enable-R-shlib \
+    --with-tcltk \
+    --enable-memory-profiling \
+    --with-x \
+    --with-system-valgrind-headers \
+    --with-tcl-config=/usr/lib64/tclConfig.sh \
+    --with-tk-config=/usr/lib64/tkConfig.sh \
+    --enable-prebuilt-html"
+
+# RHEL 7 doesn't have the inconsolata font, so override the defaults.
+ENV R_RD4PDF="times,hyper"
+
+COPY package.centos-7 /package.sh
+COPY build.sh .
+ENTRYPOINT ./build.sh

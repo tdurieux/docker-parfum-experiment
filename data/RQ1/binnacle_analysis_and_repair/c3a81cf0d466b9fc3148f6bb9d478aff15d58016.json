@@ -1,0 +1,44 @@
+{
+  "startTime": 1674246572357,
+  "endTime": 1674246572765,
+  "originalSmells": [
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 45,
+        "lineEnd": 45,
+        "columnStart": 1,
+        "columnEnd": 50
+      }
+    },
+    {
+      "rule": "aptGetInstallUseY",
+      "position": {
+        "lineStart": 37,
+        "lineEnd": 39,
+        "columnStart": 22,
+        "columnEnd": 9
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 37,
+        "lineEnd": 39,
+        "columnStart": 22,
+        "columnEnd": 9
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 37,
+        "lineEnd": 39,
+        "columnStart": 22,
+        "columnEnd": 9
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "ARG ARCH=amd64\n\n# The node version here should match the version of the runtime image which is\n# specified in the base-image subdirectory in the project\nFROM balenalib/raspberry-pi-node:10-run as rpi-base\nFROM balenalib/armv7hf-node:10-run as armv7hf-base\nFROM balenalib/aarch64-node:10-run as aarch64-base\nRUN [ \"cross-build-start\" ]\nRUN sed -i '/security.debian.org jessie/d' /etc/apt/sources.list\nRUN [ \"cross-build-end\" ]\n\nFROM balenalib/amd64-node:10-run as amd64-base\nRUN echo '#!/bin/sh\\nexit 0' > /usr/bin/cross-build-start && chmod +x /usr/bin/cross-build-start \\\n\t&& echo '#!/bin/sh\\nexit 0' > /usr/bin/cross-build-end && chmod +x /usr/bin/cross-build-end\n\nFROM balenalib/i386-node:10-run as i386-base\nRUN echo '#!/bin/sh\\nexit 0' > /usr/bin/cross-build-start && chmod +x /usr/bin/cross-build-start \\\n\t&& echo '#!/bin/sh\\nexit 0' > /usr/bin/cross-build-end && chmod +x /usr/bin/cross-build-end\n\nFROM resin/i386-node:6.13.1-slim as i386-nlp-base\nRUN echo '#!/bin/sh\\nexit 0' > /usr/bin/cross-build-start && chmod +x /usr/bin/cross-build-start \\\n\t&& echo '#!/bin/sh\\nexit 0' > /usr/bin/cross-build-end && chmod +x /usr/bin/cross-build-end \\\n\t# TODO: Move this to a balenalib image so this isn't necessary\n\t&& sed -i '/jessie-updates/{s/^/#/}' /etc/apt/sources.list\n\n# A little hack to make this work with the makefile\nFROM $ARCH-base AS node-build\nFROM $ARCH-base AS node-deps\n\nARG ARCH\nARG VERSION=master\nARG DEFAULT_MIXPANEL_TOKEN=bananasbananas\n\nRUN [ \"cross-build-start\" ]\n\nWORKDIR /usr/src/app\n\nRUN apt-get update && apt-get install -y --no-install-recommends ca-certificates \\\n\tiptables libnss-mdns nodejs rsync git python make wget g++ \\\n\tkmod vim && rm -rf /var/lib/apt/lists/*;\n\nCOPY package*.json ./\n\n# i386-nlp doesn't have an npm version which supports ci\nRUN if [ $ARCH = \"i386-nlp\" ]; then \\\n JOBS=MAX npm install --no-optional --unsafe-perm; npm cache clean --force; \\\nelse \\\n JOBS=MAX npm ci --no-optional --unsafe-perm; \\\nfi\n\nCOPY src src/\nCOPY typings typings/\nCOPY tsconfig.json tsconfig.release.json hardcode-migrations.js fix-jsonstream.js ./\n\nRUN npm run build:debug\nRUN mkdir -p dist && echo \"require('../build/app.js')\" > dist/app.js\n\nCOPY entry.sh .\n\nRUN mkdir -p rootfs-overlay && \\\n\t(([ ! -d rootfs-overlay/lib64 ] && ln -s /lib rootfs-overlay/lib64) || true)\n\nENV CONFIG_MOUNT_POINT=/boot/config.json \\\n\tLED_FILE=/dev/null \\\n\tSUPERVISOR_IMAGE=resin/$ARCH-supervisor \\\n\tVERSION=$VERSION \\\n\tDEFAULT_MIXPANEL_TOKEN=$DEFAULT_MIXPANEL_TOKEN\nCOPY avahi-daemon.conf /etc/avahi/avahi-daemon.conf\n\nVOLUME /data\nHEALTHCHECK --interval=5m --start-period=1m --timeout=30s --retries=3 \\\n\tCMD wget -qO- http://127.0.0.1:${LISTEN_PORT:-48484}/v1/healthy || exit 1\n\nRUN [ \"cross-build-end\" ]\n\nCMD DEBUG=1 ./entry.sh || while true; do echo 'Supervisor runtime exited - waiting for changes'; sleep 100; done;\n"
+}

@@ -1,0 +1,14 @@
+FROM python:3.6
+COPY src/agent/docker-rest-agent/requirements.txt /
+ARG pip=pip.conf.bak
+COPY src/agent/docker-rest-agent/pip.conf /root/.pip/$pip
+
+RUN pip install --no-cache-dir -r /requirements.txt
+RUN mkdir -p /var/www/server
+
+COPY src/agent/docker-rest-agent/server.py /var/www/server
+COPY src/agent/docker-rest-agent/gunicorn.conf.py  /var/www/server
+
+WORKDIR /var/www/server
+
+CMD ["gunicorn", "server:app", "-c", "./gunicorn.conf.py"]

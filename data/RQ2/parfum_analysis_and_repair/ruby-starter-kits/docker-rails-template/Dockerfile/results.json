@@ -1,0 +1,63 @@
+{
+  "startTime": 1674218111076,
+  "endTime": 1674218112851,
+  "originalSmells": [
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 118,
+        "lineEnd": 118,
+        "columnStart": 4,
+        "columnEnd": 48
+      }
+    },
+    {
+      "rule": "mkdirUsrSrcThenRemove",
+      "position": {
+        "lineStart": 73,
+        "lineEnd": 73,
+        "columnStart": 4,
+        "columnEnd": 25
+      }
+    },
+    {
+      "rule": "mkdirUsrSrcThenRemove",
+      "position": {
+        "lineStart": 74,
+        "lineEnd": 74,
+        "columnStart": 9,
+        "columnEnd": 43
+      }
+    },
+    {
+      "rule": "mkdirUsrSrcThenRemove",
+      "position": {
+        "lineStart": 75,
+        "lineEnd": 75,
+        "columnStart": 9,
+        "columnEnd": 43
+      }
+    },
+    {
+      "rule": "mkdirUsrSrcThenRemove",
+      "position": {
+        "lineStart": 76,
+        "lineEnd": 76,
+        "columnStart": 9,
+        "columnEnd": 40
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 118,
+        "lineEnd": 118,
+        "columnStart": 52,
+        "columnEnd": 68
+      }
+    }
+  ],
+  "repairedDockerfile": "FROM ruby:3.0.1-alpine AS builder\nLABEL maintainer=\"Mike Rogers <me@mikerogers.io>\"\n\nRUN apk --no-cache add --virtual build-dependencies \\\n      build-base \\\n      openssl \\\n      # Nokogiri Libraries\n      zlib-dev \\\n      libxml2-dev \\\n      libxslt-dev \\\n      # Postgres\n      postgresql-dev \\\n      # JavaScript\n      nodejs \\\n      yarn \\\n      # FFI Bindings in ruby (Run C Commands)\n      libffi-dev \\\n      # Fixes watch file issues with things like HMR\n      libnotify-dev\n\n# Dockerize allows us to wait for other containers to be ready before we run our own code.\nENV DOCKERIZE_VERSION v0.6.1\nRUN wget -nv https://github.com/jwilder/dockerize/releases/download/$DOCKERIZE_VERSION/dockerize-alpine-linux-amd64-$DOCKERIZE_VERSION.tar.gz \\\n    && tar -C /usr/local/bin -xzvf dockerize-alpine-linux-amd64-$DOCKERIZE_VERSION.tar.gz \\\n    && rm dockerize-alpine-linux-amd64-$DOCKERIZE_VERSION.tar.gz\n\n# Rails Specific libraries\nRUN apk --no-cache add \\\n      # ActiveStorage file inspection\n      file \\\n      # Time zone data\n      tzdata \\\n      # HTML to PDF conversion\n      # ttf-ubuntu-font-family \\\n      # wkhtmltopdf \\\n      # Image Resizing\n      imagemagick \\\n      vips \\\n      # Nice to have\n      bash \\\n      git \\\n      # VIM is a handy editor for editing credentials\n      vim \\\n      # Allows for mimemagic gem to be installed\n      shared-mime-info\n\n# Install any extra dependencies via Aptfile - These are installed on Heroku\n# COPY Aptfile /usr/src/app/Aptfile\n# RUN apk add --update $(cat /usr/src/app/Aptfile | xargs)\n\nFROM builder AS development\n\n# Set common ENVs\nENV BOOTSNAP_CACHE_DIR /usr/src/bootsnap\nENV YARN_CACHE_FOLDER /usr/src/yarn\nENV EDITOR vim\nENV LANG en_US.UTF-8\nENV BUNDLE_PATH /usr/local/bundle\nENV RAILS_LOG_TO_STDOUT enabled\nENV HISTFILE /usr/src/app/log/.bash_history\n\n# Set build args. These let linux users not run into file permission problems\nARG USER_ID=${USER_ID:-1000}\nARG GROUP_ID=${GROUP_ID:-1000}\n\n# Add non-root user and group with alpine first available uid, 1000\nRUN addgroup -g $USER_ID -S appgroup \\\n      && adduser -u $GROUP_ID -S appuser -G appgroup\n\n# Install multiple gems at the same time\nRUN bundle config set jobs $(nproc)\n\n# Create app directory in the conventional /usr/src/app\nRUN mkdir -p /usr/src/app \\\n      && mkdir -p /usr/src/app/node_modules \\\n      && mkdir -p /usr/src/app/public/packs \\\n      && mkdir -p /usr/src/app/tmp/cache \\\n      && mkdir -p $YARN_CACHE_FOLDER \\\n      && mkdir -p $BOOTSNAP_CACHE_DIR \\\n      && chown -R appuser:appgroup /usr/src/app \\\n      && chown -R appuser:appgroup $BUNDLE_PATH \\\n      && chown -R appuser:appgroup $BOOTSNAP_CACHE_DIR \\\n      && chown -R appuser:appgroup $YARN_CACHE_FOLDER && rm -rf /usr/src/app\nWORKDIR /usr/src/app\n\nENV PATH /usr/src/app/bin:$PATH\n\n# Add a script to be executed every time the container starts.\nCOPY bin/docker/entrypoints/* /usr/bin/\nRUN chmod +x /usr/bin/wait-for-postgres.sh\nRUN chmod +x /usr/bin/wait-for-web.sh\nENTRYPOINT [\"/usr/bin/wait-for-postgres.sh\"]\n\n# Define the user running the container\nUSER appuser\n\nEXPOSE 3000\nCMD [\"./bin/rails\", \"server\", \"-b\", \"0.0.0.0\", \"-p\", \"3000\"]\n\nFROM development AS production\n\nENV RAILS_ENV production\nENV RACK_ENV production\nENV NODE_ENV production\n\nCOPY Gemfile /usr/src/app\nCOPY .ruby-version /usr/src/app\nCOPY Gemfile.lock /usr/src/app\n\n# Install Ruby Gems\nRUN bundle config set deployment 'true' \\\n      && bundle config set without 'development:test' \\\n      && bundle check || bundle install --jobs=$(nproc)\n\nCOPY package.json /usr/src/app\nCOPY yarn.lock /usr/src/app\n\n# Install Yarn Libraries\nRUN yarn install --frozen-lockfile --check-files && yarn cache clean;\n\n# Chown files so non are root.\nCOPY --chown=appuser:appgroup . /usr/src/app\n\n# Precompile the assets, yarn relay & bootsnap\nRUN RAILS_SERVE_STATIC_FILES=enabled \\\n      SECRET_KEY_BASE=secret-key-base \\\n      bundle exec rake assets:precompile \\\n      && bundle exec bootsnap precompile --gemfile app/ lib/\n"
+}

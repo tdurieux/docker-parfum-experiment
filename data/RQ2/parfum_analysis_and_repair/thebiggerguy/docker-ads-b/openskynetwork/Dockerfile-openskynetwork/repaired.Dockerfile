@@ -1,0 +1,19 @@
+FROM multiarch/alpine:armhf-v3.9
+
+RUN apk add --no-cache socat iputils
+
+COPY openskynetwork-client.sh /usr/local/bin/openskynetwork-client
+
+EXPOSE 30005/tcp
+
+ENTRYPOINT ["openskynetwork-client"]
+
+# Metadata
+ARG VCS_REF="Unknown"
+LABEL maintainer="thebigguy.co.uk@gmail.com" \
+      org.label-schema.name="Docker ADS-B - openskynetwork" \
+      org.label-schema.description="Docker container for ADS-B - This is the opensky-network.org component" \
+      org.label-schema.url="https://github.com/TheBiggerGuy/docker-ads-b" \
+      org.label-schema.vcs-ref="${VCS_REF}" \
+      org.label-schema.vcs-url="https://github.com/TheBiggerGuy/docker-ads-b" \
+      org.label-schema.schema-version="1.0"

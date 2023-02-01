@@ -1,0 +1,4 @@
+# Ignore everything
+**
+
+# Allow files and directories

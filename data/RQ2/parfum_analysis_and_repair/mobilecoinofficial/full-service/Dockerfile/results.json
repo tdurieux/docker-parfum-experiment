@@ -1,0 +1,44 @@
+{
+  "startTime": 1674254157410,
+  "endTime": 1674254158240,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 43,
+        "lineEnd": 43,
+        "columnStart": 5,
+        "columnEnd": 89
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 44,
+        "lineEnd": 44,
+        "columnStart": 5,
+        "columnEnd": 83
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 72,
+        "lineEnd": 72,
+        "columnStart": 5,
+        "columnEnd": 39
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 72,
+        "lineEnd": 72,
+        "columnStart": 5,
+        "columnEnd": 39
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Full Build - This container will do a full compile and create a minimal runtime image.\n\n# This build requires BuildKit\n\n# To build testnet\n#   DOCKER_BUILDKIT=1 docker build -t mobilecoin/full-service:0.0.0-testnet \\\n#   --progress=plain --build-arg NAMESPACE=test --build-arg BUILD_OPTS=--no-default-features .\n\n# To build mainnet\n#   DOCKER_BUILDKIT=1 docker build -t mobilecoin/full-service:0.0.0 \\\n#   --progress=plain --build-arg NAMESPACE=prod .\n\n# Build Args:\n# BUILD_OPTS: - '--no-default-features' - Additonal options to cargo build command\n# NAMESPACE: - test|prod - specifies enclave.css files to download.\n# SGX_MODE: - HW|SW - See README\n# IAS_MODE: - PROD|DEV - See README\n# RUSTFLAGS: - '-C target-cpu=penryn' - RUSTFLAGS Environment Variable\n# SIGNED_ENCLAVE_BASE: - enclave-distribution.${NAMESPACE}.mobilecoin.com - base domain for CSS files.\n# SIGSTRUCT_JSON_LOCATION: - production.json - Json file where CSS file paths are located.\n\n# IMPORTANT: Do not add or update OS packages or components in the builder section.\n# In order to create a consistent and verifiable the build environment, only add\n# or update in the mobilecoin/rust-sgx-base image and refer to the image by its hash.\n\nFROM mobilecoin/rust-sgx-base@sha256:a7fcad9b7172ea0f20b2a83a47fbc34f13363cfd95788cc32427a658790adef0 as builder\n\nARG NAMESPACE=test\nARG SIGNED_ENCLAVE_BASE=enclave-distribution.${NAMESPACE}.mobilecoin.com\nARG SIGSTRUCT_JSON_LOCATION=production.json\n\nENV INGEST_ENCLAVE_CSS=/app/ingest-enclave.css\nENV CONSENSUS_ENCLAVE_CSS=/app/consensus-enclave.css\n\nWORKDIR /app\n\nADD https://${SIGNED_ENCLAVE_BASE}/${SIGSTRUCT_JSON_LOCATION} /app/${SIGSTRUCT_JSON_LOCATION}\n\n# Get enclave sigstruct\nRUN export CONSENSUS_CSS_URL=$(cat /app/${SIGSTRUCT_JSON_LOCATION} | jq -r .consensus.sigstruct) \\\n  && export INGEST_CSS_URL=$(cat /app/${SIGSTRUCT_JSON_LOCATION} | jq -r .ingest.sigstruct) \\\n  && curl -f https://${SIGNED_ENCLAVE_BASE}/${CONSENSUS_CSS_URL} -o ${CONSENSUS_ENCLAVE_CSS} \\\n  && curl -f https://${SIGNED_ENCLAVE_BASE}/${INGEST_CSS_URL} -o ${INGEST_ENCLAVE_CSS}\n\nCOPY . /app/\n\nARG BUILD_OPTS\nARG SGX_MODE=HW\nARG IAS_MODE=PROD\nARG RUSTFLAGS='-C target-cpu=penryn'\n\n# Build full-service\nRUN  --mount=type=cache,target=/root/.cargo/git \\\n     --mount=type=cache,target=/root/.cargo/registry \\\n     --mount=type=cache,target=/app/target \\\n     cargo build --release -p mc-full-service ${BUILD_OPTS} \\\n  && cp /app/target/release/full-service /usr/local/bin/full-service\n\n\n# This is the runtime container.\n# Adding/updating OS will not affect the ability to verify the build environment.\nFROM ubuntu:focal-20211006\n\nRUN  addgroup --system --gid 1000 app \\\n  && adduser --system --ingroup app --uid 1000 app \\\n  && mkdir /data \\\n  && chown app:app /data\n\nRUN apt-get update \\\n  && apt-get upgrade -y \\\n  && apt-get install --no-install-recommends -y ca-certificates \\\n  && apt-get clean \\\n  && rm -r /var/lib/apt/lists \\\n  && mkdir -p /usr/share/grpc \\\n  && ln -s /etc/ssl/certs/ca-certificates.crt /usr/share/grpc/roots.pem && rm -rf /var/lib/apt/lists/*;\n\nCOPY --from=builder /usr/local/bin/full-service /usr/local/bin/full-service\nCOPY --from=builder /app/*.css /usr/local/bin/\n\nUSER app\nVOLUME /data\nEXPOSE 9090\n\nENV RUST_LOG=info,rustls=warn,hyper=warn,tokio_reactor=warn,mio=warn,want=warn,rusoto_core=error,h2=error,reqwest=error,rocket=error,<unknown>=error\nENV INGEST_ENCLAVE_CSS=/usr/local/bin/ingest-enclave.css\nENV CONSENSUS_ENCLAVE_CSS=/usr/local/bin/consensus-enclave.css\n\nENTRYPOINT [\"/usr/local/bin/full-service\", \"--wallet-db=/data/wallet.db\", \"--ledger-db=/data/ledger.db\", \"--listen-host=0.0.0.0\", \"--fog-ingest-enclave-css=/usr/local/bin/ingest-enclave.css\"]\n\nCMD [ \"--help\" ]\n"
+}

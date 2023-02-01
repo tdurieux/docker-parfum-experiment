@@ -1,0 +1,17 @@
+{
+  "startTime": 1674253079098,
+  "endTime": 1674253080046,
+  "originalSmells": [
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 28,
+        "lineEnd": 28,
+        "columnStart": 4,
+        "columnEnd": 58
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM alpine:3.16 as builder\n\nLABEL maintainer=\"InspIRCd Team <noreply@inspircd.org>\"\n\nARG VERSION=insp3\nARG CONFIGUREARGS=\nARG EXTRASMODULES=\nARG BUILD_DEPENDENCIES=\n\n# Stage 0: Build from source\nCOPY modules/ /src/modules/\n\nRUN apk add --no-cache gcc g++ make git pkgconfig perl \\\n       perl-net-ssleay perl-crypt-ssleay perl-lwp-protocol-https \\\n       perl-libwww wget gnutls-dev $BUILD_DEPENDENCIES\n\nRUN addgroup -g 10000 -S inspircd\nRUN adduser -u 10000 -h /inspircd/ -D -S -G inspircd inspircd\n\nRUN git clone https://github.com/inspircd/inspircd.git inspircd-src\n\nWORKDIR /inspircd-src\nRUN git checkout $(git describe --abbrev=0 --tags $VERSION)\n\n## Add modules\nRUN { [ $(ls /src/modules/ | wc -l) -gt 0 ] && cp -r /src/modules/* /inspircd-src/src/modules/ || echo \"No modules overwritten/added by repository\"; }\nRUN echo $EXTRASMODULES | xargs --no-run-if-empty ./modulemanager install\n\nRUN ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" --prefix /inspircd --uid 10000 --gid 10000\nRUN echo $CONFIGUREARGS | xargs --no-run-if-empty ./configure\nRUN make -j`getconf _NPROCESSORS_ONLN` install\n\n## Wipe out vanilla config; entrypoint.sh will handle repopulating it at runtime\nRUN rm -rf /inspircd/conf/*\n\n# Stage 1: Create optimized runtime container\nFROM alpine:3.16\n\nARG RUN_DEPENDENCIES=\n\nRUN apk add --no-cache libgcc libstdc++ gnutls gnutls-utils $RUN_DEPENDENCIES && \\\n    addgroup -g 10000 -S inspircd && \\\n    adduser -u 10000 -h /inspircd/ -D -S -G inspircd inspircd\n\nCOPY --chown=inspircd:inspircd conf/ /conf/\nCOPY --chown=inspircd:inspircd entrypoint.sh /entrypoint.sh\nCOPY --from=builder --chown=inspircd:inspircd /inspircd/ /inspircd/\n\nUSER inspircd\n\nEXPOSE 6667 6697 7000 7001\n\nWORKDIR /\nENTRYPOINT [\"/entrypoint.sh\"]\n\nHEALTHCHECK \\\n        --interval=60s \\\n        --timeout=3s \\\n        --start-period=60s \\\n        --retries=3 \\\n    CMD \\\n        /usr/bin/nc -z localhost 6667\n"
+}

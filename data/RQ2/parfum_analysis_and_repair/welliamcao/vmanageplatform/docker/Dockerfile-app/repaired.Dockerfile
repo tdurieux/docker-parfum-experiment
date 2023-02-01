@@ -1,0 +1,1 @@
+#docker build -t vmp-app -f Dockerfile-app ..

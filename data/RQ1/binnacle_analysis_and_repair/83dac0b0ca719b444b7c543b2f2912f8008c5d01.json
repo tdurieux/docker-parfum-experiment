@@ -1,0 +1,62 @@
+{
+  "startTime": 1674250813574,
+  "endTime": 1674250813781,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 53,
+        "lineEnd": 53,
+        "columnStart": 4,
+        "columnEnd": 39
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 54,
+        "lineEnd": 54,
+        "columnStart": 4,
+        "columnEnd": 41
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 55,
+        "lineEnd": 55,
+        "columnStart": 4,
+        "columnEnd": 66
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 96,
+        "lineEnd": 96,
+        "columnStart": 4,
+        "columnEnd": 15
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 27,
+        "lineEnd": 42,
+        "columnStart": 22,
+        "columnEnd": 20
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 67,
+        "lineEnd": 67,
+        "columnStart": 4,
+        "columnEnd": 59
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM ubuntu:14.04\n\nMAINTAINER Jeremiah Harmsen <jeremiah@google.com>\nMAINTAINER Samuel Cozannet <samuel.cozannet@madeden.com>\n\n# This is an evolution of the Dockerfile.devel published by Google for Tensorflow.\n# It adds building the server in the container at the end as documented in\n# https://tensorflow.github.io/serving/serving_inception\n# then we moved to\n\nENV PORT=8500\nENV MODEL_NAME=inception\nENV MODEL_PATH=/var/tensorflow/output\nENV BATCHING=\"--enable_batching\"\n\n# build variables for serving\nENV PYTHON_BIN_PATH=\"/usr/bin/python\"\nENV PYTHON_LIB_PATH=\"/usr/local/lib/python2.7/dist-packages\"\nENV CC_OPT_FLAGS=\"-march=native\"\nENV TF_NEED_JEMALLOC=1\nENV TF_NEED_GCP=0\nENV TF_NEED_HDFS=0\nENV TF_ENABLE_XLA=0\nENV TF_NEED_OPENCL=0\nENV TF_NEED_CUDA=0\nENV TF_CUDA_VERSION=v8.0\n\nRUN apt-get update && apt-get install --no-install-recommends -y \\\n        build-essential \\\n        curl \\\n        git \\\n        libfreetype6-dev \\\n        libpng12-dev \\\n        libzmq3-dev \\\n        pkg-config \\\n        python-dev \\\n        python-numpy \\\n        python-pip \\\n        software-properties-common \\\n        swig \\\n        zip \\\n        zlib1g-dev \\\n        libcurl3-dev \\\n        && \\\n    apt-get clean && \\\n    rm -rf /var/lib/apt/lists/*\n\nRUN curl -fSsL -O https://bootstrap.pypa.io/get-pip.py && \\\n    python get-pip.py && \\\n    rm get-pip.py\n\n# Set up grpc\n\nRUN pip install --no-cache-dir enum34 futures mock six && \\\n    pip install --no-cache-dir --pre 'protobuf>=3.0.0a3' && \\\n    pip install --no-cache-dir -i https://testpypi.python.org/simple --pre grpcio\n\n# Set up Bazel.\n\n# We need to add a custom PPA to pick up JDK8, since trusty doesn't\n# have an openjdk8 backport.  openjdk-r is maintained by a reliable contributor:\n# Matthias Klose (https://launchpad.net/~doko).  It will do until\n# we either update the base image beyond 14.04 or openjdk-8 is\n# finally backported to trusty; see e.g.\n#   https://bugs.launchpad.net/trusty-backports/+bug/1368094\nRUN add-apt-repository -y ppa:openjdk-r/ppa && \\\n    apt-get update && \\\n    apt-get install --no-install-recommends -y openjdk-8-jdk openjdk-8-jre-headless && \\\n    apt-get clean && \\\n    rm -rf /var/lib/apt/lists/*\n\n# Running bazel inside a `docker build` command causes trouble, cf:\n#   https://github.com/bazelbuild/bazel/issues/134\n# The easiest solution is to set up a bazelrc file forcing --batch.\nRUN echo \"startup --batch\" >>/root/.bazelrc\n# Similarly, we need to workaround sandboxing issues:\n#   https://github.com/bazelbuild/bazel/issues/418\nRUN echo \"build --spawn_strategy=standalone --genrule_strategy=standalone\" \\\n    >>/root/.bazelrc\nENV BAZELRC /root/.bazelrc\n# Install the most recent bazel release.\nENV BAZEL_VERSION 0.4.2\nWORKDIR /\nRUN mkdir /bazel && \\\n    cd /bazel && \\\n    curl -fSsL -O https://github.com/bazelbuild/bazel/releases/download/$BAZEL_VERSION/bazel-$BAZEL_VERSION-installer-linux-x86_64.sh && \\\n    curl -fSsL -o /bazel/LICENSE.txt https://raw.githubusercontent.com/bazelbuild/bazel/master/LICENSE.txt && \\\n    chmod +x bazel-*.sh && \\\n    ./bazel-$BAZEL_VERSION-installer-linux-x86_64.sh && \\\n    cd / && \\\n    rm -f /bazel/bazel-$BAZEL_VERSION-installer-linux-x86_64.sh\n\n# PYTHON_BIN_PATH=/usr/bin/python PYTHON_LIB_PATH=/usr/local/lib/python2.7/dist-packages CC_OPT_FLAGS=\"-march=native\" TF_NEED_JEMALLOC=1 TF_NEED_GCP=0 TF_NEED_HDFS=0 TF_ENABLE_XLA=0 TF_NEED_OPENCL=0 TF_NEED_CUDA=0 TF_CUDA_VERSION=v8.0 ./configure\n\nRUN git clone --recurse-submodules https://github.com/tensorflow/serving /serving && \\\n    cd /serving/tensorflow && \\\n    ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" && \\\n    cd .. && \\\n    bazel build -c opt tensorflow_serving/...\n\nCMD [ \"/serving/bazel-bin/tensorflow_serving/model_servers/tensorflow_model_server\" , \"--port=${PORT}\", \"${BATCHING}\", \"--model_name=${MODEL_NAME}\", \"--model_base_path=${MODEL_PATH}\" ]\n"
+}

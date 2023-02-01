@@ -1,0 +1,26 @@
+{
+  "startTime": 1674256101434,
+  "endTime": 1674256102638,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 8,
+        "lineEnd": 8,
+        "columnStart": 25,
+        "columnEnd": 66
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 8,
+        "lineEnd": 8,
+        "columnStart": 25,
+        "columnEnd": 66
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# ===================\n# ===== Builder =====\n# ====================\n\nFROM golang:1.13 AS builder\n\n# Install required packages\nRUN sed -i s@/deb.debian.org/@/mirrors.aliyun.com/@g /etc/apt/sources.list \\\n    && apt-get update && apt-get install --no-install-recommends -y apt-utils gettext-base && rm -rf /var/lib/apt/lists/*;\n\n# Reconstruct source tree inside docker\nWORKDIR /clickhouse-operator\nADD . .\n\n# ./vendor is excluded in .dockerignore, reconstruct it with 'mod' tool\nENV GOPROXY=https://goproxy.cn,direct\nRUN GO111MODULE=on go mod tidy\nRUN GO111MODULE=on go mod vendor\n\n# Build operator binary with explicitly specified output\nRUN METRICS_EXPORTER_BIN=/tmp/metrics-exporter ./dev/go_build_metrics_exporter.sh\n\n# ============================\n# ===== Metrics exporter =====\n# ============================\n\nFROM registry.access.redhat.com/ubi7/ubi-minimal AS ubi7\nRUN microdnf update && microdnf clean all\n\nMAINTAINER \"RadonDB <support@radondb.com>\"\n\nLABEL name=\"ClickHouse operator. Metrics exporter\" \\\n      maintainer=\"support@radondb.com\" \\\n      vendor=\"RadonDB\" \\\n      version=\"2.1.1\" \\\n      release=\"1\" \\\n      summary=\"Metrics Exporter\" \\\n      description=\"Metrics exporter for RadonDB ClickHouse operator\"\n\nADD LICENSE /licenses/\n\nWORKDIR /\n\n# Add config files from local source dir into image\nADD config/config.yaml   /etc/clickhouse-operator/\nADD config/conf.d/*      /etc/clickhouse-operator/conf.d/\nADD config/config.d/*    /etc/clickhouse-operator/config.d/\nADD config/templates.d/* /etc/clickhouse-operator/templates.d/\nADD config/users.d/*     /etc/clickhouse-operator/users.d/\n\n# Copy clickhouse-operator binary into operator image from builder\nCOPY --from=builder /tmp/metrics-exporter .\n\nUSER nobody\n\n# Run /metrics-exporter -alsologtostderr=true -v=1\n# We can specify additional options, such as:\n#   --config=/path/to/config\n#   --kube-config=/path/to/kubeconf\nENTRYPOINT [\"/metrics-exporter\"]\nCMD [\"-logtostderr=true\", \"-v=1\"]\n#CMD [\"-alsologtostderr=true\", \"-v=1\"]\n"
+}

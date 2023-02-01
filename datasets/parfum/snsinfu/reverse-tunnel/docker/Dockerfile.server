@@ -1,0 +1,17 @@
+FROM golang:1.16 AS builder
+WORKDIR /srv
+COPY . .
+ARG GOARCH=
+ARG CGO_ENABLED=0
+RUN git clone https://github.com/snsinfu/reconf.git /tmp/reconf \
+ && cd /tmp/reconf \
+ && go build -o /srv/reconf .
+RUN go build -o rtun-server ./server/cmd
+
+FROM scratch
+COPY --from=builder /srv/reconf /srv/rtun-server /
+COPY --from=builder /srv/docker/rtun-server.yml.template /config/
+ENV RTUN_PORT=9000
+ENV RTUN_AGENT=
+ENTRYPOINT ["/reconf", "-w", "/config/rtun-server.yml", "/rtun-server"]
+CMD ["-f", "/config/rtun-server.yml"]

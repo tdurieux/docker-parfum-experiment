@@ -1,0 +1,26 @@
+{
+  "startTime": 1674219587000,
+  "endTime": 1674219588328,
+  "originalSmells": [
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 20,
+        "lineEnd": 20,
+        "columnStart": 4,
+        "columnEnd": 28
+      }
+    },
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 88,
+        "lineEnd": 88,
+        "columnStart": 7,
+        "columnEnd": 48
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "#############\n### base ###\n#############\nFROM node:16-alpine as base\n\n#The name of the app to build\nARG app\nENV APP=$app\nRUN echo building ${APP}\n\n#############\n### build ###\n#############\nFROM base as build\n\nWORKDIR /app\n# add `/app/node_modules/.bin` to $PATH\nENV PATH /app/node_modules/.bin:$PATH\n\n# install nrwl cli\nRUN npm install -g @nrwl/cli && npm cache clean --force;\n\n# install dependencies needed to compile canvas (needed for Vega-embed)\nENV PYTHONUNBUFFERED=1\nRUN apk add --update --no-cache \\\n    python3 \\\n    pkgconfig \\\n    pixman-dev \\\n    cairo-dev \\\n    pango-dev \\\n    alpine-sdk \\\n    cmake\nRUN ln -sf python3 /usr/bin/python\nRUN python3 -m ensurepip\nRUN pip3 install --no-cache --no-cache-dir  --upgrade pip setuptools\n\n# copy dependencies\n# Copy over dependency list\nCOPY tsconfig.base.json /app/tsconfig.base.json\nCOPY package.json /app/package.json\nCOPY package-lock.json /app/package-lock.json\nCOPY declarations.d.ts /app/declarations.d.ts\n# set working directory\n\n\n# install the app, including the dev dependencies\nRUN npm ci\n\nCOPY nx.json  /app/nx.json\t\nCOPY angular.json /app/angular.json\n#copy source\nCOPY libs /app/libs\nCOPY apps /app/apps\n\n# generate build\n# Redifining the env *might* correct cache invalidation issue\nENV APP=${APP}\nENV node_options=--max_old_space_size=6144\nRUN nx build ${APP} --prod --with-deps\n\n############\n### prod ###\n############\n\n# base image\nFROM base as prod\n\nWORKDIR /app\n\n#Copy over dependency list\nCOPY package.json /app/package.json\nCOPY package-lock.json /app/package-lock.json\n\n# install the app and include only dependencies needed to run\nRUN npm ci --only=production --ignore-scripts=true\nRUN apk add --no-cache --virtual .gyp python3 make g++\\\n    pkgconfig \\\n    pixman-dev \\\n    cairo-dev \\\n    pango-dev \\\n    alpine-sdk \\\n    cmake  \\\n    # remove sharp since it is currently installed and the install comand below wont actually run the post install script\n    # Therefore, the node module folder wont have the needed binaries\n    # Removing it here causes a fresh install which works properly\n    # This is problematic however, since there is no longer a version lock\n    # TODO find a way to ensure version\n    && npm uninstall sharp \\ \n    && npm install sharp  --ignore-scripts=false \\\n    && apk del .gyp && npm cache clean --force;\n\n# copy artifact build from the 'build environment'\nRUN echo app is ${APP}\nCOPY --from=build /app/dist/apps/${APP}/ .\nEXPOSE 3333\nCMD node main.js\n"
+}

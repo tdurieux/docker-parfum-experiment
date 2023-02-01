@@ -1,0 +1,26 @@
+{
+  "startTime": 1674251942513,
+  "endTime": 1674251943803,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 14,
+        "lineEnd": 14,
+        "columnStart": 22,
+        "columnEnd": 62
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 14,
+        "lineEnd": 14,
+        "columnStart": 22,
+        "columnEnd": 62
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Stage 0: Build the thing\n# Need debian based image to build the native rust module\n# as musl doesn't support cdylib\nFROM node:16 AS builder\n\nCOPY . /src\nWORKDIR /src\n\n# We need rustup so we have a sensible rust version, the version packed with bullsye is too old\nRUN curl https://sh.rustup.rs -sSf | sh -s -- -y --profile minimal\nENV PATH=\"/root/.cargo/bin:${PATH}\"\n\n# Needed to build rust things for matrix-sdk-crypto-nodejs\n# See https://github.com/matrix-org/matrix-rust-sdk-bindings/blob/main/crates/matrix-sdk-crypto-nodejs/release/Dockerfile.linux#L5-L6\nRUN apt-get update && apt-get install --no-install-recommends -y build-essential cmake && rm -rf /var/lib/apt/lists/*;\n\n# Workaround: Need to install esbuild manually https://github.com/evanw/esbuild/issues/462#issuecomment-771328459\nRUN yarn --ignore-scripts --pure-lockfile\nRUN node node_modules/esbuild/install.js\nRUN yarn build\n\n\n# Stage 1: The actual container\nFROM node:16-slim\n\nCOPY --from=builder /src/lib/ /bin/matrix-hookshot/\nCOPY --from=builder /src/public/ /bin/matrix-hookshot/public/\nCOPY --from=builder /src/package.json /bin/matrix-hookshot/\nCOPY --from=builder /src/yarn.lock /bin/matrix-hookshot/\nWORKDIR /bin/matrix-hookshot\n\n# --ignore-scripts so we don't try to build\nRUN yarn --ignore-scripts --production --pure-lockfile && yarn cache clean\n\n# Copy rust bindings for crypto, since we built them in the previous step.\nCOPY --from=builder /src/node_modules/@turt2live/matrix-sdk-crypto-nodejs /bin/matrix-hookshot/node_modules/@turt2live/matrix-sdk-crypto-nodejs\n\nVOLUME /data\nEXPOSE 9993\nEXPOSE 7775\n\nCMD [\"node\", \"/bin/matrix-hookshot/App/BridgeApp.js\", \"/data/config.yml\", \"/data/registration.yml\"]\n"
+}

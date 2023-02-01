@@ -1,0 +1,114 @@
+FROM fedora:30
+LABEL Description="Fedora 30 with build dependencies for shared"
+
+# Override the language to force UTF-8 output
+ENV LANG=C.UTF-8
+
+# Fedora>=30 provides python3-z3 but not python2-z3 (cf. https://src.fedoraproject.org/rpms/z3/c/9257eb278f0353c184d5f68286fe4df7b6a0e504)
+RUN \
+    dnf update -q -y --setopt=deltarpm=false && \
+    dnf install -q -y --setopt=deltarpm=false \
+        cargo \
+        clang \
+        coq \
+        elfutils-libelf-devel \
+        gcc \
+        gdb \
+        glibc-devel.x86_64 \
+        glibc-devel.i686 \
+        gmp-devel.x86_64 \
+        gmp-devel.i686 \
+        gtk3-devel \
+        java-11-openjdk-devel \
+        kernel \
+        kernel-devel \
+        libmnl-devel.x86_64 \
+        libmnl-devel.i686 \
+        m4 \
+        make \
+        mingw32-gcc \
+        mingw64-gcc \
+        numpy \
+        openssh \
+        openssl \
+        openssl-devel \
+        perl-Getopt-Long \
+        perl-Term-ANSIColor \
+        pkgconf \
+        pulseaudio-libs-devel \
+        python3 \
+        python3-cffi \
+        python3-cryptography \
+        python3-devel \
+        python3-gmpy2 \
+        python3-numpy \
+        python3-pillow \
+        python3-pycryptodomex \
+        python3-pynacl \
+        python3-z3 \
+        python2-cffi \
+        python2-devel \
+        python2-gmpy2 \
+        python2-pillow \
+        python2-pycryptodomex \
+        SDL2-devel \
+        which \
+        wine && \
+    dnf clean all
+
+WORKDIR /shared
+RUN ln -s shared/machines/run_shared_test.sh /run_shared_test.sh
+COPY . /shared/
+
+CMD ["/run_shared_test.sh"]
+
+# make list-nobuild:
+#    Global blacklist: latex% rust/asymkeyfind% rust/check_linux_pass% rust/download_web%
+#    In sub-directories:
+#       c:
+#       glossaries:
+#       java/keystore:
+#       linux:
+#       python:
+#       python/crypto:
+#       python/network:
+#       python/network/dnssec:
+#       python/qrcode:
+#       rust:
+#       verification:
+#    With gcc -m32:
+#       Global blacklist: latex% rust/asymkeyfind% rust/check_linux_pass% rust/download_web%
+#       In sub-directories:
+#          c: gtk_alpha_window
+#          glossaries:
+#          java/keystore:
+#          linux: pulseaudio_echo sdl_v4l_video
+#          python:
+#          python/crypto:
+#          python/network:
+#          python/network/dnssec:
+#          python/qrcode:
+#          rust:
+#          verification:
+#    Compilers:
+#       gcc -m64: ok
+#       gcc -m32: ok
+#       clang -m64: ok
+#       clang -m32: ok
+#       musl-gcc: not working
+#       x86_64-w64-mingw32-gcc: ok
+#       i686-w64-mingw32-gcc: ok
+#    Versions:
+#       gcc: gcc (GCC) 9.3.1 20200408 (Red Hat 9.3.1-2)
+#       clang: clang version 8.0.0 (Fedora 8.0.0-3.fc30)
+#       x86_64-w64-mingw32-gcc: x86_64-w64-mingw32-gcc (GCC) 8.3.0 20190222 (Fedora MinGW 8.3.0-2.fc30)
+#       i686-w64-mingw32-gcc: i686-w64-mingw32-gcc (GCC) 8.3.0 20190222 (Fedora MinGW 8.3.0-2.fc30)
+#       wine: wine-5.0 (Staging)
+#       Linux kernel: 5.6.13-100.fc30.x86_64
+#       python3: Python 3.7.7
+#       javac: javac 11.0.7
+#       java: openjdk 11.0.7 2020-04-14
+#       rustc: rustc 1.43.1
+#       cargo: cargo 1.43.0
+#       coqc: The Coq Proof Assistant, version 8.8.2 (February 2019) compiled on Feb 8 2019 2:53:04 with OCaml 4.07.0
+#       openssl: OpenSSL 1.1.1g FIPS  21 Apr 2020

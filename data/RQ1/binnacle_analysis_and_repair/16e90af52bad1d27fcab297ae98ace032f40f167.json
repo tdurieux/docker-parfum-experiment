@@ -1,0 +1,90 @@
+{
+  "startTime": 1674251531781,
+  "endTime": 1674251531993,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseY",
+      "position": {
+        "lineStart": 35,
+        "lineEnd": 35,
+        "columnStart": 4,
+        "columnEnd": 25
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 7,
+        "lineEnd": 7,
+        "columnStart": 4,
+        "columnEnd": 28
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 35,
+        "lineEnd": 35,
+        "columnStart": 4,
+        "columnEnd": 25
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 7,
+        "lineEnd": 7,
+        "columnStart": 4,
+        "columnEnd": 28
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 35,
+        "lineEnd": 35,
+        "columnStart": 4,
+        "columnEnd": 25
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 7,
+        "lineEnd": 7,
+        "columnStart": 4,
+        "columnEnd": 28
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 35,
+        "lineEnd": 35,
+        "columnStart": 4,
+        "columnEnd": 25
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 7,
+        "lineEnd": 7,
+        "columnStart": 4,
+        "columnEnd": 52
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 35,
+        "lineEnd": 35,
+        "columnStart": 4,
+        "columnEnd": 52
+      }
+    }
+  ],
+  "repairedDockerfile": "#\n# bootstrap_base\n#\nARG GOLANG_VERSION=1.12\nFROM golang:$GOLANG_VERSION as bootstrap_base\n\nRUN apt-get update\nRUN apt-get install --no-install-recommends -y unzip && rm -rf /var/lib/apt/lists/*;\n\n# We need gcloud to get gke credentials.\nRUN \\\n    cd /tmp && \\\n    wget -nv https://dl.google.com/dl/cloudsdk/release/install_google_cloud_sdk.bash && \\\n    chmod +x install_google_cloud_sdk.bash && \\\n    ./install_google_cloud_sdk.bash --disable-prompts --install-dir=/opt/\n\nENV PATH /go/bin:/usr/local/go/bin:/opt/google-cloud-sdk/bin:${PATH}\n\nRUN mkdir -p /opt/kubeflow\nRUN mkdir -p ${GOPATH}/src/github.com/kubeflow/kubeflow/bootstrap\nWORKDIR ${GOPATH}/src/github.com/kubeflow/kubeflow/bootstrap\n\n# use go modules\nENV GO111MODULE=on\n\nCOPY . .\nRUN unzip -q -d /tmp hack/v2.zip\nRUN go mod download\nRUN go build -gcflags 'all=-N -l' -o bin/bootstrapper cmd/bootstrap/main.go\n\n#\n# kfctl_base\n#\nFROM bootstrap_base as kfctl_base\n\nRUN apt-get install -y --no-install-recommends unzip && rm -rf /var/lib/apt/lists/*;\nWORKDIR ${GOPATH}/src/github.com/kubeflow/kubeflow/bootstrap\nRUN GO111MODULE=off GOPATH=${GOPATH} go get k8s.io/code-generator/cmd/deepcopy-gen\nRUN ${GOPATH}/bin/deepcopy-gen -i github.com/kubeflow/kubeflow/bootstrap/config/... -O zz_generated.deepcopy\nRUN ${GOPATH}/bin/deepcopy-gen -i github.com/kubeflow/kubeflow/bootstrap/pkg/apis/apps/kfdef/... -O zz_generated.deepcopy\nRUN ${GOPATH}/bin/deepcopy-gen -i github.com/kubeflow/kubeflow/bootstrap/v2/pkg/apis/apps/kfdef/... -O zz_generated.deepcopy\nRUN go generate ./config/... ./pkg/apis/... ./pkg/utils/... ./pkg/kfapp/... ./cmd/kfctl/...\nRUN go fmt ./config/... ./pkg/apis/... ./pkg/utils/... ./pkg/kfapp/... ./cmd/kfctl/...\nRUN go vet ./config/... ./pkg/apis/... ./pkg/utils/... ./pkg/kfapp/... ./cmd/kfctl/...\nRUN go build -gcflags 'all=-N -l' -o bin/kfctl cmd/kfctl/main.go\n\n#\n# kfctl\n#\nFROM golang:${GOLANG_VERSION} as kfctl\n\nENV PATH ${GOPATH}/bin:/usr/local/go/bin:${PATH}\nRUN mkdir -p /opt/kubeflow\nWORKDIR /opt/kubeflow\nCOPY --from=kfctl_base ${GOPATH}/src/github.com/kubeflow/kubeflow/bootstrap/bin/kfctl /usr/local/bin\n\nCMD [\"/bin/bash\", \"-c\", \"trap : TERM INT; sleep infinity & wait\"]\n\n#\n# bootstrap\n#\nFROM golang:${GOLANG_VERSION} as bootstrap\nARG registries\n\nCOPY $registries /opt/registries\n\nRUN mkdir -p /opt/kubeflow\nCOPY --from=bootstrap_base ${GOPATH}/src/github.com/kubeflow/kubeflow/bootstrap/bin/bootstrapper /opt/kubeflow/\n\nCOPY config/default.yaml /opt/kubeflow/\nCOPY image_registries.yaml /opt/kubeflow/\nRUN mkdir -p /opt/bootstrap\nRUN mkdir -p /opt/versioned_registries\nRUN chmod a+rx /opt/kubeflow/bootstrapper\n\nENV PATH ${GOPATH}/bin:/usr/local/go/bin:${PATH}\nRUN mkdir -p /opt/kubeflow\nWORKDIR /opt/kubeflow\n\nEXPOSE 8080\n\n\n# Set default values for USER, USER_ID, GROUP_ID\n# The startup script will create the user and su to that user.\n# We delay the user creation until runtime so that user can specify\n# the user info at runtime.\n\n# Work around for https://github.com/ksonnet/ksonnet/issues/298\nENV USER kubeflow\nENV USER_ID 1000\nENV GROUP_ID 1000\nENV GROUP kubeflow\n\nCMD [\"/opt/kubeflow/bootstrapper\",\"--in-cluster\",\"--namespace=kubeflow\",\"--apply\"]\n"
+}

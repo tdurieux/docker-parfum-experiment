@@ -1,0 +1,1 @@
+# {json:scada} Grafana docker container - (c) 2021 - Ricardo L. Olsen 

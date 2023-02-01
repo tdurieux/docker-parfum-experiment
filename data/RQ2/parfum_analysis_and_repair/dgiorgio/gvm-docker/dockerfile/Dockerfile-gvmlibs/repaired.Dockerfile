@@ -1,0 +1,33 @@
+ARG gvmlibs_debian_version
+FROM debian:${gvmlibs_debian_version}
+
+RUN apt update -y && apt install -y --no-install-recommends --fix-missing \
+  wget git cmake gcc make clang-format pkg-config libglib2.0-dev libgpgme-dev \
+  libgnutls28-dev uuid-dev libssh-gcrypt-dev libldap2-dev libhiredis-dev libradcli-dev \
+  doxygen xmltoman libxml2-dev sudo libpcap0.8 libpcap0.8-dev libgcrypt20 libgcrypt20-dev \
+  libnet1-dev \
+  && rm -rf /var/lib/apt/lists/* \
+  && mkdir -p /etc/sudoers.d \
+  && useradd -s /bin/bash -m gvm \
+  && echo 'gvm ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/gvm
+
+# gvm-libs
+ARG STAGE
+ENV STAGE ${STAGE}
+ARG gvmlibs_version
+ENV gvmlibs_version ${gvmlibs_version}
+
+RUN mkdir -p /root/gvm-src/gvm-libs
+WORKDIR /root/gvm-src/gvm-libs
+COPY ./src/gvm-libs/build.sh ./src/gvm-libs/commit/${STAGE} ./
+RUN chmod +x ./build.sh && ./build.sh ${STAGE} \
+  && apt remove -y git cmake gcc make clang-format pkg-config \
+  && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /
+RUN rm -rf /root/gvm-src
+
+# Add Tini
+ENV TINI_VERSION v0.19.0
+ADD https://github.com/krallin/tini/releases/download/${TINI_VERSION}/tini /tini
+RUN chmod +x /tini

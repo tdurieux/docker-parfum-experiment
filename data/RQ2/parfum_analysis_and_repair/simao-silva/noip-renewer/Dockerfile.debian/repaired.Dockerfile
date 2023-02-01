@@ -1,0 +1,36 @@
+FROM python:3.10.5-slim-bullseye@sha256:b208c71e1d72864460394cc648c6b5c1ddac6f8587af4a3a54b7be575353f5d0
+
+ARG PIP_VERSION
+ARG SELENIUM_VERSION
+ARG GOOGLETRANS_VERSION
+ARG REQUESTS_VERSION
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+ARG ARMV7_DEPS="gcc libc6-dev libffi-dev rustc cargo libssl-dev"
+
+RUN apt-get update && \
+    if [ $(getconf LONG_BIT) -eq 32 ]; then \
+    apt-get install -y --no-install-recommends ${ARMV7_DEPS}; rm -rf /var/lib/apt/lists/*; fi
+
+RUN pip install --no-cache-dir pip=="${PIP_VERSION}" && \
+    pip install --no-cache-dir --user selenium=="${SELENIUM_VERSION}" googletrans=="$GOOGLETRANS_VERSION" requests=="$REQUESTS_VERSION"
+
+
+
+FROM python:3.10.5-slim-bullseye@sha256:b208c71e1d72864460394cc648c6b5c1ddac6f8587af4a3a54b7be575353f5d0
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends chromium chromium-driver && \
+    apt-get clean && \
+    rm -rf /tmp/* /var/lib/apt/lists/* /var/tmp/* /usr/share/doc /usr/share/man
+
+COPY --from=0 /root/.local /root/.local
+
+ENV PATH=/root/.local/bin:$PATH
+
+COPY renew.py renew.py
+
+ENTRYPOINT ["python3", "renew.py"]

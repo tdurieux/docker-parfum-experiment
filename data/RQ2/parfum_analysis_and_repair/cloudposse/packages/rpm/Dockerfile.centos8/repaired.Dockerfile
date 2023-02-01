@@ -1,0 +1,15 @@
+FROM registry.access.redhat.com/ubi8/ubi
+
+ENV LC_ALL=C.UTF-8
+ENV PS1="(rpm) \w \$ "
+
+RUN yum clean all && yum -y install ruby-devel gcc make rpm-build rubygems git zip bzip2 jq which && rm -rf /var/cache/yum
+# install sudo, needed by package sudosh, and protected, so it is nearly impossible to remove
+RUN yum -y install sudo && rm -rf /var/cache/yum
+
+RUN gem install --no-document fpm
+# https://github.com/jordansissel/fpm/issues/1663
+RUN gem uninstall --all --ignore-dependencies --force backports
+RUN gem install --no-document backports -v 3.15.0
+
+WORKDIR /packages

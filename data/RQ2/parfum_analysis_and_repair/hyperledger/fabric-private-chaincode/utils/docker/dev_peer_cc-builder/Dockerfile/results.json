@@ -1,0 +1,63 @@
+{
+  "startTime": 1674218516428,
+  "endTime": 1674218517472,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 128,
+        "lineEnd": 131,
+        "columnStart": 5,
+        "columnEnd": 19
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 177,
+        "lineEnd": 181,
+        "columnStart": 4,
+        "columnEnd": 16
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 177,
+        "lineEnd": 181,
+        "columnStart": 4,
+        "columnEnd": 16
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 128,
+        "lineEnd": 131,
+        "columnStart": 5,
+        "columnEnd": 19
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 177,
+        "lineEnd": 181,
+        "columnStart": 4,
+        "columnEnd": 16
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 177,
+        "lineEnd": 181,
+        "columnStart": 4,
+        "columnEnd": 16
+      }
+    }
+  ],
+  "repairedDockerfile": "# Copyright IBM Corp. All Rights Reserved.\n# Copyright 2020 Intel Corporation\n#\n# SPDX-License-Identifier: Apache-2.0\n\n# Description:\n#   Sets up fabric/fpc source environment and builds, in different stages, three different\n#   containers\n#   - peer: a container with an fpc-enhanced fabric peer\n#   - cc-builder: an environment to build fpc chaincode enclave.so\n#   - dev: a fpc-enabled interactive development environment\n#\n#  Configuration (build) paramaters (for defaults, see below section with ARGs)\n#  - fpc image version:         FPC_VERSION\n#  - fabric repo:               FABRIC_REPO\n#  - fabric branch:             FABRIC_VERSION\n#  - fpc repo:                  FPC_REPO_URL\n#  - fpc branch/tag/commit      FPC_REPO_BRANCH_TAG_OR_COMMIT\n#  - git user:                  GIT_USER_NAME\n#  - git user's email:          GIT_USER_EMAIL\n#  - sgx mode:                  SGX_MODE\n#  - additional apt pkgs:       APT_ADD_PKGS\n\n# Note on SGX_MODE:\n# In a docker build environment, we build but cannot _run_ with SGX_MODE=HW!.\n# Moreoever, libraries like sgxssl are be agnostic to the mode in which they are built and\n# can be used in both modes. Hence, even when we define glabally SGX_MODE to be HW,\n# we can still build _and test_ them by locally/temporarily defining SGX_MODE to SIM\n# as we do below for sgxssl ...\n\n# global config params\nARG FPC_VERSION=main\nARG SGX_MODE=SIM\nARG APT_ADD_PKGS=\n\n# global constants\n# paths relative to GOPATH. to share across stages, has to be defined global but at\n# this stage we do not know GOPATH, so has to be relative ...\nARG FABRIC_REL_PATH=src/github.com/hyperledger/fabric\nARG FPC_REL_PATH=src/github.com/hyperledger/fabric-private-chaincode\n\n\n# Note on multi-stage: pre-docker build kit, all stages are evaluated, even if they are not required.\n# While our default setting is to use build kit (see ../../config.mk), we order here in decreasing\n# importance of how regularly we need the builds so builds are also faster without build-kit\n\nFROM hyperledger/fabric-private-chaincode-base-dev:${FPC_VERSION} as common\n\n# import global vars\nARG FABRIC_REL_PATH\nARG FPC_REL_PATH\nARG SGX_MODE\n\n# config/build params\nARG FABRIC_REPO=https://github.com/hyperledger/fabric.git\nARG FABRIC_VERSION=2.3.3\nARG FPC_REPO_URL=https://github.com/hyperledger/fabric-private-chaincode.git\nARG FPC_REPO_BRANCH_TAG_OR_COMMIT=main\nARG GIT_USER_NAME=tester\nARG GIT_USER_EMAIL=tester@fpc\n\n\n# make sure we have a valid git user (needed for the git am when patching fabric)\nRUN git config --global user.name \"${GIT_USER_NAME}\" \\\n && git config --global user.email \"${GIT_USER_EMAIL}\"\n\n\n# Get Fabric\nENV FABRIC_PATH=${GOPATH}/${FABRIC_REL_PATH}\nRUN git clone --branch v${FABRIC_VERSION} ${FABRIC_REPO} ${FABRIC_PATH}\n# Note: could add --single-branch to below to speed-up and keep size smaller. But for now for a dev-image better keep complete repo\n\n# Get FPC\nENV FPC_PATH=${GOPATH}/${FPC_REL_PATH}\n# We copy context so we can use that to potentially get local .git as repo ...\nCOPY .git /tmp/cloned-local-fpc-git-repo/\nRUN git \\\n       -c submodule.interpreters/wasm-micro-runtime.update=none -c submodule.ccf_transaction_processor/CCF.update=none \\\n\tclone --recurse ${FPC_REPO_URL} ${FPC_PATH} \\\n  && cd ${FPC_PATH} \\\n  && git checkout --recurse ${FPC_REPO_BRANCH_TAG_OR_COMMIT}\n# Notes:\n# - the -c submodule's are to prevent dragging in large but unneeded sub-sub-modules of pdo ...\n\n# Make sure we download common godeps once instead if separate times below\nRUN cd ${FPC_PATH} \\\n && make godeps\n\n\n# peer builder container (Ephemeral)\n#------------------------------------\nFROM common as peer-builder\n\n# import global vars\nARG SGX_MODE\nENV SGX_MODE=${SGX_MODE}\n\n# Build FPC peer\nRUN cd ${FPC_PATH} \\\n && make fpc-peer \\\n && make fpc-peer-cli\n\n\n# peer Container\n#------------------------\n# Note we don't need all the build support for that,\n# so just start from base and copy the necessary built binaries/scripts\nFROM hyperledger/fabric-private-chaincode-base-rt:${FPC_VERSION} as peer\n\n# import global vars\nARG FABRIC_REL_PATH\nARG FPC_REL_PATH\nARG SGX_MODE\n\n# local vars\n# note these envs are _not_ inhereted from above as we start from base-rt !\nARG FABRIC_PATH=${GOPATH}/${FABRIC_REL_PATH}\nARG FPC_PATH=${GOPATH}/${FPC_REL_PATH}\nARG FABRIC_BIN_DIR=${FPC_PATH}/fabric/_internal/bin\nARG FPC_CMDS=${FPC_PATH}/fabric/bin\n\nENV FABRIC_PATH=${FABRIC_PATH}\nENV FABRIC_BIN_DIR=${FABRIC_BIN_DIR}\nENV FPC_PATH=${FPC_PATH}\nENV FPC_CMDS=${FPC_CMDS}\nENV SGX_MODE=${SGX_MODE}\n\nRUN apt-get update \\\n  && apt-get install --no-install-recommends -y -q \\\n    docker.io \\\n    jq \\\n    ${APT_ADD_PKGS} && rm -rf /var/lib/apt/lists/*;\n\n\n# components we need\n# - peer cli wrapper\nCOPY --from=peer-builder ${FPC_CMDS} ${FPC_CMDS}\n# - fabric binariers\nCOPY --from=peer-builder ${FABRIC_BIN_DIR} ${FABRIC_BIN_DIR}\n# - (sgx) config\nCOPY --from=peer-builder ${FPC_PATH}/config ${FPC_PATH}/config\n# - ercc binary\nCOPY --from=peer-builder ${FPC_PATH}/ercc/ercc ${FPC_PATH}/ercc/ercc\n# - external builders itself ..\nCOPY --from=peer-builder ${FPC_PATH}/fabric/externalBuilder/chaincode ${FPC_PATH}/fabric/externalBuilder/chaincode\n# - and for host-based run also ecc and libs\nCOPY --from=peer-builder ${FPC_PATH}/ecc/ecc ${FPC_PATH}/ecc/ecc\nCOPY --from=peer-builder ${FPC_PATH}/ecc_enclave/_build/lib/libsgxcc.so ${FPC_PATH}/ecc_enclave/_build/lib/libsgxcc.so\n\nCMD [${FPC_CMDS}/peer.sh node start]\n\n\n# cc-builder Container\n#------------------------\nFROM common as cc-builder\n\n# import global vars\nARG SGX_MODE\nENV SGX_MODE=${SGX_MODE}\n\nWORKDIR ${FPC_PATH}\n\nRUN make fpc-sdk\n\n\n\n# Dev Container\n#------------------------\nFROM common as dev\n\n# import global vars\nARG FPC_REL_PATH\nARG SGX_MODE\nARG APT_ADD_PKGS\n\nENV SGX_MODE=${SGX_MODE}\n\nRUN apt-get install --no-install-recommends -y -q \\\n\tpsmisc \\\n\tbc \\\n\tdocker-compose \\\n\t${APT_ADD_PKGS} && rm -rf /var/lib/apt/lists/*;\n\nRUN GO111MODULE=on \\\n    go get github.com/mikefarah/yq/v3\n\nWORKDIR ${FPC_PATH}\n"
+}

@@ -1,0 +1,19 @@
+FROM alpine:3.16.0
+RUN  apk add --no-cache wget ca-certificates
+EXPOSE 8082
+EXPOSE 8445
+RUN mkdir /server
+RUN mkdir /server/database
+RUN mkdir /config
+COPY postee /server/
+COPY rego-templates /server/rego-templates
+COPY rego-filters /server/rego-filters
+COPY cfg.yaml /config/
+WORKDIR /server
+RUN chmod +x postee
+RUN addgroup -g 1099 postee
+RUN adduser -D -g '' -G postee -u 1099 postee
+RUN chown -R postee:postee /server
+RUN chown -R postee:postee /config
+USER postee
+ENTRYPOINT ["/server/postee"]

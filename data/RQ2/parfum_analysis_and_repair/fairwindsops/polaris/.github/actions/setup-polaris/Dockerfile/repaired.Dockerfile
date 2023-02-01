@@ -1,0 +1,1 @@
+# The action uses an own Dockerfile on purpose because the root Dockerfile takes way too long to build for an action

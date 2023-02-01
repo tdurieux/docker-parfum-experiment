@@ -1,0 +1,53 @@
+{
+  "startTime": 1674216505365,
+  "endTime": 1674216506865,
+  "originalSmells": [
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 55,
+        "lineEnd": 55,
+        "columnStart": 7,
+        "columnEnd": 49
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 63,
+        "lineEnd": 63,
+        "columnStart": 7,
+        "columnEnd": 32
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 89,
+        "lineEnd": 97,
+        "columnStart": 7,
+        "columnEnd": 213
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 53,
+        "lineEnd": 53,
+        "columnStart": 7,
+        "columnEnd": 28
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 104,
+        "lineEnd": 113,
+        "columnStart": 4,
+        "columnEnd": 12
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM ubuntu:20.04 AS BUILD\n\n# Build deps\nENV DEBIAN_FRONTEND=noninteractive\n\nRUN apt-get update -y && \\\n    apt-get install -y --no-install-recommends \\\n        libmicrohttpd-dev \\\n\t\tlibjansson-dev \\\n\t\tlibssl-dev \\\n\t\tlibglib2.0-dev \\\n\t\tlibopus-dev \\\n\t\tlibogg-dev \\\n\t\tlibcurl4-openssl-dev \\\n\t\tliblua5.3-dev \\\n\t\tlibconfig-dev \\\n\t\tlibpcre3-dev \\\n\t\tzlib1g-dev \\\n\t\tpkg-config \\\n\t\tgengetopt \\\n\t\tlibtool \\\n\t\tautomake \\\n\t\tcmake \\\n\t\tbuild-essential \\\n\t\twget \\\n\t\tcurl \\\n\t\tgit \\\n\t\tca-certificates \\\n\t\tgolang \\\n        gtk-doc-tools \\\n        # for libnice versions >= 0.1.18\n        meson \\\n        ninja-build \\\n    && apt-get autoremove -y && apt-get clean && rm -r /var/lib/apt/lists/*\n\nRUN mkdir /tmp/sources\n\n# Build libnice\nRUN cd /tmp/sources/ && git clone https://gitlab.freedesktop.org/libnice/libnice.git/ \\\n    && cd libnice \\\n    && git checkout tags/0.1.19 \\\n#   for versions >= 0.1.18 (Using meson & ninja)\n    && meson builddir \\\n    && ninja -C builddir \\\n    && ninja -C builddir test \\\n    && ninja -C builddir install\n#   for versions < 0.1.18\n#    && ./autogen.sh \\\n#    && ./configure --prefix=/usr \\\n#    && make && make install\n\n# Build libsrtp\nRUN cd /tmp/sources/ && wget https://github.com/cisco/libsrtp/archive/v2.4.2.tar.gz \\\n    && tar xfv v2.4.2.tar.gz \\\n    && cd libsrtp-2.4.2 \\\n    && ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" --prefix=/usr --enable-openssl \\\n    && make shared_library && make install && rm v2.4.2.tar.gz\n\n# Build usrsctp (for DataChannels support)\nRUN cd /tmp/sources/ && git clone https://github.com/sctplab/usrsctp \\\n    && cd usrsctp \\\n    && git checkout 0.9.5.0 \\\n    && ./bootstrap \\\n    && ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" --prefix=/usr \\\n    && make && make install\n\n# Build libwebsockets (for WebSockets transport support)\nRUN cd /tmp/sources/ && git clone https://github.com/warmcat/libwebsockets.git \\\n    && cd libwebsockets \\\n    && git checkout v4.3.2 \\\n    && mkdir build && cd build \\\n    && cmake -DLWS_MAX_SMP=1 -DCMAKE_INSTALL_PREFIX:PATH=/usr -DCMAKE_C_FLAGS=\"-fpic\" .. \\\n    && make && make install\n\n# Build BoringSSL (instead of OpenSSL, for DTLS timeout)\nRUN cd /tmp/sources/ && git clone https://boringssl.googlesource.com/boringssl \\\n    && cd boringssl \\\n    && git checkout 78b3337a10a7f7b3495b6cb8140a74e265290898 \\\n    && sed -i s/\" -Werror\"//g CMakeLists.txt \\\n    && mkdir -p build && cd build \\\n    && cmake -DCMAKE_CXX_FLAGS=\"-lrt\" .. && make && cd .. \\\n    && mkdir -p /opt/boringssl && cp -R include /opt/boringssl/ && mkdir -p /opt/boringssl/lib \\\n    && cp build/ssl/libssl.a /opt/boringssl/lib/ && cp build/crypto/libcrypto.a /opt/boringssl/lib/\n\n# Build Janus Gateway\nRUN cd /tmp/sources/ && git clone https://github.com/meetecho/janus-gateway.git \\\n    && cd janus-gateway \\\n    && git checkout v0.12.3 \\\n    && sh autogen.sh \\\n    && ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" \\\n      # General\n      --prefix=/usr/local \\\n      --enable-boringssl \\\n      --enable-dtls-settimeout \\\n      # Transports\n      --disable-rabbitmq --disable-mqtt --disable-unix-sockets --disable-nanomsg \\\n      # Plugins\n      --disable-plugin-echotest --disable-plugin-audiobridge --disable-plugin-recordplay --disable-plugin-sip --disable-plugin-nosip --disable-plugin-videocall --disable-plugin-videoroom --disable-plugin-voicemail \\\n    && make && make install\n\n\nFROM ubuntu:20.04\n\nRUN apt-get -y update \\\n\t&& apt-get install --no-install-recommends -y \\\n\t\tlibmicrohttpd12 \\\n\t\tlibjansson4 \\\n\t\tlibssl1.1 \\\n\t\tlibglib2.0-0 \\\n\t\tlibopus0 \\\n\t\tlibogg0 \\\n\t\tlibcurl4 \\\n\t\tliblua5.3-0 \\\n\t\tlibconfig9 \\\n\t&& apt-get autoremove -y && apt-get clean && rm -r /var/lib/apt/lists/*\n\n# COPY libnice\nCOPY --from=BUILD /usr/local/lib/x86_64-linux-gnu/libnice.so.10.12.0 /usr/local/lib/x86_64-linux-gnu/libnice.so.10.12.0\n\n# COPY to /usr/lib\nCOPY --from=BUILD \\\n  ## SOURCES\n  # libsrtp\n  /usr/lib/libsrtp2.so.1 \\\n  # usrsctp\n  /usr/lib/libusrsctp.la \\\n  /usr/lib/libusrsctp.so.2.0.0 \\\n  # libwebsockets\n  /usr/lib/libwebsockets.so.19 \\\n  ## DESTINATION\n  /usr/lib/\n\n# RUN stuff\nRUN \\\n  # libnice symlinks\n    ln -s /usr/local/lib/x86_64-linux-gnu/libnice.so.10.12.0 /usr/local/lib/x86_64-linux-gnu/libnice.so.10 \\\n && ln -s /usr/local/lib/x86_64-linux-gnu/libnice.so.10.12.0 /usr/local/lib/x86_64-linux-gnu/libnice.so \\\n && ln -s /usr/local/lib/x86_64-linux-gnu/libnice.so.10.12.0 /usr/lib/libnice.so.10.12.0 \\\n && ln -s /usr/local/lib/x86_64-linux-gnu/libnice.so.10.12.0 /usr/lib/libnice.so.10 \\\n && ln -s /usr/local/lib/x86_64-linux-gnu/libnice.so.10.12.0 /usr/lib/libnice.so \\\n  # libsrtp symlinks\n && ln -s /usr/lib/libsrtp2.so.1 /usr/lib/libsrtp2.so \\\n  # usrsctp symlinks\n && ln -s /usr/lib/libusrsctp.so.2.0.0 /usr/lib/libusrsctp.so \\\n && ln -s /usr/lib/libusrsctp.so.2.0.0 /usr/lib/libusrsctp.so.2 \\\n  # libwebsockets symlinks\n && ln -s /usr/lib/libwebsockets.so.19 /usr/lib/libwebsockets.so \\\n  # Janus config dir\n && mkdir /usr/local/etc/janus\n\n## Janus Gateway\n# binaries\nCOPY --from=BUILD /usr/local/bin/janus /usr/local/bin/janus\nCOPY --from=BUILD /usr/local/bin/janus-cfgconv /usr/local/bin/janus-cfgconv\n# libs\nCOPY --from=BUILD /usr/local/lib/janus /usr/local/lib/janus\n# assets, demos, etc\nCOPY --from=BUILD /usr/local/share/janus /usr/local/share/janus\n\n# SECURE ports (REST, Admin&Monitor REST, WebSockets, Admin&Monitor WebSockets)\n# EXPOSE 8089 7889 8989 7989  # default ports, but disabled due to \"host\" network mode\n\n# INSECURE ports (REST, Admin&Monitor REST, WebSockets, Admin&Monitor WebSockets)\n# EXPOSE 8088 7088 8188 7188  # default ports, but disabled due to \"host\" network mode\n\n# RTP/RTCP ports\n# EXPOSE 10000-10200/udp  # default ports, but disabled due to \"host\" network mode\n\nCMD [\"/usr/local/bin/janus\"]\n\n"
+}

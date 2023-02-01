@@ -1,0 +1,53 @@
+{
+  "startTime": 1674235294771,
+  "endTime": 1674235294971,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 28,
+        "lineEnd": 28,
+        "columnStart": 5,
+        "columnEnd": 129
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 31,
+        "lineEnd": 31,
+        "columnStart": 5,
+        "columnEnd": 88
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 46,
+        "lineEnd": 46,
+        "columnStart": 5,
+        "columnEnd": 133
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 77,
+        "lineEnd": 77,
+        "columnStart": 4,
+        "columnEnd": 116
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 80,
+        "lineEnd": 80,
+        "columnStart": 4,
+        "columnEnd": 91
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# This Docker image is used to run both \"tester\" containers (containers that invoke the unit/integration tests) and\n# System-Under-Test (SUT) containers (WordPress+plugin containers that are accessed by the integration tests).\n# Both types of containers are run from the same Docker image because they have similar OS dependencies and\n# both need PHP Composer install to be run (i.e. so that the tester can run Codeception and for the SUT to provide\n# Code coverage data). The difference of behavior between the two types of containers is because their Docker\n# entrypoints are different.\n\n# Updating Software used in this Dockerfile:\n# PHP Composer: https://getcomposer.org/doc/faqs/how-to-install-composer-programmatically.md\n# XDebug: https://pecl.php.net/package/xdebug\n\n# Using the 'DESIRED_' prefix to avoid confusion with environment variables of the same name.\nARG DESIRED_WP_VERSION\nARG DESIRED_PHP_VERSION\nARG OFFICIAL_WORDPRESS_DOCKER_IMAGE=\"wordpress:${DESIRED_WP_VERSION}-php${DESIRED_PHP_VERSION}-apache\"\n\nFROM ${OFFICIAL_WORDPRESS_DOCKER_IMAGE}\n\n# Set timezone, install XDebug, PHP Composer, WP-CLI\nRUN echo 'date.timezone = \"UTC\"' > /usr/local/etc/php/conf.d/timezone.ini \\\n  && apt-get update -y \\\n  && apt-get install --no-install-recommends -y mysql-client subversion \\\n  && rm -rf /var/lib/apt/lists/* \\\n  && if echo \"${PHP_VERSION}\" | grep '^7'; then \\\n        pecl install xdebug; \\\n        docker-php-ext-enable xdebug; \\\n     fi \\\n  && docker-php-ext-install pdo_mysql \\\n  && curl -f -Ls 'https://raw.githubusercontent.com/composer/getcomposer.org/ffdc3c7fcb7c0f2a806508a868a35d13177a5a51/web/installer' | php -- --quiet \\\n  && chmod +x composer.phar \\\n  && mv composer.phar /usr/local/bin/composer \\\n  && curl -f -O 'https://raw.githubusercontent.com/wp-cli/builds/gh-pages/phar/wp-cli.phar' \\\n  && chmod +x wp-cli.phar \\\n  && mv wp-cli.phar /usr/local/bin/wp\n\nENV PRISTINE_WP_DIR=/usr/src/wordpress/ \\\n  SUT_PLUGIN_DIR=/usr/src/wordpress/wp-content/plugins/wp-graphql/ \\\n  WP_TEST_CORE_DIR=/tmp/wordpress/ \\\n  TESTER_PLUGIN_DIR=/tmp/wordpress/wp-content/plugins/wp-graphql/ \\\n  WP_TESTS_DIR=/tmp/wordpress-tests-lib/ \\\n  WP_TESTS_TAG=tags/$WORDPRESS_VERSION\n\n# Install WP_Unit test framework\nRUN mkdir -p \"${WP_TESTS_DIR}\" \\\n  && svn co --quiet \"https://develop.svn.wordpress.org/${WP_TESTS_TAG}/tests/phpunit/includes/\" \"${WP_TESTS_DIR}/includes\" \\\n  && svn co --quiet \"https://develop.svn.wordpress.org/${WP_TESTS_TAG}/tests/phpunit/data/\" \"${WP_TESTS_DIR}/data\" \\\n  && curl -f -Lsv \"https://develop.svn.wordpress.org/${WP_TESTS_TAG}/wp-tests-config-sample.php\" > \"${WP_TESTS_DIR}/wp-tests-config.php\" \\\n  && chown -R 'www-data:www-data' \"${WP_TESTS_DIR}\"\n\n\n# Add WP-CLI config for SUT to flush rewrite rules: https://developer.wordpress.org/cli/commands/rewrite/flush/\nCOPY --chown='www-data:www-data' docker/wp-cli.yml /var/www/html/\n\n\n# First copy the files needed for PHP composer install so that the Docker build only re-executes the install when those\n# files change.\nCOPY --chown='www-data:www-data' composer.json composer.lock \"${SUT_PLUGIN_DIR}\"/\nCOPY --chown='www-data:www-data' src/ \"${SUT_PLUGIN_DIR}/src/\"\nCOPY --chown='www-data:www-data' vendor/ \"${SUT_PLUGIN_DIR}/vendor/\"\n\n# Run PHP Composer install so that Codeception dependencies are available\nUSER www-data\nRUN cd \"${SUT_PLUGIN_DIR}\" \\\n  && composer install --prefer-source --no-interaction --dev\n\n# Copy in all other files from repo, but preserve the files used by/modified by composer install.\nUSER root\nCOPY --chown='www-data:www-data' . /tmp/project/\n\nRUN rm -rf /tmp/project/composer.* /tmp/project/vendor \\\n  && cp -a /tmp/project/* \"${SUT_PLUGIN_DIR}\" \\\n  && rm -rf /tmp/project\n\n# Copy core WordPress files to core test directory\nRUN cp -a \"${PRISTINE_WP_DIR}\" \"${WP_TEST_CORE_DIR}\"\n\n# Add db configuration to core test directory\nRUN curl -f -Ls 'https://raw.github.com/markoheijnen/wp-mysqli/master/db.php' > \"${WP_TEST_CORE_DIR}/wp-content/db.php\"\n\n# Install code coverage support for SUT\nRUN curl -f -L 'https://raw.github.com/Codeception/c3/2.0/c3.php' > \"${SUT_PLUGIN_DIR}/c3.php\"\n\n# Add Docker entrypoint scripts\nCOPY docker/edit-wp-test-suite-db-config.sh docker/docker-entrypoint*.sh docker/wait-for-service.sh /usr/local/bin/\n"
+}

@@ -1,0 +1,37 @@
+FROM nvidia/cuda:9.0-cudnn7-runtime-ubuntu16.04
+
+# Use a fixed apt-get repo to stop intermittent failures due to flaky httpredir connections,
+# as described by Lionel Chan at http://stackoverflow.com/a/37426929/5881346
+RUN sed -i "s/httpredir.debian.org/debian.uchicago.edu/" /etc/apt/sources.list && \
+    apt-get update && apt-get install -y --no-install-recommends apt-utils && \
+    apt-get update && apt-get install --no-install-recommends -y build-essential && \
+    apt-get update --fix-missing && apt-get install --no-install-recommends -y wget bzip2 ca-certificates \
+    libglib2.0-0 libxext6 libsm6 libxrender1 \
+    git mercurial subversion zip unzip && rm -rf /var/lib/apt/lists/*;
+
+# install Anaconda3
+ENV LANG=C.UTF-8 LC_ALL=C.UTF-8
+
+RUN echo 'export PATH=/opt/conda/bin:$PATH' > /etc/profile.d/conda.sh && \
+    wget --quiet https://repo.continuum.io/archive/Anaconda3-5.0.1-Linux-x86_64.sh -O ~/anaconda.sh && \
+    /bin/bash ~/anaconda.sh -b -p /opt/conda && \
+    rm ~/anaconda.sh && \
+    apt-get install --no-install-recommends -y curl grep sed dpkg && \
+    TINI_VERSION=$( curl -f https://github.com/krallin/tini/releases/latest | grep -o "/v.*\"" | sed 's:^..\(.*\).$:\1:') && \
+    curl -f -L "https://github.com/krallin/tini/releases/download/v${TINI_VERSION}/tini_${TINI_VERSION}.deb" > tini.deb && \
+    dpkg -i tini.deb && \
+    rm tini.deb && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*;
+
+ENV PATH /opt/conda/bin:$PATH
+
+RUN apt-get update && apt-get install --no-install-recommends -y libglu1 vim && pip install --no-cache-dir Cython tensorflow==1.8.1 keras==2.2.1 \
+    h5py matplotlib pandas pylint scikit-image scikit-learn scipy seaborn Shapely tqdm opencv-python && rm -rf /var/lib/apt/lists/*;
+
+
+WORKDIR /work
+
+# copy entire directory where docker file is into docker container at /work
+COPY . /work/
+
+RUN pip install --no-cache-dir -e .

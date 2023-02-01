@@ -1,0 +1,64 @@
+FROM centos:7.8.2003
+
+ARG COUNTLY_PLUGINS=mobile,web,desktop,plugins,density,locale,browser,sources,views,enterpriseinfo,logger,systemlogs,populator,reports,crashes,push,star-rating,slipping-away-users,compare,server-stats,dbviewer,assistant,times-of-day,compliance-hub,alerts,onboarding,consolidate,remote-config,hooks,dashboards
+# Enterprise Edition:
+#ARG COUNTLY_PLUGINS=mobile,web,desktop,plugins,density,locale,browser,sources,views,drill,funnels,retention_segments,flows,cohorts,surveys,remote-config,ab-testing,formulas,activity-map,concurrent_users,revenue,logger,systemlogs,populator,reports,crashes,push,geo,block,users,star-rating,slipping-away-users,compare,server-stats,assistant,dbviewer,crash_symbolication,groups,white-labeling,alerts,times-of-day,compliance-hub,onboarding,active_users,performance-monitoring,config-transfer,consolidate,data-manager,hooks,dashboards,heatmaps
+
+EXPOSE 6001
+HEALTHCHECK --start-period=400s CMD curl --fail http://localhost:6001/ping || exit 1
+
+USER root
+
+# Core dependencies
+## Tini
+ENV COUNTLY_CONTAINER="frontend" \
+	COUNTLY_DEFAULT_PLUGINS="${COUNTLY_PLUGINS}" \
+	COUNTLY_CONFIG_FRONTEND_WEB_HOST="0.0.0.0" \
+	TINI_VERSION="0.18.0" \
+	PATH="/opt/rh/rh-nodejs10/root/usr/bin:${PATH}"
+
+WORKDIR /opt/countly
+COPY . .
+
+RUN curl -f -s -L -o /tmp/tini.rpm "https://github.com/krallin/tini/releases/download/v${TINI_VERSION}/tini_${TINI_VERSION}.rpm" && \
+	rpm -i /tmp/tini.rpm && \
+
+	curl -f -sL https://rpm.nodesource.com/setup_14.x | bash - && \
+	yum -y install nodejs && \
+	ln -s /usr/bin/node /usr/bin/nodejs && \
+
+	yum -y install centos-release-scl && \
+	yum -y install openssl-devel devtoolset-7-gcc-c++ make git wget unzip bzip2 make binutils autoconf automake makedepend libtool pkgconfig zlib-devel libxml2-devel python-setuptools && \
+	source /opt/rh/devtoolset-7/enable && \
+
+	# modify standard distribution
+	./bin/docker/modify.sh && \
+
+	# preinstall
+	cp -n ./frontend/express/public/javascripts/countly/countly.config.sample.js ./frontend/express/public/javascripts/countly/countly.config.js && \
+	cp -n ./frontend/express/config.sample.js ./frontend/express/config.js && \
+	cp -n ./api/config.sample.js ./api/config.js && \
+	HOME=/tmp npm install --unsafe-perm=true --allow-root && \
+	HOME=/tmp npm install argon2 --build-from-source --unsafe-perm=true --allow-root && \
+	./bin/docker/preinstall.sh && \
+	bash /opt/countly/bin/scripts/detect.init.sh && \
+	countly update sdk-web && \
+
+	# cleanup & chown
+	npm remove -y --no-save mocha nyc should supertest puppeteer && \
+	rm -rf /opt/app-root/src/.npm && \
+	yum remove -y git wget unzip gcc-c++ gcc centos-release-scl devtoolset-7-gcc-c++ devtoolset-7-gcc make automake autoconf makedepend zlib-devel libxml2-devel python-setuptools openssl-devel devtoolset-7-gcc devtoolset-7-libstdc++-devel python36-devel centos-release-scl devtoolset-7-gcc-c++ && \
+	yum clean all && \
+	rm -rf test /tmp/* /tmp/.??* /var/tmp/* /var/tmp/.??* /var/log/* && \
+	chown -R 1001:0 /opt/countly && \
+	chmod -R g=u /opt/countly && \
+
+	bash ./bin/scripts/detect.init.sh && \
+	./bin/commands/countly.sh update sdk-web && npm cache clean --force; && rm -rf /var/cache/yum
+
+
+USER 1001:0
+
+ENTRYPOINT ["/usr/bin/tini", "-v", "--"]
+
+CMD ["/opt/countly/bin/docker/cmd.sh"]

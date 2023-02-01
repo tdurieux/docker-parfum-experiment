@@ -1,0 +1,26 @@
+{
+  "startTime": 1674240516256,
+  "endTime": 1674240516458,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 41,
+        "lineEnd": 41,
+        "columnStart": 4,
+        "columnEnd": 33
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 27,
+        "lineEnd": 27,
+        "columnStart": 26,
+        "columnEnd": 66
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# jupyter project recommends pinning the base image: https://github.com/jupyter/docker-stacks#other-tips-and-known-issues\n# jupyter project recently removed support for python2, we'll recreate it using their commit as a guide\n# https://github.com/jupyter/docker-stacks/commit/32b3d2bec23bc46fab1ed324f04a0ad7a7c73747#commitcomment-24129620\nFROM jupyter/minimal-notebook:f9e77e3ddd6f\n\nENV CLOJURE_VERSION 1.10.0.442\n\n# install conda-build into the root environment. useful for reproducing travis runs.\n# also install java-jdk for clojure notebooks\nRUN conda install --quiet --yes -c bioconda conda-build java-jdk\n\n# Install Python 2 packages\nCOPY files/conda_python2.txt /tmp/\nRUN conda create --quiet --yes -p $CONDA_DIR/envs/python2 python=2.7 \\\n    --file /tmp/conda_python2.txt\n# Add shortcuts to distinguish pip for python2 and python3 envs\nRUN ln -s $CONDA_DIR/envs/python2/bin/pip $CONDA_DIR/bin/pip2 && \\\n    ln -s $CONDA_DIR/bin/pip $CONDA_DIR/bin/pip3\n\n# Import matplotlib the first time to build the font cache.\nENV XDG_CACHE_HOME /home/$NB_USER/.cache/\nENV MPLBACKEND=Agg\nRUN $CONDA_DIR/envs/python2/bin/python -c \"import matplotlib.pyplot\"\n\nUSER root\n\n# install packages that are nice for dev environment.\nRUN apt-get -qy update && apt-get install --no-install-recommends -qy curl htop less rsync && \\\n    apt-get clean && \\\n    rm -rf /var/lib/apt/lists/*\n\n# install clojure and lein\nRUN curl -fsSL -o /tmp/linux-install.sh https://download.clojure.org/install/linux-install-${CLOJURE_VERSION}.sh && \\\n    curl -fsSL -o /usr/local/bin/lein https://raw.githubusercontent.com/technomancy/leiningen/stable/bin/lein && \\\n    chmod +x /usr/local/bin/lein && \\\n    bash /tmp/linux-install.sh\n\n# Install Python 2 kernel spec globally to avoid permission problems when NB_UID\n# switching at runtime and to allow the notebook server running out of the root\n# environment to find it. Also, activate the python2 environment upon kernel\n# launch.\nRUN pip install --no-cache-dir kernda --no-cache && \\\n    $CONDA_DIR/envs/python2/bin/python -m ipykernel install && \\\n    kernda -o -y /usr/local/share/jupyter/kernels/python2/kernel.json && \\\n    pip uninstall kernda -y\n\n# add custom css/logo and tutorials (use a skeleton directory in case a bind mount is used)\nCOPY files/skel/dot_jupyter/ /usr/local/etc/skel/jupyter/.jupyter/\nCOPY tutorials/ /usr/local/etc/skel/jupyter/tutorials\nRUN rsync -aq /home/$NB_USER/.cache /usr/local/etc/skel/jupyter/\nRUN chown -R $NB_USER /usr/local/etc/skel/jupyter\n\nUSER $NB_USER\n\n# install clojupyter\nRUN git clone https://github.com/roryk/clojupyter /tmp/clojupyter && \\\n    cd /tmp/clojupyter && \\\n    make && make install\n\n# bash improvements for developer environment\nRUN git clone --depth=1 https://github.com/Bash-it/bash-it.git ~/.bash_it && \\\n    bash ~/.bash_it/install.sh --silent && \\\n    echo \"source activate python2\\nalias pytest=py.test\\nexport SCM_CHECK=false\" >> /home/$NB_USER/.bashrc\n\n# install the probcomp libraries, fix permissions\nCOPY files/conda_probcomp.txt /tmp/\nRUN conda install -n python2 --quiet --yes -c probcomp -c cidermole -c fritzo -c ursusest \\\n    --file /tmp/conda_probcomp.txt && \\\n    conda remove -n python2 --quiet --yes --force qt pyqt && \\\n    conda clean -tipsy && \\\n    fix-permissions $CONDA_DIR && \\\n    fix-permissions /home/$NB_USER\n\n# Add local files as late as possible to avoid cache busting\nCOPY files/docker-entrypoint.sh /usr/local/bin/\n\n# Make installing pip packages in child images more intuitive\nENV PATH $CONDA_DIR/envs/python2/bin:$PATH\n\nENTRYPOINT      [\"tini\", \"--\", \"docker-entrypoint.sh\"]\nCMD             [\"start-notebook.sh\"]\n"
+}

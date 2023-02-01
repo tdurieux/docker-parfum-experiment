@@ -1,0 +1,55 @@
+#########################################################################
+# Dockerfile for DSMR-reader development only, NEVER use in production! #
+#########################################################################
+
+### Base: OS + venv + base requirements
+FROM python:3.10-bullseye AS local-dsmrreader-base
+WORKDIR /app
+ENV PYTHONUNBUFFERED=1
+
+RUN apt-get update && \
+    apt-get install --no-install-recommends -y \
+        python3 \
+        python3-psycopg2 \
+        python3-pip \
+        python3-venv && rm -rf /var/lib/apt/lists/*;
+
+# Credits to: https://pythonspeed.com/articles/activate-virtualenv-dockerfile/
+ENV VIRTUAL_ENV=/opt/venv
+RUN python3 -m venv $VIRTUAL_ENV
+ENV PATH="$VIRTUAL_ENV/bin:$PATH"
+
+COPY ./dsmrreader/provisioning/requirements/base.txt /app/dsmrreader/provisioning/requirements/
+RUN pip3 install --no-cache-dir pip --upgrade && \
+    pip3 install --no-cache-dir -r dsmrreader/provisioning/requirements/base.txt
+
+
+### Dev: Debug/dev tools + mysql client
+FROM local-dsmrreader-base AS local-dsmrreader-dev
+RUN apt-get install --no-install-recommends -y \
+    telnet \
+    cu \
+    gettext \
+    libmariadb-dev \
+    libopenjp2-7-dev && rm -rf /var/lib/apt/lists/*;
+
+COPY ./dsmrreader/provisioning/requirements/dev.txt /app/dsmrreader/provisioning/requirements/
+RUN pip3 install --no-cache-dir -r dsmrreader/provisioning/requirements/dev.txt
+
+
+
+### Runserver instance
+FROM local-dsmrreader-dev AS local-dsmrreader-app
+WORKDIR /app
+ENTRYPOINT python3 manage.py runserver 0.0.0.0:8000
+
+
+
+### Docs instance(s) - Language parameter does not seem to be supported dynamically...
+FROM local-dsmrreader-dev AS local-dsmrreader-docs-en
+WORKDIR /app/docs
+ENTRYPOINT sphinx-autobuild . /var/tmp/_build/html --host 0.0.0.0 --port 10000 -D language=en
+
+FROM local-dsmrreader-dev AS local-dsmrreader-docs-nl
+WORKDIR /app/docs
+ENTRYPOINT sphinx-autobuild . /var/tmp/_build/html --host 0.0.0.0 --port 10000 -D language=nl

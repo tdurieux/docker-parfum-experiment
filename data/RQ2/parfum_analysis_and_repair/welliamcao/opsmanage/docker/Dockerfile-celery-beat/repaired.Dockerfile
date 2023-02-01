@@ -1,0 +1,1 @@
+#docker build -t opsmanage-celery-beat -f Dockerfile-celery-beat ..

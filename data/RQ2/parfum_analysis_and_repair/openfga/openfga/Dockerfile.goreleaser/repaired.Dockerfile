@@ -1,0 +1,4 @@
+FROM scratch
+COPY static/playground /static/playground
+COPY openfga /
+ENTRYPOINT ["/openfga"]

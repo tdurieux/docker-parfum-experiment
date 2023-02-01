@@ -1,0 +1,35 @@
+{
+  "startTime": 1674255428271,
+  "endTime": 1674255429346,
+  "originalSmells": [
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 21,
+        "lineEnd": 29,
+        "columnStart": 1,
+        "columnEnd": 23
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 19,
+        "lineEnd": 19,
+        "columnStart": 2,
+        "columnEnd": 41
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 10,
+        "lineEnd": 16,
+        "columnStart": 2,
+        "columnEnd": 82
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "ARG GOLANG_VERSION=1.17\nFROM golang:${GOLANG_VERSION}-bullseye as builder\n\nARG IMAGINARY_VERSION=dev\nARG LIBVIPS_VERSION=8.12.2\nARG GOLANGCILINT_VERSION=1.29.0\n\n# Installs libvips + required libraries\nRUN DEBIAN_FRONTEND=noninteractive \\\n  apt-get update && \\\n  apt-get install --no-install-recommends -y \\\n  ca-certificates \\\n  automake build-essential curl \\\n  gobject-introspection gtk-doc-tools libglib2.0-dev libjpeg62-turbo-dev libpng-dev \\\n  libwebp-dev libtiff5-dev libgif-dev libexif-dev libxml2-dev libpoppler-glib-dev \\\n  swig libmagickwand-dev libpango1.0-dev libmatio-dev libopenslide-dev libcfitsio-dev \\\n  libgsf-1-dev fftw3-dev liborc-0.4-dev librsvg2-dev libimagequant-dev libheif-dev && \\\n  cd /tmp && \\\n  curl -fsSLO https://github.com/libvips/libvips/releases/download/v${LIBVIPS_VERSION}/vips-${LIBVIPS_VERSION}.tar.gz && \\\n  tar zvxf vips-${LIBVIPS_VERSION}.tar.gz && \\\n  cd /tmp/vips-${LIBVIPS_VERSION} && \\\n\tCFLAGS=\"-g -O3\" CXXFLAGS=\"-D_GLIBCXX_USE_CXX11_ABI=0 -g -O3\" \\\n    ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" \\\n\n    --disable-debug \\\n    --disable-dependency-tracking \\\n    --disable-introspection \\\n    --disable-static \\\n    --enable-gtk-doc-html=no \\\n    --enable-gtk-doc=no \\\n    --enable-pyvips8=no && \\\n  make && \\\n  make install && \\\n  ldconfig && rm vips-${LIBVIPS_VERSION}.tar.gz && rm -rf /var/lib/apt/lists/*;\n\n# Installing golangci-lint\nWORKDIR /tmp\nRUN curl -fsSL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b \"${GOPATH}/bin\" v${GOLANGCILINT_VERSION}\n\nWORKDIR ${GOPATH}/src/github.com/h2non/imaginary\n\n# Cache go modules\nENV GO111MODULE=on\n\nCOPY go.mod .\nCOPY go.sum .\n\nRUN go mod download\n\n# Copy imaginary sources\nCOPY . .\n\n# Run quality control\nRUN go test ./... -test.v -race -test.coverprofile=atomic .\nRUN golangci-lint run .\n\n# Compile imaginary\nRUN go build -a \\\n    -o ${GOPATH}/bin/imaginary \\\n    -ldflags=\"-s -w -h -X main.Version=${IMAGINARY_VERSION}\" \\\n    github.com/h2non/imaginary\n\nFROM debian:bullseye-slim\n\nARG IMAGINARY_VERSION\n\nLABEL maintainer=\"tomas@aparicio.me\" \\\n      org.label-schema.description=\"Fast, simple, scalable HTTP microservice for high-level image processing with first-class Docker support\" \\\n      org.label-schema.schema-version=\"1.0\" \\\n      org.label-schema.url=\"https://github.com/h2non/imaginary\" \\\n      org.label-schema.vcs-url=\"https://github.com/h2non/imaginary\" \\\n      org.label-schema.version=\"${IMAGINARY_VERSION}\"\n\nCOPY --from=builder /usr/local/lib /usr/local/lib\nCOPY --from=builder /go/bin/imaginary /usr/local/bin/imaginary\nCOPY --from=builder /etc/ssl/certs /etc/ssl/certs\n\n# Install runtime dependencies\nRUN DEBIAN_FRONTEND=noninteractive \\\n  apt-get update && \\\n  apt-get install --no-install-recommends -y \\\n  procps libglib2.0-0 libjpeg62-turbo libpng16-16 libopenexr25 \\\n  libwebp6 libwebpmux3 libwebpdemux2 libtiff5 libgif7 libexif12 libxml2 libpoppler-glib8 \\\n  libmagickwand-6.q16-6 libpango1.0-0 libmatio11 libopenslide0 libjemalloc2 \\\n  libgsf-1-114 fftw3 liborc-0.4-0 librsvg2-2 libcfitsio9 libimagequant0 libheif1 && \\\n  ln -s /usr/lib/$(uname -m)-linux-gnu/libjemalloc.so.2 /usr/local/lib/libjemalloc.so && \\\n  apt-get autoremove -y && \\\n  apt-get autoclean && \\\n  apt-get clean && \\\n  rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*\nENV LD_PRELOAD=/usr/local/lib/libjemalloc.so\n\n# Server port to listen\nENV PORT 9000\n\n# Drop privileges for non-UID mapped environments\nUSER nobody\n\n# Run the entrypoint command by default when the container starts.\nENTRYPOINT [\"/usr/local/bin/imaginary\"]\n\n# Expose the server TCP port\nEXPOSE ${PORT}\n"
+}

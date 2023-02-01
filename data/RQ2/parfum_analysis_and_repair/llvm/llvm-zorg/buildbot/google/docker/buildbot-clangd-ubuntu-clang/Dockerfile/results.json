@@ -1,0 +1,62 @@
+{
+  "startTime": 1674216913496,
+  "endTime": 1674216914792,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 48,
+        "lineEnd": 48,
+        "columnStart": 4,
+        "columnEnd": 39
+      }
+    },
+    {
+      "rule": "gpgUseBatchFlag",
+      "position": {
+        "lineStart": 39,
+        "lineEnd": 39,
+        "columnStart": 4,
+        "columnEnd": 19
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 17,
+        "lineEnd": 22,
+        "columnStart": 4,
+        "columnEnd": 40
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 43,
+        "lineEnd": 43,
+        "columnStart": 4,
+        "columnEnd": 30
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 17,
+        "lineEnd": 22,
+        "columnStart": 4,
+        "columnEnd": 40
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 43,
+        "lineEnd": 43,
+        "columnStart": 4,
+        "columnEnd": 30
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "#===-- Dockerfile --------------------------------------------------------===//\n# Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.\n# See https://llvm.org/LICENSE.txt for license information.\n# SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception\n#\n#===----------------------------------------------------------------------===//\n# Docker image used for the mlir-nvidia builder\n#\n# Environment variables configurable at runtime:\n#    BUILDBOT_PORT - server port to connect to\n#===----------------------------------------------------------------------===//\n\n# Use an official Ubuntu image as the base.\nFROM ubuntu:18.04\n\n# Install build tools.\nRUN apt-get update; \\\n    apt-get install --no-install-recommends -y software-properties-common apt-transport-https ca-certificates \\\n    ninja-build git wget gnupg \\\n    # Install ccache for local caching of builds.\n    ccache \\\n    # Install python for buildbot and LIT.\n    python3 python3-pip python3-psutil; rm -rf /var/lib/apt/lists/*; \\\n    # Clean apt cache to reduce image size.\n    apt-get clean\n\n# install latest LLVM release\nRUN bash -c \"$(wget -O - https://apt.llvm.org/llvm.sh)\";\\\n    # clean apt cache to reduce image size\n    apt-get clean\n\n# configure default versions of LLVM tools\nRUN update-alternatives --install /usr/bin/clang clang /usr/bin/clang-11 100 ;\\\n    update-alternatives --install /usr/bin/clang++ clang++ /usr/bin/clang++-11 100 ;\\\n    update-alternatives --install /usr/bin/lld lld /usr/bin/lld-11 100\n\n# Ubuntu ships with old cmake version, install the latest one\n# from https://apt.kitware.com/\nRUN wget -O - https://apt.kitware.com/keys/kitware-archive-latest.asc 2>/dev/null | \\\n    gpg --batch --dearmor - | \\\n    tee /etc/apt/trusted.gpg.d/kitware.gpg >/dev/null; \\\n    apt-add-repository 'deb https://apt.kitware.com/ubuntu/ bionic main' ; \\\n    apt-get update ; \\\n    apt-get install --no-install-recommends -y cmake; rm -rf /var/lib/apt/lists/*; \\\n    # Clean apt cache to reduce image size.\n    apt-get clean\n\n# Install build bot (server was at 2.8.5-dev at time of writing).\nRUN pip3 install --no-cache-dir buildbot-worker==2.8.4\n\n# Build and install gRPC for clangd remote index, based on instructions\n# https://github.com/llvm/llvm-project/tree/master/clang-tools-extra/clangd/index/remote#building-from-sources\n# The grpc version shipped with Ubuntu 18.04 crashes on TSan checks.\nENV GRPC_INSTALL_PATH=/usr/local/lib/grpc\nRUN cd /tmp ; \\\n    git clone -b v1.36.3 --depth 1  --recursive --shallow-submodules https://github.com/grpc/grpc ; \\\n    cd grpc  ; \\\n    mkdir build; cd build ; \\\n    cmake -G Ninja -DgRPC_INSTALL=ON -DCMAKE_INSTALL_PREFIX=${GRPC_INSTALL_PATH} -DCMAKE_BUILD_TYPE=Release .. ; \\\n    cmake --build . --target install ; \\\n    # Clean up sources to reduce image size.\n    cd / ; rm -rf /tmp/grpc\n\n# Workaround permissions issues when writing to named volumes\n# https://github.com/docker/compose/issues/3270#issuecomment-206214034\nRUN mkdir -p /vol/test /vol/ccache /vol/worker ; \\\n    chmod -R 777 /vol\n\n# Volume to mount secrets into the container.\nVOLUME /vol/secrets\n# Volume to store data for local, manual testing of the container.\nVOLUME /vol/test\n# Volume to store ccache.\nVOLUME /vol/ccache\nENV CCACHE_DIR=/vol/ccache\n# Volume for worker working directory.\nVOLUME /vol/worker\n\n# Create user account, some tests fail if run as root.\nRUN useradd buildbot --create-home\nWORKDIR /vol/worker\n\n# Copy startup script.\nCOPY run.sh /home/buildbot/\nRUN chmod a+rx /home/buildbot/run.sh\n\nUSER buildbot\nENV WORKER_NAME=\"clangd-ubuntu-clang\"\n\n# Allow the server port of this agent to be configurable during deployment.\n# This way we can connect the same image to production and integration.\n# Ports:\n#   9990 - production\n#   9994 - integration\nENV BUILDBOT_PORT=\"9994\"\n\n# Configure LLVM tools.\nENV CC=clang\nENV CXX=clang++\nENV LD=LLD\n\n# Run startup script.\nCMD /home/buildbot/run.sh\n"
+}

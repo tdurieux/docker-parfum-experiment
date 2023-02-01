@@ -1,0 +1,26 @@
+{
+  "startTime": 1674253027003,
+  "endTime": 1674253027733,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 85,
+        "lineEnd": 85,
+        "columnStart": 4,
+        "columnEnd": 30
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 86,
+        "lineEnd": 88,
+        "columnStart": 4,
+        "columnEnd": 17
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# This Source Code Form is subject to the terms of the Mozilla Public\n# License, v. 2.0. If a copy of the MPL was not distributed with this\n# file, You can obtain one at http://mozilla.org/MPL/2.0/.\n\n# We use this specific version because our decision task also runs on this one.\n# We also use that same version in decisionlib.py\nFROM ubuntu:18.04\n\nMAINTAINER Jan-Erik Rediger \"janerik@mozilla.com\"\n\nRUN echo \"trigger rebuild\"\n\n# Add worker user\n\nRUN mkdir /builds && \\\n    useradd -d /builds/worker -s /bin/bash -m worker && \\\n    chown worker:worker /builds/worker && \\\n    mkdir /builds/worker/artifacts && \\\n    chown worker:worker /builds/worker/artifacts\n\nWORKDIR /builds/worker/\n\n# Configuration\n\nENV ANDROID_BUILD_TOOLS \"30.0.3\"\nENV ANDROID_TOOLS_VERSION \"7583922\"\nENV ANDROID_PLATFORM_VERSION \"30\"\nENV ANDROID_NDK_VERSION \"21.3.6528147\"\n\n# Set up the language variables to avoid problems (we run locale-gen later).\nENV LANG en_US.UTF-8\nENV LANGUAGE en_US:en\nENV LC_ALL en_US.UTF-8\n\n# Do not use fancy output on taskcluster\nENV TERM dumb\n\nENV GRADLE_OPTS -Xmx4096m -Dorg.gradle.daemon=false\n\n# Used to detect in scripts whether we are running on taskcluster\nENV CI_TASKCLUSTER true\n\nENV \\\n    # Some APT packages like 'tzdata' wait for user input on install by default.\n    # https://stackoverflow.com/questions/44331836/apt-get-install-tzdata-noninteractive\n    DEBIAN_FRONTEND=noninteractive\n\n# System.\n\nRUN apt-get update -qq \\\n    && apt-get install -qy --no-install-recommends \\\n        # To compile Android stuff.\n        openjdk-11-jdk \\\n        git \\\n        curl \\\n        # Required by symbolstore.py.\n        file \\\n        # Will set up the timezone to UTC (?).\n        tzdata \\\n        # To install UTF-8 locales.\n        locales \\\n        # For `cc` crates; see https://github.com/jwilm/alacritty/issues/1440.\n        # <TODO: Is this still true?>.\n        g++ \\\n        libxml2-dev \\\n        # Python 2 for tooltool\n        python \\\n        python3 \\\n        python3-pip \\\n        python3-venv \\\n        # taskcluster > mohawk > setuptools.\n        python3-setuptools \\\n        # Required to extract the Android SDK/NDK.\n        unzip \\\n        # Required by tooltool to extract tar.xz archives.\n        xz-utils \\\n        # Required to unpack compiler\n        zstd \\\n        # Required to build libs/.\n        make \\\n        # For windows cross-compilation.\n        mingw-w64 \\\n    && apt-get clean \\\n    && rm -rf /var/lib/apt/lists/*\n\nRUN pip3 install --no-cache-dir --upgrade pip\nRUN pip3 install --no-cache-dir \\\n    pyyaml \\\n    'taskcluster'\n\n# Compile the UTF-8 english locale files (required by Python).\nRUN locale-gen en_US.UTF-8\n\n# Android SDK\nRUN mkdir -p /builds/worker/android-sdk\nWORKDIR /builds/worker\n\nENV ANDROID_HOME /builds/worker/android-sdk\nENV ANDROID_SDK_HOME /builds/worker/android-sdk\nENV PATH ${PATH}:${ANDROID_SDK_HOME}/cmdline-tools/latest/bin:${ANDROID_SDK_HOME}/platform-tools:/opt/tools:${ANDROID_SDK_HOME}/build-tools/${ANDROID_BUILD_TOOLS}\n\n# Download the Android SDK tools, unzip them to ${ANDROID_SDK_HOME}/cmdline-tools/latest/, accept all licenses\n# The download link comes from https://developer.android.com/studio/#downloads\nRUN curl -sfSL --retry 5 --retry-delay 10 https://dl.google.com/android/repository/commandlinetools-linux-${ANDROID_TOOLS_VERSION}_latest.zip > sdk.zip \\\n    && unzip -q sdk.zip \\\n    && mkdir $ANDROID_SDK_HOME/cmdline-tools \\\n    && mv cmdline-tools $ANDROID_HOME/cmdline-tools/latest \\\n    && rm sdk.zip \\\n    && mkdir -p /builds/worker/android-sdk/.android/ \\\n    && touch /builds/worker/android-sdk/.android/repositories.cfg \\\n    && yes | sdkmanager --licenses \\\n    && sdkmanager --verbose \"platform-tools\" \\\n        \"platforms;android-${ANDROID_PLATFORM_VERSION}\" \\\n        \"build-tools;${ANDROID_BUILD_TOOLS}\" \\\n        \"extras;android;m2repository\" \\\n        \"extras;google;m2repository\" \\\n        \"ndk;${ANDROID_NDK_VERSION}\"\n\nRUN chown -R worker:worker /builds/worker/android-sdk\n\n# tooltool\nRUN \\\n    curl -sfSL --retry 5 --retry-delay 10 \\\n         -o /usr/local/bin/tooltool.py \\\n         https://raw.githubusercontent.com/mozilla/build-tooltool/36511dae0ead6848017e2d569b1f6f1b36984d40/tooltool.py && \\\n         chmod +x /usr/local/bin/tooltool.py\n\n# %include-run-task\n\nENV SHELL=/bin/bash \\\n    HOME=/builds/worker \\\n    PATH=/builds/worker/.local/bin:$PATH\n\nVOLUME /builds/worker/checkouts\nVOLUME /builds/worker/.cache\n\n# run-task expects to run as root\nUSER root\n"
+}

@@ -1,0 +1,71 @@
+{
+  "startTime": 1674251649740,
+  "endTime": 1674251650576,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 14,
+        "lineEnd": 14,
+        "columnStart": 4,
+        "columnEnd": 23
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 19,
+        "lineEnd": 19,
+        "columnStart": 4,
+        "columnEnd": 26
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 25,
+        "lineEnd": 25,
+        "columnStart": 4,
+        "columnEnd": 31
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 37,
+        "lineEnd": 37,
+        "columnStart": 4,
+        "columnEnd": 29
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 41,
+        "lineEnd": 41,
+        "columnStart": 4,
+        "columnEnd": 41
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 44,
+        "lineEnd": 45,
+        "columnStart": 4,
+        "columnEnd": 1
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 60,
+        "lineEnd": 60,
+        "columnStart": 4,
+        "columnEnd": 29
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# NOTE: Use the run-container.sh script to build and launch this container.\n\n# NOTE: Multi-stage builds require Docker >= 17.05.\nFROM rockylinux:8 AS base\n\n# update packages and install requirements\nRUN dnf -y upgrade-minimal && \\\n    dnf install -y python38\n\n# NOTE: We don't need the following stuff for the build step, but it's nice to not have to re-install\n# it all every time we change the requirements :-/\n\n# install Java\nARG JAVA_URL=https://download.java.net/java/GA/jdk15.0.1/51f4f36ad4ef43e39d0dfdbaf6549e32/9/GPL/openjdk-15.0.1_linux-x64_bin.tar.gz\nRUN curl -f -s \"$JAVA_URL\" | tar -xz -C /usr/bin/\n\n# install Firefox\nARG FIREFOX_URL=https://ftp.mozilla.org/pub/firefox/releases/94.0.2/linux-x86_64/en-US/firefox-94.0.2.tar.bz2\nRUN dnf install -y bzip2 xorg-x11-server-Xvfb gtk3 dbus-glib && \\\n    curl -f -s \"$FIREFOX_URL\" | tar -jx -C /usr/local/ && \\\n    ln -s /usr/local/firefox/firefox /usr/bin/firefox && \\\n    echo \"exclude=firefox\" >>/etc/dnf/dnf.conf\n\n# install geckodriver\nARG GECKODRIVER_URL=https://github.com/mozilla/geckodriver/releases/download/v0.30.0/geckodriver-v0.30.0-linux64.tar.gz\nRUN curl -f -sL \"$GECKODRIVER_URL\" | tar -xz -C /usr/bin/\n\n# clean up\nRUN dnf clean all\n\n# - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -\n\nFROM base AS build\n\n# set up a virtualenv\nRUN python3 -m venv /opt/venv\nENV PATH=\"/opt/venv/bin:$PATH\"\nRUN pip install --no-cache-dir --upgrade pip\n\n# install the application requirements\nCOPY requirements.txt requirements-dev.txt /tmp/\nRUN pip3 install --no-cache-dir -r /tmp/requirements.txt\nARG CONTROL_TESTS_PORT\nRUN if [ -n \"$CONTROL_TESTS_PORT\" ]; then \\\n    pip3 install --no-cache-dir -r /tmp/requirements-dev.txt \\\n; fi\n\n# - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -\n\nFROM base\n\n# copy the virtualenv from the build image\nCOPY --from=build /opt/venv /opt/venv\nENV PATH=\"/opt/venv/bin:$PATH\"\n\n# install the application\nWORKDIR /app\nCOPY vasl_templates/ ./vasl_templates/\nCOPY vassal-shim/release/vassal-shim.jar ./vassal-shim/release/\nCOPY setup.py requirements.txt requirements-dev.txt LICENSE.txt ./\nRUN pip3 install --no-cache-dir --editable .\n\n# install the config files\nCOPY vasl_templates/webapp/config/logging.yaml.example ./vasl_templates/webapp/config/logging.yaml\nCOPY docker/config/ ./vasl_templates/webapp/config/\n\n# create a new user\n# NOTE: It would be nice to just specify the UID/GID in the \"docker run\" command, but VASSAL has problems\n# if there is no user :-/ We could specify these here, but that would bake them into the image.\n# In general, this is not a problem, since the application doesn't need to access files outside the container,\n# but if the user wants to e.g. keep the cached scenario index files outside the container, and they are\n# running with a non-default UID/GID, they will have to manage permissions themselves. Sigh...\nRUN useradd --create-home app\nUSER app\n\n# FUDGE! We need this to stop spurious warning messages:\n#   Fork support is only compatible with the epoll1 and poll polling strategies\n# Setting the verbosity to ERROR should suppress these, but doesn't :-/\n#   https://github.com/grpc/grpc/issues/17253\n#   https://github.com/grpc/grpc/blob/master/doc/environment_variables.md\nENV GRPC_VERBOSITY=NONE\n\n# run the application\nEXPOSE 5010\nCOPY docker/run.sh ./\nCMD ./run.sh\n"
+}

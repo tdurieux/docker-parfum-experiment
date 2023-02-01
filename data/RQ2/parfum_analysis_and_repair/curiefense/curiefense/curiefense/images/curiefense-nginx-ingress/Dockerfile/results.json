@@ -1,0 +1,35 @@
+{
+  "startTime": 1674253662750,
+  "endTime": 1674253663801,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 27,
+        "lineEnd": 27,
+        "columnStart": 26,
+        "columnEnd": 40
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 30,
+        "lineEnd": 30,
+        "columnStart": 27,
+        "columnEnd": 41
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 10,
+        "lineEnd": 20,
+        "columnStart": 7,
+        "columnEnd": 25
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "ARG RUSTBIN_TAG=latest\nFROM curiefense/curiefense-rustbuild-bionic:${RUSTBIN_TAG} AS rustbin\nFROM docker.io/nginx/nginx-ingress:1.11.3 as nginx-ingress\nFROM docker.io/openresty/openresty:1.19.9.1-1-bionic as openresty\n\nUSER root\nRUN groupadd --system --gid 101 nginx \\\n    && useradd --system --gid nginx --no-create-home --home-dir /nonexistent --comment \"nginx user\" --shell /bin/false --uid 101 nginx\n\nRUN apt-get update \\\n    && apt-get install --no-install-recommends -y \\\n        libcap2-bin \\\n        libhyperscan4 \\\n        rsyslog \\\n        python3-pip \\\n        python3-setuptools \\\n        python3-wheel \\\n        python3-magic \\\n        python3-xattr \\\n        python3-cffi \\\n        python3-netifaces \\\n    && rm -rf /var/lib/apt/lists/*\n\n# bucket credentials will be provided by docker-compose or k8s secrets, if needed\nRUN ln -s /run/secrets/s3cfg/s3cfg /root/.s3cfg\n\nCOPY curieconf-utils /curieconf-utils\nRUN cd /curieconf-utils ; pip3 install --no-cache-dir .\n\nCOPY curieconf-client /curieconf-client\nRUN cd /curieconf-client ; pip3 install --no-cache-dir .\n\nCOPY init /curiesync\n\nCOPY --from=nginx-ingress /nginx* /\n\nRUN mkdir -p /var/lib/nginx /etc/nginx/secrets /etc/nginx/stream-conf.d /var/cache/nginx \\\n    && mkdir -p /var/lib/openresty /var/run/openresty /var/cache/openresty \\\n    && ln -sf /usr/local/openresty/nginx/sbin/nginx /usr/sbin/nginx \\\n    && ln -sf /usr/local/openresty/nginx/conf/* /etc/nginx/ \\\n\t&& chown -R nginx:0 /etc/nginx /etc/nginx/secrets /var/cache/nginx /var/lib/nginx /nginx* \\\n    && chown -R nginx:0 /var/lib/openresty /var/run/openresty /var/cache/openresty /usr/local/openresty \\\n\t&& setcap 'cap_net_bind_service=+ep' /usr/local/openresty/nginx/sbin/nginx \\\n\t&& setcap -v 'cap_net_bind_service=+ep' /usr/local/openresty/nginx/sbin/nginx  \\\n\t&& rm -f /etc/nginx/conf.d/* \\\n    && mkdir -p /var/lib/syslog \\\n    && touch /var/log/syslog \\\n\t&& setcap 'cap_net_bind_service=+ep' /usr/sbin/rsyslogd  \\\n\t&& setcap -v 'cap_net_bind_service=+ep' /usr/sbin/rsyslogd  \\\n    && chown -R nginx:0 /var/lib/syslog /var/log/syslog\n\n\nRUN sed -i \"/^http {/a log_format curiefenselog escape=none '\\$request_map';\" /nginx.tmpl \\\n        && sed -i \"/^http {/a map \\$status \\$request_map { default '-'; }\" /nginx.tmpl \\\n        && sed -i \"/^http {/a lua_package_path '/lua/?.lua;;';\" /nginx.tmpl\n\n\nCOPY curieproxy/lua/shared-objects/*.so /usr/local/lib/lua/5.1/\nCOPY --from=rustbin /root/curiefense.so /usr/local/lib/lua/5.1/\n\nCOPY curieproxy/cf-config /cf-bootstrap-config/config\nCOPY curieproxy/lua /lua\nRUN rm -f /lua/session.lua && ln -s /lua/session_nginx.lua /lua/session.lua\n\nENTRYPOINT [\"/curiefense-nginx.sh\"]\n\nRUN mkdir /cf-config && chmod a+rwxt /cf-config\nRUN mkfifo /nginx-accesslogs\n\nCOPY curiefense-nginx.sh /curiefense-nginx.sh\nCOPY rsyslog.conf /etc/rsyslog.conf\n\n"
+}

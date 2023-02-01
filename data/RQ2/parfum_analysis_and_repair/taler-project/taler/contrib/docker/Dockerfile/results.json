@@ -1,0 +1,26 @@
+{
+  "startTime": 1674216558381,
+  "endTime": 1674216559508,
+  "originalSmells": [
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 43,
+        "lineEnd": 54,
+        "columnStart": 4,
+        "columnEnd": 19
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 9,
+        "lineEnd": 9,
+        "columnStart": 7,
+        "columnEnd": 24
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Build stage for BerkeleyDB\nFROM alpine as berkeleydb\n\nRUN apk --no-cache add autoconf automake build-base openssl\n\nENV BERKELEYDB_VERSION=db-4.8.30.NC\nENV BERKELEYDB_PREFIX=/opt/${BERKELEYDB_VERSION}\n\nRUN wget https://download.oracle.com/berkeley-db/${BERKELEYDB_VERSION}.tar.gz \\\n    && tar -xzf *.tar.gz \\\n    && sed s/__atomic_compare_exchange/__atomic_compare_exchange_db/g -i ${BERKELEYDB_VERSION}/dbinc/atomic.h \\\n    && mkdir -p ${BERKELEYDB_PREFIX} && rm *.tar.gz\n\nWORKDIR /${BERKELEYDB_VERSION}/build_unix\n\nRUN ../dist/configure --enable-cxx --disable-shared --with-pic --prefix=${BERKELEYDB_PREFIX}\nRUN make\nRUN make install\nRUN rm -rf ${BERKELEYDB_PREFIX}/docs\n\n# Build stage for Bitcoin Core\nFROM alpine as taler-core\n\nCOPY --from=berkeleydb /opt /opt\n\nRUN apk --no-cache add git autoconf automake boost-dev build-base chrpath file libevent-dev gnupg openssl openssl-dev libtool protobuf-dev zeromq-dev\n\nENV TALER_VERSION=0.16.3.1\nENV TALER_PREFIX=/opt/taler-${TALER_VERSION}\n\nRUN git clone https://github.com/taler-project/taler.git --depth=1\n\nWORKDIR /taler\n\nRUN sed -i '/AC_PREREQ/a\\AR_FLAGS=cr' src/univalue/configure.ac\nRUN sed -i '/AX_PROG_CC_FOR_BUILD/a\\AR_FLAGS=cr' src/secp256k1/configure.ac\nRUN sed -i s:sys/fcntl.h:fcntl.h: src/compat.h\n\n# Fix alpine segfault\nRUN sed -i '/char\\ scratchpad\\[SCRYPT_SCRATCHPAD_SIZE\\];/a\\memset(scratchpad, 0, sizeof(scratchpad));' src/crypto/scrypt.cpp \\\n && sed -i 's/char\\ scratchpad\\[SCRYPT_SCRATCHPAD_SIZE\\];/static &/g' src/crypto/scrypt.cpp\n\nRUN ./autogen.sh\nRUN ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" LDFLAGS=-L`ls -d /opt/db*`/lib/ CPPFLAGS=-I`ls -d /opt/db*`/include/ \\\n    --prefix=${TALER_PREFIX} \\\n    --mandir=/usr/share/man \\\n    --disable-tests \\\n    --disable-bench \\\n    --disable-ccache \\\n    --with-gui=no \\\n    --with-utils \\\n    --with-libs \\\n    --with-daemon \\\n    --disable-shared \\\n    --enable-static\nRUN make\nRUN make install\nRUN strip ${TALER_PREFIX}/bin/taler-cli \\\n && strip ${TALER_PREFIX}/bin/taler-tx \\\n && strip ${TALER_PREFIX}/bin/talerd \\\n && strip ${TALER_PREFIX}/lib/libbitcoinconsensus.a\n\n# Build stage for compiled artifacts\nFROM alpine\n\nRUN adduser -S taler\nRUN apk --no-cache add \\\n  boost \\\n  boost-program_options \\\n  libevent \\\n  openssl \\\n  libzmq \\\n  su-exec\n\nENV TALER_DATA=/home/taler/.taler\nENV TALER_VERSION=0.16.3.1\nENV TALER_PREFIX=/opt/taler-${TALER_VERSION}\nENV PATH=${TALER_PREFIX}/bin:$PATH\n\nCOPY --from=taler-core ${TALER_PREFIX} ${TALER_PREFIX}\nCOPY docker-entrypoint.sh /entrypoint.sh\n\nVOLUME [\"/home/taler/.taler\"]\n\nEXPOSE 23153\n\nENTRYPOINT [\"/entrypoint.sh\"]\n\nCMD [\"talerd\"]\n\n"
+}

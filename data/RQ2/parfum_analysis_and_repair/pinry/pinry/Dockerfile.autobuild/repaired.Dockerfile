@@ -1,0 +1,80 @@
+# -----------------------------------------------------------------------------
+# docker-pinry
+#
+# Builds a basic docker image that can run Pinry (http://getpinry.com) and serve
+# all of it's assets, there are more optimal ways to do this but this is the
+# most friendly and has everything contained in a single instance.
+#
+# Authors: Isaac Bythewood, Jason Kaltsikis
+# Updated: May 2nd, 2020
+# Require: Docker (http://www.docker.io/)
+# -----------------------------------------------------------------------------
+
+# Build static yarn file
+FROM node:14-buster as yarn-build
+
+WORKDIR pinry-spa
+COPY pinry-spa/package.json pinry-spa/yarn.lock ./
+RUN yarn install && yarn cache clean;
+COPY pinry-spa .
+RUN yarn build && yarn cache clean;
+
+
+# Required for other database options
+FROM python:3.9.12-slim-buster as base
+ARG DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update \
+    && if [ $(dpkg --print-architecture) = "arm64" -o $(dpkg --print-architecture) = "armhf" ]; then \
+    apt-get -y --no-install-recommends install apt-utils; rm -rf /var/lib/apt/lists/*; fi \
+    && apt-get -y --no-install-recommends install gcc default-libmysqlclient-dev && rm -rf /var/lib/apt/lists/*;
+RUN pip --no-cache-dir install --user mysqlclient cx-Oracle
+
+
+# Final image
+FROM python:3.9.12-slim-buster
+ARG DEBIAN_FRONTEND=noninteractive
+
+WORKDIR pinry
+RUN mkdir /data && chown -R www-data:www-data /data
+
+RUN groupadd -g 2300 tmpgroup \
+ && usermod -g tmpgroup www-data \
+ && groupdel www-data \
+ && groupadd -g 1000 www-data \
+ && usermod -g www-data www-data \
+ && usermod -u 1000 www-data \
+ && groupdel tmpgroup
+
+RUN apt-get update \
+    # Install nginx \
+    && apt-get -y --no-install-recommends install nginx pwgen \
+    # Install Pillow dependencies
+    && apt-get -y --no-install-recommends install libopenjp2-7 libjpeg-turbo-progs libjpeg62-turbo-dev libtiff5-dev libxcb1 \
+    # Needed to compile psycopg2 on arm (fallback for psycopg2-binary)
+    && if [ $(dpkg --print-architecture) = "arm64" -o $(dpkg --print-architecture) = "armhf" ]; then \
+    apt-get -y --no-install-recommends install apt-utils libpq-dev gcc; fi \
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get autoclean
+
+# Install Pipfile requirements
+COPY requirements.txt ./
+RUN pip install --no-cache-dir "rcssmin==1.0.6" --install-option="--without-c-extensions" \
+    && pip install --no-cache-dir -r requirements.txt
+
+# Copy from previous stages
+COPY --from=yarn-build pinry-spa/dist /pinry/pinry-spa/dist
+COPY --from=base /root/.local /root/.local
+ENV PATH=/root/.local/bin:$PATH
+
+COPY . .
+
+# Load in all of our config files.
+ADD docker/nginx/nginx.conf /etc/nginx/nginx.conf
+ADD docker/nginx/sites-enabled/default /etc/nginx/sites-enabled/default
+
+# 80 is for nginx web, /data contains static files and database /start runs it.
+EXPOSE 80
+ENV DJANGO_SETTINGS_MODULE pinry.settings.docker
+VOLUME ["/data"]
+CMD    ["/pinry/docker/scripts/start.sh"]

@@ -1,0 +1,27 @@
+FROM registry.access.redhat.com/ubi8:8.6 as build
+
+RUN  dnf module install --nodocs -y nodejs:16 python39 --setopt=install_weak_deps=0 --disableplugin=subscription-manager \
+    && dnf install --nodocs -y make gcc gcc-c++  --setopt=install_weak_deps=0 --disableplugin=subscription-manager \
+    && dnf clean all --disableplugin=subscription-manager
+
+RUN mkdir -p /opt/app-root/src
+WORKDIR /opt/app-root/src
+COPY package.json /opt/app-root/src
+RUN npm install --no-audit --no-update-notifier --no-fund --production && npm cache clean --force;
+COPY . .
+
+ENV PORT 3000
+ENV NODE_HEAPDUMP_OPTIONS nosignal
+EXPOSE 3000
+EXPOSE 9229
+
+RUN mkdir -p /opt/app-root/src
+WORKDIR /opt/app-root/src
+COPY . /opt/app-root/src
+
+CMD ["/bin/bash"]
+ARG bx_dev_user=root
+ARG bx_dev_userid=1000
+RUN BX_DEV_USER=$bx_dev_user
+RUN BX_DEV_USERID=$bx_dev_userid
+RUN if [ "$bx_dev_user" != root ]; then useradd -ms /bin/bash -u $bx_dev_userid $bx_dev_user; fi

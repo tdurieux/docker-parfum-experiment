@@ -1,0 +1,32 @@
+FROM debian:10
+
+# Install packages required by Spack
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential ca-certificates curl        g++          \
+        gcc             gfortran        git         gnupg2       \
+        iproute2        lmod            lua-posix   make         \
+        openssh-server  python3         python3-pip tcl          \
+        unzip           less            vim         file         \
+        pkg-config \
+    && pip3 install --no-cache-dir boto3 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install and configure Spack
+ENV SPACK_ROOT=/opt/spack
+ENV PATH=${PATH}:${SPACK_ROOT}/bin
+RUN git clone https://github.com/spack/spack.git ${SPACK_ROOT} \
+    && git --git-dir=${SPACK_ROOT}/.git --work-tree=${SPACK_ROOT} checkout develop \
+    && . ${SPACK_ROOT}/share/spack/setup-env.sh
+
+# Install builtin dependencies for Sarus
+ENV FORCE_UNSAFE_CONFIGURE=1
+RUN spack install wget
+RUN spack install cmake
+RUN spack install boost@1.65.0: cxxstd=11 +program_options +regex +filesystem
+RUN spack install skopeo
+RUN spack install umoci
+RUN spack install runc@:1.0.3
+RUN spack install tini
+RUN spack install squashfs
+RUN spack install python@3:

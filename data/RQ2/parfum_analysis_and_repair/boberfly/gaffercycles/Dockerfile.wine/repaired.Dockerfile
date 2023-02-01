@@ -1,0 +1,1 @@
+# Using a very strange setup of running MSVC 2017 in a Linux container with wine

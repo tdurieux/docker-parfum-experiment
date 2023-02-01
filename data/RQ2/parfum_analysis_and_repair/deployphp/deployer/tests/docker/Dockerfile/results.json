@@ -1,0 +1,35 @@
+{
+  "startTime": 1674255509076,
+  "endTime": 1674255509746,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 43,
+        "lineEnd": 47,
+        "columnStart": 22,
+        "columnEnd": 12
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 1,
+        "lineEnd": 1,
+        "columnStart": 4,
+        "columnEnd": 16
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 10,
+        "lineEnd": 13,
+        "columnStart": 4,
+        "columnEnd": 13
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM php:7.3-cli-alpine AS composer\nRUN apk add --no-cache wget\nCOPY ./scripts/install-composer.sh /tmp/install-composer.sh\nRUN sh /tmp/install-composer.sh\n\n\n\n\n\nFROM php:7.3-cli-alpine AS deployer\nRUN apk add --no-cache \\\n        git \\\n        openssh-client \\\n        rsync\n\nRUN ssh-keygen \\\n    -q \\\n    -b 2048 \\\n    -t rsa \\\n    -f ~/.ssh/id_rsa\n\nRUN git config --global user.email \"e2e@deployer.test\" \\\n    && git config --global user.name \"E2E Deployer\"\n\nARG XDEBUG_VERSION=2.9.8\nRUN set -eux; \\\n\tapk add --no-cache --virtual .build-deps $PHPIZE_DEPS; \\\n\tpecl install xdebug-$XDEBUG_VERSION; \\\n\tdocker-php-ext-enable xdebug; \\\n\tapk del .build-deps\n\nCOPY scripts/php-code-coverage/coverage-start-wrapper.php /usr/local/etc/php/php-code-coverage/\nCOPY conf/10-coverage.ini /usr/local/etc/php/conf.d/\n\nCOPY --from=composer /tmp/composer /bin/composer\nVOLUME [ \"/project\" ]\nWORKDIR /project\n\n\n\n\n\nFROM php:7.3-apache AS server\nRUN apt-get update && apt-get install --no-install-recommends -y \\\n        acl \\\n        git \\\n        openssh-server \\\n        sudo \\\n    && rm -rf /var/lib/apt/lists/*\n\n# SSH login fix. Otherwise user is kicked off after login\nRUN mkdir /run/sshd \\\n    && sed -i 's@session\\s*required\\s*pam_loginuid.so@session optional pam_loginuid.so@g' /etc/pam.d/sshd\n\n# Configure Apache to expose healthcheck & configure site to use /var/www/html/current ad document root\nCOPY conf/healthcheck.conf /etc/apache2/sites-available/healthcheck.conf\nCOPY ./initial-site /var/www/html/initial-site\n\nENV APACHE_DOCUMENT_ROOT /var/www/html/current/public\nRUN sed -ri -e 's!/var/www/html!${APACHE_DOCUMENT_ROOT}!g' /etc/apache2/sites-available/000-default.conf \\\n    && sed -ri -e 's!/var/www/!${APACHE_DOCUMENT_ROOT}!g' /etc/apache2/apache2.conf /etc/apache2/conf-available/*.conf \\\n    && ln -s /var/www/html/initial-site /var/www/html/current \\\n    && chown -R www-data:www-data /var/www/html \\\n    && echo \"Listen 81\" >> /etc/apache2/ports.conf \\\n    && a2enmod rewrite \\\n    && a2ensite healthcheck\n\nRUN useradd \\\n        --create-home \\\n        deployer \\\n    && echo 'deployer:deployer' | chpasswd \\\n    && echo 'deployer ALL=(ALL) ALL' >> /etc/sudoers \\\n    && mkdir ~deployer/.ssh \\\n    && touch ~deployer/.ssh/authorized_keys \\\n    && chown -R deployer:deployer ~deployer/.ssh \\\n    && chmod 700 ~deployer/.ssh \\\n    && chmod 600 ~deployer/.ssh/authorized_keys \\\n    && usermod -a -G www-data deployer\n\nRUN useradd \\\n        --create-home \\\n        git \\\n    && mkdir ~git/.ssh \\\n    && touch ~git/.ssh/authorized_keys \\\n    && chown -R git:git ~git/.ssh \\\n    && chmod 700 ~git/.ssh \\\n    && chmod 700 ~git/.ssh/authorized_keys \\\n    && mkdir ~git/repository \\\n    && git init --bare ~git/repository \\\n    && chown -R git:git ~git/repository\n\nCOPY scripts/start-servers.sh /usr/local/bin/start-servers\nCOPY --from=composer /tmp/composer /usr/local/bin/composer\nCOPY --from=deployer /root/.ssh/id_rsa.pub /tmp/root_rsa.pub\n\nRUN chmod a+x /usr/local/bin/start-servers \\\n    && cat /tmp/root_rsa.pub >> ~deployer/.ssh/authorized_keys \\\n    && cat /tmp/root_rsa.pub >> ~git/.ssh/authorized_keys \\\n    && rm -rf /tmp/root_rsa.pub\n\nEXPOSE 22 80 81\nCMD [ \"start-servers\" ]\n"
+}

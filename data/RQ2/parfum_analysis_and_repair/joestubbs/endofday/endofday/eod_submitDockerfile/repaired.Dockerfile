@@ -1,0 +1,22 @@
+# Docker image that is capable of submitting a job to Agave to run an arbitrary Agave app in an
+# eod work flow.
+#
+# image: eod_job_submit
+
+from alpine:3.2
+
+RUN apk add --update musl python && rm /var/cache/apk/*
+RUN apk add --update musl py-pip && rm /var/cache/apk/*
+
+RUN apk add --update bash && rm -f /var/cache/apk/*
+RUN apk add --update git && rm -f /var/cache/apk/*
+
+ADD agave/eod_job_submit/requirements.txt /eod_job_submit/requirements.txt
+RUN pip install --no-cache-dir -r /eod_job_submit/requirements.txt
+ADD endofday.conf /endofday.conf
+
+ADD core /core
+ADD agave/eod_job_submit /eod_job_submit
+
+
+CMD ["python", "/eod_job_submit/submit.py"]

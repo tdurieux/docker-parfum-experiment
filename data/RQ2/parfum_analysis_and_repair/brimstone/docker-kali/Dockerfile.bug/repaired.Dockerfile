@@ -1,0 +1,95 @@
+# httpx
+FROM brimstone/golang:latest as httpx
+RUN git clone https://github.com/projectdiscovery/httpx \
+ && cd httpx/cmd/httpx \
+ && go build -v \
+ && pwd
+
+# subfinder
+FROM brimstone/golang:latest as subfinder
+RUN git clone https://github.com/projectdiscovery/subfinder \
+ && cd subfinder/v2/cmd/subfinder \
+ && go build -v \
+ && pwd
+
+# nuclei
+FROM brimstone/golang:latest as nuclei
+RUN git clone https://github.com/projectdiscovery/nuclei \
+ && cd nuclei/v2/cmd/nuclei \
+ && go get -v \
+ && go build -v \
+ && pwd
+
+# ureplace instead of qsreplace
+FROM brimstone/golang:latest as ureplace
+RUN git clone https://github.com/theblackturtle/ureplace \
+ && cd ureplace \
+ && go mod init \
+ && go get -v \
+ && go build -v \
+ && pwd
+
+# gf
+FROM brimstone/golang:latest as gf
+RUN git clone https://github.com/tomnomnom/gf \
+ && cd gf \
+ && go mod init \
+ && go build -v \
+ && pwd
+
+# anew
+FROM brimstone/golang:latest as anew
+RUN git clone https://github.com/tomnomnom/anew \
+ && cd anew \
+ && go build -v \
+ && pwd
+
+# jaeles
+FROM brimstone/golang:latest as jaeles
+RUN git clone https://github.com/jaeles-project/jaeles \
+ && cd jaeles \
+ && go build -v \
+ && pwd
+
+FROM brimstone/golang:latest as ipinfo
+RUN git clone https://github.com/ipinfo/cli ipinfo \
+ && cd ipinfo/ipinfo \
+ && go build -v \
+ && pwd
+
+FROM brimstone/kali:latest
+
+RUN apt update \
+ && apt install -y --no-install-recommends \
+    amass whois ffuf bsdextrautils python3 python3-pip python3-venv zip unzip \
+    gobuster gospider proxychains4 getallurls sqlmap whois bind9-host jq \
+ && apt clean \
+ && rm -rf /var/lib/apt/lists && rm -rf /var/lib/apt/lists/*;
+
+RUN git clone https://github.com/devanshbatham/ParamSpider \
+ &&	cd ParamSpider \
+ && mv paramspider.py __main__.py \
+ && pip3 install --no-cache-dir -r requirements.txt --target . \
+ && zip -r paramspider.zip __main__.py core $(awk -F= '{printf $1 " "}' requirements.txt) \
+ && echo '#!/usr/bin/env python3' > /usr/local/bin/paramspider \
+ && cat paramspider.zip >> /usr/local/bin/paramspider \
+ && chmod 755 /usr/local/bin/paramspider \
+ && cd .. \
+ && rm -rf ParamSpider
+
+COPY --from=httpx /go/src/app/httpx/cmd/httpx/httpx /usr/local/bin/
+COPY --from=subfinder /go/src/app/subfinder/v2/cmd/subfinder/subfinder /usr/local/bin/
+COPY --from=nuclei /go/src/app/nuclei/v2/cmd/nuclei/nuclei /usr/local/bin/
+COPY --from=ureplace /go/src/app/ureplace/ureplace /usr/local/bin/
+COPY --from=anew /go/src/app/anew/anew /usr/local/bin/
+
+COPY --from=gf /go/src/app/gf/gf /usr/local/bin/
+RUN git clone https://github.com/1ndianl33t/gf-patterns /root/.gf/
+COPY --from=gf /go/src/app/gf/examples/*.json /root/.gf/
+
+COPY --from=jaeles /go/src/app/jaeles/jaeles /usr/local/bin/
+RUN jaeles config init
+
+COPY --from=ipinfo /go/src/app/ipinfo/ipinfo /usr/local/bin/
+# bountyit
+# https://github.com/Findomain/Findomain

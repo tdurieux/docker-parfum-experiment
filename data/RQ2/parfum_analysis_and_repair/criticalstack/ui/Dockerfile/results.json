@@ -1,0 +1,17 @@
+{
+  "startTime": 1674255894827,
+  "endTime": 1674255895314,
+  "originalSmells": [
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 14,
+        "lineEnd": 14,
+        "columnStart": 4,
+        "columnEnd": 27
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "############################\n# First stage: client asset builder\n# Dubnium is the NodeJS codename for current LTS (10.x) release\nFROM docker.io/node:dubnium as client-builder\n\nWORKDIR /ui/client\n\n# Copy the package.json and Makefile first so node_modules don't have to change after source-files change\nCOPY client/package*.json ./\n\nENV CI=true\n\n# As long as package*.json don't change, then this step will be cached\n# Note that this step is done first and separately from the clientAssets below\nRUN npm install --only=prod && npm cache clean --force;\n\n# Copy the client source code\nCOPY client ./\n\nRUN npm run build:prod\n\n############################\n# Second stage: build the executable with embedded client assets\nFROM docker.io/golang:1.14 AS go-builder\n\n# Set the environment variables for the go command\nENV CGO_ENABLED=0 GOOS=linux GOARCH=amd64 GOSUMDB=off GO111MODULE=on\n\nWORKDIR /ui\n\n# Copy Go module info and vendored dependencies first\n# they are less susceptible to change on every build\n# and will therefore be cached for speeding up the next build\nCOPY ./go.mod ./go.sum ./\n\n# Import the code from the context.\nCOPY api ./api\nCOPY controllers ./controllers\nCOPY internal ./internal\nCOPY cmd ./cmd\n\n# Put these right before the go build since they will change with each commit,\n# which reduces docker caching\nARG VERSION=dev\n\nRUN go build \\\n    -ldflags \"-s -w -X github.com/criticalstack/ui/internal/app.Version=$VERSION\" \\\n    -o ./bin/ui ./cmd/ui\n\n############################\n# Final stage: Just the executable and bare minimum other files\nFROM scratch AS final\n\nLABEL MAINTAINER=\"Critical Stack <dev@criticalstack.com>\"\n\n# Import the Certificate-Authority certificates for enabling HTTPS.\nCOPY --from=go-builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/\n\n# Perform any further action as an unprivileged user.\nUSER 65534:65534\n\n# ui runs on port 8000\nEXPOSE 8000\n\n# Built client/frontend assets\nCOPY --from=client-builder --chown=65534:65534 /ui/client/build /client/build\n\n# Add ui bin\nCOPY --from=go-builder --chown=65534:65534 /ui/bin/ui /\n\nENTRYPOINT [\"/ui\"]\n"
+}

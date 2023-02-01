@@ -1,0 +1,14 @@
+FROM node:18-alpine
+
+ARG USER_ID
+ARG GROUP_ID
+
+RUN yarn global add pnpm && \
+    pnpm config set --global store-dir /tmp/.pnpm-store && \
+    deluser node && \
+    addgroup --gid ${GROUP_ID} dev && \
+    adduser --uid ${USER_ID} -G dev -D dev
+
+USER dev
+
+EXPOSE 3000

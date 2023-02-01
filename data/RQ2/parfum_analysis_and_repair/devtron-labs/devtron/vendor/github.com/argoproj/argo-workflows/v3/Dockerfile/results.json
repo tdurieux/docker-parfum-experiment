@@ -1,0 +1,44 @@
+{
+  "startTime": 1674249261269,
+  "endTime": 1674249262513,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 52,
+        "lineEnd": 52,
+        "columnStart": 8,
+        "columnEnd": 123
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 54,
+        "lineEnd": 54,
+        "columnStart": 8,
+        "columnEnd": 130
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 58,
+        "lineEnd": 58,
+        "columnStart": 4,
+        "columnEnd": 144
+      }
+    },
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 72,
+        "lineEnd": 72,
+        "columnStart": 4,
+        "columnEnd": 60
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "ARG DOCKER_CHANNEL=stable\nARG DOCKER_VERSION=20.10.14\n# NOTE: kubectl version should be one minor version less than https://storage.googleapis.com/kubernetes-release/release/stable.txt\nARG KUBECTL_VERSION=1.22.3\nARG JQ_VERSION=1.6\n\nFROM golang:1.17 as builder\n\nRUN apt-get update && apt-get --no-install-recommends install -y \\\n    git \\\n    make \\\n    apt-utils \\\n    apt-transport-https \\\n    ca-certificates \\\n    wget \\\n    gcc \\\n    libcap2-bin \\\n    zip && \\\n    apt-get clean \\\n    && rm -rf \\\n        /var/lib/apt/lists/* \\\n        /tmp/* \\\n        /var/tmp/* \\\n        /usr/share/man \\\n        /usr/share/doc \\\n        /usr/share/doc-base\n\nWORKDIR /tmp\n\n# https://blog.container-solutions.com/faster-builds-in-docker-with-go-1-11\nWORKDIR /go/src/github.com/argoproj/argo-workflows\nCOPY go.mod .\nCOPY go.sum .\nRUN go mod download\n\nCOPY . .\n\n####################################################################################################\n\nFROM alpine:3 as argoexec-base\n\nARG DOCKER_CHANNEL\nARG DOCKER_VERSION\nARG KUBECTL_VERSION\n\nRUN apk --no-cache add curl procps git tar libcap jq\n\nCOPY hack/arch.sh hack/os.sh /bin/\n\nRUN if [ $(arch.sh) = ppc64le ] || [ $(arch.sh) = s390x ]; then \\\n        curl -f -o docker.tgz https://download.docker.com/$(os.sh)/static/${DOCKER_CHANNEL}/$(uname -m)/docker-18.06.3-ce.tgz; \\\n    else \\\n        curl -f -o docker.tgz https://download.docker.com/$(os.sh)/static/${DOCKER_CHANNEL}/$(uname -m)/docker-${DOCKER_VERSION}.tgz; \\\n    fi && \\\n    tar --extract --file docker.tgz --strip-components 1 --directory /usr/local/bin/ && \\\n    rm docker.tgz\nRUN curl -f -o /usr/local/bin/kubectl https://storage.googleapis.com/kubernetes-release/release/v${KUBECTL_VERSION}/bin/$(os.sh)/$(arch.sh)/kubectl && \\\n    chmod +x /usr/local/bin/kubectl\nRUN rm /bin/arch.sh /bin/os.sh\n\nCOPY hack/ssh_known_hosts /etc/ssh/\nCOPY hack/nsswitch.conf /etc/\n\n\n####################################################################################################\n\nFROM node:16 as argo-ui\n\nCOPY ui/package.json ui/yarn.lock ui/\n\nRUN JOBS=max yarn --cwd ui install --network-timeout 1000000 && yarn cache clean;\n\nCOPY ui ui\nCOPY api api\n\nRUN NODE_OPTIONS=\"--max-old-space-size=2048\" JOBS=max yarn --cwd ui build\n\n####################################################################################################\n\nFROM builder as argoexec-build\n\n# Tell git to forget about all of the files that were not included because of .dockerignore in order to ensure that\n# the git state is \"clean\" even though said .dockerignore files are not present\nRUN cat .dockerignore >> .gitignore\nRUN git status --porcelain | cut -c4- | xargs git update-index --skip-worktree\n\nRUN --mount=type=cache,target=/root/.cache/go-build make dist/argoexec\nRUN setcap CAP_SYS_PTRACE,CAP_SYS_CHROOT+ei dist/argoexec\n\n####################################################################################################\n\nFROM builder as workflow-controller-build\n\n# Tell git to forget about all of the files that were not included because of .dockerignore in order to ensure that\n# the git state is \"clean\" even though said .dockerignore files are not present\nRUN cat .dockerignore >> .gitignore\nRUN git status --porcelain | cut -c4- | xargs git update-index --skip-worktree\n\nRUN --mount=type=cache,target=/root/.cache/go-build make dist/workflow-controller\n\n####################################################################################################\n\nFROM builder as argocli-build\n\nRUN mkdir -p ui/dist\nCOPY --from=argo-ui ui/dist/app ui/dist/app\n# stop make from trying to re-build this without yarn installed\nRUN touch ui/dist/node_modules.marker\nRUN touch ui/dist/app/index.html\n\n# Tell git to forget about all of the files that were not included because of .dockerignore in order to ensure that\n# the git state is \"clean\" even though said .dockerignore files are not present\nRUN cat .dockerignore >> .gitignore\nRUN git status --porcelain | cut -c4- | xargs git update-index --skip-worktree\n\nRUN --mount=type=cache,target=/root/.cache/go-build make dist/argo\n\n####################################################################################################\n\nFROM argoexec-base as argoexec\n\nCOPY --from=argoexec-build /go/src/github.com/argoproj/argo-workflows/dist/argoexec /usr/local/bin/\nCOPY --from=argoexec-build /etc/mime.types /etc/mime.types\n\nENTRYPOINT [ \"argoexec\" ]\n\n####################################################################################################\n\nFROM scratch as workflow-controller\n\nUSER 8737\n\nCOPY --chown=8737 --from=workflow-controller-build /usr/share/zoneinfo /usr/share/zoneinfo\nCOPY --chown=8737 --from=workflow-controller-build /go/src/github.com/argoproj/argo-workflows/dist/workflow-controller /bin/\n\nENTRYPOINT [ \"workflow-controller\" ]\n\n####################################################################################################\n\nFROM scratch as argocli\n\nUSER 8737\n\nWORKDIR /home/argo\n\nCOPY hack/ssh_known_hosts /etc/ssh/\nCOPY hack/nsswitch.conf /etc/\nCOPY --from=argocli-build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/\nCOPY --from=argocli-build /go/src/github.com/argoproj/argo-workflows/dist/argo /bin/\n\nENTRYPOINT [ \"argo\" ]\n"
+}

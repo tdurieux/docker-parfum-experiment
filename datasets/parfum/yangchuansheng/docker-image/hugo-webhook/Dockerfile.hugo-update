@@ -1,0 +1,16 @@
+FROM alpine AS builder
+LABEL maintainer="hugo-webhook Maintainers https://fuckcloudnative.io"
+
+# config
+ENV HUGO_VERSION=0.82.0
+
+WORKDIR /app
+
+RUN apk update; \
+    apk --no-cache add git; \
+    wget -O - https://github.com/gohugoio/hugo/releases/download/v${HUGO_VERSION}/hugo_${HUGO_VERSION}_Linux-64bit.tar.gz | tar -xz -C /usr/local/bin
+
+COPY deploy.sh /app
+RUN chmod +x ./deploy.sh
+
+CMD ["./deploy.sh"]

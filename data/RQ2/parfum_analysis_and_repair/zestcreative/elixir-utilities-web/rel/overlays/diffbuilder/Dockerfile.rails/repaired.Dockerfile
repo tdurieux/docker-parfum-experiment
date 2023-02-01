@@ -1,0 +1,55 @@
+FROM ruby:2.7
+
+RUN curl -f -sS https://dl.yarnpkg.com/debian/pubkey.gpg | apt-key add - && \
+    echo "deb https://dl.yarnpkg.com/debian/ stable main" | tee /etc/apt/sources.list.d/yarn.list
+RUN apt-get update -qq && \
+    apt-get install -y --no-install-recommends \
+        nodejs \
+        postgresql-client \
+        libsqlite3-dev \
+        yarn \
+        curl \
+        make \
+        wget \
+        git \
+        ca-certificates \
+        openssh-client \
+        build-essential \
+        openssl \
+        locales && \
+    echo "en_US.UTF-8 UTF-8" >> /etc/locale.gen && \
+    echo "LANG=en_US.UTF-8" > /etc/locale.conf && \
+    locale-gen en_US.UTF-8 && \
+    update-ca-certificates && rm -rf /var/lib/apt/lists/*;
+
+ENV LANG=en_US.UTF-8 \
+    LANGUAGE=en_US:en \
+    LC_ALL=en_US.UTF-8 \
+    GEM_HOME=/cache/.gem \
+    GEM_PATH=/cache/.gem \
+    HOME=/home \
+    PATH="/cache/.gem/bin:${PATH}" \
+    DEBIAN_FRONTEND=noninteractive
+RUN mkdir -p /usr/local/etc \
+  && { \
+    echo 'install: --no-document'; \
+    echo 'update: --no-document'; \
+  } >> /usr/local/etc/gemrc;
+
+RUN mkdir -p /cache/.gem && \
+    gem update --system && rm -rf /root/.gem;
+
+ARG USER_ID=1000
+ARG GROUP_ID=1001
+ARG USER=user
+
+RUN groupadd --gid $GROUP_ID $USER && \
+    useradd -m --gid $GROUP_ID --uid $USER_ID $USER && \
+    mkdir -p /cache /home /app && chown -R $USER_ID:$GROUP_ID /cache /home /app
+
+USER $USER
+WORKDIR /app
+RUN echo "gem: --no-document" > $HOME/.gemrc && \
+    gem install mysql2 pg sqlite3 bundler
+
+CMD ["/bin/bash"]

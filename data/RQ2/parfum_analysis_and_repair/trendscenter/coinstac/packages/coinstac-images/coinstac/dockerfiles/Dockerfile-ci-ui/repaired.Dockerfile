@@ -1,0 +1,17 @@
+FROM coinstacteam/coinstac:ci
+RUN apt-get update && \
+    apt-get install --no-install-recommends -y xvfb \
+    x11-apps \
+    ffmpeg \
+    imagemagick \
+    libgbm1 \
+    libxss1 \
+    libnss3 \
+    libgtk-3-dev \
+    libasound2-dev \
+    unzip \
+    && rm -rf /var/lib/apt/lists/*
+
+CMD . ./config/.env-ci.sh && npm run switch:ci && \
+sleep 25  && cd packages/coinstac-ui && xvfb-run --auto-servernum \
+--server-args='-screen 0, 1920x1080x24' npm run test:e2e

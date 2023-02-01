@@ -1,0 +1,19 @@
+FROM python:3.10
+
+ENV DOCKERIZE_VERSION v0.6.1
+RUN wget https://github.com/jwilder/dockerize/releases/download/$DOCKERIZE_VERSION/dockerize-linux-amd64-$DOCKERIZE_VERSION.tar.gz \
+    && tar -C /usr/local/bin -xzvf dockerize-linux-amd64-$DOCKERIZE_VERSION.tar.gz \
+    && rm dockerize-linux-amd64-$DOCKERIZE_VERSION.tar.gz
+
+
+ENV PYTHONUNBUFFERED 1
+ENV PYTHONPATH /replica
+
+RUN mkdir /replica
+COPY ./requirements/ /replica/requirements
+RUN pip install --no-cache-dir -r /replica/requirements/dev.txt -r && pip install --no-cache-dir psycopg2-binary redis django-cqrs==1.3.1
+
+COPY . /replica/
+ADD integration_tests/manage.py /replica/
+
+WORKDIR /replica/

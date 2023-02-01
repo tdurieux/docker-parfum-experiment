@@ -1,0 +1,62 @@
+{
+  "startTime": 1674215318559,
+  "endTime": 1674215319242,
+  "originalSmells": [
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 79,
+        "lineEnd": 79,
+        "columnStart": 30,
+        "columnEnd": 41
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 72,
+        "lineEnd": 72,
+        "columnStart": 4,
+        "columnEnd": 39
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 73,
+        "lineEnd": 73,
+        "columnStart": 4,
+        "columnEnd": 44
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 98,
+        "lineEnd": 98,
+        "columnStart": 4,
+        "columnEnd": 24
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 117,
+        "lineEnd": 117,
+        "columnStart": 4,
+        "columnEnd": 24
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 7,
+        "lineEnd": 43,
+        "columnStart": 4,
+        "columnEnd": 16
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM ubuntu:focal as base\n\n# Warning: This file is experimental.\n\n# Install system requirements\nRUN apt-get update && \\\n    # Global requirements\n    DEBIAN_FRONTEND=noninteractive apt-get --no-install-recommends install --yes \\\n    build-essential \\\n    curl \\\n    # If we don't need gcc, we should remove it.\n    g++ \\\n    gcc \\\n    git \\\n    git-core \\\n    language-pack-en \\\n    libfreetype6-dev \\\n    libmysqlclient-dev \\\n    libssl-dev \\\n    libxml2-dev \\\n    libxmlsec1-dev \\\n    libxslt1-dev \\\n    swig \\\n    # openedx requirements\n    gettext \\\n    gfortran \\\n    graphviz \\\n    libffi-dev \\\n    libfreetype6-dev \\\n    libgeos-dev \\\n    libgraphviz-dev \\\n    libjpeg8-dev \\\n    liblapack-dev \\\n    libpng-dev \\\n    libsqlite3-dev \\\n    libxml2-dev \\\n    libxmlsec1-dev \\\n    libxslt1-dev \\\n    # lynx: Required by https://github.com/edx/edx-platform/blob/b489a4ecb122/openedx/core/lib/html_to_text.py#L16\n    lynx \\\n    ntp \\\n    pkg-config \\\n    python3-dev \\\n    python3-venv \\\n    && rm -rf /var/lib/apt/lists/*\n\nRUN locale-gen en_US.UTF-8\nENV LANG en_US.UTF-8\nENV LANGUAGE en_US:en\nENV LC_ALL en_US.UTF-8\n\nWORKDIR /edx/app/edxapp/edx-platform\n\nENV PATH /edx/app/edxapp/nodeenv/bin:${PATH}\nENV PATH ./node_modules/.bin:${PATH}\nENV CONFIG_ROOT /edx/etc/\nENV PATH /edx/app/edxapp/edx-platform/bin:${PATH}\nENV SETTINGS production\nRUN mkdir -p /edx/etc/\n\nENV VIRTUAL_ENV=/edx/app/edxapp/venvs/edxapp\nRUN python3.8 -m venv $VIRTUAL_ENV\nENV PATH=\"$VIRTUAL_ENV/bin:$PATH\"\n\n# Install Python requirements\nCOPY setup.py setup.py\nCOPY common common\nCOPY openedx openedx\nCOPY lms lms\nCOPY cms cms\nCOPY requirements/pip.txt requirements/pip.txt\nCOPY requirements/edx/base.txt requirements/edx/base.txt\nRUN pip install --no-cache-dir -r requirements/pip.txt\nRUN pip install --no-cache-dir -r requirements/edx/base.txt\n\n# Copy just JS requirements and install them.\nCOPY package.json package.json\nCOPY package-lock.json package-lock.json\nRUN nodeenv /edx/app/edxapp/nodeenv --node=12.11.1 --prebuilt\nRUN npm set progress=false && npm install && npm cache clean --force;\n\nENV LMS_CFG /edx/etc/lms.yml\nENV STUDIO_CFG /edx/etc/studio.yml\nCOPY lms/devstack.yml /edx/etc/lms.yml\nCOPY cms/devstack.yml /edx/etc/studio.yml\n\n# Copy over remaining code.\n# We do this as late as possible so that small changes to the repo don't bust\n# the requirements cache.\nCOPY . .\n\nFROM base as lms\nENV SERVICE_VARIANT lms\nENV DJANGO_SETTINGS_MODULE lms.envs.production\nEXPOSE 8000\nCMD gunicorn -c /edx/app/edxapp/edx-platform/lms/docker_lms_gunicorn.py --name lms --bind=0.0.0.0:8000 --max-requests=1000 --access-logfile - lms.wsgi:application\n\nFROM lms as lms-newrelic\nRUN pip install --no-cache-dir newrelic\nCMD newrelic-admin run-program gunicorn -c /edx/app/edxapp/edx-platform/lms/docker_lms_gunicorn.py --name lms --bind=0.0.0.0:8000 --max-requests=1000 --access-logfile - lms.wsgi:application\n\nFROM lms as lms-devstack\n# TODO: This compiles static assets.\n# However, it's a bit of a hack, it's slow, and it's inefficient because makes the final Docker cache layer very large.\n# We ought to be able to this higher up in the Dockerfile, and do it the same for Prod and Devstack.\nRUN mkdir -p test_root/log\nENV DJANGO_SETTINGS_MODULE \"\"\nRUN NO_PREREQ_INSTALL=1 paver update_assets lms --settings devstack_decentralized\nENV DJANGO_SETTINGS_MODULE lms.envs.devstack_decentralized\n\nFROM base as studio\nENV SERVICE_VARIANT cms\nENV DJANGO_SETTINGS_MODULE cms.envs.production\nEXPOSE 8010\nCMD gunicorn -c /edx/app/edxapp/edx-platform/cms/docker_cms_gunicorn.py --name cms --bind=0.0.0.0:8010 --max-requests=1000 --access-logfile - cms.wsgi:application\n\nFROM studio as studio-newrelic\nRUN pip install --no-cache-dir newrelic\nCMD newrelic-admin run-program gunicorn -c /edx/app/edxapp/edx-platform/cms/docker_cms_gunicorn.py --name cms --bind=0.0.0.0:8010 --max-requests=1000 --access-logfile - cms.wsgi:application\n\nFROM studio as studio-devstack\n# TODO: This compiles static assets.\n# However, it's a bit of a hack, it's slow, and it's inefficient because makes the final Docker cache layer very large.\n# We ought to be able to this higher up in the Dockerfile, and do it the same for Prod and Devstack.\nRUN mkdir -p test_root/log\nENV DJANGO_SETTINGS_MODULE \"\"\nRUN NO_PREREQ_INSTALL=1 paver update_assets cms --settings devstack_decentralized\nENV DJANGO_SETTINGS_MODULE cms.envs.devstack_decentralized\n"
+}

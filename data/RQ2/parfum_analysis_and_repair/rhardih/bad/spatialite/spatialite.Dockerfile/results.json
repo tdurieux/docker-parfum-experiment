@@ -1,0 +1,44 @@
+{
+  "startTime": 1674217260160,
+  "endTime": 1674217261121,
+  "originalSmells": [
+    {
+      "rule": "wgetUseHttpsUrl",
+      "position": {
+        "lineStart": 34,
+        "lineEnd": 35,
+        "columnStart": 4,
+        "columnEnd": 86
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 83,
+        "lineEnd": 90,
+        "columnStart": 4,
+        "columnEnd": 29
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 26,
+        "lineEnd": 30,
+        "columnStart": 22,
+        "columnEnd": 9
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 26,
+        "lineEnd": 30,
+        "columnStart": 22,
+        "columnEnd": 9
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "ARG PLATFORM=android-23\nARG TOOLCHAIN=arm-linux-androideabi-4.9\nARG ARCH=armv7-a\n\nFROM bad-sqlite3:3.21.0-$ARCH AS sqlite3-dep\nFROM bad-proj:4.9.3-$ARCH AS proj-dep\nFROM bad-iconv:1.15-$ARCH AS iconv-dep\nFROM bad-geos:3.6.2-$ARCH AS geos-dep\n\nFROM rhardih/stand:r18b--$PLATFORM--$TOOLCHAIN\n\nARG HOST=arm-linux-androideabi\nARG PLATFORM\nENV PLATFORM $PLATFORM\nARG ARCH\nENV ARCH $ARCH\n\n# List of available versions can be found at\n# http://www.gaia-gis.it/gaia-sins/libspatialite-sources/\nARG VERSION\n\nCOPY --from=sqlite3-dep /sqlite3-build /sqlite3-build\nCOPY --from=proj-dep /proj-build /proj-build\nCOPY --from=iconv-dep /iconv-build /iconv-build\nCOPY --from=geos-dep /geos-build /geos-build\n\nRUN apt-get update && apt-get -y --no-install-recommends install \\\n  wget \\\n  pkg-config \\\n  autoconf \\\n  libtool && rm -rf /var/lib/apt/lists/*;\n\nWORKDIR /\n\nRUN wget -O libspatialite-$VERSION.tar.gz \\\n  https://www.gaia-gis.it/gaia-sins/libspatialite-sources/libspatialite-$VERSION.tar.gz && \\\n  tar -xzvf libspatialite-$VERSION.tar.gz && \\\n  rm libspatialite-$VERSION.tar.gz\n\nWORKDIR /libspatialite-$VERSION\n\nENV PATH $PATH:/$PLATFORM-toolchain/bin\nENV PATH $PATH:/geos-build/bin\n\n# Update \"missing\" script to avoid error:\n# libspatialite-$VERSION/missing: Unknown `--is-lightweight' option\nRUN autoreconf -fi\n\n# Acquire newer versions of .guess and .sub files for configure\nRUN wget -O config.guess \\\n  https://raw.githubusercontent.com/gcc-mirror/gcc/master/config.guess\n\nRUN wget -O config.sub \\\n  https://raw.githubusercontent.com/gcc-mirror/gcc/master/config.sub\n\n# pkg-config is only used for libxml2 it would seem, so is instead used directly\n# to set vars for configure\nENV PKG_CONFIG_PATH \"/sqlite3-build/lib/pkgconfig\"\nENV PKG_CONFIG_PATH \"$PKG_CONFIG_PATH:/proj-build/lib/pkgconfig\"\n\nRUN pkg-config sqlite3 proj --cflags >> cflags.tmp\nRUN pkg-config sqlite3 proj --libs >> ldflags.tmp\n\n# iconv and geos doesn't produce pkg-config .pc files, so those flags are added\n# manually\nRUN echo \"-I/iconv-build/include\" >> cflags.tmp\nRUN echo \"-L/iconv-build/lib -liconv\" >> ldflags.tmp\n\nRUN echo \"-I/geos-build/include\" >> cflags.tmp\nRUN echo \"-L/geos-build/lib -lgeos\" >> cflags.tmp\n\n# Linking log remediates the following run time error:\n#   UnsatisfiedLinkError: dlopen failed: cannot locate symbol \"__android_log_print\"\nRUN echo \"-L/$PLATFORM-toolchain/sysroot/usr/lib -llog\" >> ldflags.tmp\n\n# This is a bit silly, but somehow libgeos_c is needed and incurs a dependency\n# for libc++_shared.so only on arm64-v8a, and I haven't found a better way to\n# link it\nRUN if [ \"$ARCH\" = \"arm64-v8a\" ]; then \\\n      echo \"-lgeos_c\" >> cflags.tmp; \\\n      echo \"-L/$PLATFORM-toolchain/aarch64-linux-android/lib -lc++_shared\" >> ldflags.tmp; \\\n    fi\n\nRUN CFLAGS=$(tr \"\\r\\n\" \" \" < cflags.tmp) \\\n  LDFLAGS=$(tr \"\\r\\n\" \" \" < ldflags.tmp) \\\n  ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" \\\n\n  --host=$HOST \\\n  --target=android \\\n  --disable-freexl \\\n  --disable-libxml2 \\\n  --disable-examples \\\n  --prefix=/spatialite-build/\n\nRUN make -j && make install\n"
+}

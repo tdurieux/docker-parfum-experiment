@@ -1,0 +1,1 @@
+# requires installing the module first: 'mvn clean install'

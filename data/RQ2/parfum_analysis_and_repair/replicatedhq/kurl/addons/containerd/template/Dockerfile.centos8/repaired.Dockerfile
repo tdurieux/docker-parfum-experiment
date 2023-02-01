@@ -1,0 +1,19 @@
+FROM rockylinux:8.5
+
+RUN echo -e "fastestmirror=1\nmax_parallel_downloads=8" >> /etc/dnf/dnf.conf
+
+RUN yum install -y yum-utils epel-release createrepo && rm -rf /var/cache/yum
+RUN yum-config-manager --add-repo http://mirror.centos.org/centos/8-stream/AppStream/x86_64/os/
+RUN yum install -y modulemd-tools && rm -rf /var/cache/yum
+RUN yum-config-manager --add-repo https://download.docker.com/linux/centos/docker-ce.repo
+RUN mkdir -p /packages/archives
+
+ARG VERSION
+ENV VERSION=${VERSION}
+
+CMD yumdownloader --installroot=/tmp/empty-directory --releasever=/ --resolve --destdir=/packages/archives -y \
+    containerd.io-$(yum list --showduplicates 'containerd.io' | grep ${VERSION} | tail -1 | awk '{ print $2 }' | sed 's/.\://') \
+  && createrepo_c /packages/archives \
+  && repo2module --module-name=kurl.local --module-stream=stable /packages/archives /tmp/modules.yaml \
+  && modifyrepo_c --mdtype=modules /tmp/modules.yaml /packages/archives/repodata \
+  && cp -r /packages/archives/* /out/

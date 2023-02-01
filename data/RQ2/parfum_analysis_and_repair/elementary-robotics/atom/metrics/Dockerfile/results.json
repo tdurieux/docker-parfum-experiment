@@ -1,0 +1,62 @@
+{
+  "startTime": 1674254089294,
+  "endTime": 1674254089946,
+  "originalSmells": [
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 45,
+        "lineEnd": 45,
+        "columnStart": 4,
+        "columnEnd": 23
+      }
+    },
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 45,
+        "lineEnd": 45,
+        "columnStart": 27,
+        "columnEnd": 39
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 59,
+        "lineEnd": 59,
+        "columnStart": 4,
+        "columnEnd": 30
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 60,
+        "lineEnd": 60,
+        "columnStart": 4,
+        "columnEnd": 22
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 61,
+        "lineEnd": 61,
+        "columnStart": 4,
+        "columnEnd": 36
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 21,
+        "lineEnd": 30,
+        "columnStart": 33,
+        "columnEnd": 9
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM grafana/grafana:8.2.2\n\n# Use root user -- easier/better able to store configs locally.\n# THIS SHOULD NOT BE USED FOR NON-LOCAL SETUPS\n# (but is fine for local setups)\nUSER root\n\n# Configuration environment variables\nENV ATOM_NUCLEUS_HOST \"\"\nENV ATOM_METRICS_HOST \"\"\nENV ATOM_NUCLEUS_PORT \"6379\"\nENV ATOM_METRICS_PORT \"6380\"\nENV ATOM_NUCLEUS_SOCKET \"/shared/redis.sock\"\nENV ATOM_METRICS_SOCKET \"/shared/metrics.sock\"\nENV REDIS_CLI_BIN /usr/bin/redis-cli\nENV PYTHONUNBUFFERED=TRUE\nENV GRAFANA_HTTP_PORT \"3001\"\nENV GRAFANA_SUBPATH \"\"\nENV GRAFANA_SERVE_FROM_SUBPATH \"false\"\n\n# Install our requirements\nRUN apk update && apk upgrade && apk add --no-cache \\\n    alpine-sdk \\\n    git \\\n    go \\\n    npm \\\n    python2 \\\n    python3 \\\n    py-pip \\\n    py3-virtualenv \\\n    redis\n\n# Install Mage\nRUN mkdir -p /root/go/bin && git clone https://github.com/magefile/mage && cd mage && go run bootstrap.go\n\nENV PATH=/root/go/bin:${PATH}\n\n# Get the grafana go plugin\nRUN go get -u github.com/grafana/grafana-plugin-sdk-go\n\n# Get the redis datasource\nADD metrics/grafana-redis-datasource /tmp/grafana-redis-datasource\nWORKDIR /tmp/grafana-redis-datasource\n\n# Install yarn and dependencies, build JS\nRUN npm install yarn -g && yarn install && yarn build && npm cache clean --force; && yarn cache clean;\n\n# Build and install plugin\nRUN set -x; mage -v build:linux$(arch | sed 's/x86_64//g' | sed 's/aarch64/ARM64/g')\nRUN mv dist/ /var/lib/grafana/plugins/redis-datasource\n\n# Add in our grafana config file\nADD metrics/grafana.ini /etc/grafana/grafana.ini\n\n# Install scripts we'll use to auto-create dashboards\nADD metrics/dashboards /metrics/dashboards\nWORKDIR /metrics/dashboards\nRUN virtualenv env\nRUN . env/bin/activate && \\\n    pip3 install --no-cache-dir --upgrade pip && \\\n    pip3 install --no-cache-dir wheel && \\\n    pip3 install --no-cache-dir -r requirements.txt\n\n# Add in the launch script\nWORKDIR /metrics\nADD metrics/launch.sh .\n\n# Add in the script that lets us wait for the nucleus\nADD utilities/scripts/wait_for_nucleus.sh /usr/local/bin/wait_for_nucleus.sh\n\n# Specify bash as the entrypoint and the command as launch.sh\nENTRYPOINT [ \"/bin/bash\" ]\nCMD [ \"/usr/local/bin/wait_for_nucleus.sh\", \"/bin/bash\", \"launch.sh\" ]\n"
+}

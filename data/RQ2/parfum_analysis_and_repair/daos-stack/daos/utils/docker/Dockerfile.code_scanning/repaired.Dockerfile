@@ -1,0 +1,14 @@
+#
+# Copyright 2018-2022, Intel Corporation
+#
+# 'recipe' for Docker for code scanning.
+#
+
+# Pull base image
+FROM fedora:latest
+LABEL maintainer="daos@daos.groups.io"
+
+# Intermittent cache-bust.  Used to reduce load on the actual CACHEBUST later.
+ARG CB0
+
+# Install Python Bandit scanner.

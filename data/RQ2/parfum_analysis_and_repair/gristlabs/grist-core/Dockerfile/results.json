@@ -1,0 +1,62 @@
+{
+  "startTime": 1674250840241,
+  "endTime": 1674250841373,
+  "originalSmells": [
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 17,
+        "lineEnd": 17,
+        "columnStart": 4,
+        "columnEnd": 44
+      }
+    },
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 25,
+        "lineEnd": 25,
+        "columnStart": 33,
+        "columnEnd": 106
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 51,
+        "lineEnd": 51,
+        "columnStart": 2,
+        "columnEnd": 20
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 52,
+        "lineEnd": 52,
+        "columnStart": 2,
+        "columnEnd": 34
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 53,
+        "lineEnd": 53,
+        "columnStart": 2,
+        "columnEnd": 35
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 49,
+        "lineEnd": 50,
+        "columnStart": 2,
+        "columnEnd": 63
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "################################################################################\n## The Grist source can be extended. This is a stub that can be overridden\n## from command line, as:\n##   docker buildx build -t ... --build-context=ext=<path> .\n## The code in <path> will then be built along with the rest of Grist.\n################################################################################\nFROM scratch as ext\n\n################################################################################\n## Javascript build stage\n################################################################################\n\nFROM node:14-buster as builder\n\n# Install all node dependencies.\nWORKDIR /grist\nCOPY package.json yarn.lock /grist/\nRUN yarn install --frozen-lockfile --verbose && yarn cache clean;\n\n# Install any extra node dependencies (at root level, to avoid having to wrestle\n# with merging them).\nCOPY --from=ext / /grist/ext\nRUN \\\n mkdir /node_modules && \\\n cd /grist/ext && \\\n { \\\n  if [ -e package.json ] ; then \\\n yarn install --frozen-lockfile --modules-folder=/node_modules --verbose ; yarn cache clean; fi \\\n}\n\n# Build node code.\nCOPY tsconfig.json /grist\nCOPY tsconfig-ext.json /grist\nCOPY test/tsconfig.json /grist/test/tsconfig.json\nCOPY test/chai-as-promised.js /grist/test/chai-as-promised.js\nCOPY app /grist/app\nCOPY stubs /grist/stubs\nCOPY buildtools /grist/buildtools\nRUN yarn run build:prod\n\n################################################################################\n## Python collection stage\n################################################################################\n\n# Fetch python3.9 and python2.7\nFROM python:3.9-slim-buster as collector\n\n# Install all python dependencies.\nADD sandbox/requirements.txt requirements.txt\nADD sandbox/requirements3.txt requirements3.txt\nRUN \\\n  apt update && \\\n  apt install -y --no-install-recommends python2 python-pip python-setuptools \\\n  build-essential libxml2-dev libxslt-dev python-dev zlib1g-dev && \\\n  pip2 install --no-cache-dir wheel && \\\n  pip2 install --no-cache-dir -r requirements.txt && \\\n  pip3 install --no-cache-dir -r requirements3.txt && rm -rf /var/lib/apt/lists/*;\n\n################################################################################\n## Sandbox collection stage\n################################################################################\n\n# Fetch gvisor-based sandbox. Note, to enable it to run within default\n# unprivileged docker, layers of protection that require privilege have\n# been stripped away, see https://github.com/google/gvisor/issues/4371\nFROM gristlabs/gvisor-unprivileged:buster as sandbox\n\n################################################################################\n## Run-time stage\n################################################################################\n\n# Now, start preparing final image.\nFROM node:14-buster-slim\n\n# Install libexpat1, libsqlite3-0 for python3 library binary dependencies.\n# Install pgrep for managing gvisor processes.\nRUN \\\n  apt-get update && \\\n  apt-get install -y --no-install-recommends libexpat1 libsqlite3-0 procps && \\\n  rm -rf /var/lib/apt/lists/*\n\n# Keep all storage user may want to persist in a distinct directory\nRUN mkdir -p /persist/docs\n\n# Copy node files.\nCOPY --from=builder /node_modules /node_modules\nCOPY --from=builder /grist/node_modules /grist/node_modules\nCOPY --from=builder /grist/_build /grist/_build\nCOPY --from=builder /grist/static /grist/static-built\n\n# Copy python files.\nCOPY --from=collector /usr/bin/python2.7 /usr/bin/python2.7\nCOPY --from=collector /usr/lib/python2.7 /usr/lib/python2.7\nCOPY --from=collector /usr/local/lib/python2.7 /usr/local/lib/python2.7\nCOPY --from=collector /usr/local/bin/python3.9 /usr/bin/python3.9\nCOPY --from=collector /usr/local/lib/python3.9 /usr/local/lib/python3.9\nCOPY --from=collector /usr/local/lib/libpython3.9.* /usr/local/lib/\n# Set default to python3\nRUN \\\n  ln -s /usr/bin/python3.9 /usr/bin/python && \\\n  ln -s /usr/bin/python3.9 /usr/bin/python3 && \\\n  ldconfig\n\n# Copy runsc.\nCOPY --from=sandbox /runsc /usr/bin/runsc\n\n# Add files needed for running server.\nADD package.json /grist/package.json\nADD ormconfig.js /grist/ormconfig.js\nADD bower_components /grist/bower_components\nADD sandbox /grist/sandbox\nADD plugins /grist/plugins\nADD static /grist/static\n\n# Finalize static directory\nRUN \\\n  mv /grist/static-built/* /grist/static && \\\n  rmdir /grist/static-built\n\nWORKDIR /grist\n\n# Set some default environment variables to give a setup that works out of the box when\n# started as:\n#   docker run -p 8484:8484 -it <image>\n# Variables will need to be overridden for other setups.\n#\n# GRIST_SANDBOX_FLAVOR is set to unsandboxed by default, because it\n# appears that the services people use to run docker containers have\n# a wide variety of security settings and the functionality needed for\n# sandboxing may not be possible in every case. For default docker\n# settings, you can get sandboxing as follows:\n#   docker run --env GRIST_SANDBOX_FLAVOR=gvisor -p 8484:8484 -it <image>\n#\nENV \\\n  PYTHON_VERSION_ON_CREATION=3 \\\n  GRIST_ORG_IN_PATH=true \\\n  GRIST_HOST=0.0.0.0 \\\n  GRIST_SINGLE_PORT=true \\\n  GRIST_SERVE_SAME_ORIGIN=true \\\n  GRIST_DATA_DIR=/persist/docs \\\n  GRIST_INST_DIR=/persist \\\n  GRIST_SESSION_COOKIE=grist_core \\\n  GVISOR_FLAGS=\"-unprivileged -ignore-cgroups\" \\\n  GRIST_SANDBOX_FLAVOR=unsandboxed \\\n  TYPEORM_DATABASE=/persist/home.sqlite3\n\nEXPOSE 8484\n\nCMD ./sandbox/run.sh\n"
+}

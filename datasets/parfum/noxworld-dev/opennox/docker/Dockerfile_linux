@@ -1,0 +1,6 @@
+FROM nox:base_build_image
+USER runner
+
+COPY --chown=runner ./start_linux.sh /home/runner/
+
+ENTRYPOINT ["/home/runner/start_linux.sh"]

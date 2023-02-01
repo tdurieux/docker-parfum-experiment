@@ -1,0 +1,80 @@
+{
+  "startTime": 1674250150895,
+  "endTime": 1674250151854,
+  "originalSmells": [
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 41,
+        "lineEnd": 41,
+        "columnStart": 4,
+        "columnEnd": 63
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 28,
+        "lineEnd": 28,
+        "columnStart": 4,
+        "columnEnd": 60
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 31,
+        "lineEnd": 31,
+        "columnStart": 4,
+        "columnEnd": 23
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 39,
+        "lineEnd": 39,
+        "columnStart": 4,
+        "columnEnd": 35
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 46,
+        "lineEnd": 46,
+        "columnStart": 4,
+        "columnEnd": 35
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 50,
+        "lineEnd": 50,
+        "columnStart": 4,
+        "columnEnd": 29
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 4,
+        "lineEnd": 5,
+        "columnStart": 2,
+        "columnEnd": 94
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 4,
+        "lineEnd": 5,
+        "columnStart": 2,
+        "columnEnd": 94
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM docker.io/ubuntu:20.04\n\nENV DEBIAN_FRONTEND=noninteractive\nRUN apt update && \\\n  apt install --no-install-recommends -y curl git-core language-pack-en python3 python3-pip python3-venv \\\n  build-essential libffi-dev libmysqlclient-dev libxml2-dev libxslt-dev libjpeg-dev libssl-dev && rm -rf /var/lib/apt/lists/*;\nENV LC_ALL en_US.UTF-8\n\nARG APP_USER_ID=1000\nRUN useradd --home-dir /openedx --create-home --shell /bin/bash --uid ${APP_USER_ID} app\nUSER ${APP_USER_ID}\n\nARG DISCOVERY_REPOSITORY=https://github.com/edx/course-discovery.git\nARG DISCOVERY_VERSION={{ OPENEDX_COMMON_VERSION }}\nRUN mkdir -p /openedx/discovery && \\\n    git clone $DISCOVERY_REPOSITORY --branch $DISCOVERY_VERSION --depth 1 /openedx/discovery\nWORKDIR /openedx/discovery\n\n# Setup empty yml config file, which is required by production settings\nRUN echo \"{}\" > /openedx/config.yml\nENV DISCOVERY_CFG /openedx/config.yml\n\n# Install python venv\nRUN python3 -m venv ../venv/\nENV PATH \"/openedx/venv/bin:$PATH\"\n# https://pypi.org/project/setuptools/\n# https://pypi.org/project/pip/\n# https://pypi.org/project/wheel/\nRUN pip install --no-cache-dir setuptools==62.1.0 pip==22.0.4 wheel==0.37.1\n\n# Install a recent version of nodejs\nRUN pip install --no-cache-dir nodeenv\n# nodejs version picked from https://github.com/openedx/course-discovery/blob/master/Dockerfile\nRUN nodeenv /openedx/nodeenv --node=16.14.2 --prebuilt\nENV PATH /openedx/nodeenv/bin:${PATH}\n\n# Install python and nodejs requirements\n# This is identical to \"make production-requirements\" but it was split in multiple\n# instructions to benefit from docker image caching\nRUN pip install --no-cache-dir -r requirements.txt\nARG NPM_REGISTRY=https://registry.npmjs.org/\nRUN npm install --verbose --registry=$NPM_REGISTRY --production && npm cache clean --force;\nRUN ./node_modules/.bin/bower install --allow-root --production\n\n# Install django-redis for using redis as a django cache\n# https://pypi.org/project/django-redis/\nRUN pip install --no-cache-dir django-redis==5.2.0\n\n# Install uwsgi\n# https://pypi.org/project/uWSGI/\nRUN pip install --no-cache-dir uwsgi==2.0.20\n\n# Collect static assets\nCOPY --chown=app:app assets.py ./course_discovery/settings/assets.py\nRUN DJANGO_SETTINGS_MODULE=course_discovery.settings.assets make static\n\n# Run production server\nENV DJANGO_SETTINGS_MODULE course_discovery.settings.tutor.production\nEXPOSE 8000\nCMD uwsgi \\\n    --static-map /static=/openedx/discovery/course_discovery/assets \\\n    --static-map /media=/openedx/discovery/course_discovery/media \\\n    --http 0.0.0.0:8000 \\\n    --thunder-lock \\\n    --single-interpreter \\\n    --enable-threads \\\n    --processes=2 \\\n    --buffer-size=8192 \\\n    --wsgi-file course_discovery/wsgi.py\n"
+}

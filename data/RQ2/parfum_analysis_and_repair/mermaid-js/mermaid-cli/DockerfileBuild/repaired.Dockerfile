@@ -1,0 +1,35 @@
+FROM node:alpine AS build
+
+ENV CHROME_BIN="/usr/bin/chromium-browser" \
+    PUPPETEER_SKIP_CHROMIUM_DOWNLOAD="true"
+
+RUN apk add --no-cache chromium
+
+WORKDIR /app
+
+COPY . /app/
+
+RUN yarn \
+    && chmod 755 copy_modules.sh \
+    && /bin/sh copy_modules.sh \
+    && yarn prepublishOnly \
+    && yarn pack && yarn cache clean;
+
+FROM node:alpine AS mermaid-cli-current
+
+WORKDIR /app
+
+COPY --from=build /app/*-mermaid-cli-*.tgz /install/
+COPY --from=build /app/puppeteer-config.json /puppeteer-config.json
+
+ADD install-dependencies.sh install-dependencies.sh
+RUN chmod 755 install-dependencies.sh && /bin/sh install-dependencies.sh
+
+RUN adduser -D mermaidcli
+USER mermaidcli
+WORKDIR /home/mermaidcli
+RUN yarn add $(ls -d /install/*.tgz)
+
+ADD puppeteer-config.json  /puppeteer-config.json
+ENTRYPOINT ["./node_modules/.bin/mmdc", "-p", "/puppeteer-config.json"]
+CMD [ "--help" ]

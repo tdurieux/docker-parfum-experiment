@@ -1,0 +1,26 @@
+{
+  "startTime": 1674242583898,
+  "endTime": 1674242584071,
+  "originalSmells": [
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 19,
+        "lineEnd": 22,
+        "columnStart": 4,
+        "columnEnd": 13
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 34,
+        "lineEnd": 35,
+        "columnStart": 7,
+        "columnEnd": 28
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM centos:7\n\n\nARG TERM=linux\n\nARG SCIDB_NAME=scidb\nARG SCIDB_LOG_LEVEL=WARN\nARG SCIDB_SCRIPT_URL=\"https://downloads.paradigm4.com/community/18.1/install-scidb-ce.sh\"\n\n\nENV SCIDB_VER=18.1   \\\n    SCIDB_NAME=scidb\n\nENV SCIDB_INSTALL_PATH=/opt/scidb/$SCIDB_VER\n\nENV PATH=$PATH:$SCIDB_INSTALL_PATH/bin\n\n\n## Install dependencies\nRUN yum install --assumeyes                     \\\n        patch                                   \\\n        wget                                    \\\n        which \\\n    && yum clean all && rm -rf /var/cache/yum\n\n\n## Get SciDB install script\nRUN wget --no-verbose --output-document /install-scidb-ce.sh \"$SCIDB_SCRIPT_URL\"\nRUN chmod +x /install-scidb-ce.sh\n\n\n## Run SciDB install script\nRUN yes                                         \\\n    |  /install-scidb-ce.sh                     \\\n    && yum install --assumeyes                  \\\n        scidb-$SCIDB_VER-dev \\\n    && yum clean all && rm -rf /var/cache/yum\n\n        # scidb-$SCIDB_VER-libboost-devel         \\\n\n\n## Setup SSH\nRUN echo 'StrictHostKeyChecking no'                        \\\n    >> /etc/ssh/ssh_config                                 \\\n    && ssh-keygen -f /root/.ssh/id_rsa -q -N \"\"            \\\n    && cp /root/.ssh/id_rsa.pub /root/.ssh/authorized_keys\n\n\n## Setup SciDB config file\nCOPY config.ini $SCIDB_INSTALL_PATH/etc/\n\n\n## Setup PostgreSQL and SciDB\nRUN echo \"127.0.0.1:5432:$SCIDB_NAME:$SCIDB_NAME:`                   \\\n            date +%s | sha256sum | base64 | head -c 32`\"             \\\n    >  /root/.pgpass                                                 \\\n    && chmod go-r /root/.pgpass                                      \\\n    && chmod a+r $SCIDB_INSTALL_PATH/etc/config.ini                  \\\n    && ssh-keygen -A                                                 \\\n    && /usr/sbin/sshd                                                \\\n    && sed --in-place                                                \\\n        s/\\\\.\\\\.\\\\.0/172.17.0.0/                                     \\\n        /var/lib/pgsql/9.3/data/pg_hba.conf                          \\\n    && su --command=\"                                                \\\n            /usr/pgsql-9.3/bin/pg_ctl start                          \\\n                -D /var/lib/pgsql/9.3/data/                          \\\n                -s                                                   \\\n                -w                                                   \\\n                -t 300\"                                              \\\n                postgres                                             \\\n    && until su --command=\"/usr/pgsql-9.3/bin/pg_isready\" postgres   \\\n    ;  do sleep 1                                                    \\\n    ;  done                                                          \\\n    && su --command=\"                                                \\\n            $SCIDB_INSTALL_PATH/bin/scidb.py init-syscat $SCIDB_NAME \\\n                --db-password `                                      \\\n                    cut --delimiter : --fields 5  /root/.pgpass`\"    \\\n        postgres                                                     \\\n    && $SCIDB_INSTALL_PATH/bin/scidb.py init-all --force $SCIDB_NAME \\\n    && su --command=\"                                                \\\n            /usr/pgsql-9.3/bin/pg_ctl stop                           \\\n                -D /var/lib/pgsql/9.3/data/                          \\\n                -s                                                   \\\n                -m fast\"                                             \\\n                postgres                                             \\\n    && sed --in-place                                                \\\n        s/log4j.rootLogger=INFO/log4j.rootLogger=$SCIDB_LOG_LEVEL/   \\\n        $SCIDB_INSTALL_PATH/share/scidb/log4cxx.properties\n\n\n## Setup container entrypoint\nCOPY docker-entrypoint-centos-7.sh /docker-entrypoint.sh\nENTRYPOINT [\"/docker-entrypoint.sh\"]\n\n\n## Port | App\n## -----+-----\n## 1239 | SciDB iquery\nEXPOSE 1239\n"
+}

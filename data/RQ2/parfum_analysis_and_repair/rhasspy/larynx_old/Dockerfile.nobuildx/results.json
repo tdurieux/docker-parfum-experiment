@@ -1,0 +1,26 @@
+{
+  "startTime": 1674255108660,
+  "endTime": 1674255110277,
+  "originalSmells": [
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 24,
+        "lineEnd": 26,
+        "columnStart": 4,
+        "columnEnd": 28
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 74,
+        "lineEnd": 78,
+        "columnStart": 4,
+        "columnEnd": 17
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# -----------------------------------------------------------------------------\n# Dockerfile for Larynx (https://github.com/rhasspy/larynx)\n# See scripts/build-docker.sh\n#\n# The IFDEF statements are handled by docker/preprocess.sh. These are just\n# comments that are uncommented if the environment variable after the IFDEF is\n# not empty.\n#\n# The build-docker.sh script will optionally add apt/pypi proxies running locally:\n# * apt - https://docs.docker.com/engine/examples/apt-cacher-ng/\n# * pypi - https://github.com/jayfk/docker-pypi-cache\n# -----------------------------------------------------------------------------\n\nFROM debian:buster-slim as build\n\nENV LANG C.UTF-8\n\n# IFDEF PROXY\n#! RUN echo 'Acquire::http { Proxy \"http://${APT_PROXY_HOST}:${APT_PROXY_PORT}\"; };' >> /etc/apt/apt.conf.d/01proxy\n# ENDIF\n\nENV DEBIAN_FRONTEND=noninteractive\n\nRUN apt-get update && \\\n    apt-get install --yes --no-install-recommends \\\n        python3 python3-pip python3-venv python3-dev \\\n        build-essential curl && rm -rf /var/lib/apt/lists/*;\n\n# IFDEF PYPI\n#! ENV PIP_INDEX_URL=http://${PYPI_PROXY_HOST}:${PYPI_PROXY_PORT}/simple/\n#! ENV PIP_TRUSTED_HOST=${PYPI_PROXY_HOST}\n# ENDIF\n\nENV DOWNLOAD_DIR /app/download\n\nCOPY requirements.txt /app/\nCOPY scripts/create-venv.sh /app/scripts/\nCOPY TTS/ /app/TTS/\n\n\nARG TARGETARCH\nARG TARGETVARIANT\n\nCOPY download/$TARGETARCH$TARGETVARIANT/ /app/download/\nCOPY download/shared/ /app/download/\n\n# IFDEF NOAVX\n#! RUN mv /app/download/noavx/* /app/download/\n# ENDIF\n\nRUN cd /app && \\\n    export stage=0 end_stage=0 && \\\n    scripts/create-venv.sh\n\n# Install app\nRUN cd /app && \\\n    export PIP_INSTALL='install -f /app/download' && \\\n    export SETUP_DEVELOP='-f /app/download' && \\\n    export PIP_PREINSTALL_PACKAGES='numpy==1.19.0 scipy==1.5.1' && \\\n    scripts/create-venv.sh\n\n# -----------------------------------------------------------------------------\n\nFROM debian:buster-slim as run\n\nENV LANG C.UTF-8\n\n# IFDEF PROXY\n#! RUN echo 'Acquire::http { Proxy \"http://${APT_PROXY_HOST}:${APT_PROXY_PORT}\"; };' >> /etc/apt/apt.conf.d/01proxy\n# ENDIF\n\nENV DEBIAN_FRONTEND=noninteractive\n\nRUN apt-get update && \\\n    apt-get install --yes --no-install-recommends \\\n        python3 python3-distutils python3-llvmlite libpython3.7 \\\n        libsndfile1 libgomp1 libatlas3-base libgfortran4 libopenblas-base \\\n        libnuma1 \\\n        espeak-ng && rm -rf /var/lib/apt/lists/*;\n\n# Remove proxy\n# IFDEF PROXY\n#! RUN rm -f /etc/apt/apt.conf.d/01proxy\n#! ENV PIP_INDEX_URL=''\n#! ENV PIP_TRUSTED_HOST=''\n# ENDIF\n\n# Copy virtual environment\nCOPY --from=build /app/.venv/ /app/.venv/\n\n# Copy TTS with compiled extension\nCOPY --from=build /app/TTS/ /app/TTS/\n\n# Copy other files\nCOPY larynx/ /app/larynx/\n\n# Need this since we installed numba as root but will be running as a regular user\nENV NUMBA_CACHE_DIR=/tmp\n\nWORKDIR /app\n\nEXPOSE 5002\n\nENTRYPOINT [\"/app/.venv/bin/python3\", \"-m\", \"larynx\", \"serve\"]\n"
+}

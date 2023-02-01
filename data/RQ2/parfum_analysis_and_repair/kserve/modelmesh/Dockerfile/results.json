@@ -1,0 +1,26 @@
+{
+  "startTime": 1674246974907,
+  "endTime": 1674246978490,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 32,
+        "lineEnd": 32,
+        "columnStart": 4,
+        "columnEnd": 34
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 39,
+        "lineEnd": 39,
+        "columnStart": 4,
+        "columnEnd": 91
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Copyright 2021 IBM Corporation\n#\n# Licensed under the Apache License, Version 2.0 (the \"License\");\n# you may not use this file except in compliance with the License.\n# You may obtain a copy of the License at\n#\n#     http://www.apache.org/licenses/LICENSE-2.0\n#\n# Unless required by applicable law or agreed to in writing, software\n# distributed under the License is distributed on an \"AS IS\" BASIS,\n# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.\n# See the License for the specific language governing permissions and\n# limitations under the License.\n\nFROM registry.access.redhat.com/ubi8/ubi-minimal:8.4 as build_base\n\nARG ETCD_VERSION=v3.5.4\n\nLABEL image=\"build_base\"\n\nUSER root\n\nRUN true \\\n    && microdnf --nodocs install java-17-openjdk-devel nss \\\n    && microdnf update --nodocs \\\n    && microdnf clean all \\\n    && sed -i 's:security.provider.12=SunPKCS11:#security.provider.12=SunPKCS11:g' /usr/lib/jvm/java-17-openjdk-*/conf/security/java.security \\\n    && sed -i 's:#security.provider.1=SunPKCS11 ${java.home}/lib/security/nss.cfg:security.provider.12=SunPKCS11 ${java.home}/lib/security/nss.cfg:g' /usr/lib/jvm/java-17-openjdk-*/conf/security/java.security \\\n    && true\n\nRUN microdnf install wget tar \\\n    gzip vim-common python39 maven && \\\n    pip3 install --no-cache-dir -U pip setuptools\n\nENV JAVA_HOME=/usr/lib/jvm/java-17-openjdk\n\n# Install etcd -- used for CI tests\nRUN wget -q https://github.com/etcd-io/etcd/releases/download/${ETCD_VERSION}/etcd-${ETCD_VERSION}-linux-amd64.tar.gz && \\\n    mkdir -p /usr/lib/etcd && \\\n    tar xzf etcd-*-linux-amd64.tar.gz -C /usr/lib/etcd --strip-components=1 --no-same-owner && \\\n    rm -rf etcd*.gz && rm etcd-*-linux-amd64.tar.gz\n\nENV PATH=\"/usr/lib/etcd:$PATH\"\n\n# Copy in code\nRUN mkdir /build\n\nWORKDIR /build\n\n###############################################################################\nFROM build_base AS build\n\nLABEL image=\"build\"\n\nCOPY / /build\n\nENV MAVEN_OPTS=\"-Dfile.encoding=UTF8\"\n\nRUN mvn -B package -DskipTests=true --file pom.xml\n\n###############################################################################\nFROM registry.access.redhat.com/ubi8/ubi-minimal:8.4\n\nARG imageVersion\nARG buildId\nARG commitSha\nARG USER=2000\n\nLABEL name=\"model-mesh\" \\\n      vendor=\"KServe\" \\\n      version=\"${imageVersion}\" \\\n      summary=\"Core model-mesh sidecar image\" \\\n      description=\"Model-mesh is a distributed LRU cache for serving runtime models\" \\\n      release=\"${commitSha}\"\nLABEL maintainer=nickhill@us.ibm.com\n\nUSER root\n\nRUN true \\\n    && microdnf --nodocs install java-17-openjdk-headless nss \\\n    && microdnf update --nodocs \\\n    && microdnf clean all \\\n    && sed -i 's:security.provider.12=SunPKCS11:#security.provider.12=SunPKCS11:g' /usr/lib/jvm/java-17-openjdk-*/conf/security/java.security \\\n    && sed -i 's:#security.provider.1=SunPKCS11 ${java.home}/lib/security/nss.cfg:security.provider.12=SunPKCS11 ${java.home}/lib/security/nss.cfg:g' /usr/lib/jvm/java-17-openjdk-*/conf/security/java.security \\\n    && true\n\nENV JAVA_HOME=/usr/lib/jvm/jre-17-openjdk\n\nCOPY --from=build /build/target/dockerhome/ /opt/kserve/mmesh/\n\n# Make this the current directory when starting the container\nWORKDIR /opt/kserve/mmesh\n\nRUN microdnf install shadow-utils hostname python39 && \\\n    # Create app user\n    useradd -c \"Application User\" -U -u ${USER} -m app && \\\n    chown -R app:0 /home/app && \\\n    # Adjust permissions on /etc/passwd to be writable by group root.\n    # The user app is replaced by the assigned UID on OpenShift.\n    chmod g+w /etc/passwd && \\\n    # In newer Docker there is a --chown option for the COPY command\n    ln -s /opt/kserve/mmesh /opt/kserve/tas && \\\n    mkdir -p log && \\\n    chown -R app:0 . && \\\n    chmod -R 771 . && chmod 775 *.sh *.py && \\\n    echo \"${buildId}\" > /opt/kserve/mmesh/build-version && \\\n    \\\n    # Disable java FIPS - see https://access.redhat.com/documentation/en-us/openjdk/17/html-single/configuring_openjdk_17_on_rhel_with_fips/index#config-fips-in-openjdk\n    sed -i 's/security.useSystemPropertiesFile=true/security.useSystemPropertiesFile=false/g' $JAVA_HOME/conf/security/java.security\n\nEXPOSE 8080\n\n# Run as non-root user by default, to allow runAsNonRoot:true without runAsUser\nUSER ${USER}\n\n# The command to run by default when the container is first launched\nCMD [\"sh\", \"-c\", \"exec /opt/kserve/mmesh/start.sh\"]\n"
+}

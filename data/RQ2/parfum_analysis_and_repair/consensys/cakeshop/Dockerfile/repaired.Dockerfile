@@ -1,0 +1,24 @@
+# Build
+FROM maven:3.6.3-jdk-11 as builder
+
+RUN mkdir -p $HOME/.m2
+
+ADD . /home/cakeshop
+
+RUN cd /home/cakeshop && mvn clean -DskipTests package
+
+# Create docker image with only distribution jar
+FROM adoptopenjdk/openjdk11:alpine
+
+RUN apk add --no-cache nodejs
+
+# Cakeshop data directory is a volume, so it can be persisted and
+# survive image upgrades
+VOLUME /cakeshop/data
+
+COPY --from=builder /home/cakeshop/cakeshop-api/target/cakeshop*.war /cakeshop/cakeshop.war
+
+# for main web interface
+EXPOSE 8080
+
+ENTRYPOINT ["java", "-Dcakeshop.config.dir=/cakeshop/data", "-Dspring.config.additional-location=file:/cakeshop/data/local/", "-jar", "/cakeshop/cakeshop.war"]

@@ -1,0 +1,14 @@
+FROM registry.ci.openshift.org/ocp/builder:rhel-8-golang-1.18-openshift-4.11 AS builder
+WORKDIR /go/src/github.com/openshift/machine-api-operator
+COPY . .
+RUN NO_DOCKER=1 make build
+
+FROM registry.ci.openshift.org/ocp/4.11:base
+COPY --from=builder /go/src/github.com/openshift/machine-api-operator/install manifests
+COPY --from=builder /go/src/github.com/openshift/machine-api-operator/bin/machine-api-operator .
+COPY --from=builder /go/src/github.com/openshift/machine-api-operator/bin/nodelink-controller .
+COPY --from=builder /go/src/github.com/openshift/machine-api-operator/bin/machine-healthcheck .
+COPY --from=builder /go/src/github.com/openshift/machine-api-operator/bin/machineset ./machineset-controller
+COPY --from=builder /go/src/github.com/openshift/machine-api-operator/bin/vsphere ./machine-controller-manager
+
+LABEL io.openshift.release.operator true

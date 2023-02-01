@@ -1,0 +1,44 @@
+ARG IMAGE=balenalib/raspberry-pi
+
+# build
+FROM ubuntu:18.04 as builder
+LABEL maintainer=michel.promonet@free.fr
+
+ARG ARCH=armv6l
+ARG CROSSCOMPILER=https://sourceforge.net/projects/raspberry-pi-cross-compilers/files/Raspberry%20Pi%20GCC%20Cross-Compiler%20Toolchains/Buster/GCC%2010.2.0/Raspberry%20Pi%201%2C%20Zero/cross-gcc-10.2.0-pi_0-1.tar.gz
+
+WORKDIR /v4l2onvif
+COPY . /v4l2onvif
+
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates git wget g++ make cmake zlib1g-dev libssl-dev autoconf automake flex bison busybox \
+        # gsoap native \
+        && wget -qO- https://sourceforge.net/projects/gsoap2/files/gsoap_2.8.117.zip | busybox unzip - \
+        && cd gsoap* && autoreconf -i && ./configure --build="$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)" --prefix=/usr && make install && make clean && cd .. \
+        # cross-compiler \
+        && echo "CROSSCOMPILER=${CROSSCOMPILER}" \
+        && wget -qO- ${CROSSCOMPILER} | tar xz -C /opt \
+        && export PATH=$(ls -d /opt/cross-pi-gcc-*/bin):$PATH \
+        && export CC=arm-linux-gnueabihf-gcc CXX=arm-linux-gnueabihf-g++ AR=arm-linux-gnueabihf-ar LD=arm-linux-gnueabihf-ld RANLIB=arm-linux-gnueabihf-ranlib \
+        # openssl \
+        && wget -qO- https://www.openssl.org/source/openssl-1.1.1g.tar.gz | tar xz \
+        && cd openssl* && ./Configure linux-armv4 no-shared no-tests --prefix=$(arm-linux-gnueabihf-gcc -print-sysroot)/usr && make install && cd .. \
+        # zilb \
+        && wget -qO- https://zlib.net/zlib-1.2.11.tar.gz | tar xz \
+        && cd zlib* && ./configure --build="$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)" --static --prefix=$(arm-linux-gnueabihf-gcc -print-sysroot)/usr && make install && cd .. \
+        # gsoap \
+        && cd gsoap* \
+                && cd gsoap/wsdl && soapcpp2 -SC -pwsdl -I../import ./wsdl.h && cd ../.. \
+                && ac_cv_func_malloc_0_nonnull=yes ./configure --build="$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)" --host arm --prefix=$(arm-linux-gnueabihf-gcc -print-sysroot)/usr && make install CXXFLAGS="-fpermissive" LDFLAGS="-ldl" \
+        && cd .. \
+        # build \
+        && make GSOAP_BIN=/usr/bin \
+        && make install \
+        && apt-get clean && rm -rf /var/lib/apt/lists/ && rm -rf /var/lib/apt/lists/*;
+
+# run
+FROM $IMAGE
+
+WORKDIR /app
+COPY --from=builder /usr/bin/ /app/
+
+ENTRYPOINT [ "./onvif-server.exe" ]

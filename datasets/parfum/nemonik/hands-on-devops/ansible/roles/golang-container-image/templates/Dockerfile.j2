@@ -1,0 +1,10 @@
+FROM {{ registry_host }}:{{ registry_port }}/golang:{{ golang_version }}
+MAINTAINER Michael Joseph Walsh <nemonik@gmail.com>
+
+{% if CA_CERTIFICATES %}
+RUN cd /usr/local/share/ca-certificates/ && {% for ca in CA_CERTIFICATES %} wget {{ ca }} &&{% endfor %} update-ca-certificates
+{% endif %}
+
+RUN go get -u golang.org/x/lint/golint
+RUN go get -u gopkg.in/alecthomas/gometalinter.v2
+RUN gometalinter.v2 --install -d

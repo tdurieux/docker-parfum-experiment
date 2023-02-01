@@ -1,0 +1,26 @@
+{
+  "startTime": 1674219556395,
+  "endTime": 1674219557295,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 40,
+        "lineEnd": 40,
+        "columnStart": 4,
+        "columnEnd": 27
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 18,
+        "lineEnd": 37,
+        "columnStart": 25,
+        "columnEnd": 15
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Copyright (c) Meta Platforms, Inc. and affiliates.\n#\n# This source code is licensed under the MIT license found in the\n# LICENSE file in the root directory of this source tree.\nARG os_release=\"latest\"\nARG tag=\"latest\"\nFROM fbpcs/data-processing:${tag} as data_processing\nFROM fbpcs/emp-games:${tag} as emp_games\n# Tag for private-id is always latest\nFROM ghcr.io/facebookresearch/private-id:latest as private_id\n\nFROM ubuntu:${os_release}\n# Set the timezone\nENV TZ=America/Los_Angeles\nRUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone\n\n# Install Dependencies\nARG DEBIAN_FRONTEND=noninteractive\nRUN apt-get -y update && apt-get install -y --no-install-recommends \\\n    # onedocker\n    git \\\n    wget \\\n    python3.8 \\\n    python3-pip \\\n    # emp_games and data_processing dependencies\n    ca-certificates \\\n    libboost-regex1.71.0 \\\n    libcurl4 \\\n    libdouble-conversion3 \\\n    libgflags2.2 \\\n    libgmp10 \\\n    libgoogle-glog0v5 \\\n    libssl1.1 \\\n    libre2-5 \\\n    zlib1g \\\n    # pyinstaller\n    gcc \\\n    python3-dev && rm -rf /var/lib/apt/lists/*;\n\n# Install pip packages\nRUN pip install --no-cache-dir pyinstaller\n\n# Create the pcs user\nRUN useradd -ms /bin/bash pcs\n\n# Copy emp_games and data_processing executables\nCOPY --from=emp_games /usr/local/bin/. /usr/local/bin/.\nCOPY --from=data_processing /usr/local/bin/. /usr/local/bin/.\n\n# Copy private_id executables: private-id-client, private-id-server,\n#                              private-id-multi-key-client, private-id-multi-key-server\nCOPY --from=private_id /opt/private-id/bin/private-id-client /usr/local/bin/private-id-client\nCOPY --from=private_id /opt/private-id/bin/private-id-server /usr/local/bin/private-id-server\nCOPY --from=private_id /opt/private-id/bin/private-id-multi-key-client /usr/local/bin/private-id-multi-key-client\nCOPY --from=private_id /opt/private-id/bin/private-id-multi-key-server /usr/local/bin/private-id-multi-key-server\n\n# OneDocker likes to change permissions as 'pcs' in /usr/local/bin, set these to be owned by 'pcs' to prevent an error\nRUN chown pcs:pcs /usr/local/bin/*\n\n# Copy fbpcs for building the pc_pre_validation_cli binary later\nCOPY fbpcs/ /tmp/fbpcs-temp/fbpcs/\nRUN chown -R pcs:pcs /tmp/fbpcs-temp/fbpcs/\n\n# Switch to pcs user\nUSER pcs\n\n# installing fbpcp (onedocker)\nRUN python3.8 -m pip install 'git+https://github.com/facebookresearch/fbpcp.git'\n\n# installing pip requirements\nRUN mkdir -p /home/pcs/src/\nWORKDIR /home/pcs/src\nCOPY fbpcs/pip_requirements.txt /home/pcs/src/.\nRUN python3.8 -m pip install --user -r pip_requirements.txt\n\n# Build and copy the pc_pre_validation_cli binary\nUSER pcs\nWORKDIR /tmp/fbpcs-temp/fbpcs/pc_pre_validation/\nRUN pyinstaller pc_pre_validation_cli.py --onefile\n\nUSER root\nRUN cp ./dist/pc_pre_validation_cli /usr/local/bin/\nRUN chown pcs:pcs /usr/local/bin/pc_pre_validation_cli\nWORKDIR /\nRUN rm -rf /tmp/fbpcs-temp/fbpcs/\nUSER pcs\n\n# Link all the binaries into /home/pcs/onedocker/package\nRUN mkdir -p /home/pcs/onedocker/package\nWORKDIR /usr/local/bin\nRUN for b in $(ls attribution* lift* pid* shard* private-id* decoupled* pcf2* pc_pre*); do ln -s $(pwd)/$b /home/pcs/onedocker/package/$b; done\n\n# Link binaries name to match with onedocker binaries name\nRUN ln -s decoupled_attribution_calculator /home/pcs/onedocker/package/decoupled_attribution\nRUN ln -s decoupled_aggregation_calculator /home/pcs/onedocker/package/decoupled_aggregation\nRUN ln -s pcf2_attribution_calculator /home/pcs/onedocker/package/pcf2_attribution\nRUN ln -s pcf2_aggregation_calculator /home/pcs/onedocker/package/pcf2_aggregation\nRUN ln -s lift_calculator /home/pcs/onedocker/package/lift\nRUN ln -s pcf2_lift_calculator /home/pcs/onedocker/package/pcf2_lift\nRUN ln -s shard_aggregator /home/pcs/onedocker/package/shard-aggregator\n\nWORKDIR /home/pcs\nCMD [\"/bin/bash\"]\n"
+}

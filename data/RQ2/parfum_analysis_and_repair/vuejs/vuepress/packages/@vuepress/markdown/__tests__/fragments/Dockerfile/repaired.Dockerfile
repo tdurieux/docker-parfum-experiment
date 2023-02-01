@@ -1,0 +1,1 @@
+# Sample snippet file with no filename extension.

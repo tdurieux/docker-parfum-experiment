@@ -1,0 +1,17 @@
+{
+  "startTime": 1674241408227,
+  "endTime": 1674241408337,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 5,
+        "lineEnd": 11,
+        "columnStart": 7,
+        "columnEnd": 17
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM mail-base\n\n# prerequisites\nRUN apt-get update                                  \\\n    # install self-signed ssl certs \\\n    && apt-get install --no-install-recommends -y --force-yes ssl-cert \\\n    # Install postfix as MTA\n    postfix \\\n    # Install postgrey for greylisting\n    postgrey \\\n    # Install dovecot as IMAP server\n    dovecot-imapd \\\n    && rm -rf /var/lib/apt/lists/*\n\n# postfix configuration\nRUN echo \"mail.docker.container\" > /etc/mailname\nADD ./postfix.main.cf /etc/postfix/main.cf\nADD ./postfix.master.cf.append /etc/postfix/master-additional.cf\nRUN cat /etc/postfix/master-additional.cf >> /etc/postfix/master.cf\n\n# configure mail delivery to dovecot\n#ADD ./aliases /etc/postfix/virtual\n#ADD ./domains /etc/postfix/virtual-mailbox-domains\nRUN cp /aliases /etc/postfix/virtual                     \\\n    && cp /domains /etc/postfix/virtual-mailbox-domains\n\n# todo: this could probably be done in one line\nRUN mkdir /etc/postfix/tmp                                                                                                    \\\n    && awk < /etc/postfix/virtual '{ print $2 }' > /etc/postfix/tmp/virtual-receivers                                         \\\n    && sed -r 's,(.+)@(.+),\\2/\\1/,' /etc/postfix/tmp/virtual-receivers > /etc/postfix/tmp/virtual-receiver-folders            \\\n    && paste /etc/postfix/tmp/virtual-receivers /etc/postfix/tmp/virtual-receiver-folders > /etc/postfix/virtual-mailbox-maps\n\n# map virtual aliases and user/filesystem mappings\nRUN postmap /etc/postfix/virtual              \\\n    && postmap /etc/postfix/virtual-mailbox-maps\n\n# add user vmail who own all mail folders\nRUN groupadd -g 5000 vmail                             \\\n    && useradd -g vmail -u 5000 vmail -d /srv/vmail -m \\\n    && chown -R vmail:vmail /srv/vmail                 \\\n    && chmod u+w /srv/vmail\n\n# dovecot configuration\nADD ./dovecot.mail /etc/dovecot/conf.d/10-mail.conf\nADD ./dovecot.ssl /etc/dovecot/conf.d/10-ssl.conf\nADD ./dovecot.auth /etc/dovecot/conf.d/10-auth.conf\nADD ./dovecot.master /etc/dovecot/conf.d/10-master.conf\nADD ./dovecot.lda /etc/dovecot/conf.d/15-lda.conf\nADD ./dovecot.imap /etc/dovecot/conf.d/20-imap.conf\n# add verbose logging\n#ADD ./internal/dovecot.logging /etc/dovecot/conf.d/10-logging.conf\n\n# Add password file\nRUN cp /passwords /etc/dovecot/passwd\n\n# i'm not sure what expose actually does, so its mainly here for documentation\n# smtp port for incoming mail\nEXPOSE 25\n# imap port\nEXPOSE 143\n# smtp port for outgoing\nEXPOSE 587\n\n# todo: enable port 587 for outgoing mail, separate ports 25 and 587\n# http://www.synology-wiki.de/index.php/Zusaetzliche_Ports_fuer_Postfix\n\n# start necessary services for operation (dovecot -F starts dovecot in the foreground to prevent container exit)\nENTRYPOINT chown -R vmail:vmail /srv/vmail; service rsyslog start; service postgrey start; service postfix start; dovecot -F\n\n"
+}

@@ -1,0 +1,68 @@
+FROM golang:1.17-alpine as builder
+
+ARG TARGETPLATFORM
+ARG TARGETARCH
+ARG REVISION
+
+RUN apk --no-cache add alpine-sdk perl curl bash tar
+
+RUN HELM3_VERSION=3.7.2 && \
+curl -sSL "https://get.helm.sh/helm-v${HELM3_VERSION}-linux-${TARGETARCH}.tar.gz" | tar xvz && \
+chmod +x linux-${TARGETARCH}/helm && mv linux-${TARGETARCH}/helm /usr/local/bin/helm
+
+RUN GRPC_HEALTH_PROBE_VERSION=v0.4.6 && \
+wget -qO /usr/local/bin/grpc_health_probe https://github.com/grpc-ecosystem/grpc-health-probe/releases/download/${GRPC_HEALTH_PROBE_VERSION}/grpc_health_probe-linux-${TARGETARCH} && \
+chmod +x /usr/local/bin/grpc_health_probe
+
+RUN GHZ_VERSION=0.105.0 && \
+curl -sSL "https://github.com/bojand/ghz/archive/refs/tags/v${GHZ_VERSION}.tar.gz" | tar xz -C /tmp && \
+cd /tmp/ghz-${GHZ_VERSION}/cmd/ghz && GOARCH=$TARGETARCH go build . && mv ghz /usr/local/bin && \
+chmod +x /usr/local/bin/ghz
+
+WORKDIR /workspace
+
+# copy modules manifests
+COPY go.mod go.mod
+COPY go.sum go.sum
+
+# cache modules
+RUN go mod download
+
+# copy source code
+COPY cmd/ cmd/
+COPY pkg/ pkg/
+
+# build
+RUN CGO_ENABLED=0 go build -o loadtester ./cmd/loadtester/*
+
+FROM bash:5.0
+
+ARG TARGETPLATFORM
+
+RUN addgroup -S app && \
+adduser -S -g app app && \
+apk --no-cache add ca-certificates curl jq libgcc wrk hey
+
+WORKDIR /home/app
+
+COPY --from=bats/bats:v1.1.0 /opt/bats/ /opt/bats/
+RUN ln -s /opt/bats/bin/bats /usr/local/bin/
+
+COPY --from=builder /usr/local/bin/helm /usr/local/bin/
+COPY --from=builder /usr/local/bin/ghz /usr/local/bin/
+COPY --from=builder /usr/local/bin/grpc_health_probe /usr/local/bin/
+
+ADD https://raw.githubusercontent.com/grpc/grpc-proto/master/grpc/health/v1/health.proto /tmp/ghz/health.proto
+
+RUN chown -R app:app ./
+RUN chown -R app:app /tmp/ghz
+
+USER app
+
+# test load generator tools
+RUN hey -n 1 -c 1 https://flagger.app > /dev/null && echo $? | grep 0
+RUN wrk -d 1s -c 1 -t 1 https://flagger.app > /dev/null && echo $? | grep 0
+
+COPY --from=builder --chown=app:app /workspace/loadtester .
+
+ENTRYPOINT ["./loadtester"]

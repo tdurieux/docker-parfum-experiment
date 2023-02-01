@@ -1,0 +1,44 @@
+{
+  "startTime": 1674235478578,
+  "endTime": 1674235478809,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 28,
+        "lineEnd": 28,
+        "columnStart": 4,
+        "columnEnd": 71
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 31,
+        "lineEnd": 31,
+        "columnStart": 7,
+        "columnEnd": 35
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 60,
+        "lineEnd": 60,
+        "columnStart": 4,
+        "columnEnd": 22
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 29,
+        "lineEnd": 29,
+        "columnStart": 4,
+        "columnEnd": 39
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM amazonlinux:latest AS builder\n\nRUN yum -y groupinstall \"Development Tools\"\n\nENV BUILD_DIR=/build \\\n    OUTPUT_DIR=/output \\\n    RUST_BACKTRACE=1 \\\n    RUSTUP_HOME=/usr/local/rustup \\\n    CARGO_HOME=/usr/local/cargo \\\n    PATH=/usr/local/cargo/bin:$PATH \\\n    PREFIX=/musl \\\n    MUSL_VERSION=1.1.19\n\nRUN mkdir -p /usr/local/cargo/bin \\\n  && mkdir -p $BUILD_DIR \\\n  && mkdir -p $OUTPUT_DIR \\\n  && mkdir -p $PREFIX\n\nRUN curl https://sh.rustup.rs -sSf | sh -s -- --default-toolchain nightly -y\n\nENV BUILD_TARGET=x86_64-unknown-linux-musl\nRUN rustup target add $BUILD_TARGET\n\nWORKDIR $PREFIX\n\n# Build any dependencies that aren't part of your build, e.g. thrift compiler\n\n# Build Musl\nRUN curl -f -O http://www.musl-libc.org/releases/musl-$MUSL_VERSION.tar.gz\nRUN tar -xvzf musl-$MUSL_VERSION.tar.gz \\\n    && cd musl-$MUSL_VERSION \\\n    && ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" --prefix=$PREFIX \\\n    && make install \\\n    && cd .. && rm musl-$MUSL_VERSION.tar.gz\n\n# Set environment for musl\nENV CC=$PREFIX/bin/musl-gcc \\\n    C_INCLUDE_PATH=$PREFIX/include/ \\\n    CPPFLAGS=-I$PREFIX/include \\\n    LDFLAGS=-L$PREFIX/lib\n\nWORKDIR $BUILD_DIR\n\nRUN mkdir .cargo\nADD docker/cargo_config .cargo/config\n\n# Install literally anything to download the cargo index and cache it in a docker layer\nRUN cargo install serde || true\n\nADD ./Cargo.toml .\nRUN mkdir src && touch src/lib.rs\nRUN cargo build --target $BUILD_TARGET --release\n\nADD ./src src\nRUN cargo build --target $BUILD_TARGET --release --bin kirby-s3\n\nRUN find target/$BUILD_TARGET/release -maxdepth 1 -type f -executable -exec cp '{}' $OUTPUT_DIR \\;\n\nFROM amazonlinux:latest AS package\n\nRUN yum -y install zip && rm -rf /var/cache/yum\nENV OUTPUT_DIR=/output \\\n    ARTIFACTS_DIR=/artifacts\n\nRUN mkdir -p $ARTIFACTS_DIR\n\nCOPY --from=builder $OUTPUT_DIR $ARTIFACTS_DIR\n\nWORKDIR $ARTIFACTS_DIR\n\nRUN find . -maxdepth 1 -type f -executable -exec zip aws_lambda.zip '{}' \\;\n\nRUN ls -a $ARTIFACTS_DIR\n\nFROM package\n\nENV ARTIFACTS_DIR=/artifacts \\\n    EXPORT_DIR=/export\n\nRUN mkdir -p $EXPORT_DIR\n\n#Snapshot the directory\nVOLUME $EXPORT_DIR\n\nCMD find $ARTIFACTS_DIR -type f -name \"aws_lambda.zip\" -exec cp '{}' $EXPORT_DIR \\;"
+}

@@ -1,0 +1,53 @@
+{
+  "startTime": 1674253394570,
+  "endTime": 1674253395154,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 20,
+        "lineEnd": 20,
+        "columnStart": 4,
+        "columnEnd": 116
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 13,
+        "lineEnd": 13,
+        "columnStart": 18,
+        "columnEnd": 40
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 13,
+        "lineEnd": 13,
+        "columnStart": 18,
+        "columnEnd": 40
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 7,
+        "lineEnd": 7,
+        "columnStart": 4,
+        "columnEnd": 36
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 19,
+        "lineEnd": 19,
+        "columnStart": 18,
+        "columnEnd": 34
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM alpine:3.16.0 as otelcol\nCOPY otelcol-sumo /\n# This shouldn't be necessary but sometimes we end up with execution bit not set.\n# ref: https://github.com/open-telemetry/opentelemetry-collector/issues/1317\nRUN chmod 755 /otelcol-sumo\n\nFROM alpine:3.16.0 as certs\nRUN apk --update --no-cache add ca-certificates\n\nFROM alpine:3.16.0 as directories\nRUN mkdir /etc/otel/\n\nFROM debian:11.4 as systemd\nRUN apt update && apt install --no-install-recommends -y systemd && rm -rf /var/lib/apt/lists/*;\n# prepare package with journald and it's dependencies keeping original paths\n# h stands for dereference of symbolic links\nRUN tar czhf journalctl.tar.gz /bin/journalctl $(ldd /bin/journalctl | grep -oP \"\\/.*? \")\n\nFROM alpine:3.16.0\nRUN apk update && apk add --no-cache curl tar\nRUN curl -f -LJ \"https://go-boringcrypto.storage.googleapis.com/go1.18.2b7.linux-amd64.tar.gz\" -o go.linux-amd64.tar.gz \\\n    && tar -C /usr/local -xzf go.linux-amd64.tar.gz \\\n    && rm go.linux-amd64.tar.gz \\\n    && ln -s /usr/local/go/bin/go /usr/local/bin\n\nARG BUILD_TAG=latest\nENV TAG $BUILD_TAG\nARG USER_UID=10001\nUSER ${USER_UID}\nENV HOME /etc/otel/\n\nCOPY --from=certs /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt\nCOPY --from=otelcol /otelcol-sumo /otelcol-sumo\nCOPY --from=directories --chown=${USER_UID}:${USER_UID} /etc/otel/ /etc/otel/\n\n# copy and extract journald with dependencies\nCOPY --from=systemd --chown=${USER_UID}:${USER_UID} /journalctl.tar.gz /journalctl.tar.gz\nUSER root\nRUN tar xf /journalctl.tar.gz --directory / && rm /journalctl.tar.gz\nUSER ${USER_UID}\n\nENTRYPOINT [\"/otelcol-sumo\"]\nCMD [\"--config\", \"/etc/otel/config.yaml\"]\n"
+}

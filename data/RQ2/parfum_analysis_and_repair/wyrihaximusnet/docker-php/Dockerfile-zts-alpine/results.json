@@ -1,0 +1,26 @@
+{
+  "startTime": 1674252781332,
+  "endTime": 1674252782308,
+  "originalSmells": [
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 29,
+        "lineEnd": 29,
+        "columnStart": 7,
+        "columnEnd": 18
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 61,
+        "lineEnd": 61,
+        "columnStart": 222,
+        "columnEnd": 233
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM php:7.4-zts-alpine3.11 AS base\n\n# Build-time metadata as defined at http://label-schema.org\nLABEL org.label-schema.name=\"wyrihaximusnet/php\" \\\n      org.label-schema.description=\"Opinionated ReactPHP optimised PHP Docker images\" \\\n      org.label-schema.url=\"https://github.com/wyrihaximusnet/docker-php\" \\\n      org.label-schema.vcs-url=\"https://github.com/wyrihaximusnet/docker-php\" \\\n      org.label-schema.vendor=\"WyriHaximus.net\" \\\n      org.label-schema.schema-version=\"1.0\"\n\nRUN apk update \\\n    && apk upgrade \\\n    && set -x \\\n    && addgroup -g 1000 app \\\n    && adduser -u 1000 -D -G app app --home /opt/app \\\n    && touch /.you-are-in-a-wyrihaximus.net-php-docker-image\n\nCOPY --from=mlocati/php-extension-installer /usr/bin/install-php-extensions /usr/local/bin/\n\nFROM base AS base-build\nRUN apk add --no-cache $PHPIZE_DEPS git libuv-dev\n\nFROM base-build AS build-uv\nRUN git clone https://github.com/amphp/ext-uv uv\nWORKDIR /uv\nRUN git fetch \\\n    && git pull \\\n    && phpize \\\n    && ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" \\\n    && make install \\\n    && EXTENSION_DIR=`php-config --extension-dir 2>/dev/null` \\\n    && cp \"$EXTENSION_DIR/uv.so\" /uv.so \\\n    && sha256sum /uv.so\n\nFROM base AS zts-slim-root\n\nCOPY --from=build-uv /uv.so /uv.so\n\n# Install docker help scripts\nCOPY src/php/utils/docker/alpine/ /usr/local/bin/\n\nCOPY src/php/conf/ /usr/local/etc/php/conf.d/\nCOPY src/php/cli/conf/*.ini /usr/local/etc/php/conf.d/\n\nRUN EXTENSION_DIR=`php-config --extension-dir 2>/dev/null` && \\\n\tmv /*.so \"$EXTENSION_DIR/\" && \\\n\tapk add --no-cache \\\n        libuv-dev \\\n        icu-dev \\\n        make \\\n        git \\\n        openssh-client \\\n        bash \\\n        coreutils \\\n        procps \\\n        git \\\n        $PHPIZE_DEPS \\\n    ## Install PECL\n    && wget -q pear.php.net/go-pear.phar && php go-pear.phar \\\n    && install-php-extensions pcntl pgsql pdo pdo_pgsql bcmath zip gmp iconv opcache intl \\\n    && pecl install parallel || ( cd /tmp && apk add --no-cache $PHPIZE_DEPS git && git clone https://github.com/WyriHaximus-labs/parallel && cd parallel && git fetch && git checkout php-8.1-part-2 && git pull && phpize && ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" && make install && cd) \\\n    && docker-php-ext-enable parallel \\\n    && if [ $(php -v | grep \"PHP 8.\" | wc -l) != 0 ] ; then true ; else pecl install eio; fi \\\n    && if [ $(php -v | grep \"PHP 8.\" | wc -l) != 0 ] ; then true ; else docker-php-ext-enable eio; fi \\\n    && docker-php-ext-enable uv \\\n    && apk del $PHPIZE_DEPS \\\n    && wget -q -O - https://raw.githubusercontent.com/eficode/wait-for/master/wait-for > /bin/wait-for \\\n    && chmod +x /bin/wait-for \\\n    && rm -rf /var/cache/apk/* \\\n    && rm -rf /tmp/*\n\nSTOPSIGNAL SIGTERM\n\nENTRYPOINT [\"docker-php-entrypoint\"]\n\n## ZTS-DEV STAGE ##\nFROM zts-slim-root AS zts-root\n\n# Install ext-gd and ext-vips\nCOPY src/php/utils/docker/alpine/install-gd-and-vips /usr/local/bin/install-gd-and-vips\nRUN if [ $(php -v | grep \"alpha\\|ALPHA\\|beta\\|BETA\\|rc\\|RC\" | wc -l) != 0 ] ; then true ; else install-gd-and-vips; fi \\\n     && rm -rf /usr/local/bin/install-gd-and-vips\n\n## ZTS-DEV STAGE ##\nFROM zts-slim-root AS zts-slim-dev-root\n\nRUN touch /.you-are-in-a-wyrihaximus.net-php-docker-image-dev\n\n# Install docker help scripts\nCOPY src/php/utils/docker/alpine/dev-mode /usr/local/bin/dev-mode\nRUN if [ $(php -v | grep \"alpha\\|ALPHA\\|beta\\|BETA\\|rc\\|RC\" | wc -l) != 0 ] ; then true ; else dev-mode; fi && rm -rf /usr/local/bin/dev-mode\n\n# Install composer\nCOPY --from=composer:2 /usr/bin/composer /usr/local/bin/composer\n\n\nENTRYPOINT [\"docker-php-entrypoint\"]\n\n## ZTS-DEV STAGE ##\nFROM zts-root AS zts-dev-root\n\nRUN touch /.you-are-in-a-wyrihaximus.net-php-docker-image-dev\n\n# Install docker help scripts\nCOPY src/php/utils/docker/alpine/dev-mode /usr/local/bin/dev-mode\nRUN if [ $(php -v | grep \"alpha\\|ALPHA\\|beta\\|BETA\\|rc\\|RC\" | wc -l) != 0 ] ; then true ; else dev-mode; fi && rm -rf /usr/local/bin/dev-mode\n\n# Install composer\nCOPY --from=composer:2 /usr/bin/composer /usr/local/bin/composer\n\n\nENTRYPOINT [\"docker-php-entrypoint\"]\n\n## ZTS-DEV stage ##\nFROM zts-slim-dev-root AS zts-slim-dev\nUSER app\n\nFROM zts-dev-root AS zts-dev\nUSER app\n\n## ZTS stage ##\nFROM zts-slim-root AS zts-slim\nUSER app\n\nFROM zts-root AS zts\nUSER app\n"
+}

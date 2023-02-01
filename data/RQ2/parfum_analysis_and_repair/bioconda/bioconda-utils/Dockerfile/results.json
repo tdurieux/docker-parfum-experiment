@@ -1,0 +1,17 @@
+{
+  "startTime": 1674254724831,
+  "endTime": 1674254725866,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 50,
+        "lineEnd": 50,
+        "columnStart": 4,
+        "columnEnd": 73
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM quay.io/condaforge/linux-anvil-cos7-x86_64 as base\n\n# Copy over C.UTF-8 locale from our base image to make it consistently available during build.\nCOPY --from=quay.io/bioconda/base-glibc-busybox-bash /usr/lib/locale/C.UTF-8 /usr/lib/locale/C.UTF-8\n\n# Provide system deps unconditionally until we are able to offer per-recipe installs.\n# (Addresses, e.g., \"ImportError: libGL.so.1\" in tests directly invoked by conda-build.)\n# Also install packages that have been installed historically (openssh-client).\nRUN yum install -y mesa-libGL-devel \\\n    && \\\n    yum install -y openssh-clients \\\n    && \\\n    yum clean all && \\\n    rm -rf /var/cache/yum/*\n\n# This changes root's .condarc which ENTRYPOINT copies to /home/conda/.condarc later.\nRUN . /opt/conda/etc/profile.d/conda.sh && \\\n    conda config \\\n      --prepend channels defaults \\\n      --prepend channels bioconda \\\n      --prepend channels conda-forge \\\n    && \\\n    { conda config --remove repodata_fns current_repodata.json 2> /dev/null || true ; } && \\\n    conda config --prepend repodata_fns repodata.json && \\\n    conda config --set channel_priority flexible && \\\n    conda config --set auto_update_conda False\n\nFROM base as build\nWORKDIR /tmp/repo\nCOPY . ./\nRUN . /opt/conda/etc/profile.d/conda.sh  && conda list\nRUN . /opt/conda/etc/profile.d/conda.sh  && conda activate base && \\\n    pip wheel . && \\\n    mkdir - /opt/bioconda-utils && \\\n    cp ./bioconda_utils-*.whl \\\n        ./bioconda_utils/bioconda_utils-requirements.txt \\\n        /opt/bioconda-utils/ \\\n    && \\\n    chgrp -R lucky /opt/bioconda-utils && \\\n    chmod -R g=u /opt/bioconda-utils\n\nFROM base\nCOPY --from=build /opt/bioconda-utils /opt/bioconda-utils\nRUN . /opt/conda/etc/profile.d/conda.sh  && conda activate base && \\\n    # Make sure we get the (working) conda we want before installing the rest.\n    sed -nE \\\n        '/^conda([><!=~ ].+)?$/p' \\\n        /opt/bioconda-utils/bioconda_utils-requirements.txt \\\n        | xargs -r conda install --yes && \\\n    conda install --yes --file /opt/bioconda-utils/bioconda_utils-requirements.txt && \\\n    pip install --no-cache-dir --no-deps --find-links /opt/bioconda-utils bioconda_utils && \\\n    conda clean --yes --index --tarballs && \\\n    # Find files that are not already in group \"lucky\" and change their group and mode.\n    find /opt/conda \\\n      \\! -group lucky \\\n      -exec chgrp --no-dereference lucky {} + \\\n      \\! -type l \\\n      -exec chmod g=u {} +\n"
+}

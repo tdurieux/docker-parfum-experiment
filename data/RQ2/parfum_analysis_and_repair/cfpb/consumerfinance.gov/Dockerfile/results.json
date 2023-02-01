@@ -1,0 +1,72 @@
+{
+  "startTime": 1674215578877,
+  "endTime": 1674215580205,
+  "originalSmells": [
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 75,
+        "lineEnd": 75,
+        "columnStart": 4,
+        "columnEnd": 20
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 17,
+        "lineEnd": 17,
+        "columnStart": 4,
+        "columnEnd": 53
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 30,
+        "lineEnd": 30,
+        "columnStart": 4,
+        "columnEnd": 53
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 49,
+        "lineEnd": 49,
+        "columnStart": 4,
+        "columnEnd": 48
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 85,
+        "lineEnd": 85,
+        "columnStart": 20,
+        "columnEnd": 31
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 84,
+        "lineEnd": 84,
+        "columnStart": 4,
+        "columnEnd": 27
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 76,
+        "lineEnd": 76,
+        "columnStart": 72,
+        "columnEnd": 88
+      }
+    }
+  ],
+  "repairedDockerfile": "FROM python:3.8-alpine as base\n\n# Hard labels\nLABEL maintainer=\"tech@cfpb.gov\"\n\n# Ensure that the environment uses UTF-8 encoding by default\nENV LANG en_US.UTF-8\nENV ENV /etc/profile\nENV PIP_NO_CACHE_DIR true\n# Stops Python default buffering to stdout, improving logging to the console.\nENV PYTHONUNBUFFERED 1\nENV APP_HOME /src/consumerfinance.gov\n\nWORKDIR ${APP_HOME}\n\n# Install and update common OS packages, pip, setuptools, wheel, and awscli\nRUN apk update --no-cache && apk upgrade --no-cache\nRUN pip install --no-cache-dir --upgrade pip setuptools wheel awscli\n\n# Add `$HOME/.local/bin` to PATH\nRUN echo 'export PATH=$HOME/.local/bin:$PATH' >> /etc/profile\n\n# Intermediate layer to build only prod deps\nFROM base as cfgov-python-builder\n\n# .build-deps are required to build and test the application (pip, tox, etc.)\nRUN apk add --no-cache --virtual .build-deps gcc gettext git libffi-dev musl-dev postgresql-dev\n\n# Install python requirements\nCOPY requirements requirements\nRUN pip install --no-cache-dir --user -r requirements/deployment.txt\n\n# cfgov-dev is used for local development, as well as a base for frontend.\nFROM cfgov-python-builder AS cfgov-dev\n\nENV CFGOV_PATH ${APP_HOME}\nENV CFGOV_CURRENT ${APP_HOME}\nENV PYTHONPATH ${APP_HOME}/cfgov\n\n# Django Settings\nENV DJANGO_SETTINGS_MODULE cfgov.settings.local\nENV ALLOWED_HOSTS '[\"*\"]'\n\n# .backend-deps and .frontend-deps are required to run the application\nRUN apk add --no-cache --virtual .backend-deps bash curl postgresql\nRUN apk add --no-cache --virtual .frontend-deps jpeg-dev nodejs yarn zlib-dev\n\n# Install python requirements\nCOPY requirements requirements\nRUN pip install --no-cache-dir --user -r requirements/local.txt\n\nEXPOSE 8000\n\nENTRYPOINT [\"./docker-entrypoint.sh\"]\nCMD [\"python\", \"./cfgov/manage.py\", \"runserver\", \"0.0.0.0:8000\"]\n\n# Build Frontend Assets using cfgov-dev as base\nFROM cfgov-dev as cfgov-frontend-builder\n\nARG FRONTEND_TARGET=production\n\nENV STATIC_PATH ${APP_HOME}/cfgov/static/\nENV PYTHONPATH ${APP_HOME}/cfgov\n\n# Django Settings\nENV DJANGO_SETTINGS_MODULE cfgov.settings.production\nENV DJANGO_STATIC_ROOT ${STATIC_PATH}\nENV ALLOWED_HOSTS '[\"*\"]'\n\n# See .dockerignore for details on which files are included\nCOPY . .\n\n# Build the front-end\nRUN ./frontend.sh  ${FRONTEND_TARGET} && \\\n    cfgov/manage.py collectstatic && \\\n    yarn cache clean && \\\n    rm -rf node_modules npm-packages-offline-cache cfgov/unprocessed && yarn cache clean;\n\n# Build mod_wsgi against target Python version\nFROM base as cfgov-mod-wsgi\nWORKDIR /tmp\nRUN apk add --no-cache --virtual .build-deps apache2-dev gcc make musl-dev\nRUN wget https://github.com/GrahamDumpleton/mod_wsgi/archive/refs/tags/4.9.0.tar.gz -O mod_wsgi.tar.gz\nRUN echo -n \"0a6f380af854b85a3151e54a3c33b520c4a6e21a99bcad7ae5ddfbfe31a74b50  mod_wsgi.tar.gz\" | sha256sum -c\nRUN tar xvf mod_wsgi.tar.gz && rm mod_wsgi.tar.gz\nRUN cd mod_wsgi* && ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" && make install\nRUN ls /usr/lib/apache2/mod_wsgi.so  # Ensure it compiled and is where expected\nRUN apk del .build-deps\nRUN rm -Rf /tmp/mod_wsgi*\n\n# Production-like Apache-based image\nFROM base as cfgov-prod\n\nENV HTTPD_ROOT /etc/apache2\n\n# Apache HTTPD settings\nENV APACHE_SERVER_ROOT ${APP_HOME}/cfgov/apache\nENV APACHE_PROCESS_COUNT 4\nENV ACCESS_LOG /dev/stdout\nENV ERROR_LOG /dev/stderr\nENV STATIC_PATH ${APP_HOME}/cfgov/static/\nENV LIMIT_REQUEST_BODY 0\n\n# mod_wsgi settings\nENV CFGOV_PATH ${APP_HOME}\nENV CFGOV_CURRENT ${APP_HOME}\nENV PYTHONPATH ${APP_HOME}/cfgov\n\n# Django Settings\nENV DJANGO_SETTINGS_MODULE cfgov.settings.production\nENV DJANGO_STATIC_ROOT ${STATIC_PATH}\nENV ALLOWED_HOSTS '[\"*\"]'\n\n# Install Apache server and curl (container healthcheck),\n# and converts all Docker Secrets into environment variables.\nRUN apk add --no-cache apache2 curl && \\\n    echo '[ -d /var/run/secrets ] && for s in $(find /var/run/secrets -type f -name \"*\" -maxdepth 1) ; do export $s=$(cat $s); done && cd -' > /etc/profile.d/secrets_env.sh\n\n# Link mime.types for RHEL Compatability in apache config.\n# TODO: Remove this link once RHEL is replaced\nRUN ln -s /etc/apache2/mime.types /etc/mime.types\n\n# Copy mod_wsgi.so from mod_wsgi image\nCOPY --from=cfgov-mod-wsgi /usr/lib/apache2/mod_wsgi.so /usr/lib/apache2/mod_wsgi.so\n\n# Copy installed production requirements from the cfgov-python-builder layer\nCOPY --from=cfgov-python-builder --chown=apache:apache /root/.local /var/www/.local\n\nRUN chown -R apache:apache ${APP_HOME}\n\n# Copy the cfgov directory form the build image\nCOPY --from=cfgov-frontend-builder --chown=apache:apache ${CFGOV_PATH}/cfgov ${CFGOV_PATH}/cfgov\nCOPY --from=cfgov-frontend-builder --chown=apache:apache ${CFGOV_PATH}/docker-entrypoint.sh ${CFGOV_PATH}/refresh-data.sh ${CFGOV_PATH}/initial-data.sh ${CFGOV_PATH}/\nCOPY --from=cfgov-frontend-builder --chown=apache:apache ${CFGOV_PATH}/static.in ${CFGOV_PATH}/static.in\n\nRUN ln -s /usr/lib/apache2 cfgov/apache/modules\nRUN chown -R apache:apache /usr/share/apache2 /var/run/apache2 /var/log/apache2\n\n# Cleanup *.key files\nRUN for i in $(find /usr/local/lib/python3* -type f -name \"*.key*\"); do rm \"$i\"; done\nRUN for i in $(find /var/www/.local/lib/python3* -type f -name \"*.key*\"); do rm \"$i\"; done\n\n# .backend-deps are required to run the application\nRUN apk add --no-cache --virtual .backend-deps bash postgresql-client\n\n# Swap to apache user\nUSER apache\n\n# Create additional structure\n# cfgov/f/ - Wagtail file uploads\nRUN mkdir -p cfgov/f\n\n# Healthcheck retry set high since database loads take a while\nHEALTHCHECK --start-period=300s --interval=30s --retries=30 \\\n            CMD curl -sf -A docker-healthcheck -o /dev/null http://localhost:8000/ht/\n\nCMD [\"httpd\", \"-d\", \"/src/consumerfinance.gov/cfgov/apache\", \"-f\", \"/src/consumerfinance.gov/cfgov/apache/conf/httpd.conf\", \"-D\", \"FOREGROUND\"]\n"
+}

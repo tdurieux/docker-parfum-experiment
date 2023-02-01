@@ -1,0 +1,19 @@
+FROM openjdk:8-jdk-alpine
+
+RUN apk update && apk upgrade && apk add --no-cache bash git openssh jq
+
+WORKDIR /app
+RUN git clone https://github.com/marytts/marytts-installer.git
+
+WORKDIR /app/marytts-installer
+
+RUN cat components.json | jq .[].artifact | xargs ./marytts install
+
+EXPOSE 59125
+
+RUN addgroup --gid 1000 marytts && adduser --uid 1000 --ingroup marytts --disabled-password --shell /bin/bash marytts
+RUN chown -R 1000:1000 /app/marytts-installer
+USER marytts
+
+ENV JAVA_OPTS -Xmx2g
+CMD ./marytts

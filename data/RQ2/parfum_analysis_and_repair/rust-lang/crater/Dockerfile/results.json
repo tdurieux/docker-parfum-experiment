@@ -1,0 +1,53 @@
+{
+  "startTime": 1674253421278,
+  "endTime": 1674253422162,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 19,
+        "lineEnd": 19,
+        "columnStart": 4,
+        "columnEnd": 104
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 9,
+        "lineEnd": 16,
+        "columnStart": 22,
+        "columnEnd": 14
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 54,
+        "lineEnd": 60,
+        "columnStart": 22,
+        "columnEnd": 8
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 9,
+        "lineEnd": 16,
+        "columnStart": 22,
+        "columnEnd": 14
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 54,
+        "lineEnd": 60,
+        "columnStart": 22,
+        "columnEnd": 8
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# This Dockerfile is composed of two steps: the first one builds the release\n# binary, and then the binary is copied inside another, empty image.\n\n#################\n#  Build image  #\n#################\n\nFROM ubuntu:focal AS build\n\nRUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get --no-install-recommends install -y \\\n    ca-certificates \\\n    curl \\\n    build-essential \\\n    git \\\n    pkg-config \\\n    libsqlite3-dev \\\n    libssl-dev && rm -rf /var/lib/apt/lists/*;\n\n# Install the currently pinned toolchain with rustup\nRUN curl -f https://static.rust-lang.org/rustup/dist/x86_64-unknown-linux-gnu/rustup-init >/tmp/rustup-init && \\\n    chmod +x /tmp/rustup-init && \\\n    /tmp/rustup-init -y --no-modify-path --default-toolchain nightly --profile minimal\nENV PATH=/root/.cargo/bin:$PATH\n\n# Build the dependencies in a separate step to avoid rebuilding all of them\n# every time the source code changes. This takes advantage of Docker's layer\n# caching, and it works by copying the Cargo.{toml,lock} with dummy source code\n# and doing a full build with it.\nWORKDIR /source\nCOPY Cargo.lock Cargo.toml /source/\nRUN mkdir -p /source/src && \\\n    echo \"fn main() {}\" > /source/src/main.rs && \\\n    echo \"fn main() {}\" > /source/build.rs\n\nRUN cargo fetch\nRUN cargo build --release\n\n# Dependencies are now cached, copy the actual source code and do another full\n# build. The touch on all the .rs files is needed, otherwise cargo assumes the\n# source code didn't change thanks to mtime weirdness.\nRUN rm -rf /source/src /source/build.rs\nCOPY src /source/src\nCOPY build.rs /source/build.rs\nCOPY assets /source/assets\nCOPY templates /source/templates\nCOPY .git /source/.git\nRUN find /source -name \"*.rs\" -exec touch {} \\; && cargo build --release\n\n##################\n#  Output image  #\n##################\n\nFROM ubuntu:focal AS binary\n\nRUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get --no-install-recommends install -y \\\n    docker.io \\\n    build-essential \\\n    pkg-config \\\n    libssl-dev \\\n    ca-certificates \\\n    tini && rm -rf /var/lib/apt/lists/*;\n\nRUN mkdir /workspace\nENV CRATER_WORK_DIR=/workspace\nENV CRATER_INSIDE_DOCKER=1\n\nRUN mkdir /crater\nCOPY config.toml /crater/config.toml\nWORKDIR /crater\n\nCOPY --from=build /source/target/release/crater /usr/local/bin/\nENTRYPOINT [\"tini\", \"--\", \"crater\"]\n"
+}

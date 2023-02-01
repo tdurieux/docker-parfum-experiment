@@ -1,0 +1,90 @@
+{
+  "startTime": 1674236698345,
+  "endTime": 1674236698696,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 33,
+        "lineEnd": 33,
+        "columnStart": 4,
+        "columnEnd": 49
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 35,
+        "lineEnd": 35,
+        "columnStart": 44,
+        "columnEnd": 86
+      }
+    },
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 38,
+        "lineEnd": 38,
+        "columnStart": 0,
+        "columnEnd": 20
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 17,
+        "lineEnd": 17,
+        "columnStart": 22,
+        "columnEnd": 61
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 33,
+        "lineEnd": 33,
+        "columnStart": 70,
+        "columnEnd": 95
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 33,
+        "lineEnd": 33,
+        "columnStart": 70,
+        "columnEnd": 95
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 17,
+        "lineEnd": 17,
+        "columnStart": 22,
+        "columnEnd": 61
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 33,
+        "lineEnd": 33,
+        "columnStart": 70,
+        "columnEnd": 95
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 33,
+        "lineEnd": 33,
+        "columnStart": 73,
+        "columnEnd": 122
+      }
+    }
+  ],
+  "repairedDockerfile": "FROM kerberos/base:linux-amd64\n\nARG APP_ENV=master\nENV APP_ENV ${APP_ENV}\n\nMAINTAINER \"Cédric Verstraeten\" <hello@cedric.ws>\n\n#################################\n# Surpress Upstart errors/warning\n\nRUN dpkg-divert --local --rename --add /sbin/initctl\nRUN ln -sf /bin/true /sbin/initctl\n\n#############################################\n# Let the container know that there is no tty\n\nENV DEBIAN_FRONTEND noninteractive\nRUN apt-get update && apt-get install --no-install-recommends -y libcurl4-openssl-dev && rm -rf /var/lib/apt/lists/*;\n\n############################\n# Clone and build machinery\n\nRUN\tgit clone https://github.com/kerberos-io/machinery /tmp/machinery && \\\n    cd /tmp/machinery && git checkout ${APP_ENV} && \\\n    mkdir build && cd build && \\\n    cmake .. && make && make check && make install && \\\n    rm -rf /tmp/machinery && \\\n    chown -Rf www-data.www-data /etc/opt/kerberosio && \\\n    chmod -Rf 777 /etc/opt/kerberosio/config\n\n#####################\n# Clone and build web\n\nRUN curl -f -sL https://deb.nodesource.com/setup_9.x | sudo -E bash - && apt-get install --no-install-recommends -y nodejs && rm -rf /var/lib/apt/lists/*;\nRUN git clone https://github.com/kerberos-io/web /var/www/web && cd /var/www/web && git checkout ${APP_ENV} && \\\nchown -Rf www-data.www-data /var/www/web && curl -f -sS https://getcomposer.org/installer | sudo php -- --install-dir=/usr/local/bin --filename=composer && \\\ncd /var/www/web && \\\ncomposer install --prefer-source && \\\nnpm install -g bower && \\\ncd public && \\\nnodejs /usr/lib/node_modules/bower/bin/bower --allow-root install && npm cache clean --force;\n\nRUN rm /var/www/web/public/capture && \\\nln -s /etc/opt/kerberosio/capture/ /var/www/web/public/capture\n\n# Fixes, because we are now combining the two docker images.\n# Docker is aware of both web and machinery.\nRUN sed -i -e \"s/'insideDocker'/'insideDocker' => false,\\/\\//\" /var/www/web/app/Http/Controllers/SystemController.php\n# RUN sed -i -e \"s/\\$output \\=/\\$output \\= '';\\/\\//\" /var/www/web/app/Http/Controllers/SettingsController.php\nRUN sed -i -e \"s/service kerberosio status/supervisorctl status machinery \\| grep \\\"RUNNING\\\"';\\/\\//\" /var/www/web/app/Http/Repositories/System/OSSystem.php\n\n###################\n# nginx site conf\n\nRUN rm -Rf /etc/nginx/conf.d/* && rm -Rf /etc/nginx/sites-available/default && mkdir -p /etc/nginx/ssl\nADD ./web.conf /etc/nginx/sites-available/default.conf\nRUN ln -s /etc/nginx/sites-available/default.conf /etc/nginx/sites-enabled/default.conf\n\n##################################\n# Fix PHP-FPM environment variables\n\nRUN sed -i 's/\"GPCS\"/\"EGPCS\"/g' /etc/php/7.0/fpm/php.ini\nRUN sed -i 's/\"--daemonize/\"--daemonize --allow-to-run-as-root/g' /etc/init.d/php7.0-fpm\nRUN sed -i 's/www-data/root/g' /etc/php/7.0/fpm/pool.d/www.conf\nRUN sed -i 's/www-data/root/g' /etc/nginx/nginx.conf\n\n# Merged supervisord config of both web and machinery\nADD ./supervisord.conf /etc/supervisord.conf\n\n# Merge the two run files.\nADD ./run.sh /runny.sh\nRUN chmod 755 /runny.sh\nRUN chmod +x /runny.sh\nRUN sed -i -e 's/\\r$//' /runny.sh\n\n# Exposing web on port 80 and livestreaming on port 8889\nEXPOSE 8889\nEXPOSE 80\n\n# Make capture and config directory visible\nVOLUME [\"/etc/opt/kerberosio/capture\"]\nVOLUME [\"/etc/opt/kerberosio/config\"]\nVOLUME [\"/etc/opt/kerberosio/logs\"]\n\n# Make web config directory visible\nVOLUME [\"/var/www/web/config\"]\n\n# Start runner script when booting container\nCMD [\"/bin/bash\", \"/runny.sh\"]\n"
+}

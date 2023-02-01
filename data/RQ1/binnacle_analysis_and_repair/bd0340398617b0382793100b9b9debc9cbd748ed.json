@@ -1,0 +1,62 @@
+{
+  "startTime": 1674248321367,
+  "endTime": 1674248321622,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 42,
+        "lineEnd": 42,
+        "columnStart": 4,
+        "columnEnd": 62
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 47,
+        "lineEnd": 47,
+        "columnStart": 4,
+        "columnEnd": 37
+      }
+    },
+    {
+      "rule": "sha256sumEchoOneSpaces",
+      "position": {
+        "lineStart": 53,
+        "lineEnd": 53,
+        "columnStart": 4,
+        "columnEnd": 98
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 44,
+        "lineEnd": 44,
+        "columnStart": 4,
+        "columnEnd": 47
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 21,
+        "lineEnd": 22,
+        "columnStart": 22,
+        "columnEnd": 48
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 44,
+        "lineEnd": 44,
+        "columnStart": 4,
+        "columnEnd": 47
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM nvcr.io/nvidia/rapidsai/rapidsai:cuda9.2-runtime-ubuntu16.04\n\nUSER root\n\nENV DEBIAN_FRONTEND noninteractive\n\nENV NB_USER jovyan\nENV NB_UID 1000\nENV HOME /home/$NB_USER\n# We prefer to have a global conda install\n# to minimize the amount of content in $HOME\nENV CONDA_DIR=/conda\nENV PATH $CONDA_DIR/bin:$PATH\nENV PATH $CONDA_DIR/envs/rapids/bin:$PATH\n# anticipate a default GKE nvidia mount\nENV PATH /usr/local/nvidia/bin:$PATH\n\n# Use bash instead of sh\nSHELL [\"/bin/bash\", \"-c\"]\n\n# add https support\nRUN apt-get update && apt-get install -yq --no-install-recommends \\\n    apt-transport-https locales lsb-release wget && rm -rf /var/lib/apt/lists/*;\n\nRUN echo \"en_US.UTF-8 UTF-8\" > /etc/locale.gen && \\\n    locale-gen\n\nENV LC_ALL en_US.UTF-8\nENV LANG en_US.UTF-8\nENV LANGUAGE en_US.UTF-8\n\n# Replace jupyter user with jovyan user UID=1000 and in the 'users' group\n# but allow for non-initial launches of the notebook to have\n# $HOME provided by the contents of a PV\nRUN useradd -M -s /bin/bash -N -u $NB_UID $NB_USER && \\\n    chown -R ${NB_USER}:users /usr/local/bin && \\\n    chown -R ${NB_USER}:users $CONDA_DIR && \\\n    chown -R ${NB_USER}:users /rapids && \\\n    mkdir -p $HOME\n\nRUN export CLOUD_SDK_REPO=\"cloud-sdk-$(lsb_release -c -s)\" && \\\n    echo \"deb https://packages.cloud.google.com/apt $CLOUD_SDK_REPO main\" > /etc/apt/sources.list.d/google-cloud-sdk.list && \\\n    curl -f https://packages.cloud.google.com/apt/doc/apt-key.gpg | apt-key add - && \\\n    apt-get update && \\\n    apt-get install --no-install-recommends -y google-cloud-sdk kubectl && \\\n    # Install to the existing RapidsAI conda env\n    source activate rapids && \\\n    pip install --no-cache-dir --upgrade pip==19.0.1 && \\\n    pip --no-cache-dir install jupyterhub matplotlib && rm -rf /var/lib/apt/lists/*;\n\n# Install Tini - used as entrypoint for container\nRUN cd /tmp && \\\n    wget --quiet https://github.com/krallin/tini/releases/download/v0.18.0/tini && \\\n    echo \"12d20136605531b09a2c2dac02ccee85e1b874eb322ef6baf7561cd93f93c855  *tini\" | sha256sum -c - && \\\n    mv tini /usr/local/bin/tini && \\\n    chmod +x /usr/local/bin/tini\n\nRUN chown -R ${NB_USER}:users $HOME\n\nENV GITHUB_REF https://raw.githubusercontent.com/kubeflow/kubeflow/master/components/tensorflow-notebook-image\n\nADD --chown=jovyan:users $GITHUB_REF/jupyter_notebook_config.py /tmp\n\n# Wipe $HOME for PVC detection later\nWORKDIR $HOME\nRUN rm -fr $(ls -A $HOME)\n\n# Get init scripts from kubeflow\nADD --chown=jovyan:users \\\n    $GITHUB_REF/start-notebook.sh \\\n    $GITHUB_REF/start-singleuser.sh \\\n    $GITHUB_REF/start.sh \\\n    $GITHUB_REF/pvc-check.sh \\\n    /usr/local/bin/\n\nRUN chmod a+rx /usr/local/bin/*\n\n# HACK: GKE late-binding of NVIDIA driver mount\n# seems to leave us with a stale cache for the CUDA libs;\n# cudf librmm.so can't find libcuda* from LD_LIBRARY_PATH\nRUN chown -R ${NB_USER}:users /etc\nRUN sed -i '/JUPYTERHUB_API_TOKEN/i\\ldconfig' /usr/local/bin/start-notebook.sh\n\n# Configure container startup\nEXPOSE 8888\nENTRYPOINT [\"tini\", \"--\"]\nCMD [\"start-notebook.sh\"]\n"
+}

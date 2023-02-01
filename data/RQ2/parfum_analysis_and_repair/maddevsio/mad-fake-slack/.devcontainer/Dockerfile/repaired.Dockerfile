@@ -1,0 +1,67 @@
+#-------------------------------------------------------------------------------------------------------------
+# Copyright (c) Microsoft Corporation. All rights reserved.
+# Licensed under the MIT License. See https://go.microsoft.com/fwlink/?linkid=2090316 for license information.
+#-------------------------------------------------------------------------------------------------------------
+
+FROM node:lts
+
+# Configure apt
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update \
+    && apt-get -y install --no-install-recommends apt-utils 2>&1 && rm -rf /var/lib/apt/lists/*;
+
+# Install and configure locales
+RUN apt-get install --no-install-recommends -y locales && rm -rf /var/lib/apt/lists/*;
+
+RUN sed -i -e 's/# en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/' /etc/locale.gen && \
+    dpkg-reconfigure --frontend=noninteractive locales && \
+    update-locale LANG=en_US.UTF-8
+
+ENV LANG en_US.UTF-8
+
+# Verify git and needed tools are installed
+RUN apt-get install --no-install-recommends -y git procps && rm -rf /var/lib/apt/lists/*;
+
+# Remove outdated yarn from /opt and install via package
+# so it can be easily updated via apt-get upgrade yarn
+RUN rm -rf /opt/yarn-* \
+    && rm -f /usr/local/bin/yarn \
+    && rm -f /usr/local/bin/yarnpkg \
+    && apt-get install --no-install-recommends -y curl apt-transport-https lsb-release \
+    && curl -f -sS https://dl.yarnpkg.com/$(lsb_release -is | tr '[:upper:]' '[:lower:]')/pubkey.gpg | apt-key add - 2>/dev/null \
+    && echo "deb https://dl.yarnpkg.com/$(lsb_release -is | tr '[:upper:]' '[:lower:]')/ stable main" | tee /etc/apt/sources.list.d/yarn.list \
+    && apt-get update \
+    && apt-get -y install --no-install-recommends yarn && rm -rf /var/lib/apt/lists/*;
+
+# Install eslint
+RUN npm install -g eslint && npm cache clean --force;
+
+RUN wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | apt-key add - \
+    && sh -c 'echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" >> /etc/apt/sources.list.d/google.list' \
+    && apt-get update \
+    && apt-get install -y google-chrome-stable fonts-ipafont-gothic fonts-wqy-zenhei fonts-thai-tlwg fonts-kacst ttf-freefont \
+    --no-install-recommends \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN apt-get update \
+  && apt-get install --no-install-recommends -y apt-transport-https ca-certificates curl gnupg-agent software-properties-common lsb-release \
+  && curl -fsSL https://download.docker.com/linux/$(/usr/bin/lsb_release -is | tr '[:upper:]' '[:lower:]')/gpg | apt-key add - 2>&1 >/dev/null \
+  && add-apt-repository "deb [arch=amd64] https://download.docker.com/linux/$(/usr/bin/lsb_release -is | tr '[:upper:]' '[:lower:]') $(lsb_release -cs) stable" \
+  && apt-get update \
+  && apt-get install --no-install-recommends -y docker-ce-cli && rm -rf /var/lib/apt/lists/*;
+
+# Uncomment to skip the chromium download when installing puppeteer. If you do,
+# you'll need to launch puppeteer with:
+#     browser.launch({executablePath: 'google-chrome-stable'})
+ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD true
+
+# Clean up
+RUN apt-get autoremove -y \
+    && apt-get clean -y \
+    && rm -rf /var/lib/apt/lists/*
+ENV DEBIAN_FRONTEND=dialog
+
+VOLUME [ "/root/.vscode-server-insiders" ]
+
+# Set the default shell to bash instead of sh
+ENV SHELL /bin/bash

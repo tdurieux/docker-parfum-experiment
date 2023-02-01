@@ -1,0 +1,9 @@
+FROM debian:stretch-slim
+
+ARG BUNDLE_DIR
+
+COPY . $BUNDLE_DIR
+
+# PORTER_MIXINS
+
+WORKDIR $BUNDLE_DIR

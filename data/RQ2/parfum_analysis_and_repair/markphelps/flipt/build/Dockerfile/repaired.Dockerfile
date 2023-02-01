@@ -1,0 +1,1 @@
+# https://goreleaser.com/docker/

@@ -1,0 +1,26 @@
+{
+  "startTime": 1674248652831,
+  "endTime": 1674248652909,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 18,
+        "lineEnd": 18,
+        "columnStart": 4,
+        "columnEnd": 46
+      }
+    },
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 29,
+        "lineEnd": 29,
+        "columnStart": 4,
+        "columnEnd": 51
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "#############\n## Builder ##\n#############\n\n# Builder image uses node/yarn (on debian jessie) to create production build of frontend\nFROM node:10 as builder\n\n# Yes no maybe. This is strange. Although all default shells are bash and bash has been set as the shell for yarn/npm to use,\n# it still runs everything as /bin/sh for some weird reason. Let's make sure it doesn't. Naughty yarn.\nRUN rm /bin/sh \\\n    && ln -s /bin/bash /bin/sh\n\n# Setup /app/ with current code\nWORKDIR /app\n\n# https://github.com/nodejs/docker-node/issues/661\n# Remove the version of yarn that is coming with node:10 & Install latest yarn\nRUN rm -f /usr/local/bin/yarn && \\\n    curl -f -o- -L https://yarnpkg.com/install.sh | bash && \\\n    chmod +x ~/.yarn/bin/yarn && \\\n    ln -s ~/.yarn/bin/yarn /usr/local/bin/yarn\n\n# Copy only package.json, yarn.lock and .yarnrc first to properly leverage Docker build caching for node_modules, greatly speeds up build times\nCOPY package.json /app/package.json\nCOPY yarn.lock /app/yarn.lock\nCOPY .yarnrc /app/.yarnrc\n\n# Install all required modules first, `--production=false` is required since the default node image sets `NODE_ENV production`,\n# which causes yarn to not install any devDependencies. Node module install script will now be cached unless the package files are modified\nRUN yarn install --pure-lockfile --production=false && yarn cache clean;\n\n# Copy project sources\nCOPY . /app/\n\n# Define all used build-time arguments including default values, will be available as ENV variables for build command below.\n# Always define the build args as late as possible since changed values will result in cache misses for every RUN command following their definition.\n# Build args without a default value should be treated as required and checked for existence, aborting the build if they haven't been defined.\n# Build args will be defined via gitkube remote in k8s deployment, make sure they match what's defined here! If you require additional ENV variables\n# for your build, add them to this file and the gitkube remote, then re-apply the remote using `kubectl apply -f cms.remote.yaml`.\n# If you need to build the Docker image elsewhere, you can specify them via `--build-arg <name>=<value>` for the `docker build` command.\n# See https://docs.docker.com/engine/reference/builder/#using-arg-variables for further details\nARG REACT_APP_API_BASE_URL\nARG REACT_APP_DEPLOYMENT_ENV\nARG REACT_APP_BASE_NAME\nARG PUBLIC_URL\nARG NODE_ENV=production\n\n# Build project and copy to nginx folder, then clean up sources\n# Re-export build args to strip double quotes from them (taken from https://stackoverflow.com/a/9733456 @ 2018-08-20)\nRUN set -e \\\n    && cd /app \\\n    && test -n \"${REACT_APP_API_BASE_URL}\" \\\n    && test -n \"${REACT_APP_DEPLOYMENT_ENV}\" \\\n    && test -n \"${REACT_APP_BASE_NAME}\" \\\n    && test -n \"${PUBLIC_URL}\" \\\n    && export REACT_APP_API_BASE_URL=$(sed -e 's/^\"//' -e 's/\"$//' <<<\"$REACT_APP_API_BASE_URL\") \\\n    && export REACT_APP_DEPLOYMENT_ENV=$(sed -e 's/^\"//' -e 's/\"$//' <<<\"$REACT_APP_DEPLOYMENT_ENV\") \\\n    && export REACT_APP_BASE_NAME=$(sed -e 's/^\"//' -e 's/\"$//' <<<\"$REACT_APP_BASE_NAME\") \\\n    && export PUBLIC_URL=$(sed -e 's/^\"//' -e 's/\"$//' <<<\"$PUBLIC_URL\") \\\n    && export NODE_ENV=$(sed -e 's/^\"//' -e 's/\"$//' <<<\"$NODE_ENV\") \\\n    && yarn build\n\n############\n## Runner ##\n############\n\n# Runner image uses minimal nginx setup (on alpine linux) required for serving frontend\nFROM nginx:alpine as runner\nEXPOSE 80\n\n# Copy default nginx config in repo\nCOPY nginx-default.conf /etc/nginx/conf.d/default.conf\n\n# Copy only minified build files f rom builder setup\nCOPY --from=builder /app/build /usr/share/nginx/html\n"
+}

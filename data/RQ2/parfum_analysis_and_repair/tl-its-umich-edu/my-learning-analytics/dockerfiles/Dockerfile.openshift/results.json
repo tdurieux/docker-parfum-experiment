@@ -1,0 +1,35 @@
+{
+  "startTime": 1674250591701,
+  "endTime": 1674250592837,
+  "originalSmells": [
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 6,
+        "lineEnd": 6,
+        "columnStart": 4,
+        "columnEnd": 15
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 18,
+        "lineEnd": 18,
+        "columnStart": 40,
+        "columnEnd": 106
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 17,
+        "lineEnd": 17,
+        "columnStart": 4,
+        "columnEnd": 50
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# build react components for production mode\nFROM docker-registry.default.svc:5000/openshift/node:16-slim AS node-webpack\nWORKDIR /usr/src/app\n\n# NOTE: package.json and webpack.config.js not likely to change between dev builds\nCOPY package.json webpack.config.js /usr/src/app/\nRUN npm install && npm cache clean --force;\n\n# NOTE: assets/ likely to change between dev builds\nCOPY assets /usr/src/app/assets\nRUN npm run prod\n\n# This is to find and remove symlinks that break some Docker builds.\n# We need these later we'll just uncompress them\n# Put them in node_modules as this directory isn't masked by docker-compose\n# Also remove src and the symlinks afterward\nRUN apt-get update && \\\n    apt-get install -y --no-install-recommends tar && \\\n    find node_modules -type l -print0 | tar -zcvf node_modules/all_symlinks.tgz --remove-files --null -T - && \\\n    rm -rf /usr/src/app/assets/src && rm node_modules/all_symlinks.tgz && rm -rf /var/lib/apt/lists/*;\n\n# build node libraries for production mode\nFROM docker-registry.default.svc:5000/openshift/node:16-slim AS node-prod-deps\n\nWORKDIR /usr/src/app\nCOPY --from=node-webpack /usr/src/app /usr/src/app\nRUN npm prune --production && \\\n    # This is needed to clean up the examples files as these cause collectstatic to fail (and take up extra space)\n    find node_modules -type d -name \"examples\" -print0 | xargs -0 rm -rf\n\n# FROM directive instructing base image to build upon\nFROM docker-registry.default.svc:5000/openshift/python:3.8-slim AS app\n\n# EXPOSE port 5000 to allow communication to/from server\nEXPOSE 5000\nWORKDIR /code\n\n# NOTE: requirements.txt not likely to change between dev builds\nCOPY requirements.txt .\nRUN apt-get update && \\\n    apt-get install -y --no-install-recommends \\\n    build-essential default-libmysqlclient-dev  libpq-dev netcat vim-tiny jq python3-dev xmlsec1 cron git && \\\n    apt-get upgrade -y && \\\n    apt-get clean -y && \\\n    rm -rf /var/lib/apt/lists/*\n\nRUN pip install --no-cache-dir -r requirements.txt\n\n# copy built react and node libraries for production mode\nCOPY --from=node-prod-deps /usr/src/app/package-lock.json package-lock.json\nCOPY --from=node-prod-deps /usr/src/app/webpack-stats.json webpack-stats.json\nCOPY --from=node-prod-deps /usr/src/app/assets assets\nCOPY --from=node-prod-deps /usr/src/app/node_modules node_modules\n\n# NOTE: project files likely to change between dev builds\nCOPY . .\n\nRUN python manage.py collectstatic --verbosity 0 --noinput\n\n# Sets the local timezone of the docker image\nARG TZ\nENV TZ ${TZ:-America/Detroit}\nRUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone\n\nCMD [\"/code/start.sh\"]\n# done!\n"
+}

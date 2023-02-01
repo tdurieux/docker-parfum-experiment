@@ -1,0 +1,53 @@
+{
+  "startTime": 1674250477515,
+  "endTime": 1674250478527,
+  "originalSmells": [
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 11,
+        "lineEnd": 11,
+        "columnStart": 4,
+        "columnEnd": 29
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 4,
+        "lineEnd": 5,
+        "columnStart": 22,
+        "columnEnd": 32
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 10,
+        "lineEnd": 10,
+        "columnStart": 4,
+        "columnEnd": 37
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 70,
+        "lineEnd": 70,
+        "columnStart": 25,
+        "columnEnd": 48
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 75,
+        "lineEnd": 75,
+        "columnStart": 4,
+        "columnEnd": 59
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Need to remote into this image and debug some flow?\n# docker run -it --rm node:12.22.1-alpine3.12 /bin/ash\nFROM node:lts-buster AS build\nARG ODBC_ENABLED=false\nRUN apt-get update && apt-get install --no-install-recommends -y \\\n    python3 make g++ python3-dev \\\n    && (if [ \"$ODBC_ENABLED\" = \"true\" ] ; \\\n    then \\\n    echo \"Installing ODBC build dependencies.\" 1>&2 ; \\\n    apt-get install --no-install-recommends -y unixodbc-dev; \\\n    npm install -g node-gyp ; npm cache clean --force; \\\n    fi) \\\n\n    && rm -rf /var/lib/apt/lists/*\nRUN npm config set python /usr/bin/python3\n\nWORKDIR /sqlpad\n\n# By copying just the package files and installing node layers,\n# we can take advantage of caching\n# SQLPad is really 3 node projects though\n# * root directory for linting\n# * client/ for web front end\n# * server/ for server (and what eventually holds built front end)\nCOPY ./package* ./\nCOPY ./client/package* ./client/\nCOPY ./server/package* ./server/\nCOPY ./yarn* ./\nCOPY ./client/yarn* ./client/\nCOPY ./server/yarn* ./server/\n\n# Install dependencies\nRUN yarn\nWORKDIR /sqlpad/client\nRUN yarn\nWORKDIR /sqlpad/server\nRUN yarn\nWORKDIR /sqlpad\n\n# Copy rest of the project into docker\nCOPY . .\n\n# Build front-end and copy files into server public dir\nRUN npm run build --prefix client && \\\n    rm -rf server/public && \\\n    mkdir server/public && \\\n    cp -r client/build/* server/public\n\n# Build test db used for dev, debugging and running tests\nRUN node server/generate-test-db-fixture.js\n\n# Run tests and linting to validate build\nENV SKIP_INTEGRATION true\nRUN npm run test --prefix server\nRUN npm run lint\n\n# Remove any dev dependencies from server\n# We don't care about root or client directories\n# as they are not going to be copied to next stage\nWORKDIR /sqlpad/server\nRUN npm prune --production\n\n# Start another stage with a fresh node\n# Copy the server directory that has all the necessary node modules + front end build\nFROM node:lts-buster-slim as bundle\nARG ODBC_ENABLED=false\n\n# Create a directory for the hooks and optionaly install ODBC\nRUN mkdir -p /etc/docker-entrypoint.d \\\n    && apt-get update && apt-get install --no-install-recommends -y wget \\\n    && (if [ \"$ODBC_ENABLED\" = \"true\" ] ; \\\n    then \\\n    echo \"Installing ODBC runtime dependencies.\" 1>&2 ; \\\n    apt-get install --no-install-recommends -y unixodbc libaio1 odbcinst libodbc1; \\\n    touch /etc/odbcinst.ini ; \\\n    fi) \\\n\n    && rm -rf /var/lib/apt/lists/*\n\nWORKDIR /usr/app\nCOPY --from=build /sqlpad/docker-entrypoint /\nCOPY --from=build /sqlpad/server .\n\nENV NODE_ENV production\nENV SQLPAD_DB_PATH /var/lib/sqlpad\nENV SQLPAD_PORT 3000\nEXPOSE 3000\nENTRYPOINT [\"/docker-entrypoint\"]\n\n# Things to think about for future docker builds\n# Perhaps add a healthcheck?\n# Should nginx be used to front sqlpad? << No. you can always add an LB/nginx on top of this with compose or other tools when needed.\n\nRUN [\"chmod\", \"+x\", \"/docker-entrypoint\"]\nWORKDIR /var/lib/sqlpad\n\n# If you want to use ODBC, use `docker build -t sqlpad/sqlpad-odbc --build-arg ODBC_ENABLED=true .`\n# That will create an image with ODBC enabled.\n#\n# Then add specific ODBC drivers.\n# Option 1: extend this Dockerfile in a fork.\n# Option 2: create your own that starts `FROM sqlpad/sqlpad-odbc` and add drivers there.\n#           Note: this is currently not available on dockerhub so you must use the build command to provision it locally.\n"
+}

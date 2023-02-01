@@ -1,0 +1,35 @@
+{
+  "startTime": 1674218961801,
+  "endTime": 1674218963036,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 54,
+        "lineEnd": 54,
+        "columnStart": 4,
+        "columnEnd": 59
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 133,
+        "lineEnd": 133,
+        "columnStart": 4,
+        "columnEnd": 59
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 65,
+        "lineEnd": 65,
+        "columnStart": 4,
+        "columnEnd": 33
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "#\n# Using --build-arg PGVERSION=11 we can build pg_auto_failover for any\n# target version of Postgres. In the Makefile, we use that to our advantage\n# and tag test images such as pg_auto_failover_test:pg14.\n#\nARG PGVERSION=10\n\n#\n# Define a base image with all our build dependencies.\n#\n# This base image contains all our target Postgres versions.\n#\nFROM debian:buster-slim as base\n\nARG PGVERSION\n\nRUN apt-get update \\\n  && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \\\n    build-essential \\\n    ca-certificates \\\n\tcurl \\\n\tgnupg \\\n\tgit \\\n    iproute2 \\\n    libicu-dev \\\n    libkrb5-dev \\\n    libssl-dev \\\n    libedit-dev \\\n    libreadline-dev \\\n    libpam-dev \\\n    zlib1g-dev \\\n    liblz4-dev \\\n\tlibxml2-dev \\\n    libxslt1-dev \\\n    libselinux1-dev \\\n\tlibncurses-dev \\\n    libncurses6 \\\n    make \\\n    openssl \\\n    pipenv \\\n    python3-nose \\\n    python3 \\\n\tpython3-setuptools \\\n\tpython3-psycopg2 \\\n    python3-pip \\\n\tsudo \\\n    tmux \\\n    watch \\\n    lsof \\\n    psutils \\\n\tvalgrind \\\n    postgresql-common \\\n\t&& rm -rf /var/lib/apt/lists/*\n\nRUN curl -f https://www.postgresql.org/media/keys/ACCC4CF8.asc | apt-key add -\nRUN echo \"deb http://apt.postgresql.org/pub/repos/apt buster-pgdg main\" > /etc/apt/sources.list.d/pgdg.list\n\n# bypass initdb of a \"main\" cluster\nRUN echo 'create_main_cluster = false' | sudo tee -a /etc/postgresql-common/createcluster.conf\nRUN apt-get update \\\n\t&& DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \\\n     postgresql-server-dev-${PGVERSION} \\\n     postgresql-${PGVERSION} \\\n\t&& rm -rf /var/lib/apt/lists/*\n\nRUN pip3 install --no-cache-dir pyroute2 >=0.5.17\n\nRUN adduser --disabled-password --gecos '' docker\nRUN adduser docker sudo\nRUN adduser docker postgres\nRUN echo '%sudo ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers\n\n#\n# On-top of the base build-dependencies image, now we can build\n# pg_auto_failover for a given --build-arg PGVERSION target version of\n# Postgres.\n#\nFROM base as build\n\nARG PGVERSION\n\nENV PG_CONFIG /usr/lib/postgresql/${PGVERSION}/bin/pg_config\n\nWORKDIR /usr/src/pg_auto_failover\n\nCOPY Makefile ./\nCOPY ./src/ ./src\nRUN make -s clean && make -s install -j8\n\n\n#\n# Given the build image above, we can now run our test suite targetting a\n# given version of Postgres.\n#\nFROM build as test\n\nARG PGVERSION\n\nCOPY ./tests/ ./tests\nCOPY ./valgrind ./valgrind\nRUN chmod a+w ./valgrind\n\nUSER docker\n\nENV PG_AUTOCTL_DEBUG 1\nENV PATH /usr/lib/postgresql/${PGVERSION}/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin\n\n\n#\n# And finally our \"run\" images with the bare minimum for run-time.\n#\nFROM debian:buster-slim as run\n\nARG PGVERSION\n\nRUN apt-get update \\\n  && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \\\n    ca-certificates \\\n\tcurl \\\n\tgnupg \\\n    make \\\n    sudo \\\n    tmux \\\n\twatch \\\n    libncurses6 \\\n    lsof \\\n    psutils \\\n    dnsutils \\\n    bind9-host \\\n    postgresql-common \\\n    libpq-dev \\\n\t&& rm -rf /var/lib/apt/lists/*\n\nRUN curl -f https://www.postgresql.org/media/keys/ACCC4CF8.asc | apt-key add -\nRUN echo \"deb http://apt.postgresql.org/pub/repos/apt buster-pgdg main\" > /etc/apt/sources.list.d/pgdg.list\n\n# bypass initdb of a \"main\" cluster\nRUN echo 'create_main_cluster = false' | sudo tee -a /etc/postgresql-common/createcluster.conf\nRUN apt-get update\\\n\t&& DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends postgresql-${PGVERSION} \\\n\t&& rm -rf /var/lib/apt/lists/*\n\nRUN adduser --disabled-password --gecos '' --home /var/lib/postgres docker\nRUN adduser docker sudo\nRUN adduser docker postgres\nRUN echo '%sudo ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers\n\nCOPY --from=build /usr/lib/postgresql/${PGVERSION}/lib/pgautofailover.so /usr/lib/postgresql/${PGVERSION}/lib\nCOPY --from=build /usr/share/postgresql/${PGVERSION}/extension/pgautofailover* /usr/share/postgresql/${PGVERSION}/extension/\nCOPY --from=build /usr/lib/postgresql/${PGVERSION}/bin/pg_autoctl /usr/local/bin\n\n#\n# In tests/upgrade/docker-compose.yml we use internal docker volumes in\n# order to be able to restart the nodes and keep the data around. For that\n# to work, we must prepare a mount-point that is owned by our target user\n# (docker), so that once the volume in mounted there by docker compose,\n# pg_autoctl has the necessary set of privileges.\n#\nRUN mkdir -p /var/lib/postgres \\\n && chown -R docker /var/lib/postgres\n\nUSER docker\nENV PATH /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/lib/postgresql/${PGVERSION}/bin\nENV PG_AUTOCTL_DEBUG 1\nENV PGDATA /var/lib/postgres/pgaf\n\nCMD pg_autoctl do tmux session --nodes 3 --binpath /usr/local/bin/pg_autoctl\n"
+}

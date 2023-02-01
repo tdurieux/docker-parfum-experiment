@@ -1,0 +1,52 @@
+FROM ubuntu:bionic
+RUN ( \
+        [ "$(. /etc/os-release; echo $ID)" != "ubuntu" ] || { \
+            grep universe$ /etc/apt/sources.list || \
+            head -1 /etc/apt/sources.list | \
+            sed 's/ [a-zA-Z]*$/ universe/' >>/etc/apt/sources.list; \
+        } \
+    ) \
+    && apt-get update \
+    && apt-get -y --no-install-recommends install \
+        git \
+        git-lfs \
+        locales \
+        openssh-client \
+        python3 \
+        python3-venv \
+
+        gcc \
+        python3-dev \
+        libdpkg-perl \
+        libssl-dev \
+        curl \
+    && locale-gen en_US.UTF-8 \
+    && python3 -m venv env \
+    && (curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y) \
+    && rm -rf \
+        /var/lib/apt/* \
+        /var/log/apt/* \
+        /var/cache/apt/* \
+        /usr/lib/python3.6/__pycache__ && rm -rf /var/lib/apt/lists/*;
+ADD lektorium*whl /
+ADD key /root/.ssh/id_rsa
+ADD entrypoint.sh /
+RUN chmod 700 /root/.ssh \
+    && chmod 600 /root/.ssh/id_rsa \
+    && \
+    LC_ALL=en_US.UTF-8 \
+    PATH="$HOME/.cargo/bin:/env/bin:$PATH" \
+    pip --no-cache-dir \
+    install --no-cache setuptools-rust \
+    && \
+    LC_ALL=en_US.UTF-8 \
+    PATH="$HOME/.cargo/bin:/env/bin:$PATH" \
+    pip --no-cache-dir \
+    install --no-cache *whl \
+    && rm -rf \
+        /usr/lib/python3.6/__pycache__ \
+        /root/.npm
+ENV LC_ALL en_US.UTF-8
+ENV PATH "/env/bin:$PATH"
+VOLUME /sessions
+ENTRYPOINT ["/entrypoint.sh"]

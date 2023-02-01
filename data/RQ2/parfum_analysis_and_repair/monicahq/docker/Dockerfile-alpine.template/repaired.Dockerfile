@@ -1,0 +1,73 @@
+%%HEAD%%
+
+# entrypoint.sh dependencies
+RUN set -ex; \
+    \
+    apk add --no-cache \
+        bash \
+        coreutils
+
+# Install required PHP extensions
+RUN set -ex; \
+
+    apk add --no-cache --virtual .build-deps \
+        $PHPIZE_DEPS \
+        icu-dev \
+        zlib-dev \
+        libzip-dev \
+        libxml2-dev \
+        freetype-dev \
+        libpng-dev \
+        libjpeg-turbo-dev \
+        jpeg-dev \
+        gmp-dev \
+        libmemcached-dev \
+        libwebp-dev \
+    ; \
+
+    docker-php-ext-configure intl; \
+    docker-php-ext-configure gd --with-jpeg --with-freetype --with-webp; \
+    docker-php-ext-configure gmp; \
+    docker-php-ext-install -j "$(nproc)" \
+        intl \
+        zip \
+        bcmath \
+        gd \
+        gmp \
+        pdo_mysql \
+        mysqli \
+        soap \
+    ; \
+# pecl will claim success even if one install fails, so we need to perform each install separately
+    pecl install APCu-%%APCU_VERSION%%; \
+    pecl install memcached-%%MEMCACHED_VERSION%%; \
+    pecl install redis-%%REDIS_VERSION%%; \
+
+    docker-php-ext-enable \
+        apcu \
+        memcached \
+        redis \
+    ; \
+
+    runDeps="$( \
+        scanelf --needed --nobanner --format '%n#p' --recursive /usr/local/lib/php/extensions \
+        | tr ',' '\n' \
+        | sort -u \
+        | awk 'system("[ -e /usr/local/lib/" $1 " ]") == 0 { next } { print "so:" $1 }' \
+        )"; \
+    apk add --no-cache --no-network --virtual .monica-phpext-rundeps $runDeps; \
+    apk del --no-network .build-deps
+
+%%EXTRA_INSTALL%%
+
+RUN set -ex; \
+    apk add --no-cache --virtual .fetch-deps \
+        bzip2 \
+        gnupg \
+    ; \
+    \
+%%INSTALL%% \
+    \
+    apk del .fetch-deps
+
+%%FOOT%%

@@ -1,0 +1,15 @@
+#build stage
+FROM golang:1.16.5-alpine3.13 as builder
+
+ENV CGO_ENABLED 1
+ARG GIT_COMMIT_HASH
+ENV GIT_COMMIT_HASH=${GIT_COMMIT_HASH}
+ENV SRC_DIR=/src
+
+ADD . $SRC_DIR/
+
+WORKDIR $SRC_DIR
+
+RUN go build -o mock-server tests/mocksubscriber/cmd/main.go
+
+# final stage

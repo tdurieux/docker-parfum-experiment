@@ -1,0 +1,23 @@
+FROM node:16
+
+RUN apt-get update && apt-get install --no-install-recommends -y netcat && rm -rf /var/lib/apt/lists/*;
+
+WORKDIR /js-ceramic
+
+COPY package.json package-lock.json lerna.json tsconfig.json ./
+
+RUN npm ci --ignore-scripts --production
+
+RUN npm install -g lerna && npm cache clean --force;
+
+COPY packages ./packages
+
+RUN lerna bootstrap --hoist --ci -- --production
+
+COPY types ./types
+
+RUN lerna run build
+
+EXPOSE 7007
+
+ENTRYPOINT ["./packages/cli/bin/ceramic.js", "daemon"]

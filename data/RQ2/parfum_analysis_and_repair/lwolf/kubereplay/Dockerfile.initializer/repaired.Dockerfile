@@ -1,0 +1,3 @@
+FROM alpine:3.7
+COPY kubereplay-initializer /
+ENTRYPOINT ["/kubereplay-initializer"]

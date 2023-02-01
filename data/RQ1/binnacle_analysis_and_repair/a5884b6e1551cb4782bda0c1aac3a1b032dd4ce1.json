@@ -1,0 +1,26 @@
+{
+  "startTime": 1674234442382,
+  "endTime": 1674234442679,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 11,
+        "lineEnd": 52,
+        "columnStart": 22,
+        "columnEnd": 5
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 11,
+        "lineEnd": 52,
+        "columnStart": 22,
+        "columnEnd": 5
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM debian:jessie\n\nMAINTAINER cedric.olivier@free.fr\n\nENV JEEDOM_DB_HOST localhost\nENV JEEDOM_DB_PASSWORD jeedom\nENV SHELL_ROOT_PASSWORD jeedom\n\nRUN echo \"mysql-server mysql-server/root_password password ${JEEDOM_DB_PASSWORD}\" | debconf-set-selections\nRUN echo \"mysql-server mysql-server/root_password_again password ${JEEDOM_DB_PASSWORD}\" | debconf-set-selections\n\nRUN apt-get update && apt-get install --no-install-recommends -y \\\n\tadduser \\\n\tbuild-essential \\\n\tcron \\\n\tcurl \\\n\tlibarchive-dev \\\n\tlibav-tools \\\n\tlibjsoncpp-dev \\\n\tlibpcre3-dev \\\n\tgit \\\n\tlibssh2-php \\\n\tlibtinyxml-dev \\\n\tlibudev1 \\\n\tlibxml2 \\\n\tlocales \\\n\tminiupnpc \\\n\tmysql-client \\\n\tmysql-common \\\n\tmysql-server \\\n\tmysql-server-core \\\n\tnet-tools \\\n\tnginx-common \\\n\tnginx-full \\\n\tnodejs \\\n\tnpm \\\n\tntp \\\n\topenssh-server \\\n\tphp5-cli \\\n\tphp5-common \\\n\tphp5-curl \\\n\tphp5-dev \\\n\tphp5-fpm \\\n\tphp5-json \\\n\tphp5-mysql \\\n\tphp-pear \\\n\tpython-serial \\\n\tsudo \\\n\tsupervisor \\\n\tsystemd \\\n\tunzip \\\n\tusb-modeswitch \\\n\twget && rm -rf /var/lib/apt/lists/*;\n\nRUN dpkg-reconfigure locales && \\\n    locale-gen C.UTF-8 && \\\n    /usr/sbin/update-locale LANG=C.UTF-8\n\nENV LC_ALL C.UTF-8\n\n#RUN pecl install oauth\n\n\nRUN apt-get autoremove\n\n# Configuration nginx\nCOPY nginx_default /etc/nginx/sites-available/default\nRUN touch /etc/nginx/sites-available/jeedom_dynamic_rule && chmod 777 /etc/nginx/sites-available/jeedom_dynamic_rule\n\n# Configuration nginx_ssl\nRUN openssl genrsa -out jeedom.key 2048\nRUN openssl req \\\n        -new \\\n        -subj \"/C=FR/ST=France/L=Paris/O=jeedom/OU=JE/CN=jeedom\" \\\n        -key jeedom.key \\\n        -out jeedom.csr && \\\n   openssl x509 -req -days 9999 -in jeedom.csr -signkey jeedom.key -out jeedom.crt\n\nRUN mkdir /etc/nginx/certs && \\\n        cp jeedom.key /etc/nginx/certs && \\\n        cp jeedom.crt /etc/nginx/certs && \\\n        rm jeedom.key jeedom.crt\n\nCOPY nginx_default_ssl /etc/nginx/sites-enabled/default_ssl\n\n# modification de la configuration PHP pour un temps d'exécution allongé et le traitement de fichiers lourds\nRUN sed -i \"s/max_execution_time = 30/max_execution_time = 300/g\" /etc/php5/fpm/php.ini\nRUN sed -i \"s/upload_max_filesize = 2M/upload_max_filesize = 1G/g\" /etc/php5/fpm/php.ini\nRUN sed -i \"s/post_max_size = 8M/post_max_size = 1G/g\" /etc/php5/fpm/php.ini\n\n# installation nginx\nRUN mkdir -p /usr/share/nginx/www\n\n# téléchargement de l'archive\n#RUN cd /usr/share/nginx/jeedom/ && wget --no-check-certificate -O jeedom.zip https://market.jeedom.fr/jeedom/stable/jeedom.zip\nRUN cd /usr/share/nginx/www && git clone https://github.com/jeedom/core.git jeedom\n\n# ajout au préalable d'un dossier tmp\nRUN mkdir -p /usr/share/nginx/www/jeedom/tmp\n\n# définition des droits utilisateur/groupes/autres de manière récursif\nRUN chmod 755 -R /usr/share/nginx/www/jeedom\n\n# délégation des droits pour l'utilisateur www-data de manière récursif\nRUN chown -R www-data:www-data /usr/share/nginx/www/jeedom\n\n# ajout de l'utilisateur www-data au group dialout (pour piloter la connexion 3G éventuelle)\nRUN adduser www-data dialout\n\nRUN echo \"www-data ALL=(ALL) NOPASSWD: ALL\" >> /etc/sudoers\n\n# on copie le fichier de configuration d'exemple\nRUN cp /usr/share/nginx/www/jeedom/core/config/common.config.sample.php /usr/share/nginx/www/jeedom/core/config/common.config.php\n\n# on modifie le contenu avec les paramètres fixés lors de la configuration de l'utilisateur mysql dédié (cf. \"Bases de données mysql\")\nRUN sed -i \"s/#PASSWORD#/${JEEDOM_DB_PASSWORD}/g\" /usr/share/nginx/www/jeedom/core/config/common.config.php\n\nCOPY docker-entrypoint.sh /entrypoint.sh\n\nRUN chmod +x /entrypoint.sh\n\n\nRUN sed -i \"s/PermitRootLogin without-password/PermitRootLogin yes/g\" /etc/ssh/sshd_config\n\n#ADD nginx.conf /etc/nginx/sites-available/default\nRUN echo \"daemon off;\" >> /etc/nginx/nginx.conf\n\nRUN echo \"root:${SHELL_ROOT_PASSWORD}\" | chpasswd\n\nRUN mkdir -p /var/run/sshd /var/log/supervisor\n\nADD supervisord.conf /etc/supervisor/conf.d/supervisord.conf\n\nRUN echo \"* * * * * su --shell=/bin/bash - www-data -c 'nice -n 19 /usr/bin/php /usr/share/nginx/www/jeedom/core/php/jeeCron.php' >> /dev/null\" | crontab -\n\nWORKDIR /usr/share/nginx/www/jeedom\n\nEXPOSE 80 8070 8083 9001 443 22 10000 17100\nENTRYPOINT [\"/entrypoint.sh\"]\nCMD [\"/usr/bin/supervisord\"]\n\n"
+}

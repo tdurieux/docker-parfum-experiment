@@ -1,0 +1,8 @@
+FROM debian:9.11
+EXPOSE 80
+EXPOSE 81/udp
+ENV protocol tcp
+EXPOSE 82/$protocol
+ENV port 83
+EXPOSE $port/udp
+EXPOSE $port/$protocol

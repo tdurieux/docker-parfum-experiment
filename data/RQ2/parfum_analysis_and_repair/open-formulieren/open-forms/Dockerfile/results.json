@@ -1,0 +1,35 @@
+{
+  "startTime": 1674250915102,
+  "endTime": 1674250916416,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 37,
+        "lineEnd": 37,
+        "columnStart": 4,
+        "columnEnd": 22
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 39,
+        "lineEnd": 39,
+        "columnStart": 4,
+        "columnEnd": 46
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 42,
+        "lineEnd": 42,
+        "columnStart": 4,
+        "columnEnd": 50
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# This is a multi-stage build file, which means a stage is used to build\n# the backend (dependencies), the frontend stack and a final production\n# stage re-using assets from the build stages. This keeps the final production\n# image minimal in size.\n\n# must be at the top to use it in FROM clauses\nARG SDK_RELEASE=latest\nFROM openformulieren/open-forms-sdk:${SDK_RELEASE} as sdk-image\n\n# Stage 1 - Backend build environment\n# includes compilers and build tooling to create the environment\nFROM python:3.8-slim-buster AS backend-build\n\nRUN apt-get update && apt-get install -y --no-install-recommends \\\n        pkg-config \\\n        build-essential \\\n        git \\\n        libpq-dev \\\n        libxml2-dev \\\n        libxmlsec1-dev \\\n        libxmlsec1-openssl \\\n        # weasyprint deps\n        libcairo2 \\\n        libpango-1.0-0 \\\n        libpangocairo-1.0-0 \\\n        libgdk-pixbuf2.0-0 \\\n        libffi-dev \\\n        shared-mime-info \\\n    && rm -rf /var/lib/apt/lists/*\n\n        # build-essential python3-dev python3-pip python3-setuptools python3-wheel python3-cffi\n\n\nWORKDIR /app\nRUN mkdir /app/src\n\n# Ensure we use the latest version of pip\nRUN pip install --no-cache-dir pip -U\nCOPY ./requirements /app/requirements\nRUN pip install --no-cache-dir -r requirements/setuptools.txt\n\nARG ENVIRONMENT=production\nRUN pip install --no-cache-dir -r requirements/${ENVIRONMENT}.txt\n\n# Stage 2 - Install frontend deps and build assets\nFROM node:16-buster AS frontend-build\n\nRUN apt-get update && apt-get install -y --no-install-recommends \\\n        git \\\n    && rm -rf /var/lib/apt/lists/*\n\nWORKDIR /app\n\n# copy configuration/build files\nCOPY ./build /app/build/\nCOPY ./*.json ./*.js ./.babelrc /app/\n\n# install WITH dev tooling\nRUN npm ci --legacy-peer-deps\n\n# copy source code\nCOPY ./src /app/src\n\n# build frontend\nRUN npm run build\n\n# Stage 3 - Build docker image suitable for production\nFROM python:3.8-slim-buster\n\n# Stage 3.1 - Set up the needed production dependencies\n# install all the dependencies for GeoDjango\nRUN apt-get update && apt-get install -y --no-install-recommends \\\n        procps \\\n        vim \\\n        mime-support \\\n        postgresql-client \\\n        libmagic1 \\\n        libxmlsec1 \\\n        libxmlsec1-openssl \\\n        gettext \\\n        # lxml deps\n        # libxslt \\\n        # weasyprint deps\n        libcairo2 \\\n        libpango-1.0-0 \\\n        libpangocairo-1.0-0 \\\n        libgdk-pixbuf2.0-0 \\\n        shared-mime-info \\\n    && rm -rf /var/lib/apt/lists/*\n\nWORKDIR /app\nCOPY ./bin/docker_start.sh /start.sh\nCOPY ./bin/celery_worker.sh /celery_worker.sh\nCOPY ./bin/celery_beat.sh /celery_beat.sh\nCOPY ./bin/celery_flower.sh /celery_flower.sh\nRUN mkdir /app/log\nRUN mkdir /app/media\n\n# copy backend build deps\nCOPY --from=backend-build /usr/local/lib/python3.8 /usr/local/lib/python3.8\nCOPY --from=backend-build /usr/local/bin/uwsgi /usr/local/bin/uwsgi\nCOPY --from=backend-build /usr/local/bin/celery /usr/local/bin/celery\nCOPY --from=backend-build /app/src/ /app/src/\n\n# copy frontend build statics\nCOPY --from=frontend-build /app/src/openforms/static /app/src/openforms/static\nCOPY --from=frontend-build /app/node_modules/@fortawesome/fontawesome-free/webfonts /app/node_modules/@fortawesome/fontawesome-free/webfonts\n\n# Include SDK files. Collectstatic produces both the versions with and without hash\n# in the STATICFILES_ROOT\nCOPY --from=sdk-image /sdk /app/src/openforms/static/sdk\n\n# copy source code\nCOPY ./src /app/src\nCOPY ./.sdk-release /app/.sdk-release\n\nRUN useradd -M -u 1000 maykin\nRUN chown -R maykin /app\n\n# drop privileges\nUSER maykin\n\nARG RELEASE ARG SDK_RELEASE=latest COMMIT_HASH\nENV GIT_SHA=${COMMIT_HASH}\nENV RELEASE=${RELEASE} SDK_RELEASE=${SDK_RELEASE}\n\nENV DJANGO_SETTINGS_MODULE=openforms.conf.docker\n\nARG SECRET_KEY=dummy\n\nLABEL org.label-schema.vcs-ref=$COMMIT_HASH \\\n      org.label-schema.vcs-url=\"https://github.com/open-formulieren/open-forms\" \\\n      org.label-schema.version=$RELEASE \\\n      org.label-schema.name=\"Open Forms\"\n\n# Run collectstatic and compilemessages, so the result is already included in\n# the image\nRUN python src/manage.py collectstatic --noinput \\\n    && python src/manage.py compilemessages\n\nEXPOSE 8000\nCMD [\"/start.sh\"]\n"
+}

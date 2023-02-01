@@ -1,0 +1,1 @@
+# Based on https://github.com/aws/aws-node-termination-handler/blob/main/Dockerfile

@@ -1,0 +1,44 @@
+{
+  "startTime": 1674214937794,
+  "endTime": 1674214938601,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 30,
+        "lineEnd": 30,
+        "columnStart": 7,
+        "columnEnd": 92
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 54,
+        "lineEnd": 54,
+        "columnStart": 7,
+        "columnEnd": 49
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 68,
+        "lineEnd": 68,
+        "columnStart": 7,
+        "columnEnd": 59
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 20,
+        "lineEnd": 27,
+        "columnStart": 7,
+        "columnEnd": 18
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "ARG HASS_ARCH=amd64\nARG S6_ARCH=amd64\nARG RUST_ARCH=x86_64-unknown-linux-gnu\nARG BUILD_VERSION=latest\n\n#####################################################################\n#                                                                   #\n# Build Wheels                                                      #\n#                                                                   #\n#####################################################################\nFROM python:3.9-slim as wheels-builder\nARG RUST_ARCH\n\nENV PIP_EXTRA_INDEX_URL=https://www.piwheels.org/simple\nENV PATH=\"${PATH}:/root/.cargo/bin\"\n\n# Install buildtime packages\nRUN set -x \\\n    && apt-get update \\\n    && apt-get install -y --no-install-recommends \\\n        build-essential \\\n        ca-certificates \\\n        curl \\\n        gcc \\\n        git \\\n        libffi-dev \\\n        libssl-dev && rm -rf /var/lib/apt/lists/*;\n\nRUN set -x \\\n    && curl -f -o rustup-init https://static.rust-lang.org/rustup/dist/${RUST_ARCH}/rustup-init \\\n    && chmod +x rustup-init \\\n    && ./rustup-init -y --no-modify-path --profile minimal --default-host ${RUST_ARCH}\n\nWORKDIR /wheels\nCOPY requirements.txt .\n\n# build python wheels\nRUN set -x \\\n    && pip wheel -r requirements.txt\n\n#####################################################################\n#                                                                   #\n# Download and extract s6 overlay                                   #\n#                                                                   #\n#####################################################################\nFROM alpine:latest as s6downloader\n# Required to persist build arg\nARG S6_ARCH\nWORKDIR /s6downloader\n\nRUN set -x \\\n    && wget -O /tmp/s6-overlay.tar.gz \"https://github.com/just-containers/s6-overlay/releases/download/v2.2.0.3/s6-overlay-${S6_ARCH}.tar.gz\" \\\n    && mkdir -p /tmp/s6 \\\n    && tar zxvf /tmp/s6-overlay.tar.gz -C /tmp/s6 \\\n    && mv /tmp/s6/* . && rm /tmp/s6-overlay.tar.gz\n\n#####################################################################\n#                                                                   #\n# Download and extract bashio                                       #\n#                                                                   #\n#####################################################################\nFROM alpine:latest as bashiodownloader\nWORKDIR /bashio\n\nRUN set -x \\\n    && wget -O /tmp/bashio.tar.gz \"https://github.com/hassio-addons/bashio/archive/v0.13.1.tar.gz\" \\\n    && mkdir -p /tmp/bashio \\\n    && tar zxvf /tmp/bashio.tar.gz --strip 1 -C /tmp/bashio \\\n    && mv /tmp/bashio/lib/* . && rm /tmp/bashio.tar.gz\n\n#####################################################################\n#                                                                   #\n# Final Image                                                       #\n#                                                                   #\n#####################################################################\nFROM python:3.9-slim AS final-build\nWORKDIR /app\n\nENV DEBIAN_FRONTEND=\"noninteractive\"\n\nRUN set -x \\\n    && apt-get update \\\n    && apt-get install -y --no-install-recommends \\\n        ca-certificates \\\n        curl \\\n        git \\\n        jq \\\n        openssl \\\n        tzdata \\\n    # cleanup\n    && rm -rf /tmp/* \\\n    && rm -rf /var/lib/apt/lists/*\n\n# Install bashio\nCOPY --from=bashiodownloader /bashio /usr/lib/bashio\nRUN ln -s /usr/lib/bashio/bashio /usr/bin/bashio\n\n# Install s6 overlay\nCOPY --from=s6downloader /s6downloader /\n\n# https://github.com/moby/buildkit/blob/master/frontend/dockerfile/docs/syntax.md#build-mounts-run---mount\n# Install pip dependencies with built wheels\nRUN --mount=type=bind,target=/tmp/wheels,source=/wheels,from=wheels-builder,rw \\\n    set -x \\\n    && pip install --no-cache-dir -f /tmp/wheels -r /tmp/wheels/requirements.txt\n\n# Copy root filesystem\nCOPY docker/rootfs /\n\n# Copy app\nCOPY emulated_hue emulated_hue\n\nENV S6_BEHAVIOUR_IF_STAGE2_FAILS=2\n\n# Required to persist build arg\nARG BUILD_VERSION\nARG HASS_ARCH\nLABEL \\\n    io.hass.version=${BUILD_VERSION} \\\n    io.hass.name=\"Hass Emulated Hue\" \\\n    io.hass.description=\"Hue Emulation for Home Assistant\" \\\n    io.hass.arch=\"${HASS_ARCH}\" \\\n    io.hass.type=\"addon\"\n\nCMD [\"/init\"]\n"
+}

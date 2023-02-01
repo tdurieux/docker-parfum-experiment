@@ -1,0 +1,1 @@
+#FROM ndslabs/dataverse-solr:latest

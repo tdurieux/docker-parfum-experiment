@@ -1,0 +1,18 @@
+FROM node:17-alpine
+
+# set up packages
+COPY package.json /app/package.json
+COPY yarn.lock /app/yarn.lock
+
+WORKDIR /app
+RUN yarn install --production && yarn cache clean;
+
+# set up app
+COPY . /app
+
+# link app
+RUN yarn global add file:$(pwd)
+ENV PATH="${PATH}:$(yarn global bin)"
+
+# run app
+ENTRYPOINT [ "echo", "This image includes the noicejs dependency injection library, but is otherwise a noop. Please inherit FROM it and add your application." ]

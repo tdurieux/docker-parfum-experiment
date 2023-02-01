@@ -1,0 +1,20 @@
+FROM travix/gocd-agent:21.2.0-alpine
+
+MAINTAINER estafette.io
+
+LABEL maintainer="estafette.io" \
+      description="The ${ESTAFETTE_GIT_NAME} is the component that runs builds as defined in the .estafette.yaml manifest"
+
+RUN mkdir -p /estafette-entrypoints \
+    && docker version || true
+
+# copy builder
+COPY ${ESTAFETTE_GIT_NAME} /usr/bin/
+COPY templates /entrypoint-templates
+
+VOLUME /tmp
+VOLUME /var/lib/docker
+VOLUME /var/lib/go-agent/pipelines
+
+ENV ESTAFETTE_CI_SERVER="gocd" \
+    ESTAFETTE_LOG_FORMAT="console"

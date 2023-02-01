@@ -1,0 +1,18 @@
+FROM golang:1.18-alpine3.16 AS build
+WORKDIR /veneur/
+COPY . .
+RUN CGO_ENABLED=0 go build -a -ldflags "-X github.com/stripe/veneur/v14/util/build.VERSION=${VERSION} -X github.com/stripe/veneur/v14/util/build.BUILD_DATE=$(date +%s)" -o /build/veneur ./cmd/veneur &&\
+    CGO_ENABLED=0 go build -a -o /build/veneur-emit ./cmd/veneur-emit &&\
+    CGO_ENABLED=0 go build -a -o /build/veneur-prometheus ./cmd/veneur-prometheus &&\
+    CGO_ENABLED=0 go build -a -ldflags "-X github.com/stripe/veneur/v14/util/build.VERSION=${VERSION} -X github.com/stripe/veneur/v14/util/build.BUILD_DATE=$(date +%s)" -o /build/veneur-proxy ./cmd/veneur-proxy
+
+
+FROM alpine:3.16 AS release
+LABEL maintainer="The Stripe Observability Team <support@stripe.com>"
+RUN apk add --no-cache ca-certificates
+WORKDIR /veneur/
+EXPOSE 8126/UDP 8126/TCP 8127/TCP 8128/UDP
+COPY --from=build /build/* /veneur/
+COPY example.yaml /veneur/config.yaml
+COPY example_proxy.yaml /veneur/config_proxy.yaml
+CMD ["/veneur/veneur", "-f", "config.yaml"]

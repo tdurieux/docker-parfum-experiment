@@ -1,0 +1,15 @@
+FROM scratch
+
+LABEL name="Pachyderm" \
+      vendor="Pachyderm"
+
+COPY LICENSE /LICENSE
+COPY licenses /licenses
+
+WORKDIR /app
+COPY worker . 
+COPY worker_init init
+COPY pachctl .
+COPY pachtf .
+
+USER 1000

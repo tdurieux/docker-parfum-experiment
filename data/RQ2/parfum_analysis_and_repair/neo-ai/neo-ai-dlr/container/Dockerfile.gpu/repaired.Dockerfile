@@ -1,0 +1,116 @@
+### Multi-stage Docker image. See https://docs.docker.com/develop/develop-images/multistage-build/
+### Run "docker build" at the root directory of neo-ai-dlr
+
+### Stage 0: Base image
+FROM nvidia/cuda:10.2-cudnn8-devel-ubuntu18.04 AS base
+
+ENV DEBIAN_FRONTEND noninteractive
+
+RUN mkdir -p /packages
+COPY container/TensorRT-7.1.3.4.Ubuntu-18.04.x86_64-gnu.cuda-10.2.cudnn8.0.tar.gz /packages/TensorRT-7.1.3.4.Ubuntu-18.04.x86_64-gnu.cuda-10.2.cudnn8.0.tar.gz
+RUN cd /packages \
+    && tar xzvf TensorRT-7.1.3.4.Ubuntu-18.04.x86_64-gnu.cuda-10.2.cudnn8.0.tar.gz && rm TensorRT-7.1.3.4.Ubuntu-18.04.x86_64-gnu.cuda-10.2.cudnn8.0.tar.gz
+ENV LD_LIBRARY_PATH=/packages/TensorRT-7.1.3.4/lib:$LD_LIBRARY_PATH
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+    python3 \
+    python3-distutils \
+    wget \
+    curl \
+    ca-certificates \
+    openssl \
+    libnettle6 \
+    libssl1.1 \
+    libzstd1 \
+    && rm -rf /var/lib/apt/lists/* \
+    && curl -f https://bootstrap.pypa.io/pip/3.6/get-pip.py -o get-pip.py && python3 get-pip.py && rm get-pip.py \
+    && rm -rf /root/.cache/pip
+
+RUN pip3 install --no-cache-dir -U pip setuptools wheel
+
+### Stage 1: Build
+FROM base AS builder
+WORKDIR /workspace
+
+ENV DEBIAN_FRONTEND noninteractive
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+    build-essential \
+    git \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN wget https://cmake.org/files/v3.22/cmake-3.22.0-linux-x86_64.sh \
+    && bash cmake-3.22.0-linux-x86_64.sh --skip-license --prefix=/usr/local
+
+COPY CMakeLists.txt /workspace/
+COPY Config.cmake.in /workspace/
+COPY README.md /workspace/
+COPY include/ /workspace/include/
+COPY src/ /workspace/src/
+COPY python/ /workspace/python/
+COPY cmake/ /workspace/cmake/
+COPY 3rdparty/ /workspace/3rdparty/
+
+RUN rm -rf /workspace/python/dist && \
+    mkdir /workspace/build && cd /workspace/build && \
+    cmake .. -DUSE_CUDA=ON -DUSE_CUDNN=ON -DUSE_TENSORRT=/packages/TensorRT-7.1.3.4 && \
+    make -j15 && cd ../python && \
+    python3 setup.py bdist_wheel
+
+### Stage 2: Run
+### Stage 2-1: Runner base (everything except the APP-specific handler)
+FROM base AS runner_base
+
+ENV DEBIAN_FRONTEND noninteractive
+
+# python3-dev and gcc are required by multi-model-server
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+    openjdk-8-jdk-headless \
+    python3-dev \
+    gcc \
+    libgtk2.0-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /workspace/python/dist/*.whl /home/model-server/
+
+RUN pip3 install --pre --no-cache-dir multi-model-server \
+    && pip3 install --no-cache-dir --prefer-binary numpy scipy xlrd Pillow boto3 six requests mxnet-cu102 tensorflow_gpu opencv-python \
+    && pip3 install --no-cache-dir /home/model-server/dlr-*.whl \
+    && rm -rf /root/.cache/pip
+
+### Stage 2-2: Runner (APP-specific handler)
+FROM runner_base AS runner
+ARG APP=image_classification
+
+ENV PYTHONUNBUFFERED TRUE
+
+# Disable thread pinning in TVM and Treelite
+ENV TVM_BIND_THREADS 0
+ENV TREELITE_BIND_THREADS 0
+
+ENV USE_GPU 1
+
+RUN useradd -m model-server \
+    && mkdir -p /home/model-server/tmp \
+    && mkdir -p /home/model-server/model
+
+COPY container/dockerd-entrypoint.sh /usr/local/bin/dockerd-entrypoint.sh
+COPY container/config.properties /home/model-server/config.properties
+
+COPY container/neo_template_$APP.py /home/model-server/neo_template.py
+COPY container/mms_config_$APP.sh /home/model-server/mms_config.sh
+
+RUN chmod +x /usr/local/bin/dockerd-entrypoint.sh \
+    && chown -R model-server /home/model-server
+
+EXPOSE 8080 8081
+
+WORKDIR /home/model-server
+ENV TEMP=/home/model-server/tmp
+ENTRYPOINT ["/usr/local/bin/dockerd-entrypoint.sh"]
+CMD ["serve"]
+
+LABEL maintainer="guas@amazon.com, chyunsu@amazon.com"

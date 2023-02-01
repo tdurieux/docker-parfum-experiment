@@ -1,0 +1,71 @@
+{
+  "startTime": 1674248087162,
+  "endTime": 1674248087971,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 5,
+        "lineEnd": 5,
+        "columnStart": 22,
+        "columnEnd": 45
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 7,
+        "lineEnd": 7,
+        "columnStart": 2,
+        "columnEnd": 27
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 12,
+        "lineEnd": 12,
+        "columnStart": 20,
+        "columnEnd": 63
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 5,
+        "lineEnd": 5,
+        "columnStart": 22,
+        "columnEnd": 45
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 7,
+        "lineEnd": 7,
+        "columnStart": 2,
+        "columnEnd": 27
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 12,
+        "lineEnd": 12,
+        "columnStart": 20,
+        "columnEnd": 63
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 50,
+        "lineEnd": 51,
+        "columnStart": 20,
+        "columnEnd": 17
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "ARG UBUNTU_VERSION=20.04\n\nFROM ubuntu:${UBUNTU_VERSION} as ubuntu-nodejs\nARG NODEJS_MAJOR_VERSION=14\nENV DEBIAN_FRONTEND=nonintercative\nRUN apt-get update && apt-get install --no-install-recommends curl -y && \\\n  curl --proto '=https' --tlsv1.2 -sSf -L https://deb.nodesource.com/setup_${NODEJS_MAJOR_VERSION}.x | bash - && \\\n  apt-get install --no-install-recommends nodejs -y && rm -rf /var/lib/apt/lists/*;\n\nFROM ubuntu-nodejs as nodejs-builder\nRUN curl --proto '=https' --tlsv1.2 -sSf -L https://dl.yarnpkg.com/debian/pubkey.gpg | apt-key add - &&\\\n  echo \"deb https://dl.yarnpkg.com/debian/ stable main\" | tee /etc/apt/sources.list.d/yarn.list &&\\\n  apt-get update && apt-get install --no-install-recommends gcc g++ make gnupg2 yarn -y && rm -rf /var/lib/apt/lists/*;\nRUN mkdir -p /app/packages\nWORKDIR /app\nCOPY build build\nCOPY packages packages\nCOPY scripts scripts\nCOPY \\\n  package.json \\\n  tsconfig.json \\\n  yarn.lock \\\n  /app/\n\nFROM nodejs-builder as cardano-services-builder\nRUN yarn --frozen-lockfile --non-interactive &&\\\n  yarn build\n\nFROM nodejs-builder as cardano-services-production-deps\nRUN yarn --frozen-lockfile --non-interactive --production\n\nFROM ubuntu-nodejs as cardano-services\nCOPY --from=cardano-services-production-deps /app/node_modules /app/node_modules\nCOPY --from=cardano-services-builder /app/packages/cardano-services/dist /app/packages/cardano-services/dist\nCOPY --from=cardano-services-production-deps /app/packages/cardano-services/node_modules /app/packages/cardano-services/node_modules\nCOPY --from=cardano-services-builder /app/scripts /app/scripts\nCOPY --from=cardano-services-builder /app/packages/cardano-services/package.json /app/packages/cardano-services/package.json\nCOPY --from=cardano-services-builder /app/packages/core/dist /app/packages/core/dist\nCOPY --from=cardano-services-builder /app/packages/core/package.json /app/packages/core/package.json\nCOPY --from=cardano-services-builder /app/packages/ogmios/dist /app/packages/ogmios/dist\nCOPY --from=cardano-services-builder /app/packages/ogmios/package.json /app/packages/ogmios/package.json\nCOPY --from=cardano-services-builder /app/packages/rabbitmq/dist /app/packages/rabbitmq/dist\nCOPY --from=cardano-services-builder /app/packages/rabbitmq/package.json /app/packages/rabbitmq/package.json\nCOPY --from=cardano-services-builder /app/packages/util/dist /app/packages/util/dist\nCOPY --from=cardano-services-builder /app/packages/util/package.json /app/packages/util/package.json\n\nFROM cardano-services as http-server\nARG NETWORK=mainnet\nRUN curl --proto '=https' --tlsv1.2 -sSf -L https://www.postgresql.org/media/keys/ACCC4CF8.asc | apt-key add - &&\\\n  echo \"deb http://apt.postgresql.org/pub/repos/apt/ `lsb_release -cs`-pgdg main\" | tee  /etc/apt/sources.list.d/pgdg.list &&\\\n  apt-get update && apt-get install -y --no-install-recommends \\\n  ca-certificates && rm -rf /var/lib/apt/lists/*;\nENV \\\n  API_URL=\"http://0.0.0.0:3000\" \\\n  CARDANO_NODE_CONFIG_PATH=/config/cardano-node/config.json \\\n  NETWORK=${NETWORK} \\\n  OGMIOS_URL=\"ws://cardano-node-ogmios:1337\" \\\n  POSTGRES_DB_FILE=/run/secrets/postgres_db \\\n  POSTGRES_HOST=postgres \\\n  POSTGRES_PASSWORD_FILE=/run/secrets/postgres_password \\\n  POSTGRES_PORT=5432 \\\n  POSTGRES_USER_FILE=/run/secrets/postgres_user \\\n  SERVICE_NAMES=\"chain-history,network-info,rewards,stake-pool,tx-submit,utxo\"\nWORKDIR /app/packages/cardano-services\nCOPY packages/cardano-services/config/network/${NETWORK} /config/\nEXPOSE 3000\nCMD [\"node\", \"dist/cjs/run.js\"]\n\nFROM cardano-services as worker\nENV \\\n  OGMIOS_URL=\"ws://cardano-node-ogmios:1337\" \\\n  RABBITMQ_URL='amqp://rabbitmq:5672'\nWORKDIR /app/packages/cardano-services\nCMD [\"node\", \"dist/cjs/startWorker.js\"]\n"
+}

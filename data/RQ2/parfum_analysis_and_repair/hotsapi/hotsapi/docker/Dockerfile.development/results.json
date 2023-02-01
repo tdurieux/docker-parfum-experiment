@@ -1,0 +1,80 @@
+{
+  "startTime": 1674220898147,
+  "endTime": 1674220899677,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 21,
+        "lineEnd": 21,
+        "columnStart": 4,
+        "columnEnd": 58
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 28,
+        "lineEnd": 28,
+        "columnStart": 4,
+        "columnEnd": 117
+      }
+    },
+    {
+      "rule": "gpgUseBatchFlag",
+      "position": {
+        "lineStart": 21,
+        "lineEnd": 21,
+        "columnStart": 61,
+        "columnEnd": 113
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 6,
+        "lineEnd": 6,
+        "columnStart": 1,
+        "columnEnd": 26
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 19,
+        "lineEnd": 19,
+        "columnStart": 3,
+        "columnEnd": 46
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 24,
+        "lineEnd": 24,
+        "columnStart": 3,
+        "columnEnd": 38
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 39,
+        "lineEnd": 40,
+        "columnStart": 1,
+        "columnEnd": 128
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 44,
+        "lineEnd": 44,
+        "columnStart": 1,
+        "columnEnd": 43
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "### Replaces builder pattern with a named multi-stage build\n### building heroprotocol -> parser -> hotsapi sequentially in a single container\n## heroprotocol (base image)\nFROM ubuntu:16.04 AS heroprotocol\n\nRUN apt update && \\\n\tapt install --no-install-recommends -y python git && \\\n\trm -rf /var/lib/apt/lists/*\n\nWORKDIR /opt/heroprotocol\nRUN git clone https://github.com/hotsapi/heroprotocol.git /opt/heroprotocol\nRUN ln -s /opt/heroprotocol/heroprotocol.py /usr/bin/heroprotocol\nENTRYPOINT ['heroprotocol']\n\n\n## Build parser image off heroprotocol/base\nFROM heroprotocol AS parser\n\nRUN apt update && \\\n\t\t\tapt install --no-install-recommends -y git curl apt-transport-https && \\\n\t\t\trm -rf /var/lib/apt/lists/*\nRUN curl -f https://packages.microsoft.com/keys/microsoft.asc | gpg --batch --dearmor > /etc/apt/trusted.gpg.d/microsoft.gpg\nRUN echo \"deb [arch=amd64] https://packages.microsoft.com/repos/microsoft-ubuntu-xenial-prod xenial main\" > /etc/apt/sources.list.d/dotnetdev.list\nRUN apt update && \\\n\t\t\tapt install --no-install-recommends -y dotnet-runtime-2.0.0 && \\\n\t\t\trm -rf /var/lib/apt/lists/*\n\nWORKDIR /opt/hotsapi-parser\nRUN curl -f https://s3-eu-west-1.amazonaws.com/hotsapi-public/Hotsapi.Parser/master/latest/parser.tar.gz > parser.tar.gz && \\\n    tar -xzf parser.tar.gz && \\\n    rm parser.tar.gz\nRUN ln -s /opt/hotsapi-parser/parser.sh /usr/bin/hotsapi-parser\nENTRYPOINT ['hotsapi-parser']\n\n\n## build API image off parser/protocol image\nFROM parser AS hotsapi\n\nRUN apt update && \\\n\tapt install --no-install-recommends -y git curl zip unzip composer \\\n\t\tphp7.0 php7.0-mysql php7.0-zip php7.0-gd mcrypt php7.0-mcrypt php7.0-mbstring php7.0-xml php7.0-curl php7.0-json php-memcached && \\\n\trm -rf /var/lib/apt/lists/*\n\nRUN apt update && \\\n\tapt install --no-install-recommends -y php7.0-fpm nginx supervisor && \\\n\trm -rf /var/lib/apt/lists/*\n\nRUN composer global require hirak/prestissimo\n\nWORKDIR /var/www/hotsapi\nCOPY composer.json composer.lock ./\nRUN composer install --prefer-dist --no-scripts --no-dev --no-autoloader && rm -rf /root/.composer\n\nRUN sed -i 's/upload_max_filesize = .*/upload_max_filesize = 30M/g' /etc/php/7.0/fpm/php.ini\nRUN sed -i 's/post_max_size = .*/post_max_size = 30M/g' /etc/php/7.0/fpm/php.ini\nRUN sed -i 's/;clear_env = .*/clear_env = no/g' /etc/php/7.0/fpm/pool.d/www.conf\nRUN sed -i 's/pm.max_children = .*/pm.max_children = 10/g' /etc/php/7.0/fpm/pool.d/www.conf\nRUN mkdir /var/run/php\nCOPY docker/nginx.conf /etc/nginx\nCOPY docker/supervisord.conf /etc/supervisor\n\nCOPY . .\n# RUN chown -R www-data:www-data .\nRUN chmod -R a+w storage\nRUN chmod -R a+w bootstrap/cache\nRUN composer dump-autoload --no-scripts --no-dev --optimize\nEXPOSE 80\nENTRYPOINT [\"/usr/bin/supervisord\", \"-n\", \"-c\", \"/etc/supervisor/supervisord.conf\"]\n"
+}

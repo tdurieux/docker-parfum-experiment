@@ -1,0 +1,53 @@
+FROM bbernhard/imagemonkey-buildbase2:latest
+
+ENV SENTRY_DSN=
+ENV X_CLIENT_ID=
+ENV X_CLIENT_SECRET=
+ENV JWT_SECRET=
+ENV API_BASE_URL=http://127.0.0.1:8081
+ENV PLAYGROUND_BASE_URL=
+ENV LOCAL_SENTRY_DSN=
+ENV USE_SENTRY=false
+ENV IMAGEMONKEY_DB_CONNECTION_STRING=
+ENV REDIS_ADDRESS=:6379
+ENV DB_HOST=127.0.0.1
+ENV DB_PORT=5433
+
+RUN mkdir -p /home/go/bin
+ENV GOPATH=/home/go
+ENV GOBIN=/home/go/bin
+
+RUN mkdir -p /home/imagemonkey
+
+COPY src/web.go /tmp/src/web.go
+COPY src/auth.go /tmp/src/auth.go
+COPY src/commons /tmp/src/commons
+COPY src/image /tmp/src/image
+COPY src/languages /tmp/src/languages
+COPY src/database /tmp/src/database
+COPY src/parser /tmp/src/parser
+COPY src/datastructures /tmp/src/datastructures
+COPY src/go.mod /tmp/src/go.mod
+COPY src/go.sum /tmp/src/go.sum
+COPY html /home/imagemonkey/html
+COPY js /home/imagemonkey/js
+COPY css /home/imagemonkey/css
+COPY img /home/imagemonkey/img
+RUN mkdir -p /home/imagemonkey/html/templates/components \
+	&& mkdir -p /home/imagemonkey/js/components \
+	&& mkdir -p /home/imagemonkey/js/utils
+ADD src/webui/html/components /home/imagemonkey/html/templates/components/
+ADD src/webui/js/components /home/imagemonkey/js/components/
+ADD src/webui/js/utils /home/imagemonkey/js/utils/
+
+RUN cd /tmp/src/ && go install web.go auth.go
+
+RUN mkdir -p /home/imagemonkey/bin/ \
+	&& mv /home/go/bin/web /home/imagemonkey/bin/web
+
+WORKDIR /home/imagemonkey/bin/
+
+COPY env/docker/run_web.sh /home/imagemonkey/bin/run_web.sh
+RUN chmod u+rx ./run_web.sh
+
+ENTRYPOINT ["./run_web.sh"]

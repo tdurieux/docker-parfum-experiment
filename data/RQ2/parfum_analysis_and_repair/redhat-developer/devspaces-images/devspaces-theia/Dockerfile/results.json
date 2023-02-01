@@ -1,0 +1,81 @@
+{
+  "startTime": 1674250410579,
+  "endTime": 1674250412267,
+  "originalSmells": [
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 129,
+        "lineEnd": 129,
+        "columnStart": 4,
+        "columnEnd": 60
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 253,
+        "lineEnd": 253,
+        "columnStart": 26,
+        "columnEnd": 37
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 106,
+        "lineEnd": 106,
+        "columnStart": 4,
+        "columnEnd": 67
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 251,
+        "lineEnd": 251,
+        "columnStart": 7,
+        "columnEnd": 84
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 42,
+        "lineEnd": 42,
+        "columnStart": 4,
+        "columnEnd": 48
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 103,
+        "lineEnd": 103,
+        "columnStart": 34,
+        "columnEnd": 73
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 252,
+        "lineEnd": 252,
+        "columnStart": 7,
+        "columnEnd": 58
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 252,
+        "lineEnd": 252,
+        "columnStart": 7,
+        "columnEnd": 58
+      }
+    }
+  ],
+  "repairedDockerfile": "# Copyright (c) 2018-2021 Red Hat, Inc.\n# This program and the accompanying materials are made\n# available under the terms of the Eclipse Public License 2.0\n# which is available at https://www.eclipse.org/legal/epl-2.0/\n#\n# SPDX-License-Identifier: EPL-2.0\n#\n# Contributors:\n#   Red Hat, Inc. - initial API and implementation\n###\n# Builder Image\n#\nFROM registry-proxy.engineering.redhat.com/rh-osbs/devspaces-theia-dev-rhel8:3.2 as builder\n\nWORKDIR ${HOME}\n\n# Export GITHUB_TOKEN into environment variable\nARG GITHUB_TOKEN=''\nENV GITHUB_TOKEN=$GITHUB_TOKEN\n\nARG THEIA_GITHUB_REPO=eclipse-theia/theia\n\n# Define upstream version of theia to use\nARG THEIA_VERSION=master\n\nARG THEIA_COMMIT_SHA=''\n\nENV NODE_OPTIONS=\"--max-old-space-size=4096\"\n\n# avoid any linter/formater/unit test\nENV SKIP_LINT=true SKIP_FORMAT=true SKIP_TEST=true\n\n# if true - then unpack che-theia plugins at building image step\nARG UNPACK_CHE_THEIA_PLUGINS=\"true\"\n\n\n# Clone theia\nCOPY asset-theia-source-code.tar.gz /tmp/asset-theia-source-code.tar.gz\nRUN tar xzf /tmp/asset-theia-source-code.tar.gz -C ${HOME} && rm -f /tmp/asset-theia-source-code.tar.gz\n\n#apply patch for Theia loader\nCOPY asset-branding.tar.gz /tmp/asset-branding.tar.gz\nRUN tar xvzf /tmp/asset-branding.tar.gz -C /tmp; rm /tmp/asset-branding.tar.gz cp /tmp/branding/loader/loader.svg ${HOME}/theia-source-code/packages/core/src/browser/icons/loader.svg\nRUN cd ${HOME}/theia-source-code && git apply /tmp/branding/loader/loader.patch\n# patch electron module by removing native keymap module (no need to have some X11 libraries)\nRUN line_to_delete=$(grep -n native-keymap ${HOME}/theia-source-code/dev-packages/electron/package.json | cut -d \":\" -f 1) && \\\n    if [[ ${line_to_delete} ]]; then \\\n        sed -i -e \"${line_to_delete},1d\" ${HOME}/theia-source-code/dev-packages/electron/package.json; \\\n    else \\\n        echo \"[WARNING] native-keymap not found in ${HOME}/theia-source-code/dev-packages/electron/package.json\"; \\\n    fi\n\n# Patch theia\n# Add patches\nADD src/patches ${HOME}/patches\n\n# Apply patches\nRUN if [ -d \"${HOME}/patches/${THEIA_VERSION}\" ]; then \\\n    echo \"Applying patches for Theia version ${THEIA_VERSION}\"; \\\n    for file in $(find \"${HOME}/patches/${THEIA_VERSION}\" -name '*.patch'); do \\\n      echo \"Patching with ${file}\"; \\\n      # if patch already applied, don't ask if it's a reverse-patch and just move on with the build without throwing an error\n      cd ${HOME}/theia-source-code && patch -p1 < ${file} --forward --silent || true; \\\n    done \\\n    fi\n\n\n# Generate che-theia\nARG CDN_PREFIX=\"https://static.developers.redhat.com/che/ds_theia_artifacts/\"\nARG MONACO_CDN_PREFIX=\"https://cdn.jsdelivr.net/npm/\"\nWORKDIR ${HOME}/theia-source-code\n\n# Add che-theia repository content\nCOPY asset-che-theia.tar.gz /tmp/asset-che-theia.tar.gz\nRUN mkdir -p ${HOME}/theia-source-code/che-theia/ && tar xzf /tmp/asset-che-theia.tar.gz -C ${HOME}/theia-source-code/che-theia/ && rm /tmp/asset-che-theia.tar.gz\n\n# run che-theia init command and alias che-theia repository to use local sources insted of cloning\nRUN che-theia init -c ${HOME}/theia-source-code/che-theia/che-theia-init-sources.yml --alias https://github.com/eclipse-che/che-theia=${HOME}/theia-source-code/che-theia\n\n# cleanup theia folders that we don't need to compile\nRUN rm -rf ${HOME}/theia-source-code/examples/browser && \\\n    rm -rf ${HOME}/theia-source-code/examples/electron && \\\n    rm -rf ${HOME}/theia-source-code/examples/api-samples && \\\n    rm -rf ${HOME}/theia-source-code/examples/api-tests && \\\n    rm -rf ${HOME}/theia-source-code/packages/git && \\\n    # ovewrite upstream's lerna 4.0.0 as Che-Theia is not adapted to it\n    sed -i -r -e \"s/\\\"lerna\\\": \\\"..*\\\"/\\\"lerna\\\": \\\"2.11.0\\\"/\" ${HOME}/theia-source-code/package.json && \\\n    # Allow the usage of ELECTRON_SKIP_BINARY_DOWNLOAD=1 by using a more recent version of electron \\\n    sed -i 's|  \"resolutions\": {|  \"resolutions\": {\\n    \"**/electron\": \"7.0.0\",\\n    \"**/vscode-ripgrep\": \"1.12.0\",|' ${HOME}/theia-source-code/package.json && \\\n    # remove all electron-browser module to not compile them\n    find . -name \"electron-browser\"  | xargs rm -rf {} && \\\n    find . -name \"*-electron-module.ts\"  | xargs rm -rf {} && \\\n    rm -rf ${HOME}/theia-source-code/dev-packages/electron/native && \\\n    echo \"\" > ${HOME}/theia-source-code/dev-packages/electron/scripts/post-install.js && \\\n    # Remove linter/formatters of theia\n    sed -i 's|concurrently -n compile,lint -c blue,green \\\\\"theiaext compile\\\\\" \\\\\"theiaext lint\\\\\"|concurrently -n compile -c blue \\\\\"theiaext compile\\\\\"|' ${HOME}/theia-source-code/dev-packages/ext-scripts/package.json\n\nRUN che-theia cdn --theia=\"${CDN_PREFIX}\" --monaco=\"${MONACO_CDN_PREFIX}\"\n\n# Compile Theia\n#{IF:DO_REMOTE_CHECK}\n\n\nRUN echo ${HOME} && cd ${HOME} && tar zxf eclipse-che-theia-generator.tgz && mv package eclipse-che-theia-generator && \\\n    ls -la /home/theia-dev/* && rm eclipse-che-theia-generator.tgz\n\nRUN yum install -y libsecret libsecret-devel make cmake gcc gcc-c++ && rm -rf /var/cache/yum\n\n\n\n#ENDIF\n\nCOPY asset-yarn-*.tar.gz asset-post-download-dependencies-*.tar.gz /tmp/\nRUN tar xzf /tmp/asset-yarn-$(uname -m).tar.gz -C / && rm -f /tmp/asset-yarn-*.tar.gz && \\\n    tar xzf /tmp/asset-post-download-dependencies-$(uname -m).tar.gz -C / && rm -f /tmp/asset-post-download-dependencies-*.tar.gz\n\n# Copy yarn.lock to be the same than the previous build\nCOPY asset-yarn-*.lock /tmp/\nRUN cp /tmp/asset-yarn-$(uname -m).lock ${HOME}/theia-source-code/yarn.lock && rm -f /tmp/asset-yarn-*.lock\n\nENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true \\\n    puppeteer_skip_chromium_download=true\n\nCOPY asset-node-headers.tar.gz ${HOME}/asset-node-headers.tar.gz\nRUN \\\n\n    npm config set tarball ${HOME}/asset-node-headers.tar.gz && \\\n    # Disable puppeteer from downloading chromium\n    npm config set puppeteer_skip_chromium_download true -g && \\\n    yarn config set puppeteer_skip_chromium_download true -g && \\\n    # Disable travis script\n    echo \"#!/usr/bin/env node\" > /home/theia-dev/theia-source-code/scripts/prepare-travis \\\n    # Add offline mode in examples\n    && sed -i -e \"s|spawnSync('yarn', \\[\\]|spawnSync('yarn', \\['--offline'\\]|\" ${HOME}/theia-source-code/plugins/foreach_yarn \\\n    # Disable automatic tests that connect online \\\n    && for d in plugins/*/package.json; do echo \"Disable 'yarn test' in $d\"; sed -i -e \"s/ && yarn test//\" $d; done && yarn cache clean;\n\n# enable offline move (no DNS resolution)\n# comment out -- this fails with \"Device or resource busy\"\n# RUN mv /etc/resolv.conf{,.BAK} && echo \"\" > /etc/resolv.conf\nRUN echo \"\" > /etc/resolv.conf || true\n# kill all electron\nRUN rm -fr /home/theia-dev/theia-source-code/node_modules/*/electron /home/theia-dev/theia-source-code/node_modules/*electron* || true\n\n# Unset GITHUB_TOKEN environment variable if it is empty.\n# This is needed for some tools which use this variable and will fail with 401 Unauthorized error if it is invalid.\n# For example, vscode ripgrep downloading is an example of such case.\nRUN if [ -z $GITHUB_TOKEN ]; then unset GITHUB_TOKEN; fi && \\\n    yarn ${YARN_FLAGS} && yarn build\n\n# Run into production mode\n# revert offline mode (put back previous DNS resolution)\n# comment out -- this fails with \"Device or resource busy\"\n# RUN rm -f /etc/resolv.conf && mv /etc/resolv.conf{.BAK,} || true\nRUN che-theia production\n\n# Compile plugins\nRUN if [ -z $GITHUB_TOKEN ]; then unset GITHUB_TOKEN; fi && \\\n    cd plugins && ./foreach_yarn\n\n# Add yeoman generator & vscode git plug-ins\nCOPY asset-untagged-theia_yeoman_plugin.theia /home/theia-dev/theia-source-code/production/plugins/theia_yeoman_plugin.theia\n\n# unpack che-theia plugins at building image step to avoid unpacking the plugins at starting IDE step and reduce Che-Theia start time\nRUN if [ \"$UNPACK_CHE_THEIA_PLUGINS\" = \"true\" ]; then cd plugins && ./unpack_che-theia_plugins; fi\n\n# Use node image\n# https://access.redhat.com/containers/?tab=tags#/registry.access.redhat.com/ubi8/nodejs-14\nFROM ubi8/nodejs-14:1-79 as build-result\nUSER root\n\nCOPY --from=builder /home/theia-dev/theia-source-code/production /che-theia-build\n\n# change permissions\nRUN find /che-theia-build -exec sh -c \"chgrp 0 {}; chmod g+rwX {}\" \\; 2>log.txt && \\\n    # Add missing permissions on shell scripts of plug-ins\n    find /che-theia-build/plugins -name \"*.sh\" | xargs chmod +x\n\n# to copy the plug-ins folder into a runtime image more easily\nRUN mv /che-theia-build/plugins /default-theia-plugins\n\n###\n# Runtime Image\n#\n\n# Use node image\n# https://access.redhat.com/containers/?tab=tags#/registry.access.redhat.com/ubi8/nodejs-14\nFROM ubi8/nodejs-14:1-79 as runtime\nUSER 0\nRUN yum -y -q update && \\\n    yum -y -q clean all && rm -rf /var/cache/yum && \\\n    echo \"Installed Packages\" && rpm -qa | sort -V && echo \"End Of Installed Packages\"\n\nENV USE_LOCAL_GIT=true \\\n    HOME=/home/theia \\\n    SHELL=/bin/bash \\\n    THEIA_DEFAULT_PLUGINS=local-dir:///default-theia-plugins \\\n    # Specify the directory of git (avoid to search at init of Theia)\n    LOCAL_GIT_DIRECTORY=/usr \\\n    GIT_EXEC_PATH=/usr/libexec/git-core \\\n    # Ignore from port plugin the default hosted mode port\n    PORT_PLUGIN_EXCLUDE_3130=TRUE \\\n    YARN_FLAGS=\"\"\n\n# setup extra stuff\n#Copy branding files\nCOPY --from=builder /tmp/branding ${HOME}/branding\n\nENV YARN_FLAGS=\"--offline\"\n\nENV SUMMARY=\"Red Hat OpenShift Dev Spaces - theia container\" \\\n    DESCRIPTION=\"Red Hat OpenShift Dev Spaces - theia container\" \\\n    PRODNAME=\"devspaces\" \\\n    COMPNAME=\"theia-rhel8\" \\\n    PRODUCT_JSON=${HOME}/branding/product.json\n\nLABEL summary=\"$SUMMARY\" \\\n      description=\"$DESCRIPTION\" \\\n      io.k8s.description=\"$DESCRIPTION\" \\\n      io.k8s.display-name=\"$DESCRIPTION\" \\\n      io.openshift.tags=\"$PRODNAME,$COMPNAME\" \\\n      com.redhat.component=\"$PRODNAME-$COMPNAME-container\" \\\n      name=\"$PRODNAME/$COMPNAME\" \\\n      version=\"3.2\" \\\n      license=\"EPLv2\" \\\n      maintainer=\"Nick Boldt <nboldt@redhat.com>\" \\\n      io.openshift.expose-services=\"\" \\\n      usage=\"\"\n\nEXPOSE 3100 3130\n\nCOPY --from=build-result /default-theia-plugins /default-theia-plugins\n\n# need root user\nUSER root\n\n# Copy sshpass sources\nCOPY asset-sshpass-sources.tar.gz /tmp/\n\n# Install sudo\n# Install git\n# Install git-lfs for Large File Storage\n# Install bzip2 to unpack files\n# Install which tool in order to search git\n# Install curl and bash\n# Install ssh for cloning ssh-repositories\n# Install less for handling git diff properly\n# Install sshpass for handling passwords for SSH keys\n# Install libsecret as Theia requires it\n# Install libsecret-devel on s390x and ppc64le for keytar build (binary included in npm package for x86)\nRUN LIBSECRET=\"libsecret libsecret-devel\" \\\n    && yum install -y $LIBSECRET sudo git git-lfs bzip2 which bash curl openssh less \\\n    && tar -xvf /tmp/asset-sshpass-sources.tar.gz -C /tmp/ && \\\n    cd /tmp/sshpass-*/ && ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" && make install && cd .. && rm -rf *sshpass-* && \\\n    echo \"Installed Packages\" && rpm -qa | sort -V && echo \"End Of Installed Packages\" && rm -rf /var/cache/yum\n\n# setup yarn (if missing)\n# Include yarn assets for runtime image\nCOPY asset-yarn-runtime-image-*.tar.gz /tmp/\nRUN tar xzf /tmp/asset-yarn-runtime-image-$(uname -m).tar.gz -C / && \\\n    rm -f /tmp/asset-yarn-runtime-image-*.tar.gz\n\n RUN \\\n    adduser -r -u 1002 -G root -d ${HOME} -m -s /bin/sh theia \\\n    && echo \"%wheel ALL=(ALL) NOPASSWD: ALL\" >> /etc/sudoers \\\n    # Create /projects for Che\n    && mkdir /projects \\\n    # Create root node_modules in order to not use node_modules in each project folder\n    && mkdir /node_modules \\\n    && for f in \"${HOME}\" \"/etc/passwd\" \"/etc/group /node_modules /default-theia-plugins /projects\"; do\\\n           sudo chgrp -R 0 ${f} && \\\n           sudo chmod -R g+rwX ${f}; \\\n       done \\\n    && cat /etc/passwd | sed s#root:x.*#root:x:\\${USER_ID}:\\${GROUP_ID}::\\${HOME}:/bin/bash#g > ${HOME}/passwd.template \\\n    && cat /etc/group | sed s#root:x:0:#root:x:0:0,\\${USER_ID}:#g > ${HOME}/group.template \\\n    # Add yeoman, theia plugin & VS Code generator and typescript (to have tsc/typescript working)\n    && yarn global add ${YARN_FLAGS} yo @theia/generator-plugin@0.0.1-1622834185 generator-code typescript@3.5.3 \\\n    && mkdir -p ${HOME}/.config/insight-nodejs/ \\\n    # Copy the global git configuration to user config as global config is overwritten by a mounted file at runtime\n    && cp /etc/gitconfig ${HOME}/.gitconfig \\\n    && chmod -R 777 ${HOME}/.config/ \\\n    # Disable the statistics for yeoman\n    && echo '{\"optOut\": true}' > $HOME/.config/insight-nodejs/insight-yo.json \\\n    #{IF:DO_CLEANUP}\n    # Link yarn global modules for yeoman\n    && local_modules=$(ls -d1 /usr/*/node_modules 2>/dev/null || ls -d1 /usr/*/*/node_modules) \\\n    && mv ${local_modules}/* /usr/local/share/.config/yarn/global/node_modules && rm -rf ${local_modules} && ln -s /usr/local/share/.config/yarn/global/node_modules $(dirname ${local_modules})/ \\\n    # Cleanup tmp folder\n    && rm -rf /tmp/* \\\n    # Cleanup yarn cache\n    && yarn cache clean \\\n    #ENDIF\n    # Change permissions to allow editing of files for openshift user\n    && find ${HOME} -exec sh -c \"chgrp 0 {}; chmod g+rwX {}\" \\;\n\nCOPY --chown=theia:root --from=build-result /che-theia-build /home/theia\nUSER theia\nWORKDIR /projects\nCOPY src/entrypoint.sh /entrypoint.sh\nENTRYPOINT [\"/entrypoint.sh\"]\n"
+}

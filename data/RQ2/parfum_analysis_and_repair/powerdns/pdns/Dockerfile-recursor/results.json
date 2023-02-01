@@ -1,0 +1,117 @@
+{
+  "startTime": 1674252078937,
+  "endTime": 1674252080400,
+  "originalSmells": [
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 52,
+        "lineEnd": 56,
+        "columnStart": 4,
+        "columnEnd": 36
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 74,
+        "lineEnd": 74,
+        "columnStart": 4,
+        "columnEnd": 62
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 81,
+        "lineEnd": 81,
+        "columnStart": 4,
+        "columnEnd": 52
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 15,
+        "lineEnd": 15,
+        "columnStart": 4,
+        "columnEnd": 73
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 74,
+        "lineEnd": 74,
+        "columnStart": 4,
+        "columnEnd": 62
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 81,
+        "lineEnd": 81,
+        "columnStart": 4,
+        "columnEnd": 52
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 15,
+        "lineEnd": 15,
+        "columnStart": 4,
+        "columnEnd": 73
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 74,
+        "lineEnd": 74,
+        "columnStart": 4,
+        "columnEnd": 62
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 81,
+        "lineEnd": 81,
+        "columnStart": 4,
+        "columnEnd": 52
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 15,
+        "lineEnd": 15,
+        "columnStart": 4,
+        "columnEnd": 73
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 74,
+        "lineEnd": 74,
+        "columnStart": 4,
+        "columnEnd": 86
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 81,
+        "lineEnd": 81,
+        "columnStart": 4,
+        "columnEnd": 76
+      }
+    }
+  ],
+  "repairedDockerfile": "# USAGE\n\n#   docker build --build-arg MAKEFLAGS=-j8 -t recursor -f docker/Dockerfile-recursor .\n#   docker run -p 1053:53 -p 1053:53/udp -ti --rm recursor\n#   dig a www.example.com @0 -p 1053\n\n# Builder\nFROM debian:10-slim AS builder\n\nENV NO_LUA_JIT=\"s390x arm64\"\n\n# Reusable layer for base update\nRUN apt-get update && apt-get -y dist-upgrade && apt-get clean\n\n# devscripts gives us mk-build-deps (and a lot of other stuff)\nRUN apt-get install -y --no-install-recommends devscripts equivs git curl && apt-get clean && rm -rf /var/lib/apt/lists/*;\n\nCOPY builder-support /source/builder-support\n\n# TODO: control file is not in tarballs at all right now\nRUN mk-build-deps -i -t 'apt-get -y -o Debug::pkgProblemResolver=yes --no-install-recommends' /source/builder-support/debian/recursor/debian-buster/control && \\\n    apt-get clean\n\nCOPY pdns /source/pdns\nCOPY build-aux /source/build-aux\nCOPY m4 /source/m4\nCOPY ext /source/ext\nCOPY .git /source/.git\nCOPY builder/helpers/set-configure-ac-version.sh /usr/local/bin\n\n# build and install (TODO: before we hit this line, rearrange /source structure if we are coming from a tarball)\nWORKDIR /source/pdns/recursordist\n\nARG MAKEFLAGS=\nENV MAKEFLAGS ${MAKEFLAGS:--j2}\n\nARG DOCKER_FAKE_RELEASE=NO\nENV DOCKER_FAKE_RELEASE ${DOCKER_FAKE_RELEASE}\n\n# Manpage deps\n# RUN apt-get install -y python3-venv && apt-get clean\n\n# Manpage prevent\nRUN touch pdns_recursor.1 rec_control.1 # avoid installing pandoc\n\nRUN if [ \"${DOCKER_FAKE_RELEASE}\" = \"YES\" ]; then \\\n      BUILDER_VERSION=\"$(IS_RELEASE=YES BUILDER_MODULES=recursor ./builder-support/gen-version | sed 's/\\([0-9]\\+\\.[0-9]\\+\\.[0-9]\\+\\(\\(alpha|beta|rc\\)\\d\\+\\)\\)?.*/\\1/')\" set-configure-ac-version.sh;\\\n    fi && \\\n    BUILDER_MODULES=recursor autoreconf -vfi\n\nRUN mkdir /build && \\\n    LUAVER=$([ -z \"${NO_LUA_JIT##*$(dpkg --print-architecture)*}\" ] && echo 'lua5.3' || echo 'luajit') && \\\n    ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" \\\n      --with-lua=${LUAVER} \\\n      LDFLAGS=-rdynamic \\\n      --sysconfdir=/etc/powerdns \\\n      --enable-option-checking=fatal && \\\n      make clean && \\\n      make $MAKEFLAGS install DESTDIR=/build && make clean && \\\n      strip /build/usr/local/bin/* /build/usr/local/sbin/*\nRUN cd /tmp && mkdir /build/tmp/ && mkdir debian && \\\n    echo 'Source: docker-deps-for-pdns' > debian/control && \\\n    dpkg-shlibdeps /build/usr/local/bin/rec_control /build/usr/local/sbin/pdns_recursor && \\\n    sed 's/^shlibs:Depends=/Depends: /' debian/substvars >> debian/control && \\\n    equivs-build debian/control && \\\n    dpkg-deb -I equivs-dummy_1.0_all.deb && cp equivs-dummy_1.0_all.deb /build/tmp/\n\n# Runtime\nFROM debian:10-slim\n\n# Reusable layer for base update - Should be cached from builder\nRUN apt-get update && apt-get -y dist-upgrade && apt-get clean\n\n# Ensure python3 and jinja2 is present (for startup script), and tini for signal management\nRUN apt-get install --no-install-recommends -y python3 python3-jinja2 tini libcap2-bin && apt-get clean && rm -rf /var/lib/apt/lists/*;\n\n# Executables from builder\nCOPY --from=builder /build /\nRUN chmod 1777 /tmp # FIXME: better not use /build/tmp for equivs at all\n\n# Ensure dependencies are present\nRUN apt-get install --no-install-recommends -y /tmp/equivs-dummy_1.0_all.deb && apt-get clean && rm -rf /var/lib/apt/lists/*;\n\n# Start script\nCOPY dockerdata/startup.py /usr/local/sbin/pdns_recursor-startup\n\n# Config file(s) from builder\nCOPY dockerdata/recursor.conf /etc/powerdns/\n\n# Is recursor.d necessary if we copy the config into recursor.conf? (see above)\nRUN mkdir -p /etc/powerdns/recursor.d /var/run/pdns-recursor /etc/powerdns/templates.d\n\n# Work with pdns user - not root\nRUN adduser --system --disabled-password --disabled-login --no-create-home --group pdns --uid 953\nRUN chown pdns:pdns /var/run/pdns-recursor /etc/powerdns/recursor.d /etc/powerdns/templates.d\nUSER pdns\n\n# Default DNS ports\nEXPOSE 53/udp\nEXPOSE 53/tcp\n\n# Default webserver port\nEXPOSE 8082/tcp\n\nENTRYPOINT [\"/usr/bin/tini\", \"--\", \"/usr/local/sbin/pdns_recursor-startup\"]\n"
+}

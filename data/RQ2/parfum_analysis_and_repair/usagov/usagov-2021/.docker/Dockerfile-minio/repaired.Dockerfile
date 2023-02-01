@@ -1,0 +1,15 @@
+FROM minio/minio:latest
+
+COPY .docker/src-minio/docker-entrypoint-minio.sh /docker-entrypoint-minio.sh
+COPY .docker/src-minio/setup-bucket.sh /setup-bucket.sh
+COPY .docker/src-minio/certs/ /root/.minio/certs/
+
+RUN curl -f -L https://dl.min.io/client/mc/release/linux-amd64/mc \
+        -s -q --create-dirs \
+        -o /opt/bin/mc \
+    && chmod +x /opt/bin/mc \
+    && chmod +x /docker-entrypoint-minio.sh
+
+ENTRYPOINT ["/docker-entrypoint-minio.sh"]
+
+CMD ["server", "/data", "--console-address", ":9001"]

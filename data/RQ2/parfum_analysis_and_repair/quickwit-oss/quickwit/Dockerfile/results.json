@@ -1,0 +1,44 @@
+{
+  "startTime": 1674253344074,
+  "endTime": 1674253344761,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 6,
+        "lineEnd": 6,
+        "columnStart": 7,
+        "columnEnd": 52
+      }
+    },
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 26,
+        "lineEnd": 26,
+        "columnStart": 7,
+        "columnEnd": 41
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 9,
+        "lineEnd": 14,
+        "columnStart": 7,
+        "columnEnd": 32
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 56,
+        "lineEnd": 57,
+        "columnStart": 7,
+        "columnEnd": 35
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM rust:bullseye AS builder\n\nARG CARGO_FEATURES=release-feature-set\nARG CARGO_PROFILE=release\n\nRUN echo \"Adding Node.js PPA\" \\\n    && curl -f -s https://deb.nodesource.com/setup_16.x | bash\n\nRUN apt-get -y update \\\n    && apt-get -y --no-install-recommends install ca-certificates \\\n                          clang \\\n                          cmake \\\n                          libssl-dev \\\n                          llvm \\\n                          nodejs \\\n    && rm -rf /var/lib/apt/lists/*\n\n# Required by tonic\nRUN rustup component add rustfmt\n\n# Build UI\nCOPY quickwit-ui /quickwit/quickwit-ui\n\nWORKDIR /quickwit/quickwit-ui\n\nRUN echo \"Building Quickwit UI\" \\\n    && npm install --location=global yarn \\\n    && make install build && npm cache clean --force;\n\n# Build workspace\nCOPY . /quickwit\n\nWORKDIR /quickwit\n\nRUN echo \"Building workspace with feature(s) '$CARGO_FEATURES' and profile '$CARGO_PROFILE'\" \\\n    && cargo build \\\n        --features $CARGO_FEATURES \\\n        $(test \"$CARGO_PROFILE\" = \"release\" && echo \"--release\") \\\n    && echo \"Copying binaries to /quickwit/bin\" \\\n    && mkdir -p /quickwit/bin \\\n    && find target/$CARGO_PROFILE -maxdepth 1 -perm /a+x -type f -exec mv {} /quickwit/bin \\;\n\n# Change the default configuration file in order to make the REST,\n# gRPC, and gossip services accessible outside of Docker container.\nCOPY ./config/quickwit.yaml ./config/quickwit.yaml\nRUN sed -i 's/#[ ]*listen_address: 127.0.0.1/listen_address: 0.0.0.0/g' ./config/quickwit.yaml\n\n\nFROM debian:bullseye-slim AS quickwit\n\nLABEL org.opencontainers.image.title=\"Quickwit\"\nLABEL maintainer=\"Quickwit, Inc. <hello@quickwit.io>\"\nLABEL org.opencontainers.image.vendor=\"Quickwit, Inc.\"\nLABEL org.opencontainers.image.licenses=\"AGPL-3.0\"\n\nRUN apt-get -y update \\\n    && apt-get -y --no-install-recommends install ca-certificates \\\n                          libssl1.1 \\\n    && rm -rf /var/lib/apt/lists/*\n\nWORKDIR /quickwit\nRUN mkdir config qwdata\nCOPY --from=builder /quickwit/bin/quickwit /usr/local/bin/quickwit\nCOPY --from=builder /quickwit/config/quickwit.yaml /quickwit/config/quickwit.yaml\n\nENV QW_CONFIG=/quickwit/config/quickwit.yaml\nENV QW_DATA_DIR=/quickwit/qwdata\n\nENTRYPOINT [\"/usr/local/bin/quickwit\"]\n"
+}

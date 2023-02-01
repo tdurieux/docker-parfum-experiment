@@ -1,0 +1,7 @@
+FROM registry.opensource.zalan.do/library/alpine-3.13:latest
+LABEL maintainer="Team Lens @ Zalando SE <team-lens@zalando.de>"
+
+# add binary
+ADD build/linux/e2e /
+
+ENTRYPOINT ["/e2e", "-test.v", "-test.parallel", "64"]

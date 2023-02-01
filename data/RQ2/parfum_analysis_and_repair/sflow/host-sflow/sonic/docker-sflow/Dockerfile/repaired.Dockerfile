@@ -1,0 +1,20 @@
+FROM ubuntu:18.04 as builder
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      build-essential \
+      git-all \
+      libssl-dev \
+      libhiredis-dev && rm -rf /var/lib/apt/lists/*;
+
+RUN git clone https://github.com/sflow/host-sflow && cd host-sflow && make all install FEATURES="SONIC"
+
+FROM ubuntu:18.04 as runner
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      libhiredis0.13 \
+      dumb-init && rm -rf /var/lib/apt/lists/*;
+COPY --from=builder /usr/sbin/hsflowd /usr/sbin/hsflowd
+COPY --from=builder /etc/hsflowd.conf /etc/hsflowd.conf
+COPY --from=builder /etc/hsflowd/modules/* /etc/hsflowd/modules/
+ENTRYPOINT ["/usr/bin/dumb-init", "--"]
+CMD ["/usr/sbin/hsflowd", "-d"]
+

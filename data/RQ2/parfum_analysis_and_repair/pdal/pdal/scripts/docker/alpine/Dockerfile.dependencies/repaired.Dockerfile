@@ -1,0 +1,88 @@
+FROM alpine:3.11
+
+#
+# Nitro looks for unistd.h in the wrong place.
+#
+RUN \
+    mkdir -p /usr/include/linux; \
+    ln -sf /usr/include/unistd.h /usr/include/linux/unistd.h
+
+#
+# gdal-tools is for gdalinfo, which gets used in a test
+#
+RUN \
+    echo "http://mirror.math.princeton.edu/pub/alpinelinux/v3.11/main" >> /etc/apk/repositories; \
+    echo "http://mirror.math.princeton.edu/pub/alpinelinux/v3.11/community" >> /etc/apk/repositories; \
+    echo "http://mirror.math.princeton.edu/pub/alpinelinux/edge/main" >> /etc/apk/repositories; \
+    echo "@edgetesting http://mirror.math.princeton.edu/pub/alpinelinux/edge/testing" >> /etc/apk/repositories; \
+    echo "@edgecomm http://mirror.math.princeton.edu/pub/alpinelinux/edge/community" >> /etc/apk/repositories; \
+    apk update; \
+    apk add --no-cache \
+        git \
+        cmake \
+        ninja \
+        g++ \
+        bash \
+    ; \
+    apk add --no-cache \
+        eigen-dev \
+        py3-numpy \
+        py3-numpy-dev \
+        libxml2-dev \
+        python3-dev \
+        curl-dev \
+        postgresql-dev \
+        sqlite-dev \
+        zstd-dev \
+        libcrypto1.1 \
+        xerces-c-dev \
+        json-c-dev \
+        proj-dev@edgecomm \
+        proj-data@edgecomm \
+        geos-dev@edgecomm \
+        gdal-tools@edgecomm \
+        gdal-dev@edgecomm \
+        libspatialite-dev@edgecomm \
+        libgeotiff-dev@edgecomm \
+        nitro@edgetesting \
+        nitro-dev@edgetesting \
+        laszip-dev@edgecomm \
+        hdf5-dev@edgecomm \
+    ; \
+#
+# These use PDAL's vendor/eigen
+#
+    git clone https://github.com/gadomski/fgt.git; \
+    cd fgt; \
+    mkdir build; \
+    cd build; \
+    cmake .. \
+        -G Ninja \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+    ; \
+    ninja install; \
+    cd /; \
+    rm -rf fgt; \
+    \
+    git clone https://github.com/gadomski/cpd.git; \
+    cd cpd; \
+    mkdir build; \
+    cd build; \
+    cmake .. \
+        -G Ninja \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+    ; \
+    ninja install; \
+    cd /; \
+    rm -rf cpd; \
+    \
+    git clone https://github.com/hobu/laz-perf.git lazperf; \
+    cd lazperf; \
+    mkdir build; \
+    cd build; \
+    cmake .. -G Ninja -DCMAKE_BUILD_TYPE=Release; \
+    ninja install; \
+    cd /; \
+    rm -rf lazperf;

@@ -1,0 +1,49 @@
+FROM node:16-alpine AS web_builder
+WORKDIR /app
+COPY web-frontend .
+RUN npm install && npm run build && npm cache clean --force;
+
+FROM python:3.9-slim as base
+
+ENV VIRTUAL_ENV=/opt/venv
+RUN python3 -m venv $VIRTUAL_ENV
+ENV PATH="$VIRTUAL_ENV/bin:$PATH"
+ENV PYTHONUNBUFFERED=1
+
+FROM base as builder
+WORKDIR /app
+
+# copy requirements over first so this layer is cached and we don't have to reinstall deps when editing src
+COPY requirements-server.txt requirements-formats.txt requirements-dataframe.txt requirements-array.txt requirements-xarray.txt requirements-compression.txt docker/requirements-docker.txt /tmp/
+RUN pip install --no-cache-dir --upgrade pip
+RUN pip install --no-cache-dir \
+  -r /tmp/requirements-server.txt \
+  -r /tmp/requirements-formats.tx \
+  -r /tmp/requirements-dataframe. \
+  -r /tmp/requirements-array.txt \
+  -r /tmp/requirements-xarray.txt \
+  -r /tmp/requirements-compressio \
+  -r /tmp/requirements-docker.txt
+
+COPY --from=web_builder /app/build /app/share/tiled/ui
+COPY . .
+
+# note requirements listed here but all deps should be already satisfied
+RUN pip install --no-cache-dir '.[server, formats, dataframe, array, xarray, compression]'
+
+FROM builder as test
+
+RUN pip install --no-cache-dir '.[client]'
+RUN pip install --no-cache-dir -r requirements-dev.txt
+RUN pytest -v
+
+FROM base as app
+
+COPY --from=builder $VIRTUAL_ENV $VIRTUAL_ENV
+COPY --from=builder /app /app
+
+WORKDIR /deploy
+
+EXPOSE 8000
+
+ENTRYPOINT ["/app/docker/entrypoint.sh"]

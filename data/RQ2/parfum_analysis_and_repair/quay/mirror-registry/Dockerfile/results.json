@@ -1,0 +1,89 @@
+{
+  "startTime": 1674251830732,
+  "endTime": 1674251831838,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 24,
+        "lineEnd": 24,
+        "columnStart": 4,
+        "columnEnd": 92
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 25,
+        "lineEnd": 25,
+        "columnStart": 4,
+        "columnEnd": 40
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 81,
+        "lineEnd": 81,
+        "columnStart": 4,
+        "columnEnd": 34
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 84,
+        "lineEnd": 84,
+        "columnStart": 4,
+        "columnEnd": 52
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 87,
+        "lineEnd": 87,
+        "columnStart": 4,
+        "columnEnd": 34
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 90,
+        "lineEnd": 90,
+        "columnStart": 4,
+        "columnEnd": 40
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 93,
+        "lineEnd": 93,
+        "columnStart": 4,
+        "columnEnd": 32
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 98,
+        "lineEnd": 98,
+        "columnStart": 4,
+        "columnEnd": 72
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 101,
+        "lineEnd": 101,
+        "columnStart": 4,
+        "columnEnd": 96
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "ARG RELEASE_VERSION=${RELEASE_VERSION}\nARG QUAY_IMAGE=${QUAY_IMAGE}\nARG EE_IMAGE=${EE_IMAGE}\nARG EE_BASE_IMAGE=${EE_BASE_IMAGE}\nARG EE_BUILDER_IMAGE=${EE_BUILDER_IMAGE}\nARG POSTGRES_IMAGE=${POSTGRES_IMAGE}\nARG REDIS_IMAGE=${REDIS_IMAGE}\nARG PAUSE_IMAGE=${PAUSE_IMAGE}\n\n# Create Go CLI\nFROM registry.redhat.io/ubi8:latest AS cli\n\n# Need to duplicate these, otherwise they won't be available to the stage\nARG RELEASE_VERSION=${RELEASE_VERSION}\nARG QUAY_IMAGE=${QUAY_IMAGE}\nARG EE_IMAGE=${EE_IMAGE}\nARG POSTGRES_IMAGE=${POSTGRES_IMAGE}\nARG REDIS_IMAGE=${REDIS_IMAGE}\nARG PAUSE_IMAGE=${PAUSE_IMAGE}\n\nENV GOROOT=/usr/local/go\nENV PATH=$GOPATH/bin:$GOROOT/bin:$PATH\n\n# Get Go binary\nRUN curl -f -o go1.16.4.linux-amd64.tar.gz https://dl.google.com/go/go1.16.4.linux-amd64.tar.gz\nRUN tar -xzf go1.16.4.linux-amd64.tar.gz && \\\n    mv go /usr/local && rm go1.16.4.linux-amd64.tar.gz\n\nCOPY . /cli\nWORKDIR /cli\n\n# Create CLI\nENV RELEASE_VERSION=${RELEASE_VERSION}\nENV EE_IMAGE=${EE_IMAGE}\nENV QUAY_IMAGE=${QUAY_IMAGE}\nENV REDIS_IMAGE=${REDIS_IMAGE}\nENV POSTGRES_IMAGE=${POSTGRES_IMAGE}\nENV PAUSE_IMAGE=${PAUSE_IMAGE}\n\nRUN go build -v \\\n\t-ldflags \"-X github.com/quay/mirror-registry/cmd.releaseVersion=${RELEASE_VERSION} -X github.com/quay/mirror-registry/cmd.eeImage=${EE_IMAGE} -X github.com/quay/mirror-registry/cmd.pauseImage=${PAUSE_IMAGE} -X github.com/quay/mirror-registry/cmd.quayImage=${QUAY_IMAGE} -X github.com/quay/mirror-registry/cmd.redisImage=${REDIS_IMAGE} -X github.com/quay/mirror-registry/cmd.postgresImage=${POSTGRES_IMAGE}\" \\\n\t-o mirror-registry\n\n# Create Ansible Execution Environment\nFROM $EE_BASE_IMAGE as galaxy\nARG ANSIBLE_GALAXY_CLI_COLLECTION_OPTS=\nUSER root\n\nADD ansible-runner/context/_build /build\nWORKDIR /build\n\nRUN ansible-galaxy role install -r requirements.yml --roles-path /usr/share/ansible/roles\nRUN ansible-galaxy collection install $ANSIBLE_GALAXY_CLI_COLLECTION_OPTS -r requirements.yml --collections-path /usr/share/ansible/collections\n\nFROM $EE_BUILDER_IMAGE as builder\n\nCOPY --from=galaxy /usr/share/ansible /usr/share/ansible\n\nRUN ansible-builder introspect --sanitize --write-bindep=/tmp/src/bindep.txt --write-pip=/tmp/src/requirements.txt\nRUN assemble\n\nFROM $EE_BASE_IMAGE as ansible\nUSER root\n\nCOPY --from=galaxy /usr/share/ansible /usr/share/ansible\n\nCOPY --from=builder /output/ /output/\nRUN /output/install-from-bindep && rm -rf /output/wheels\nCOPY ansible-runner/context/app /runner\n\n# Pull in Quay dependencies\nFROM $QUAY_IMAGE as quay\nFROM $REDIS_IMAGE as redis\nFROM $POSTGRES_IMAGE as postgres\nFROM $PAUSE_IMAGE as pause\n\n# Create mirror registry archive\nFROM registry.redhat.io/ubi8:latest AS build\n\n# Import and archive image dependencies\nCOPY --from=pause / /pause\nRUN tar -cvf pause.tar -C /pause . && rm pause.tar\n\nCOPY --from=ansible / /ansible\nRUN tar -cvf execution-environment.tar -C /ansible . && rm execution-environment.tar\n\nCOPY --from=redis / /redis\nRUN tar -cvf redis.tar -C /redis . && rm redis.tar\n\nCOPY --from=postgres / /postgres\nRUN tar -cvf postgres.tar -C /postgres . && rm postgres.tar\n\nCOPY --from=quay / /quay\nRUN tar -cvf quay.tar -C /quay . && rm quay.tar\n\nCOPY --from=cli /cli/mirror-registry .\n\n# Bundle quay, redis, postgres, and pause into a single archive\nRUN tar -cvf image-archive.tar quay.tar redis.tar postgres.tar pause.tar && rm image-archive.tar\n\n# Bundle mirror registry archive\nRUN tar -czvf mirror-registry.tar.gz image-archive.tar execution-environment.tar mirror-registry && rm mirror-registry.tar.gz\n\n# Extract bundle to final release image\nFROM registry.redhat.io/ubi8:latest AS release\nCOPY --from=build mirror-registry.tar.gz mirror-registry.tar.gz"
+}

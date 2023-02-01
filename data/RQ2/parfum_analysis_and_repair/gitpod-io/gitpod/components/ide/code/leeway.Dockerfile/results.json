@@ -1,0 +1,81 @@
+{
+  "startTime": 1674220320562,
+  "endTime": 1674220321496,
+  "originalSmells": [
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 15,
+        "lineEnd": 15,
+        "columnStart": 4,
+        "columnEnd": 64
+      }
+    },
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 42,
+        "lineEnd": 42,
+        "columnStart": 4,
+        "columnEnd": 51
+      }
+    },
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 63,
+        "lineEnd": 63,
+        "columnStart": 4,
+        "columnEnd": 33
+      }
+    },
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 64,
+        "lineEnd": 64,
+        "columnStart": 7,
+        "columnEnd": 31
+      }
+    },
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 65,
+        "lineEnd": 65,
+        "columnStart": 7,
+        "columnEnd": 41
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 15,
+        "lineEnd": 15,
+        "columnStart": 68,
+        "columnEnd": 84
+      }
+    },
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 42,
+        "lineEnd": 42,
+        "columnStart": 55,
+        "columnEnd": 71
+      }
+    },
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 65,
+        "lineEnd": 65,
+        "columnStart": 45,
+        "columnEnd": 61
+      }
+    }
+  ],
+  "repairedDockerfile": "# Copyright (c) 2020 Gitpod GmbH. All rights reserved.\n# Licensed under the GNU Affero General Public License (AGPL).\n# See License-AGPL.txt in the project root for license information.\n\nFROM gitpod/openvscode-server-linux-build-agent:centos7-devtoolset8-x64 as dependencies_builder\n\nARG CODE_COMMIT\n\nRUN mkdir /gp-code \\\n    && cd /gp-code \\\n    && git init \\\n    && git remote add origin https://github.com/gitpod-io/openvscode-server \\\n    && git fetch origin $CODE_COMMIT --depth=1 \\\n    && git reset --hard FETCH_HEAD\nWORKDIR /gp-code\nRUN yarn --cwd remote --frozen-lockfile --network-timeout 180000 && yarn cache clean;\n\n\nFROM gitpod/openvscode-server-linux-build-agent:bionic-x64 as code_builder\n\nARG CODE_COMMIT\nARG CODE_QUALITY\n\nARG NODE_VERSION=16.16.0\nARG NVM_DIR=\"/root/.nvm\"\nRUN mkdir -p $NVM_DIR \\\n    && curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.1/install.sh | sh \\\n    && . $NVM_DIR/nvm.sh \\\n    && nvm alias default $NODE_VERSION\nENV PATH=$NVM_DIR/versions/node/v$NODE_VERSION/bin:$PATH\n\nENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1\nENV ELECTRON_SKIP_BINARY_DOWNLOAD=1\n\nRUN mkdir /gp-code \\\n    && cd /gp-code \\\n    && git init \\\n    && git remote add origin https://github.com/gitpod-io/openvscode-server \\\n    && git fetch origin $CODE_COMMIT --depth=1 \\\n    && git reset --hard FETCH_HEAD\nWORKDIR /gp-code\nENV npm_config_arch=x64\nRUN yarn --frozen-lockfile --network-timeout 180000 && yarn cache clean;\n\n# copy remote dependencies build in dependencies_builder image\nRUN rm -rf remote/node_modules/\nCOPY --from=dependencies_builder /gp-code/remote/node_modules/ /gp-code/remote/node_modules/\n\n# update product.json\nRUN nameShort=$(jq --raw-output '.nameShort' product.json) && \\\n    nameLong=$(jq --raw-output '.nameLong' product.json) && \\\n    if [ \"$CODE_QUALITY\" = \"insider\" ]; then \\\n        nameShort=\"$nameShort - Insiders\" \\\n        nameLong=\"$nameLong - Insiders\" \\\n    ; fi  && \\\n    setQuality=\"setpath([\\\"quality\\\"]; \\\"$CODE_QUALITY\\\")\" && \\\n    setNameShort=\"setpath([\\\"nameShort\\\"]; \\\"$nameShort\\\")\" && \\\n    setNameLong=\"setpath([\\\"nameLong\\\"]; \\\"$nameLong\\\")\" && \\\n    jqCommands=\"${setQuality} | ${setNameShort} | ${setNameLong}\" && \\\n    cat product.json | jq \"${jqCommands}\" > product.json.tmp && \\\n    mv product.json.tmp product.json && \\\n    jq '{quality,nameLong,nameShort}' product.json\n\nRUN yarn --cwd extensions compile \\\n    && yarn gulp vscode-web-min \\\n    && yarn gulp vscode-reh-linux-x64-min && yarn cache clean;\n\n# config for first layer needed by blobserve\n# we also remove `static/` from resource urls as that's needed by blobserve,\n# this custom urls will be then replaced by blobserve.\n# Check pkg/blobserve/blobserve.go, `inlineVars` method\nRUN cp /vscode-web/out/vs/gitpod/browser/workbench/workbench.html /vscode-web/index.html \\\n    && sed -i -e 's#static/##g' /vscode-web/index.html\n\n# cli config: alises to gitpod-code\nRUN cp /vscode-reh-linux-x64/bin/remote-cli/gitpod-code /vscode-reh-linux-x64/bin/remote-cli/code \\\n    && cp /vscode-reh-linux-x64/bin/remote-cli/gitpod-code /vscode-reh-linux-x64/bin/remote-cli/gp-code \\\n    && cp /vscode-reh-linux-x64/bin/remote-cli/gitpod-code /vscode-reh-linux-x64/bin/remote-cli/open\n\n# grant write permissions for built-in extensions\nRUN chmod -R ugo+w /vscode-reh-linux-x64/extensions\n\n\nFROM scratch\n# copy static web resources in first layer to serve from blobserve\nCOPY --from=code_builder --chown=33333:33333 /vscode-web/ /ide/\nCOPY --from=code_builder --chown=33333:33333 /vscode-reh-linux-x64/ /ide/\nCOPY --chown=33333:33333 startup.sh supervisor-ide-config.json components-ide-code-codehelper--app/codehelper /ide/\n\nENV GITPOD_ENV_APPEND_PATH=/ide/bin/remote-cli:\n\n# editor config\nENV GITPOD_ENV_SET_EDITOR=/ide/bin/remote-cli/gitpod-code\nENV GITPOD_ENV_SET_VISUAL=\"$GITPOD_ENV_SET_EDITOR\"\nENV GITPOD_ENV_SET_GP_OPEN_EDITOR=\"$GITPOD_ENV_SET_EDITOR\"\nENV GITPOD_ENV_SET_GIT_EDITOR=\"$GITPOD_ENV_SET_EDITOR --wait\"\nENV GITPOD_ENV_SET_GP_PREVIEW_BROWSER=\"/ide/bin/remote-cli/gitpod-code --preview\"\nENV GITPOD_ENV_SET_GP_EXTERNAL_BROWSER=\"/ide/bin/remote-cli/gitpod-code --openExternal\"\n"
+}

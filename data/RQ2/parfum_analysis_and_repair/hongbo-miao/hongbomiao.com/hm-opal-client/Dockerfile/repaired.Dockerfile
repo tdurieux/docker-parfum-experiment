@@ -1,0 +1,1 @@
+# https://github.com/authorizon/opal/blob/master/docs/HOWTO/write_your_own_fetch_provider.md

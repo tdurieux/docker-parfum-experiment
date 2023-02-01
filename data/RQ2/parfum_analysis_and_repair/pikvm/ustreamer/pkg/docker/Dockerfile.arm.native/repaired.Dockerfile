@@ -1,0 +1,32 @@
+FROM balenalib/raspberrypi3-debian:build as build
+
+RUN apt-get update \
+	&& apt-get install -y --no-install-recommends \
+		gcc \
+		libjpeg8-dev \
+		libbsd-dev \
+		libgpiod-dev \
+	&& rm -rf /var/lib/apt/lists/*
+
+WORKDIR /build/ustreamer/
+COPY . .
+RUN make -j5 WITH_GPIO=1
+
+FROM balenalib/raspberrypi3-debian:run as RUN
+
+RUN apt-get update \
+	&& apt-get install -y --no-install-recommends \
+		libevent-2.1 \
+		libevent-pthreads-2.1-6 \
+		libjpeg8 \
+		libbsd0 \
+		libgpiod2 \
+	&& rm -rf /var/lib/apt/lists/*
+
+WORKDIR /ustreamer
+COPY --from=build /build/ustreamer/ustreamer .
+
+EXPOSE 8080
+ENTRYPOINT ["./ustreamer", "--host=::"]
+
+# vim: syntax=dockerfile

@@ -1,0 +1,8 @@
+FROM docker.io/library/golang:1.18
+
+ENV GO111MODULE=on
+
+ADD ./ /go/src/app
+
+WORKDIR /go/src/app
+RUN make download && go mod vendor

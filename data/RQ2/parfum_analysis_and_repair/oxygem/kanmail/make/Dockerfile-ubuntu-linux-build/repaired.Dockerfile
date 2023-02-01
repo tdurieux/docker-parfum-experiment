@@ -1,0 +1,26 @@
+FROM --platform=linux/amd64 ubuntu:18.04
+LABEL maintainer="hello@oxygem.com"
+
+ENV DEBIAN_FRONTEND noninteractive
+
+# pyenv recommended build setup
+RUN apt-get update && apt-get install -y --no-install-recommends make build-essential libssl-dev zlib1g-dev libbz2-dev libreadline-dev libsqlite3-dev wget curl llvm libncurses5-dev xz-utils tk-dev libxml2-dev libxmlsec1-dev libffi-dev liblzma-dev git ca-certificates pkg-config libcairo2-dev libgirepository1.0-dev libgtk-3-dev libwebkit2gtk-4.0-37 gir1.2-webkit2-4.0 && rm -rf /var/lib/apt/lists/*;
+
+# Remove unncessary stuff
+RUN rm -rf /usr/share/icons /usr/share/themes
+
+# pyenv install
+RUN git clone https://github.com/pyenv/pyenv.git ~/.pyenv
+ENV HOME /root
+ENV PYENV_ROOT $HOME/.pyenv
+ENV PATH $PYENV_ROOT/shims:$PYENV_ROOT/bin:$PATH
+
+# Python install
+ADD .python-version /opt/kanmail/.python-version
+WORKDIR /opt/kanmail
+RUN env PYTHON_CONFIGURE_OPTS="--enable-shared" pyenv install `cat .python-version` -v
+
+# Finally, install the linux requirements
+RUN pip install --no-cache-dir pip -U
+ADD requirements /opt/kanmail/requirements
+RUN pip install --no-cache-dir -r requirements/linux.txt

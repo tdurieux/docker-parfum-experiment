@@ -1,0 +1,128 @@
+#### cache image
+#### This image is not pushed to any repository and it shouldn't be used as base image for any other docker build.
+#### Its main goal is to create a `/calypso/.cache` that can be copied over other images that can benefit from a warm cache.
+#### Note that yarn v3 cache lives in `/calypso/.yarn`
+FROM node:16.13.2-buster as cache
+
+ARG node_memory=8192
+WORKDIR /calypso
+ENV NPM_CONFIG_CACHE=/calypso/.cache
+ENV PERSISTENT_CACHE=true
+ENV READONLY_CACHE=false
+ENV PROFILE=true
+ENV SKIP_TSC=true
+ENV NVM_DIR=/calypso/.nvm
+ENV CALYPSO_ENV=production
+ENV BUILD_TRANSLATION_CHUNKS=true
+ENV NODE_OPTIONS=--max-old-space-size=$node_memory
+ENV HOME=/calypso
+
+RUN git clone --branch v0.37.0 --depth 1 https://github.com/nvm-sh/nvm.git "$NVM_DIR" \
+	&& echo ". ${NVM_DIR}/nvm.sh" >> "${HOME}/.bashrc"
+
+COPY . .
+
+# Run nvm.sh in a different dir so it doesn't try to use the version specified in /calypso/.nvmrc.
+# If not, it will fail the image generation.
+RUN cd / \
+	&& . "$NVM_DIR/nvm.sh" \
+	&& cd $HOME \
+	&& nvm install \
+	# Prime yarn cache
+	&& yarn \
+	# Prime webpack caches, including sourcemaps.
+	&& NODE_ENV=production SOURCEMAP=hidden-source-map yarn build-client
+
+ENTRYPOINT [ "/bin/bash" ]
+
+#### base image
+#### This image can be used as a base image for other builds, or to uni test and build calypso.
+FROM node:16.13.2-buster as base
+
+ARG node_memory=8192
+ARG user=calypso
+ARG UID=1003
+
+WORKDIR /calypso
+ENV NPM_CONFIG_CACHE=/calypso/.cache
+ENV NVM_DIR=/calypso/.nvm
+ENV NODE_OPTIONS=--max-old-space-size=$node_memory
+ENV HOME=/calypso
+ENV SKIP_TSC=true
+ENV PUPPETEER_SKIP_DOWNLOAD=true
+ENV PLAYWRIGHT_SKIP_DOWNLOAD=true
+
+# Add user calypso with uid 1003, give it sudo permissions
+RUN apt-get update \
+	&& apt-get install -y sudo zip jq \
+	&& adduser --uid $UID --disabled-password $user \
+	&& echo "$user ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/$user \
+	&& chmod 0440 /etc/sudoers.d/$user \
+	&& chown $UID /calypso \
+	&& rm -rf /var/lib/apt/lists/*
+
+# Set bash as the default shell
+RUN rm /bin/sh && ln -s /bin/bash /bin/sh
+# Copy nvm cache so we don't need to download it again
+COPY --from=cache --chown=$UID /calypso/.nvm /calypso/.nvm
+# Copy all other caches (webpack, babel, yarn...)
+COPY --from=cache --chown=$UID /calypso/.cache /calypso/.cache
+COPY --from=cache --chown=$UID /calypso/.bashrc /calypso/.bashrc
+COPY --from=cache --chown=$UID /calypso/.yarn /calypso/.yarn
+
+ENTRYPOINT [ "/bin/bash" ]
+
+#### ci-e2e image
+#### This image is used to run E2E tests.
+FROM base as ci-e2e
+
+ENV PUPPETEER_SKIP_DOWNLOAD=false
+ENV PLAYWRIGHT_SKIP_DOWNLOAD=false
+ENV DISPLAY=:99
+
+RUN apt update \
+	&& apt-get install -y \
+		fonts-liberation \
+		fonts-noto \
+		git-restore-mtime \
+		gtk2-engines-pixbuf \
+		libappindicator3-1 \
+		libasound2 \
+		libatk-bridge2.0-0 \
+		libatspi2.0-0 \
+		libdbus-glib-1-2 \
+		libgtk-3-0 \
+		libgbm-dev \
+		libnspr4 \
+		libnss3 \
+		libsecret-1-dev \
+		libx11-xcb1 \
+		libxss1 \
+		libxtst6 \
+		xdg-utils \
+		xfonts-100dpi \
+		xfonts-75dpi \
+		xfonts-base \
+		xfonts-cyrillic \
+		xfonts-scalable \
+		xvfb
+
+ENTRYPOINT [ "/bin/bash" ]
+
+#### ci-wpcom image
+#### This image is used to test and build WPCOM plugins in Calypso repo.
+FROM base as ci-wpcom
+
+COPY --from=composer:latest /usr/bin/composer /usr/local/bin/composer
+COPY --from=cache --chown=$UID /calypso/composer.* /calypso/
+
+RUN apt update &&\
+	apt-get install -y apt-transport-https &&\
+	wget https://packages.sury.org/php/apt.gpg -O /etc/apt/trusted.gpg.d/php-sury.gpg &&\
+	echo "deb https://packages.sury.org/php/ buster main" > /etc/apt/sources.list.d/php-sury.list &&\
+	apt update &&\
+ 	apt-get upgrade -y &&\
+	apt-get install -y php7.4-cli php7.4-xml php7.4-mbstring docker-compose &&\
+	composer install
+
+ENTRYPOINT [ "/bin/bash" ]

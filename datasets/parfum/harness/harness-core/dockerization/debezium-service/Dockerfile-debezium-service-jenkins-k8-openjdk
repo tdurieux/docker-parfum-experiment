@@ -1,0 +1,10 @@
+FROM harness/java-docker-base:smp_jdk11
+
+COPY --chown=65534:65534 redisson-jcache.yaml /opt/harness/
+COPY --chown=65534:65534 config.yml /opt/harness/
+COPY --chown=65534:65534 debezium-service-capsule.jar /opt/harness/
+COPY --chown=65534:65534 scripts /opt/harness/
+
+RUN chmod 500 /opt/harness/*.sh
+
+CMD [ "./run.sh" ]

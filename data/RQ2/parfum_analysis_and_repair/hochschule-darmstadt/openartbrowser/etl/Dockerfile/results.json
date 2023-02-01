@@ -1,0 +1,71 @@
+{
+  "startTime": 1674220866465,
+  "endTime": 1674220867502,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 6,
+        "lineEnd": 6,
+        "columnStart": 4,
+        "columnEnd": 46
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 14,
+        "lineEnd": 14,
+        "columnStart": 4,
+        "columnEnd": 29
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 34,
+        "lineEnd": 34,
+        "columnStart": 4,
+        "columnEnd": 30
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 64,
+        "lineEnd": 64,
+        "columnStart": 4,
+        "columnEnd": 21
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 84,
+        "lineEnd": 84,
+        "columnStart": 4,
+        "columnEnd": 45
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 79,
+        "lineEnd": 79,
+        "columnStart": 4,
+        "columnEnd": 58
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 80,
+        "lineEnd": 80,
+        "columnStart": 4,
+        "columnEnd": 42
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM python:3 as Wikicrawler\n\nWORKDIR /app\n# The pythonpath is needed for package/module imports\nENV PYTHONPATH \"${PYTHONPATH}:/app\"\n\nRUN pip install --no-cache-dir pywikibot ijson wikitextparser\n\n#copy necessary files\nCOPY [\"./data_extraction/\", \"/app/data_extraction\"]\nCOPY [\"./user-config.py\", \"/app\"]\nCOPY [\"./shared/\", \"/app/shared\"]\nRUN mkdir \"/app/logs\"\n# run get_wikidata_items in development mode\nRUN pip install --no-cache-dir SPARQLWrapper\nRUN [\"python\", \"/app/data_extraction/get_wikidata_items.py\", \"-d\", \"5\"]\nRUN [\"python\", \"/app/data_extraction/get_wikipedia_extracts.py\"]\n\n\n# ------------------------------------------------\n\nFROM python:3 as data_enhancement\nENV PYTHONPATH \"${PYTHONPATH}:/app\"\n\nWORKDIR /app\n\n# get files from previous stage\nCOPY --from=Wikicrawler /app/crawler_output/ /app/crawler_output/\n\nRUN mkdir data_enhancement\nCOPY [\"./data_enhancement/\", \"/app/data_enhancement\"]\nCOPY [\"./shared/\", \"/app/shared\"]\nRUN mkdir \"/app/logs\"\n\nRUN pip install --no-cache-dir ijson requests\nRUN [\"python\", \"./data_enhancement/estimate_movement_period.py\"]\nRUN [\"python\", \"./data_enhancement/has_part_part_of_enhancement.py\"]\nRUN [\"python\", \"./data_enhancement/add_youtube_videos.py\"]\n\nRUN [\"python\", \"./data_enhancement/ranking.py\"]\n# ------------------------------------------------\n\nFROM stedolan/jq:latest as merge_files\n\nWORKDIR /app\n\n# get files from previous stage\nCOPY --from=data_enhancement /app/crawler_output/intermediate_files/json/ /app/\n\nRUN jq -s \"[.[][]]\" artworks.json genres.json artists.json locations.json materials.json movements.json motifs.json classes.json > art_ontology.json\n\n# ------------------------------------------------\n\nFROM python:3 as post_data_ranking\nENV PYTHONPATH \"${PYTHONPATH}:/app\"\n\nWORKDIR /app\n\n# copy necessary files\nCOPY --from=merge_files /app/art_ontology.json/ /app/crawler_output/\n\nCOPY [\"./data_enhancement/split_languages.py\", \"/app/data_enhancement/split_languages.py\"]\nCOPY --from=Wikicrawler /app/shared/ /app/shared/\n\nRUN pip install --no-cache-dir ijson\nRUN [\"python\", \"data_enhancement/split_languages.py\"]\n\n# art_ontology.json is moved to /root because elasticsearch_helper.py\n# expects the json file in the home directory\nRUN [\"cp\", \"-r\", \"/app/crawler_output\", \"/root/crawler_output/\"]\n\n# ------------------------------------------------\n\nFROM docker.elastic.co/elasticsearch/elasticsearch:7.4.2\nENV PYTHONPATH \"${PYTHONPATH}:/app\"\n\nWORKDIR /app\n\nRUN yum update -y && \\\n    yum install -y https://repo.ius.io/ius-release-el7.rpm && \\\n    yum install -y python36u python36u-pip && rm -rf /var/cache/yum\n\nRUN python3 --version\n\nRUN pip3 install --no-cache-dir elasticsearch ijson requests\n\nRUN mkdir /var/log/elasticsearch && \\\n    mkdir /var/lib/elasticsearch && \\\n    chown elasticsearch:elasticsearch /var/log/elasticsearch && \\\n    chown elasticsearch:elasticsearch /var/lib/elasticsearch\n\n# copy elasticsearch config from repo into docker container\nCOPY --chown=elasticsearch:elasticsearch elasticsearch.yml /usr/share/elasticsearch/config/\n\n#copy other necessary files\nCOPY --from=post_data_ranking /app/crawler_output/ /app/crawler_output/\nCOPY [\"./shared/\", \"/app/shared\"]\nCOPY [\"./upload_to_elasticsearch/\", \"/app/upload_to_elasticsearch/\"]\n"
+}

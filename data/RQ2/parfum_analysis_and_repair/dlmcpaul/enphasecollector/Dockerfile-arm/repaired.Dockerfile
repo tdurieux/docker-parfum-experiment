@@ -1,0 +1,15 @@
+FROM eclipse-temurin:17-jre-focal
+LABEL maintainer="dlmcpaul@gmail.com"
+
+ARG JAR_FILE
+COPY ${JAR_FILE} /app.jar
+
+ENV SPRING_DATASOURCE_URL=jdbc:h2:/internal_db/solar_stats_db
+RUN mkdir "/properties"
+RUN touch "/properties/application.properties"
+
+ENTRYPOINT ["java", "-Djava.security.egd=file:/dev/./urandom", "-Dspring.jmx.enabled=false", "-jar", "app.jar", "--spring.config.additional-location=file:/properties/application.properties"]
+
+EXPOSE 8080
+
+VOLUME /internal_db /properties

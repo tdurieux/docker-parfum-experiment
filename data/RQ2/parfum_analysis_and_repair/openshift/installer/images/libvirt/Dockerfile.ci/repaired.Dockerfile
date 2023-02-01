@@ -1,0 +1,34 @@
+# This Dockerfile is a used by CI to publish an installer image for creating libvirt clusters
+# It builds an image containing openshift-install and nss-wrapper for remote deployments, as well as the google cloud-sdk for nested GCE environments.
+
+FROM registry.ci.openshift.org/ocp/builder:rhel-8-golang-1.17-openshift-4.10 AS builder
+ARG TAGS="libvirt"
+RUN yum install -y libvirt-devel && \
+    yum clean all && rm -rf /var/cache/yum/*
+WORKDIR /go/src/github.com/openshift/installer
+COPY . .
+RUN DEFAULT_ARCH="$(go env GOHOSTARCH)" hack/build.sh
+
+FROM centos:7
+COPY --from=builder /go/src/github.com/openshift/installer/bin/openshift-install /bin/openshift-install
+COPY --from=builder /go/src/github.com/openshift/installer/images/libvirt/mock-nss.sh /bin/mock-nss.sh
+COPY --from=builder /go/src/github.com/openshift/installer/images/libvirt/google-cloud-sdk.repo /etc/yum.repos.d/google-cloud-sdk.repo
+
+RUN yum update -y && \
+    yum install --setopt=tsflags=nodocs -y \
+    genisoimage \
+    gettext \
+    google-cloud-sdk-365.0.1 \
+    libvirt-client \
+    libvirt-libs \
+    nss_wrapper \
+    openssh-clients && \
+    yum clean all && rm -rf /var/cache/yum/*
+
+RUN curl -f -L https://github.com/mikefarah/yq/releases/download/3.3.0/yq_linux_amd64 -o /usr/bin/yq && \
+    chmod +x /usr/bin/yq
+RUN mkdir /output && chown 1000:1000 /output
+USER 1000:1000
+ENV PATH /bin
+ENV HOME /output
+WORKDIR /output

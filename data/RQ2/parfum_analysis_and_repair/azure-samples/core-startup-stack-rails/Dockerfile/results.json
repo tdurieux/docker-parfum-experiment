@@ -1,0 +1,17 @@
+{
+  "startTime": 1674253808621,
+  "endTime": 1674253809316,
+  "originalSmells": [
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 32,
+        "lineEnd": 32,
+        "columnStart": 4,
+        "columnEnd": 43
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Copyright (c) Microsoft Corporation.\n# Licensed under the MIT license.\n\nFROM ruby:2.6.6-alpine AS build-env\n\nARG RAILS_ROOT=/app\nARG BUILD_PACKAGES=\"build-base curl-dev git\"\nARG DEV_PACKAGES=\"postgresql-dev yaml-dev zlib-dev nodejs yarn libxml2-dev libxslt-dev\"\nARG RUBY_PACKAGES=\"tzdata\"\n\nENV RAILS_ENV=production SECRET_KEY_BASE=fake NODE_ENV=production BUNDLE_APP_CONFIG=\"$RAILS_ROOT/.bundle\"\n\nWORKDIR $RAILS_ROOT\n\n# install packages\nRUN apk update \\\n    && apk upgrade \\\n    && apk add --update --no-cache $BUILD_PACKAGES $DEV_PACKAGES $RUBY_PACKAGES\n\nRUN gem install bundler -v 2.2.19\n\nCOPY Gemfile* package.json yarn.lock ./\nRUN bundle config build.nokogiri --use-system-libraries \\\n    && bundle config --global frozen 1 \\\n    && bundle config set --local path 'vendor/bundle' \\\n    && bundle config set --local without 'development:test:assets' \\\n    && bundle install -j4 --retry 3 \\\n    # Remove unneeded files (cached *.gem, *.o, *.c)\n    && rm -rf vendor/bundle/ruby/2.5.0/cache/*.gem \\\n    && find vendor/bundle/ruby/*/gems/ -name \"*.c\" -delete \\\n    && find vendor/bundle/ruby/*/gems/ -name \"*.o\" -delete\n\nRUN yarn install --production --check-files && yarn cache clean;\nCOPY . .\nRUN bundle exec bin/rails webpacker:compile \\\n    && bundle exec bin/rails assets:precompile \\\n    && rm -rf node_modules tmp/cache app/assets/images app/assets/stylesheets vendor/assets spec\n\n############### Build step done ###############\n\nFROM ruby:2.6.6-alpine as app\n\nARG RAILS_ROOT=/app\nARG PACKAGES=\"tzdata postgresql-client nodejs bash libxml2 libxslt openssh\"\nENV RAILS_ENV=production BUNDLE_APP_CONFIG=\"$RAILS_ROOT/.bundle\"\nWORKDIR $RAILS_ROOT\n# install packages\nRUN apk update \\\n    && apk upgrade \\\n    && apk add --update --no-cache $PACKAGES \\\n    && gem install bundler -v2.2.19\nRUN echo \"root:Docker!\" | chpasswd\nCOPY --from=build-env $RAILS_ROOT $RAILS_ROOT\n\n# Copy the sshd_config file to the /etc/ssh/ directory\nCOPY sshd_config /etc/ssh/\n# Generate SSH host keys\nRUN ssh-keygen -A\n\nARG commit=\"Unset\"\nENV COMMIT=${commit}\n\nEXPOSE 3000 2222\nCMD [\"bash\", \"startup.sh\"]\n\nFROM scratch as static\nARG RAILS_ROOT=/app\nCOPY --from=build-env ${RAILS_ROOT}/public ."
+}

@@ -1,0 +1,44 @@
+{
+  "startTime": 1674251457521,
+  "endTime": 1674251458514,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 34,
+        "lineEnd": 35,
+        "columnStart": 4,
+        "columnEnd": 28
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 38,
+        "lineEnd": 38,
+        "columnStart": 4,
+        "columnEnd": 31
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 15,
+        "lineEnd": 27,
+        "columnStart": 4,
+        "columnEnd": 15
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 15,
+        "lineEnd": 27,
+        "columnStart": 4,
+        "columnEnd": 15
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "{% from \"dockers/dockerfile-macros.j2\" import install_debian_packages, install_python_wheels, copy_files %}\nFROM docker-config-engine-bullseye-{{DOCKER_USERNAME}}:{{DOCKER_USERTAG}}\n\nARG docker_container_name\nARG image_version\nRUN [ -f /etc/rsyslog.conf ] && sed -ri \"s/%syslogtag%/$docker_container_name#%syslogtag%/;\" /etc/rsyslog.conf\n\n# Make apt-get non-interactive\nENV DEBIAN_FRONTEND=noninteractive\n\n# Pass the image_version to container\nENV IMAGE_VERSION=$image_version\n\n# Install required packages\nRUN apt-get update && \\\n    apt-get install --no-install-recommends -y \\\n        build-essential \\\n        python3-dev \\\n        ipmitool \\\n        librrd8 \\\n        librrd-dev \\\n        rrdtool \\\n        python3-smbus \\\n        dmidecode \\\n        i2c-tools \\\n        psmisc \\\n        python3-jsonschema \\\n        libpci3 && rm -rf /var/lib/apt/lists/*;\n\n# On Arista devices, the sonic_platform wheel is not installed in the container.\n# Instead, the installation directory is mounted from the host OS. However, this method\n# doesn't ensure all dependencies are installed in the container. So here we\n# install any dependencies required by the Arista sonic_platform package.\n# TODO: eliminate the need to install these explicitly.\nRUN pip3 install --no-cache-dir grpcio==1.39.0 \\\n        grpcio-tools==1.39.0\n\n# Barefoot platform vendors' sonic_platform packages import the Python 'thrift' library\nRUN pip3 install --no-cache-dir thrift==0.13.0\n\n{% if docker_platform_monitor_debs.strip() -%}\n# Copy locally-built Debian package dependencies\n{{ copy_files(\"debs/\", docker_platform_monitor_debs.split(' '), \"/debs/\") }}\n\n# Install locally-built Debian packages and implicitly install their dependencies\n{{ install_debian_packages(docker_platform_monitor_debs.split(' ')) }}\n{%- endif %}\n\n{% if docker_platform_monitor_pydebs.strip() -%}\n# Copy locally-built Debian package dependencies\n{{ copy_files(\"python-debs/\", docker_platform_monitor_pydebs.split(' '), \"/debs/\") }}\n\n# Install locally-built Debian packages and implicitly install their dependencies\n{{ install_debian_packages(docker_platform_monitor_pydebs.split(' ')) }}\n{%- endif %}\n\n{% if docker_platform_monitor_whls.strip() -%}\n# Copy locally-built Python wheel dependencies\n{{ copy_files(\"python-wheels/\", docker_platform_monitor_whls.split(' '), \"/python-wheels/\") }}\n\n# Install locally-built Python wheel dependencies\n{{ install_python_wheels(docker_platform_monitor_whls.split(' ')) }}\n{% endif %}\n\n\n# Clean up\nRUN apt-get purge -y           \\\n        build-essential        \\\n        python3-dev         && \\\n    apt-get clean -y        && \\\n    apt-get autoclean -y    && \\\n    apt-get autoremove -y   && \\\n    rm -rf /debs               \\\n           /python-wheels      \\\n           ~/.cache\n\nCOPY [\"lm-sensors.sh\", \"/usr/bin/\"]\nCOPY [\"docker-pmon.supervisord.conf.j2\", \"docker_init.j2\", \"/usr/share/sonic/templates/\"]\nCOPY [\"ssd_tools/*\", \"/usr/bin/\"]\nCOPY [\"files/supervisor-proc-exit-listener\", \"/usr/bin\"]\nCOPY [\"critical_processes\", \"/etc/supervisor\"]\n\nRUN sonic-cfggen -a \"{\\\"CONFIGURED_PLATFORM\\\":\\\"{{CONFIGURED_PLATFORM}}\\\"}\" -t /usr/share/sonic/templates/docker_init.j2 > /usr/bin/docker_init.sh\nRUN rm -f /usr/share/sonic/templates/docker_init.j2\nRUN chmod 755 /usr/bin/docker_init.sh\n\nENTRYPOINT [\"/usr/bin/docker_init.sh\"]\n"
+}

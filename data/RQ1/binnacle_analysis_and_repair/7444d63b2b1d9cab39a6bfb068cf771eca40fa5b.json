@@ -1,0 +1,35 @@
+{
+  "startTime": 1674250595258,
+  "endTime": 1674250595388,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 8,
+        "lineEnd": 8,
+        "columnStart": 4,
+        "columnEnd": 32
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 8,
+        "lineEnd": 8,
+        "columnStart": 4,
+        "columnEnd": 32
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 8,
+        "lineEnd": 8,
+        "columnStart": 4,
+        "columnEnd": 32
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "#**********************************************************************\n# Builder\n#\n# Create a go runtime suitable for building and testing kfctl\nARG GOLANG_VERSION=1.12\nFROM golang:$GOLANG_VERSION as builder\n\nRUN apt-get update && apt-get install --no-install-recommends -y git unzip && rm -rf /var/lib/apt/lists/*;\n\n# junit report is used to conver go test output to junit for reporting\nRUN go get -u github.com/jstemmer/go-junit-report\n\n# We need gcloud to get gke credentials.\nRUN \\\n    cd /tmp && \\\n    wget -nv https://dl.google.com/dl/cloudsdk/release/install_google_cloud_sdk.bash && \\\n    chmod +x install_google_cloud_sdk.bash && \\\n    ./install_google_cloud_sdk.bash --disable-prompts --install-dir=/opt/\n\nENV PATH /go/bin:/usr/local/go/bin:/opt/google-cloud-sdk/bin:${PATH}\n\n# use go modules\nENV GO111MODULE=on\nENV GOPATH=/go\n\n# Create bootstrap folder\nRUN mkdir -p ${GOPATH}/src/github.com/kubeflow/kubeflow/bootstrap\nWORKDIR ${GOPATH}/src/github.com/kubeflow/kubeflow/bootstrap\n\n# Download dependencies first to optimize Docker caching.\nCOPY go.mod .\nCOPY go.sum .\nCOPY hack/v2.zip hack/v2.zip\nRUN unzip -q -d /tmp hack/v2.zip\nRUN go mod download\n# Copy in the source\nCOPY . .\n\n#**********************************************************************\n# Bootstrap base\n#\n# A container that builds bootstrap.\n#\n# TODO(https://github.com/kubeflow/kubeflow/issues/2870): We\n# might get rid of the bootstrap binary and instead just have kfctl\n# and allow kfctl to run in a daemon/server mode.\n#\nFROM builder as bootstrap_base\n\nRUN make build-bootstrap\n\n#**********************************************************************\n#\n# kfctl_base\n#\nFROM builder as kfctl_base\n\nRUN make build-kfctl\n\n#**********************************************************************\n#\n# Final image base\n#\n\nFROM alpine:3.9.4 as barebones_base\nRUN mkdir -p /opt/kubeflow\nWORKDIR /opt/kubeflow\n\n#**********************************************************************\n#\n# kfctl\n#\nFROM barebones_base as kfctl\n\nCOPY --from=kfctl_base /go/src/github.com/kubeflow/kubeflow/bootstrap/bin/kfctl /usr/local/bin\n\nCMD [\"/bin/bash\", \"-c\", \"trap : TERM INT; sleep infinity & wait\"]\n\n#**********************************************************************\n#\n# bootstrap\n#\nFROM barebones_base as bootstrap\nARG registries\n\nCOPY $registries /opt/registries\n\nCOPY --from=bootstrap_base ${GOPATH}/src/github.com/kubeflow/kubeflow/bootstrap/bin/bootstrapper /opt/kubeflow/\n\nCOPY config/default.yaml /opt/kubeflow/\nCOPY image_registries.yaml /opt/kubeflow/\nRUN mkdir -p /opt/bootstrap\nRUN mkdir -p /opt/versioned_registries\nRUN chmod a+rx /opt/kubeflow/bootstrapper\n\nENV PATH /opt/kubeflow:/opt/bootstrap:${PATH}\n\n\nEXPOSE 8080\n\n\n# Set default values for USER, USER_ID, GROUP_ID\n# The startup script will create the user and su to that user.\n# We delay the user creation until runtime so that user can specify\n# the user info at runtime.\n\n# Work around for https://github.com/ksonnet/ksonnet/issues/298\nENV USER kubeflow\nENV USER_ID 1000\nENV GROUP_ID 1000\nENV GROUP kubeflow\n\nCMD [\"/opt/kubeflow/bootstrapper\",\"--in-cluster\",\"--namespace=kubeflow\",\"--apply\"]\n"
+}

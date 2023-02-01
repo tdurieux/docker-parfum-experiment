@@ -1,0 +1,35 @@
+{
+  "startTime": 1674255873013,
+  "endTime": 1674255873782,
+  "originalSmells": [
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 53,
+        "lineEnd": 67,
+        "columnStart": 4,
+        "columnEnd": 21
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 10,
+        "lineEnd": 10,
+        "columnStart": 4,
+        "columnEnd": 183
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 10,
+        "lineEnd": 10,
+        "columnStart": 4,
+        "columnEnd": 183
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM debian AS builder\n\nARG VERSION=latest\nARG WALLET=true\nARG UPNPC=true\nARG USE_OLD_BERKLEYDB=true\n\nCOPY --from=kamehb/berkleydb4.8-dev /opt/db /opt/db\n\nRUN apt update && \\\n    apt install --no-install-recommends -y build-essential libc6-dev binutils git autoconf pkg-config automake libtool libdb-dev libdb++-dev libboost-all-dev libssl-dev libminiupnpc-dev libevent-dev dpkg-dev && rm -rf /var/lib/apt/lists/*;\n\nCOPY . /MFCoin\n\nWORKDIR /MFCoin\n\nRUN if ! [ \"$VERSION\" = latest ]; then \\\n        git checkout \"tags/v.$VERSION\"; \\\n    fi\n\nRUN git submodule update --init --recursive\n\nRUN echo -n \"-static-libgcc -static-libstdc++ -static\" > /ldflags\nRUN echo -n -all-static > /ltaldflags\n\nRUN LDFLAGS=\"$(cat /ldflags)\" LIBTOOL_APP_LDFLAGS=\"$(cat /ltaldflags)\" ./autogen.sh\n\n# flags\nRUN if [ \"$WALLET\" = true ]; then \\\n        if [ \"$USE_OLD_BERKLEYDB\" = true ]; then \\\n            echo -n \" -L/opt/db/lib/\" >> /ldflags; \\\n            echo -n \" -I/opt/db/include/\" >> /cppflags; \\\n        else \\\n            echo -n --with-incompatible-bdb > /newdbflag; \\\n            echo -n \" -I/usr/include/\" >> /cppflags; \\\n        fi \\\n    else \\\n        echo -n --disable-wallet > /nowalletflag; \\\n    fi\nRUN if [ \"$UPNPC\" = false ]; then \\\n        echo -n --without-miniupnpc > /noupnpcflag; \\\n    fi\nRUN echo -n \" -L/usr/lib/\" >> /ldflags\nRUN echo -n \" -I/usr/include/boost/\" >> /cppflags\n\nRUN export LDFLAGS=\"$(cat /ldflags)\" && \\\n    export CPPFLAGS=\"$(cat /cppflags)\" && \\\n    export LIBTOOL_APP_LDFLAGS=\"$(cat /ltaldflags)\" && \\\n    export NEW_DB=\"$(cat /newdbflag)\" && \\\n    export WITHOUT_WALLET=\"$(cat /nowalletflag)\" && \\\n    export WITHOUT_UPNPC=\"$(cat /noupnpcflag)\" && \\\n    export CFLAGS=\"-static -static-libgcc -fno-strict-aliasing\" && \\\n    eval \"export $(dpkg-architecture | grep DEB_HOST_MULTIARCH)\" && \\\n    ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" \\\n        LDFLAGS=\"$LDFLAGS\" \\\n        CPPFLAGS=\"$CPPFLAGS $CFLAGS\" \\\n        CFLAGS=\"$CFLAGS\" \\\n        LIBS=-ldl \\\n        \"$NEW_DB\" \\\n        \"$WITHOUT_WALLET\" \\\n        \"$WITHOUT_UPNPC\" \\\n        --prefix=/usr \\\n        --disable-tests \\\n        --disable-bench \\\n        --disable-ccache \\\n        --disable-shared \\\n        --with-boost-libdir=/usr/lib/\"$DEB_HOST_MULTIARCH\" \\\n        --without-gui\n\nRUN make -j$(nproc --all) && \\\n    make install && \\\n    strip /usr/bin/mfcoind\n\n\nFROM alpine\n\nCOPY --from=builder /usr/bin/mfcoind /usr/bin\n\nRUN apk add --no-cache libc6-compat && \\\n    mkdir /data && \\\n    chown guest:nobody /data\n\nUSER guest\n\nVOLUME [ \"/data\" ]\n\nENTRYPOINT [ \"/usr/bin/mfcoind\", \"-datadir=/data\" ]\n"
+}

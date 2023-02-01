@@ -1,0 +1,110 @@
+FROM ubuntu:18.04
+
+RUN apt-get update -qq
+RUN apt-get install --no-install-recommends -y software-properties-common && rm -rf /var/lib/apt/lists/*;
+RUN add-apt-repository ppa:apt-fast/stable
+RUN apt-get update -qq
+RUN apt-get -y --no-install-recommends install apt-fast && rm -rf /var/lib/apt/lists/*;
+
+# Prevent tzdata from prompting us for a timezone and hanging the build.
+ENV DEBIAN_FRONTEND=noninteractive
+
+# The packages related to R are somewhat weird, see the README for more details.
+
+COPY workers/CRAN.gpg .
+
+RUN \
+  apt-fast update -qq && \
+  apt-get install --no-install-recommends -y apt-transport-https && \
+  apt-fast install -y lsb-release && \
+  echo "deb https://cloud.r-project.org/bin/linux/ubuntu bionic-cran35/" \
+      >> /etc/apt/sources.list.d/added_repos.list && \
+  apt-key add CRAN.gpg && \
+  apt-fast update -qq && \
+  apt-fast install -y \
+  ed \
+  git \
+  mercurial \
+  libcairo-dev \
+  libedit-dev \
+  lsb-release \
+  python3 \
+  python3-pip \
+  libxml2-dev \
+  cmake \
+  r-base-core \
+  libssl-dev \
+  libcurl4-openssl-dev \
+  curl \
+  wget && \
+  rm -rf /var/lib/apt/lists/*
+RUN rm CRAN.gpg
+
+RUN groupadd user && useradd --create-home --home-dir /home/user -g user user
+WORKDIR /home/user
+
+# Install Salmon
+
+# Tximport requires all experiments to be processed with the same version of Salmon to work https://github.com/AlexsLemonade/refinebio/issues/1496
+# This is something that should be considered when updating salmon, because
+# all samples from incomplete experiments must have salmon run on them again.
+ENV SALMON_VERSION 0.13.1
+
+RUN wget https://github.com/COMBINE-lab/salmon/releases/download/v${SALMON_VERSION}/Salmon-${SALMON_VERSION}_linux_x86_64.tar.gz
+RUN mkdir Salmon-${SALMON_VERSION}_linux_x86_64
+# On version 0.13.1 salmon was being extracted to a folder with an all lowercase name
+# the options `-C` and `--strip-components` allow us to specify the name for the resulting file
+RUN tar -xzf Salmon-${SALMON_VERSION}_linux_x86_64.tar.gz -C Salmon-${SALMON_VERSION}_linux_x86_64 --strip-components 1 && rm Salmon-${SALMON_VERSION}_linux_x86_64.tar.gz
+# Create soft link `/usr/local/bin/salmon` that points to the actual program
+RUN ln -sf `pwd`/Salmon-${SALMON_VERSION}_linux_x86_64/bin/salmon /usr/local/bin/
+RUN rm -f Salmon-${SALMON_VERSION}_linux_x86_64.tar.gz
+# End Salmon installation.
+
+# Install R dependencies
+COPY common/install_devtools.R .
+RUN Rscript install_devtools.R
+COPY workers/R_dependencies/tximport/dependencies.R tximport_dependencies.R
+RUN Rscript tximport_dependencies.R
+
+# Install tximport
+COPY workers/install_tximport.R .
+RUN Rscript install_tximport.R
+
+# Install SalmonTools
+RUN git clone https://github.com/COMBINE-lab/SalmonTools.git && cd SalmonTools && git checkout 3e6654c2c10a5225498b623056993947fa688afc
+RUN cd SalmonTools && cmake . -DCMAKE_INSTALL_PREFIX=/usr/local && make install
+RUN rm -rf SalmonTools
+
+# Install sra-tools
+ENV SRA_VERSION 2.9.1
+RUN wget "https://ftp-trace.ncbi.nlm.nih.gov/sra/sdk/${SRA_VERSION}/sratoolkit.${SRA_VERSION}-ubuntu64.tar.gz" && \
+    tar zxfv sratoolkit.${SRA_VERSION}-ubuntu64.tar.gz && \
+    cp -r sratoolkit.${SRA_VERSION}-ubuntu64/bin/* /usr/bin && rm sratoolkit.${SRA_VERSION}-ubuntu64.tar.gz
+
+# Source: https://github.com/thisbejim/Pyrebase/issues/87#issuecomment-354452082
+# For whatever reason this worked and 'en_US.UTF-8' did not.
+ENV LANG C.UTF-8
+
+RUN pip3 install --no-cache-dir --upgrade pip
+
+COPY config/ config/
+COPY .boto .boto
+
+COPY workers/data_refinery_workers/processors/requirements.txt .
+
+RUN pip3 install --no-cache-dir -r requirements.txt
+
+COPY common/dist/data-refinery-common-* common/
+
+# Get the latest version from the dist directory.
+RUN pip3 install --no-cache-dir common/$(ls common -1 | sort --version-sort | tail -1)
+
+ARG SYSTEM_VERSION
+
+ENV SYSTEM_VERSION $SYSTEM_VERSION
+
+USER user
+
+COPY workers/ .
+
+ENTRYPOINT []

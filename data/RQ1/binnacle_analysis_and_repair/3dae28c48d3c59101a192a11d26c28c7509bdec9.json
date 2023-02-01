@@ -1,0 +1,26 @@
+{
+  "startTime": 1674253088449,
+  "endTime": 1674253088685,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 19,
+        "lineEnd": 21,
+        "columnStart": 4,
+        "columnEnd": 30
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 49,
+        "lineEnd": 49,
+        "columnStart": 4,
+        "columnEnd": 15
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "#---------------------------------------------------------------------\n# Base instance to build MKL based Tensorflow on Clear Linux\n#---------------------------------------------------------------------\n\nFROM clearlinux as base\nLABEL maintainer=otc-swstacks@intel.com\n\n# tf with vnni support and bug fixes\nARG TF_COMMIT_SHA=47ab68d265a96b6e7be06afd1b4b47e0114c0ee9\nARG swupd_args\n\n# update os and add required bundles\nRUN swupd update $swupd_args && \\\n    swupd bundle-add machine-learning-basic git \\\n    java-basic sysadmin-basic package-utils devpkg-zlib\n\nRUN ln -s -f /usr/bin/pip3.7 /usr/bin/pip\nRUN ln -s -f /usr/bin/python3.7 /usr/bin/python\n\nRUN pip install --no-cache-dir \\\n    keras_applications==1.0.6 \\\n    keras_preprocessing==1.0.9\n\n# clone build and install tensorflow 1.13.1\nWORKDIR /tensorflow_src\nRUN git clone https://github.com/tensorflow/tensorflow.git /tensorflow_src && \\\n    git checkout -b quantized ${TF_COMMIT_SHA}\nRUN \\\n  export PYTHON_BIN_PATH=/usr/bin/python3.7 &&\\\n  export USE_DEFAULT_PYTHON_LIB_PATH=1 &&\\\n  export CC_OPT_FLAGS=\"-march=native -mtune=native\"  &&\\\n  export TF_NEED_JEMALLOC=1  &&\\\n  export TF_NEED_KAFKA=0 &&\\\n  export TF_NEED_OPENCL_SYCL=0 &&\\\n  export TF_NEED_GCP=0 &&\\\n  export TF_NEED_HDFS=0 &&\\\n  export TF_NEED_S3=0 &&\\\n  export TF_ENABLE_XLA=1 &&\\\n  export TF_NEED_GDR=0 &&\\\n  export TF_NEED_VERBS=0 &&\\\n  export TF_NEED_OPENCL=0 &&\\\n  export TF_NEED_MPI=0 &&\\\n  export TF_NEED_TENSORRT=0 &&\\\n  export TF_SET_ANDROID_WORKSPACE=0 &&\\\n  export TF_DOWNLOAD_CLANG=0 &&\\\n  export TF_NEED_CUDA=0 &&\\\n  export TF_BUILD_MAVX=MAVX512 &&\\\n  export HTTP_PROXY=`echo $http_proxy | sed -e 's/\\/$//'` &&\\\n  export HTTPS_PROXY=`echo $https_proxy | sed -e 's/\\/$//'`\nRUN ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\"\nRUN bazel --output_base=/tmp/bazel build --repository_cache=/tmp/cache \\\n   --config=opt --config=mkl --copt=-O3 --copt=-mavx \\\n   --copt=-mavx2 --copt=-march=skylake-avx512 --copt=-mfma  \\\n   //tensorflow/tools/pip_package:build_pip_package\nRUN bazel-bin/tensorflow/tools/pip_package/build_pip_package /tmp/tf/\n\n#---------------------------------------------------------------------\n# Tensorflow with MKL-DNN on Clear Linux\n#---------------------------------------------------------------------\n\nFROM clearlinux\nLABEL maintainer=otc-swstacks@intel.com\n\nARG HOROVOD_VERSION=0.16.1\nARG swupd_args\n\n# update os and add required bundles\nRUN swupd update $swupd_args && \\\n    swupd bundle-add git \\\n    openssh-server sysadmin-basic \\\n    devpkg-openmpi python3-basic jupyter devpkg-opencv\n\nRUN ln -s -f /usr/bin/pip3.7 /usr/bin/pip &&\\\n    ln -s -f /usr/bin/python3.7 /usr/bin/python\n\n# install keras, nltk and jupyterhub\nRUN pip --no-cache-dir install \\\n    keras_applications==1.0.6 \\\n    keras_preprocessing==1.0.9 \\\n    nltk==3.4 jupyterhub==0.9.4\n\n# install tensorflow\nCOPY --from=base /tmp/tf/*.whl /tmp/.\nRUN pip --no-cache-dir  install /tmp/tensorflow*.whl\n\n# install horovod\nRUN HOROVOD_WITH_TENSORFLOW=1 \\\n    pip --no-cache-dir install --no-cache-dir horovod==${HOROVOD_VERSION}\n\n# clean up and init\nRUN rm -rf /tmp/*\nWORKDIR /workspace\nCOPY ./set_env.sh /workspace/\nRUN chmod -R a+w /workspace\nENTRYPOINT source /workspace/set_env.sh && /bin/bash\n"
+}

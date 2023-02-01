@@ -1,0 +1,16 @@
+FROM elixir:1.12.2-slim
+
+RUN mix local.hex --force
+RUN mix local.rebar --force
+
+RUN mkdir /app
+WORKDIR /app
+
+RUN apt-get update && apt-get install --no-install-recommends -y git curl bash libgcc1 && rm -rf /var/lib/apt/lists/*;
+
+COPY . /app
+
+RUN mix deps.get
+RUN MIX_ENV=prod COOKIE=fake mix compile --warnings-as-errors
+
+CMD bash docker-entrypoint.sh

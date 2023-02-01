@@ -1,0 +1,26 @@
+{
+  "startTime": 1674252549357,
+  "endTime": 1674252550350,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 47,
+        "lineEnd": 47,
+        "columnStart": 4,
+        "columnEnd": 104
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 48,
+        "lineEnd": 48,
+        "columnStart": 4,
+        "columnEnd": 47
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM cern/cc7-base:20201101-1.x86_64 as builder\nMAINTAINER Valentin Kuznetsov vkuznet@gmail.com\n\nENV WDIR=/data\nENV USER=_dbs\nADD oci8.pc $WDIR/oci8.pc\nENV PKG_CONFIG_PATH=$WDIR\nADD cernonly2.repo /etc/yum.repos.d/cernonlyw.repo\nADD slc7-cernonly.repo /etc/yum.repos.d/slc7-cernonly.repo\nADD epel.repo /etc/yum.repos.d/epel.repo\n\nRUN yum install -y git-core make gcc golang sudo oracle-instantclient-tnsnames.ora \\\n            oracle-instantclient-devel oracle-instantclient-basic \\\n            && yum clean all && rm -rf /var/cache/yum\n\n# Create new user account\nRUN useradd ${USER} && install -o ${USER} -d ${WDIR}\n# add user to sudoers file\nRUN echo \"%$USER ALL=(ALL) NOPASSWD:ALL\" >> /etc/sudoers\n# switch to user\nUSER ${USER}\n\n# start the setup\nRUN mkdir -p $WDIR\nWORKDIR ${WDIR}\n\n# get go dependencies\nENV GOPATH=$WDIR/gopath\nRUN mkdir -p $GOPATH\nENV PATH=\"${GOROOT}/bin:${WDIR}:${PATH}\"\nRUN go get github.com/dmwm/cmsauth && \\\n    go get github.com/vkuznet/x509proxy && \\\n    go get github.com/mattn/go-oci8 && \\\n    go get github.com/gorilla/csrf && \\\n    go get github.com/gorilla/mux && \\\n    go get github.com/lestrrat-go/file-rotatelogs && \\\n    go get golang.org/x/sys/unix && \\\n    go get github.com/shirou/gopsutil && \\\n    go get github.com/mattn/go-sqlite3 && \\\n    go get golang.org/x/exp/errors && \\\n    go get -u -d github.com/vkuznet/cmsweb-exporters\n\n# build process_monitor\nWORKDIR $GOPATH/src/github.com/vkuznet/cmsweb-exporters\nRUN go build process_exporter.go && cp process_exporter $WDIR && cp process_monitor.sh $WDIR\n\n# get filebeat\nRUN curl -f -ksLO https://artifacts.elastic.co/downloads/beats/filebeat/filebeat-7.10.0-linux-x86_64.tar.gz && \\\n    tar xfz filebeat-7.10.0-linux-x86_64.tar.gz && \\\n    cp filebeat-7.10.0-linux-x86_64/filebeat /data && rm filebeat-7.10.0-linux-x86_64.tar.gz\n\nADD config.json $WDIR/config.json\nENV PATH=\"${GOPATH}/src/github.com/vkuznet/dbs2go:${GOPATH}/src/github.com/vkuznet/dbs2go/bin:${PATH}\"\nENV X509_USER_PROXY=/data/srv/current/auth/proxy/proxy\n\n# build dbs2go with specific tag\nENV TAG=v00.00.77\nWORKDIR $GOPATH/src/github.com/vkuznet\nRUN git clone https://github.com/vkuznet/dbs2go\nWORKDIR $GOPATH/src/github.com/vkuznet/dbs2go\nRUN git checkout tags/$TAG -b build && \\\n    sed -i -e \"s,_ \\\"gopkg.in/rana/ora.v4\\\",,g\" web/server.go && \\\n    sed -i -e \"s,_ \\\"github.com/mattn/go-sqlite3\\\",,g\" web/server.go && \\\n    sed -i -e \"s,_ \\\"github.com/go-sql-driver/mysql\\\",,g\" web/server.go && \\\n    make\nRUN cat $WDIR/config.json | sed -e \"s,GOPATH,$GOPATH,g\" > dbsconfig.json\n\nFROM cern/cc7-base:20201101-1.x86_64\nRUN yum install -y libaio && yum clean all && rm -rf /var/cache/yum\nRUN mkdir -p /data\nCOPY --from=builder /data/gopath/src/github.com/vkuznet/dbs2go/dbs2go /data/\nCOPY --from=builder /data/gopath /data/gopath\nCOPY --from=builder /usr/lib/oracle /usr/lib/oracle\nCOPY --from=builder /etc/tnsnames.ora /etc\nCOPY --from=builder /data/filebeat /usr/bin/filebeat\nCOPY --from=builder /data/process_exporter /data\nCOPY --from=builder /data/process_monitor.sh /data\n\n# run the service\nENV PATH=\"/data/gopath/bin:/data:${PATH}\"\nRUN cp /data/gopath/src/github.com/vkuznet/dbs2go/dbsconfig.json /data/config.json\nADD monitor.sh /data/monitor.sh\nADD run.sh /data/run.sh\nWORKDIR /data\nCMD [\"run.sh\"]\n"
+}

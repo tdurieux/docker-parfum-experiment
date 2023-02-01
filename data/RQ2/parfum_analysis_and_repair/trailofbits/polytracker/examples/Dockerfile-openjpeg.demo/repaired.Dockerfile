@@ -1,0 +1,25 @@
+# Create a separate image with the latest source
+FROM ubuntu:focal AS openjpg-sources
+WORKDIR /polytracker/the_klondike
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install --no-install-recommends -y git && git clone https://github.com/uclouvain/openjpeg.git && rm -rf /var/lib/apt/lists/*;
+
+# Now, build the openjpg image using previously downloaded source
+FROM trailofbits/polytracker:latest
+MAINTAINER Henrik Brodin <henrik.brodin@trailofbits.com>
+
+WORKDIR /polytracker/the_klondike
+COPY --from=openjpg-sources /polytracker/the_klondike/openjpeg /polytracker/the_klondike/openjpeg
+
+RUN mkdir -p openjpeg/build
+WORKDIR openjpeg/build
+RUN polytracker build cmake .. -DCMAKE_BUILD_TYPE=Release -DBUILD_JPWL:bool=on -DBUILD_MJ2:bool=on
+RUN polytracker build make install
+WORKDIR bin
+
+RUN polytracker extract-bc opj_decompress -o opj_decompress.bc
+RUN polytracker extract-bc libopenjp2.a -o libopenjp2.a.bc
+RUN llvm-link -only-needed opj_decompress.bc libopenjp2.a.bc -o exec.bc
+RUN polytracker optimize-bc exec.bc -o exec.bc
+RUN polytracker instrument-bc exec.bc -o exec.bc --no-control-flow-tracking -o exec.instrumented.bc
+RUN polytracker lower-bc exec.instrumented.bc -t opj_decompress -o opj_decompress_track

@@ -1,0 +1,17 @@
+{
+  "startTime": 1674251239671,
+  "endTime": 1674251240782,
+  "originalSmells": [
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 33,
+        "lineEnd": 34,
+        "columnStart": 4,
+        "columnEnd": 114
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "ARG TAG=\"development\"\nARG PROJECT=\"coffea-casa\"\nARG HUB=\"hub.opensciencegrid.org\"\nARG NAME=\"${PROJECT}/cc-ubuntu\"\nFROM ${HUB}/${NAME}:${TAG}\n\n# https://github.com/jupyter/docker-stacks/blob/master/base-notebook/Dockerfile\n\n# Fix DL4006\nSHELL [\"/bin/bash\", \"-o\", \"pipefail\", \"-c\"]\n\nUSER root\nLABEL maintainer=\"Oksana Shadura <ksu.shadura@gmail.com>\"\n# Tag\nARG TAG\nARG PROJECT\nARG HUB\n# Worker image\nARG WORKER_IMAGE=\"${HUB}/${PROJECT}/cc-analysis-ubuntu\"\n# Try to see if CEPH_CONF works (https://access.redhat.com/documentation/en-us/red_hat_ceph_storage/1.2.3/html/ceph_configuration_guide/configuration_file_structure)\nARG CEPH_DIR=\"/opt/ceph\"\nARG CEPH_CONF=$CEPH_DIR\"/ceph.conf\"\n\n# Hack for GH Actions\nARG GITHUB_ACTIONS=\"false\"\n\nENV CEPH_DIR=$CEPH_DIR\nENV CEPH_CONF=$CEPH_CONF\nENV TAG=$TAG\nENV WORKER_IMAGE=$WORKER_IMAGE\n\nUSER root\nRUN apt-get update --yes && \\\n    apt-get install --yes --no-install-recommends \\\n    libradospp-dev librados2 rados-objclass-dev python3-rados ceph ceph-mon ceph-osd ceph-mgr ceph-mds ceph-common && rm -rf /var/lib/apt/lists/*;\n\n# Preparing directories for Dask conf files, patches and job spool directory for HTCondor\nRUN mkdir -p ${CEPH_DIR} && chown -R \"${NB_USER}:${NB_GID}\" ${CEPH_DIR}\n\nUSER ${NB_UID}\nCOPY skyhook/build-skyhook.sh /tmp/\nCOPY skyhook/.coffea.toml $HOME/\n\nRUN cd /tmp && \\\n    git clone \\\n        --branch arrow-master \\\n        --depth=1 \\\n        https://github.com/uccross/skyhookdm-arrow && \\\n        ./build-skyhook.sh\n\n# Skyhook setup: Ceph configuration and Keyring\nCOPY ceph/ceph.conf ceph/keyring ${CEPH_DIR}/\n\nUSER root\n#\nRUN echo \"CEPH_DATA_POOL=\"cephfs-data0\"\" >> /etc/enviroment\nRUN echo \"CEPH_CONFIG_PATH=${CEPH_CONF}\" >> /etc/enviroment\n# Cleanup\nRUN rm -rf /tmp/* \\\n    && rm -rf $HOME/.cache/.pip/* \\\n    && mamba clean -tipsy \\\n    && jupyter lab clean \\\n    && jlpm cache clean \\\n    && npm cache clean --force \\\n    && find ${CONDA_DIR} -type f -name '*.a' -delete \\\n    && find ${CONDA_DIR} -type f -name '*.pyc' -delete \\\n    && find ${CONDA_DIR} -type f -name '*.js.map' -delete \\\n    && (find ${CONDA_DIR}/lib/python*/site-packages/bokeh/server/static -type f,l -name '*.js' -not -name '*.min.js' -delete || echo \"no bokeh static files to cleanup\") \\\n    && rm -rf ${CONDA_DIR}/pkgs\n\n# Fix permissions for Dask/Ceph config files\nRUN chown -R \"${NB_USER}:${NB_GID}\" ${CEPH_DIR}/keyring ${CEPH_DIR}/ceph.conf\n\n# FIXME: done for AGC workshop\nADD prepare-env/prepare-env-cc.sh /usr/local/bin/prepare-env.sh\nRUN chmod ugo+x /usr/local/bin/prepare-env.sh\n\n# Switch back to cms-jovyan to avoid accidental container runs as root\nUSER ${NB_UID}\nWORKDIR $HOME\nENTRYPOINT [\"tini\", \"-g\", \"--\", \"/usr/local/bin/prepare-env.sh\"]\n\n# Extra packages to be installed (apt, pip, conda) and commands to be executed\n# Use bash login shell for entrypoint in order\n# to automatically source user's .bashrc\nCMD [\"start-notebook.sh\"]\n"
+}

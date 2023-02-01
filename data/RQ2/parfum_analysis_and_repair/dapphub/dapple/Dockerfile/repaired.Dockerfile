@@ -1,0 +1,29 @@
+FROM ubuntu:15.10
+ENV TIMESTAMP 2016-07-06
+
+# Install Node.js
+RUN apt-get update && apt-get install --no-install-recommends -y curl && rm -rf /var/lib/apt/lists/*;
+RUN curl -f -sL https://deb.nodesource.com/setup_6.x | bash
+RUN apt-get update && apt-get install --no-install-recommends -y nodejs && rm -rf /var/lib/apt/lists/*;
+
+# Install Solidity
+RUN apt-get update && apt-get install --no-install-recommends -y software-properties-common && rm -rf /var/lib/apt/lists/*;
+RUN add-apt-repository ppa:ethereum/ethereum
+RUN add-apt-repository ppa:ethereum/ethereum-qt
+RUN apt-get update && apt-get install --no-install-recommends -y cpp-ethereum && rm -rf /var/lib/apt/lists/*;
+
+# Avoid su(1) and sudo(1) due to signal and TTY weirdness
+RUN curl -fsSL https://github.com/tianon/gosu/releases/download/1.7/\
+gosu-`dpkg --print-architecture` -o /bin/gosu && chmod +x /bin/gosu
+
+# Install editors for convenience
+RUN apt-get update && apt-get install --no-install-recommends -y emacs vim && rm -rf /var/lib/apt/lists/*;
+
+# Install Dapple
+RUN apt-get update && apt-get install --no-install-recommends -y git build-essential python && rm -rf /var/lib/apt/lists/*;
+ENV TIMESTAMP 2016-07-19T20
+COPY package.json /dapple/package.json
+RUN cd dapple && npm install && npm cache clean --force;
+ENTRYPOINT ["/dapple/docker-entrypoint"]
+COPY . /dapple
+RUN cd dapple && npm link

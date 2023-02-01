@@ -1,0 +1,1 @@
+# This is a base nginx image with Wikia's directory structure

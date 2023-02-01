@@ -1,0 +1,1 @@
+# Based on https://github.com/prometheus/pushgateway/blob/v0.9.0/Dockerfile

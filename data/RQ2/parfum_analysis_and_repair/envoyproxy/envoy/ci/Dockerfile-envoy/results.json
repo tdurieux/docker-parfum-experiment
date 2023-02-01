@@ -1,0 +1,17 @@
+{
+  "startTime": 1674248179392,
+  "endTime": 1674248180445,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 60,
+        "lineEnd": 60,
+        "columnStart": 7,
+        "columnEnd": 62
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "ARG BUILD_OS=ubuntu\nARG BUILD_TAG=18.04\nARG ENVOY_VRP_BASE_IMAGE=envoy\n\n\nFROM scratch AS binary\n\nARG TARGETPLATFORM=linux/amd64\nARG ENVOY_BINARY=envoy\nARG ENVOY_BINARY_SUFFIX=_stripped\nADD ${TARGETPLATFORM}/build_${ENVOY_BINARY}_release${ENVOY_BINARY_SUFFIX}/envoy* /usr/local/bin/\nADD configs/envoyproxy_io_proxy.yaml /etc/envoy/envoy.yaml\nCOPY --chown=0:0 ${TARGETPLATFORM}/build_${ENVOY_BINARY}_release/su-exec /usr/local/bin/\nCOPY ${TARGETPLATFORM}/build_${ENVOY_BINARY}_release/schema_validator_tool /usr/local/bin/schema_validator_tool\nCOPY ci/docker-entrypoint.sh /\n\n\n# STAGE: envoy\nFROM ${BUILD_OS}:${BUILD_TAG} AS envoy\n\nRUN apt-get update && apt-get upgrade -y \\\n    && apt-get install --no-install-recommends -y ca-certificates \\\n    && apt-get autoremove -y && apt-get clean \\\n    && rm -rf /tmp/* /var/tmp/* \\\n    && rm -rf /var/lib/apt/lists/*\n\nRUN mkdir -p /etc/envoy\n\nCOPY --from=binary /usr/local/bin/envoy* /usr/local/bin/\nCOPY --from=binary /usr/local/bin/su-exec /usr/local/bin/\nCOPY --from=binary /etc/envoy/envoy.yaml /etc/envoy/envoy.yaml\nCOPY --from=binary /docker-entrypoint.sh /\n\nRUN adduser --group --system envoy\n\nEXPOSE 10000\n\nENTRYPOINT [\"/docker-entrypoint.sh\"]\nCMD [\"envoy\", \"-c\", \"/etc/envoy/envoy.yaml\"]\n\n\n# STAGE: envoy-distroless\n# gcr.io/distroless/base-debian11:nonroot\nFROM gcr.io/distroless/base-debian11@sha256:d65ac1a65a4d82a48ebd0a22aea2acdd95d7abeeda245dfee932ec0018c781f4 AS envoy-distroless\n\nCOPY --from=binary /usr/local/bin/envoy* /usr/local/bin/\nCOPY --from=binary /usr/local/bin/su-exec /usr/local/bin/\nCOPY --from=binary /etc/envoy/envoy.yaml /etc/envoy/envoy.yaml\n\nEXPOSE 10000\n\nENTRYPOINT [\"/usr/local/bin/envoy\"]\nCMD [\"-c\", \"/etc/envoy/envoy.yaml\"]\n\n\n# STAGE: envoy-google-vrp\nFROM ${ENVOY_VRP_BASE_IMAGE} AS envoy-google-vrp\n\nRUN apt-get update \\\n    && apt-get upgrade -y \\\n    && apt-get install --no-install-recommends -y libc++1 supervisor gdb strace tshark \\\n    && apt-get autoremove -y \\\n    && apt-get clean \\\n    && rm -rf /tmp/* /var/tmp/* \\\n    && rm -rf /var/lib/apt/lists/*\n\nADD configs/google-vrp/envoy-edge.yaml /etc/envoy/envoy-edge.yaml\nADD configs/google-vrp/envoy-origin.yaml /etc/envoy/envoy-origin.yaml\nADD configs/google-vrp/launch_envoy.sh /usr/local/bin/launch_envoy.sh\nADD configs/google-vrp/supervisor.conf /etc/supervisor.conf\nADD test/config/integration/certs/serverkey.pem /etc/envoy/certs/serverkey.pem\nADD test/config/integration/certs/servercert.pem /etc/envoy/certs/servercert.pem\n# ADD %local envoy bin% /usr/local/bin/envoy\nRUN chmod 777 /var/log/supervisor\nRUN chmod a+r /etc/supervisor.conf /etc/envoy/* /etc/envoy/certs/*\nRUN chmod a+rx /usr/local/bin/launch_envoy.sh\n\nEXPOSE 10000\nEXPOSE 10001\n\nCMD [\"supervisord\", \"-c\", \"/etc/supervisor.conf\"]\n\n# STAGE: envoy-tools\nFROM ${BUILD_OS}:${BUILD_TAG} AS envoy-tools\n\nCOPY --from=binary /usr/local/bin/schema_validator_tool /usr/local/bin/\n\n\n# Make envoy image as last stage so it is built by default\nFROM envoy\n"
+}

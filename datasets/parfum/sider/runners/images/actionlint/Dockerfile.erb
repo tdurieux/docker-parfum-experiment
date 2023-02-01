@@ -1,0 +1,9 @@
+FROM rhysd/actionlint:1.6.13 as actionlint
+FROM koalaman/shellcheck:v0.8.0 as shellcheck
+
+<%= render_erb 'images/Dockerfile.python.erb' %>
+
+COPY --chown=<%= chown %> --from=actionlint /usr/local/bin/actionlint ${RUNNER_USER_BIN}/
+COPY --chown=<%= chown %> --from=shellcheck /bin/shellcheck ${RUNNER_USER_BIN}/
+
+<%= render_erb 'images/Dockerfile.end.erb' %>

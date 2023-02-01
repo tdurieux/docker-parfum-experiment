@@ -1,0 +1,53 @@
+{
+  "startTime": 1674215797681,
+  "endTime": 1674215798775,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 36,
+        "lineEnd": 36,
+        "columnStart": 4,
+        "columnEnd": 29
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 37,
+        "lineEnd": 39,
+        "columnStart": 2,
+        "columnEnd": 15
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 64,
+        "lineEnd": 64,
+        "columnStart": 4,
+        "columnEnd": 35
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 70,
+        "lineEnd": 70,
+        "columnStart": 4,
+        "columnEnd": 35
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 6,
+        "lineEnd": 22,
+        "columnStart": 5,
+        "columnEnd": 8
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM phusion/baseimage:0.9.22\nMAINTAINER Denys Zhdanov <denis.zhdanov@gmail.com>\n\n\nRUN apt-get -y update \\\n  && apt-get -y upgrade \\\n  && apt-get -y --no-install-recommends install vim \\\n  nginx \\\n  python-dev \\\n  python-flup \\\n  python-pip \\\n  python-ldap \\\n  expect \\\n  git \\\n  memcached \\\n  sqlite3 \\\n  libffi-dev \\\n  libcairo2 \\\n  libcairo2-dev \\\n  python-cairo \\\n  python-rrdtool \\\n  pkg-config \\\n  nodejs \\\n  && rm -rf /var/lib/apt/lists/*\n\n# choose a timezone at build-time\n# use `--build-arg CONTAINER_TIMEZONE=Europe/Brussels` in `docker build`\nARG CONTAINER_TIMEZONE\nENV DEBIAN_FRONTEND noninteractive\n\nRUN if [ ! -z \"${CONTAINER_TIMEZONE}\" ]; \\\n    then ln -sf /usr/share/zoneinfo/$CONTAINER_TIMEZONE /etc/localtime && \\\n    dpkg-reconfigure -f noninteractive tzdata; \\\n    fi\n\n# fix python dependencies (LTS Django and newer memcached/txAMQP)\nRUN pip install --no-cache-dir --upgrade pip && \\\n  pip install --no-cache-dir django==1.8.18 \\\n  python-memcached==1.53 \\\n  txAMQP==0.6.2\n\nARG version=1.0.2\nARG whisper_version=${version}\nARG carbon_version=${version}\nARG graphite_version=${version}\n\nRUN echo \"Building Version: $version\"\n\nARG whisper_repo=https://github.com/graphite-project/whisper.git\nARG carbon_repo=https://github.com/graphite-project/carbon.git\nARG graphite_repo=https://github.com/graphite-project/graphite-web.git\n\nARG statsd_version=v0.8.0\n\nARG statsd_repo=https://github.com/etsy/statsd.git\n\n# install whisper\nRUN git clone -b ${whisper_version} --depth 1 ${whisper_repo} /usr/local/src/whisper\nWORKDIR /usr/local/src/whisper\nRUN python ./setup.py install\n\n# install carbon\nRUN git clone -b ${carbon_version} --depth 1 ${carbon_repo} /usr/local/src/carbon\nWORKDIR /usr/local/src/carbon\nRUN pip install --no-cache-dir -r requirements.txt \\\n  && python ./setup.py install\n\n# install graphite\nRUN git clone -b ${graphite_version} --depth 1 ${graphite_repo} /usr/local/src/graphite-web\nWORKDIR /usr/local/src/graphite-web\nRUN pip install --no-cache-dir -r requirements.txt \\\n  && python ./setup.py install\n\n# install statsd\nRUN git clone -b ${statsd_version} ${statsd_repo} /opt/statsd\n\n# config graphite\nADD conf/opt/graphite/conf/*.conf /opt/graphite/conf/\nADD conf/opt/graphite/webapp/graphite/local_settings.py /opt/graphite/webapp/graphite/local_settings.py\n# ADD conf/opt/graphite/webapp/graphite/app_settings.py /opt/graphite/webapp/graphite/app_settings.py\nWORKDIR /opt/graphite/webapp\nRUN mkdir -p /var/log/graphite/ \\\n  && PYTHONPATH=/opt/graphite/webapp django-admin.py collectstatic --noinput --settings=graphite.settings\n\n# config statsd\nADD conf/opt/statsd/config.js /opt/statsd/\n\n# config nginx\nRUN rm /etc/nginx/sites-enabled/default\nADD conf/etc/nginx/nginx.conf /etc/nginx/nginx.conf\nADD conf/etc/nginx/sites-enabled/graphite-statsd.conf /etc/nginx/sites-enabled/graphite-statsd.conf\n\n# init django admin\nADD conf/usr/local/bin/django_admin_init.exp /usr/local/bin/django_admin_init.exp\nADD conf/usr/local/bin/manage.sh /usr/local/bin/manage.sh\nRUN chmod +x /usr/local/bin/manage.sh && /usr/local/bin/django_admin_init.exp\n\n# logging support\nRUN mkdir -p /var/log/carbon /var/log/graphite /var/log/nginx\nADD conf/etc/logrotate.d/graphite-statsd /etc/logrotate.d/graphite-statsd\n\n# daemons\nADD conf/etc/service/carbon/run /etc/service/carbon/run\nADD conf/etc/service/carbon-aggregator/run /etc/service/carbon-aggregator/run\nADD conf/etc/service/graphite/run /etc/service/graphite/run\nADD conf/etc/service/statsd/run /etc/service/statsd/run\nADD conf/etc/service/nginx/run /etc/service/nginx/run\n\n# default conf setup\nADD conf /etc/graphite-statsd/conf\nADD conf/etc/my_init.d/01_conf_init.sh /etc/my_init.d/01_conf_init.sh\n\n# cleanup\nRUN apt-get clean\\\n && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*\n\n# defaults\nEXPOSE 80 2003-2004 2023-2024 8125 8125/udp 8126\nVOLUME [\"/opt/graphite/conf\", \"/opt/graphite/storage\", \"/etc/nginx\", \"/opt/statsd\", \"/etc/logrotate.d\", \"/var/log\"]\nWORKDIR /\nENV HOME /root\nENV STATSD_INTERFACE udp\n\nCMD [\"/sbin/my_init\"]\n"
+}

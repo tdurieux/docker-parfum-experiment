@@ -1,0 +1,58 @@
+FROM node:12.19.0-alpine as depsInstaller
+
+RUN apk add --no-cache --virtual .gyp make g++ git
+
+WORKDIR /app
+
+ARG GITHUB_TOKEN
+ENV GITHUB_TOKEN ${GITHUB_TOKEN}
+
+COPY package.json .
+COPY package-lock.json .
+COPY .npmrc .
+
+RUN git config --global url."https://${GITHUB_TOKEN}@github.com/".insteadOf ssh://git@github.com/ && \
+    # install all dependencies
+    npm set unsafe-perm=true && \
+    npm set progress=false && \
+    npm run setup && \
+    # cleanup
+    npm cache clean --force
+
+ARG IMAGE_VERSION
+ENV IMAGE_VERSION ${IMAGE_VERSION}
+
+COPY . .
+RUN npm run build-prod && \
+    rm -rf node_modules/.cache && \
+    rm -rf node_modules/webpack* && \
+    rm -rf node_modules/*webpack* && \
+    rm -rf node_modules/babel* && \
+    rm -rf node_modules/@babel && \
+    rm -rf node_modules/broccoli* && \
+    rm -rf node_modules/terser && \
+    rm -rf node_modules/caniuse* && \
+    rm -rf node_modules/rollup* && \
+    rm -rf node_modules/stylelint* && \
+    rm -rf node_modules/eslint* && \
+    rm -rf node_modules/sinon && \
+    rm -rf node_modules/@sinonjs && \
+    rm -rf node_modules/ember-sinon && \
+    rm -rf node_modules/prettier && \
+    rm -rf node_modules/ember-cli*
+
+
+FROM node:12.19.0-alpine
+
+ARG IMAGE_VERSION
+ENV IMAGE_VERSION ${IMAGE_VERSION}
+
+USER 65534
+
+COPY --from=depsInstaller /app /app
+WORKDIR /app
+
+# 8001 is for prod, 8007 is for metrics
+EXPOSE 8001 8007
+
+CMD ["npm", "run", "fastboot-server"]

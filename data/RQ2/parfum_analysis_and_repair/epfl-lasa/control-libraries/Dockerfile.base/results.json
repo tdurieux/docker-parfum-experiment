@@ -1,0 +1,80 @@
+{
+  "startTime": 1674252682498,
+  "endTime": 1674252683788,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 27,
+        "lineEnd": 27,
+        "columnStart": 7,
+        "columnEnd": 71
+      }
+    },
+    {
+      "rule": "curlUseHttpsUrl",
+      "position": {
+        "lineStart": 27,
+        "lineEnd": 27,
+        "columnStart": 7,
+        "columnEnd": 71
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 127,
+        "lineEnd": 127,
+        "columnStart": 4,
+        "columnEnd": 42
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 4,
+        "lineEnd": 17,
+        "columnStart": 22,
+        "columnEnd": 15
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 35,
+        "lineEnd": 36,
+        "columnStart": 22,
+        "columnEnd": 22
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 56,
+        "lineEnd": 57,
+        "columnStart": 22,
+        "columnEnd": 16
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 73,
+        "lineEnd": 78,
+        "columnStart": 22,
+        "columnEnd": 9
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 115,
+        "lineEnd": 122,
+        "columnStart": 22,
+        "columnEnd": 9
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM ubuntu:20.04 as core-build-dependencies\nENV DEBIAN_FRONTEND=noninteractive\n\n# install core compilation and access dependencies for building the libraries\nRUN apt-get update && apt-get install --no-install-recommends -y \\\n    autoconf \\\n    automake \\\n    build-essential \\\n    cmake \\\n    curl \\\n    g++ \\\n    gcc \\\n    gnupg2 \\\n    make \\\n    git \\\n    wget \\\n    libtool \\\n    lsb-release \\\n    && apt-get clean \\\n    && rm -rf /var/lib/apt/lists/*\n\n\nFROM core-build-dependencies as project-dependencies\n\n# add pinocchio to package list\nRUN echo \"deb [arch=amd64] http://robotpkg.openrobots.org/packages/debian/pub $(lsb_release -cs) robotpkg\" \\\n    | tee /etc/apt/sources.list.d/robotpkg.list \\\n    && curl -f https://robotpkg.openrobots.org/packages/debian/robotpkg.key \\\n    | apt-key add -\n\nRUN wget -c https://gitlab.com/libeigen/eigen/-/archive/3.4.0/eigen-3.4.0.tar.gz -O - | tar -xz\nRUN cd eigen-3.4.0 && mkdir build && cd build && cmake .. && make install\nRUN rm -r eigen-3.4.0\n\n# install dependencies for building the libraries\nRUN apt-get update && apt-get install --no-install-recommends -y \\\n    robotpkg-pinocchio \\\n    && apt-get clean \\\n    && rm -rf /var/lib/apt/lists/*\n\n# install osqp and eigen wrapper\nWORKDIR /tmp/osqp_build\nRUN git clone --recursive https://github.com/oxfordcontrol/osqp \\\n    && cd osqp && mkdir build && cd build && cmake -G \"Unix Makefiles\" .. && cmake --build . --target install\n\nRUN git clone https://github.com/robotology/osqp-eigen.git \\\n    && cd osqp-eigen && mkdir build && cd build && cmake .. && make -j && make install\n\nENV LD_LIBRARY_PATH=${LD_LIBRARY_PATH}:/usr/local/lib:/opt/openrobots/lib/\n\nWORKDIR /home\nRUN rm -rf /tmp/*\n\n\nFROM core-build-dependencies as google-dependencies\n\nRUN apt-get update && apt-get install --no-install-recommends -y \\\n    libgtest-dev \\\n    && apt-get clean \\\n    && rm -rf /var/lib/apt/lists/*\n\n# install gtest\nWORKDIR /tmp/gtest_build\nRUN cmake /usr/src/gtest \\\n    && make \\\n    && cp lib/* /usr/local/lib || cp *.a /usr/local/lib\n\nWORKDIR /home\nRUN rm -rf /tmp/*\n\n\nFROM project-dependencies as ssh-configuration\n\nRUN apt-get update && apt-get install --no-install-recommends -y \\\n    sudo \\\n    libssl-dev \\\n    ssh \\\n    iputils-ping \\\n    rsync \\\n    && apt-get clean \\\n    && rm -rf /var/lib/apt/lists/*\n\n# Configure sshd server settings\nRUN ( \\\n    echo 'LogLevel DEBUG2'; \\\n    echo 'PubkeyAuthentication yes'; \\\n    echo 'Subsystem sftp /usr/lib/openssh/sftp-server'; \\\n  ) > /etc/ssh/sshd_config_development \\\n  && mkdir /run/sshd\n\nENV USER developer\nENV HOME /home/${USER}\n\n# create amd configure a new user\nARG UID=1000\nARG GID=1000\nRUN addgroup --gid ${GID} ${USER}\nRUN adduser --gecos \"Remote User\" --uid ${UID} --gid ${GID} ${USER} && yes | passwd ${USER}\nRUN usermod -a -G dialout ${USER}\nRUN echo \"${USER} ALL=(ALL) NOPASSWD: ALL\" > /etc/sudoers.d/99_aptget\nRUN chmod 0440 /etc/sudoers.d/99_aptget && chown root:root /etc/sudoers.d/99_aptget\n\n# Configure sshd entrypoint to authorise the new user for ssh access and\n# optionally update UID and GID when invoking the container with the entrypoint script\nCOPY ./docker/sshd_entrypoint.sh /sshd_entrypoint.sh\nRUN chmod 744 /sshd_entrypoint.sh\n\n# create the credentials to be able to pull private repos using ssh\nRUN mkdir /root/.ssh/ && ssh-keyscan github.com | tee -a /root/.ssh/known_hosts\n\nRUN echo \"session required pam_limits.so\" | tee --append /etc/pam.d/common-session > /dev/null\n\n\nFROM ssh-configuration as development-dependencies\n\nRUN apt-get update && apt-get install --no-install-recommends -y \\\n    clang \\\n    gdb \\\n    python \\\n    python3-dev \\\n    python3-pip \\\n    tar \\\n    unzip \\\n    && apt-get clean \\\n    && rm -rf /var/lib/apt/lists/*\n\n# install python requirements\nRUN pip3 install --no-cache-dir numpy setuptools pybind11\n\n# install google dependencies\nCOPY --from=google-dependencies /usr/include/gtest /usr/include/gtest\nCOPY --from=ghcr.io/epfl-lasa/control-libraries/proto-dependencies /usr/local/include/google /usr/local/include/google\nCOPY --from=google-dependencies /usr/local/lib/libgtest* /usr/local/lib/\nCOPY --from=ghcr.io/epfl-lasa/control-libraries/proto-dependencies /usr/local/lib/libproto* /usr/local/lib/\nCOPY --from=ghcr.io/epfl-lasa/control-libraries/proto-dependencies /usr/local/bin/protoc /usr/local/bin\nRUN ldconfig\n"
+}

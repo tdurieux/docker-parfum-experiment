@@ -1,0 +1,35 @@
+{
+  "startTime": 1674254676690,
+  "endTime": 1674254677857,
+  "originalSmells": [
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 14,
+        "lineEnd": 16,
+        "columnStart": 7,
+        "columnEnd": 31
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 35,
+        "lineEnd": 35,
+        "columnStart": 30,
+        "columnEnd": 80
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 51,
+        "lineEnd": 51,
+        "columnStart": 12,
+        "columnEnd": 78
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM nginx:mainline-alpine as builder\n\nARG ENABLED_MODULES\n\nRUN set -ex \\\n    && if [ \"$ENABLED_MODULES\" = \"\" ]; then \\\n        echo \"No additional modules enabled, exiting\"; \\\n        exit 1; \\\n    fi\n\nCOPY ./ /modules/\n\nRUN set -ex \\\n    && apk update \\\n    && apk add --no-cache linux-headers openssl-dev pcre2-dev zlib-dev openssl abuild \\\n               musl-dev libxslt libxml2-utils make mercurial gcc unzip git \\\n               xz g++ coreutils \\\n    # allow abuild as a root user \\\n    && printf \"#!/bin/sh\\\\nSETFATTR=true /usr/bin/abuild -F \\\"\\$@\\\"\\\\n\" > /usr/local/bin/abuild \\\n    && chmod +x /usr/local/bin/abuild \\\n    && hg clone -r ${NGINX_VERSION}-${PKG_RELEASE} https://hg.nginx.org/pkg-oss/ \\\n    && cd pkg-oss \\\n    && mkdir /tmp/packages \\\n    && for module in $ENABLED_MODULES; do \\\n        echo \"Building $module for nginx-$NGINX_VERSION\"; \\\n        if [ -d /modules/$module ]; then \\\n            echo \"Building $module from user-supplied sources\"; \\\n\n            if [ ! -s /modules/$module/source ]; then \\\n                echo \"No source file for $module in modules/$module/source, exiting\"; \\\n                exit 1; \\\n            fi; \\\n\n            if [ -f /modules/$module/build-deps ]; then \\\n                echo \"Installing $module build dependencies\"; \\\n                apk update && apk add --no-cache $(cat /modules/$module/build-deps | xargs); \\\n            fi; \\\n\n\n\n\n            if [ -x /modules/$module/prebuild ]; then \\\n                echo \"Running prebuild script for $module\"; \\\n                /modules/$module/prebuild; \\\n            fi; \\\n            /pkg-oss/build_module.sh -v $NGINX_VERSION -f -y -o /tmp/packages -n $module $(cat /modules/$module/source); \\\n            BUILT_MODULES=\"$BUILT_MODULES $(echo $module | tr '[A-Z]' '[a-z]' | tr -d '[/_\\-\\.\\t ]')\"; \\\n        elif make -C /pkg-oss/alpine list | grep -E \"^$module\\s+\\d+\" > /dev/null; then \\\n            echo \"Building $module from pkg-oss sources\"; \\\n            cd /pkg-oss/alpine; \\\n            make abuild-module-$module BASE_VERSION=$NGINX_VERSION NGINX_VERSION=$NGINX_VERSION; \\\n            apk add --no-cache $(. ./abuild-module-$module/APKBUILD; echo $makedepends;); \\\n            make module-$module BASE_VERSION=$NGINX_VERSION NGINX_VERSION=$NGINX_VERSION; \\\n            find ~/packages -type f -name \"*.apk\" -exec mv -v {} /tmp/packages/ \\;; \\\n            BUILT_MODULES=\"$BUILT_MODULES $module\"; \\\n        else \\\n            echo \"Don't know how to build $module module, exiting\"; \\\n            exit 1; \\\n        fi; \\\n    done \\\n    && echo \"BUILT_MODULES=\\\"$BUILT_MODULES\\\"\" > /tmp/packages/modules.env\n\nFROM nginx:mainline-alpine\nCOPY --from=builder /tmp/packages /tmp/packages\nRUN set -ex \\\n    && . /tmp/packages/modules.env \\\n    && for module in $BUILT_MODULES; do \\\n           apk add --no-cache --allow-untrusted /tmp/packages/nginx-module-${module}-${NGINX_VERSION}*.apk; \\\n       done \\\n    && rm -rf /tmp/packages\n"
+}

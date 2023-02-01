@@ -1,0 +1,17 @@
+{
+  "startTime": 1674254468428,
+  "endTime": 1674254469028,
+  "originalSmells": [
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 25,
+        "lineEnd": 25,
+        "columnStart": 4,
+        "columnEnd": 43
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM behance/docker-base:5.0.1-centos-7\n\n# Use in multi-phase builds, when an init process requests for the container to gracefully exit, so that it may be committed\n# Used with alternative CMD (worker.sh), leverages supervisor to maintain long-running processes\nENV CONTAINER_ROLE=web \\\n    CONTAINER_PORT=8080 \\\n    CONF_NGINX_SITE=\"/etc/nginx/sites-available/default\" \\\n    CONF_NGINX_SERVER=\"/etc/nginx/nginx.conf\" \\\n    NOT_ROOT_USER=nginx \\\n    S6_KILL_FINISH_MAXTIME=55000\n\n# Using a non-privileged port to prevent having to use setcap internally\nEXPOSE ${CONTAINER_PORT}\n\n# - Update security packages\n# - Install new stable version of nginx\nRUN /bin/bash -e /security_updates.sh && \\\n    mkdir -p /etc/yum.repos.d && \\\n    echo $'[nginx-stable] \\n\\\nname=nginx stable repo \\n\\\nbaseurl=http://nginx.org/packages/centos/$releasever/$basearch/ \\n\\\ngpgcheck=1 \\n\\\nenabled=1 \\n\\\nname=nginx stable repo \\n\\\ngpgkey=https://nginx.org/keys/nginx_signing.key' > /etc/yum.repos.d/nginx.repo && \\\n    yum -y -q install nginx ca-certificates && \\\n    /bin/bash -e /clean.sh && rm -rf /var/cache/yum\n\n# Overlay the root filesystem from this repo\nCOPY --chown=nginx ./container/root /\n\n# - Set nginx to listen on defined port\n# - NOTE: order of operations is important, new config had to already installed from repo (above)\n# - Make temp directory for .nginx runtime files\n# - Fix woff mime type support\n# - Update nginx.conf user\n# - Set permissions to allow image to be run under a non root user\nRUN sed -i \"s/listen [0-9]*;/listen ${CONTAINER_PORT};/\" $CONF_NGINX_SITE && \\\n    mkdir /tmp/.nginx && \\\n    /bin/bash -e /scripts/fix_woff_support.sh && \\\n    sed -i \"s/^user .*$/user ${NOT_ROOT_USER};/\" ${CONF_NGINX_SERVER} && \\\n    /bin/bash -e /scripts/set_permissions.sh\n\nRUN yum update -y -q nginx\nRUN goss -g /tests/centos/nginx.goss.yaml validate && \\\n    /aufs_hack.sh\n"
+}

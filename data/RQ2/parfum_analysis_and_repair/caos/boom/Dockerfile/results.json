@@ -1,0 +1,53 @@
+{
+  "startTime": 1674253820356,
+  "endTime": 1674253821283,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 10,
+        "lineEnd": 10,
+        "columnStart": 4,
+        "columnEnd": 131
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 12,
+        "lineEnd": 12,
+        "columnStart": 4,
+        "columnEnd": 102
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 15,
+        "lineEnd": 15,
+        "columnStart": 4,
+        "columnEnd": 65
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 8,
+        "lineEnd": 8,
+        "columnStart": 18,
+        "columnEnd": 34
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 37,
+        "lineEnd": 37,
+        "columnStart": 18,
+        "columnEnd": 46
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "####################################################################################################\n# Download dependencies and build\n####################################################################################################\nFROM golang:1.14.2-alpine3.11 AS dependencies\n\nWORKDIR $GOPATH/src/github.com/caos/boom\n\n# Runtime dependencies\nRUN apk update && apk add --no-cache git curl && \\\n    mkdir /artifacts && \\\n    curl -f -L \"https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2Fv3.4.0/kustomize_v3.4.0_linux_amd64.tar.gz\" | tar xvz && \\\n    mv ./kustomize /artifacts/kustomize && \\\n    curl -f -LO https://storage.googleapis.com/kubernetes-release/release/v1.17.0/bin/linux/amd64/kubectl && \\\n    chmod +x ./kubectl && \\\n    mv ./kubectl /artifacts/kubectl && \\\n    curl -f -L \"https://get.helm.sh/helm-v2.12.0-linux-amd64.tar.gz\" | tar xvz && \\\n    mv linux-amd64/helm /artifacts/helm && \\\n    chmod +x /artifacts/helm && \\\n    go get -u github.com/go-delve/delve/cmd/dlv\n\n# copy all sourcecode from the current repository\nCOPY ./go.mod ./go.sum ./\nRUN go mod download\n\n# Copy the go source\nCOPY cmd cmd\nCOPY api api\nCOPY controllers controllers\nCOPY internal internal\n\nRUN CGO_ENABLED=0 GOOS=linux go build -o /gen cmd/gen-executable/*.go\n\n# ####################################################################################################\n# Create base runtime\n# ####################################################################################################\nFROM alpine:3.11 AS runtime\n\nRUN apk update && apk add --no-cache bash ca-certificates\nCOPY --from=dependencies /artifacts /usr/local/bin/\nCOPY --from=dependencies /gen /\n\nCOPY config/crd /crd\nCOPY dashboards /dashboards\n\nRUN /gen\n\n# ####################################################################################################\n# Build debug binary\n# ####################################################################################################\nFROM dependencies AS debug-build\n\n# RUN CGO_ENABLED=0 GOOS=linux go build -ldflags \"-s -w\" -o boom main.go\nRUN CGO_ENABLED=0 GOOS=linux go build -gcflags 'all=-N -l' -o /boom cmd/boom/*.go\n\n# ####################################################################################################\n# Create debug runtime\n# ####################################################################################################\nFROM runtime AS debug\nCOPY --from=dependencies /go/bin/dlv /usr/local/bin/\nCOPY --from=debug-build /boom /\n\nENTRYPOINT [ \"dlv\", \"exec\", \"--api-version\", \"2\", \"--headless\", \"--accept-multiclient\", \"--listen\", \":2345\", \"/boom\", \"--\"]\n\n# ####################################################################################################\n# Run tests\n# ####################################################################################################\nFROM dependencies AS test\n\nRUN CGO_ENABLED=0 GOOS=linux go test -short $(go list ./... | grep -v /vendor/)\n# RUN go test -race -short $(go list ./... | grep -v /vendor/)\n# RUN go test -msan -short $(go list ./... | grep -v /vendor/)\n\n# ####################################################################################################\n# Run build\n# ####################################################################################################\nFROM dependencies AS build\n\n# RUN CGO_ENABLED=0 GOOS=linux go build -ldflags \"-s -w\" -o boom main.go\nRUN CGO_ENABLED=0 GOOS=linux go build -o /boom cmd/boom/*.go\n\n# ####################################################################################################\n# Create production runtime\n# ####################################################################################################\nFROM runtime\n\nCOPY --from=build /boom /\n\nENTRYPOINT [\"/boom\"]"
+}

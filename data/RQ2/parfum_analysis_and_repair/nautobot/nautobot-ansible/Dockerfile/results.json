@@ -1,0 +1,35 @@
+{
+  "startTime": 1674248524055,
+  "endTime": 1674248524971,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 20,
+        "lineEnd": 20,
+        "columnStart": 4,
+        "columnEnd": 89
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 12,
+        "lineEnd": 12,
+        "columnStart": 27,
+        "columnEnd": 58
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 12,
+        "lineEnd": 12,
+        "columnStart": 27,
+        "columnEnd": 58
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "#############\n# Dependencies\n#\n#  This base stage just installs the dependencies required for production\n#  without any development deps.\nARG PYTHON_VER=3.8\nFROM python:${PYTHON_VER} AS base\n\n# Allow for flexible Python versions, for broader testing\nARG PYTHON_VER=3.8\nENV PYTHON_VERSION=${PYTHON_VER}\nENV DEBIAN_FRONTEND=noninteractive\nRUN apt-get update -yqq && apt-get install --no-install-recommends -yqq shellcheck && apt-get clean && rm -rf /var/lib/apt/lists/*;\n\nWORKDIR /usr/src/app\n\n# Update pip to latest\nRUN python -m pip install -U pip\n\n# Install poetry for dep management\nRUN curl -f -sSL https://raw.githubusercontent.com/python-poetry/poetry/master/get-poetry.py | python\nENV PATH=\"$PATH:/root/.poetry/bin\"\nRUN poetry config virtualenvs.create false\n\n# Bring in Poetry related files needed for other stages\nCOPY pyproject.toml poetry.lock ./\n\n# Install only package Dependencies\nRUN poetry install --no-dev\n\n# Copy in the application source and everything not explicitly banned by .dockerignore\nCOPY . .\n\n#########\n# Linting\n#\n# Runs all necessary non Ansible linting and code checks\nFROM base AS lint\n\n# Install dev dependencies\nRUN poetry install\n\nRUN echo 'Running Black' && \\\n    black --check --diff . && \\\n    echo 'Running Bandit' && \\\n    bandit --recursive ./ --configfile .bandit.yml\n\n\n############\n# Unit Tests\n#\n# This test stage runs true unit tests (no outside services) at build time, as\n# well as enforcing codestyle and performing fast syntax checks. It is built\n# into an image with docker-compose for running the full test suite.\nFROM lint AS unittests\n\n# Remove black from dev dependencies to prevent conflicts with Ansible\nRUN poetry remove black --dev\n\n# Set a custom collection path for all ansible commands\n# Note: This only allows for one path, not colon-separated, because we use it\n# elsewhere\nARG ANSIBLE_COLLECTIONS_PATH=/usr/share/ansible/collections\nENV ANSIBLE_COLLECTIONS_PATH=${ANSIBLE_COLLECTIONS_PATH}\n\nARG PYTHON_VER=3.8\nENV PYTHON_VERSION=${PYTHON_VER}\n\n# Allows for custom command line arguments to be passed to ansible-test (like -vvv)\nARG ANSIBLE_SANITY_ARGS\nENV ANSIBLE_SANITY_ARGS=${ANSIBLE_SANITY_ARGS}\nARG ANSIBLE_UNIT_ARGS\nENV ANSIBLE_UNIT_ARGS=${ANSIBLE_UNIT_ARGS}\n\n# For Module unit tests as we use some testing features avaiable in this collection\nRUN ansible-galaxy collection install community.general\n\n# Build Collection to run ansible-tests against\nRUN ansible-galaxy collection build --output-path ./dist/ .\n\n# Install built library\nRUN ansible-galaxy collection install ./dist/networktocode*.tar.gz\n\n# Switch to the collection path for tests\nWORKDIR ${ANSIBLE_COLLECTIONS_PATH}/ansible_collections/networktocode/nautobot\n\n# Run sanity tests\nRUN ansible-test sanity $ANSIBLE_SANITY_ARGS \\\n    --requirements \\\n    --skip-test pep8 \\\n    --python ${PYTHON_VER} \\\n    plugins/\n\n# Run unit tests\nRUN ansible-test units $ANSIBLE_UNIT_ARGS --coverage --python ${PYTHON_VERSION}\n\n############\n# Integration Tests\nFROM unittests AS integration\n\nARG ANSIBLE_INTEGRATION_ARGS\nENV ANSIBLE_INTEGRATION_ARGS=${ANSIBLE_INTEGRATION_ARGS}\n\n# Integration test entrypoint\nENTRYPOINT ${ANSIBLE_COLLECTIONS_PATH}/ansible_collections/networktocode/nautobot/tests/integration/entrypoint.sh\n\nCMD [\"--help\"]\n"
+}

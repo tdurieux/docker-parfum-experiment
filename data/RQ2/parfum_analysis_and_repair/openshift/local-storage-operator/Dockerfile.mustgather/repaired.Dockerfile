@@ -1,0 +1,9 @@
+FROM registry.ci.openshift.org/ocp/4.12:must-gather AS builder
+WORKDIR /go/src/github.com/openshift/local-storage-operator
+COPY . .
+
+FROM registry.ci.openshift.org/ocp/4.12:cli
+COPY --from=builder /go/src/github.com/openshift/local-storage-operator/must-gather/* /usr/bin/
+RUN chmod +x /usr/bin/gather
+
+ENTRYPOINT /usr/bin/gather

@@ -1,0 +1,5 @@
+<%= render_erb 'images/Dockerfile.npm.erb' %>
+
+COPY --chown=<%= chown %> images/<%= analyzer %>/sider_recommended_remark_lint.yml ${RUNNER_USER_HOME}/
+
+<%= render_erb 'images/Dockerfile.end.erb' %>

@@ -1,0 +1,8 @@
+# Nginx container.
+#
+# All web requests are sent to this container.
+ARG CLI_IMAGE
+FROM ${CLI_IMAGE:-cli} as cli
+
+# @see https://hub.docker.com/r/uselagoon/nginx-drupal/tags?page=1
+# @see https://github.com/uselagoon/lagoon-images/tree/main/images/nginx-drupal

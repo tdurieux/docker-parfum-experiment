@@ -1,0 +1,45 @@
+{
+  "startTime": 1674253046462,
+  "endTime": 1674253047010,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 4,
+        "lineEnd": 4,
+        "columnStart": 4,
+        "columnEnd": 31
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 4,
+        "lineEnd": 4,
+        "columnStart": 4,
+        "columnEnd": 31
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 4,
+        "lineEnd": 4,
+        "columnStart": 4,
+        "columnEnd": 31
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 4,
+        "lineEnd": 4,
+        "columnStart": 4,
+        "columnEnd": 55
+      }
+    }
+  ],
+  "repairedDockerfile": "FROM --platform=linux/arm64 maven:3.6.3-jdk-11 as build\n\nARG MAPFILE_URL=set_MAPFILE_URL_env_var\n\nRUN apt-get install --no-install-recommends -y git wget && rm -rf /var/lib/apt/lists/*;\nWORKDIR /build\n\n# fetch graphhopper, make some finetune in the pom.xml and build it\nRUN \\\n    git clone --depth 2 https://github.com/graphhopper/graphhopper.git \\\n    && cd graphhopper \\\n    && sed -i 's/nodeVersion>v12.3.1/nodeVersion>v17.2.0/' web-bundle/pom.xml \\\n    && sed -i 's/npmVersion>6.14.5/npmVersion>8.1.4/' web-bundle/pom.xml \\\n    && mvn clean package --quiet\n\n# fetch the mapfile\nRUN mkdir -p /map && wget -O /map/mapfile.osm.pbf ${MAPFILE_URL}\n\n# add the config file\nCOPY config-docker.yml /build/config.yml\nCOPY ./gh-script/graphhopper.sh ./graphhopper\n\n# build the mapfile cache with graphhopper\nRUN \\\n    mkdir -p /graphhopper-cache \\\n    && cd graphhopper \\\n    && JAVA_OPTS=\"-Xmx16g -Xms16g\" ./graphhopper.sh --action import --config /build/config.yml --graph-cache /graphhopper-cache --input /map/mapfile.osm.pbf \\\n    && sleep 2\n    # && java -Ddw.graphhopper.datareader.file=/map/mapfile.osm.pbf -Ddw.graphhopper.graph.location=/graphhopper-cache -Xmx16g -Xms16g -jar web/target/graphhopper-web-*.jar server /build/config.yml\n\nFROM --platform=linux/arm64 openjdk:11.0-jre\n\nENV JAVA_OPTS \"-Xmx6g -Xms6g -Ddw.server.application_connectors[0].bind_host=0.0.0.0 -Ddw.server.application_connectors[0].port=80\"\nWORKDIR /graphhopper\n\n# mapfile\nCOPY --from=build /map/mapfile.osm.pbf /map/mapfile.osm.pbf\n\n# graphhopper cache\nCOPY --from=build /graphhopper-cache /graphhopper-cache\n\n# pom.xml is used to get the jar file version. see https://github.com/graphhopper/graphhopper/pull/1990#discussion_r409438806\nCOPY --from=build /build/graphhopper/pom.xml ./\n\n# graphhopper executables\nCOPY --from=build /build/graphhopper/web/target/*.jar ./web/target/\n\n# graphhopper script\nCOPY ./gh-script/graphhopper.sh ./\n\n# config file\nCOPY ./config-docker.yml ./config.yml\n\nVOLUME [ \"/data\" ]\n\nEXPOSE 80\n\nENTRYPOINT [ \"./graphhopper.sh\", \"--action\", \"web\", \"--config\", \"/graphhopper/config.yml\", \"--graph-cache\", \"/graphhopper-cache\", \"--input\", \"/map/mapfile.osm.pbf\" ]"
+}

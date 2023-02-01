@@ -1,0 +1,35 @@
+{
+  "startTime": 1674234561174,
+  "endTime": 1674234561473,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 48,
+        "lineEnd": 48,
+        "columnStart": 4,
+        "columnEnd": 109
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 5,
+        "lineEnd": 5,
+        "columnStart": 6,
+        "columnEnd": 57
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 5,
+        "lineEnd": 5,
+        "columnStart": 6,
+        "columnEnd": 57
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM autograph-app\n\nUSER root\nRUN apt update && \\\n      apt -y upgrade && \\\n      apt -y --no-install-recommends install softhsm2 python3 python3-ruamel.yaml && \\\n      apt-get clean && rm -rf /var/lib/apt/lists/*;\n\n# copy the config\nADD autograph.softhsm.yaml /app/\n\n# give app access to dev db root cert\nADD db-root.crt /opt/db-root.crt\nRUN chgrp -vR app /opt\nRUN chmod -vR 0444 /opt/db-root.crt\n\n# Setup SoftHSM\nRUN mkdir -p /var/lib/softhsm/tokens && \\\n      softhsm2-util --init-token --slot 0 --label test --pin 0000 --so-pin 0000\n\n# load dev keys\nADD webextensions-rsa.pem /go/src/go.mozilla.org/autograph/tools/softhsm/\nADD extensions-ecdsa-pk8.pem /go/src/go.mozilla.org/autograph/tools/softhsm/\n\n# Import a key pair from the given path. The file must be in PKCS#8-format. Use with --slot or --token or --serial, --file-pin, --label, --id, --no-public-key, and --pxin.\nRUN softhsm2-util --token test --pin 0000 --so-pin 0000 --label webextrsa4096 --id deadbeef --import /go/src/go.mozilla.org/autograph/tools/softhsm/webextensions-rsa.pem\nRUN softhsm2-util --token test --pin 0000 --so-pin 0000 --label ext-ecdsa-p384 --id 12345678 --import /go/src/go.mozilla.org/autograph/tools/softhsm/extensions-ecdsa-pk8.pem\n\n# genkeys\nRUN cd /go/src/go.mozilla.org/autograph/tools/softhsm/ && go run genkeys.go\n\n# make a pki in softhsm then update the config\nRUN cd /go/src/go.mozilla.org/autograph/tools/genpki/ && \\\n      go run genpki.go > /app/genpki.out && \\\n      cd /go/src/go.mozilla.org/autograph/tools/configurator && \\\n      python3 configurator.py -c /app/autograph.softhsm.yaml -i -s normandy \\\n      -p issuerprivkey -v \"$(grep 'inter key name' /app/genpki.out | awk '{print $4}')\" && \\\n      python3 configurator.py -c /app/autograph.softhsm.yaml -i -s normandy \\\n      -p issuercert -v \"$(grep 'inter cert path' /app/genpki.out | awk '{print $4}')\" && \\\n      python3 configurator.py -c /app/autograph.softhsm.yaml -i -s normandy \\\n      -p cacert -v \"$(grep 'root cert path' /app/genpki.out | awk '{print $4}')\" && \\\n      python3 configurator.py -c /app/autograph.softhsm.yaml -i -s kinto \\\n      -p issuerprivkey -v \"$(grep 'inter key name' /app/genpki.out | awk '{print $4}')\" && \\\n      python3 configurator.py -c /app/autograph.softhsm.yaml -i -s kinto \\\n      -p issuercert -v \"$(grep 'inter cert path' /app/genpki.out | awk '{print $4}')\" && \\\n      python3 configurator.py -c /app/autograph.softhsm.yaml -i -s kinto \\\n      -p cacert -v \"$(grep 'root cert path' /app/genpki.out | awk '{print $4}')\"\n\nRUN curl -f -o /app/wait-for-it.sh https://raw.githubusercontent.com/vishnubob/wait-for-it/master/wait-for-it.sh && \\\n      chmod +x /app/wait-for-it.sh\n\n# in docker-compose, the monitor job will mount /tmp to get the generated config\nRUN cp /app/autograph.softhsm.yaml /tmp/\n\nCMD /go/bin/autograph -c /app/autograph.softhsm.yaml\n"
+}

@@ -1,0 +1,8 @@
+FROM debian:11-slim
+RUN apt-get update && apt-get install --no-install-recommends curl jq -y && rm -rf /var/lib/apt/lists/*;
+RUN curl -f https://letsencrypt.org/certs/fakelerootx1.pem -o /usr/local/share/ca-certificates/fakelerootx1.crt
+RUN update-ca-certificates
+RUN curl -f -L https://github.com/ameshkov/dnslookup/releases/download/v1.4.4/dnslookup-linux-amd64-v1.4.4.tar.gz > /tmp/dnslookup.tar.gz
+RUN cd /tmp && tar -xzvf dnslookup.tar.gz && mv /tmp/linux-amd64/dnslookup /usr/bin && rm dnslookup.tar.gz
+RUN chmod +x /usr/bin/dnslookup
+ENTRYPOINT /usr/local/bin/test.sh

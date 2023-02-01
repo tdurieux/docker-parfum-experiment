@@ -1,0 +1,34 @@
+FROM arm32v6/alpine:3.12@sha256:cd6068a4eda8ac02e821d726f4ab8ecb0e7451a771fdb621eb75d367b1bdbc8e AS build
+
+RUN apk add --no-cache -U curl ca-certificates
+
+# renovate: datasource=github-releases depName=thegeeklab/wait-for
+ENV WAITFOR_VERSION=0.2.0
+
+RUN curl -f -sSLo /tmp/wait-for-it https://github.com/thegeeklab/wait-for/releases/download/v${WAITFOR_VERSION}/wait-for && \
+  chmod +x /tmp/wait-for-it
+
+# renovate: datasource=github-releases depName=hairyhenderson/gomplate
+ENV GOMPLATE_VERSION=3.11.1
+
+RUN curl -f -sSLo /tmp/gomplate https://github.com/hairyhenderson/gomplate/releases/download/v${GOMPLATE_VERSION}/gomplate_linux-armv6 && \
+  chmod +x /tmp/gomplate
+
+FROM arm32v6/alpine:3.12@sha256:cd6068a4eda8ac02e821d726f4ab8ecb0e7451a771fdb621eb75d367b1bdbc8e
+
+ENV CRON_ENABLED false
+ENV TERM xterm
+
+ENTRYPOINT ["/sbin/tini", "--", "/usr/bin/entrypoint"]
+CMD ["bash"]
+
+COPY ./overlay /
+
+COPY --from=build /tmp/wait-for-it /usr/bin/
+COPY --from=build /tmp/gomplate /usr/bin/
+
+RUN apk update && \
+  apk upgrade -a || apk fix && \
+  apk add ca-certificates curl bash bash-completion ncurses vim tar rsync shadow su-exec tini s6 xz && \
+  update-ca-certificates && \
+  rm -rf /var/cache/apk/*

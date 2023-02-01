@@ -1,0 +1,155 @@
+# docker run -it --rm -p 6081:8080 -v `pwd`/..:hadabot_main hadabot/ros2-codeserver
+
+ARG FROM_IMAGE=dorowu/ubuntu-desktop-lxde-vnc:focal
+
+FROM $FROM_IMAGE AS cache
+
+ARG USER_ID
+ARG GROUP_ID
+
+# Check for mandatory build arguments
+RUN : "${USER_ID:?Build argument needs to be set and non-empty.}" && \
+    : "${GROUP_ID:?Build argument needs to be set and non-empty.}"
+
+RUN apt-get update && \
+    apt-get upgrade -y && \
+    apt-get install --no-install-recommends -y locales curl gnupg2 lsb-release wget git sudo unzip && \
+    locale-gen en_US en_US.UTF-8 && \
+    update-locale LC_ALL=en_US.UTF-8 LANG=en_US.UTF-8 && \
+    export LANG=en_US.UTF-8 && \
+    curl -f -s https://raw.githubusercontent.com/ros/rosdistro/master/ros.asc | apt-key add - && \
+    sh -c 'echo "deb http://packages.ros.org/ros2/ubuntu `lsb_release -cs` main" > /etc/apt/sources.list.d/ros2-latest.list' && \
+    rm -rf /var/lib/apt/lists/*
+
+ENV LANG en_US.UTF-8
+
+# Some ROS environment variables
+ENV ROS_DISTRO="foxy"
+ENV ROS_PYTHON_VERSION="3"
+ENV ROS_VERSION="2"
+
+RUN apt-get update && \
+    DEBIAN_FRONTEND=noninteractive apt-get --no-install-recommends install -y tzdata && \
+    apt-get install --no-install-recommends -y \
+      ros-${ROS_DISTRO}-desktop && \
+    rm -rf /var/lib/apt/lists/*
+
+# Error with a ros1-bridge dependency if we install ros-eloquent-ros2bag*
+# so install each package individually igoring the package with the
+# ros1-bridge dependency
+# Actually according to https://index.ros.org/r/rosbag2/, we only need
+# ros2bag and rosbag2-transport for ROS 2 (need to verify this claim)
+RUN apt-get update && \
+    apt-get install --no-install-recommends -y \
+      ros-${ROS_DISTRO}-image-common \
+      ros-${ROS_DISTRO}-image-pipeline \
+      # ros-${ROS_DISTRO}-rosbag2-dbgsym \
+      ros-${ROS_DISTRO}-ros2bag \
+      ros-${ROS_DISTRO}-rosbag2-storage-default-plugins-dbgsym \
+      ros-${ROS_DISTRO}-rosbag2-test-common \
+      ros-${ROS_DISTRO}-rosbag2-converter-default-plugins \
+      ros-${ROS_DISTRO}-rosbag2-tests \
+      ros-${ROS_DISTRO}-rosbag2-storage-dbgsym \
+      ros-${ROS_DISTRO}-rosbag2-storage \
+      ros-${ROS_DISTRO}-rosbag2-storage-default-plugins \
+      ros-${ROS_DISTRO}-rosbag2 \
+      ros-${ROS_DISTRO}-rosbag2-converter-default-plugins-dbgsym \
+      ros-${ROS_DISTRO}-rosbag2-transport \
+      ros-${ROS_DISTRO}-rosbag2-transport-dbgsym && \
+    rm -rf /var/lib/apt/lists/*
+
+RUN apt-get update && apt-get install --no-install-recommends -y \
+     google-mock \
+	libceres-dev \
+	liblua5.3-dev \
+	libboost-dev \
+	libboost-iostreams-dev \
+	libprotobuf-dev \
+	protobuf-compiler \
+	libcairo2-dev \
+	libpcl-dev \
+	python3-sphinx && \
+    rm -rf /var/lib/apt/lists/*
+
+RUN apt-get update && \
+    apt-get install --no-install-recommends -y gazebo11 libgazebo11-dev \
+         ros-${ROS_DISTRO}-test-msgs && \
+    apt-get install --no-install-recommends -y \
+            python3-argcomplete \
+         python3-vcstool \
+         python3-rosdep \
+					python3-colcon-common-extensions \
+					python3-pip && \
+    rm -rf /var/lib/apt/lists/*
+
+# Set up hadabot user
+
+ENV SHELL=/bin/bash
+
+RUN addgroup --gid $GROUP_ID hadabot && \
+    adduser --gecos '' --disabled-password --uid $USER_ID --gid $GROUP_ID hadabot && \
+    adduser hadabot sudo && \
+    echo "hadabot ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers.d/nopasswd
+
+WORKDIR /root
+
+# New way to install code server
+# https://github.com/cdr/code-server/blob/master/doc/install.md#debian-ubuntu
+ARG CS_VERSION=3.4.1
+RUN mkdir -p code_server && cd code_server && \
+    curl -fOL https://github.com/cdr/code-server/releases/download/v${CS_VERSION}/code-server_${CS_VERSION}_amd64.deb && \
+    dpkg -i code-server_${CS_VERSION}_amd64.deb && \
+    rm code-server_*.deb
+
+RUN echo "[program:codeserver]" >> /etc/supervisor/conf.d/codeserver.conf && \
+    echo "user=hadabot" >> /etc/supervisor/conf.d/codeserver.conf && \
+    echo "command=/usr/bin/code-server --host 0.0.0.0 --auth none --disable-telemetry" >> /etc/supervisor/conf.d/codeserver.conf
+
+# Other packages we need
+ENV RMW_IMPLEMENTATION="rmw_cyclonedds_cpp"
+RUN apt-get update && apt-get install --no-install-recommends -y \
+        gdb \
+        python3-pip \
+        virtualenvwrapper && \
+    apt-get install --no-install-recommends -y \
+        ros-${ROS_DISTRO}-rmw-cyclonedds-cpp \
+        ros-${ROS_DISTRO}-navigation2 \
+        ros-${ROS_DISTRO}-nav2-bringup \
+        ros-${ROS_DISTRO}-tf-transformations && \
+    rm -rf /var/lib/apt/lists/*
+
+USER hadabot
+
+WORKDIR /home/hadabot
+ENV HOME=$WORKDIR
+
+# Explicitly download correct cpptools-linux version since code-server downloads the wrong cpptools aarch version which causes exceptions - https://github.com/cdr/code-server/issues/2120 and https://github.com/hadabot/hadabot_main/issues/10
+# code-server --install-extension ms-vscode.cpptools && \   
+# Newer python extension also has issues
+# https://github.com/microsoft/vscode-python/releases/download/2020.7.94776/ms-python-release.vsix
+RUN wget https://github.com/microsoft/vscode-cpptools/releases/download/1.0.1/cpptools-linux.vsix && \
+    wget https://github.com/microsoft/vscode-python/releases/download/2020.5.86806/ms-python-release.vsix && \
+    code-server --verbose --install-extension cpptools-linux.vsix && \
+    code-server --verbose --install-extension ms-python-release.vsix && \
+    rm cpptools-linux.vsix && \
+    rm ms-python-release.vsix && \
+    code-server --install-extension twxs.cmake && \
+    /usr/bin/python3 -m pip install -U numpy mypy autopep8 flake8 jupyterlab pandas transforms3d scipy --user && \
+    echo "source /usr/share/virtualenvwrapper/virtualenvwrapper.sh" >> .bashrc
+
+
+# Install ROS vscode extension
+COPY --chown=hadabot:hadabot ./config_files/vscode-ros-dev-vsix.zip ./
+RUN unzip vscode-ros-dev-vsix.zip && \
+    code-server --install-extension vscode-ros-dev.vsix && \
+    rm vscode-ros-dev*.*
+
+ENV PATH=$PATH:/home/hadabot/.local/bin
+
+COPY --chown=hadabot:hadabot ./config_files/settings.json .local/share/code-server/User/
+COPY --chown=hadabot:hadabot ./config_files/coder.json .local/share/code-server/
+
+USER root
+
+ENV USER=hadabot
+ENTRYPOINT ["/startup.sh"]

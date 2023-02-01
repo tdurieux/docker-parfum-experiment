@@ -1,0 +1,54 @@
+{
+  "startTime": 1674217161143,
+  "endTime": 1674217162567,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 70,
+        "lineEnd": 70,
+        "columnStart": 4,
+        "columnEnd": 31
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 44,
+        "lineEnd": 44,
+        "columnStart": 4,
+        "columnEnd": 53
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 6,
+        "lineEnd": 6,
+        "columnStart": 22,
+        "columnEnd": 97
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 44,
+        "lineEnd": 44,
+        "columnStart": 4,
+        "columnEnd": 53
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 44,
+        "lineEnd": 44,
+        "columnStart": 4,
+        "columnEnd": 53
+      }
+    }
+  ],
+  "repairedDockerfile": "FROM continuumio/miniconda3:4.8.2 as builder\n\n# Install Boost dependency.\n# Need to build manually -- the standard Debian boost will pull\n# in another install of Python. We'll link Boost to the existing\n# Anaconda install instead.\nRUN apt-get update && apt-get install -y --no-install-recommends build-essential cmake zlib1g-dev && rm -rf /var/lib/apt/lists/*;\n\n# Install NLTK for tokenization and Eigen for modeling.\n# NB skip MKL (huge filesize) in favor of OpenBLAS\nRUN conda install -qy --freeze-installed nomkl nltk=3.4.5 eigen=3.3.7 boost=1.67.0 \\\n      && conda clean --all -f -y\n\n# Copy source code + model parameters via SSH\n# Build arguments provide SSH keys for accessing private CPL data.\nARG CPL_SSH_PRV_KEY\nRUN mkdir ${HOME}/.ssh && echo \"StrictHostKeyChecking no\" >> ${HOME}/.ssh/config \\\n      && echo \"$CPL_SSH_PRV_KEY\" > ${HOME}/.ssh/id_rsa \\\n      && chmod 600 ${HOME}/.ssh/id_rsa\n\n# Copy in source code.\nRUN git clone cpl@45.79.223.150:rnng-incremental.git /opt/rnng-incremental \\\n      && cd /opt/rnng-incremental && git checkout docker\n\n# Add checkpoint.\nARG CHECKPOINT_PATH=cpl@45.79.223.150:/home/cpl/rnng-incremental/checkpoint\nRUN mkdir -p /opt/rnng-incremental/checkpoint && \\\n      scp -To \"StrictHostKeyChecking=no\" \\\n        \"${CHECKPOINT_PATH}/{ntparse_gen.params,train_gen.oracle,clusters.txt}\" /opt/rnng-incremental/checkpoint\n\n# Remove SSH information.\nRUN rm -rf ${HOME}/.ssh\n\n# Compile source.\n# NB: requires ~2 GB RAM.\nWORKDIR /opt/rnng-incremental\nRUN mkdir build && cd build \\\n  && cmake -DEIGEN3_INCLUDE_DIR=/opt/conda/include/eigen3 -DBOOST_INCLUDEDIR=/opt/conda/include/boost -DBOOST_ROOT=/opt/conda .. && make -j2 \\\n  && find . -iwholename '*cmake*' -not -name CMakeLists.txt -delete\n\n\n\nFROM continuumio/miniconda3:4.8.2\n\nRUN apt-get install -y --no-install-recommends zlib1g && rm -rf /var/lib/apt/lists/*;\n\n# Root of model directory relative to build context.\nARG MODEL_ROOT=models/RNNG\n\n# Copy from previous stage\nRUN rm -rf /opt/conda\nCOPY --from=builder /opt/conda /opt/conda\nCOPY --from=builder /opt/rnng-incremental /opt/rnng-incremental\n\n# Copy external-facing scripts and resources\nCOPY ${MODEL_ROOT}/bin /opt/bin\nCOPY ${MODEL_ROOT}/vocab.pkl /opt/rnng-incremental/\nCOPY shared/spec /opt/bin/spec\nCOPY shared/unkify /opt/bin/unkify\nCOPY shared/unsupported /opt/bin/get_predictions.hdf5\n\nENV PATH \"/opt/bin:${PATH}\"\nENV LMZOO_CHECKPOINT_PATH /opt/rnng-incremental/checkpoint\nENV LMZOO_VOCABULARY_PATH vocab\n\n# Get model vocab from clusters file.\nRUN cut -f2 \"${LMZOO_CHECKPOINT_PATH}/clusters.txt\" \\\n      > \"${LMZOO_CHECKPOINT_PATH}/${LMZOO_VOCABULARY_PATH}\"\n\n# Copy test dependencies.\nRUN pip install --no-cache-dir nose jsonschema\nCOPY test.py /opt/test.py\n\n# Current git commit of build repository\nARG COMMIT\n# sha1 checksum of build directory\nARG FILES_SHA1\n\n# Prepare spec.\nCOPY ${MODEL_ROOT}/spec.template.json /tmp/spec.template.json\nRUN BUILD_DATETIME=\"$(date)\" cat /tmp/spec.template.json | \\\n            sed \"s/<image\\.sha1>/$COMMIT/g; s/<image\\.files_sha1>/${FILES_SHA1}/g; s/<image.datetime>/${BUILD_DATETIME}/g\" \\\n            > /opt/spec.template.json\n\nENV PYTHONIOENCODING utf-8\n\nWORKDIR /opt/bin\n"
+}

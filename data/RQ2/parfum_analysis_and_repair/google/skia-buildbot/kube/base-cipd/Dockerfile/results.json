@@ -1,0 +1,44 @@
+{
+  "startTime": 1674249912480,
+  "endTime": 1674249913612,
+  "originalSmells": [
+    {
+      "rule": "rmRecursiveAfterMktempD",
+      "position": {
+        "lineStart": 23,
+        "lineEnd": 23,
+        "columnStart": 10,
+        "columnEnd": 19
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 4,
+        "lineEnd": 5,
+        "columnStart": 44,
+        "columnEnd": 17
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 17,
+        "lineEnd": 17,
+        "columnStart": 44,
+        "columnEnd": 87
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 17,
+        "lineEnd": 17,
+        "columnStart": 44,
+        "columnEnd": 87
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "ARG CIPD_ROOT=\"/cipd\"\n\n# Keep the tag for base-cipd in sync with the tag used here for debian.\nFROM debian:testing-slim AS base\nRUN apt-get update && apt-get upgrade -y && apt-get install --no-install-recommends -y \\\n  ca-certificates \\\n  && rm -rf /var/lib/apt/lists/* \\\n  && addgroup --gid 2000 skia \\\n  && adduser --uid 2000 --gid 2000 skia\nUSER skia:skia\n\n# Install the CIPD client by syncing depot_tools to the revision specified in\n# recipes.cfg (we're not a recipe, but it's conveniently pinned there and auto-\n# rolled) and running the wrapper script. This process requires temporarily\n# installing some packages that we prefer to obtain via CIPD.\nFROM base AS install_cipd\nUSER root\nRUN apt-get update && apt-get upgrade -y && apt-get install --no-install-recommends -y git curl python2-minimal && rm -rf /var/lib/apt/lists/*;\nUSER skia:skia\nCOPY ./tmp/recipes.cfg /tmp/recipes.cfg\nRUN cat /tmp/recipes.cfg | \\\n  python2 -c \"import json; import sys; print json.load(sys.stdin)['deps']['depot_tools']['revision']\" > \\\n  /tmp/depot_tools_rev \\\n  && cd $(mktemp -d) \\\n  && git clone https://chromium.googlesource.com/chromium/tools/depot_tools.git \\\n  && cd depot_tools \\\n  && git reset --hard \"$(cat /tmp/depot_tools_rev)\" \\\n  && ./cipd --version \\\n  && cp ./.cipd_client /tmp/cipd && rm -rf -d\n\n# This stage brings us back to the base image, plus the CIPD binary.\nFROM base AS cipd\nUSER root\nCOPY --from=install_cipd /tmp/cipd /usr/local/bin/cipd\nUSER skia:skia\n\n# Now install the desired packages.\nFROM cipd AS install_pkgs\nARG CIPD_ROOT\nENV CIPD_ROOT=$CIPD_ROOT\nUSER root\nRUN mkdir -p ${CIPD_ROOT} && chown skia:skia ${CIPD_ROOT}\nUSER skia\nCOPY ./tmp/cipd.ensure /tmp/cipd.ensure\nENV CIPD_CACHE_DIR=\"/tmp/.cipd_cache\"\nRUN cipd ensure -root=${CIPD_ROOT} -ensure-file /tmp/cipd.ensure\n\n# The final stage brings us back to the base image with the installed CIPD packages.\nFROM base AS base-cipd\nARG CIPD_ROOT\nENV CIPD_ROOT=$CIPD_ROOT\nCOPY --from=install_pkgs ${CIPD_ROOT} ${CIPD_ROOT}\nENV PATH=\"${CIPD_ROOT}:${CIPD_ROOT}/cipd_bin_packages:${CIPD_ROOT}/cipd_bin_packages/bin:${CIPD_ROOT}/cipd_bin_packages/cpython:${CIPD_ROOT}/cipd_bin_packages/cpython/bin:${CIPD_ROOT}/cipd_bin_packages/cpython3:${CIPD_ROOT}/cipd_bin_packages/cpython3/bin:${PATH}\"\n"
+}

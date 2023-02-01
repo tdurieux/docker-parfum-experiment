@@ -1,0 +1,35 @@
+{
+  "startTime": 1674248084505,
+  "endTime": 1674248085169,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 74,
+        "lineEnd": 74,
+        "columnStart": 4,
+        "columnEnd": 140
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 105,
+        "lineEnd": 105,
+        "columnStart": 4,
+        "columnEnd": 95
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 63,
+        "lineEnd": 65,
+        "columnStart": 22,
+        "columnEnd": 17
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM nvidia/cuda:10.1-base-ubuntu18.04\n\nLABEL maintainer=\"Amazon AI\"\nLABEL dlc_major_version=\"6\"\n\nENV NCCL_VERSION=2.4.7-1+cuda10.1\nENV CUDNN_VERSION=7.6.2.24-1+cuda10.1\nENV TF_TENSORRT_VERSION=6.0.1\n\n# allow unauthenticated and allow downgrades for special libcublas library\nRUN apt-get update && apt-get install -y --no-install-recommends --allow-unauthenticated --allow-downgrades \\\n    ca-certificates \\\n    cuda-command-line-tools-10-1 \\\n    cuda-cufft-10-1 \\\n    cuda-curand-10-1 \\\n    cuda-cusolver-10-1 \\\n    cuda-cusparse-10-1 \\\n    #cuda-cublas-dev not available with 10-1, install libcublas instead\n    libcublas10=10.1.0.105-1 \\\n    libcublas-dev=10.1.0.105-1 \\\n    libcudnn7=${CUDNN_VERSION} \\\n    libnccl2=${NCCL_VERSION} \\\n    libgomp1 \\\n    curl \\\n    emacs \\\n    git \\\n    wget \\\n    vim \\\n && apt-get clean \\\n && rm -rf /var/lib/apt/lists/*\n\n# The 'apt-get install' of nvinfer-runtime-trt-repo-ubuntu1604-4.0.1-ga-cuda10.0\n# adds a new list which contains libnvinfer library, so it needs another\n# 'apt-get update' to retrieve that list before it can actually install the\n# library.\n# We don't install libnvinfer-dev since we don't need to build against TensorRT,\n# and libnvinfer4 doesn't contain libnvinfer.a static library.\nRUN apt-get update \\\n && apt-get install -y --no-install-recommends nvinfer-runtime-trt-repo-ubuntu1804-5.0.2-ga-cuda10.0 \\\n && apt-get update \\\n && apt-get install -y --no-install-recommends libnvinfer6=${TF_TENSORRT_VERSION}-1+cuda10.1 \\\n && apt-get clean \\\n && rm -rf /var/lib/apt/lists/*\n\n# See http://bugs.python.org/issue19846\nENV LANG C.UTF-8\n\n# Add arguments to achieve the version, python and url\n#  PYTHON=python for 2.7\n#  PYTHON=python3 for 3.5, 3.6 is not available directly on 16.04\nARG PYTHON=python\n\n# user python-pip or python3-pip\nARG PYTHON_PIP=python-pip\n\n#  PIP=pip for 2.7\n#  PIP=pip3 for 3.5, 3.6 is not available directly on 16.04\nARG PIP=pip\n\n# Python won’t try to write .pyc or .pyo files on the import of source modules\nENV PYTHONDONTWRITEBYTECODE=1 \\\n    PYTHONUNBUFFERED=1\n\nRUN apt-get update && apt-get install -y --no-install-recommends \\\n    ${PYTHON} \\\n    ${PYTHON_PIP} && rm -rf /var/lib/apt/lists/*;\n\nRUN ${PIP} --no-cache-dir install --upgrade \\\n    pip \\\n    setuptools\n\n# Some TF tools expect a \"python\" binary\nRUN ln -s $(which ${PYTHON}) /usr/local/bin/python\n\nRUN curl -f https://tensorflow-aws.s3-us-west-2.amazonaws.com/2.1/Serving/GPU/tensorflow_model_server --output /usr/bin/tensorflow_model_server \\\n && chmod 555 /usr/bin/tensorflow_model_server\n\nRUN pip install -U --no-cache-dir \\\n    docutils==0.15.2 \\\n    \"awscli<2\" \\\n    requests==2.22.0\n\n#CMD [\"/bin/bash\"]\n# Expose ports\n# gRPC\nEXPOSE 8500\n\n# REST\nEXPOSE 8501\n\n# Set where models should be stored in the container\nENV MODEL_BASE_PATH=/models\nRUN mkdir -p ${MODEL_BASE_PATH}\n\n# The only required piece is the model name in order to differentiate endpoints\nENV MODEL_NAME=model\n\n# Create a script that runs the model server so we can use environment variables\n# while also passing in arguments from the docker command line\nRUN echo '#!/bin/bash \\n\\n\\\ntensorflow_model_server --port=8500 --rest_api_port=8501 \\\n--model_name=${MODEL_NAME} --model_base_path=${MODEL_BASE_PATH}/${MODEL_NAME} \\\n\"$@\"' > /usr/bin/tf_serving_entrypoint.sh \\\n&& chmod +x /usr/bin/tf_serving_entrypoint.sh\n\nRUN curl -f https://aws-dlc-licenses.s3.amazonaws.com/tensorflow-2.1.0/license.txt -o /license.txt\n\nCMD [\"/usr/bin/tf_serving_entrypoint.sh\"]\n"
+}

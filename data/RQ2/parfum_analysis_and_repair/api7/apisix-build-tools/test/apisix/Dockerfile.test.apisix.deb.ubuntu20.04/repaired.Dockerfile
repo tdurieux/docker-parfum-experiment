@@ -1,0 +1,30 @@
+ARG IMAGE_BASE="ubuntu"
+ARG IMAGE_TAG="20.04"
+
+FROM ${IMAGE_BASE}:${IMAGE_TAG}
+
+ARG ETCD_VERSION="v3.4.14"
+ARG APISIX_VERSION
+ARG IMAGE_BASE
+ARG IMAGE_TAG
+
+ENV RUNNING_ETCD_VERSION=${ETCD_VERSION}
+
+COPY ./output/apisix_${APISIX_VERSION}-0~${IMAGE_BASE}${IMAGE_TAG}_amd64.deb /apisix_${APISIX_VERSION}-0~${IMAGE_BASE}${IMAGE_TAG}_amd64.deb
+COPY ./utils/install-common.sh /install-common.sh
+
+# install openresty
+RUN /install-common.sh install_openresty_deb
+
+# install etcd
+RUN /install-common.sh install_etcd
+
+# install apisix
+RUN set -x \
+    && apt install --no-install-recommends -y libldap2-dev \
+    && dpkg -i /apisix_${APISIX_VERSION}-0~${IMAGE_BASE}${IMAGE_TAG}_amd64.deb && rm -rf /var/lib/apt/lists/*;
+
+# start etcd and test
+CMD ["sh", "-c", "(nohup etcd-$RUNNING_ETCD_VERSION-linux-amd64/etcd >/tmp/etcd.log 2>&1 &) && sleep 10 && apisix start && sleep 3600"]
+
+EXPOSE 9080 9443

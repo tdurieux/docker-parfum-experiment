@@ -1,0 +1,44 @@
+{
+  "startTime": 1674248562904,
+  "endTime": 1674248563994,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 67,
+        "lineEnd": 67,
+        "columnStart": 4,
+        "columnEnd": 105
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 70,
+        "lineEnd": 70,
+        "columnStart": 4,
+        "columnEnd": 92
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 75,
+        "lineEnd": 75,
+        "columnStart": 4,
+        "columnEnd": 104
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 34,
+        "lineEnd": 34,
+        "columnStart": 7,
+        "columnEnd": 35
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Copyright 2020 Google LLC\n#\n# Licensed under the Apache License, Version 2.0 (the \"License\");\n# you may not use this file except in compliance with the License.\n# You may obtain a copy of the License at\n#\n#      http://www.apache.org/licenses/LICENSE-2.0\n#\n# Unless required by applicable law or agreed to in writing, software\n# distributed under the License is distributed on an \"AS IS\" BASIS,\n# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.\n# See the License for the specific language governing permissions and\n# limitations under the License.\n\nFROM gcr.io/gcp-runtimes/ubuntu_18_0_4 AS parent\n\nARG cnb_uid=1000\nARG cnb_gid=1000\nARG stack_id=\"google\"\n\n# Required by python/runtime.\nRUN apt-get update && apt-get install -y --no-install-recommends \\\n  libexpat1 \\\n  libffi6 \\\n  libmpdec2 \\\n  && apt-get clean && rm -rf /var/lib/apt/lists/*\n\n# Required by dotnet/runtime.\nRUN apt-get update && apt-get install -y --no-install-recommends \\\n  libicu60 \\\n  && apt-get clean && rm -rf /var/lib/apt/lists/*\n\n# Required by cpp/runtime.\nRUN apt-get update \\\n    && apt-get install --no-install-recommends -y libc++1-9 \\\n    && apt-get clean && rm -rf /var/lib/apt/lists/*\n\nLABEL io.buildpacks.stack.id=${stack_id}\n\nRUN groupadd cnb --gid ${cnb_gid} && \\\n  useradd --uid ${cnb_uid} --gid ${cnb_gid} -m -s /bin/bash cnb\n\nENV CNB_USER_ID=${cnb_uid}\nENV CNB_GROUP_ID=${cnb_gid}\nENV CNB_STACK_ID=${stack_id}\n\nFROM parent AS gcf-cpp-runtime\nENV PORT 8080\nUSER cnb\n\n# Install the system tools needed to compile C++. This needs to go into the\n# `build-image` of the buildpack.\nFROM parent AS gcf-cpp-incremental-0\nRUN apt-get update \\\n    && apt install -y  --no-install-recommends \\\n       build-essential g++-8 gcc-8 git libstdc++-8-dev pkg-config tar unzip zip \\\n    && apt-get clean && rm -rf /var/lib/apt/lists/*\nRUN update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-8 100 \\\n    && update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-8 100\n\n# Install cmake, ninja and vcpkg. The first two are build systems for C++, the\n# latter is the package manager we use. In an open source builder these would\n# get downloaded dynamically, for builders created by the user they can be\n# part of the builder to speed up the first build of each function.\nFROM gcf-cpp-incremental-0 AS gcf-cpp-incremental-1\n\nWORKDIR /usr/local\nRUN curl -f -sSL https://github.com/Kitware/CMake/releases/download/v3.19.4/cmake-3.19.4-Linux-x86_64.tar.gz | \\\n    tar -xzf - --strip-components=1\n\nRUN curl -f -sSL https://github.com/ninja-build/ninja/releases/download/v1.10.2/ninja-linux.zip | \\\n    funzip >/usr/local/bin/ninja && \\\n    chmod 755 /usr/local/bin/ninja\n\nWORKDIR /usr/local/vcpkg\nRUN curl -f -sSL https://github.com/Microsoft/vcpkg/archive/dfcd4e4b30799c4ce02fe3939b62576fec444224.tar.gz | \\\n    tar -xzf - --strip-components=1 && \\\n    ./bootstrap-vcpkg.sh -disableMetrics -useSystemBinaries && \\\n    rm -fr toolsrc/build.rel downloads/*\n# TODO(#249) - for now duplicate this code from /pack/bin/build, this should go away once we\n#   split the \"production\" vs. \"development\" builders.\nRUN { \\\n    echo 'set(VCPKG_BUILD_TYPE release)'; \\\n    echo 'set(VCPKG_CMAKE_SYSTEM_NAME Linux)'; \\\n    echo 'set(VCPKG_CRT_LINKAGE dynamic)'; \\\n    echo 'set(VCPKG_LIBRARY_LINKAGE static)'; \\\n    echo 'set(VCPKG_TARGET_ARCHITECTURE x64)'; \\\n} >triplets/x64-linux-nodebug.cmake\n\n# Warm up the vcpkg cache with all the dependencies for `functions-framework-cpp` and some\n# commonly use packages, like `google-cloud-cpp`.\nWORKDIR /var/cache/vcpkg-cache\nENV VCPKG_DEFAULT_BINARY_CACHE=/var/cache/vcpkg-cache\n\nFROM gcf-cpp-incremental-1 AS gcf-cpp-incremental-2\n\n# These are needed by the Functions Framework, do them one at a time, easier to\n# rebuild the Docker image if one of them fails to download or something.\nRUN /usr/local/vcpkg/vcpkg install --triplet x64-linux-nodebug abseil\nRUN /usr/local/vcpkg/vcpkg install --triplet x64-linux-nodebug boost-core\nRUN /usr/local/vcpkg/vcpkg install --triplet x64-linux-nodebug openssl\nRUN /usr/local/vcpkg/vcpkg install --triplet x64-linux-nodebug boost-program-options\nRUN /usr/local/vcpkg/vcpkg install --triplet x64-linux-nodebug boost-asio\nRUN /usr/local/vcpkg/vcpkg install --triplet x64-linux-nodebug boost-beast\nRUN /usr/local/vcpkg/vcpkg install --triplet x64-linux-nodebug boost-serialization\nRUN /usr/local/vcpkg/vcpkg install --triplet x64-linux-nodebug nlohmann-json\n\n# The following are not needed by the Functions Framework, but are used often\n# enough that it is a good idea to make them part of the base development\n# environment. Note that this automatically pulls abseil, grpc, protobuf, curl,\n# and a few other libraries.\nRUN /usr/local/vcpkg/vcpkg install --triplet x64-linux-nodebug curl\nRUN /usr/local/vcpkg/vcpkg install --triplet x64-linux-nodebug protobuf\nRUN /usr/local/vcpkg/vcpkg install --triplet x64-linux-nodebug grpc\nRUN /usr/local/vcpkg/vcpkg install --triplet x64-linux-nodebug google-cloud-cpp\n\n# Warmup the vcpkg cache for `functions-framework-cpp` using the release version\n# of the framework, this is the recommended path for users of the framework.\nFROM gcf-cpp-incremental-2 AS gcf-cpp-incremental-3\n\nRUN /usr/local/vcpkg/vcpkg install --triplet x64-linux-nodebug functions-framework-cpp\n\n# This is the development image we recommend users create in their workstation.\n# It includes all the development tools, including cmake, ninja and vcpkg, as\n# well as binary caches for the latest release of `functions-framework-cpp` and\n# its dependencies, as well as for `google-cloud-cpp`.\nFROM gcf-cpp-incremental-1 AS gcf-cpp-develop\n\nCOPY --from=gcf-cpp-incremental-3 /usr/local/bin/cmake   /usr/local/bin/cmake\nCOPY --from=gcf-cpp-incremental-3 /usr/local/bin/ctest   /usr/local/bin/ctest\nCOPY --from=gcf-cpp-incremental-3 /usr/local/bin/ninja   /usr/local/bin/ninja\nCOPY --from=gcf-cpp-incremental-3 /usr/local/vcpkg/vcpkg /usr/local/bin/vcpkg\nCOPY --from=gcf-cpp-incremental-3 /var/cache/vcpkg-cache /var/cache/vcpkg-cache\n\nUSER cnb\n\n# Warmup the vcpkg cache for `functions-framework-cpp` using the *current*\n# version of the framework, this is used in the CI build.\nFROM gcf-cpp-incremental-2 AS gcf-cpp-ci-0\n\nCOPY . /usr/local/share/gcf\nRUN find /usr/local/share/gcf -type f | xargs chmod 644\nRUN find /usr/local/share/gcf -type d | xargs chmod 755\nRUN VCPKG_OVERLAY_PORTS=/usr/local/share/gcf/build_scripts/vcpkg-overlays \\\n    /usr/local/vcpkg/vcpkg install --triplet x64-linux-nodebug functions-framework-cpp\n\n# This is the image used for the CI builds, includes a binary cache of the\n# *current* version of `functions-framework-cpp`, as well as binary caches of\n# its dependencies and other packages used in the examples.\nFROM gcf-cpp-incremental-1 AS gcf-cpp-ci\n\n# Copy the framework to /usr/local/share/gcf, that is just a lazy way to\n# get all the scripts we need for both the CI and regular builds.\n\nCOPY --from=gcf-cpp-ci-0 /usr/local/bin/cmake   /usr/local/bin/cmake\nCOPY --from=gcf-cpp-ci-0 /usr/local/bin/ctest   /usr/local/bin/ctest\nCOPY --from=gcf-cpp-ci-0 /usr/local/bin/ninja   /usr/local/bin/ninja\nCOPY --from=gcf-cpp-ci-0 /usr/local/vcpkg/vcpkg /usr/local/bin/vcpkg\nCOPY --from=gcf-cpp-ci-0 /usr/local/share /usr/local/share\nCOPY --from=gcf-cpp-ci-0 /var/cache/vcpkg-cache /var/cache/vcpkg-cache\n\nUSER cnb\n\nFROM gcf-cpp-incremental-0 AS gcf-cpp-minimal\nUSER cnb\n"
+}

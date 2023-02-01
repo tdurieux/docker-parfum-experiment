@@ -1,0 +1,71 @@
+{
+  "startTime": 1674256317126,
+  "endTime": 1674256318185,
+  "originalSmells": [
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 46,
+        "lineEnd": 46,
+        "columnStart": 4,
+        "columnEnd": 187
+      }
+    },
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 46,
+        "lineEnd": 46,
+        "columnStart": 191,
+        "columnEnd": 215
+      }
+    },
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 48,
+        "lineEnd": 48,
+        "columnStart": 4,
+        "columnEnd": 32
+      }
+    },
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 68,
+        "lineEnd": 68,
+        "columnStart": 4,
+        "columnEnd": 81
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 33,
+        "lineEnd": 33,
+        "columnStart": 22,
+        "columnEnd": 43
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 89,
+        "lineEnd": 89,
+        "columnStart": 22,
+        "columnEnd": 44
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 33,
+        "lineEnd": 33,
+        "columnStart": 22,
+        "columnEnd": 43
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# NOTE: This Dockerfile only works with BuildKit enabled.\n# Please find instructions on how to run it at\n# https://zwave-js.github.io/zwavejs2mqtt/#/development/custom-docker?id=building-a-container-using-dockerfilecontrib\nARG SRC=git-clone-src\n\n#####################\n# Setup the source  #\n#####################\n\n# Option 1 (default): Clone from git\nFROM node:16.3.0-buster AS git-clone-src\nARG ZWJ_BRANCH=master\nARG ZWJ_REPOSITORY=https://github.com/zwave-js/node-zwave-js\nARG Z2M_BRANCH=master\nARG Z2M_REPOSITORY=https://github.com/zwave-js/zwavejs2mqtt\nUSER node\nWORKDIR /home/node\n\nRUN git clone -b ${ZWJ_BRANCH} ${ZWJ_REPOSITORY}\nRUN git clone -b ${Z2M_BRANCH} --depth 1 ${Z2M_REPOSITORY}\n\n# Option 2: Copy from local sources\nFROM node:16.3.0-buster AS local-copy-src\nCOPY --chown=node node-zwave-js /home/node/node-zwave-js\nCOPY --chown=node zwavejs2mqtt /home/node/zwavejs2mqtt\n\n#####################\n# Build Environment #\n#####################\nFROM ${SRC} AS build\n\n# Setup the container\nUSER root\nRUN apt-get update && apt-get install --no-install-recommends -y jq && rm -rf /var/lib/apt/lists/*;\n\n### Build node-zwave-js ###\nUSER node\nWORKDIR /home/node/node-zwave-js\nENV YARN_HTTP_TIMEOUT=300000\n\nRUN yarn\nRUN yarn build\n\nRUN yarn plugin import version && yarn plugin import workspace-tools\n\n# Update the version info to match the branch built\nRUN yarn workspaces foreach version $(echo $(yarn node -p 'require(\"semver\").inc(require(\"zwave-js/package.json\").version, \"prerelease\")+\".dev\"')-$(git rev-parse --short HEAD)) --deferred && yarn version apply --all && yarn cache clean;\n\nRUN yarn workspaces foreach pack && yarn cache clean;\n\n### Build zwavejs2mqtt ###\nWORKDIR /home/node/zwavejs2mqtt\n\n# Change resolutions to point to local packs\nRUN cat package.json \\\n      | jq '.resolutions += { \"@zwave-js/config\": \"file:../node-zwave-js/packages/config/package.tgz\" }' \\\n      | jq '.resolutions += { \"@zwave-js/core\": \"file:../node-zwave-js/packages/core/package.tgz\" }' \\\n      | jq '.resolutions += { \"@zwave-js/nvmedit\": \"file:../node-zwave-js/packages/nvmedit/package.tgz\" }' \\\n      | jq '.resolutions += { \"@zwave-js/serial\": \"file:../node-zwave-js/packages/serial/package.tgz\" }' \\\n      | jq '.resolutions += { \"@zwave-js/shared\": \"file:../node-zwave-js/packages/shared/package.tgz\" }' \\\n      | jq '.resolutions += { \"zwave-js\": \"file:../node-zwave-js/packages/zwave-js/package.tgz\" }' \\\n      | jq '.dependencies += { \"zwave-js\": \"file:../node-zwave-js/packages/zwave-js/package.tgz\" }' \\\n      > package2.json && rm package.json && mv package2.json package.json\n\nRUN yarn\nRUN yarn build\n\n# Prune devDependencies\nRUN yarn remove $(cat package.json | jq -r '.devDependencies | keys | join(\" \")') && \\\n    rm -rf \\\n    build \\\n    package.sh \\\n    src \\\n    static \\\n    docs \\\n    .yarn && yarn cache clean;\n\n# Copy to distribution folder\nRUN mkdir my_dist\nRUN cp -Lr .git package.json yarn.lock .yarnrc.yml bin config server dist hass lib store views node_modules my_dist/\n\n#####################\n# Setup Final Image #\n#####################\nFROM node:16.3.0-buster\nLABEL maintainer=\"robertsLando\"\n\nENV ZWAVEJS_EXTERNAL_CONFIG=/usr/src/app/store/.config-db\n\nRUN apt-get update && apt-get install --no-install-recommends -y git && rm -rf /var/lib/apt/lists/*\nCOPY --from=build /home/node/zwavejs2mqtt/my_dist /usr/src/app\nWORKDIR /usr/src/app\nEXPOSE 8091\nUSER root\nCMD [\"node\", \"server/bin/www\"]\n"
+}

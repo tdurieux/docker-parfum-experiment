@@ -1,0 +1,14 @@
+ARG BASE_IMAGE=node:12.22.0
+FROM $BASE_IMAGE
+RUN adduser --disabled-password --gecos '' user
+RUN chown -R user /usr/local/
+USER user
+
+RUN npm i @teambit/bvm -g && npm cache clean --force;
+RUN bvm upgrade
+ENV PATH=$PATH:/home/user/bin
+ENV BIT_GLOBALS_DIR=/tmp/bit
+RUN bit config set analytics_reporting false
+RUN bit config set no_warnings false
+RUN bit config set interactive false
+RUN bit config set error_reporting true

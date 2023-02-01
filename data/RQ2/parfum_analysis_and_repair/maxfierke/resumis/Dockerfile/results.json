@@ -1,0 +1,17 @@
+{
+  "startTime": 1674248586505,
+  "endTime": 1674248587178,
+  "originalSmells": [
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 36,
+        "lineEnd": 36,
+        "columnStart": 4,
+        "columnEnd": 16
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM ruby:3.1.2-alpine3.15 AS builder\nLABEL maintainer=\"Max Fierke <max@maxfierke.com>\" \\\n      description=\"Build image for resumis\"\n\nENV APP_HOME=/resumis \\\n    NODE_ENV=production \\\n    RAILS_ENV=production \\\n    RESUMIS_USER=resumis\n\n# Build-time deps\nRUN apk add --update --no-cache \\\n  build-base \\\n  linux-headers \\\n  nodejs \\\n  yarn \\\n  tzdata \\\n  libxml2-dev \\\n  libxslt-dev \\\n  libgcc libstdc++ \\\n  git \\\n  postgresql-dev\n\nRUN mkdir -p $APP_HOME\nWORKDIR $APP_HOME\n\nADD ./Gemfile* $APP_HOME/\nRUN bundle config --global frozen 1 \\\n  && bundle config build.nokogiri --use-system-libraries \\\n  && bundle config set without development test \\\n  && bundle install -j$(getconf _NPROCESSORS_ONLN) --retry 3 \\\n  # Remove unneeded files (cached *.gem, *.o, *.c)\n  && rm -rf /usr/local/bundle/cache/*.gem \\\n  && find /usr/local/bundle/gems/ -name \"*.c\" -delete \\\n  && find /usr/local/bundle/gems/ -name \"*.o\" -delete\n\nADD ./package.json ./yarn.lock $APP_HOME/\nRUN yarn install && yarn cache clean;\n\nADD . $APP_HOME\n\nRUN SECRET_KEY_BASE=IGNORE_ME_I_AM_A_BAD_KEY_BASE bundle exec rake assets:precompile\nRUN rm -rf node_modules tmp/cache\n\n# Runtime image\nFROM ruby:3.1.2-alpine3.15\nLABEL maintainer=\"Max Fierke <max@maxfierke.com>\" \\\n      description=\"An API for your personal site & resume\"\nENV APP_HOME=/resumis \\\n    NODE_ENV=production \\\n    RAILS_ENV=production \\\n    RAILS_SERVE_STATIC_FILES=true \\\n    RESUMIS_DEPLOY_ROOT=/resumis \\\n    RESUMIS_TENANCY_MODE=single \\\n    RESUMIS_USER=resumis \\\n    PORT=5000 \\\n    WKHTMLTOPDF_PATH=/usr/bin/wkhtmltopdf\n\nRUN mkdir -p $APP_HOME/shared/pids\nRUN addgroup -g 1000 -S $RESUMIS_USER && \\\n    adduser -u 1000 -S $RESUMIS_USER -G $RESUMIS_USER -D\n\n# Runtime deps\nRUN apk add --update --no-cache \\\n  postgresql-client \\\n  file \\\n  imagemagick vips \\\n  tzdata \\\n  # PDF stuff\n  libintl \\\n  libcrypto1.1 libssl1.1 \\\n  ttf-dejavu ttf-droid ttf-freefont ttf-liberation \\\n  weasyprint\n\nWORKDIR $APP_HOME\nCOPY --from=builder /usr/local/bundle/ /usr/local/bundle/\nCOPY --from=builder $APP_HOME $APP_HOME\nRUN chown -R $RESUMIS_USER:$RESUMIS_USER $APP_HOME\n\n# forward request and error logs to docker log collector\nRUN ln -sf /dev/stdout log/unicorn.log && ln -sf /dev/stderr log/production.log\n\nUSER $RESUMIS_USER\nEXPOSE 5000\n\nRUN date -u > IMAGE_BUILD_TIME\n\nCMD [ \"bundle\", \"exec\", \"unicorn\", \"-c\", \"config/unicorn.rb\" ]\n"
+}

@@ -1,0 +1,14 @@
+FROM python:2.7.15
+
+RUN mkdir -p /opt/my/service
+
+COPY service /opt/my/service
+
+WORKDIR /opt/my/service
+
+RUN pip install --no-cache-dir -r requirements.txt
+
+EXPOSE 1300
+ENTRYPOINT ["python","/opt/my/service/server.py"]
+
+

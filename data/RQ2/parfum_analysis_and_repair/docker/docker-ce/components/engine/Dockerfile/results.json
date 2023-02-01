@@ -1,0 +1,107 @@
+{
+  "startTime": 1674255993223,
+  "endTime": 1674255994838,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 346,
+        "lineEnd": 346,
+        "columnStart": 5,
+        "columnEnd": 160
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 311,
+        "lineEnd": 311,
+        "columnStart": 4,
+        "columnEnd": 33
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 27,
+        "lineEnd": 27,
+        "columnStart": 11,
+        "columnEnd": 58
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 82,
+        "lineEnd": 85,
+        "columnStart": 25,
+        "columnEnd": 13
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 108,
+        "lineEnd": 113,
+        "columnStart": 26,
+        "columnEnd": 38
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 121,
+        "lineEnd": 129,
+        "columnStart": 26,
+        "columnEnd": 23
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 137,
+        "lineEnd": 147,
+        "columnStart": 26,
+        "columnEnd": 32
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 181,
+        "lineEnd": 182,
+        "columnStart": 26,
+        "columnEnd": 24
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 231,
+        "lineEnd": 233,
+        "columnStart": 26,
+        "columnEnd": 22
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 276,
+        "lineEnd": 302,
+        "columnStart": 26,
+        "columnEnd": 16
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 340,
+        "lineEnd": 344,
+        "columnStart": 26,
+        "columnEnd": 24
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "ARG CROSS=\"false\"\nARG SYSTEMD=\"false\"\n# IMPORTANT: When updating this please note that stdlib archive/tar pkg is vendored\nARG GO_VERSION=1.17.4\nARG DEBIAN_FRONTEND=noninteractive\nARG VPNKIT_VERSION=0.5.0\nARG DOCKER_BUILDTAGS=\"apparmor seccomp\"\n\nARG BASE_DEBIAN_DISTRO=\"bullseye\"\nARG GOLANG_IMAGE=\"golang:${GO_VERSION}-${BASE_DEBIAN_DISTRO}\"\n\nFROM ${GOLANG_IMAGE} AS base\nRUN echo 'Binary::apt::APT::Keep-Downloaded-Packages \"true\";' > /etc/apt/apt.conf.d/keep-cache\nARG APT_MIRROR\nRUN sed -ri \"s/(httpredir|deb).debian.org/${APT_MIRROR:-deb.debian.org}/g\" /etc/apt/sources.list \\\n && sed -ri \"s/(security).debian.org/${APT_MIRROR:-security.debian.org}/g\" /etc/apt/sources.list\nENV GO111MODULE=off\n\nFROM base AS criu\nARG DEBIAN_FRONTEND\nADD --chmod=0644 https://download.opensuse.org/repositories/devel:/tools:/criu/Debian_11/Release.key /etc/apt/trusted.gpg.d/criu.gpg.asc\nRUN --mount=type=cache,sharing=locked,id=moby-criu-aptlib,target=/var/lib/apt \\\n    --mount=type=cache,sharing=locked,id=moby-criu-aptcache,target=/var/cache/apt \\\n        echo 'deb https://download.opensuse.org/repositories/devel:/tools:/criu/Debian_11/ /' > /etc/apt/sources.list.d/criu.list \\\n        && apt-get update \\\n        && apt-get install -y --no-install-recommends criu \\\n        && install -D /usr/sbin/criu /build/criu && rm -rf /var/lib/apt/lists/*;\n\nFROM base AS registry\nWORKDIR /go/src/github.com/docker/distribution\n\n# REGISTRY_VERSION specifies the version of the registry to build and install\n# from the https://github.com/docker/distribution repository. This version of\n# the registry is used to test both schema 1 and schema 2 manifests. Generally,\n# the version specified here should match a current release.\nARG REGISTRY_VERSION=v2.3.0\n\n# REGISTRY_VERSION_SCHEMA1 specifies the version of the regsitry to build and\n# install from the https://github.com/docker/distribution repository. This is\n# an older (pre v2.3.0) version of the registry that only supports schema1\n# manifests. This version of the registry is not working on arm64, so installation\n# is skipped on that architecture.\nARG REGISTRY_VERSION_SCHEMA1=v2.1.0\nRUN --mount=type=cache,target=/root/.cache/go-build \\\n    --mount=type=cache,target=/go/pkg/mod \\\n    --mount=type=tmpfs,target=/go/src/ \\\n        set -x \\\n        && git clone https://github.com/docker/distribution.git . \\\n        && git checkout -q \"$REGISTRY_VERSION\" \\\n        && GOPATH=\"/go/src/github.com/docker/distribution/Godeps/_workspace:$GOPATH\" \\\n           go build -buildmode=pie -o /build/registry-v2 github.com/docker/distribution/cmd/registry \\\n        && case $(dpkg --print-architecture) in \\\n               amd64|armhf|ppc64*|s390x) \\\n               git checkout -q \"$REGISTRY_VERSION_SCHEMA1\"; \\\n               GOPATH=\"/go/src/github.com/docker/distribution/Godeps/_workspace:$GOPATH\"; \\\n                   go build -buildmode=pie -o /build/registry-v2-schema1 github.com/docker/distribution/cmd/registry; \\\n                ;; \\\n           esac\n\nFROM base AS swagger\nWORKDIR $GOPATH/src/github.com/go-swagger/go-swagger\n\n# GO_SWAGGER_COMMIT specifies the version of the go-swagger binary to build and\n# install. Go-swagger is used in CI for validating swagger.yaml in hack/validate/swagger-gen\n#\n# Currently uses a fork from https://github.com/kolyshkin/go-swagger/tree/golang-1.13-fix,\n# TODO: move to under moby/ or fix upstream go-swagger to work for us.\nENV GO_SWAGGER_COMMIT c56166c036004ba7a3a321e5951ba472b9ae298c\nRUN --mount=type=cache,target=/root/.cache/go-build \\\n    --mount=type=cache,target=/go/pkg/mod \\\n    --mount=type=tmpfs,target=/go/src/ \\\n        set -x \\\n        && git clone https://github.com/kolyshkin/go-swagger.git . \\\n        && git checkout -q \"$GO_SWAGGER_COMMIT\" \\\n        && go build -o /build/swagger github.com/go-swagger/go-swagger/cmd/swagger\n\nFROM debian:${BASE_DEBIAN_DISTRO} AS frozen-images\nARG DEBIAN_FRONTEND\nRUN --mount=type=cache,sharing=locked,id=moby-frozen-images-aptlib,target=/var/lib/apt \\\n    --mount=type=cache,sharing=locked,id=moby-frozen-images-aptcache,target=/var/cache/apt \\\n       apt-get update && apt-get install -y --no-install-recommends \\\n           ca-certificates \\\n           curl \\\n           jq && rm -rf /var/lib/apt/lists/*;\n# Get useful and necessary Hub images so we can \"docker load\" locally instead of pulling\nCOPY contrib/download-frozen-image-v2.sh /\nARG TARGETARCH\nRUN /download-frozen-image-v2.sh /build \\\n        busybox:latest@sha256:95cf004f559831017cdf4628aaf1bb30133677be8702a8c5f2994629f637a209 \\\n        busybox:glibc@sha256:1f81263701cddf6402afe9f33fca0266d9fff379e59b1748f33d3072da71ee85 \\\n        debian:bullseye-slim@sha256:dacf278785a4daa9de07596ec739dbc07131e189942772210709c5c0777e8437 \\\n        hello-world:latest@sha256:d58e752213a51785838f9eed2b7a498ffa1cb3aa7f946dda11af39286c3db9a9 \\\n        arm32v7/hello-world:latest@sha256:50b8560ad574c779908da71f7ce370c0a2471c098d44d1c8f6b513c5a55eeeb1\n# See also frozenImages in \"testutil/environment/protect.go\" (which needs to be updated when adding images to this list)\n\nFROM base AS cross-false\n\nFROM --platform=linux/amd64 base AS cross-true\nARG DEBIAN_FRONTEND\nRUN dpkg --add-architecture arm64\nRUN dpkg --add-architecture armel\nRUN dpkg --add-architecture armhf\nRUN dpkg --add-architecture ppc64el\nRUN dpkg --add-architecture s390x\nRUN --mount=type=cache,sharing=locked,id=moby-cross-true-aptlib,target=/var/lib/apt \\\n    --mount=type=cache,sharing=locked,id=moby-cross-true-aptcache,target=/var/cache/apt \\\n        apt-get update && apt-get install -y --no-install-recommends \\\n            crossbuild-essential-arm64 \\\n            crossbuild-essential-armel \\\n            crossbuild-essential-armhf \\\n            crossbuild-essential-ppc64el \\\n            crossbuild-essential-s390x && rm -rf /var/lib/apt/lists/*;\n\nFROM cross-${CROSS} AS dev-base\n\nFROM dev-base AS runtime-dev-cross-false\nARG DEBIAN_FRONTEND\nRUN --mount=type=cache,sharing=locked,id=moby-cross-false-aptlib,target=/var/lib/apt \\\n    --mount=type=cache,sharing=locked,id=moby-cross-false-aptcache,target=/var/cache/apt \\\n        apt-get update && apt-get install -y --no-install-recommends \\\n            binutils-mingw-w64 \\\n            g++-mingw-w64-x86-64 \\\n            libapparmor-dev \\\n            libbtrfs-dev \\\n            libdevmapper-dev \\\n            libseccomp-dev \\\n            libsystemd-dev \\\n            libudev-dev && rm -rf /var/lib/apt/lists/*;\n\nFROM --platform=linux/amd64 runtime-dev-cross-false AS runtime-dev-cross-true\nARG DEBIAN_FRONTEND\n# These crossbuild packages rely on gcc-<arch>, but this doesn't want to install\n# on non-amd64 systems, so other architectures cannnot crossbuild amd64.\nRUN --mount=type=cache,sharing=locked,id=moby-cross-true-aptlib,target=/var/lib/apt \\\n    --mount=type=cache,sharing=locked,id=moby-cross-true-aptcache,target=/var/cache/apt \\\n        apt-get update && apt-get install -y --no-install-recommends \\\n            libapparmor-dev:arm64 \\\n            libapparmor-dev:armel \\\n            libapparmor-dev:armhf \\\n            libapparmor-dev:ppc64el \\\n            libapparmor-dev:s390x \\\n            libseccomp-dev:arm64 \\\n            libseccomp-dev:armel \\\n            libseccomp-dev:armhf \\\n            libseccomp-dev:ppc64el \\\n            libseccomp-dev:s390x && rm -rf /var/lib/apt/lists/*;\n\nFROM runtime-dev-cross-${CROSS} AS runtime-dev\n\nFROM base AS tomll\n# GOTOML_VERSION specifies the version of the tomll binary to build and install\n# from the https://github.com/pelletier/go-toml repository. This binary is used\n# in CI in the hack/validate/toml script.\n#\n# When updating this version, consider updating the github.com/pelletier/go-toml\n# dependency in vendor.conf accordingly.\nARG GOTOML_VERSION=v1.8.1\nRUN --mount=type=cache,target=/root/.cache/go-build \\\n    --mount=type=cache,target=/go/pkg/mod \\\n        GOBIN=/build/ GO111MODULE=on go install \"github.com/pelletier/go-toml/cmd/tomll@${GOTOML_VERSION}\" \\\n     && /build/tomll --help\n\nFROM base AS vndr\n# VNDR_VERSION specifies the version of the vndr tool to build and install\n# from the https://github.com/LK4D4/vndr repository.\n#\n# The vndr tool is used to manage vendored go packages in the vendor directory,\n# and is pinned to a fixed version because different versions of this tool\n# can result in differences in the (go) files that are considered for vendoring.\nARG VNDR_VERSION=v0.1.2\nRUN --mount=type=cache,target=/root/.cache/go-build \\\n    --mount=type=cache,target=/go/pkg/mod \\\n        GOBIN=/build/ GO111MODULE=on go install \"github.com/LK4D4/vndr@${VNDR_VERSION}\" \\\n     && /build/vndr --help\n\nFROM dev-base AS containerd\nARG DEBIAN_FRONTEND\nRUN --mount=type=cache,sharing=locked,id=moby-containerd-aptlib,target=/var/lib/apt \\\n    --mount=type=cache,sharing=locked,id=moby-containerd-aptcache,target=/var/cache/apt \\\n        apt-get update && apt-get install -y --no-install-recommends \\\n            libbtrfs-dev && rm -rf /var/lib/apt/lists/*;\nARG CONTAINERD_VERSION\nCOPY /hack/dockerfile/install/install.sh /hack/dockerfile/install/containerd.installer /\nRUN --mount=type=cache,target=/root/.cache/go-build \\\n    --mount=type=cache,target=/go/pkg/mod \\\n        PREFIX=/build /install.sh containerd\n\nFROM base AS golangci_lint\nARG GOLANGCI_LINT_VERSION=v1.23.8\nRUN --mount=type=cache,target=/root/.cache/go-build \\\n    --mount=type=cache,target=/go/pkg/mod \\\n        GOBIN=/build/ GO111MODULE=on go install \"github.com/golangci/golangci-lint/cmd/golangci-lint@${GOLANGCI_LINT_VERSION}\" \\\n     && /build/golangci-lint --version\n\nFROM base AS gotestsum\nARG GOTESTSUM_VERSION=v1.7.0\nRUN --mount=type=cache,target=/root/.cache/go-build \\\n    --mount=type=cache,target=/go/pkg/mod \\\n        GOBIN=/build/ GO111MODULE=on go install \"gotest.tools/gotestsum@${GOTESTSUM_VERSION}\" \\\n     && /build/gotestsum --version\n\nFROM base AS shfmt\nARG SHFMT_VERSION=v3.0.2\nRUN --mount=type=cache,target=/root/.cache/go-build \\\n    --mount=type=cache,target=/go/pkg/mod \\\n        GOBIN=/build/ GO111MODULE=on go install \"mvdan.cc/sh/v3/cmd/shfmt@${SHFMT_VERSION}\" \\\n     && /build/shfmt --version\n\nFROM dev-base AS dockercli\nARG DOCKERCLI_CHANNEL\nARG DOCKERCLI_VERSION\nCOPY /hack/dockerfile/install/install.sh /hack/dockerfile/install/dockercli.installer /\nRUN --mount=type=cache,target=/root/.cache/go-build \\\n    --mount=type=cache,target=/go/pkg/mod \\\n        PREFIX=/build /install.sh dockercli\n\nFROM runtime-dev AS runc\nARG RUNC_VERSION\nARG RUNC_BUILDTAGS\nCOPY /hack/dockerfile/install/install.sh /hack/dockerfile/install/runc.installer /\nRUN --mount=type=cache,target=/root/.cache/go-build \\\n    --mount=type=cache,target=/go/pkg/mod \\\n        PREFIX=/build /install.sh runc\n\nFROM dev-base AS tini\nARG DEBIAN_FRONTEND\nARG TINI_VERSION\nRUN --mount=type=cache,sharing=locked,id=moby-tini-aptlib,target=/var/lib/apt \\\n    --mount=type=cache,sharing=locked,id=moby-tini-aptcache,target=/var/cache/apt \\\n        apt-get update && apt-get install -y --no-install-recommends \\\n            cmake \\\n            vim-common && rm -rf /var/lib/apt/lists/*;\nCOPY /hack/dockerfile/install/install.sh /hack/dockerfile/install/tini.installer /\nRUN --mount=type=cache,target=/root/.cache/go-build \\\n    --mount=type=cache,target=/go/pkg/mod \\\n        PREFIX=/build /install.sh tini\n\nFROM dev-base AS rootlesskit\nARG ROOTLESSKIT_VERSION\nARG PREFIX=/build\nCOPY /hack/dockerfile/install/install.sh /hack/dockerfile/install/rootlesskit.installer /\nRUN --mount=type=cache,target=/root/.cache/go-build \\\n    --mount=type=cache,target=/go/pkg/mod \\\n        /install.sh rootlesskit \\\n     && \"${PREFIX}\"/rootlesskit --version \\\n     && \"${PREFIX}\"/rootlesskit-docker-proxy --help\nCOPY ./contrib/dockerd-rootless.sh /build\nCOPY ./contrib/dockerd-rootless-setuptool.sh /build\n\nFROM --platform=amd64 djs55/vpnkit:${VPNKIT_VERSION} AS vpnkit-amd64\n\nFROM --platform=arm64 djs55/vpnkit:${VPNKIT_VERSION} AS vpnkit-arm64\n\nFROM scratch AS vpnkit\nCOPY --from=vpnkit-amd64 /vpnkit /build/vpnkit.x86_64\nCOPY --from=vpnkit-arm64 /vpnkit /build/vpnkit.aarch64\n\n# TODO: Some of this is only really needed for testing, it would be nice to split this up\nFROM runtime-dev AS dev-systemd-false\nARG DEBIAN_FRONTEND\nRUN groupadd -r docker\nRUN useradd --create-home --gid docker unprivilegeduser \\\n && mkdir -p /home/unprivilegeduser/.local/share/docker \\\n && chown -R unprivilegeduser /home/unprivilegeduser\n# Let us use a .bashrc file\nRUN ln -sfv /go/src/github.com/docker/docker/.bashrc ~/.bashrc\n# Activate bash completion and include Docker's completion if mounted with DOCKER_BASH_COMPLETION_PATH\nRUN echo \"source /usr/share/bash-completion/bash_completion\" >> /etc/bash.bashrc\nRUN ln -s /usr/local/completion/bash/docker /etc/bash_completion.d/docker\nRUN ldconfig\n# This should only install packages that are specifically needed for the dev environment and nothing else\n# Do you really need to add another package here? Can it be done in a different build stage?\nRUN --mount=type=cache,sharing=locked,id=moby-dev-aptlib,target=/var/lib/apt \\\n    --mount=type=cache,sharing=locked,id=moby-dev-aptcache,target=/var/cache/apt \\\n        apt-get update && apt-get install -y --no-install-recommends \\\n            apparmor \\\n            bash-completion \\\n            bzip2 \\\n            inetutils-ping \\\n            iproute2 \\\n            iptables \\\n            jq \\\n            libcap2-bin \\\n            libnet1 \\\n            libnl-3-200 \\\n            libprotobuf-c1 \\\n            net-tools \\\n            patch \\\n            pigz \\\n            python3-pip \\\n            python3-setuptools \\\n            python3-wheel \\\n            sudo \\\n            thin-provisioning-tools \\\n            uidmap \\\n            vim \\\n            vim-common \\\n            xfsprogs \\\n            xz-utils \\\n            zip \\\n            zstd && rm -rf /var/lib/apt/lists/*;\n\n\n# Switch to use iptables instead of nftables (to match the CI hosts)\n# TODO use some kind of runtime auto-detection instead if/when nftables is supported (https://github.com/moby/moby/issues/26824)\nRUN update-alternatives --set iptables  /usr/sbin/iptables-legacy  || true \\\n && update-alternatives --set ip6tables /usr/sbin/ip6tables-legacy || true \\\n && update-alternatives --set arptables /usr/sbin/arptables-legacy || true\n\nRUN pip3 install --no-cache-dir yamllint==1.26.1\n\nCOPY --from=dockercli     /build/ /usr/local/cli\nCOPY --from=frozen-images /build/ /docker-frozen-images\nCOPY --from=swagger       /build/ /usr/local/bin/\nCOPY --from=tomll         /build/ /usr/local/bin/\nCOPY --from=tini          /build/ /usr/local/bin/\nCOPY --from=registry      /build/ /usr/local/bin/\nCOPY --from=criu          /build/ /usr/local/bin/\nCOPY --from=vndr          /build/ /usr/local/bin/\nCOPY --from=gotestsum     /build/ /usr/local/bin/\nCOPY --from=golangci_lint /build/ /usr/local/bin/\nCOPY --from=shfmt         /build/ /usr/local/bin/\nCOPY --from=runc          /build/ /usr/local/bin/\nCOPY --from=containerd    /build/ /usr/local/bin/\nCOPY --from=rootlesskit   /build/ /usr/local/bin/\nCOPY --from=vpnkit        /build/ /usr/local/bin/\nENV PATH=/usr/local/cli:$PATH\nARG DOCKER_BUILDTAGS\nENV DOCKER_BUILDTAGS=\"${DOCKER_BUILDTAGS}\"\nWORKDIR /go/src/github.com/docker/docker\nVOLUME /var/lib/docker\nVOLUME /home/unprivilegeduser/.local/share/docker\n# Wrap all commands in the \"docker-in-docker\" script to allow nested containers\nENTRYPOINT [\"hack/dind\"]\n\nFROM dev-systemd-false AS dev-systemd-true\nRUN --mount=type=cache,sharing=locked,id=moby-dev-aptlib,target=/var/lib/apt \\\n    --mount=type=cache,sharing=locked,id=moby-dev-aptcache,target=/var/cache/apt \\\n        apt-get update && apt-get install -y --no-install-recommends \\\n            dbus \\\n            dbus-user-session \\\n            systemd \\\n            systemd-sysv && rm -rf /var/lib/apt/lists/*;\nRUN mkdir -p hack \\\n  && curl -f -o hack/dind-systemd https://raw.githubusercontent.com/AkihiroSuda/containerized-systemd/b70bac0daeea120456764248164c21684ade7d0d/docker-entrypoint.sh \\\n  && chmod +x hack/dind-systemd\nENTRYPOINT [\"hack/dind-systemd\"]\n\nFROM dev-systemd-${SYSTEMD} AS dev\n\nFROM runtime-dev AS binary-base\nARG DOCKER_GITCOMMIT=HEAD\nENV DOCKER_GITCOMMIT=${DOCKER_GITCOMMIT}\nARG VERSION\nENV VERSION=${VERSION}\nARG PLATFORM\nENV PLATFORM=${PLATFORM}\nARG PRODUCT\nENV PRODUCT=${PRODUCT}\nARG DEFAULT_PRODUCT_LICENSE\nENV DEFAULT_PRODUCT_LICENSE=${DEFAULT_PRODUCT_LICENSE}\nARG DOCKER_BUILDTAGS\nENV DOCKER_BUILDTAGS=\"${DOCKER_BUILDTAGS}\"\nENV PREFIX=/build\n# TODO: This is here because hack/make.sh binary copies these extras binaries\n# from $PATH into the bundles dir.\n# It would be nice to handle this in a different way.\nCOPY --from=tini        /build/ /usr/local/bin/\nCOPY --from=runc        /build/ /usr/local/bin/\nCOPY --from=containerd  /build/ /usr/local/bin/\nCOPY --from=rootlesskit /build/ /usr/local/bin/\nCOPY --from=vpnkit      /build/ /usr/local/bin/\nWORKDIR /go/src/github.com/docker/docker\n\nFROM binary-base AS build-binary\nRUN --mount=type=cache,target=/root/.cache/go-build \\\n    --mount=type=bind,target=/go/src/github.com/docker/docker \\\n        hack/make.sh binary\n\nFROM binary-base AS build-dynbinary\nRUN --mount=type=cache,target=/root/.cache/go-build \\\n    --mount=type=bind,target=/go/src/github.com/docker/docker \\\n        hack/make.sh dynbinary\n\nFROM binary-base AS build-cross\nARG DOCKER_CROSSPLATFORMS\nRUN --mount=type=cache,target=/root/.cache/go-build \\\n    --mount=type=bind,target=/go/src/github.com/docker/docker \\\n    --mount=type=tmpfs,target=/go/src/github.com/docker/docker/autogen \\\n        hack/make.sh cross\n\nFROM scratch AS binary\nCOPY --from=build-binary /build/bundles/ /\n\nFROM scratch AS dynbinary\nCOPY --from=build-dynbinary /build/bundles/ /\n\nFROM scratch AS cross\nCOPY --from=build-cross /build/bundles/ /\n\nFROM dev AS final\nCOPY . /go/src/github.com/docker/docker\n"
+}

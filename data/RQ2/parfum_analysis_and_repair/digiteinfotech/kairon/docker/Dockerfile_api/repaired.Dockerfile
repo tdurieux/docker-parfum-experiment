@@ -1,0 +1,71 @@
+FROM amazonlinux:latest
+
+ENV RASA_NLU_DOCKER="YES" \
+    RASA_NLU_HOME=/app
+
+WORKDIR ${RASA_NLU_HOME}
+RUN yum update -y
+RUN yum -y install wget make gcc openssl-devel bzip2-devel && rm -rf /var/cache/yum
+RUN amazon-linux-extras install python3.8
+RUN rm /usr/bin/python
+RUN ln -s /usr/bin/python3.8 /usr/bin/python
+RUN python -m pip install --upgrade pip
+RUN python -m pip install sentence-transformers
+RUN python -m pip install rasa[full]==2.8.15
+RUN python -m pip install mongoengine==0.23.1
+RUN python -m pip install cython
+RUN python -m pip install pandas
+RUN python -m pip install passlib[bcrypt]
+RUN python -m pip install python-multipart
+RUN python -m pip install validators
+RUN python -m pip install secure
+RUN python -m spacy download en_core_web_md
+RUN python -m spacy link en_core_web_md en
+RUN python -m pip install password-strength
+RUN python -m pip install loguru
+RUN python -m pip install smart-config==0.1.3
+RUN python -m pip install elastic-apm
+RUN python -m pip install pymongo==3.12.0
+RUN python -m pip install cryptography~=3.4.8
+RUN python -m pip install websockets==10.1
+RUN python -m pip install fastapi>=0.68.1
+RUN python -m pip install uvicorn>=0.12.3
+RUN python -m pip install gunicorn>=20.1.0
+RUN python -m pip install transformers==4.5.0
+RUN python -m pip install aiohttp==3.8.0
+RUN python -m pip install nlpaug
+RUN python -m pip install torch
+RUN python -m pip install nltk==3.6.6
+RUN python -m pip install pytest
+RUN python -m pip install fastapi_sso
+RUN python -m pip install json2html
+RUN python -m pip install blinker
+RUN python -m nltk.downloader wordnet
+RUN python -m nltk.downloader averaged_perceptron_tagger
+RUN python -m nltk.downloader omw-1.4
+RUN python -m pip install numpy==1.22.0
+RUN python -m pip install ujson==5.1.0
+RUN python -m pip install jira
+RUN python -m pip install zenpy
+RUN python -m pip install pipedrive-python-lib
+
+RUN mkdir ssl
+RUN mkdir data_generator
+RUN mkdir training_data
+RUN mkdir testing_data
+RUN mkdir models
+RUN chmod 777 -R /tmp
+
+COPY kairon ${RASA_NLU_HOME}/kairon
+COPY augmentation ${RASA_NLU_HOME}/augmentation
+COPY system.yaml ${RASA_NLU_HOME}/
+COPY template ${RASA_NLU_HOME}/template
+COPY custom ${RASA_NLU_HOME}/custom
+COPY email.yaml ${RASA_NLU_HOME}/
+COPY metadata ${RASA_NLU_HOME}/metadata
+
+ENV WORKER_TIMEOUT=240
+ENV APP_MODULE=kairon.api.app.main:app
+EXPOSE 80
+
+CMD gunicorn -k uvicorn.workers.UvicornWorker ${APP_MODULE} --bind 0.0.0.0:80 --timeout ${WORKER_TIMEOUT}

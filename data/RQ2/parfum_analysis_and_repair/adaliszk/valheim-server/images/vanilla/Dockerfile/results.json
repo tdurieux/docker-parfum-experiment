@@ -1,0 +1,45 @@
+{
+  "startTime": 1674253474054,
+  "endTime": 1674253474813,
+  "originalSmells": [
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 20,
+        "lineEnd": 20,
+        "columnStart": 4,
+        "columnEnd": 92
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 10,
+        "lineEnd": 10,
+        "columnStart": 4,
+        "columnEnd": 55
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 10,
+        "lineEnd": 10,
+        "columnStart": 4,
+        "columnEnd": 55
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 9,
+        "lineEnd": 9,
+        "columnStart": 4,
+        "columnEnd": 55
+      }
+    }
+  ],
+  "repairedDockerfile": "# Install Vanilla Server\n# =================================================================================================\nFROM steamcmd/steamcmd:ubuntu as steam\nENV APP_ID=\"896660\" \\\n    APP_VERSION=\"0.208.1\" \\\n    APP_BUILD=\"8449481\" \\\n    APP_PATH=\"/server\"\n\n# hadolint ignore=DL3018,DL3008\nRUN apt-get -y install --no-install-recommends bash tar && rm -rf /var/lib/apt/lists/*;\n\n# Workaround for https://github.com/ValveSoftware/steam-for-linux/issues/7843\n# creating a steamapps folder for the install dir\nRUN mkdir -p \"${APP_PATH}/steamapps\"\n\n# Install the server\nRUN steamcmd +force_install_dir \"${APP_PATH}\" +login anonymous +app_update ${APP_ID} +quit\n\n# Compress files so the image can be small for the price of ~5-10s decompression on runtime\nRUN tar -czf \"${APP_PATH}/valheim_server_Data.tar.gz\" -C \"${APP_PATH}\" \"valheim_server_Data\" \\\n && rm -rf \"${APP_PATH}/valheim_server_Data\" && rm \"${APP_PATH}/valheim_server_Data.tar.gz\"\n\n\n# Fix file format and permissions for the Windows peeps out there\n# =================================================================================================\n# hadolint ignore=DL3007\nFROM adaliszk/dos2unix:latest as unix\n\nCOPY scripts /scripts\nRUN dos2unix /scripts/** && chmod +x /scripts/**\n\nCOPY srv /srv\nRUN dos2unix /srv/** && chmod +x /srv/**\n\n\n# Set up the Runtime Environment\n# =================================================================================================\n# hadolint ignore=DL3007\nFROM adaliszk/alpine:3.15 as runtime\n\nARG REF=\"\"\nARG TIMESTAMP=\"\"\nARG VERSION=\"\"\n\n# Apply OCI Annotations\nLABEL \\\n  org.opencontainers.image.created=\"${TIMESTAMP}\" \\\n  org.opencontainers.image.title=\"Valheim Server OCI\" \\\n  org.opencontainers.image.description=\"Secure Kubernetes-ready Valheim Server with Mod support, Automatic backups, Alpine.\" \\\n  org.opencontainers.image.authors=\"Ádám Liszkai <valheim-server@adaliszk.dev>\" \\\n  org.opencontainers.image.license=\"MIT\" \\\n  org.opencontainers.image.url=\"https://adaliszk.github.io/valheim-server\" \\\n  org.opencontainers.image.documentation=\"https://adaliszk.github.io/valheim-server\" \\\n  org.opencontainers.image.source=\"https://github.com/adaliszk/valheim-server\" \\\n  org.opencontainers.image.version=\"${VERSION}\" \\\n  org.opencontainers.image.revision=\"${REF}\" \\\n  org.opencontainers.image.vendor=\"AdaLiszk\"\n\n\n# Install glibc dependency (sadly needed as a barebone musl libc cannot be used)\nARG GLIBC_VERSION=\"2.34-r0\"\n\n# hadolint ignore=DL3018\nRUN wget -q -O /etc/apk/keys/sgerrand.rsa.pub https://alpine-pkgs.sgerrand.com/sgerrand.rsa.pub \\\n && wget https://github.com/sgerrand/alpine-pkg-glibc/releases/download/${GLIBC_VERSION}/glibc-${GLIBC_VERSION}.apk \\\n && apk --no-cache \\\n   add \\\n     glibc-${GLIBC_VERSION}.apk \\\n && wget https://github.com/sgerrand/alpine-pkg-glibc/releases/download/${GLIBC_VERSION}/glibc-bin-${GLIBC_VERSION}.apk \\\n && apk --no-cache \\\n   add \\\n     glibc-bin-${GLIBC_VERSION}.apk \\\n && rm glibc*.apk /etc/apk/keys/sgerrand.rsa.pub \\\n && apk del libc-utils\n\n# Install runtime dependendencies\n# @TODO: remove Python3 dependency via building the VhPretty as a Python/Go binary\nRUN apk --no-cache \\\n    add \\\n      'bash>=5.1.16-r0' \\\n      'coreutils>=9.0-r2' \\\n      'tzdata>=2021e-r0' \\\n      'python3>=3.9.7-r4' \\\n # Install edge packages for up-to-date security\n && apk --no-cache --repository=\"https://dl-cdn.alpinelinux.org/alpine/edge/main\" \\\n    add \\\n      'musl>=1.2.2-r7' \\\n      'ca-certificates>=20211220-r0' \\\n      'openssl>=1.1.1m-r2' \\\n && apk --no-cache --repository=\"https://dl-cdn.alpinelinux.org/alpine/edge/community\" \\\n    add \\\n      'sdl2>=2.0.20-r1'\n\nCOPY --from=steam --chown=1001 /server /server\n\nENV \\\n SERVER_NAME=\"Valheim v0.208.1\" \\\n SERVER_WORLD=\"Dedicated\" \\\n SERVER_PASSWORD=\"p4ssw0rd\" \\\n SERVER_PUBLIC=\"1\" \\\n SERVER_ADMINS=\"\" \\\n SERVER_PERMITTED=\"\" \\\n SERVER_BANNED=\"\" \\\n LEGACY_BACKUP_SYSTEM=\"true\" \\\n BACKUP_RETENTION=\"6\" \\\n LOG_LEVEL=\"info\" \\\n TZ=\"Etc/UTC\"\n\nRUN bash -c \"mkdir -p /{scripts,config,server,backup,data,logs,status}\" \\\n && chown 1001:1001 /scripts /config /server /backup /data /logs /status\n\nCOPY --from=unix /scripts /scripts\nCOPY --from=unix /srv /srv\n\nCOPY --from=unix /srv/valheim.sh /valheim\nENTRYPOINT [\"/valheim\"]\n\nVOLUME [\"/data\", \"/backups\", \"/logs\"]\nSTOPSIGNAL SIGINT\nCMD [\"start\"]\nUSER 1001\n\nHEALTHCHECK --start-period=30s --timeout=5s CMD [\"/scripts/health.sh\"]\nEXPOSE 2456-2457/udp\n"
+}

@@ -1,0 +1,54 @@
+# pytorch
+ARG PYTORCH_TAG
+FROM pytorch/pytorch:${PYTORCH_TAG:-latest}
+
+# apex
+ARG CATALYST_APEX
+# extras
+ARG CATALYST_DEV
+ARG CATALYST_CV
+ARG CATALYST_ML
+ARG CATALYST_OPTUNA
+ARG CATALYST_ONNX
+ARG CATALYST_ONNX_GPU
+
+#RUN apt-get update && apt-get install -y software-properties-common \
+#    && rm -rf /var/lib/apt/lists/* \
+#    && add-apt-repository "deb http://security.ubuntu.com/ubuntu xenial-security main" \
+#    && apt-get update && apt-get install -y \
+#         build-essential \
+#         libsm6 \
+#         libxext6 \
+#         libfontconfig1 \
+#         libxrender1 \
+#         libswscale-dev \
+#         libtbb2 \
+#         libtbb-dev \
+#         libjpeg-dev \
+#         libpng-dev \
+#         libtiff-dev \
+#         libjasper-dev \
+#         libavformat-dev \
+#         libpq-dev \
+#         libturbojpeg \
+#        git \
+#    && apt-get clean \
+#    && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
+
+
+
+CMD mkdir -p /workspace
+COPY requirements/ /workspace/
+RUN if [ "$CATALYST_DEV" = "1" ] ; then pip install -r /workspace/requirements-dev.txt --no-cache-dir ; else echo "catalyst[dev] is not required" ; fi
+RUN if [ "$CATALYST_CV" = "1" ] ; then pip install -r /workspace/requirements-cv.txt --no-cache-dir ; else echo "catalyst[cv] is not required" ; fi
+RUN if [ "$CATALYST_ML" = "1" ] ; then pip install -r /workspace/requirements-ml.txt --no-cache-dir ; else echo "catalyst[ml] is not required" ; fi
+RUN if [ "$CATALYST_OPTUNA" = "1" ] ; then pip install -r /workspace/requirements-optuna.txt --no-cache-dir ; else echo "catalyst[optuna] is not required" ; fi
+RUN if [ "$CATALYST_ONNX" = "1" ] ; then pip install -r /workspace/requirements-onnx.txt --no-cache-dir ; else echo "catalyst[onnx] is not required" ; fi
+RUN if [ "$CATALYST_ONNX_GPU" = "1" ] ; then pip install -r /workspace/requirements-onnx-gpu.txt --no-cache-dir ; else echo "catalyst[onnx-gpu] is not required" ; fi
+RUN if [ "$CATALYST_MLFLOW" = "1" ] ; then pip install -r /workspace/requirements-mlflow.txt --no-cache-dir ; else echo "catalyst[mlflow] is not required" ; fi
+RUN if [ "$CATALYST_NEPTUNE" = "1" ] ; then pip install -r /workspace/requirements-neptune.txt --no-cache-dir ; else echo "catalyst[neptune] is not required" ; fi
+RUN if [ "$CATALYST_WANDB" = "1" ] ; then pip install -r /workspace/requirements-wandb.txt --no-cache-dir ; else echo "catalyst[wandb] is not required" ; fi
+RUN if [ "$CATALYST_DEEPSPEED" = "1" ] ; then pip install -r /workspace/requirements-deepspeed.txt --no-cache-dir ; else echo "catalyst[deepspeed] is not required" ; fi
+RUN if [ "$CATALYST_ALL" = "1" ] ; then pip install -r /workspace/requirements-all.txt --no-cache-dir ; else echo "catalyst[all] is not required" ; fi
+
+WORKDIR /workspace

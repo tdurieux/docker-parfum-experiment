@@ -1,0 +1,44 @@
+{
+  "startTime": 1674219325014,
+  "endTime": 1674219326613,
+  "originalSmells": [
+    {
+      "rule": "gpgVerifyAscRmAsc",
+      "position": {
+        "lineStart": 86,
+        "lineEnd": 86,
+        "columnStart": 4,
+        "columnEnd": 26
+      }
+    },
+    {
+      "rule": "gpgUseBatchFlag",
+      "position": {
+        "lineStart": 85,
+        "lineEnd": 85,
+        "columnStart": 4,
+        "columnEnd": 109
+      }
+    },
+    {
+      "rule": "gpgUseBatchFlag",
+      "position": {
+        "lineStart": 86,
+        "lineEnd": 86,
+        "columnStart": 4,
+        "columnEnd": 26
+      }
+    },
+    {
+      "rule": "gpgUseHaPools",
+      "position": {
+        "lineStart": 85,
+        "lineEnd": 85,
+        "columnStart": 4,
+        "columnEnd": 109
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM debian:buster\n\n# Install gosu\nENV GOSU_VERSION=1.11\n\nRUN apt-get update \\\n\t&& apt-get install -y --no-install-recommends ca-certificates wget gnupg2 gosu\\\n\t&& rm -rf /var/lib/apt/lists/* \\\n    # verify that the binary works\n    && gosu nobody true\n\n# Install postgres 9.4, 9.5, 9.6 clients.  This is so that barman can use the\n# appropriate version when using pg_basebackup.\n# Install some other requirements as well.\n#   cron: For scheduling base backups\n#   gcc: For building psycopg2\n#   libpq-dev: Needed to build/run psycopg2\n#   libpython-dev: For building psycopg2\n#   openssh-client: Needed to rsync basebackups from the database servers\n#   python: Needed to run barman\n#   rsync: Needed to rsync basebackups from the database servers\n#   gettext-base: envsubst\nRUN bash -c 'echo \"deb http://apt.postgresql.org/pub/repos/apt/ buster-pgdg main\" >> /etc/apt/sources.list.d/pgdg.list' \\\n\t&& (wget --quiet -O - https://www.postgresql.org/media/keys/ACCC4CF8.asc | apt-key add -) \\\n\t&& apt-get update \\\n\t&& apt-get install -y --no-install-recommends \\\n\t\tcron \\\n\t\tgcc \\\n\t\tlibpq-dev \\\n\t\tlibpython3-dev \\\n\t\topenssh-client \\\n\t\tpostgresql-client-9.5 \\\n\t\tpostgresql-client-9.6 \\\n\t\tpostgresql-client-10 \\\n\t\tpostgresql-client-11 \\\n\t\tpostgresql-client-12 \\\n\t\tpython3 \\\n        python3-distutils \\\n\t\trsync \\\n        gettext-base \\\n        procps \\\n\t&& rm -rf /var/lib/apt/lists/* \\\n\t&& rm -f /etc/crontab /etc/cron.*/* \\\n\t&& sed -i 's/\\(.*pam_loginuid.so\\)/#\\1/' /etc/pam.d/cron \\\n    && mkdir -p /etc/barman/barman.d\n\n# Set up some defaults for file/directory locations used in entrypoint.sh.\nENV \\\n\tBARMAN_VERSION=2.10 \\\n\tBARMAN_CRON_SRC=/private/cron.d \\\n\tBARMAN_DATA_DIR=/var/lib/barman \\\n\tBARMAN_LOG_DIR=/var/log/barman \\\n\tBARMAN_SSH_KEY_DIR=/private/ssh \\\n\tBARMAN_PGPASSFILE=/private/pgpass \\\n    BARMAN_CRON_SCHEDULE=\"* * * * *\" \\\n    BARMAN_BACKUP_SCHEDULE=\"0 4 * * *\" \\\n    BARMAN_LOG_LEVEL=INFO \\\n    DB_HOST=pg \\\n    DB_PORT=5432 \\\n    DB_SUPERUSER=postgres \\\n    DB_SUPERUSER_PASSWORD=postgres \\\n    DB_SUPERUSER_DATABASE=postgres \\\n    DB_REPLICATION_USER=standby \\\n    DB_REPLICATION_PASSWORD=standby \\\n    DB_SLOT_NAME=barman \\\n    DB_BACKUP_METHOD=postgres \\\n    BARMAN_EXPORTER_SCHEDULE=\"*/5 * * * *\" \\\n    BARMAN_EXPORTER_LISTEN_ADDRESS=\"0.0.0.0\" \\\n    BARMAN_EXPORTER_LISTEN_PORT=9780 \\\n    BARMAN_EXPORTER_CACHE_TIME=3600\nVOLUME ${BARMAN_DATA_DIR}\n\nCOPY install_barman.sh /tmp/\nRUN /tmp/install_barman.sh && rm /tmp/install_barman.sh\nCOPY barman.conf.template /etc/barman.conf.template\nCOPY pg.conf.template /etc/barman/barman.d/pg.conf.template\nCOPY wal_archiver.py /usr/local/lib/python3.7/dist-packages/barman/wal_archiver.py\n\n# Install barman exporter\nRUN pip install --no-cache-dir barman-exporter && mkdir /node_exporter\nVOLUME /node_exporter\n\nENV TINI_VERSION v0.18.0\nADD https://github.com/krallin/tini/releases/download/${TINI_VERSION}/tini /tini\nADD https://github.com/krallin/tini/releases/download/${TINI_VERSION}/tini.asc /tini.asc\nRUN gpg --batch --keyserver hkp://p80.ha.pool.sks-keyservers.net:80 --recv-keys 595E85A6B1B4779EA4DAAEC70B588DFF0527A9B7 \\\n && gpg --batch --verify /tini.asc \\\n && chmod +x /tini && rm /tini.asc\n\nCMD [\"cron\", \"-L\", \"4\",  \"-f\"]\nCOPY entrypoint.sh /\nWORKDIR ${BARMAN_DATA_DIR}\n\n# Install the entrypoint script.  It will set up ssh-related things and then run\n# the CMD which, by default, starts cron.  The 'barman -q cron' job will get\n# pg_receivexlog running.  Cron may also have jobs installed to run\n# 'barman backup' periodically.\nENTRYPOINT [\"/tini\", \"--\", \"/entrypoint.sh\"]\n"
+}

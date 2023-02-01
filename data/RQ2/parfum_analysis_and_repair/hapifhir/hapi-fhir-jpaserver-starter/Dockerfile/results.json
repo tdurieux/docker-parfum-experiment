@@ -1,0 +1,17 @@
+{
+  "startTime": 1674251252043,
+  "endTime": 1674251253658,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 4,
+        "lineEnd": 4,
+        "columnStart": 4,
+        "columnEnd": 166
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM maven:3.8-openjdk-17-slim as build-hapi\nWORKDIR /tmp/hapi-fhir-jpaserver-starter\n\nARG OPENTELEMETRY_JAVA_AGENT_VERSION=1.15.0\nRUN curl -f -LSsO https://github.com/open-telemetry/opentelemetry-java-instrumentation/releases/download/v${OPENTELEMETRY_JAVA_AGENT_VERSION}/opentelemetry-javaagent.jar\n\nCOPY pom.xml .\nCOPY server.xml .\nRUN mvn -ntp dependency:go-offline\n\nCOPY src/ /tmp/hapi-fhir-jpaserver-starter/src/\nRUN mvn clean install -DskipTests -Djdk.lang.Process.launchMechanism=vfork\n\nFROM build-hapi AS build-distroless\nRUN mvn package spring-boot:repackage -Pboot\nRUN mkdir /app && cp /tmp/hapi-fhir-jpaserver-starter/target/ROOT.war /app/main.war\n\n\n########### bitnami tomcat version is suitable for debugging and comes with a shell\n########### it can be built using eg. `docker build --target tomcat .`\nFROM bitnami/tomcat:9.0 as tomcat\n\nRUN rm -rf /opt/bitnami/tomcat/webapps/ROOT && \\\n    mkdir -p /opt/bitnami/hapi/data/hapi/lucenefiles && \\\n    chmod 775 /opt/bitnami/hapi/data/hapi/lucenefiles\n\nUSER root\nRUN mkdir -p /target && chown -R 1001:1001 target\nUSER 1001\n\nCOPY --chown=1001:1001 catalina.properties /opt/bitnami/tomcat/conf/catalina.properties\nCOPY --chown=1001:1001 server.xml /opt/bitnami/tomcat/conf/server.xml\nCOPY --from=build-hapi --chown=1001:1001 /tmp/hapi-fhir-jpaserver-starter/target/ROOT.war /opt/bitnami/tomcat/webapps/ROOT.war\nCOPY --from=build-hapi --chown=1001:1001 /tmp/hapi-fhir-jpaserver-starter/opentelemetry-javaagent.jar /app\n\nENV ALLOW_EMPTY_PASSWORD=yes\n\n########### distroless brings focus on security and runs on plain spring boot - this is the default image\nFROM gcr.io/distroless/java17:nonroot as default\n# 65532 is the nonroot user's uid\n# used here instead of the name to allow Kubernetes to easily detect that the container\n# is running as a non-root (uid != 0) user.\nUSER 65532:65532\nWORKDIR /app\n\nCOPY --chown=nonroot:nonroot --from=build-distroless /app /app\nCOPY --chown=nonroot:nonroot --from=build-hapi /tmp/hapi-fhir-jpaserver-starter/opentelemetry-javaagent.jar /app\n\nCMD [\"/app/main.war\"]\n"
+}

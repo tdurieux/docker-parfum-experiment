@@ -1,0 +1,80 @@
+{
+  "startTime": 1674235114278,
+  "endTime": 1674235114524,
+  "originalSmells": [
+    {
+      "rule": "wgetUseHttpsUrl",
+      "position": {
+        "lineStart": 59,
+        "lineEnd": 59,
+        "columnStart": 4,
+        "columnEnd": 119
+      }
+    },
+    {
+      "rule": "wgetUseHttpsUrl",
+      "position": {
+        "lineStart": 79,
+        "lineEnd": 79,
+        "columnStart": 4,
+        "columnEnd": 113
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 61,
+        "lineEnd": 65,
+        "columnStart": 1,
+        "columnEnd": 15
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 60,
+        "lineEnd": 60,
+        "columnStart": 1,
+        "columnEnd": 40
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 80,
+        "lineEnd": 80,
+        "columnStart": 4,
+        "columnEnd": 41
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 12,
+        "lineEnd": 33,
+        "columnStart": 4,
+        "columnEnd": 13
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 12,
+        "lineEnd": 33,
+        "columnStart": 4,
+        "columnEnd": 13
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 12,
+        "lineEnd": 33,
+        "columnStart": 4,
+        "columnEnd": 13
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "####\n# Netflow collector and local processing container\n# using NFSen and NFDump for processing. This can\n# be run standalone or in conjunction with a analytics\n# engine that will perform time based graphing and\n# stats summarization.\n###\n\nFROM debian:latest\nMAINTAINER Brent Salisbury <brent.salisbury@gmail.com\n\nRUN apt-get update && apt-get install --no-install-recommends -y \\\n    gcc \\\n    flex \\\n    rrdtool \\\n    apache2 \\\n    tcpdump \\\n    wget \\\n    php5 \\\n    apache2 \\\n    librrd-dev \\\n    libapache2-mod-php5 \\\n    php5-common \\\n    libio-socket-inet6-perl \\\n    libio-socket-ssl-perl \\\n    libmailtools-perl \\\n    librrds-perl \\\n    libwww-perl \\\n    libipc-run-perl \\\n    perl-base \\\n    libsys-syslog-perl \\\n    supervisor \\\n    net-tools && rm -rf /var/lib/apt/lists/*;\n\n# Cleanup apt-get cache\nRUN apt-get clean\n\n# Apache\nEXPOSE 80\n# NetFlow\nEXPOSE 2055\n# IPFIX\nEXPOSE 4739\n# sFlow\nEXPOSE 6343\n# nfsen src ip src node mappings per example\nEXPOSE 9996\n\n# mk some dirs\nRUN mkdir -p /var/lock/apache2 /var/run/apache2 /var/log/supervisor\n\n# Example ENV variable injection if you want to add collector addresses\nENV NFSEN_VERSION 1.3.7\nENV NFDUMP_VERSION 1.6.13\n\n# Install NFDump (note the random redirected DL server from sourceforge. Their redirects are awful\n# so using the only 302 redirect that is the closest to almost working every time...\nRUN cd /usr/local/src && \\\n    wget https://iweb.dl.sourceforge.net/project/nfdump/stable/nfdump-${NFDUMP_VERSION}/nfdump-${NFDUMP_VERSION}.tar.gz && \\\n\ttar xfz nfdump-${NFDUMP_VERSION}.tar.gz && cd nfdump-${NFDUMP_VERSION}/ && \\\n\t./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" \\\n\t\t--enable-nfprofile \\\n\t--with-rrdpath=/usr/bin \\\n\t--enable-nftrack \\\n\t--enable-sflow && \\\n\tmake && make install && rm nfdump-${NFDUMP_VERSION}.tar.gz\n\n# Configure php with the systems timezone, modifications are tagged with the word 'NFSEN_OPT' for future ref\n# Recommended leaving the timezone as UTC as NFSen and NFCapd timestamps need to be in synch.\n# Timing is also important for the agregates time series viewer for glabal visibility and analytics.\nRUN sed -i 's/^;date.timezone =/date.timezone \\= \\\"UTC\\\"/g' /etc/php5/apache2/php.ini\nRUN sed -i '/date.timezone = \"UTC\\\"/i ; NFSEN_OPT Adjust your timezone for nfsen' /etc/php5/apache2/php.ini\nRUN sed -i 's/^;date.timezone =/date.timezone \\= \\\"UTC\\\"/g' /etc/php5/cli/php.ini\nRUN sed -i '/date.timezone = \"UTC\\\"/i ; NFSEN_OPT Adjust your timezone for nfsen' /etc/php5/cli/php.ini\n\n# Configure NFSen config files\nRUN mkdir -p /data/nfsen\nWORKDIR /data\nRUN wget https://iweb.dl.sourceforge.net/project/nfsen/stable/nfsen-${NFSEN_VERSION}/nfsen-${NFSEN_VERSION}.tar.gz\nRUN tar xfz nfsen-${NFSEN_VERSION}.tar.gz && rm nfsen-${NFSEN_VERSION}.tar.gz\nRUN sed -i 's/\"www\";/\"www-data\";/g' nfsen-${NFSEN_VERSION}/etc/nfsen-dist.conf\n# Example how to fill in any flow source you want using | as a delimiter. Sort of long and gross though.\n# Modify the pre-defined NetFlow v5/v9 line matching the regex 'upstream1'\nRUN sed -i  \"s|'upstream1'    => { 'port' => '9995', 'col' => '#0000ff', 'type' => 'netflow' },|'netflow-global'  => { 'port' => '2055', 'col' => '#0000ff', 'type' => 'netflow' },|g\"  nfsen-${NFSEN_VERSION}/etc/nfsen-dist.conf\n# Bind port 6343 and an entry for  sFlow collection\nRUN sed  -i \"/%sources/a \\\\    'sflow-global'  => { 'port' => '6343', 'col' => '#0000ff', 'type' => 'sflow' },\" nfsen-${NFSEN_VERSION}/etc/nfsen-dist.conf\n# Bind port 4739 and an entry for IPFIX collection. E.g. NetFlow v10\nRUN sed  -i \"/%sources/a \\\\    'ipfix-global'  => { 'port' => '4739', 'col' => '#0000ff', 'type' => 'netflow' },\" nfsen-${NFSEN_VERSION}/etc/nfsen-dist.conf\n\n# Add an account for NFSen as a member of the apache group\nRUN useradd -d /var/netflow -G www-data -m -s /bin/false netflow\n\n# Run the nfsen installer\nWORKDIR /data/nfsen-${NFSEN_VERSION}\nRUN perl ./install.pl etc/nfsen-dist.conf || true\nRUN sleep 3\n\nWORKDIR /\n# Add startup script for nfsen profile init\nADD ./start.sh /data/start.sh\n# flow-generator binary for testing\nADD ./flow-generator /data/flow-generator\nADD\t./supervisord.conf /etc/supervisord.conf\n\nCMD bash -C '/data/start.sh'; '/usr/bin/supervisord'\n"
+}

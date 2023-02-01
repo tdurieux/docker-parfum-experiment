@@ -1,0 +1,1 @@
+# Production-friendly Dockerfile with multi-stage build and decent layer caching

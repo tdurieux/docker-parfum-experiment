@@ -1,0 +1,35 @@
+{
+  "startTime": 1674250188224,
+  "endTime": 1674250189203,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 96,
+        "lineEnd": 96,
+        "columnStart": 4,
+        "columnEnd": 46
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 12,
+        "lineEnd": 12,
+        "columnStart": 4,
+        "columnEnd": 55
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 13,
+        "lineEnd": 22,
+        "columnStart": 4,
+        "columnEnd": 44
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM centos:7\n\nLABEL description=\"slurm sim node\"\nUSER root\n# setup entry point\nWORKDIR /root\n\n############################\n# building dep\n# install dependencies\nRUN \\\n    yum -y update && \\\n    yum -y install --setopt=tsflags=nodocs epel-release && \\\n    yum -y install --setopt=tsflags=nodocs \\\n        vim wget bzip2 \\\n        autoconf make gcc rpm-build \\\n        gdb gdb-gdbserver \\\n        openssl openssh-clients openssl-devel \\\n        mariadb-server mariadb-devel \\\n        munge munge-devel \\\n        readline readline-devel \\\n        hdf5 hdf5-devel pam-devel hwloc hwloc-devel \\\n        perl perl-ExtUtils-MakeMaker python3 && rm -rf /var/cache/yum\n\n############################\n# Common\n\n# install dependencies\nRUN \\\n    yum update --assumeno || true && \\\n    yum -y install --setopt=tsflags=nodocs epel-release && \\\n    yum -y install --setopt=tsflags=nodocs \\\n        openssl openssh-server openssh-clients \\\n        munge sudo && \\\n    yum clean all && \\\n    rm -rf /var/cache/yum\n#        vim tmux mc perl-Switch\\\n#        iproute \\\n#        perl-Date* \\\n#        gcc-c++ python3 \\\nWORKDIR /root\n\n# copy daemons starters\nCOPY ./docker/virtual_cluster/utils/cmd_setup ./docker/virtual_cluster/utils/cmd_start ./docker/virtual_cluster/utils/cmd_stop /usr/local/sbin/\nCOPY ./docker/virtual_cluster/vctools /opt/cluster/vctools\n# directories\nRUN mkdir /scratch && chmod 777 /scratch && \\\n    mkdir /scratch/jobs && chmod 777 /scratch/jobs\n\n# add users\nRUN useradd -m -s /bin/bash slurm && \\\n    echo 'slurm:slurm' |chpasswd && \\\n    usermod -a -G wheel slurm && \\\n    echo \"slurm ALL=(ALL) NOPASSWD: ALL\" >> /etc/sudoers\n\n# configure sshd\nRUN mkdir /var/run/sshd && \\\n    ssh-keygen -t rsa -f /etc/ssh/ssh_host_rsa_key -N '' && \\\n    ssh-keygen -t ecdsa -f /etc/ssh/ssh_host_ecdsa_key -N '' && \\\n    ssh-keygen -t ed25519 -f /etc/ssh/ssh_host_ed25519_key -N '' && \\\n    echo 'root:root' |chpasswd && \\\n    echo 'PermitRootLogin yes' >> /etc/ssh/sshd_config\n# uncomment two previous line if there is a need for root access through ssh\n\n# setup munge\nRUN echo \"secret munge key secret munge key secret munge key\" >/etc/munge/munge.key &&\\\n    chown -R munge:munge /var/log/munge /run/munge /var/lib/munge /etc/munge &&\\\n    chmod 600 /etc/munge/munge.key &&\\\n    cmd_start munged &&\\\n    munge -n | unmunge &&\\\n    cmd_stop munged\n\nEXPOSE 22\n\n# install miniapps\nCOPY ./docker/virtual_cluster/apps/microapps /opt/cluster/microapps\n# RUN cd /usr/local/miniapps && make\n\n# edit system processor limits\nRUN sudo echo -e \"# Default limit for number of user's processes to prevent \\n \\\n *          \\soft    nproc     unlimited \\n root       soft    nproc     unlimited\" \\\n> /etc/security/limits.d/20-nproc.conf\n\n# setup entry point\nENTRYPOINT [\"/usr/local/sbin/cmd_start\"]\nCMD [\"sshd\", \"bash\"]\n\n############################\n# Headnode\n# install dependencies\nRUN yum update --assumeno || true && \\\n    yum -y install --setopt=tsflags=nodocs \\\n        vim tmux mc perl-Switch \\\n        iproute perl-Date* \\\n        mariadb-server python3 python36-PyMySQL python36-psutil \\\n        sudo perl-Date* zstd && \\\n    pip3 install --no-cache-dir pandas py-cpuinfo tqdm gdbgui && \\\n    yum clean all && \\\n    rm -rf /var/cache/yum\n\n#configure mysqld\nRUN chmod g+rw /var/lib/mysql /var/log/mariadb /var/run/mariadb && \\\n    mysql_install_db && \\\n    chown -R mysql:mysql /var/lib/mysql && \\\n    cmd_start mysqld && \\\n    mysql -e 'DELETE FROM mysql.user WHERE user NOT LIKE \"root\";' && \\\n    mysql -e 'DELETE FROM mysql.user WHERE Host NOT IN (\"localhost\",\"127.0.0.1\",\"%\");' && \\\n    mysql -e 'GRANT ALL PRIVILEGES ON *.* TO \"root\"@\"%\" WITH GRANT OPTION;' && \\\n    mysql -e 'GRANT ALL PRIVILEGES ON *.* TO \"root\"@\"localhost\" WITH GRANT OPTION;' && \\\n    mysql -e 'DROP DATABASE IF EXISTS test;' && \\\n    mysql -e \"CREATE USER 'slurm'@'%' IDENTIFIED BY 'slurm';\" && \\\n    mysql -e 'GRANT ALL PRIVILEGES ON *.* TO \"slurm\"@\"%\" WITH GRANT OPTION;' && \\\n    mysql -e \"CREATE USER 'slurm'@'localhost' IDENTIFIED BY 'slurm';\" && \\\n    mysql -e 'GRANT ALL PRIVILEGES ON *.* TO \"slurm\"@\"localhost\" WITH GRANT OPTION;' && \\\n    cmd_stop mysqld\n\nCOPY ./src ./bin ./docker /opt/cluster/slurm_sim_tools/\n\n\n\nEXPOSE 6819\nEXPOSE 6817\n\n#install Slurm permissions\nRUN mkdir /var/log/slurm  && \\\n    chown -R slurm:slurm /var/log/slurm  && \\\n    mkdir /var/state  && \\\n    chown -R slurm:slurm /var/state  && \\\n    mkdir -p /var/spool/slurmd  && \\\n    chown -R slurm:slurm /var/spool/slurmd && \\\n    touch /bin/mail  && chmod 755 /bin/mail && \\\n    echo '/opt/cluster/vctools/start_head_node.sh' >> /root/.bash_history\n\n############################\n# Build Slurm Sim\n#install Slurm\nCOPY slurm_simulator /opt/cluster/slurm_sim_tools/slurm_simulator\nRUN mkdir /root/bld && cd /root/bld && \\\n    /opt/cluster/slurm_sim_tools/slurm_simulator/configure --prefix=/usr  --sysconfdir=/etc/slurm --disable-x11 --with-hdf5=no --enable-simulator --enable-front-end && \\\n    make -j && \\\n    make -j install\nEXPOSE 5000\n# setup entry point\nENTRYPOINT [\"/usr/local/sbin/cmd_start\"]\nCMD [\"sshd\", \"munged\", \"mysqld\", \"/opt/cluster/vctools/add_system_users.sh\", \"bash\"]\n"
+}

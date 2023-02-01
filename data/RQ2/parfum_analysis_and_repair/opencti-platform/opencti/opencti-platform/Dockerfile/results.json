@@ -1,0 +1,99 @@
+{
+  "startTime": 1674218972055,
+  "endTime": 1674218972929,
+  "originalSmells": [
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 10,
+        "lineEnd": 10,
+        "columnStart": 38,
+        "columnEnd": 60
+      }
+    },
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 19,
+        "lineEnd": 19,
+        "columnStart": 4,
+        "columnEnd": 16
+      }
+    },
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 21,
+        "lineEnd": 21,
+        "columnStart": 4,
+        "columnEnd": 19
+      }
+    },
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 32,
+        "lineEnd": 32,
+        "columnStart": 4,
+        "columnEnd": 16
+      }
+    },
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 37,
+        "lineEnd": 37,
+        "columnStart": 4,
+        "columnEnd": 25
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 10,
+        "lineEnd": 10,
+        "columnStart": 64,
+        "columnEnd": 80
+      }
+    },
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 19,
+        "lineEnd": 19,
+        "columnStart": 20,
+        "columnEnd": 36
+      }
+    },
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 21,
+        "lineEnd": 21,
+        "columnStart": 23,
+        "columnEnd": 39
+      }
+    },
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 32,
+        "lineEnd": 32,
+        "columnStart": 20,
+        "columnEnd": 36
+      }
+    },
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 37,
+        "lineEnd": 37,
+        "columnStart": 29,
+        "columnEnd": 45
+      }
+    }
+  ],
+  "repairedDockerfile": "FROM node:16-alpine AS base\n\nRUN corepack enable\n\nFROM base AS graphql-deps-builder\n\nWORKDIR /opt/opencti-build/opencti-graphql\nCOPY opencti-graphql/package.json opencti-graphql/yarn.lock opencti-graphql/.yarnrc.yml ./\nCOPY opencti-graphql/.yarn ./.yarn\nCOPY opencti-graphql/patch ./patch\nRUN yarn install --frozen-lockfile && yarn cache clean --all && yarn cache clean;\n\n\nFROM base AS graphql-builder\n\nWORKDIR /opt/opencti-build/opencti-graphql\nCOPY opencti-graphql/package.json opencti-graphql/yarn.lock opencti-graphql/.yarnrc.yml ./\nCOPY opencti-graphql/.yarn ./.yarn\nCOPY opencti-graphql/patch ./patch\nRUN yarn install && yarn cache clean;\nCOPY opencti-graphql /opt/opencti-build/opencti-graphql\nRUN yarn build:prod && yarn cache clean;\n\n\nFROM base AS front-builder\n\nWORKDIR /opt/opencti-build/opencti-front\n\nCOPY opencti-front/package.json opencti-front/yarn.lock opencti-front/.yarnrc.yml ./\nCOPY opencti-front/.yarn ./.yarn\nCOPY opencti-front/patch ./patch\n\nRUN yarn install && yarn cache clean;\n\nCOPY opencti-front /opt/opencti-build/opencti-front\nCOPY opencti-graphql/config/schema/opencti.graphql /opt/opencti-build/opencti-graphql/config/schema/opencti.graphql\n\nRUN yarn build:standalone && yarn cache clean;\n\n\nFROM base AS app\n\nRUN set -ex \\\n    ; apk add --no-cache git tini gcc musl-dev python3 python3-dev postfix postfix-pcre \\\n    && python3 -m ensurepip \\\n    && rm -rv /usr/lib/python*/ensurepip \\\n    && pip3 install --no-cache-dir --upgrade pip setuptools wheel \\\n    && ln -sf python3 /usr/bin/python\nWORKDIR /opt/opencti\n\nCOPY opencti-graphql/src/python/requirements.txt ./src/python/requirements.txt\n\nRUN pip3 install --no-cache-dir --requirement ./src/python/requirements.txt \\\n    && pip3 install \\\n        --no-cache-dir \\\n        --upgrade \\\n        --force 'git+https://github.com/OpenCTI-Platform/client-python@master' \\\n    && apk del git python3-dev gcc musl-dev\n\nCOPY --from=graphql-deps-builder /opt/opencti-build/opencti-graphql/node_modules ./node_modules\nCOPY --from=graphql-builder /opt/opencti-build/opencti-graphql/build ./build\nCOPY --from=front-builder /opt/opencti-build/opencti-front/builder/prod/build ./public\nCOPY opencti-graphql/src ./src\nCOPY opencti-graphql/config ./config\nCOPY opencti-graphql/script ./script\n\nARG UID=10000\nARG GID=10001\nARG USERNAME=\"_opencti\"\n\nENV PYTHONUNBUFFERED=1\nENV NODE_OPTIONS=--max_old_space_size=12288\nENV NODE_ENV=production\n\nRUN set -ex \\\n    ; addgroup -g \"${GID}\" -S \"${USERNAME}\" \\\n    && adduser \\\n        -h /opt/opencti \\\n        -g \"OpenCTI privsep user\" \\\n        -s \"/sbin/nologin\" \\\n        -G \"${USERNAME}\" \\\n        -S \\\n        -u \"${UID}\" \\\n        \"${USERNAME}\" \\\n    && install -o \"${UID}\" -g \"${GID}\" -m 0750 -d '/opt/opencti/logs'\n\nVOLUME [\"/opt/opencti/logs\"]\n\nUSER \"${USERNAME}\"\n\nENTRYPOINT [\"/sbin/tini\", \"--\"]\nCMD [\"node\", \"build/index.js\"]\n"
+}

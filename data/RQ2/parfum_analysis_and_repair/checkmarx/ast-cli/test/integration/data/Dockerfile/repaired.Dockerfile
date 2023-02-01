@@ -1,0 +1,1 @@
+# Example: docker build . -t dsvw && docker run -p 65412:65412 dsvw

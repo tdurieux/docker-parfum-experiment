@@ -1,0 +1,44 @@
+{
+  "startTime": 1674254199569,
+  "endTime": 1674254200764,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 24,
+        "lineEnd": 24,
+        "columnStart": 4,
+        "columnEnd": 85
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 47,
+        "lineEnd": 47,
+        "columnStart": 16,
+        "columnEnd": 40
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 18,
+        "lineEnd": 20,
+        "columnStart": 7,
+        "columnEnd": 23
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 42,
+        "lineEnd": 42,
+        "columnStart": 40,
+        "columnEnd": 91
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Creating a python base with shared environment variables\nFROM python:3.8.1-slim as python-base\nENV PYTHONUNBUFFERED=1 \\\n    PYTHONDONTWRITEBYTECODE=1 \\\n    PIP_NO_CACHE_DIR=off \\\n    PIP_DISABLE_PIP_VERSION_CHECK=on \\\n    PIP_DEFAULT_TIMEOUT=100 \\\n    POETRY_HOME=\"/opt/poetry\" \\\n    POETRY_VIRTUALENVS_IN_PROJECT=true \\\n    POETRY_NO_INTERACTION=1 \\\n    PYSETUP_PATH=\"/opt/pysetup\" \\\n    VENV_PATH=\"/opt/pysetup/.venv\"\n\nENV PATH=\"$POETRY_HOME/bin:$VENV_PATH/bin:$PATH\"\n\n# builder-base is used to build dependencies\nFROM python-base as builder-base\nRUN apt-get update \\\n    && apt-get install --no-install-recommends -y \\\n        curl \\\n        build-essential && rm -rf /var/lib/apt/lists/*;\n\n# Install Poetry - respects $POETRY_VERSION & $POETRY_HOME\nENV POETRY_VERSION=1.1.8\nRUN curl -f -sSL https://raw.githubusercontent.com/sdispater/poetry/master/get-poetry.py | python\n\n# We copy our Python requirements here to cache them\n# and install only runtime deps using poetry\nWORKDIR $PYSETUP_PATH\nCOPY ./poetry.lock ./pyproject.toml ./\nRUN poetry install --no-dev\n\n# 'development' stage installs all dev deps and can be used to develop code.\n# For example using docker-compose to mount local volume under /shelf\nFROM python-base as development\n\n# Copying poetry and venv into image\nCOPY --from=builder-base $POETRY_HOME $POETRY_HOME\nCOPY --from=builder-base $PYSETUP_PATH $PYSETUP_PATH\n\n# venv already has runtime deps installed we get a quicker install\nWORKDIR $PYSETUP_PATH\nRUN poetry install && apt-get update && apt-get install --no-install-recommends -y git nano && rm -rf /var/lib/apt/lists/*;\n\nWORKDIR /shelf\nCOPY . .\n\nRUN cd shelf && pip install --no-cache-dir --editable .\n\nRUN git config --global user.email \"test@test.com\" && git config --global user.name \"test\"\n#RUN cp shelf/hook_samples/commit-msg tests/shelf/.git/hooks/ && chmod +x tests/shelf/.git/hooks/commit-msg\n\n# 'lint' stage runs black and isort\n# running in check mode means build will fail if any linting errors occur\nFROM development AS lint\nRUN black --config ./pyproject.toml --check shelf tests\nRUN isort --settings-path ./pyproject.toml --check-only shelf tests\nCMD [\"tail\", \"-f\", \"/dev/null\"]\n\n# 'test' stage runs our unit tests with pytest and coverage.\nFROM development AS test\nRUN coverage run --rcfile ./pyproject.toml -m pytest ./tests\n\n# 'production' stage uses the clean 'python-base' stage and copyies\n# in only our runtime deps that were installed in the 'builder-base'\nFROM python-base as production\nCOPY --from=builder-base $VENV_PATH $VENV_PATH\n\nCOPY . /shelf\nWORKDIR /shelf/tests/shelf\n"
+}

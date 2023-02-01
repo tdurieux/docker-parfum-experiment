@@ -1,0 +1,22 @@
+# Filename: Dockerfile
+FROM harness/python-slim:safe-python3.6.12.slim-sec1338
+CMD ["/bin/bash"]
+
+#Update BaseOS package
+RUN apt-get clean
+RUN apt-get update && apt-get -y upgrade
+RUN apt-get clean
+
+#Install basic utilities
+#RUN apt-get install -y make wget protobuf-compiler build-essential ntp libssl-dev strace procps
+
+#Update pip packages
+RUN rm -rf ~/.cache/pip/selfcheck/*
+RUN rm -rf ~/.cache/pip/http/*
+RUN pip list --outdated
+RUN pip install --no-cache-dir -U pip-upgrade-outdated
+RUN pip_upgrade_outdated -3 -v -x distlib -x rsa -x docutils
+RUN pip list --outdated
+RUN pip uninstall -y pip-upgrade-outdated
+RUN rm -rf ~/.cache/pip/selfcheck/*
+RUN rm -rf ~/.cache/pip/http/*

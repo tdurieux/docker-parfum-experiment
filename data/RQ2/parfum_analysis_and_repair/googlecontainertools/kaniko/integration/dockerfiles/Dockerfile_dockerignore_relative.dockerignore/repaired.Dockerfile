@@ -1,0 +1,1 @@
+# A .dockerignore file to make sure dockerignore support works

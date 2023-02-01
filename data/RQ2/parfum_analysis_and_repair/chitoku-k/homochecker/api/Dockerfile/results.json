@@ -1,0 +1,116 @@
+{
+  "startTime": 1674256152457,
+  "endTime": 1674256154000,
+  "originalSmells": [
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 25,
+        "lineEnd": 25,
+        "columnStart": 4,
+        "columnEnd": 33
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 35,
+        "lineEnd": 35,
+        "columnStart": 4,
+        "columnEnd": 33
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 46,
+        "lineEnd": 46,
+        "columnStart": 4,
+        "columnEnd": 91
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 81,
+        "lineEnd": 92,
+        "columnStart": 4,
+        "columnEnd": 32
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 5,
+        "lineEnd": 11,
+        "columnStart": 4,
+        "columnEnd": 18
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 65,
+        "lineEnd": 76,
+        "columnStart": 4,
+        "columnEnd": 18
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 131,
+        "lineEnd": 133,
+        "columnStart": 4,
+        "columnEnd": 13
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 143,
+        "lineEnd": 145,
+        "columnStart": 4,
+        "columnEnd": 23
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 5,
+        "lineEnd": 11,
+        "columnStart": 4,
+        "columnEnd": 18
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 65,
+        "lineEnd": 76,
+        "columnStart": 4,
+        "columnEnd": 18
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 131,
+        "lineEnd": 133,
+        "columnStart": 4,
+        "columnEnd": 13
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 143,
+        "lineEnd": 145,
+        "columnStart": 4,
+        "columnEnd": 23
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM debian:bullseye-slim AS build-dependencies\nRUN --mount=type=cache,id=api:/var/cache/apt,target=/var/cache/apt \\\n    --mount=type=cache,id=api:/var/lib/apt/lists,target=/var/lib/apt/lists \\\n    apt-get -y update && \\\n    apt-get -y --no-install-recommends install \\\n        autoconf \\\n        build-essential \\\n        git \\\n        libnghttp2-dev \\\n        libtool \\\n        pkg-config && rm -rf /var/lib/apt/lists/*;\n\nFROM build-dependencies AS openssl\nRUN git clone --depth 1 -b OpenSSL_1_1_1n+quic https://github.com/quictls/openssl && \\\n    cd openssl && \\\n    ./config enable-tls1_3 && \\\n    make -j $(nproc) && \\\n    make install_sw && \\\n    ldconfig\n\nFROM build-dependencies AS nghttp3\nRUN git clone --depth=1 -b v0.1.0 https://github.com/ngtcp2/nghttp3 && \\\n    cd nghttp3 && \\\n    autoreconf -fi && \\\n    ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" --enable-lib-only && \\\n    make -j $(nproc) && \\\n    make install\n\nFROM build-dependencies AS ngtcp2\nCOPY --from=openssl /usr/local/ /usr/local/\nCOPY --from=nghttp3 /usr/local/ /usr/local/\nRUN git clone --depth=1 -b v0.1.0 https://github.com/ngtcp2/ngtcp2 && \\\n    cd ngtcp2 && \\\n    autoreconf -fi && \\\n    ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" --enable-lib-only && \\\n    make -j $(nproc) && \\\n    make install\n\nFROM build-dependencies AS curl\nCOPY --from=openssl /usr/local/ /usr/local/\nCOPY --from=nghttp3 /usr/local/ /usr/local/\nCOPY --from=ngtcp2 /usr/local/ /usr/local/\nRUN git clone --depth=1 -b curl-7_80_0 https://github.com/curl/curl && \\\n    cd curl && \\\n    autoreconf -fi && \\\n    ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" --enable-alt-svc --with-openssl --with-nghttp2 --with-nghttp3 --with-ngtcp2 && \\\n    make -j $(nproc) && \\\n    make install && \\\n    ldconfig\n\nFROM php:8.1.7-fpm AS runtime\nWORKDIR /var/www/html/api\nCOPY --from=openssl /usr/local/include/ /usr/local/include/\nCOPY --from=nghttp3 /usr/local/include/ /usr/local/include/\nCOPY --from=ngtcp2 /usr/local/include/ /usr/local/include/\nCOPY --from=curl /usr/local/include/curl/ /usr/local/include/curl/\nCOPY --from=curl /usr/local/bin/curl /usr/local/bin/\nCOPY --from=curl /usr/local/bin/curl-config /usr/local/bin/\nCOPY --from=curl /usr/local/lib/ /usr/local/lib/\nRUN docker-php-source extract\nCOPY php/ /usr/src/php/\nRUN --mount=type=cache,id=api:/var/cache/apt,target=/var/cache/apt \\\n    --mount=type=cache,id=api:/var/lib/apt/lists,target=/var/lib/apt/lists \\\n    apt-get -y update && \\\n    apt-get -y --no-install-recommends install \\\n        libargon2-dev \\\n        libicu-dev \\\n        libnghttp2-dev \\\n        libonig-dev \\\n        libpq5 \\\n        libpq-dev \\\n        libreadline-dev \\\n        libsodium-dev \\\n        libsqlite3-dev \\\n        libxml2-dev \\\n        zlib1g-dev && \\\n    ldconfig && \\\n    cd /usr/src/php/ext/curl && \\\n    patch -u < /usr/src/php/ext/curl/interface.patch && \\\n    cd /usr/src/php && \\\n    ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" \\\n        --disable-cgi \\\n        --enable-fpm \\\n        --enable-mbstring \\\n        --with-config-file-path=$PHP_INI_DIR \\\n        --with-config-file-scan-dir=$PHP_INI_DIR/conf.d \\\n        --with-curl \\\n        --with-openssl \\\n        --with-pear \\\n        --with-readline \\\n        --with-fpm-group=www-data \\\n        --with-fpm-user=www-data && \\\n    make -j $(nproc) && \\\n    make install && \\\n    make clean && \\\n    ln -s /etc/ssl /usr/local/ssl && \\\n    pecl install \\\n        apcu \\\n        redis && \\\n    docker-php-ext-enable \\\n        apcu \\\n        redis && \\\n    docker-php-ext-install \\\n        opcache \\\n        pdo_pgsql && \\\n    apt-get -y remove \\\n        $PHPIZE_DEPS \\\n        libargon2-dev \\\n        libc6-dev \\\n        libcurl4-openssl-dev \\\n        libedit-dev \\\n        libonig-dev \\\n        libpq-dev \\\n        libsodium-dev \\\n        libsqlite3-dev \\\n        libssl-dev \\\n        libxml2-dev \\\n        zlib1g-dev && \\\n    apt-get -y autoremove && \\\n    docker-php-source delete && \\\n    rm -rf /tmp/* && \\\n    echo 'display_errors = 0' > /usr/local/etc/php/conf.d/overrides.ini && \\\n    sed -i 's/^access\\.log/; \\0/' /usr/local/etc/php-fpm.d/docker.conf && \\\n    echo 'label ::1/128 0' > /etc/gai.conf && rm -rf /var/lib/apt/lists/*;\n\nFROM runtime AS dependencies\nCOPY --from=composer:2.3.5 /usr/bin/composer /usr/bin/composer\nRUN --mount=type=cache,id=api:/var/cache/apt,target=/var/cache/apt \\\n    --mount=type=cache,id=api:/var/lib/apt/lists,target=/var/lib/apt/lists \\\n    apt-get -y update && \\\n    apt-get -y --no-install-recommends install \\\n        git \\\n        unzip && rm -rf /var/lib/apt/lists/*;\nCOPY composer.json composer.lock /var/www/html/api/\nRUN --mount=type=cache,id=api:/root/.composer,target=/root/.composer \\\n    composer install --no-dev --no-progress --no-scripts --no-autoloader && \\\n    composer dump-autoload --no-dev --no-scripts --optimize\n\nFROM dependencies AS dev\nRUN --mount=type=cache,id=api:/var/cache/apt,target=/var/cache/apt \\\n    --mount=type=cache,id=api:/var/lib/apt/lists,target=/var/lib/apt/lists \\\n    apt-get -y update && \\\n    apt-get -y --no-install-recommends install \\\n        autoconf \\\n        build-essential && rm -rf /var/lib/apt/lists/*;\nRUN --mount=type=cache,id=api:/root/.composer,target=/root/.composer \\\n    composer install --no-progress --no-scripts && \\\n    composer dump-autoload --no-scripts --optimize\nRUN --mount=type=cache,id=api:/root/.composer,target=/mnt/.composer \\\n    cp -r /mnt/.composer /root/\nRUN pecl install pcov && \\\n    docker-php-ext-enable pcov\n\nFROM scratch\nCOPY src /var/www/html/api/src\nCOPY --from=runtime /etc/gai.conf /etc/\nCOPY --from=runtime /etc/group /etc/\nCOPY --from=runtime /etc/ld.so.cache /etc/\nCOPY --from=runtime /etc/passwd /etc/\nCOPY --from=runtime /etc/ssl/certs/ /etc/ssl/certs/\nCOPY --from=runtime /lib/ /lib/\nCOPY --from=runtime /lib64/ /lib64/\nCOPY --from=runtime /tmp/ /tmp/\nCOPY --from=runtime /usr/lib/ /usr/lib/\nCOPY --from=runtime /usr/local/etc/ /usr/local/etc/\nCOPY --from=runtime /usr/local/lib/ /usr/local/lib/\nCOPY --from=runtime /usr/local/sbin/php-fpm /usr/local/sbin/\nCOPY --from=runtime /usr/share/ca-certificates/ /usr/share/ca-certificates/\nCOPY --from=dependencies /var/www/html/api /var/www/html/api\nSTOPSIGNAL SIGQUIT\nEXPOSE 9000\nENTRYPOINT [\"/usr/local/sbin/php-fpm\"]\n"
+}

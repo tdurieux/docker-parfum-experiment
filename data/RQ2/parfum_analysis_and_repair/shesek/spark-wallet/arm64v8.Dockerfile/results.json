@@ -1,0 +1,44 @@
+{
+  "startTime": 1674248798954,
+  "endTime": 1674248800147,
+  "originalSmells": [
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 20,
+        "lineEnd": 20,
+        "columnStart": 4,
+        "columnEnd": 15
+      }
+    },
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 24,
+        "lineEnd": 24,
+        "columnStart": 4,
+        "columnEnd": 15
+      }
+    },
+    {
+      "rule": "sha256sumEchoOneSpaces",
+      "position": {
+        "lineStart": 13,
+        "lineEnd": 13,
+        "columnStart": 7,
+        "columnEnd": 109
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 6,
+        "lineEnd": 7,
+        "columnStart": 22,
+        "columnEnd": 50
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM node:12.16-slim as builder\n\nARG DEVELOPER\nENV STANDALONE=1\n\n# Install build c-lightning for third-party packages (c-lightning/bitcoind)\nRUN apt-get update && apt-get install -y --no-install-recommends git wget ca-certificates \\\n    qemu qemu-user-static qemu-user binfmt-support && rm -rf /var/lib/apt/lists/*;\n\nRUN npm config set unsafe-perm true\n\n# Install tini\nRUN mkdir /opt/bin && wget -qO /opt/bin/tini \"https://github.com/krallin/tini/releases/download/v0.18.0/tini-arm64\" \\\n    && echo \"7c5463f55393985ee22357d976758aaaecd08defb3c5294d353732018169b019  /opt/bin/tini\" | sha256sum -c - \\\n    && chmod +x /opt/bin/tini\n\n# Install Spark\nWORKDIR /opt/spark/client\nCOPY client/package.json client/npm-shrinkwrap.json ./\nCOPY client/fonts ./fonts\nRUN npm install && npm cache clean --force;\n\nWORKDIR /opt/spark\nCOPY package.json npm-shrinkwrap.json ./\nRUN npm install && npm cache clean --force;\nCOPY . .\n\n# Build production NPM package\nRUN npm run dist:npm \\\n && npm prune --production \\\n && find . -mindepth 1 -maxdepth 1 \\\n           ! -name '*.json' ! -name dist ! -name LICENSE ! -name node_modules ! -name scripts \\\n           -exec rm -r \"{}\" \\;\n\n# Prepare final image\n\nFROM arm64v8/node:12.16-slim\n\nENV STANDALONE=1\n\nWORKDIR /opt/spark\nCOPY --from=builder /usr/bin/qemu-aarch64-static /usr/bin/qemu-aarch64-static\nRUN apt-get update && apt-get install -y --no-install-recommends xz-utils inotify-tools netcat-openbsd \\\n    && rm -rf /var/lib/apt/lists/* \\\n    && ln -s /opt/spark/dist/cli.js /usr/bin/spark-wallet \\\n    && mkdir /data \\\n    && ln -s /data/lightning $HOME/.lightning\n\nCOPY --from=builder /opt/bin /usr/bin\nCOPY --from=builder /opt/spark /opt/spark\n\nENV CONFIG=/data/spark/config TLS_PATH=/data/spark/tls TOR_PATH=/data/spark/tor COOKIE_FILE=/data/spark/cookie HOST=0.0.0.0\n\n# link the granax (Tor Control client) node_modules installation directory\n# inside /data/spark/tor/, to persist the Tor Bundle download in the user-mounted volume\nRUN ln -s $TOR_PATH/tor-installation/node_modules dist/transport/granax-dep/node_modules\n\nVOLUME /data\nENTRYPOINT [ \"tini\", \"-g\", \"--\", \"scripts/docker-entrypoint.sh\" ]\n\nEXPOSE 9737\n"
+}

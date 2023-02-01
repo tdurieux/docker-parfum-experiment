@@ -1,0 +1,117 @@
+# ------------------------------------------------------------------------------
+# Build Souffle
+# ------------------------------------------------------------------------------
+FROM ubuntu:20.04 AS souffle
+RUN export DEBIAN_FRONTEND=noninteractive
+RUN ln -fs /usr/share/zoneinfo/America/New_York /etc/localtime
+RUN apt-get -y update \
+ && apt-get -y --no-install-recommends install \
+      automake \
+      bison \
+      build-essential \
+      cmake \
+      doxygen \
+      flex \
+      git \
+      libffi-dev \
+      libsqlite3-dev \
+      libtool \
+      lsb-release \
+      mcpp \
+      python \
+      sqlite3 \
+      zlib1g-dev && rm -rf /var/lib/apt/lists/*;
+
+RUN git clone -b 2.3 https://github.com/souffle-lang/souffle && \
+    cd souffle && \
+    cmake . -Bbuild -DCMAKE_BUILD_TYPE=Release -DSOUFFLE_USE_CURSES=0 -DSOUFFLE_USE_SQLITE=0 -DSOUFFLE_DOMAIN_64BIT=1 && \
+    make -C build install -j4
+
+# ------------------------------------------------------------------------------
+# Build LIEF
+# ------------------------------------------------------------------------------
+FROM ubuntu:20.04 AS lief
+RUN export DEBIAN_FRONTEND=noninteractive && \
+    ln -fs /usr/share/zoneinfo/America/New_York /etc/localtime && \
+    apt-get -y update && \
+    apt-get -y --no-install-recommends install \
+      build-essential \
+      cmake \
+      git \
+      python3 && rm -rf /var/lib/apt/lists/*;
+
+RUN git clone -b 0.12.1 --depth 1 https://github.com/lief-project/LIEF.git /usr/local/src/LIEF && \
+    cmake -DLIEF_PYTHON_API=OFF -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF /usr/local/src/LIEF -B/usr/local/src/LIEF/build && \
+    cmake --build /usr/local/src/LIEF/build -j --target install
+
+# ------------------------------------------------------------------------------
+# Build libehp
+# ------------------------------------------------------------------------------
+FROM ubuntu:20.04 AS libehp
+RUN export DEBIAN_FRONTEND=noninteractive && \
+    ln -fs /usr/share/zoneinfo/America/New_York /etc/localtime && \
+    apt-get -y update && \
+    apt-get -y --no-install-recommends install \
+      build-essential \
+      cmake \
+      git && rm -rf /var/lib/apt/lists/*;
+
+RUN git clone https://git.zephyr-software.com/opensrc/libehp.git /usr/local/src/libehp && \
+    git -C /usr/local/src/libehp reset --hard 5e41e26b88d415f3c7d3eb47f9f0d781cc519459 && \
+    cmake -DCMAKE_CXX_COMPILER=g++ -DCMAKE_BUILD_TYPE=Release -DEHP_BUILD_SHARED_LIBS=OFF /usr/local/src/libehp -B/usr/local/src/libehp/build && \
+    cmake --build /usr/local/src/libehp/build -j --target install
+
+# ------------------------------------------------------------------------------
+# Final image
+# ------------------------------------------------------------------------------
+FROM docker.grammatech.com/rewriting/gtirb-pprinter/static
+
+# Install apt packages
+RUN export DEBIAN_FRONTEND=noninteractive && \
+    ln -fs /usr/share/zoneinfo/America/New_York /etc/localtime && \
+    apt-get -y update && \
+    apt-get -y --no-install-recommends install \
+        gcc-arm-linux-gnueabihf \
+        g++-arm-linux-gnueabihf \
+        gcc-aarch64-linux-gnu \
+        g++-aarch64-linux-gnu \
+        gcc-mips-linux-gnu \
+        g++-mips-linux-gnu \
+        lib32gcc-9-dev \
+        lib32stdc++-9-dev \
+        libc-dev-i386-cross \
+        make \
+        mcpp \
+        pkg-config \
+        python3 \
+        python3-pip \
+        qemu-user \
+        software-properties-common \
+        wget \
+        unzip \
+        zlib1g-dev && rm -rf /var/lib/apt/lists/*;
+
+RUN python3 -m pip install --no-cache-dir \
+    distro \
+    pyyaml \
+    psycopg2-binary
+
+# Create the necessary links and cache to the most recent shared libraries
+# found in the directory /usr/mips-linus-gnu/ so that the run-time linker can
+# use the cache.
+RUN ln -s /usr/i686-linux-gnu/lib/ /usr/lib/i386-linux-gnu && \
+    ln -s /usr/i686-linux-gnu/include /usr/include/i386-linux-gnu && \
+    cd /usr/mips-linux-gnu && \
+    mkdir etc && \
+    ldconfig -c etc/ld.do.cache -r .
+
+COPY --from=souffle /usr/local/bin/souffle* /usr/local/bin/
+COPY --from=souffle /usr/local/include/souffle/ /usr/include/souffle
+COPY --from=lief /usr/lib/libLIEF.a /usr/lib/libLIEF.a
+COPY --from=lief /usr/include/LIEF /usr/include/LIEF
+COPY --from=lief /usr/share/LIEF /usr/share/LIEF
+COPY --from=libehp /usr/local/lib /usr/local/lib
+COPY --from=libehp /usr/local/include /usr/local/include
+
+# Install sstrip
+COPY etc/sstrip /usr/bin/sstrip

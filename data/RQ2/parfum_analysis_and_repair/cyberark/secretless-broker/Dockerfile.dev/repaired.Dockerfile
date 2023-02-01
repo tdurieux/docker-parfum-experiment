@@ -1,0 +1,86 @@
+FROM golang:1.17-buster
+MAINTAINER CyberArk Software Ltd.
+
+# On CyberArk dev laptops, golang module dependencies are downloaded with a
+# corporate proxy in the middle. For these connections to succeed we need to
+# configure the proxy CA certificate in build containers.
+#
+# To allow this script to also work on non-CyberArk laptops where the CA
+# certificate is not available, we copy the (potentially empty) directory
+# and update container certificates based on that, rather than rely on the
+# CA file itself.
+ADD build_ca_certificate /usr/local/share/ca-certificates/
+RUN update-ca-certificates
+
+RUN apt-get update && \
+    apt-get install --no-install-recommends -y curl \
+                       jq \
+                       less \
+                       vim && rm -rf /var/lib/apt/lists/*;
+
+ENV ROOT_DIR=/secretless
+
+WORKDIR $ROOT_DIR
+
+RUN groupadd -r secretless \
+             -g 777 && \
+    useradd -c "secretless runner account" \
+            -g secretless \
+            -u 777 \
+            -m \
+            -r \
+            secretless && \
+    mkdir -p /usr/local/lib/secretless \
+             /sock && \
+    chown secretless:secretless /usr/local/lib/secretless \
+                                /sock
+
+# these are binaries necessary for development
+# the happen to be written in Go:
+#
+# go-junit-report => Convert go test output to junit xml
+# goconvey => Go testing tool
+# reflex => Utility for watching files and executing process in response to changes
+# gocov => converts native coverage output to gocov's JSON interchange format
+# gocov-xml => converts gocov format to XML for use with Jenkins/Cobertura
+# gocovmerge => Merges multiple 'go test -coverprofile' results into one profile
+RUN go get -u github.com/jstemmer/go-junit-report && \
+    go get github.com/smartystreets/goconvey && \
+    go get github.com/cespare/reflex && \
+    go get github.com/axw/gocov/gocov && \
+    go get github.com/AlekSi/gocov-xml && \
+    go get github.com/wadey/gocovmerge
+
+# go mod dependency management for the secretless project
+COPY go.mod go.sum /secretless/
+COPY third_party/ /secretless/third_party
+
+RUN go mod download
+
+# TODO: all the stuff below this line is not needed
+# this image should just be a development environment for Secretless
+# and not be a snapshot of the repository
+# the repo should be volume mounted
+# NOTE: don't forget all the parts of the repo that are dependent on the definition
+# of secretless-dev as dev environment + secretless repo snapshot +
+# binaries, you'll need to fix them all
+
+# TODO: Expand this with build args when we support other arches
+ENV GOOS=linux \
+    GOARCH=amd64 \
+    CGO_ENABLED=1
+
+# secretless source files
+COPY ./cmd ./cmd
+COPY ./internal ./internal
+COPY ./pkg ./pkg
+COPY ./resource-definitions ./resource-definitions
+
+# Not strictly needed but we might as well do this step too since
+# the dev may want to run the binary
+RUN go build -o dist/$GOOS/$GOARCH/secretless-broker ./cmd/secretless-broker && \
+    go build -o dist/$GOOS/$GOARCH/summon2 ./cmd/summon2 && \
+    ln -s $ROOT_DIR/dist/$GOOS/$GOARCH/secretless-broker /usr/local/bin/ && \
+    ln -s $ROOT_DIR/dist/$GOOS/$GOARCH/summon2 /usr/local/bin/
+
+COPY . .

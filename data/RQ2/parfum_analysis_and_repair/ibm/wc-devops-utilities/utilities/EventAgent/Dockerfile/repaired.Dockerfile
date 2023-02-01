@@ -1,0 +1,3 @@
+From centos
+
+COPY ./EventAgent /

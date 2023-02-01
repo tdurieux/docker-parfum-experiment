@@ -1,0 +1,17 @@
+MAINTAINER Camptocamp
+
+COPY ./.coveragerc /odoo/
+
+# intermediate images should help speed up builds when only local-src, or only
+# external-src changes
+ONBUILD COPY ./src /odoo/src
+ONBUILD COPY ./external-src /odoo/external-src
+ONBUILD COPY ./local-src /odoo/local-src
+ONBUILD COPY ./data /odoo/data
+ONBUILD COPY ./songs /odoo/songs
+ONBUILD COPY ./setup.py /odoo/
+ONBUILD COPY ./VERSION /odoo/
+ONBUILD COPY ./migration.yml /odoo/
+# need to be called at the end, because it installs . and src
+ \
+RUN cd /odoo && pip install --no-cache-dir -r src_requirements.txtONBUILD

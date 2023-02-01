@@ -1,0 +1,66 @@
+FROM opensuse/leap
+
+# System dependent
+
+ARG TZ
+ENV TZ=${TZ}
+
+RUN zypper install -y \
+    sudo \
+    openssh \
+    rsyslog \
+    systemd-sysvinit \
+    patch \
+    rpm-build \
+    wget \
+    rsync \
+    git \
+    && systemctl enable sshd \
+    && zypper install -y \
+    libopenssl-devel \
+    postgresql13 \
+    postgresql13-devel \
+    postgresql13-server \
+    postgresql13-server-devel \
+    fuse \
+    fuse-devel \
+    libacl-devel \
+    ruby \
+    libtool \
+    && zypper addrepo \
+    https://download.opensuse.org/repositories/home:frank_scheiner:gct/openSUSE_Leap_15.2/home:frank_scheiner:gct.repo \
+    && zypper --non-interactive --no-gpg-checks refresh \
+    && zypper install -y \
+    globus-gssapi-gsi-devel \
+    globus-simple-ca \
+    globus-gsi-cert-utils-progs \
+    globus-proxy-utils \
+    gsi-openssh \
+    myproxy \
+    && globus-version \
+    && zypper mr -e repo-debug \
+    && zypper install -y \
+    telnet ncat ldns iproute2 net-tools bind-utils tcpdump \
+    gdb valgrind strace inotify-tools \
+    man man-pages man-pages-ja \
+    nano emacs-nox vim less which \
+    libfuse2-debuginfo \
+    && sed -i 's@^Defaults secure_path="/usr/sbin:@Defaults secure_path="/usr/local/bin:/usr/sbin:@' /etc/sudoers
+
+
+# System independent (see setup-univ.sh)
+
+ARG GFDOCKER_USERNAME_PREFIX
+ARG GFDOCKER_PRIMARY_USER
+ARG GFDOCKER_NUM_GFMDS
+ARG GFDOCKER_NUM_GFSDS
+ARG GFDOCKER_NUM_USERS
+ARG GFDOCKER_HOSTNAME_PREFIX_GFMD
+ARG GFDOCKER_HOSTNAME_PREFIX_GFSD
+ARG GFDOCKER_HOSTNAME_SUFFIX
+ARG GFDOCKER_USE_SAN_FOR_GFSD
+COPY . /tmp/gfarm
+COPY gfarm2fs /tmp/gfarm2fs
+RUN "/tmp/gfarm/docker/dev/common/setup-univ.sh"
+
+CMD ["/sbin/init"]

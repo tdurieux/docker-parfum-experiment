@@ -1,0 +1,15 @@
+FROM ubuntu:20.04
+
+RUN apt-get update && \
+    apt-get install --no-install-recommends -y wget build-essential python3 python3-dev python3-virtualenv vim && \
+    rm -f /bin/sh && ln -s /bin/bash /bin/sh && rm -rf /var/lib/apt/lists/*;
+
+ENV DAPPER_SOURCE /go/src/github.com/longhorn/longhorn-tests
+
+WORKDIR ${DAPPER_SOURCE}
+
+ENV VIRTUAL_ENV=${DAPPER_SOURCE}/manager/integration/.venv
+
+RUN python3 -m virtualenv --python=/usr/bin/python3 ${VIRTUAL_ENV}
+
+CMD ["./manager/integration/scripts/flake8-check.sh"]

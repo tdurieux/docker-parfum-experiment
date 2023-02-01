@@ -1,0 +1,62 @@
+{
+  "startTime": 1674236884291,
+  "endTime": 1674236884428,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 50,
+        "lineEnd": 50,
+        "columnStart": 7,
+        "columnEnd": 50
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 41,
+        "lineEnd": 41,
+        "columnStart": 7,
+        "columnEnd": 29
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 42,
+        "lineEnd": 42,
+        "columnStart": 7,
+        "columnEnd": 44
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 43,
+        "lineEnd": 43,
+        "columnStart": 7,
+        "columnEnd": 26
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 44,
+        "lineEnd": 44,
+        "columnStart": 7,
+        "columnEnd": 28
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 45,
+        "lineEnd": 45,
+        "columnStart": 7,
+        "columnEnd": 26
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM ubuntu:18.04\n\n# Metadata params\nARG BUILD_DATE\nARG VCS_REF\nARG VCS_URL\nARG VERSION\n\nLABEL maintainer=\"Antonio Musarra <antonio.musarra@gmail.com>\" \\\n    org.label-schema.name=\"cie-cns-apache-docker\" \\\n    org.label-schema.description=\"Apache HTTP 2.4 per SmartCard TS-CNS (Tessera Sanitaria - Carta Nazionale Servizi) e CIE (Carta Identità Elettronica)\" \\\n    org.label-schema.version=${VERSION} \\\n    org.label-schema.build-date=${BUILD_DATE} \\\n    org.label-schema.vendor=\"Antonio Musarra's Blog\" \\\n    org.label-schema.url=\"https://www.dontesta.it\" \\\n    org.label-schema.vcs-url=${VCS_URL} \\\n    org.label-schema.vcs-ref=${VCS_REF} \\\n    org.label-schema.schema-version=\"1.0\"\n\n# Apache ENVs\nENV APACHE_SERVER_NAME cns.dontesta.it\nENV APACHE_SERVER_ADMIN cns@dontesta.it\nENV APACHE_SSL_CERTS cns-dontesta-it_crt.pem\nENV APACHE_SSL_PRIVATE cns-dontesta-it_key.pem\nENV APACHE_SSL_PORT 10443\nENV APACHE_LOG_LEVEL info\nENV APACHE_SSL_LOG_LEVEL info\nENV APACHE_SSL_VERIFY_CLIENT optional\nENV APPLICATION_URL https://${APACHE_SERVER_NAME}:${APACHE_SSL_PORT}\nENV CLIENT_VERIFY_LANDING_PAGE /error.php\n\n# Env for deb conf\nENV DEBIAN_FRONTEND noninteractive\n\n# Env for Trusted CA certificate\nENV GOV_TRUST_CERTS_DOWNLOAD_SCRIPT_URL https://raw.githubusercontent.com/amusarra/apache-httpd-ts-cns-docker/master/scripts/parse-gov-certs.py\nENV GOV_TRUST_CERTS_SERVICE_TYPE_IDENTIFIER http://uri.etsi.org/TrstSvc/Svctype/IdV\nENV GOV_TRUST_CERTS_OUTPUT_PATH /tmp/gov/trust/certs\n\n# Install services, packages and do cleanup\nRUN apt update \\\n    && apt install --no-install-recommends -y apache2 \\\n    && apt install --no-install-recommends -y php libapache2-mod-php \\\n    && apt install --no-install-recommends -y curl \\\n    && apt install --no-install-recommends -y python \\\n    && apt install --no-install-recommends -y cron \\\n    && rm -rf /var/lib/apt/lists/*\n\n# Download Trusted CA certificate and copy to ssl system path\nRUN rm -rf ${GOV_TRUST_CERTS_OUTPUT_PATH} \\\n    && curl -f ${GOV_TRUST_CERTS_DOWNLOAD_SCRIPT_URL} \\\n    | python /dev/stdin --output-folder ${GOV_TRUST_CERTS_OUTPUT_PATH} \\\n    --service-type-identifier ${GOV_TRUST_CERTS_SERVICE_TYPE_IDENTIFIER} \\\n    && cp ${GOV_TRUST_CERTS_OUTPUT_PATH}/*.pem /etc/ssl/certs/\n\n# Copy Apache configuration file\nCOPY configs/httpd/default-ssl.conf /etc/apache2/sites-available/\nCOPY configs/httpd/ssl-params.conf /etc/apache2/conf-available/\nCOPY configs/httpd/dir.conf /etc/apache2/mods-enabled/\nCOPY configs/httpd/ports.conf /etc/apache2/\n\n# Copy Server (pub and key) cns.dontesta.it\nCOPY configs/certs/*_crt.pem /etc/ssl/certs/\nCOPY configs/certs/*_key.pem /etc/ssl/private/\n\n# Copy php samples script and other\nCOPY configs/www/*.php /var/www/html/\nCOPY configs/www/assets /var/www/html/assets\nCOPY configs/www/secure /var/www/html/secure\nCOPY images/favicon.ico /var/www/html/favicon.ico\n\n# Copy auto-update-gov-certificates scripts and entrypoint\nCOPY scripts/auto-update-gov-certificates /auto-update-gov-certificates\nCOPY scripts/entrypoint /entrypoint\n\n# Set execute flag for entrypoint and crontab entry\n# Add Cron entry auto-update-gov-certificates\n# Create Project ENV for crontab\nRUN chmod +x /entrypoint \\\n    && chmod +x /auto-update-gov-certificates \\\n    && echo \"30 23 * * * root . /project_env.sh; /auto-update-gov-certificates >> /var/log/cron.log 2>&1\" > /etc/cron.d/auto-update-gov-certificates \\\n    && printenv | sed 's/^\\(.*\\)$/export \\1/g' | grep -E \"APACHE_|APPLICATION_URL|GOV_\" > /project_env.sh \\\n    && chmod +x /project_env.sh\n\n# Configure and enabled Apache features\nRUN a2enmod ssl \\\n    && a2enmod headers \\\n    && a2enmod rewrite \\\n    && a2ensite default-ssl \\\n    && a2enconf ssl-params \\\n    && c_rehash /etc/ssl/certs/\n\n# Expose Apache\nEXPOSE ${APACHE_SSL_PORT}\n\n# Define entry for setup contrab\nENTRYPOINT [\"/entrypoint\"]\n\n# Launch Apache\nCMD [\"/usr/sbin/apache2ctl\", \"-DFOREGROUND\"]"
+}

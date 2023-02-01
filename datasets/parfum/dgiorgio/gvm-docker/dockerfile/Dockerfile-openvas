@@ -1,0 +1,68 @@
+ARG gvmlibs_version
+FROM dgiorgio/gvmlibs:${gvmlibs_version}
+
+# openvas-smb deps: git cmake gcc make pkg-config gcc-mingw-w64
+#                   perl-base heimdal-dev libpopt-dev libglib2.0-dev
+#                   libgnutls28-dev xmltoman doxygen libunistring-dev
+# openvas deps: git cmake gcc make pkg-config libglib2.0-dev libgnutls28-dev
+#               uuid-dev libssh-gcrypt-dev libpcap-dev libksba-dev bison
+#               libsnmp-dev libgpgme-dev libhiredis-dev bzip2 wget rsync nmap
+#               libldap2-dev doxygen xmltoman libfreeradius-dev cron
+# ospd/ospd-openvas deps: python3 python3-setuptools libxslt1-dev gcc python3-dev zlib1g-dev
+#               libz-dev libffi-dev make libssl-dev
+
+RUN apt update -y && apt install -y --no-install-recommends --fix-missing \
+  git cmake gcc make pkg-config bison bzip2 cron doxygen gcc-mingw-w64 \
+  heimdal-dev libfreeradius-dev libglib2.0-dev libgnutls28-dev libgpgme-dev \
+  libhiredis-dev libksba-dev libldap2-dev libpcap-dev libpopt-dev libsnmp-dev \
+  libssh-gcrypt-dev nmap perl-base rsync uuid-dev wget xmltoman \
+  sudo python3-pip python3-dev libunistring-dev \
+  python3 python3-setuptools libxslt1-dev gcc python3-dev zlib1g-dev \
+  libz-dev libffi-dev make libssl-dev \
+  && rm -rf /var/lib/apt/lists/* \
+  && python3 -m pip install --upgrade pip \
+  && python3 -m pip install setuptools_rust cryptography
+
+ARG STAGE
+ENV STAGE ${STAGE}
+ARG openvas_smb_version
+ENV openvas_smb_version ${openvas_smb_version}
+ARG ospd_openvas_version
+ENV ospd_openvas_version ${ospd_openvas_version}
+ARG openvas_scanner_version
+ENV openvas_scanner_version ${openvas_scanner_version}
+
+# openvas-smb
+RUN mkdir -p /root/gvm-src/openvas-smb
+WORKDIR /root/gvm-src/openvas-smb
+COPY ./src/openvas-smb/commit/${STAGE} ./src/openvas-smb/build.sh ./
+RUN chmod +x ./build.sh && ./build.sh ${STAGE}
+
+# ospd-openvas
+RUN mkdir -p /root/gvm-src/ospd-openvas
+WORKDIR /root/gvm-src/ospd-openvas
+COPY ./src/ospd-openvas/commit/${STAGE} ./src/ospd-openvas/build.sh ./
+RUN chmod +x ./build.sh && ./build.sh ${STAGE}
+
+# openvas
+RUN mkdir -p /root/gvm-src/openvas-scanner
+WORKDIR /root/gvm-src/openvas-scanner
+COPY ./src/openvas-scanner/commit/${STAGE} ./src/openvas-scanner/build.sh ./
+RUN chmod +x ./build.sh && ./build.sh ${STAGE} \
+  && apt remove -y git cmake gcc make pkg-config \
+  && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /
+RUN rm -rf /root/gvm-src
+
+COPY ./entrypoint/openvas-scanner/docker-entrypoint.sh ./src/openvas-scanner/scripts/* /usr/local/bin/
+RUN chmod 755 /usr/local/bin/* \
+  && mkdir -p /var/run/ospd/ \
+  && chown -R gvm. /var/run/ospd
+
+USER gvm
+WORKDIR /home/gvm
+ENTRYPOINT ["/tini", "--", "/usr/local/bin/docker-entrypoint.sh"]
+
+VOLUME ["/var/lib/openvas"]
+EXPOSE 51234

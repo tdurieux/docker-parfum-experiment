@@ -1,0 +1,54 @@
+ARG bpftraceversion=v0.13.0
+ARG bccversion=v0.21.0-focal-release
+ARG rbspyversion=0.8.0
+FROM quay.io/iovisor/bpftrace:$bpftraceversion as bpftrace
+FROM quay.io/iovisor/bcc:$bccversion as bcc
+FROM rbspy/rbspy:$rbspyversion-gnu as rbspy
+
+FROM golang:1.15-buster as gobuilder
+ARG GIT_ORG=iovisor
+ENV GIT_ORG=$GIT_ORG
+RUN apt-get update && apt-get install --no-install-recommends -y make bash git && apt-get clean && rm -rf /var/lib/apt/lists/*;
+
+WORKDIR /go/src/github.com/iovisor/kubectl-trace
+
+# first copy the go mod files and sync the module cache as this step is expensive
+COPY go.* .
+RUN go mod download
+
+# Now copy the rest of the source code one by one
+# note any changes in any of these files or subdirectories is expected to bust the cache
+# We copy only the code directories, makefile, and git directory in order to prevent
+# busting the cache. Due to limitations in docker syntax, this must be done one-per-line
+COPY Makefile .
+COPY cmd cmd
+COPY pkg pkg
+
+# This buildkit feature reduces the build time from ~50s → 5s by preserving the compiler cache
+RUN --mount=type=cache,target=/root/.cache/go-build make _output/bin/trace-runner
+RUN --mount=type=cache,target=/root/.cache/go-build make _output/bin/trace-uploader
+
+FROM ubuntu:20.04
+
+# Install bcc by copying apt packages from docker image
+COPY --from=bcc /root/bcc /tmp/bcc
+RUN apt-get update && \
+  DEBIAN_FRONTEND=noninteractive apt-get --no-install-recommends install -y python python3 binutils libelf1 kmod && apt-get clean && \
+  dpkg -i /tmp/bcc/*.deb && rm -rf /tmp/bcc && rm -rf /var/lib/apt/lists/*;
+
+# Install CA certificates
+RUN apt-get update && apt-get install --no-install-recommends -y ca-certificates && update-ca-certificates && apt-get clean && rm -rf /var/lib/apt/lists/*;
+
+COPY --from=bpftrace /usr/bin/bpftrace /usr/bin/bpftrace
+COPY --from=rbspy /usr/bin/rbspy /usr/bin/rbspy
+COPY --from=gobuilder /go/src/github.com/iovisor/kubectl-trace/_output/bin/trace-runner /bin/trace-runner
+COPY --from=gobuilder /go/src/github.com/iovisor/kubectl-trace/_output/bin/trace-uploader /bin/trace-uploader
+
+# Inject some fake tracer 'programs' for integration testing.
+COPY /build/test/fake/success /usr/share/fake/success
+COPY /build/test/fake/output /usr/share/fake/output
+COPY /build/test/fake/pidtrace /usr/share/fake/pidtrace
+
+COPY /build/hooks/prestop /bin/hooks/prestop
+
+ENTRYPOINT ["/bin/trace-runner"]

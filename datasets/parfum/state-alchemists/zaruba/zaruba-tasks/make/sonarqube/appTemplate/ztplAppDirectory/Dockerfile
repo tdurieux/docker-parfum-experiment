@@ -1,0 +1,1 @@
+FROM docker.io/sonarqube:9.4-community

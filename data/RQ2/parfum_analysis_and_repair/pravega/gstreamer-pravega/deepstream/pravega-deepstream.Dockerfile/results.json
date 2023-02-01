@@ -1,0 +1,26 @@
+{
+  "startTime": 1674246459591,
+  "endTime": 1674246460960,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 122,
+        "lineEnd": 123,
+        "columnStart": 4,
+        "columnEnd": 22
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 24,
+        "lineEnd": 32,
+        "columnStart": 4,
+        "columnEnd": 12
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "#\n# Copyright (c) Dell Inc., or its subsidiaries. All Rights Reserved.\n#\n# Licensed under the Apache License, Version 2.0 (the \"License\");\n# you may not use this file except in compliance with the License.\n# You may obtain a copy of the License at\n#\n#     http://www.apache.org/licenses/LICENSE-2.0\n#\n\nARG FROM_IMAGE\n\n# Build DeepStream image with Python bindings and Rust compiler.\n\nFROM ${FROM_IMAGE} as builder-base\n\nCOPY docker/ca-certificates /usr/local/share/ca-certificates/\nRUN update-ca-certificates\n\nRUN apt-key adv --fetch-keys http://developer.download.nvidia.com/compute/cuda/repos/ubuntu1804/x86_64/3bf863cc.pub\n\n# Install Python Bindings for DeepStream.\n\nRUN apt-get update && \\\n    apt-get install -y --no-install-recommends \\\n        curl \\\n        less \\\n        nano \\\n        python3-dev \\\n        python3-gi \\\n        python3-gst-1.0 \\\n        python3-pip \\\n        wget && rm -rf /var/lib/apt/lists/*;\n\nRUN cd /opt/nvidia/deepstream/deepstream/lib && \\\n    python3 setup.py install && \\\n    cd /opt/nvidia/deepstream/deepstream/sources && \\\n    git clone https://github.com/NVIDIA-AI-IOT/deepstream_python_apps\n\n# Install Rust compiler.\n# Based on:\n#   - https://github.com/rust-lang/docker-rust-nightly/blob/master/buster/Dockerfile\n#   - https://hub.docker.com/layers/rust/library/rust/1.49.0/images/sha256-71e239392f5a70bc034522a089175bd36d1344205625047ed42722a205b683b2?context=explore\n\nENV RUSTUP_HOME=/usr/local/rustup \\\n    CARGO_HOME=/usr/local/cargo \\\n    PATH=/usr/local/cargo/bin:$PATH \\\n    RUST_VERSION=1.54.0\n\nRUN set -eux; \\\n    rustArch=\"x86_64-unknown-linux-gnu\"; \\\n    url=\"https://static.rust-lang.org/rustup/archive/1.23.1/${rustArch}/rustup-init\"; \\\n    wget --quiet \"$url\"; \\\n    chmod +x rustup-init; \\\n    ./rustup-init -y --no-modify-path --default-toolchain $RUST_VERSION --default-host ${rustArch}; \\\n    rm rustup-init; \\\n    chmod -R a+w $RUSTUP_HOME $CARGO_HOME; \\\n    rustup --version; \\\n    cargo --version; \\\n    rustc --version;\n\nWORKDIR /usr/src/gstreamer-pravega\n\n\n# Install Cargo Chef build tool.\nFROM builder-base as chef-base\nARG RUST_JOBS=1\nRUN cargo install cargo-chef --jobs ${RUST_JOBS} --version 0.1.22 --locked\n\n\n# Create Cargo Chef recipe.\nFROM chef-base as planner\nCOPY Cargo.toml .\nCOPY Cargo.lock .\nCOPY apps apps\nCOPY deepstream/pravega_protocol_adapter deepstream/pravega_protocol_adapter\nCOPY gst-plugin-pravega gst-plugin-pravega\nCOPY integration-test integration-test\nCOPY pravega-video pravega-video\nCOPY pravega-video-server pravega-video-server\nRUN cargo chef prepare --recipe-path recipe.json\n\n\n# Download and build Rust dependencies for gstreamer-pravega.\nFROM chef-base as cacher\nCOPY --from=planner /usr/src/gstreamer-pravega/recipe.json recipe.json\nRUN cargo chef cook --release --recipe-path recipe.json | cat -\n\n\n# Build GStreamer Pravega libraries and applications.\nFROM builder-base as final\n\nARG RUST_JOBS=1\n\n# Copy over the cached dependencies.\nCOPY --from=cacher /usr/src/gstreamer-pravega/target target\nCOPY --from=cacher /usr/local/cargo /usr/local/cargo\n\nCOPY Cargo.toml .\nCOPY Cargo.lock .\nCOPY apps apps\nCOPY deepstream/pravega_protocol_adapter deepstream/pravega_protocol_adapter\nCOPY gst-plugin-pravega gst-plugin-pravega\nCOPY integration-test integration-test\nCOPY pravega-video pravega-video\nCOPY pravega-video-server pravega-video-server\n\n# Build gst-plugin-pravega.\nRUN cargo build --package gst-plugin-pravega --locked --release --jobs ${RUST_JOBS} && \\\n    mv -v target/release/*.so /usr/lib/x86_64-linux-gnu/gstreamer-1.0/\n\n# Build pravega_protocol_adapter.\nRUN cargo build --package pravega_protocol_adapter --locked --release --jobs ${RUST_JOBS} && \\\n    mv -v target/release/*.so /opt/nvidia/deepstream/deepstream/lib/\n\n# Build misc. Rust apps.\nRUN cargo install --locked --jobs ${RUST_JOBS} --path apps --bin \\\n        rtsp-camera-simulator\nRUN cargo install --locked --jobs ${RUST_JOBS} --path integration-test --bin \\\n        longevity-test\n\n# Install dependencies for applications.\nRUN pip3 install --no-cache-dir \\\n        configargparse\n\n# Copy applications.\nCOPY deepstream deepstream\nCOPY python_apps python_apps\nENV PYTHONPATH=/usr/src/gstreamer-pravega/python_apps/lib\n\n# Define default entrypoint.\nCOPY docker/entrypoint.sh /entrypoint.sh\nCMD [\"/entrypoint.sh\"]\n"
+}

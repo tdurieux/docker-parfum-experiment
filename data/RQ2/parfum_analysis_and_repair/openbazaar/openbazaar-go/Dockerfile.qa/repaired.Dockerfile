@@ -1,0 +1,33 @@
+FROM golang:1.11
+
+ENV BITCOIND_VERSION=0.16.3
+ENV BITCOIND_PATH=/opt/bitcoin-${BITCOIND_VERSION}
+
+# software installs, from most stable to most volatile
+RUN apt-get update -y && apt-get install --no-install-recommends -yq software-properties-common \
+                        zlib1g-dev \
+                        libssl-dev \
+                        unzip \
+                        python3 \
+                        python3-pip && rm -rf /var/lib/apt/lists/*;
+
+RUN wget https://github.com/google/protobuf/releases/download/v3.6.0/protoc-3.6.0-linux-x86_64.zip && \
+    unzip ./protoc-3.6.0-linux-x86_64.zip -x readme.txt && \
+    mv ./include/* /usr/local/include/ && \
+    mv ./bin/protoc /usr/local/bin/ && \
+    rm -rf ./include ./bin
+
+COPY ./qa/requirements.txt ./requirements.txt
+
+RUN python3 -m pip install --upgrade pip && \
+    pip install --no-cache-dir -r ./requirements.txt && \
+    wget https://bitcoin.org/bin/bitcoin-core-0.16.3/bitcoin-${BITCOIND_VERSION}-x86_64-linux-gnu.tar.gz && \
+    tar -xvzf bitcoin-${BITCOIND_VERSION}-x86_64-linux-gnu.tar.gz -C /opt && rm bitcoin-${BITCOIND_VERSION}-x86_64-linux-gnu.tar.gz
+
+WORKDIR /go/src/github.com/OpenBazaar/openbazaar-go
+
+COPY ./Makefile ./Makefile
+
+VOLUME /go/src/github.com/OpenBazaar/openbazaar-go
+
+CMD make qa_test

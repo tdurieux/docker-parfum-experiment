@@ -1,0 +1,80 @@
+{
+  "startTime": 1674239131505,
+  "endTime": 1674239131770,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 34,
+        "lineEnd": 34,
+        "columnStart": 5,
+        "columnEnd": 50
+      }
+    },
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 63,
+        "lineEnd": 63,
+        "columnStart": 5,
+        "columnEnd": 16
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 70,
+        "lineEnd": 70,
+        "columnStart": 4,
+        "columnEnd": 23
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 71,
+        "lineEnd": 71,
+        "columnStart": 5,
+        "columnEnd": 27
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 72,
+        "lineEnd": 72,
+        "columnStart": 5,
+        "columnEnd": 21
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 17,
+        "lineEnd": 17,
+        "columnStart": 4,
+        "columnEnd": 31
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 35,
+        "lineEnd": 52,
+        "columnStart": 23,
+        "columnEnd": 13
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 17,
+        "lineEnd": 17,
+        "columnStart": 4,
+        "columnEnd": 31
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# USE AT OWN RISK: I HAVE NOT HEAVILY TESTED THIS\n# Because I don't want to run the remote config tool, box it and run in...box.\n# docker run -it -p 9999:80 justinribeiro/kiiconf\nFROM ubuntu:bionic\n\nLABEL maintainer=\"justin@justinribeiro.com\" \\\n  version=\"0.1\" \\\n  description=\"Kiibohd KiiConf Web Configurator for Input Club Whitefox\"\n\n# Because something wants tzdata, so we just punch this to the container so\n# the apt=get doesn't hang\nENV TZ=Etc/UTC\nRUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone\n\n# I pulled this from the kiibohd docker image for the controllers, see\n# https://github.com/kiibohd/controller/tree/master/Dockerfiles\nRUN apt-get update && \\\n    apt-get install --no-install-recommends -qy locales && rm -rf /var/lib/apt/lists/*;\n\nRUN echo \"LANG=en_US.UTF-8\" > /etc/locale.conf\nRUN echo \"en_US.UTF-8 UTF-8\" >> /etc/locale.gen\nENV LANG en_US.UTF-8\nENV LC_ALL en_US.UTF-8\nENV LANGUAGE en_US:en\nRUN locale-gen\n\n# Install our packages (which I pulled from kiibohd dev docker file) and replace\n# Node with a more up-to=date version\nRUN apt-get update && apt-get install -y \\\n  apt-transport-https \\\n  ca-certificates \\\n  curl \\\n  gnupg \\\n  --no-install-recommends \\\n  && curl -f -sL https://deb.nodesource.com/setup_8.x | bash - \\\n  && apt-get update && apt-get install --no-install-recommends -qy \\\n  binutils-arm-none-eabi \\\n  bsdmainutils \\\n  cmake \\\n  ctags \\\n  dfu-util \\\n  gcc-arm-none-eabi \\\n  git \\\n  libnewlib-arm-none-eabi \\\n  libusb-1.0-0-dev \\\n  lighttpd \\\n  ninja-build \\\n  nodejs \\\n  php-cgi \\\n  php-zip \\\n  python3 \\\n  python3-pil \\\n  python3-pip \\\n  && apt-get purge --auto-remove -y curl \\\n  && rm -rf /var/lib/apt/lists/*\n\nWORKDIR /KiiConf\n\n# I had to fork the KiiConf so I could make a few changed to the base lighttpd\n# config and because I'll probably hack up some other pieces to this\nRUN cd /KiiConf \\\n  && git clone https://github.com/justinribeiro/KiiConf.git . \\\n  && mkdir -p /KiiConf/tmp && chmod 777 /KiiConf/tmp \\\n  && npm install \\\n  && tools/update_all.bash \\\n  && npm run-script build \\\n  && chown -R www-data:www-data /KiiConf && npm cache clean --force;\n\n# Since we're not running pip install against the reqs, just install some stuff\n# at the top level so we can get on with our day\nRUN pip3 install --no-cache-dir layout \\\n  && pip3 install --no-cache-dir gitpython \\\n  && pip3 install --no-cache-dir kll\n\n# This is pretty heavy handed, but it'll make it work in the container\n# 1. use sed to chop out the pipenv check since we're not going to use that in\n#    the container (I should dig up a link to why this fails)\n# 2. the path gen for kll is wrong, so we replace the specific line numbers for\n#    default and partial maps so that we can feed them from the tmp fs\nRUN sed -i.bak -e '34,44d' /KiiConf/controller/Keyboards/cmake.bash\n\n  # Historical only; not required because of upstream patch\n  # https://github.com/kiibohd/controller/commit/5dd72c2b5b36cd9c33e9d1061ece96a0b0c770ea\n  # && sed -i.bak '163s|^.*$|set ( DefaultMap_Args ${DefaultMap_Args} ${PROJECT_BINARY_DIR}/${MAP}.kll )|' /KiiConf/controller/Lib/CMake/kll.cmake \\\n  # && sed -i.bak '192s|^.*$|set ( PartialMap_Args ${PartialMap_Args} ${PROJECT_BINARY_DIR}/${MAP_PART}.kll )|' /KiiConf/controller/Lib/CMake/kll.cmake\n\n# This sets up the lighttpd server and the required PHP\nRUN mkdir -p /var/run/lighttpd && chown www-data:www-data /var/run/lighttpd \\\n  && touch /var/run/lighttpd.pid && chown www-data:www-data /var/run/lighttpd.pid \\\n  && cp /KiiConf/test_lighttpd.conf /etc/lighttpd/lighttpd.conf \\\n  && lighttpd-enable-mod fastcgi-php\n\n# We only expose 80 because no cert gen at moment\nEXPOSE 80\n\nCMD /usr/sbin/lighttpd -D -f /etc/lighttpd/lighttpd.conf\n"
+}

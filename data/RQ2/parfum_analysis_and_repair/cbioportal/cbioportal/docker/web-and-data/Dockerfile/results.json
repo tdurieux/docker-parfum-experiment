@@ -1,0 +1,26 @@
+{
+  "startTime": 1674248599008,
+  "endTime": 1674248599938,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 52,
+        "lineEnd": 52,
+        "columnStart": 7,
+        "columnEnd": 25
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 67,
+        "lineEnd": 67,
+        "columnStart": 5,
+        "columnEnd": 49
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# This image includes both the web app and the data import related scripts in\n# one image. Because of historic reasons some of these scripts run java\n# artifacts under the hood. It therefore currently makes more sense to have a\n# single image supporting both instead of moving the scripts out to a separate\n# container.\n#\n# Use from root directory of repo like:\n#\n# docker build -f docker/web-and-data/Dockerfile -t cbioportal-container:tag-name .\n#\n# NOTE: the .git folder is included in the build stage, but excluded\n# from the final image. No confidential information is exposed.\n# (see: stackoverflow.com/questions/56278325)\nFROM maven:3-openjdk-11 as build\n\n# download maven dependencies first to take advantage of docker caching\nCOPY pom.xml                                     /cbioportal/\nCOPY version.sh                                  /cbioportal/\nWORKDIR /cbioportal\n\nCOPY core/pom.xml                                   core/\nCOPY db-scripts/pom.xml                             db-scripts/\nCOPY model/pom.xml                                  model/\nCOPY persistence/pom.xml                            persistence/\nCOPY persistence/persistence-api/pom.xml            persistence/persistence-api/\nCOPY persistence/persistence-connections/pom.xml    persistence/persistence-connections/\nCOPY persistence/persistence-mybatis/pom.xml        persistence/persistence-mybatis/\nCOPY scripts/pom.xml                                scripts/\nCOPY security/pom.xml                               security/\nCOPY security/security-spring/pom.xml               security/security-spring/\nCOPY service/pom.xml                                service/\nCOPY web/pom.xml                                    web/\nRUN for subproject in */.; do cp version.sh \"$subproject\"; cd \"$subproject\"; mvn dependency:go-offline --fail-never; cd ..; done\nCOPY portal/pom.xml                                 portal/\nRUN mvn dependency:go-offline --fail-never\n\nCOPY $PWD /cbioportal\nRUN mvn -DskipTests clean install\n\nFROM openjdk:11-jre-slim\n\n# download system dependencies first to take advantage of docker caching\nRUN apt-get update; apt-get install -y --no-install-recommends \\\n        build-essential \\\n        default-mysql-client \\\n        default-libmysqlclient-dev \\\n        python3 \\\n        python3-setuptools \\\n        python3-dev \\\n        python3-pip \\\n        unzip \\\n\t&& rm -rf /var/lib/apt/lists/* \\\n    && pip3 install --no-cache-dir wheel\n\nENV PORTAL_WEB_HOME=/cbioportal-webapp\n\nRUN mkdir -p /cbioportal\nCOPY --from=build /cbioportal/portal/target/cbioportal*.war /app.war\nCOPY --from=build /cbioportal/portal/target/dependency/webapp-runner.jar /webapp-runner.jar\n# copy over core jar and scripts\nCOPY --from=build /cbioportal/core /cbioportal/core\nCOPY --from=build /cbioportal/scripts /cbioportal/scripts\nCOPY --from=build /cbioportal/db-scripts /cbioportal/db-scripts\nCOPY --from=build /cbioportal/requirements.txt /cbioportal/requirements.txt\n\n# install build and runtime dependencies\n# ignore update failures\nRUN pip3 install --no-cache-dir -r /cbioportal/requirements.txt\n\n# add importer scripts to PATH for easy running in containers\nRUN find /cbioportal/core/src/main/scripts/ -type f -executable \\! -name '*.pl'  -print0 | xargs -0 -- ln -st /usr/local/bin\n\n# put config files in this folder if you want to override config\nENV PORTAL_HOME=/cbioportal\n\nRUN mkdir -p $PORTAL_WEB_HOME\nRUN unzip /app.war -d  $PORTAL_WEB_HOME\n\n# add entrypoint\nCOPY --from=build /cbioportal/docker/web-and-data/docker-entrypoint.sh /usr/local/bin/\nENTRYPOINT [\"docker-entrypoint.sh\"]\n"
+}

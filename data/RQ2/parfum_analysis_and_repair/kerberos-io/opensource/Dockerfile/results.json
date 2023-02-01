@@ -1,0 +1,62 @@
+{
+  "startTime": 1674251761407,
+  "endTime": 1674251762382,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 28,
+        "lineEnd": 28,
+        "columnStart": 49,
+        "columnEnd": 95
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 29,
+        "lineEnd": 29,
+        "columnStart": 1,
+        "columnEnd": 50
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 28,
+        "lineEnd": 28,
+        "columnStart": 22,
+        "columnEnd": 45
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 31,
+        "lineEnd": 31,
+        "columnStart": 15,
+        "columnEnd": 34
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 28,
+        "lineEnd": 28,
+        "columnStart": 22,
+        "columnEnd": 45
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 31,
+        "lineEnd": 31,
+        "columnStart": 15,
+        "columnEnd": 34
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM kerberos/base:6e68480 AS builder\nLABEL AUTHOR=Kerberos.io\n\nENV GOROOT=/usr/local/go\nENV GOPATH=/go\nENV PATH=$GOPATH/bin:$GOROOT/bin:/usr/local/lib:$PATH\nENV GOSUMDB=off\n\n##########################################\n# Installing some additional dependencies.\n\nRUN apt-get update && apt-get install -y --no-install-recommends \\\n\tgit build-essential cmake pkg-config unzip libgtk2.0-dev \\\n\tcurl ca-certificates libcurl4-openssl-dev libssl-dev \\\n\tlibavcodec-dev libavformat-dev libswscale-dev libtbb2 libtbb-dev \\\n\tlibjpeg-dev libpng-dev libtiff-dev libdc1394-22-dev && \\\n\trm -rf /var/lib/apt/lists/*\n\n##############################################################################\n# Copy all the relevant source code in the Docker image, so we can build this.\n\nRUN mkdir -p /go/src/github.com/kerberos-io/agent\nCOPY machinery /go/src/github.com/kerberos-io/agent/machinery\nCOPY ui /go/src/github.com/kerberos-io/agent/ui\n\n########################\n# Download NPM and Yarns\n\nRUN apt-get update && apt-get install --no-install-recommends -y curl && curl -f -sL https://deb.nodesource.com/setup_14.x | bash - && \\\n\tcurl -f -sS https://dl.yarnpkg.com/debian/pubkey.gpg | apt-key add - && \\\n\techo \"deb https://dl.yarnpkg.com/debian/ stable main\" | tee /etc/apt/sources.list.d/yarn.list && \\\n\tapt update && apt install --no-install-recommends yarn -y && rm -rf /var/lib/apt/lists/*;\n\n##################################################################\n# Build Web\n# this will move the /build directory to ../machinery/www\n\nRUN cd /go/src/github.com/kerberos-io/agent/ui && yarn && yarn build\n\n##################\n# Build Machinery\n\nRUN cd /go/src/github.com/kerberos-io/agent/machinery && \\\n\tgo mod download && \\\n\tgo build main.go && \\\n\tmkdir -p /agent && \\\n\tmv main /agent && \\\n\tmv www /agent && \\\n\tmv data /agent && \\\n\tmkdir -p /agent/data/cloud && \\\n\tmkdir -p /agent/data/snapshots && \\\n\tmkdir -p /agent/data/log && \\\n\tmkdir -p /agent/data/recordings && \\\n\tmkdir -p /agent/data/capture-test && \\\n\tmkdir -p /agent/data/config && \\\n\trm -rf /go/src/gitlab.com/\n\n####################################\n# Let's create a /dist folder containing just the files necessary for runtime.\n# Later, it will be copied as the / (root) of the output image.\n\nWORKDIR /dist\nRUN cp -r /agent ./\n\n####################################################################################\n# This will collect dependent libraries so they're later copied to the final image.\n\nRUN /agent/main version\nRUN ldd /agent/main | tr -s '[:blank:]' '\\n'\nRUN ldd /agent/main | tr -s '[:blank:]' '\\n' | grep '^/' | \\\n\txargs -I % sh -c 'mkdir -p $(dirname ./%); cp % ./%;'\n\n##########################################################\n# LDD doesnt always work in docker buildx (no idea why..)\n# Therefore we are moving some libraries manually\n\nRUN mkdir -p ./usr/lib\n\nRUN [ -f /lib64/ld-linux-x86-64.so.2 ] && $(mkdir -p lib64 && \\\n\tcp /lib64/ld-linux-x86-64.so.2 lib64/) || echo \"nothing to do here x86\"\n\nRUN [ -f /lib/ld-linux-aarch64.so.1 ] && $(mkdir -p lib/aarch64-linux-gnu && \\\n\tcp /lib/ld-linux-aarch64.so.1 lib/ && \\\n\tcp /lib/aarch64-linux-gnu/lib* lib/aarch64-linux-gnu/ && \\\n\tcp /usr/lib/aarch64-linux-gnu/libopencv* usr/lib && \\\n\tcp /usr/lib/aarch64-linux-gnu/libstdc* usr/lib && \\\n\tcp /usr/lib/aarch64-linux-gnu/libx264* usr/lib ) || echo \"nothing to do here arm64\"\n\nRUN [ -f /usr/lib/arm-linux-gnueabihf/vfp/neon/libvpx.so.6 ] && \\ \n\t$(cp /usr/lib/arm-linux-gnueabihf/vfp/neon/libvpx.so.6 ./usr/lib/) || echo \"nothing to do here armv7\"\n\nRUN cp -r /usr/local/lib/libavcodec* ./usr/lib && \\\n\tcp -r /usr/local/lib/libavformat* ./usr/lib && \\\n\tcp -r /usr/local/lib/libavfilter* ./usr/lib && \\\n\tcp -r /usr/local/lib/libavutil* ./usr/lib && \\\n\tcp -r /usr/local/lib/libavresample* ./usr/lib && \\\n\tcp -r /usr/local/lib/libavdevice* ./usr/lib && \\\n\tcp -r /usr/local/lib/libswscale* ./usr/lib && \\\n\tcp -r /usr/local/lib/libswresample* ./usr/lib && \\\n\tcp -r /usr/local/lib/libpostproc* ./usr/lib\n\n# As mentioned before, above is really a hack as LDD\n# doesn't work always in docker buildx. You might not need this\n# when doing a local build.\n################################################################\n\nFROM alpine:latest\n\n############################\n# Protect by non-root user.\n\nRUN addgroup -S kerberosio && adduser -S agent -G kerberosio && addgroup agent video\n\n#################################\n# Copy files from previous images\n\nCOPY --chown=0:0 --from=builder /dist /\nCOPY --chown=0:0 --from=builder /usr/local/go/lib/time/zoneinfo.zip /zoneinfo.zip\n\nENV ZONEINFO=/zoneinfo.zip\n\nRUN apk update && apk add ca-certificates --no-cache && \\\n\tapk add tzdata curl --no-cache && rm -rf /var/cache/apk/*\n\n#################\n# Install Bento4\nRUN cd && wget https://www.bok.net/Bento4/binaries/Bento4-SDK-1-6-0-639.x86_64-unknown-linux.zip && \\\n\tunzip Bento4-SDK-1-6-0-639.x86_64-unknown-linux.zip && rm Bento4-SDK-1-6-0-639.x86_64-unknown-linux.zip && \\\n\tcp ~/Bento4-SDK-1-6-0-639.x86_64-unknown-linux/bin/mp4fragment /usr/bin/\n\n##################\n# Try running agent\n\nRUN mv /agent/* /home/agent/\nRUN /home/agent/main version\n\n###########################\n# Set permissions correctly\n\nRUN chown -R agent:kerberosio /home/agent/data\n\n###################\n# Run non-root user\n\n#USER agent\n\n######################################\n# By default the app runs on port 8080\n\nEXPOSE 8080\n\n######################################\n# Check if agent is still running\n\nHEALTHCHECK CMD curl --fail http://localhost:8080 || exit 1  \n\n###################################################\n# Leeeeettttt'ssss goooooo!!!\n# Run the shizzle from the right working directory.\nWORKDIR /home/agent\nCMD [\"./main\", \"run\", \"opensource\", \"8080\"]\n"
+}

@@ -1,0 +1,45 @@
+{
+  "startTime": 1674248117012,
+  "endTime": 1674248118501,
+  "originalSmells": [
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 28,
+        "lineEnd": 28,
+        "columnStart": 7,
+        "columnEnd": 18
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 25,
+        "lineEnd": 25,
+        "columnStart": 7,
+        "columnEnd": 56
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 39,
+        "lineEnd": 39,
+        "columnStart": 7,
+        "columnEnd": 76
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 25,
+        "lineEnd": 25,
+        "columnStart": 7,
+        "columnEnd": 56
+      }
+    }
+  ],
+  "repairedDockerfile": "ARG GOLANG_IMAGE=quay.io/cybozu/golang:1.17-focal\nARG UBUNTU_IMAGE=quay.io/cybozu/ubuntu:20.04\nARG BACKEND_IMAGE=scratch\nARG NGINX_VERSION=1.21.6\nARG NJS_VERSION=0.7.2\nARG PKG_RELEASE=1~focal\nARG NGINX_UNPRIVILEGED_COMMIT_HASH=e1eaa46947899468880e8133a67bfc656074384f\n\n# Stage 1: build\nFROM ${GOLANG_IMAGE} AS builder-base\nCOPY TAG /\n\nWORKDIR /app\n\nRUN VERSION=$(cut -d \\. -f 1,2,3 < /TAG ) \\\n    && curl -fsSL \"https://github.com/cilium/hubble-ui/archive/v${VERSION}.tar.gz\" | \\\n      tar xzf - --strip-components 1\n\n# Stage 1: build hubble-ui\nFROM builder-base as build-hubble-ui\nARG NODE_VERSION=16\n\nWORKDIR /app\n\nRUN curl -sSLf https://deb.nodesource.com/setup_${NODE_VERSION}.x | bash - \\\n    && apt-get install -y --no-install-recommends nodejs \\\n    && rm -rf /var/lib/apt/lists/* \\\n    && npm set unsafe-perm true \\\n    && npm install \\\n    && npm set unsafe-perm false && npm cache clean --force;\nARG NODE_ENV=production\nRUN npm run build\n\n# Stage 1: build hubble-ui-backend\nFROM builder-base as build-hubble-ui-backend\nWORKDIR /app/backend\n# hubble-ui-backend\nRUN CGO_ENABLED=0 go build -ldflags \"-s -w\" -o backend \\\n    && apt-get update \\\n    && apt-get install -y --no-install-recommends binutils-aarch64-linux-gnu \\\n    && ./build-gops.sh && rm -rf /var/lib/apt/lists/*;\n\n# Stage 2: hubble-ui runtime\nFROM ${UBUNTU_IMAGE} as frontend\nARG NGINX_VERSION\nARG NJS_VERSION\nARG PKG_RELEASE\nARG NGINX_UNPRIVILEGED_COMMIT_HASH\n\nARG UID=101\nARG GID=101\n\nRUN set -x \\\n    # create nginx user/group first, to be consistent throughout docker variants\n    && addgroup --system --gid $GID nginx \\\n    && adduser --system --disabled-login --ingroup nginx --no-create-home --home /nonexistent --gecos \"nginx user\" --shell /bin/false --uid $UID nginx \\\n    && apt-get update \\\n    && apt-get install --no-install-recommends --no-install-suggests -y gnupg1 ca-certificates \\\n    && \\\n    NGINX_GPGKEY=573BFD6B3D8FBC641079A6ABABF5BD827BD9BF62; \\\n    found=''; \\\n    for server in \\\n        ha.pool.sks-keyservers.net \\\n        hkp://keyserver.ubuntu.com:80 \\\n        hkp://p80.pool.sks-keyservers.net:80 \\\n        pgp.mit.edu \\\n    ; do \\\n        echo \"Fetching GPG key $NGINX_GPGKEY from $server\"; \\\n        apt-key adv --keyserver \"$server\" --keyserver-options timeout=10 --recv-keys \"$NGINX_GPGKEY\" && found=yes && break; \\\n    done; \\\n    test -z \"$found\" && echo >&2 \"error: failed to fetch GPG key $NGINX_GPGKEY\" && exit 1; \\\n    apt-get remove --purge --auto-remove -y gnupg1 && rm -rf /var/lib/apt/lists/* \\\n    && nginxPackages=\" \\\n        nginx=${NGINX_VERSION}-${PKG_RELEASE} \\\n        nginx-module-xslt=${NGINX_VERSION}-${PKG_RELEASE} \\\n        nginx-module-geoip=${NGINX_VERSION}-${PKG_RELEASE} \\\n        nginx-module-image-filter=${NGINX_VERSION}-${PKG_RELEASE} \\\n        nginx-module-njs=${NGINX_VERSION}+${NJS_VERSION}-${PKG_RELEASE} \\\n    \" \\\n    && echo \"deb https://nginx.org/packages/mainline/ubuntu/ focal nginx\" >> /etc/apt/sources.list.d/nginx.list \\\n    && apt-get update \\\n    && apt-get install --no-install-recommends --no-install-suggests -y \\\n                        $nginxPackages \\\n                        gettext-base \\\n                        curl \\\n    && apt-get remove --purge --auto-remove -y && rm -rf /var/lib/apt/lists/* /etc/apt/sources.list.d/nginx.list \\\n    \\\n# if we have leftovers from building, let's purge them (including extra, unnecessary build deps)\n    && if [ -n \"$tempDir\" ]; then \\\n        apt-get purge -y --auto-remove \\\n        && rm -rf \"$tempDir\" /etc/apt/sources.list.d/temp.list; \\\n    fi \\\n# forward request and error logs to docker log collector\n    && ln -sf /dev/stdout /var/log/nginx/access.log \\\n    && ln -sf /dev/stderr /var/log/nginx/error.log \\\n# create a docker-entrypoint.d directory\n    && mkdir /docker-entrypoint.d \\\n    && for entrypoint in \\\n            20-envsubst-on-templates.sh \\\n            30-tune-worker-processes.sh \\\n        ; do \\\n            curl -o /docker-entrypoint.d/${entrypoint} -fsSL https://raw.githubusercontent.com/nginxinc/docker-nginx-unprivileged/${NGINX_UNPRIVILEGED_COMMIT_HASH}/mainline/debian/${entrypoint}; \\\n    done \\\n    && curl -o /docker-entrypoint.sh -fsSL https://raw.githubusercontent.com/nginxinc/docker-nginx-unprivileged/${NGINX_UNPRIVILEGED_COMMIT_HASH}/mainline/debian/docker-entrypoint.sh \\\n    && chmod +x /docker-entrypoint.d/* \\\n    && chmod +x /docker-entrypoint.sh\n\n# implement changes required to run NGINX as an unprivileged user\nRUN sed -i 's,listen       80;,listen       8080;,' /etc/nginx/conf.d/default.conf \\\n    && sed -i '/user  nginx;/d' /etc/nginx/nginx.conf \\\n    && sed -i 's,/var/run/nginx.pid,/tmp/nginx.pid,' /etc/nginx/nginx.conf \\\n    && sed -i \"/^http {/a \\    proxy_temp_path /tmp/proxy_temp;\\n    client_body_temp_path /tmp/client_temp;\\n    fastcgi_temp_path /tmp/fastcgi_temp;\\n    uwsgi_temp_path /tmp/uwsgi_temp;\\n    scgi_temp_path /tmp/scgi_temp;\\n\" /etc/nginx/nginx.conf \\\n# nginx user must own the cache and etc directory to write cache and tweak the nginx config\n    && chown -R $UID:0 /var/cache/nginx \\\n    && chmod -R g+w /var/cache/nginx \\\n    && chown -R $UID:0 /etc/nginx \\\n    && chmod -R g+w /etc/nginx\n\nCOPY --from=build-hubble-ui /app/server/public /app\n\nENTRYPOINT [\"/docker-entrypoint.sh\"]\n\nEXPOSE 8080\n\nSTOPSIGNAL SIGQUIT\n\nUSER $UID\n\nCMD [\"nginx\", \"-g\", \"daemon off;\"]\n\n# Stage 2: hubble-ui-backend runtime\nFROM ${BACKEND_IMAGE} as backend\nCOPY --from=build-hubble-ui-backend /app/backend/backend /\nCOPY --from=build-hubble-ui-backend /out/linux/amd64/bin/gops /usr/bin/gops\n\nENTRYPOINT [\"/backend\"]\n"
+}

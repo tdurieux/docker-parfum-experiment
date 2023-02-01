@@ -1,0 +1,44 @@
+{
+  "startTime": 1674217742709,
+  "endTime": 1674217743904,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 28,
+        "lineEnd": 28,
+        "columnStart": 4,
+        "columnEnd": 68
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 31,
+        "lineEnd": 31,
+        "columnStart": 4,
+        "columnEnd": 54
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 44,
+        "lineEnd": 44,
+        "columnStart": 4,
+        "columnEnd": 71
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 45,
+        "lineEnd": 45,
+        "columnStart": 4,
+        "columnEnd": 67
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM gcr.io/swift-tensorflow/base-deps-cuda10.2-cudnn7-ubuntu18.04\n\n# Allows the caller to specify the toolchain to use.\nARG swift_tf_url=https://storage.googleapis.com/swift-tensorflow-artifacts/nightlies/latest/swift-tensorflow-DEVELOPMENT-notf-ubuntu18.04.tar.gz\nARG bazel_version=3.1.0\nARG TENSORFLOW_USE_STANDARD_TOOLCHAIN=NO\n\nRUN if test -d /swift-apis/google-cloud-sdk; then \\\n  mv /swift-apis/google-cloud-sdk /opt/google-cloud-sdk; \\\n  /opt/google-cloud-sdk/bin/gcloud auth list; \\\n  echo \"build --remote_cache=grpcs://remotebuildexecution.googleapis.com \\\n    --auth_enabled=true \\\n    --remote_instance_name=projects/tensorflow-swift/instances/s4tf-remote-bazel-caching \\\n    --host_platform_remote_properties_override='properties:{name:\\\"cache-silo-key\\\" value:\\\"s4tf-basic-cache-key-cuda-10.2\\\"}'\" >> ~/.bazelrc; \\\n  cat ~/.bazelrc; \\\nfi\n\n# Download and extract S4TF\nWORKDIR /swift-tensorflow-toolchain\nRUN if ! curl -fSsL --retry 5 $swift_tf_url -o swift.tar.gz; \\\n    then sleep 30 && curl -fSsL --retry 5 $swift_tf_url -o swift.tar.gz; \\\n    fi;\n\nRUN mkdir usr \\\n    && tar -xzf swift.tar.gz --directory=usr --strip-components=1 \\\n    && rm swift.tar.gz\n\n# Add bazel and cmake repositories.\nRUN curl -f -qL https://apt.kitware.com/keys/kitware-archive-latest.asc | apt-key add -\nRUN echo 'deb https://apt.kitware.com/ubuntu/ bionic main' >> /etc/apt/sources.list\n\nRUN curl -f -qL https://bazel.build/bazel-release.pub.gpg | apt-key add -\nRUN echo 'deb [arch=amd64] https://storage.googleapis.com/bazel-apt stable jdk1.8' >> /etc/apt/sources.list.d/bazel.list\n\n# Install bazel, cmake, ninja, python, and python dependencies\nARG DEBIAN_FRONTEND=noninteractive\nARG DEBCONF_NONINTERACTIVE_SEEN=true\nRUN apt-get -yq update                                                          \\\n && apt-get -yq install --no-install-recommends cmake ninja-build               \\\n && apt-get -yq install --no-install-recommends python-dev python-pip python-setuptools \\\n && apt-get -yq install --no-install-recommends bazel-$bazel_version            \\\n && apt-get clean                                                               \\\n && rm -rf /tmp/* /var/tmp/* /var/lib/apt/archive/* /var/lib/apt/lists/*\nRUN ln -s /usr/bin/bazel-$bazel_version /usr/bin/bazel\nRUN pip install --no-cache-dir -U pip six numpy wheel setuptools mock 'future>=0.17.1' \\\n && pip install --no-cache-dir -U --no-deps keras_applications keras_preprocessing\n\n# Print out swift version for better debugging for toolchain problems\nRUN /swift-tensorflow-toolchain/usr/bin/swift --version\n\nWORKDIR /swift-apis\n\n# Copy the kernel into the container\nCOPY . /swift-apis\n\n# Perform CMake based build\nENV TF_NEED_CUDA=1\nENV CTEST_OUTPUT_ON_FAILURE=1\nRUN cmake                                                                       \\\n      -B /BinaryCache/tensorflow-swift-apis                                     \\\n      -D BUILD_SHARED_LIBS=YES                                                  \\\n      -D CMAKE_BUILD_TYPE=Release                                               \\\n      -D CMAKE_INSTALL_PREFIX=/swift-tensorflow-toolchain/usr                   \\\n      -D CMAKE_Swift_COMPILER=/swift-tensorflow-toolchain/usr/bin/swiftc        \\\n      -D TENSORFLOW_USE_STANDARD_TOOLCHAIN=\"$TENSORFLOW_USE_STANDARD_TOOLCHAIN\" \\\n      -G Ninja                                                                  \\\n      -S /swift-apis\nRUN cmake --build /BinaryCache/tensorflow-swift-apis --verbose\nRUN cmake --build /BinaryCache/tensorflow-swift-apis --target install\nRUN cmake --build /BinaryCache/tensorflow-swift-apis --target test\n\nWORKDIR /\nRUN git clone https://github.com/tensorflow/swift-models.git\nRUN git clone https://github.com/fastai/fastai_dev.git\nRUN git clone https://github.com/deepmind/open_spiel.git\n\nRUN if test x\"$TENSORFLOW_USE_STANDARD_TOOLCHAIN\" = x\"YES\" ; then \\\n      echo \"-Xswiftc -DTENSORFLOW_USE_STANDARD_TOOLCHAIN -Xcc -I/swift-tensorflow-toolchain/usr/lib/swift -Xlinker -L/swift-tensorflow-toolchain/usr/lib/swift/linux\" > /.swiftflags ; \\\n    else \\\n      echo \"-Xcc -I/swift-tensorflow-toolchain/usr/lib/swift -Xlinker -L/swift-tensorflow-toolchain/usr/lib/swift/linux\" > /.swiftflags ; \\\n    fi\n\nWORKDIR /swift-models\n\nRUN /swift-tensorflow-toolchain/usr/bin/swift build $(cat /.swiftflags)\n# Swift Numerics in release mode does not currently build, which prevents the use of swift-models\n# RUN /swift-tensorflow-toolchain/usr/bin/swift build -c release $(cat /.swiftflags)\n\nWORKDIR /fastai_dev/swift/FastaiNotebook_11_imagenette\n\nRUN /swift-tensorflow-toolchain/usr/bin/swift build $(cat /.swiftflags)\nRUN /swift-tensorflow-toolchain/usr/bin/swift build -c release $(cat /.swiftflags)\n\nWORKDIR /open_spiel\nRUN rm -f Package.resolved\nRUN /swift-tensorflow-toolchain/usr/bin/swift test $(cat /.swiftflags)\n\nWORKDIR /swift-apis\n# TODO: move into bash scripts...\nRUN rm -f /swift-tensorflow-toolchain/usr/lib/swift/linux/x86_64/TensorFlow.swiftinterface\nRUN rm -f /swift-tensorflow-toolchain/usr/lib/swift/linux/x86_64/TensorFlow.swiftdoc\nRUN rm -f /swift-tensorflow-toolchain/usr/lib/swift/linux/x86_64/TensorFlow.swiftmodule\nRUN rm -f /swift-tensorflow-toolchain/usr/lib/swift/linux/libswiftTensorFlow.so\n\n# Benchmark compile times\nRUN python3 Utilities/benchmark_compile.py /swift-tensorflow-toolchain/usr/bin/swift benchmark_results.xml\n\n# Run SwiftPM tests\nRUN rm -f /swift-tensorflow-toolchain/usr/lib/swift/tensorflow/module.modulemap\nRUN /swift-tensorflow-toolchain/usr/bin/swift test $(cat /.swiftflags)\n"
+}

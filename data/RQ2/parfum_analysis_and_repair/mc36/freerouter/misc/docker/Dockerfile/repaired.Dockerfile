@@ -1,0 +1,35 @@
+FROM debian
+MAINTAINER Frederic LOUI <frederic.loui@@renater.fr>
+
+RUN apt-get update && apt-get -f --no-install-recommends -y install wget unzip net-tools libpcap-dev openssl iproute2 dpdk openvswitch-switch ethtool default-jre-headless && rm -rf /var/lib/apt/lists/*;
+RUN apt-get -f -y dist-upgrade
+
+RUN apt-get clean
+
+RUN mkdir -p /opt/freertr
+RUN mkdir -p /opt/freertr/bin
+RUN mkdir -p /opt/freertr/src
+RUN mkdir -p /opt/freertr/run
+
+WORKDIR /opt/freertr/
+
+RUN wget https://www.freertr.org/rtr.zip
+RUN wget https://www.freertr.org/rtr.jar
+RUN wget https://www.freertr.org/rtr.ver
+RUN wget https://www.freertr.org/rtr-`uname -m`.tar
+RUN mv ./rtr.jar ./bin
+RUN mv ./rtr.ver ./bin
+RUN unzip ./rtr.zip -d /opt/freertr/src
+WORKDIR /opt/freertr/bin
+RUN tar xvf ../rtr-`uname -m`.tar && rm ../rtr-$( uname -m).tar
+
+COPY . /opt/freertr/
+
+WORKDIR /opt/freertr/
+
+VOLUME ./run:/opt/freertr/run
+
+ENV FREERTR_HOSTNAME=freertr  \
+    FREERTR_INTF_LIST="eth2/20010/20011"
+
+CMD ./scripts/freertr.sh -i "$FREERTR_INTF_LIST" -r $FREERTR_HOSTNAME

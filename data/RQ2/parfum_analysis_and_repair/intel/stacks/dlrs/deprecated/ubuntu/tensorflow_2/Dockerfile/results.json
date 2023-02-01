@@ -1,0 +1,89 @@
+{
+  "startTime": 1674216457807,
+  "endTime": 1674216459161,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 17,
+        "lineEnd": 17,
+        "columnStart": 4,
+        "columnEnd": 22
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 78,
+        "lineEnd": 78,
+        "columnStart": 7,
+        "columnEnd": 18
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 76,
+        "lineEnd": 76,
+        "columnStart": 7,
+        "columnEnd": 47
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 11,
+        "lineEnd": 11,
+        "columnStart": 7,
+        "columnEnd": 108
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 41,
+        "lineEnd": 41,
+        "columnStart": 7,
+        "columnEnd": 73
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 69,
+        "lineEnd": 69,
+        "columnStart": 7,
+        "columnEnd": 95
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 11,
+        "lineEnd": 11,
+        "columnStart": 7,
+        "columnEnd": 108
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 41,
+        "lineEnd": 41,
+        "columnStart": 7,
+        "columnEnd": 73
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 69,
+        "lineEnd": 69,
+        "columnStart": 7,
+        "columnEnd": 95
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "#--------------------------------------------------------------------\n# Builder stage for MKL version of Tensorflow 2 on Ubuntu\n#--------------------------------------------------------------------\nARG ubuntu_ver\nFROM ubuntu:$ubuntu_ver as tf_builder\nLABEL maintainer=otc-swstacks@intel.com\n\n# Install SW packages\nARG DEBIAN_FRONTEND=noninteractive\nRUN apt-get update \\\n    && apt-get -y upgrade \\\n    && apt-get -y --no-install-recommends install git wget python3-pip pkg-config zip g++ zlib1g-dev unzip build-essential golang-go && rm -rf /var/lib/apt/lists/*;\n\n# Fix for /usr/bin/python not found issue\nRUN ln -s /usr/bin/python3.8 /usr/bin/python \\\n    && ln -s /usr/bin/pip3 /usr/bin/pip\n\nRUN pip install --no-cache-dir enum34\n\n# Install Bazel\nRUN go get github.com/bazelbuild/bazelisk \\\n    && export PATH=$PATH:~/go/bin/ \\\n    && ln -s ~/go/bin/bazelisk /usr/bin/bazel\n\nCOPY ./scripts/install_tensorflow_2.sh /scripts/install_tensorflow_2.sh\nCOPY ./patches /patches\n\n# Build Tensorflow\nRUN ./scripts/install_tensorflow_2.sh\n\n#--------------------------------------------------------------\n# Builder instance for OpenVINO on Ubuntu\n#--------------------------------------------------------------\nARG ubuntu_ver\nFROM ubuntu:$ubuntu_ver as serving_builder\nLABEL maintainer=otc-swstacks@intel.com\n\n# Install SW packages\nARG DEBIAN_FRONTEND=noninteractive\nRUN apt-get update \\\n    && apt-get -y upgrade \\\n    && apt-get -y --no-install-recommends install cmake libopencv-dev python3-dev git python3-pip && rm -rf /var/lib/apt/lists/*;\n\n# Fix for /usr/bin/python not found issue\nRUN ln -s /usr/bin/python3.8 /usr/bin/python \\\n    && ln -s /usr/bin/pip3 /usr/bin/pip\n\n# Copy scripts and patches\nCOPY ./scripts/build_openvino_ie.sh /scripts/build_openvino_ie.sh\nCOPY ./patches /patches\n\n#Build OpenVINO\nRUN ./scripts/build_openvino_ie.sh\n\n#--------------------------------------------------------------\n# DLRS downstream container\n#--------------------------------------------------------------\nARG ubuntu_ver\nFROM ubuntu:$ubuntu_ver as base\nLABEL maintainer=otc-swstacks@intel.com\n\nARG NUMACTL_VERSION=2.0.12\nARG HOROVOD_VERSION=0.19.0\nARG MODEL_SERVER_TAG=v2020.1\n\n# Install SW packages\nARG DEBIAN_FRONTEND=noninteractive\nRUN apt-get update \\\n    && apt-get -y upgrade \\\n    && apt-get -y --no-install-recommends install cmake gcc g++ openmpi-bin git openssh-server python3-pip curl libtbb2 && rm -rf /var/lib/apt/lists/*;\n\n# Fix for /usr/bin/python not found issue\nRUN ln -s /usr/bin/python3.8 /usr/bin/python \\\n    && ln -s /usr/bin/pip3 /usr/bin/pip\n\nRUN curl -fSsL -O https://github.com/numactl/numactl/releases/download/v${NUMACTL_VERSION}/numactl-${NUMACTL_VERSION}.tar.gz \\\n    && tar xf numactl-${NUMACTL_VERSION}.tar.gz \\\n    && cd numactl-${NUMACTL_VERSION} \\\n    && ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" \\\n    && make \\\n    && make install \\\n    && rm -rf /numactl-${NUMACTL_VERSION}* && rm numactl-${NUMACTL_VERSION}.tar.gz\n\nCOPY --from=tf_builder /tmp/tf/ /tmp/tf/\nCOPY --from=serving_builder /dldt/bin/intel64/Release/lib/ /usr/local/lib/inference-engine/\n\n# install tensorflow, ntlk, jupyterhub, opencv, seldon-core and horovod\nRUN pip --no-cache-dir install /tmp/tf/avx512/tensorflow*.whl \\\n    && rm -rf /tmp/tf\n\nRUN HOROVOD_WITHOUT_MXNET=1 HOROVOD_WITHOUT_PYTORCH=1 HOROVOD_WITHOUT_MPI=1 HOROVOD_WITH_GLOO=1 \\\n    pip --no-cache-dir install horovod==${HOROVOD_VERSION}\n\nRUN pip --no-cache-dir install notebook protobuf \\\n    numpy tensorflow-serving-api==2.2.0rc1 \\\n    google-cloud-storage boto3 jsonschema \\\n    falcon cheroot \\\n    seldon-core==1.0.1 \\\n    grpcio defusedxml==0.5.0 grpcio-tools test-generator==0.1.1 \\\n    && pip --no-cache-dir install pip==18.1 \\\n    && pip --no-cache-dir install jupyterhub==1.1.0 --upgrade pip \\\n    && find /usr/lib/ -follow -type f -name '*.pyc' -delete \\\n    && find /usr/lib/ -follow -type f -name '*.js.map' -delete\n\n# install openvino inference engine\n# init\nENV BASH_ENV /etc/profile\nRUN sed -i '1s;^;export LD_LIBRARY_PATH=/usr/local/lib/inference-engine:/usr/local/lib\\n;' /etc/bash.bashrc && \\\n    sed -i '1s;^;export PYTHONPATH=/usr/local/lib/inference-engine/python_api/python3.8:/usr/local/lib/inference-engine/python_api/python3.8/openvino/inference_engine/\\n;' /etc/bash.bashrc\n\n# init ie serving\nWORKDIR /ie_serving_py\nRUN git clone --depth 1 -b ${MODEL_SERVER_TAG} https://github.com/IntelAI/OpenVINO-model-server.git model_server \\\n    && cd model_server && git checkout ${MODEL_SERVER_TAG} && cd ..  \\\n    && cp ./model_server/setup.py /ie_serving_py \\\n    && echo \"OpenVINO Model Server version: ${MODEL_SERVER_TAG}\" > /ie_serving_py/version \\\n    && echo \"Git commit: `cd ./model_server; git rev-parse HEAD; cd ..`\" >> /ie_serving_py/version \\\n    && echo \"OpenVINO version: ${MODEL_SERVER_TAG} src\" >> /ie_serving_py/version \\\n    && echo \"# OpenVINO built with: https://github.com/opencv/dldt.git\" >> /ie_serving_py/version \\\n    && cp -r ./model_server/ie_serving /ie_serving_py/ie_serving \\\n    && cd /ie_serving_py && python3 setup.py install \\\n    && rm -rf model_server\n\nWORKDIR /workspace\nCOPY /scripts/ /workspace/scripts/\nRUN chmod -R a+w /workspace \\\n    && ./scripts/install_addons.sh \\\n    && rm -rf ./scripts/install_addons.sh\n\nCOPY /licenses/ /workspace/licenses/\n\n# Init\nSHELL [\"/bin/bash\",  \"-c\"]\n"
+}

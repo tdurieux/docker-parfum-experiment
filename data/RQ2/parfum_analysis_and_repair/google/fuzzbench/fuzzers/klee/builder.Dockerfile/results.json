@@ -1,0 +1,81 @@
+{
+  "startTime": 1674254521616,
+  "endTime": 1674254522719,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 67,
+        "lineEnd": 67,
+        "columnStart": 4,
+        "columnEnd": 22
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 52,
+        "lineEnd": 53,
+        "columnStart": 4,
+        "columnEnd": 74
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 19,
+        "lineEnd": 21,
+        "columnStart": 4,
+        "columnEnd": 8
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 24,
+        "lineEnd": 28,
+        "columnStart": 4,
+        "columnEnd": 42
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 24,
+        "lineEnd": 28,
+        "columnStart": 4,
+        "columnEnd": 42
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 19,
+        "lineEnd": 21,
+        "columnStart": 4,
+        "columnEnd": 8
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 24,
+        "lineEnd": 28,
+        "columnStart": 4,
+        "columnEnd": 42
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 24,
+        "lineEnd": 28,
+        "columnStart": 4,
+        "columnEnd": 42
+      }
+    }
+  ],
+  "repairedDockerfile": "# Copyright 2020 Google LLC\n#\n# Licensed under the Apache License, Version 2.0 (the \"License\");\n# you may not use this file except in compliance with the License.\n# You may obtain a copy of the License at\n#\n# http://www.apache.org/licenses/LICENSE-2.0\n#\n# Unless required by applicable law or agreed to in writing, software\n# distributed under the License is distributed on an \"AS IS\" BASIS,\n# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.\n# See the License for the specific language governing permissions and\n# limitations under the License.\n\nARG parent_image\nFROM $parent_image\n\n# Install Clang/LLVM 6.0.\nRUN apt-get update -y && \\\n    apt-get -y --no-install-recommends install llvm-6.0 \\\n    clang-6.0 llvm-6.0-dev llvm-6.0-tools \\\n    wget && rm -rf /var/lib/apt/lists/*;\n\n# Install KLEE dependencies.\nRUN apt-get install --no-install-recommends -y \\\n    cmake-data build-essential curl libcap-dev \\\n    git cmake libncurses5-dev unzip libtcmalloc-minimal4 \\\n    libgoogle-perftools-dev bison flex libboost-all-dev \\\n    perl zlib1g-dev libsqlite3-dev doxygen && rm -rf /var/lib/apt/lists/*;\n\nENV INSTALL_DIR=/out\n\n# Install minisat.\nRUN git clone https://github.com/stp/minisat.git /minisat && \\\n    cd /minisat && mkdir build && cd build && \\\n    CXXFLAGS= cmake -DSTATIC_BINARIES=ON \\\n    -DCMAKE_INSTALL_PREFIX=$INSTALL_DIR -DCMAKE_BUILD_TYPE=Release ../ && \\\n    make -j`nproc` && make install\n\n# Install STP solver.\nRUN git clone https://github.com/stp/stp.git /stp && \\\n    cd /stp && git checkout tags/2.1.2 && \\\n    mkdir build && cd build && \\\n    CXXFLAGS= cmake -DBUILD_SHARED_LIBS:BOOL=OFF \\\n    -DENABLE_PYTHON_INTERFACE:BOOL=OFF \\\n    -DMINISAT_LIBRARY=$INSTALL_DIR/lib/libminisat.so \\\n    -DMINISAT_INCLUDE_DIR=$INSTALL_DIR/include \\\n    -DCMAKE_INSTALL_PREFIX=/user/local/ -DCMAKE_BUILD_TYPE=Release .. && \\\n    make -j`nproc` && make install\n\nRUN git clone https://github.com/klee/klee-uclibc.git /klee-uclibc && \\\n    cd /klee-uclibc && \\\n    CC=`which clang-6.0` CXX=`which clang++-6.0` \\\n    ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" \\\n    --make-llvm-lib --with-llvm-config=`which llvm-config-6.0` && \\\n    make -j`nproc` && make install\n\n# Install KLEE. Use my personal repo containing seed conversion scripts for now.\n# TODO: Include seed conversion scripts in fuzzbench repo.\n# Note: don't use the 'debug' branch because it has checks for non-initialized values\n# that need to be fixed for certain syscalls.\n# When we use it, be sure to also use klee-uclibc from https://github.com/lmrs2/klee-uclibc.git.\nRUN git clone https://github.com/lmrs2/klee.git /klee && \\\n    cd /klee && \\\n    git checkout 3810917841c1cb58587719c1d3d47181a2401324 && \\\n    wget -O tools/ktest-tool/ktest-tool https://raw.githubusercontent.com/lmrs2/klee/debug/tools/ktest-tool/ktest-tool\n\n# The libcxx build script in the KLEE repo depends on wllvm:\nRUN pip3 install --no-cache-dir wllvm\n\n# Before building KLEE, build libcxx.\nRUN cd /klee && \\\n    LLVM_VERSION=6.0 SANITIZER_BUILD= ENABLE_OPTIMIZED=0 ENABLE_DEBUG=1 \\\n    DISABLE_ASSERTIONS=1 REQUIRES_RTTI=1 \\\n    BASE=/out \\\n    ./scripts/build/build.sh libcxx\n\nRUN cd /klee &&  \\\n    mkdir build && cd build && \\\n    CXXFLAGS= cmake -DENABLE_SOLVER_STP=ON -DENABLE_POSIX_RUNTIME=ON \\\n    -DENABLE_KLEE_LIBCXX=ON -DKLEE_LIBCXX_DIR=/out/libc++-install-60/ \\\n    -DKLEE_LIBCXX_INCLUDE_DIR=/out/libc++-install-60/include/c++/v1/ \\\n    -DENABLE_KLEE_UCLIBC=ON -DKLEE_UCLIBC_PATH=/klee-uclibc/ \\\n    -DENABLE_SYSTEM_TESTS=OFF -DENABLE_UNIT_TESTS=OFF \\\n    -DLLVM_CONFIG_BINARY=`which llvm-config-6.0` -DLLVMCC=`which clang-6.0` \\\n    -DLLVMCXX=`which clang++-6.0` -DCMAKE_INSTALL_PREFIX=$INSTALL_DIR ../ \\\n    -DCMAKE_BUILD_TYPE=Release && \\\n    make -j`nproc` && make install\n\nENV LLVM_CC_NAME=clang-6.0\nENV LLVM_CXX_NAME=clang++-6.0\nENV LLVM_AR_NAME=llvm-ar-6.0\nENV LLVM_LINK_NAME=llvm-link-6.0\nENV LLVM_COMPILER=clang\nENV CC=wllvm\nENV CXX=wllvm++\n\n# Compile the harness klee_driver.cpp.\nCOPY klee_driver.cpp /klee_driver.cpp\nCOPY klee_mock.c /klee_mock.c\nRUN $CXX -stdlib=libc++ -std=c++11 -O2 -c /klee_driver.cpp -o /klee_driver.o && \\\n    ar r /libAFL.a /klee_driver.o && \\\n    $LLVM_CC_NAME -O2 -c -fPIC /klee_mock.c -o /klee_mock.o && \\\n    $LLVM_CC_NAME -shared -o /libKleeMock.so /klee_mock.o\n"
+}

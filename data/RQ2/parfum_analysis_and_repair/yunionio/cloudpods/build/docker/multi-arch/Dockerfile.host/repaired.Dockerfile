@@ -1,0 +1,17 @@
+FROM registry.cn-beijing.aliyuncs.com/yunionio/alpine-build:3.16.0-go-1.18.2-0 as build
+ARG TARGETPLATFORM
+ARG BUILDPLATFORM
+RUN mkdir -p /root/go/src/yunion.io/x/onecloud
+COPY . /root/go/src/yunion.io/x/onecloud
+
+WORKDIR /root/go/src/yunion.io/x/onecloud
+RUN make cmd/host
+
+FROM registry.cn-beijing.aliyuncs.com/yunionio/host-base:v0.4.0
+
+MAINTAINER "Yaoqi Wan wanyaoqi@yunionyun.com"
+
+ENV TZ Asia/Shanghai
+
+RUN mkdir -p /opt/yunion/bin
+COPY --from=build /root/go/src/yunion.io/x/onecloud/_output/bin/host /opt/yunion/bin/host

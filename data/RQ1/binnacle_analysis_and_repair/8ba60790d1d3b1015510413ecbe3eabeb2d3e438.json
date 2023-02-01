@@ -1,0 +1,35 @@
+{
+  "startTime": 1674239596738,
+  "endTime": 1674239597009,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 20,
+        "lineEnd": 20,
+        "columnStart": 4,
+        "columnEnd": 85
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 42,
+        "lineEnd": 42,
+        "columnStart": 4,
+        "columnEnd": 46
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 24,
+        "lineEnd": 24,
+        "columnStart": 7,
+        "columnEnd": 18
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM php:7.2-zts-alpine\n\n# build arguments\nARG BUILD_UID=1000\nARG BUILD_WITH_OPENSSH=0\nARG BUILD_WITH_XDEBUG=0\nARG XDEBUG_REMOTE_CONNECT_BACK=0\nARG XDEBUG_REMOTE_HOST=localhost\n\n# install packages\nRUN apk update && apk add --no-cache \\\n    bash sudo supervisor \\\n    g++ make autoconf \\\n    libxml2-dev icu-dev curl-dev pcre-dev tzdata\n\n# install php extensions\nRUN docker-php-ext-install curl\n\n# install xdebug\nRUN [[ \"$BUILD_WITH_XDEBUG\" != \"1\" ]] || ( curl -f -sSL https://github.com/xdebug/xdebug/archive/bb90b66.zip -o /tmp/xdebug.zip \\\n    && unzip /tmp/xdebug.zip -d /tmp \\\n    && cd /tmp/xdebug-* \\\n    && phpize \\\n    && ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" \\\n    && make \\\n    && make install \\\n    && rm -rf /tmp/xdebug*)\n\n# enable xdebug\nRUN [[ \"$BUILD_WITH_XDEBUG\" != \"1\" ]] || ( \\\n    docker-php-ext-enable xdebug \\\n    && echo \"xdebug.remote_autostart=off\" >> /usr/local/etc/php/conf.d/docker-php-ext-xdebug.ini \\\n    && echo \"xdebug.remote_connect_back=${XDEBUG_REMOTE_CONNECT_BACK}\" >> /usr/local/etc/php/conf.d/docker-php-ext-xdebug.ini \\\n    && echo \"xdebug.remote_enable=on\" >> /usr/local/etc/php/conf.d/docker-php-ext-xdebug.ini \\\n    && echo \"xdebug.remote_port=9000\" >> /usr/local/etc/php/conf.d/docker-php-ext-xdebug.ini \\\n    && echo \"xdebug.remote_handler=dbgp\" >> /usr/local/etc/php/conf.d/docker-php-ext-xdebug.ini \\\n    && echo \"xdebug.remote_host=${XDEBUG_REMOTE_HOST}\" >> /usr/local/etc/php/conf.d/docker-php-ext-xdebug.ini \\\n)\n\n# add composer\nRUN curl -f -sS https://getcomposer.org/installer | php -- --install-dir=/usr/local/bin --filename=composer\n\n# make the bash prompt pretty and add common aliases\nRUN mv /etc/profile.d/color_prompt /etc/profile.d/color_prompt.sh \\\n    && echo -e \"alias l='ls -CF'\\n\\\nalias la='ls -A'\\n\\\nalias ll='ls -alF'\\n\\\nalias ls='ls --color=auto'\" >> /etc/profile.d/aliases.sh\n\n# add the unprivileged \"app\" user and allow passwordless sudo\nRUN adduser -D -s /bin/bash -u $BUILD_UID alpine \\\n    && addgroup alpine wheel \\\n    && echo \"alpine:\" | chpasswd \\\n    && echo -e \"%wheel ALL=(ALL) NOPASSWD: ALL\" > /etc/sudoers.d/docker\n\n# configure supervisord to run in the foreground\nRUN sed -E -i \"s/^(; ?)?nodaemon=false/nodaemon=true/\" /etc/supervisord.conf \\\n    && sed -E -i \"s#^(; ?)?pidfile=.*#pidfile=/var/run/supervisord.pid#\" /etc/supervisord.conf\n\n# add the app to supervisord\nRUN echo -e \"\\n\\\n[program:app]\\n\\\nautorestart=true\\n\\\ndirectory=/opt/project\\n\\\ncommand=/usr/local/bin/php laravel/artisan serve --host=0.0.0.0\\n\\\nstdout_logfile=/dev/stdout\\n\\\nstdout_logfile_maxbytes=0\\n\\\nstderr_logfile=/dev/stderr\\n\\\nstderr_logfile_maxbytes=0\\n\\\nuser=alpine\\n\\\n\" >> /etc/supervisord.conf\n\n# configure openssh, while this isn't a usual use-case for docker, connecting via SSH significantly speeds\n# up debugging in PhpStorm as its docker-compose support does not support reusing a container which has\n# already been brought up\nRUN [[ \"$BUILD_WITH_OPENSSH\" != \"1\" ]] || ( \\\n    apk add --no-cache openssh \\\n    && ssh-keygen -A \\\n    && echo -e \"\\n[program:sshd]\\ncommand=/usr/sbin/sshd -D\\n\" >> /etc/supervisord.conf \\\n)\n\n# create the .ssh folder in the home directory and write the public key if specified to authorized_keys\nRUN [[ \"$BUILD_WITH_OPENSSH\" != \"1\" ]] || ( \\\n    mkdir /home/alpine/.ssh \\\n    && chmod 700 /home/alpine/.ssh \\\n    && touch /tmp/authorized_keys \\\n    && chmod 600 /tmp/authorized_keys \\\n    && ( [ \"$APP_USER_PUBLIC_KEY\" == \"\" ] || echo $APP_USER_PUBLIC_KEY > /tmp/authorized_keys \\\n            && mv /tmp/authorized_keys /home/alpine/.ssh/ \\\n       ) \\\n    && chown -R alpine:alpine /home/alpine/.ssh/ \\\n)\n\nCOPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh\n\nUSER alpine\n\nWORKDIR /home/alpine\n\nENTRYPOINT [\"/usr/local/bin/docker-entrypoint.sh\"]\n"
+}

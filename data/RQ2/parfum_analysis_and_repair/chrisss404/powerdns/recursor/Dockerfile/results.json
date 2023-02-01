@@ -1,0 +1,17 @@
+{
+  "startTime": 1674218639365,
+  "endTime": 1674218640002,
+  "originalSmells": [
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 37,
+        "lineEnd": 43,
+        "columnStart": 4,
+        "columnEnd": 27
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM alpine:3.15 AS builder\n\nARG RECURSOR_VERSION=\"latest\"\n\nARG COMPILER_FLAGS=\"-Os -fomit-frame-pointer\"\nARG LINKER_FLAGS=\"-Wl,--as-needed\"\n\n# Get dependencies\nRUN apk add --no-cache \\\n        autoconf \\\n        automake \\\n        boost-dev \\\n        curl \\\n        file \\\n        g++ \\\n        git \\\n        libsodium-dev \\\n        libtool \\\n        lua-dev \\\n        make \\\n        openssl-dev \\\n        patch \\\n        protobuf-dev \\\n        py3-virtualenv \\\n        ragel\n\n# Download sources\nRUN git clone -n https://github.com/PowerDNS/pdns.git /build && \\\n    cd /build && \\\n    git checkout $([ \"${RECURSOR_VERSION}\" = \"latest\" ] && echo \"master\" || echo \"rec-${RECURSOR_VERSION}\")\n\nWORKDIR /build/pdns/recursordist\n\n# Compile\nRUN export BUILDER_VERSION=$([ \"${RECURSOR_VERSION}\" = \"latest\" ] && echo `date +%Y-%m-%d` || echo \"${RECURSOR_VERSION}\") && \\\n    sed -i -e \"s|dist_man_MANS=\\$(MANPAGES)|MANPAGES=\\ndist_man_MANS=\\$(MANPAGES)|g\" Makefile.am && \\\n    autoreconf -vif && \\\n    CFLAGS=${COMPILER_FLAGS} CXXFLAGS=${COMPILER_FLAGS} LDFLAGS=${LINKER_FLAGS} ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" \\\n            --sysconfdir=/etc/pdns-recursor \\\n            --enable-nod \\\n            --with-libsodium \\\n            --with-lua \\\n            --disable-shared \\\n            --enable-static && \\\n    make dist -j $(nproc) && \\\n    make install-strip\n\n\n# Build image\nFROM alpine:3.15\n\nRUN apk add --no-cache boost-context boost-filesystem boost-system libsodium lua protobuf && \\\n    addgroup -S recursor && \\\n    adduser -S -D -G recursor recursor\n\nCOPY --from=builder /usr/local/bin /usr/bin/\nCOPY --from=builder /usr/local/sbin /usr/sbin/\nCOPY --from=builder /etc/pdns-recursor /etc/pdns-recursor/\nCOPY ./docker-entrypoint.sh /usr/bin/\n\nEXPOSE 53/tcp 53/udp 8082/tcp\n\nHEALTHCHECK CMD [\"rec_control\", \"ping\", \"||\", \"exit\", \"1\"]\nENTRYPOINT [\"docker-entrypoint.sh\"]\nCMD [\"pdns_recursor\", \"--setuid=recursor\", \"--setgid=recursor\"]\n"
+}

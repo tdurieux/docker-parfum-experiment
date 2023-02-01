@@ -1,0 +1,62 @@
+{
+  "startTime": 1674254945175,
+  "endTime": 1674254945839,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 86,
+        "lineEnd": 86,
+        "columnStart": 6,
+        "columnEnd": 78
+      }
+    },
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 97,
+        "lineEnd": 97,
+        "columnStart": 4,
+        "columnEnd": 29
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 31,
+        "lineEnd": 31,
+        "columnStart": 4,
+        "columnEnd": 60
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 85,
+        "lineEnd": 85,
+        "columnStart": 6,
+        "columnEnd": 33
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 31,
+        "lineEnd": 31,
+        "columnStart": 4,
+        "columnEnd": 60
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 85,
+        "lineEnd": 85,
+        "columnStart": 6,
+        "columnEnd": 33
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# ===== Rust builder =====\nFROM phusion/baseimage:focal-1.1.0 as rust-builder\nLABEL maintainer=\"Unique.Network\"\n\nARG RUST_TOOLCHAIN=nightly-2022-05-11\n#ARG RUST_C=1.62.0-nightly\nARG POLKA_VERSION=release-v0.9.24\nARG UNIQUE_BRANCH=develop\n\n#ARG USER=***\n#ARG PASS=***\n\n\nENV RUST_TOOLCHAIN $RUST_TOOLCHAIN\n#ENV RUST_C $RUST_C\nENV POLKA_VERSION $POLKA_VERSION\nENV UNIQUE_BRANCH $UNIQUE_BRANCH\n\n\n#RUN echo $RUST_TOOLCHAIN\n#RUN echo $RUST_C\n#RUN echo $POLKA_VERSION\n#RUN echo $UNIQUE_BRANCH\n\nENV CARGO_HOME=\"/cargo-home\"\nENV PATH=\"/cargo-home/bin:$PATH\"\n\nRUN curl https://sh.rustup.rs -sSf | sh -s -- -y --default-toolchain none\n\nRUN apt-get update && \\\n    apt-get dist-upgrade -y -o Dpkg::Options::=\"--force-confold\" && \\\n    apt-get install --no-install-recommends -y cmake pkg-config libssl-dev git clang && rm -rf /var/lib/apt/lists/*;\n\nRUN rustup toolchain uninstall $(rustup toolchain list) && \\\n    rustup toolchain install $RUST_TOOLCHAIN && \\\n    rustup default $RUST_TOOLCHAIN && \\\n    rustup target list --installed && \\\n    rustup show\nRUN rustup target add wasm32-unknown-unknown --toolchain $RUST_TOOLCHAIN\n\nRUN cargo install cargo-chef\n\nRUN mkdir unique_parachain\nWORKDIR /unique_parachain\n\n# ===== Chef =====\nFROM rust-builder as chef\n\nCOPY . .\nRUN cargo chef prepare --recipe-path recipe.json\n\n# ===== BUILD ======\nFROM rust-builder as builder\n\nRUN mkdir unique_parachain\nWORKDIR /unique_parachain\n\nCOPY --from=chef /unique_parachain/recipe.json recipe.json\nARG PROFILE=release\nRUN cargo chef cook \"--$PROFILE\" --recipe-path recipe.json\n\nCOPY . .\nRUN cargo build \"--$PROFILE\"\n   # && \\\n   # cargo test\n\n# ===== BUILD POLKADOT =====\nFROM rust-builder as builder-polkadot\n\nRUN mkdir unique_parachain\nWORKDIR /unique_parachain\n\nRUN git clone -b $POLKA_VERSION --depth 1 https://github.com/paritytech/polkadot.git && \\\n    cd polkadot && \\\n    git tag -n && \\\n\tcargo build --release\n\n# ===== RUN ======\n\nFROM phusion/baseimage:focal-1.1.0\n\nARG PROFILE=release\n\nRUN apt-get -y update && \\\n      apt-get -y upgrade && \\\n      apt-get -y --no-install-recommends install curl git && \\\n      curl -f -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.35.3/install.sh | bash && \\\n      export NVM_DIR=\"$HOME/.nvm\" && \\\n      [ -s \"$NVM_DIR/nvm.sh\" ] && \\. \"$NVM_DIR/nvm.sh\" && \\\n      nvm install v15.5.0 && \\\n      nvm use v15.5.0 && rm -rf /var/lib/apt/lists/*;\n\nRUN git clone https://github.com/paritytech/polkadot-launch\n\nRUN export NVM_DIR=\"$HOME/.nvm\" && \\\n    [ -s \"$NVM_DIR/nvm.sh\" ] && \\. \"$NVM_DIR/nvm.sh\" && \\\n    cd /polkadot-launch && \\\n    npm install --global yarn && \\\n    yarn && npm cache clean --force;\n\nCOPY --from=builder /unique_parachain/target/$PROFILE/unique-collator /unique-chain/target/$PROFILE/\nCOPY --from=builder-polkadot /unique_parachain/polkadot/target/$PROFILE/polkadot /polkadot/target/$PROFILE/\n\nCMD export NVM_DIR=\"$HOME/.nvm\" && \\\n    [ -s \"$NVM_DIR/nvm.sh\" ] && \\. \"$NVM_DIR/nvm.sh\" && \\\n    cd /polkadot-launch && \\\n    yarn start launch-config.json\n"
+}

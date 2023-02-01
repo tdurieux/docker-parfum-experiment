@@ -1,0 +1,6 @@
+FROM alpine@sha256:ca1c944a4f8486a153024d9965aafbe24f5723c1d5c02f4964c045a16d19dc54
+
+RUN apk update && apk add --no-cache ca-certificates
+
+COPY --from=gcr.io/kaniko-project/executor@sha256:78d44ec4e9cb5545d7f85c1924695c89503ded86a59f92c7ae658afa3cff5400 /kaniko/executor /executor
+COPY kaniko /bin/kaniko

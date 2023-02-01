@@ -1,0 +1,25 @@
+ARG IMAGE
+
+FROM keppel.eu-de-1.cloud.sap/ccloud-dockerhub-mirror/library/golang:1.16-alpine3.13 as builder
+
+WORKDIR /
+ADD api-liveness.go .
+RUN CGO_ENABLED=0 go build -o /api-liveness /api-liveness.go
+
+FROM keppel.eu-de-1.cloud.sap/ccloud-dockerhub-mirror/library/alpine AS socat
+RUN apk --update --no-cache add build-base bash automake git curl linux-headers
+ARG SOCAT_VERSION=1.7.4.2
+WORKDIR /build
+RUN curl -f -LO http://www.dest-unreach.org/socat/download/socat-${SOCAT_VERSION}.tar.gz \
+    && tar xzvf socat-${SOCAT_VERSION}.tar.gz \
+    && cd socat-${SOCAT_VERSION} \
+    && CC='/usr/bin/gcc -static' CFLAGS='-fPIC' CPPFLAGS='-I/build -DNETDB_INTERNAL=-1' ./configure --build="$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)" \
+    && make -j4 \
+    && strip socat \
+    && mv socat /socat && rm socat-${SOCAT_VERSION}.tar.gz
+
+FROM $IMAGE
+COPY --from=builder /api-liveness /api-liveness
+COPY --from=socat /socat /usr/bin/socat
+RUN ["socat", "-V"]
+LABEL source_repository="https://github.com/kubernetes/kubernetes"

@@ -1,0 +1,35 @@
+{
+  "startTime": 1674238801563,
+  "endTime": 1674238801862,
+  "originalSmells": [
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 54,
+        "lineEnd": 54,
+        "columnStart": 4,
+        "columnEnd": 60
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 5,
+        "lineEnd": 21,
+        "columnStart": 1,
+        "columnEnd": 12
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 32,
+        "lineEnd": 34,
+        "columnStart": 1,
+        "columnEnd": 20
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM ubuntu:18.04\n\nRUN apt-get update -qq && \\\n\tapt-get upgrade -yq && \\\n\tapt-mark hold openjdk-11-jre-headless && \\\n\tapt-get install -yq --no-install-recommends \\\n\t\tapt-transport-https \\\n\t\tapt-utils \\\n\t\tca-certificates \\\n\t\tcurl \\\n\t\tgit-core \\\n\t\tgnupg \\\n\t\tjq \\\n\t\tless \\\n\t\tmaven \\\n\t\topenjdk-8-jdk-headless \\\n\t\tsudo \\\n\t\tsupervisor \\\n\t\twget \\\n\t\ttar \\\n\t\tvim \\\n\t\tzookeeperd && rm -rf /var/lib/apt/lists/*;\n\n#\n# Elasticsearch and Kibana\n#\nENV ES_VERSION=7.0.0\nRUN wget -qO - https://artifacts.elastic.co/GPG-KEY-elasticsearch \\\n\t| apt-key add -\nRUN echo \"deb https://artifacts.elastic.co/packages/7.x/apt stable main\" \\\n\t>> /etc/apt/sources.list.d/elasticsearch-7.x.list\nRUN apt-get update -qq && \\\n\tapt-get install -yq --no-install-recommends \\\n\t\telasticsearch=$ES_VERSION \\\n\t\tkibana=$ES_VERSION && rm -rf /var/lib/apt/lists/*;\nRUN ln -s /usr/share/elasticsearch/bin/elasticsearch /usr/bin/elasticsearch\nRUN ln -s /usr/share/kibana/bin/kibana /usr/bin/kibana\nRUN chown -R kibana:kibana /usr/share/kibana/\nUSER root\n# system configuration, see https://www.elastic.co/guide/en/elasticsearch/reference/current/deb.html\nADD etc/sysctl.d/60-elasticsearch.conf       /etc/sysctl.d/60-elasticsearch.conf\nADD etc/supervisor/conf.d/elasticsearch.conf /etc/supervisor/conf.d/elasticsearch.conf\nADD etc/supervisor/conf.d/kibana.conf        /etc/supervisor/conf.d/kibana.conf\nRUN chmod -R 644 /etc/sysctl.d/60-elasticsearch.conf /etc/supervisor/conf.d/*.conf\nENV ES_HEAP_SIZE=20g\n# set Elasticsearch data path\nRUN sed -Ei 's@^path\\.data: .*@path.data: /data/elasticsearch@' /etc/elasticsearch/elasticsearch.yml\n# TODO: enable updates via scripting\n\n#\n# Apache Storm\n#\nENV STORM_VERSION=1.2.2\nCOPY downloads/apache-storm-$STORM_VERSION.tar.gz /tmp/apache-storm-$STORM_VERSION.tar.gz\nRUN tar -xzf /tmp/apache-storm-$STORM_VERSION.tar.gz -C /opt && rm /tmp/apache-storm-$STORM_VERSION.tar.gz\nRUN rm /tmp/apache-storm-$STORM_VERSION.tar.gz\nENV STORM_HOME /opt/apache-storm-$STORM_VERSION\nRUN groupadd storm && \\\n\tuseradd --gid storm --home-dir /home/storm \\\n\t\t\t--create-home --shell /bin/bash storm && \\\n\tchown -R storm:storm $STORM_HOME && \\\n\tmkdir /var/log/storm && \\\n\tchown -R storm:storm /var/log/storm\nRUN ln -s /var/log/storm $STORM_HOME/logs\nRUN ln -s $STORM_HOME/bin/storm /usr/bin/storm\nADD etc/supervisor/conf.d/storm-*.conf   /etc/supervisor/conf.d/\nADD etc/supervisor/conf.d/zookeeper.conf /etc/supervisor/conf.d/\nRUN chmod -R 644 /etc/supervisor/conf.d/*.conf\n\n\n#\n# Storm crawler\n#\nRUN groupadd ubuntu && \\\n\tuseradd --gid ubuntu --home-dir /home/ubuntu \\\n\t\t\t--create-home --shell /bin/bash ubuntu && \\\n\tchown -R ubuntu:ubuntu /home/ubuntu\nUSER ubuntu\nWORKDIR /home/ubuntu\nRUN mkdir news-crawler/ && \\\n\tmkdir news-crawler/conf/ && \\\n    mkdir news-crawler/lib/ && \\\n    mkdir news-crawler/bin/ && \\\n    mkdir news-crawler/seeds/ && \\\n    chmod -R a+rx news-crawler/\n# add the news crawler uber-jar\nADD target/crawler-1.14.jar news-crawler/lib/crawler.jar\n# and configuration files\nADD conf/*.*        news-crawler/conf/\nADD seeds/*.txt     news-crawler/seeds/\nADD bin/*.sh        news-crawler/bin/\nADD bin/es_status   news-crawler/bin/\n\nUSER root\nRUN chown -R ubuntu:ubuntu /home/ubuntu && \\\n\tchmod -R a+r /home/ubuntu && \\\n\tchmod u+x news-crawler/bin/*\n\n\n# Ports:\n#  8080 - Storm UI\n#  9200 - Elasticsearch http\n#  9300 - Elasticsearch java\n#  5601 - Kibana\nEXPOSE 8080 9200 9300 5601\n\n# volumes for persistent data\nUSER root\nRUN mkdir /data\nRUN mkdir /data/elasticsearch && chown elasticsearch:elasticsearch /data/elasticsearch\nVOLUME [\"/data/elasticsearch\"]\nRUN mkdir /data/warc && chown storm:storm /data/warc\nVOLUME [\"/data/warc\"]\n\n# start all services\nCMD [\"/usr/bin/supervisord\"]\n\n# launch the crawl\n# CMD [\"/home/ubuntu/news-crawler/bin/run-crawler.sh\"]\n\n"
+}

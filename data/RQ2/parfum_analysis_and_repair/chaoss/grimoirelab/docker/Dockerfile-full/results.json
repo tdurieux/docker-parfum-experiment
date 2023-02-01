@@ -1,0 +1,63 @@
+{
+  "startTime": 1674249857308,
+  "endTime": 1674249858022,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 72,
+        "lineEnd": 75,
+        "columnStart": 8,
+        "columnEnd": 37
+      }
+    },
+    {
+      "rule": "curlUseHttpsUrl",
+      "position": {
+        "lineStart": 69,
+        "lineEnd": 69,
+        "columnStart": 14,
+        "columnEnd": 98
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 46,
+        "lineEnd": 46,
+        "columnStart": 4,
+        "columnEnd": 61
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 30,
+        "lineEnd": 31,
+        "columnStart": 4,
+        "columnEnd": 15
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 46,
+        "lineEnd": 46,
+        "columnStart": 4,
+        "columnEnd": 61
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 46,
+        "lineEnd": 46,
+        "columnStart": 4,
+        "columnEnd": 61
+      }
+    }
+  ],
+  "repairedDockerfile": "# Copyright (C) 2016-2018 Bitergia\n# GPLv3 License\n#\n# The container produced with this file contains all\n# GrimoireLab libraries and executables, and is configured\n# for running Mordred by default, producing a fully Functional\n# GrimoireLab dashboard.\n#\n# It also contains all services needed to produce a dashboard\n# using Mordred: Elasticsearch, MariaDB, and Kibana.\n#\n# Usually it will be run as:\n#\n# $ docker run -p 9200:9200 -p 5601:5601 -v $(pwd)/logs:/logs \\\n#   -v $(pwd)/mordred-local-full-jgb.cfg:/mordred-local.cfg -t grimoirelab/full\n#\nFROM grimoirelab/installed\nMAINTAINER Jesus M. Gonzalez-Barahona <jgb@bitergia.com>\n\nENV ES=elasticsearch-6.1.4\nENV KB_VERSION=6.1.4-4\nENV KB_TAG=community-v${KB_VERSION}\nENV KB=kibiter-${KB_VERSION}\nENV KB_DIR=${KB}-linux-x86_64\n\nUSER root\n\n# Install OpenJDK-8 & netstat (for monitoring)\nRUN mkdir /usr/share/man/man1 && \\\n    apt-get update && \\\n    apt-get -y install --no-install-recommends openjdk-8-jdk-headless \\\n      net-tools && rm -rf /var/lib/apt/lists/*;\n\n# Install ElasticSearch\nRUN wget -nv https://artifacts.elastic.co/downloads/elasticsearch/${ES}.deb && \\\n    wget -nv https://artifacts.elastic.co/downloads/elasticsearch/${ES}.deb.sha512 && \\\n    sudo dpkg -i ${ES}.deb && \\\n    rm ${ES}.deb ${ES}.deb.sha512\nRUN sed -e \"/MAX_MAP_COUNT=/s/^/#/g\" -i /etc/init.d/elasticsearch && \\\n    echo \"http.host: 0.0.0.0\" >> /etc/elasticsearch/elasticsearch.yml && \\\n    echo \"cluster.routing.allocation.disk.watermark.flood_stage: 99.9%\" >> /etc/elasticsearch/elasticsearch.yml && \\\n    echo \"cluster.routing.allocation.disk.watermark.low: 99.9%\" >> /etc/elasticsearch/elasticsearch.yml && \\\n    echo \"cluster.routing.allocation.disk.watermark.high: 99.9%\" >> /etc/elasticsearch/elasticsearch.yml\nEXPOSE 9200\n\n# Install MariaDB\nRUN apt-get -y install --no-install-recommends mariadb-server && rm -rf /var/lib/apt/lists/*;\nRUN echo \"mysqld_safe &\" > /tmp/config && \\\n    echo \"mysqladmin --silent --wait=30 ping || exit 1\" >> /tmp/config && \\\n    echo \"mysql -e 'CREATE USER grimoirelab;'\" >> /tmp/config && \\\n    echo \"mysql -e 'GRANT ALL PRIVILEGES ON *.* TO \\\"grimoirelab\\\"@\\\"%\\\" WITH GRANT OPTION;'\" >> /tmp/config && \\\n    bash /tmp/config && \\\n    rm -f /tmp/config && \\\n    sed -e \"/bind-address/s/^/#/g\" -i /etc/mysql/mariadb.conf.d/50-server.cnf\nEXPOSE 3306\n\nUSER ${DEPLOY_USER}\n\n# Install Kibana (as DEPLOY_USER)\nRUN wget -nv https://github.com/grimoirelab/kibiter/releases/download/${KB_TAG}/${KB_DIR}.tar.gz && \\\n    tar xzf ${KB_DIR}.tar.gz && \\\n    rm ${KB_DIR}.tar.gz && \\\n    sed -e \"s|^#server.host: .*$|server.host: 0.0.0.0|\" -i ${KB_DIR}/config/kibana.yml\n# Run Kibana until optimization is done, to avoid optimizing every\n# time the image is run\nRUN ${KB_DIR}/bin/kibana 2>&1 | grep -m 1 \"Optimization of .* complete in .* seconds\"\n\nRUN sudo /etc/init.d/elasticsearch start && \\\n    ${KB_DIR}/bin/kibana 2>&1 > /dev/null & \\\n    (while $( curl --output /dev/null --silent --fail https://127.0.0.1:9200/.kibana/config/_search) ; ; do \\\n        printf '.' && \\\n        sleep 2 && \\\n        curl -f -XPOST \"http://127.0.0.1:5601/api/kibana/settings/indexPattern:placeholder\" \\\n          -H 'Content-Type: application/json' -H \\\n          -H 'Accept: application/json' -d '{ -d '{\"value\": \"*\"}' \\\n          --silent --output /dev/null; \\\n    done)\n\nEXPOSE 5601\n\nADD docker/entrypoint-full.sh /entrypoint.sh\nRUN sudo chmod 755 /entrypoint.sh\n\n#VOLUME /var/lib/elasticsearch\n\n# Entrypoint\nENTRYPOINT [ \"/entrypoint.sh\" ]\nCMD [ \"-c\", \"/infra.cfg\", \"/dashboard.cfg\", \"/project.cfg\", \"/override.cfg\"]\n"
+}

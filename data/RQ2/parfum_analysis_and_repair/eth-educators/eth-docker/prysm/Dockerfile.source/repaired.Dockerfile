@@ -1,0 +1,79 @@
+# Build Prysm in a stock Go build container
+FROM golang:1.18-buster as builder
+
+# Here only to avoid build-time errors
+ARG DOCKER_TAG
+
+ARG BUILD_TARGET
+
+RUN apt-get update && apt-get install --no-install-recommends -y cmake libtinfo5 libgmp-dev npm && npm install -g @bazel/bazelisk && bazel version && npm cache clean --force; && rm -rf /var/lib/apt/lists/*;
+
+WORKDIR /go/src
+RUN bash -c "git clone https://github.com/prysmaticlabs/prysm.git && cd prysm && git config advice.detachedHead false && git fetch --all --tags && git checkout ${BUILD_TARGET} && bazel build --config=release //beacon-chain:beacon-chain && bazel build --config=release //validator:validator && bazel build --config=release //cmd/client-stats:client-stats"
+
+# Pull all binaries into a second stage deploy debian container
+FROM debian:bullseye-slim as consensus
+
+ARG USER=prysmconsensus
+ARG UID=10002
+
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive TZ=Etc/UTC apt-get install -y --no-install-recommends \
+  ca-certificates curl bash tzdata \
+  && apt-get clean \
+  && rm -rf /var/lib/apt/lists/*
+
+RUN set -eux; \
+        apt-get update; \
+        apt-get install --no-install-recommends -y gosu; \
+        rm -rf /var/lib/apt/lists/*; \
+# verify that the binary works
+        gosu nobody true
+
+# See https://stackoverflow.com/a/55757473/12429735RUN
+RUN adduser \
+    --disabled-password \
+    --gecos "" \
+    --home "/nonexistent" \
+    --shell "/sbin/nologin" \
+    --no-create-home \
+    --uid "${UID}" \
+    "${USER}"
+
+# Create data mount point with permissions
+RUN mkdir -p /var/lib/prysm && chown ${USER}:${USER} /var/lib/prysm && chmod 700 /var/lib/prysm
+
+# Copy executable
+COPY --from=builder /go/src/prysm/bazel-bin/cmd/beacon-chain/beacon-chain_/beacon-chain /usr/local/bin/
+COPY --from=builder /go/src/prysm/bazel-bin/cmd/validator/validator_/validator /usr/local/bin/
+COPY --from=builder /go/src/prysm/bazel-bin/cmd/client-stats/client-stats_/client-stats /usr/local/bin/
+COPY ./docker-entrypoint.sh /usr/local/bin/
+
+USER ${USER}
+
+ENTRYPOINT ["beacon-chain"]
+
+FROM consensus as validator
+
+ARG USER=prysmvalidator
+ARG UID=10000
+USER root
+
+# See https://stackoverflow.com/a/55757473/12429735RUN
+RUN adduser \
+    --disabled-password \
+    --gecos "" \
+    --home "/nonexistent" \
+    --shell "/sbin/nologin" \
+    --no-create-home \
+    --uid "${UID}" \
+    "${USER}"
+
+# Create data mount point with permissions
+RUN mkdir -p /var/lib/prysm && chown ${USER}:${USER} /var/lib/prysm && chmod 700 /var/lib/prysm
+
+COPY ./validator-import.sh /usr/local/bin/
+COPY ./create-wallet.sh /usr/local/bin/
+
+USER ${USER}
+
+ENTRYPOINT ["validator"]

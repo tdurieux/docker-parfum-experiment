@@ -1,0 +1,1 @@
+# Dockerfile for country (member) variants

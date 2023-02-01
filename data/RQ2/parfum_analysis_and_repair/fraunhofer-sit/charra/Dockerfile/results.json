@@ -1,0 +1,35 @@
+{
+  "startTime": 1674215080089,
+  "endTime": 1674215081435,
+  "originalSmells": [
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 40,
+        "lineEnd": 40,
+        "columnStart": 4,
+        "columnEnd": 58
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 57,
+        "lineEnd": 57,
+        "columnStart": 4,
+        "columnEnd": 15
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 75,
+        "lineEnd": 75,
+        "columnStart": 4,
+        "columnEnd": 126
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "##############################################################################\n# \"Dockerfile\"                                                               #\n#                                                                            #\n# Author: Michael Eckel <michael.eckel@sit.fraunhofer.de>                    #\n# Date: 2019-06-26                                                           #\n#                                                                            #\n# Hint: Check your Dockerfile at https://www.fromlatest.io/                  #\n##############################################################################\n\nFROM ghcr.io/tpm2-software/ubuntu-20.04:latest AS base\nLABEL maintainer=\"Michael Eckel <michael.eckel@sit.fraunhofer.de>\"\n\n## glocal arguments with default values\nARG user=bob\nARG uid=1000\nARG gid=1000\n\nRUN echo \"BUILD ARG 'user': $user\"\nRUN echo \"BUILD ARG 'uid':  $uid\"\nRUN echo \"BUILD ARG 'gid':  $gid\"\n\n## copy configs\nCOPY \"./docker/dist/etc/default/keyboard\" \"/etc/default/keyboard\"\n\n## manual pages and Bash command completion\nRUN apt-get update \\\n\t&& apt-get install --no-install-recommends -y \\\n\tman-db \\\n\tbash-completion \\\n\t&& rm -rf /var/lib/apt/lists/*\nRUN yes | unminimize\n\n## TPM2 TSS\nRUN git clone --depth=1 -b '3.0.3' \\\n\t'https://github.com/tpm2-software/tpm2-tss.git' /tmp/tpm2-tss\nWORKDIR /tmp/tpm2-tss\nENV LD_LIBRARY_PATH /usr/local/lib\nRUN git reset --hard \\\n\t&& git clean -xdf \\\n\t&& ./bootstrap \\\n\t&& ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" --enable-integration --disable-doxygen-doc \\\n\t&& make clean \\\n\t&& make -j \\\n\t&& make install \\\n\t&& ldconfig\n\n## make TPM Simulator the default for TCTI\nRUN ln -sf 'libtss2-tcti-mssim.so' '/usr/local/lib/libtss2-tcti-default.so'\n\n## remove TPM2-TSS source files\nRUN rm -rf /tmp/tpm2-tss\n\n## TPM2 tools\nRUN git clone --depth=1 -b '5.0' \\\n\t'https://github.com/tpm2-software/tpm2-tools.git' /tmp/tpm2-tools\nWORKDIR /tmp/tpm2-tools\nRUN ./bootstrap \\\n\t&& ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" \\\n\t&& make -j \\\n\t&& make install\nRUN rm -rfv /tmp/tpm2-tools\n\n## libcoap\nRUN git clone --recursive -b 'develop' \\\n\t'https://github.com/obgm/libcoap.git' /tmp/libcoap\n# Usually the second git checkout should be enough with an added '--recurse-submodules',\n# but for some reason this fails in the default docker build environment.\n# Note: The checkout with submodules works when using Buildkit.\nWORKDIR /tmp/libcoap/ext/tinydtls\nRUN git checkout 290c48d262b6859443bd4b04926146bda3293c98\nWORKDIR /tmp/libcoap\nRUN git checkout ea1deffa6b3997eea02635579a4b7fb7af4915e5\nCOPY coap_tinydtls.patch .\nRUN patch -p 1 < coap_tinydtls.patch\nRUN ./autogen.sh \\\n\t&& ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" --disable-tests --disable-documentation --disable-manpages --enable-dtls --with-tinydtls --enable-fast-install \\\n\t&& make -j \\\n\t&& make install\nRUN rm -rfv /tmp/libcoap\n\n## mbedtls\nRUN git clone --recursive -b 'development' \\\n\t'https://github.com/ARMmbed/mbedtls.git' /tmp/mbedtls\nWORKDIR /tmp/mbedtls\nRUN git checkout 70c68dac45df992137ea48e87c9db473266ea1cb\nRUN make -j lib SHARED=true \\\n\t&& make install\nRUN rm -rfv /tmp/mbedtls\n\n## QCBOR\nRUN git clone --depth=1 --recursive -b 'master' \\\n\t'https://github.com/laurencelundblade/QCBOR.git' /tmp/qcbor\nWORKDIR /tmp/qcbor\nRUN make -j all so \\\n\t&& make install install_so\nRUN rm -rfv /tmp/qcbor\n\n## t_cose\nRUN git clone --depth=1 --recursive -b 'master' \\\n\t'https://github.com/laurencelundblade/t_cose.git' /tmp/t_cose\nWORKDIR /tmp/t_cose\nRUN make -j -f Makefile.psa libt_cose.a libt_cose.so \\\n\t&&  make -f Makefile.psa install install_so\nRUN rm -rfv /tmp/t_cose\n\n## install debugging tools\nRUN apt-get update \\\n\t&& apt-get install --no-install-recommends -y \\\n\tclang \\\n\tclang-tools \\\n\tcgdb \\\n\tgdb \\\n\ttmux \\\n\tvalgrind \\\n\t&& rm -rf /var/lib/apt/lists/*\n\n## install sudo and gosu\nRUN apt-get update \\\n\t&& apt-get install --no-install-recommends -y \\\n\tgosu \\\n\tsudo \\\n\t&& rm -rf /var/lib/apt/lists/*\n\n## create non-root user and grant sudo permission\nRUN export user=\"$user\" uid=\"$uid\" gid=\"$gid\" \\\n\t&& addgroup --gid \"$gid\" \"$user\" \\\n\t&& adduser --home /home/\"$user\" --uid \"$uid\" --gid \"$gid\" \\\n\t--disabled-password --gecos '' \"$user\" \\\n\t&& mkdir -vp /etc/sudoers.d/ \\\n\t&& echo \"$user     ALL=(ALL) NOPASSWD: ALL\" > /etc/sudoers.d/\"$user\" \\\n\t&& chmod 0440 /etc/sudoers.d/\"$user\" \\\n\t&& chown \"$uid\":\"$gid\" -R /home/\"$user\"\n\n## set environment variables\nENV TPM2TOOLS_TCTI_NAME socket\nENV TPM2TOOLS_SOCKET_ADDRESS 127.0.0.1\nENV TPM2TOOLS_SOCKET_PORT 2321\n\n## install TPM Simulator reset script\nCOPY \"./docker/dist/usr/local/bin/tpm-reset\" \"/usr/local/bin/\"\n\n## install TSS compile script\nCOPY \"./docker/dist/usr/local/bin/compile-tss\" \"/usr/local/bin/\"\n\n## Docker entrypoint\nCOPY \"./docker/dist/usr/local/bin/docker-entrypoint.sh\" \"/usr/local/bin/\"\n## keep backwards compatibility\nRUN ln -s '/usr/local/bin/docker-entrypoint.sh' /\n\n## set environment variables\nUSER \"$uid:$gid\"\nENV HOME /home/\"$user\"\nWORKDIR /home/\"$user\"\n\nENTRYPOINT [\"docker-entrypoint.sh\"]\nCMD [\"/bin/bash\"]\n"
+}

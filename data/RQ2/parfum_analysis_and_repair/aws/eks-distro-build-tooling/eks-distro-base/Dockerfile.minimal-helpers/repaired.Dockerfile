@@ -1,0 +1,76 @@
+# Copyright Amazon.com Inc. or its affiliates. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+ARG BUILT_BUILDER_IMAGE
+ARG BASE_IMAGE
+FROM ${BUILT_BUILDER_IMAGE} as builder
+
+################# BASE ########################
+FROM ${BASE_IMAGE} as final
+COPY --from=builder /newroot /
+
+
+################ Export #######################
+
+FROM builder as prepare-export
+
+ARG VARIANT
+
+WORKDIR $NEWROOT
+RUN set -x && \
+    rpm --root $NEWROOT -qa | sort > /tmp/packages/$VARIANT && \
+    printf "****************** Regular Files ******************\n\n" > /tmp/packages/$VARIANT-files && \
+    find . -type f -printf '%M\t%s\t/%P\n' | numfmt --field=2 --to=iec-i --padding=8 --suffix=B | sort -k 3 >> /tmp/packages/$VARIANT-files && \
+    printf "\n****************** Symlinks ******************\n\n" >> /tmp/packages/$VARIANT-files && \
+    find . -type l -printf '%M\t%s\t/%P\t%l\n' | numfmt --field=2 --to=iec-i --padding=8 --suffix=B | sort -k 3 >> /tmp/packages/$VARIANT-files
+
+FROM scratch as export
+
+ARG VARIANT
+
+COPY --from=prepare-export /tmp/packages/$VARIANT* .
+
+
+################ Validate #######################
+ARG BUILT_BUILDER_IMAGE
+FROM --platform=$BUILDPLATFORM ${BUILT_BUILDER_IMAGE} as run_validate
+
+COPY scripts/ /usr/bin
+
+RUN set -x && \
+    validate_libraries && \
+    validate_symlinks && \
+    touch /tmp/success
+
+FROM scratch as validate
+COPY --from=run_validate /tmp/success .
+
+################## SYMLINKS #####################
+# Instead of building this during the build everytime, this is the dockerfile
+# needed to build it, but it is currently checked into the repo under scripts
+# when we switch to al22 we can remove this
+
+# the al2 version of symlinks does not support the -C chroot option
+# build a static verison so we can use it on al2 too
+FROM public.ecr.aws/amazonlinux/amazonlinux:2022 as al22
+
+ENV VERSION=1.7
+RUN set -x && \
+    yum install cpio gcc glibc-static gzip tar yum-utils  -y && \
+    yumdownloader --source symlinks && \
+    rpm2cpio symlinks-*.src.rpm | cpio -idmv && \
+    tar -xf symlinks-${VERSION}.tar.gz && \
+    cd symlinks-${VERSION} && \
+    CFLAGS="-O2 -g -Wall -Wstrict-prototypes -static" make symlinks && \
+    cp ./symlinks /tmp && rm -rf /var/cache/yum

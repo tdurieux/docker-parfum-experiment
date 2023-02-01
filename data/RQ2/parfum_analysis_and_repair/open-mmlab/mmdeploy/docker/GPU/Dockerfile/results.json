@@ -1,0 +1,35 @@
+{
+  "startTime": 1674250652735,
+  "endTime": 1674250653430,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 47,
+        "lineEnd": 47,
+        "columnStart": 4,
+        "columnEnd": 55
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 65,
+        "lineEnd": 65,
+        "columnStart": 4,
+        "columnEnd": 20
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 46,
+        "lineEnd": 46,
+        "columnStart": 7,
+        "columnEnd": 65
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM nvcr.io/nvidia/tensorrt:21.04-py3\n\nARG CUDA=10.2\nARG PYTHON_VERSION=3.8\nARG TORCH_VERSION=1.8.0\nARG TORCHVISION_VERSION=0.9.0\nARG ONNXRUNTIME_VERSION=1.8.1\nARG MMCV_VERSION=1.4.0\nARG PPLCV_VERSION=0.6.2\nENV FORCE_CUDA=\"1\"\n\nENV DEBIAN_FRONTEND=noninteractive\n\n### change the system source for installing libs\nARG USE_SRC_INSIDE=false\nRUN if [ ${USE_SRC_INSIDE} == true ] ; \\\n    then \\\n        sed -i s/archive.ubuntu.com/mirrors.aliyun.com/g /etc/apt/sources.list ; \\\n        sed -i s/security.ubuntu.com/mirrors.aliyun.com/g /etc/apt/sources.list ; \\\n        echo \"Use aliyun source for installing libs\" ; \\\n    else \\\n        echo \"Keep the download source unchanged\" ; \\\n    fi\n\n### update apt and install libs\nRUN apt-get update &&\\\n    apt-get install -y vim libsm6 libxext6 libxrender-dev libgl1-mesa-glx git wget libssl-dev libopencv-dev libspdlog-dev --no-install-recommends &&\\\n    rm -rf /var/lib/apt/lists/*\n\nRUN curl -fsSL -v -o ~/miniconda.sh -O  https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh  && \\\n    chmod +x ~/miniconda.sh && \\\n    ~/miniconda.sh -b -p /opt/conda && \\\n    rm ~/miniconda.sh && \\\n    /opt/conda/bin/conda install -y python=${PYTHON_VERSION} conda-build pyyaml numpy ipython cython typing typing_extensions mkl mkl-include ninja && \\\n    /opt/conda/bin/conda clean -ya\n\n### pytorch\nRUN /opt/conda/bin/conda install pytorch==${TORCH_VERSION} torchvision==${TORCHVISION_VERSION} cudatoolkit=${CUDA} -c pytorch\nENV PATH /opt/conda/bin:$PATH\n\n### install mmcv-full\nRUN /opt/conda/bin/pip install mmcv-full==${MMCV_VERSION} -f https://download.openmmlab.com/mmcv/dist/cu${CUDA//./}/torch${TORCH_VERSION}/index.html\n\nWORKDIR /root/workspace\n### get onnxruntime\nRUN wget https://github.com/microsoft/onnxruntime/releases/download/v${ONNXRUNTIME_VERSION}/onnxruntime-linux-x64-${ONNXRUNTIME_VERSION}.tgz \\\n    && tar -zxvf onnxruntime-linux-x64-${ONNXRUNTIME_VERSION}.tgz && \\\n    pip install --no-cache-dir onnxruntime-gpu==${ONNXRUNTIME_VERSION} && rm onnxruntime-linux-x64-${ONNXRUNTIME_VERSION}.tgz\n\n### cp trt from pip to conda\nRUN cp -r /usr/local/lib/python${PYTHON_VERSION}/dist-packages/tensorrt* /opt/conda/lib/python${PYTHON_VERSION}/site-packages/\n\n### install mmdeploy\nENV ONNXRUNTIME_DIR=/root/workspace/onnxruntime-linux-x64-${ONNXRUNTIME_VERSION}\nENV TENSORRT_DIR=/workspace/tensorrt\nARG VERSION\nRUN git clone https://github.com/open-mmlab/mmdeploy &&\\\n    cd mmdeploy &&\\\n    if [ -z ${VERSION} ] ; then echo \"No MMDeploy version passed in, building on master\" ; else git checkout tags/v${VERSION} -b tag_v${VERSION} ; fi &&\\\n    git submodule update --init --recursive &&\\\n    mkdir -p build &&\\\n    cd build &&\\\n    cmake -DMMDEPLOY_TARGET_BACKENDS=\"ort;trt\" .. &&\\\n    make -j$(nproc) &&\\\n    cd .. && \\\n    pip install --no-cache-dir -e .\n\n### build sdk\nRUN git clone https://github.com/openppl-public/ppl.cv.git &&\\\n    cd ppl.cv &&\\\n    git checkout tags/v${PPLCV_VERSION} -b v${PPLCV_VERSION} &&\\\n    ./build.sh cuda\n\nENV BACKUP_LD_LIBRARY_PATH=$LD_LIBRARY_PATH\nENV LD_LIBRARY_PATH=/usr/local/cuda-11.3/compat/lib.real/:$LD_LIBRARY_PATH\n\nRUN cd /root/workspace/mmdeploy &&\\\n    rm -rf build/CM* build/cmake-install.cmake build/Makefile build/csrc &&\\\n    mkdir -p build && cd build &&\\\n    cmake .. \\\n        -DMMDEPLOY_BUILD_SDK=ON \\\n        -DCMAKE_CXX_COMPILER=g++ \\\n        -Dpplcv_DIR=/root/workspace/ppl.cv/cuda-build/install/lib/cmake/ppl \\\n        -DTENSORRT_DIR=${TENSORRT_DIR} \\\n        -DONNXRUNTIME_DIR=${ONNXRUNTIME_DIR} \\\n        -DMMDEPLOY_BUILD_SDK_PYTHON_API=ON \\\n        -DMMDEPLOY_TARGET_DEVICES=\"cuda;cpu\" \\\n        -DMMDEPLOY_TARGET_BACKENDS=\"ort;trt\" \\\n        -DMMDEPLOY_CODEBASES=all &&\\\n    make -j$(nproc) && make install &&\\\n    cd install/example  && mkdir -p build && cd build &&\\\n    cmake -DMMDeploy_DIR=/root/workspace/mmdeploy/build/install/lib/cmake/MMDeploy .. &&\\\n    make -j$(nproc) && export SPDLOG_LEVEL=warn &&\\\n    if [ -z ${VERSION} ] ; then echo \"Built MMDeploy master for GPU devices successfully!\" ; else echo \"Built MMDeploy version v${VERSION} for GPU devices successfully!\" ; fi\n\nENV LD_LIBRARY_PATH=\"/root/workspace/mmdeploy/build/lib:${BACKUP_LD_LIBRARY_PATH}\"\n"
+}

@@ -1,0 +1,53 @@
+{
+  "startTime": 1674236125934,
+  "endTime": 1674236126209,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 56,
+        "lineEnd": 56,
+        "columnStart": 4,
+        "columnEnd": 38
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 57,
+        "lineEnd": 57,
+        "columnStart": 4,
+        "columnEnd": 30
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 62,
+        "lineEnd": 62,
+        "columnStart": 4,
+        "columnEnd": 42
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 6,
+        "lineEnd": 21,
+        "columnStart": 4,
+        "columnEnd": 15
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 6,
+        "lineEnd": 21,
+        "columnStart": 4,
+        "columnEnd": 15
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM python:2.7\n\nENV PYTHONUNBUFFERED 1\n\nRUN dpkg --add-architecture i386 && \\\n    apt-get update && \\\n    apt-get install --no-install-recommends -y \\\n        git \\\n        libpq-dev \\\n        postgresql-client \\\n        rabbitmq-server \\\n        libdb-dev \\\n        fp-compiler fp-units-base fp-units-math \\\n        texlive-latex-base \\\n        texlive-lang-polish \\\n        texlive-latex-extra \\\n        texlive-fonts-recommended \\\n        gcc-multilib \\\n        sudo \\\n        libstdc++6:i386 \\\n        zlib1g:i386 \\\n        locales && \\\n    apt-get clean && rm -rf /var/lib/apt/lists/*;\n\n# This is oioioi user linux uid. Setting it is useful in development.\n# By default we use an unused uid of 1234.\n# This is placed here to avoid redownloading package on uid change\nARG oioioi_uid=1234\n\n#Bash as shell, setup folders, create oioioi user\nRUN rm /bin/sh && ln -s /bin/bash /bin/sh && \\\n    mkdir -pv /sio2/oioioi && \\\n    mkdir -pv /sio2/logs && \\\n    mkdir -pv /sio2/sandboxes && \\\n    chmod a+rw -R /sio2/logs && \\\n    useradd -U oioioi -m -d /home/oioioi/ -u $oioioi_uid && \\\n    echo \"oioioi ALL=(ALL) NOPASSWD: ALL\" >> /etc/sudoers && \\\n    chown -R oioioi:oioioi /sio2\n\n# Modify locale\nRUN sed -i -e \"s/# en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/\" /etc/locale.gen && \\\n    locale-gen\n\n# Configure rabbitmq-server\nRUN echo \"[{rabbit, [{tcp_listeners, [5672]}, {loopback_users, []}]}].\" > /etc/rabbitmq/rabbitmq.config && \\\n    echo \"SERVER_ERL_ARGS=\\\"+K true +A 4 +P 1048576 -kernel\\\"\"          > /etc/rabbitmq/rabbitmq-env.conf\n\n# Configuring .bashrc\nRUN echo \"source /sio2/venv/bin/activate\" >> ~/.bashrc && \\\n    echo \"cd /sio2\" >> ~/.bashrc && \\\n    echo \"export PATH=$PATH:~/.local/bin\" >> ~/.bashrc\n\n# Installing python dependencies\nUSER oioioi\n\nRUN easy_install --user distribute\nRUN pip install --no-cache-dir psycopg2-binary --user\nRUN pip install --no-cache-dir twisted --user\n\nWORKDIR /sio2/oioioi\n\nCOPY setup.py requirements.txt ./\nRUN pip install --no-cache-dir -r requirements.txt --user\n\nADD --chown=oioioi:oioioi . /sio2/oioioi\n\nENV PATH $PATH:/home/oioioi/.local/bin/\n\nRUN oioioi-create-config /sio2/deployment\n\nWORKDIR /sio2/deployment\n\nRUN sed -i -e \\\n       \"s/django.db.backends./django.db.backends.postgresql_psycopg2/g;\\\n        s/'NAME': ''/'NAME': 'oioioi'/g;\\\n        s/'USER': ''/'USER': 'oioioi'/g;\\\n        s/'HOST': '',/'HOST': 'db',/g;\\\n        s/'PASSWORD': ''/'PASSWORD': ''/g;\\\n        s/#BROKER_URL/BROKER_URL/g;\\\n        s/USE_UNSAFE_EXEC/#USE_UNSAFE_EXEC/g;\\\n        s/USE_LOCAL_COMPILERS/#USE_LOCAL_COMPILERS/g;\\\n        s/#FILETRACKER_SERVER_ENABLED/FILETRACKER_SERVER_ENABLED/g;\\\n        s/#FILETRACKER_LISTEN_ADDR/FILETRACKER_LISTEN_ADDR/g;\\\n        s/#FILETRACKER_LISTEN_PORT/FILETRACKER_LISTEN_PORT/g;\\\n        s/#FILETRACKER_LISTEN_URL/FILETRACKER_LISTEN_URL/g;\\\n        s/#FILETRACKER_URL/FILETRACKER_URL/g;\\\n        s/#SIOWORKERS_LISTEN_ADDR/SIOWORKERS_LISTEN_ADDR/g;\\\n        s/#SIOWORKERS_LISTEN_PORT/SIOWORKERS_LISTEN_PORT/g;\\\n        s/#RUN_SIOWORKERSD.*$/RUN_SIOWORKERSD = True/g;\\\n        s/#USE_UNSAFE_EXEC = True/USE_UNSAFE_EXEC = True/g;\\\n        s/#USE_LOCAL_COMPILERS = True/USE_LOCAL_COMPILERS = False/g;\\\n        s/#USE_UNSAFE_CHECKER = True/USE_UNSAFE_CHECKER = False/g;\\\n        s/.*RUN_LOCAL_WORKERS = True/RUN_LOCAL_WORKERS = False/g;\\\n        s/ALLOWED_HOSTS = \\\\[.*\\\\]/ALLOWED_HOSTS = \\\\['oioioi', '127.0.0.1', 'localhost', 'web'\\\\]/g\"\\\n        settings.py && \\\n    echo \"SIOWORKERS_BACKEND = 'oioioi.sioworkers.backends.SioworkersdBackend'\"     >> settings.py && \\\n    echo \"CELERY_RESULT_BACKEND = None\"                                             >> settings.py && \\\n    sed -i \\\n        -e \"s|twistd|/home/oioioi/.local/bin/twistd|g\"\\\n        -e \"s|{{ PROJECT_DIR }}/logs|/sio2/logs|g\"\\\n        -e \"s|command=filetracker-server|command=/home/oioioi/.local/bin/filetracker-server|g\"\\\n        supervisord.conf && \\\n    mkdir -p /sio2/logs/{supervisor,runserver}\n\n# Download sandboxes\nRUN ./manage.py supervisor > /dev/null --daemonize && \\\n    ./manage.py download_sandboxes -q -y -c /sio2/sandboxes && \\\n    ./manage.py supervisor stop all\n\nRUN sed -i -e \"s|FILETRACKER_URL = '.*'|FILETRACKER_URL = 'http://web:9999'|g\" settings.py && \\\n    cp settings.py test_settings.py && \\\n    sed -i -e \"s/from oioioi.default_settings/from oioioi.test_settings/g\" test_settings.py && \\\n    cp settings.py selenium_settings.py && \\\n    sed -i -e \"s/from oioioi.default_settings/from oioioi.selenium_settings/g\" selenium_settings.py\n"
+}

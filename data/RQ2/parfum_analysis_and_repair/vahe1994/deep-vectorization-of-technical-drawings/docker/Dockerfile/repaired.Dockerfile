@@ -1,0 +1,28 @@
+FROM nvidia/cuda:11.1-devel-ubuntu16.04
+RUN apt-get update
+
+RUN apt-get install -y --no-install-recommends apt-utils && rm -rf /var/lib/apt/lists/*;
+RUN apt-get install --no-install-recommends -y vim wget git tmux && rm -rf /var/lib/apt/lists/*;
+RUN apt-get install --no-install-recommends -y ninja-build && rm -rf /var/lib/apt/lists/*;
+RUN apt-get install --no-install-recommends -y libpango1.0-0 && rm -rf /var/lib/apt/lists/*;
+RUN apt-get install --no-install-recommends -y libcairo2 && rm -rf /var/lib/apt/lists/*;
+RUN apt-get install --no-install-recommends -y libpq-dev && rm -rf /var/lib/apt/lists/*;
+WORKDIR /opt
+
+RUN wget https://repo.anaconda.com/archive/Anaconda3-2020.11-Linux-x86_64.sh
+
+RUN bash Anaconda3-2020.11-Linux-x86_64.sh -b -p /opt/anaconda3
+RUN rm Anaconda3-2020.11-Linux-x86_64.sh
+
+ENV PATH /opt/anaconda3/bin:$PATH
+
+COPY ./Deep-Vectorization-of-Technical-Drawings /opt/Deep-Vectorization-of-Technical-Drawings
+
+RUN python -m venv /opt/.venv/vect-env &&\
+. /opt/.venv/vect-env/bin/activate && \
+ pip install --no-cache-dir -r /opt/Deep-Vectorization-of-Technical-Drawings/requirements.txt && \
+conda install -c anaconda cairo==1.14.12 && \
+conda install -c conda-forge pycairo==1.19.1 && \
+ pip install --no-cache-dir chamferdist==1.0.0
+
+RUN rm -rf /opt/Deep-Vectorization-of-Technical-Drawings/

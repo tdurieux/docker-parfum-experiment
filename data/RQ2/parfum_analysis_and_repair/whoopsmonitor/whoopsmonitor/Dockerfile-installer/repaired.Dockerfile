@@ -1,0 +1,22 @@
+FROM node:17.3.1-alpine3.15
+LABEL maintainer="Daniel Rataj <daniel.rataj@centrum.cz>"
+LABEL org.opencontainers.image.source="https://github.com/whoopsmonitor/whoopsmonitor"
+
+RUN apk add --no-cache openssl=1.1.1l-r8 \
+    docker-cli=20.10.11-r0 \
+    docker-compose=1.29.2-r1 \
+    curl=7.80.0-r0 && \
+    rm -rf /var/cache/apk/*
+
+WORKDIR /app
+
+# copy required app files
+COPY installer/ .
+RUN npm install --quiet && npm cache clean --force;
+
+VOLUME /output/
+
+COPY installer/entrypoint.sh /opt/whoopsmonitor/entrypoint.sh
+RUN chmod +x /opt/whoopsmonitor/entrypoint.sh
+
+ENTRYPOINT ["/opt/whoopsmonitor/entrypoint.sh"]

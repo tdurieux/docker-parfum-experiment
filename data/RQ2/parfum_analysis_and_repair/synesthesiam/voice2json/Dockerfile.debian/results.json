@@ -1,0 +1,44 @@
+{
+  "startTime": 1674251253197,
+  "endTime": 1674251254185,
+  "originalSmells": [
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 34,
+        "lineEnd": 34,
+        "columnStart": 4,
+        "columnEnd": 15
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 60,
+        "lineEnd": 60,
+        "columnStart": 4,
+        "columnEnd": 56
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 7,
+        "lineEnd": 11,
+        "columnStart": 4,
+        "columnEnd": 21
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 26,
+        "lineEnd": 29,
+        "columnStart": 4,
+        "columnEnd": 66
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM debian:buster as base\n\nENV LANG C.UTF-8\nENV DEBIAN_FRONTEND=noninteractive\n\nRUN --mount=type=cache,id=apt-base,target=/var/cache/apt \\\n    apt-get update && \\\n    apt-get install --no-install-recommends --yes \\\n        build-essential \\\n        python3 python3-dev python3-pip python3-setuptools python3-venv \\\n        swig portaudio19-dev libatlas-base-dev \\\n        fakeroot curl && rm -rf /var/lib/apt/lists/*;\n\nENV NUM_JOBS=8\n\nENV BUILD_DIR=/build\nENV APP_DIR=${BUILD_DIR}/voice2json/usr/lib/voice2json\n\n# -----------------------------------------------------------------------------\n# Python 3.7\n# -----------------------------------------------------------------------------\n\nFROM base as python\n\nRUN --mount=type=cache,id=apt-python,target=/var/cache/apt \\\n    apt-get update && \\\n    apt-get install --yes --no-install-recommends \\\n        git zlib1g-dev patchelf rsync \\\n        libncursesw5-dev libreadline-gplv2-dev libssl-dev \\\n        libgdbm-dev libc6-dev libsqlite3-dev libbz2-dev libffi-dev && rm -rf /var/lib/apt/lists/*;\n\nADD download/source/Python-3.7.10.tar.xz /build\n\nRUN cd /build/Python-3.7.10 && \\\n    ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" && \\\n    make -j ${NUM_JOBS} && \\\n    make install DESTDIR=${APP_DIR}\n\n# -----------------------------------------------------------------------------\n\nFROM base as build\n\nCOPY --from=python ${APP_DIR}/ ${APP_DIR}/\nCOPY --from=python ${APP_DIR}/usr/local/include/python3.7m/ /usr/include/\nENV PYTHON=${APP_DIR}/usr/local/bin/python3\n\n# Directory of prebuilt tools\nARG TARGETARCH\nARG TARGETVARIANT\nCOPY download/shared/ ${BUILD_DIR}/download/\nCOPY download/${TARGETARCH}${TARGETVARIANT}/ ${BUILD_DIR}/download/\n\nCOPY m4/ ${BUILD_DIR}/m4/\nCOPY configure config.sub config.guess \\\n     install-sh missing aclocal.m4 \\\n     VERSION Makefile.in setup.py.in voice2json.sh.in voice2json.spec.in \\\n     requirements.txt \\\n     ${BUILD_DIR}/\n\nRUN cd ${BUILD_DIR} && \\\n    ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" --prefix=${APP_DIR} --disable-virtualenv\n\nCOPY scripts/install/ ${BUILD_DIR}/scripts/install/\n\nCOPY etc/profile.defaults.yml ${BUILD_DIR}/etc/\nCOPY etc/profiles/ ${BUILD_DIR}/etc/profiles/\nCOPY etc/precise/ ${BUILD_DIR}/etc/precise/\nCOPY site/ ${BUILD_DIR}/site/\n\nCOPY README.md LICENSE ${BUILD_DIR}/\nCOPY voice2json/ ${BUILD_DIR}/voice2json/\n\nRUN --mount=type=cache,id=pip-build,target=/root/.cache/pip \\\n    cd ${BUILD_DIR} && \\\n    make && \\\n    make install\n\nCOPY __main__.py ${BUILD_DIR}/\n\nCOPY debian/control.in /\n\n# Write shared variables to /.vars\nRUN export DEBIAN_ARCH=\"$(dpkg-architecture | grep DEB_BUILD_ARCH= | sed -e 's/[^=]\\\\+=//')\" && \\\n    export VERSION=\"$(cat ${BUILD_DIR}/VERSION)\" && \\\n    mkdir -p ${BUILD_DIR}/voice2json/DEBIAN && \\\n    sed -e s\"/@VERSION@/${VERSION}/\" -e \"s/@DEBIAN_ARCH@/${DEBIAN_ARCH}/\" < /control.in > ${BUILD_DIR}/voice2json/DEBIAN/control\n\nCOPY VERSION ${BUILD_DIR}/voice2json/usr/lib/voice2json/\nCOPY debian/voice2json ${BUILD_DIR}/voice2json/usr/bin/\n\n# Fix precise-engine link\nRUN cd ${APP_DIR}/bin && \\\n    ln -sf ../lib/precise/precise-engine\n\nRUN cd ${BUILD_DIR} && \\\n    dpkg --build voice2json\n\nRUN cd ${BUILD_DIR} && \\\n    dpkg-name *.deb\n\n# -----------------------------------------------------------------------------\n\nFROM scratch\n\nCOPY --from=build /build/*.deb /\n"
+}

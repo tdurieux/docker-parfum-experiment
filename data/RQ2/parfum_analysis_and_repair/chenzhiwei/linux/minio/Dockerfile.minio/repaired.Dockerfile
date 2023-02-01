@@ -1,0 +1,1 @@
+# podman build -t docker.io/siji/minio -f Dockerfile.minio .

@@ -1,0 +1,26 @@
+{
+  "startTime": 1674248230279,
+  "endTime": 1674248230944,
+  "originalSmells": [
+    {
+      "rule": "wgetUseHttpsUrl",
+      "position": {
+        "lineStart": 22,
+        "lineEnd": 22,
+        "columnStart": 2,
+        "columnEnd": 82
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 99,
+        "lineEnd": 120,
+        "columnStart": 2,
+        "columnEnd": 19
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM debian:testing-slim AS downloader\n\nARG RAV1E_VERSION=p20220531\nARG FFMPEG_VERSION=5.0\nARG BLUR_VERSION=1f77efa7947bd25a0e2fe6a1b632c832b7c4f033\n\nRUN mkdir -p /downloads/\n\nRUN  \\\n  apt-get update && \\\n  apt-get install -y --no-install-recommends \\\n  ca-certificates \\\n  wget \\\n  && rm -rf /var/lib/apt/lists/*\n\nRUN \\\n  cd /downloads/ && \\\n  wget https://github.com/xiph/rav1e/archive/refs/tags/${RAV1E_VERSION}.tar.gz -O rav1e.tar.gz && \\\n  tar zxf rav1e.tar.gz && rm rav1e.tar.gz && mv rav1e* rav1e\n\nRUN \\\n  cd /downloads/ && \\\n  wget https://ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.gz -O ffmpeg.tar.gz && \\\n  tar zxf ffmpeg.tar.gz && rm ffmpeg.tar.gz && mv ffmpeg-${FFMPEG_VERSION} ffmpeg\n\nRUN cd /downloads/ && \\\n  wget https://github.com/breunigs/frei0r-blur-from-json/archive/${BLUR_VERSION}.tar.gz && \\\n  tar zxf ${BLUR_VERSION}.tar.gz && rm ${BLUR_VERSION}.tar.gz && mv frei0r-blur-from-json-${BLUR_VERSION} blur\n\nFROM debian:testing-slim AS blur\nWORKDIR /build/\n\nRUN apt-get update \\\n  && apt-get install --yes --no-install-recommends \\\n  cmake \\\n  frei0r-plugins-dev \\\n  g++ \\\n  libboost-dev \\\n  libboost-iostreams-dev \\\n  libvips-dev \\\n  make \\\n  && rm -rf /var/lib/apt/lists/*\n\nCOPY --from=downloader /downloads/blur/ /build/.\nRUN cmake . && make\n\n\nFROM debian:testing-slim AS ffmpeg-build\n\nRUN \\\n  apt-get update \\\n  && apt-get install -y --no-install-recommends \\\n  autoconf \\\n  automake \\\n  binutils \\\n  build-essential \\\n  ca-certificates \\\n  cargo \\\n  cmake \\\n  curl \\\n  frei0r-plugins-dev \\\n  git \\\n  libdav1d-dev \\\n  libffmpeg-nvenc-dev \\\n  libssl-dev \\\n  libtool \\\n  libva-dev \\\n  libvpx-dev \\\n  libwebp-dev \\\n  libx264-dev \\\n  libx265-dev \\\n  libzimg-dev \\\n  make \\\n  meson \\\n  nasm \\\n  ninja-build \\\n  opencl-dev \\\n  pkg-config \\\n  yasm \\\n  && echo \"deb http://deb.debian.org/debian unstable main\" >> /etc/apt/sources.list \\\n  && apt-get update \\\n  && apt-get install -y --no-install-recommends -t unstable rustc \\\n  && rm -rf /var/lib/apt/lists/* \\\n  && cargo install cargo-c\n\nENV PREFIX=/build\nRUN mkdir ${PREFIX}\nENV CFLAGS=-O3\nENV CXXFLAGS=\"$CFLAGS\"\nENV LDFLAGS=\"$LDFLAGS -L${PREFIX}/lib\"\nENV LD_LIBRARY_PATH=\"${PREFIX}/lib\"\nENV PKG_CONFIG_PATH=\"${PREFIX}/lib/pkgconfig\"\n\nCOPY --from=downloader /downloads /downloads/\n\nRUN cd /downloads/rav1e && \\\n  RUSTFLAGS=\"-C target-cpu=native\" cargo cinstall --release --prefix ${PREFIX} --library-type staticlib\n\nRUN cd /downloads/ffmpeg && \\\n  ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" \\\n  --prefix=\"${PREFIX}\" \\\n  --extra-libs=\"-lm -lpthread\" \\\n  --extra-cflags=\"-I${PREFIX}/include -w -O3\" \\\n  --extra-ldflags=\"-L${PREFIX}/lib\" \\\n  --ld=\"g++\" \\\n  --enable-version3 \\\n  --enable-gpl \\\n  --enable-frei0r \\\n  --enable-libdav1d \\\n  --enable-librav1e \\\n  --enable-libvpx \\\n  --enable-libwebp \\\n  --enable-libx264 \\\n  --enable-libx265 \\\n  --enable-libzimg \\\n  --enable-opencl \\\n  --enable-vaapi \\\n  --disable-debug \\\n  --disable-doc \\\n  --disable-ffplay \\\n  --disable-ffprobe && \\\n  make -j $(nproc) && make install && make distclean\n\n\nFROM debian:testing-slim AS runner\nRUN \\\n  apt-get update && \\\n  apt-get install -y --no-install-recommends \\\n  i965-va-driver \\\n  libboost-iostreams1.74.0 \\\n  libdav1d[0-9]+ \\\n  libva-drm2 \\\n  libva2 \\\n  libvips42 \\\n  libvpx7 \\\n  libwebp[0-9]+ \\\n  libwebpmux3 \\\n  libx264-[0-9]+ \\\n  libx265-[0-9]+ \\\n  libzimg2 \\\n  mesa-opencl-icd \\\n  ocl-icd-libopencl1 \\\n  ocl-icd-opencl-dev \\\n  && rm -rf /var/lib/apt/lists/*\n\nRUN \\\n  echo \"deb http://deb.debian.org/debian unstable main\" >> /etc/apt/sources.list && \\\n  apt-get update && \\\n  apt-get install -y --no-install-recommends \\\n  beignet-opencl-icd \\\n  && rm -rf /var/lib/apt/lists/*\n\nRUN mkdir -p /usr/lib/frei0r-1/\nCOPY --from=blur /build/jsonblur.so /usr/lib/frei0r-1/\nCOPY --from=ffmpeg-build /build/bin/ffmpeg /usr/bin/\nWORKDIR /workdir\n\nARG RENDER_GID\nARG GID\nARG UID\nRUN addgroup --gid ${RENDER_GID} render && \\\n  addgroup --gid ${GID} dummy && \\\n  useradd -s /bin/bash -G render,video -g ${GID} -u ${UID} dummy\nUSER dummy\n\nCMD [\"/usr/bin/ffmpeg\"]\n"
+}

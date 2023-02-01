@@ -1,0 +1,35 @@
+{
+  "startTime": 1674217866515,
+  "endTime": 1674217867161,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 4,
+        "lineEnd": 4,
+        "columnStart": 32,
+        "columnEnd": 111
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 42,
+        "lineEnd": 42,
+        "columnStart": 7,
+        "columnEnd": 67
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 4,
+        "lineEnd": 4,
+        "columnStart": 32,
+        "columnEnd": 111
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Do the build in a rust image (we'll move the binaries later)\nFROM rust:1.58 as builder\n\n# Dependencies and environment variables\nRUN USER=root apt-get update && apt-get -y --no-install-recommends install libssl-dev libpocketsphinx-dev libsphinxbase-dev clang cmake && rm -rf /var/lib/apt/lists/*;\nENV LIBOPUS_STATIC=true\n\n# With Rust in Docker the best way to proceed is to first build the dependencies\n# (by setting up dummy projects) and then build the actual project.\n\n# First, populate workspace with dummies\nRUN USER=root \\\n    cargo new --bin lily && \\\n    cd lily && \\\n    cargo new --lib common && \\\n    cargo new --bin client\n\nWORKDIR /lily\n\n# Copy all project files\nCOPY ./common/Cargo.toml ./common/Cargo.toml\nCOPY ./client/Cargo.toml ./client/Cargo.toml\nCOPY ./Cargo.toml ./Cargo.toml\n\n# Build the dependencies\nRUN cargo build --release --package=lily\n\n\n# Actual build\n## Delete dummy sources\nRUN rm src/*.rs\n## Copy sources and build again\nCOPY . ./\nRUN \\\n    rm ./target/release/deps/lily* && \\\n    cargo build --release --package=lily\n\n# Move to final image and configure it\nFROM debian:bullseye-slim\nARG APP=/usr/src/app\n\nRUN apt-get update \\\n    && apt-get install --no-install-recommends -y libssl1.1 libpocketsphinx3 libsphinxbase3 \\\n    && rm -rf /var/lib/apt/lists/*\n\n# Ports\n## Unencrypted MQTT\nEXPOSE 1883\n## Encrypted MQTT\nEXPOSE 8883\n## CoAP\nEXPOSE 5683\n\nENV TZ=Etc/UTC \\\n    APP_USER=appuser\n\nRUN groupadd $APP_USER \\\n    && useradd -g $APP_USER $APP_USER \\\n    && mkdir -p ${APP}\n\nCOPY --from=builder \\\n    /lily/target/release/lily \\\n    ${APP}/lily\nCOPY resources ./resources\n\nRUN chown -R $APP_USER:$APP_USER ${APP}\n\nUSER $APP_USER\nWORKDIR ${APP}\n\nCMD [\"./lily\"]\n"
+}

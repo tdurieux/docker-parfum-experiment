@@ -1,0 +1,26 @@
+{
+  "startTime": 1674256114714,
+  "endTime": 1674256115569,
+  "originalSmells": [
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 88,
+        "lineEnd": 88,
+        "columnStart": 4,
+        "columnEnd": 22
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 38,
+        "lineEnd": 38,
+        "columnStart": 24,
+        "columnEnd": 77
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "#######################\n# Step 1: Base target #\n#######################\nFROM node:16.14.2-stretch-slim as base\nARG http_proxy\nARG https_proxy\nARG npm_registry\nARG no_proxy\n\n# Base dir /app\nWORKDIR /app\nRUN chown node:node /app\n# Expose the listening port of your app\nEXPOSE 8000\n\n# use proxy & private npm registry\n# With internal npm repo (autosigned) disable strict ssl : strict-ssl false\n# ENV TZ=\"Europe/Paris\" #Ne Pas mettre à cause des sources existant developpé sans TZ\nRUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo \"Europe/Paris\" > /etc/timezone ;\nRUN if [ ! -z \"$http_proxy\" ] ; then \\\n        npm config delete proxy; \\\n        npm config set proxy $http_proxy; \\\n        npm config set https-proxy $https_proxy ; \\\n        npm config set no-proxy $no_proxy; \\\n   fi ; \\\n   [ -z \"$npm_registry\" ] || npm config set registry=$npm_registry ; \\\n   [ -z \"$npm_registry\" ] || npm config set strict-ssl false\n\n################################\n# Step 2: \"development\" target #\n################################\nFROM base as development\nARG MIRROR_DEBIAN\nARG APP_VERSION\nARG MONGOMS_VERSION\n\nRUN (set -x && [ -z \"$MIRROR_DEBIAN\" ] || sed -i.orig -e \"s|http://deb.debian.org\\([^[:space:]]*\\)|$MIRROR_DEBIAN/debian9|g ; s|http://security.debian.org\\([^[:space:]]*\\)|$MIRROR_DEBIAN/debian9-security|g\" /etc/apt/sources.list) ; \\\n      buildPkgs=\"libcurl3 libssl1.1\" ; \\\n      apt-get update && apt-get install -y --no-install-recommends $buildPkgs && rm -rf /var/lib/apt/lists/*;\n\nCOPY src src/\nCOPY babel.config.js package.json package-lock.json ./\n# Install package utils for development\n# Install app dependencies\nRUN npm --no-git-tag-version version ${APP_VERSION} ; npm ci\nENV NODE_ICU_DATA=\"/app/node_modules/full-icu\"\nUSER node\n#CMD [\"npm\", \"start\"]\nCMD [\"npm\",\"run\",  \"dev\"]\n\n##########################\n# Step 3: \"build\" target #\n##########################\nFROM development as build\nARG MONGOMS_VERSION\nENV NPM_CONFIG_LOGLEVEL warn\n# Transpile the code with babel\nRUN npm run build\n\nUSER root\nRUN buildPkgs=\"libcurl3 libssl1.1\" ; \\\n      apt-get purge -y --auto-remove -o APT::AutoRemove::RecommendsImportant=false $buildPkgs ; \\\n      rm -rf /var/lib/apt/lists/* # remove the cached files\n\n\n\n###############################\n# Step 4: \"production\" target #\n###############################\n\nFROM build as production\nARG NPM_AUDIT_DRY_RUN\nENV NODE_ENV=production\nARG APP_VERSION\n\nCOPY package.json package-lock.json ./\nCOPY ci ci/\n# Copy the pm2 config\nCOPY ecosystem.config.js .\n# Copy the transpiled code to use in production (in /app)\nCOPY --from=build /app/dist ./dist\n# Install production dependencies and clean cache\nRUN unset NODE_ICU_DATA && \\\n    npm --no-git-tag-version version ${APP_VERSION} && \\\n    npm ci --production && \\\n    npm config set audit-level moderate && \\\n    npm audit --json --registry=https://registry.npmjs.org --production || ${NPM_AUDIT_DRY_RUN:-false} && \\\n    npm cache clean --force ; \\\n    npm install pm2 -g && npm cache clean --force;\nENV NODE_ICU_DATA=\"/app/node_modules/full-icu\"\n\nCMD [ \"pm2-runtime\", \"start\", \"ecosystem.config.js\", \"--env\", \"production\" ]\n"
+}

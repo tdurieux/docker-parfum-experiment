@@ -1,0 +1,24 @@
+FROM continuumio/miniconda3
+
+# allow print statements
+ENV PYTHONUNBUFFERED 1
+
+# Grab requirements.txt.
+RUN mkdir /code
+WORKDIR /code
+ADD ./requirements.txt /code/requirements.txt
+ADD ./pytest.ini /code/pytest.ini
+
+# Install dependencies
+RUN conda install -c conda-forge "python>=3.7.0" pip "paramtools>=0.5.4" "bokeh==1.2.0" gcsfs --yes && \
+    pip install --no-cache-dir -r requirements.txt
+
+# Add our code
+COPY ./webapp /code/webapp/
+WORKDIR /code
+
+ADD ./templates /code/templates/
+
+ADD ./manage.py /code/
+ADD ./static /code/static/
+RUN python manage.py collectstatic --noinput

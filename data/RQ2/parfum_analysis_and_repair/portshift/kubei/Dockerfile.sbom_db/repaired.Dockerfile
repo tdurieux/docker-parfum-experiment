@@ -1,0 +1,29 @@
+FROM golang:1.17.9-alpine AS builder
+
+RUN apk add --update --no-cache gcc g++ git
+
+WORKDIR /build/sbom_db
+COPY sbom_db/api ./api
+
+WORKDIR /build/sbom_db/backend
+COPY sbom_db/backend/go.* ./
+RUN go mod download
+
+ARG VERSION
+ARG BUILD_TIMESTAMP
+ARG COMMIT_HASH
+
+# Copy and build backend code
+COPY sbom_db/backend .
+RUN go build -ldflags="-s -w \
+     -X 'github.com/openclarity/kubeclarity/sbom_db/backend/pkg/version.Version=${VERSION}' \
+     -X 'github.com/openclarity/kubeclarity/sbom_db/backend/pkg/version.CommitHash=${COMMIT_HASH}' \
+     -X 'github.com/openclarity/kubeclarity/sbom_db/backend/pkg/version.BuildTimestamp=${BUILD_TIMESTAMP}'" -o sbom_db ./cmd/main.go
+
+FROM alpine:3.15.4
+
+WORKDIR /app
+
+COPY --from=builder ["/build/sbom_db/backend/sbom_db", "./sbom_db"]
+
+ENTRYPOINT ["/app/sbom_db"]

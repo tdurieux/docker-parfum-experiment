@@ -1,0 +1,35 @@
+{
+  "startTime": 1674255818066,
+  "endTime": 1674255818679,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 65,
+        "lineEnd": 65,
+        "columnStart": 4,
+        "columnEnd": 39
+      }
+    },
+    {
+      "rule": "sha256sumEchoOneSpaces",
+      "position": {
+        "lineStart": 55,
+        "lineEnd": 58,
+        "columnStart": 4,
+        "columnEnd": 41
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 29,
+        "lineEnd": 29,
+        "columnStart": 4,
+        "columnEnd": 86
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Licensed to the Apache Software Foundation (ASF) under one or more\n# contributor license agreements.  See the NOTICE file distributed with\n# this work for additional information regarding copyright ownership.\n# The ASF licenses this file to You under the Apache License, Version 2.0\n# (the \"License\"); you may not use this file except in compliance with\n# the License.  You may obtain a copy of the License at\n#\n#    http://www.apache.org/licenses/LICENSE-2.0\n#\n# Unless required by applicable law or agreed to in writing, software\n# distributed under the License is distributed on an \"AS IS\" BASIS,\n# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.\n# See the License for the specific language governing permissions and\n# limitations under the License.\n\nARG ZEPPELIN_DISTRIBUTION_IMAGE=zeppelin-distribution:latest\nFROM $ZEPPELIN_DISTRIBUTION_IMAGE AS zeppelin-distribution\n\nFROM ubuntu:20.04\n\nLABEL maintainer=\"Apache Software Foundation <dev@zeppelin.apache.org>\"\n\nARG version=\"0.10.0\"\n\nENV VERSION=\"${version}\" \\\n    ZEPPELIN_HOME=\"/opt/zeppelin\"\n\nRUN set -ex && \\\n    apt-get -y update && \\\n    DEBIAN_FRONTEND=noninteractive apt-get --no-install-recommends install -y openjdk-8-jre-headless wget tini && \\\n    # Cleanup\n    rm -rf /var/lib/apt/lists/* && \\\n    apt-get autoclean && \\\n    apt-get clean\n\nCOPY --from=zeppelin-distribution /opt/zeppelin/bin ${ZEPPELIN_HOME}/bin\nCOPY log4j.properties ${ZEPPELIN_HOME}/conf/\nCOPY log4j_yarn_cluster.properties ${ZEPPELIN_HOME}/conf/\n# Decide:\n## 1) Build a huge image with all interpreters (default)\nCOPY --from=zeppelin-distribution /opt/zeppelin/interpreter ${ZEPPELIN_HOME}/interpreter\n## 2) Build an image with only some interpreters\n#### Copy interpreter-shaded JAR, needed for all interpreters\n### COPY --from=zeppelin-distribution /opt/zeppelin/interpreter/zeppelin-interpreter-shaded-${VERSION}.jar ${ZEPPELIN_HOME}/interpreter/zeppelin-interpreter-shaded-${VERSION}.jar\n#### Copy specific interpreters,  replace \"${interpreter_name}\" with your interpreter. Of course you can repeat the line with defferent interpreter\n### COPY --from=zeppelin-distribution /opt/zeppelin/interpreter/${interpreter_name}  ${ZEPPELIN_HOME}/interpreter/${interpreter_name}\n\n\n# Decide: Install conda to manage python and R packages. Maybe adjust the packages in pip_packages.txt or conda_packages.txt\nARG miniconda_version=\"py38_4.8.3\"\nARG miniconda_sha256=\"879457af6a0bf5b34b48c12de31d4df0ee2f06a8e68768e5758c3293b2daf688\"\n# Install python and R packages via conda\nCOPY conda_packages.txt /conda_packages.txt\n# Some python packages are not available via conda, so we are using pip\nCOPY pip_packages.txt /pip_packages.txt\nRUN set -ex && \\\n    wget -nv https://repo.anaconda.com/miniconda/Miniconda3-${miniconda_version}-Linux-x86_64.sh -O miniconda.sh && \\\n    echo \"${miniconda_sha256}  miniconda.sh\" > anaconda.sha256 && \\\n    sha256sum --strict -c anaconda.sha256 && \\\n    bash miniconda.sh -b -p /opt/conda && \\\n    export PATH=/opt/conda/bin:$PATH && \\\n    conda config --set always_yes yes --set changeps1 no && \\\n    conda info -a && \\\n    conda config --add channels conda-forge && \\\n    conda install -y --quiet --file /conda_packages.txt && \\\n    pip install --no-cache-dir -q -r /pip_packages.txt && \\\n    # Cleanup\n    rm -v miniconda.sh anaconda.sha256 && \\\n    # Cleanup based on https://github.com/ContinuumIO/docker-images/commit/cac3352bf21a26fa0b97925b578fb24a0fe8c383\n    find /opt/conda/ -follow -type f -name '*.a' -delete && \\\n    find /opt/conda/ -follow -type f -name '*.js.map' -delete && \\\n    conda clean -ay\n    # Allow to modify conda packages. This allows malicious code to be injected into other interpreter sessions, therefore it is disabled by default\n    # chmod -R ug+rwX /opt/conda\nENV PATH /opt/conda/bin:$PATH\n\nRUN mkdir -p \"${ZEPPELIN_HOME}/logs\" \"${ZEPPELIN_HOME}/run\" \"${ZEPPELIN_HOME}/local-repo\" && \\\n     # Allow process to edit /etc/passwd, to create a user entry for zeppelin\n    chgrp root /etc/passwd && chmod ug+rw /etc/passwd && \\\n    # Give access to some specific folders\n    chmod -R 775 \"${ZEPPELIN_HOME}/logs\" \"${ZEPPELIN_HOME}/run\" \"${ZEPPELIN_HOME}/local-repo\"\n\nUSER 1000\nENTRYPOINT [ \"/usr/bin/tini\", \"--\" ]\nWORKDIR ${ZEPPELIN_HOME}\n"
+}

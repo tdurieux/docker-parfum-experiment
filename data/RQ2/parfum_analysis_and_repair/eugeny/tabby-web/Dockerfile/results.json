@@ -1,0 +1,44 @@
+{
+  "startTime": 1674254212483,
+  "endTime": 1674254213068,
+  "originalSmells": [
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 4,
+        "lineEnd": 4,
+        "columnStart": 4,
+        "columnEnd": 60
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 28,
+        "lineEnd": 28,
+        "columnStart": 4,
+        "columnEnd": 68
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 25,
+        "lineEnd": 25,
+        "columnStart": 4,
+        "columnEnd": 66
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 56,
+        "lineEnd": 56,
+        "columnStart": 4,
+        "columnEnd": 31
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM node:12-alpine AS frontend-build\nWORKDIR /app\nCOPY frontend/package.json frontend/yarn.lock ./\nRUN yarn install --frozen-lockfile --network-timeout 1000000 && yarn cache clean;\nCOPY frontend/webpack* frontend/tsconfig.json ./\nCOPY frontend/assets assets\nCOPY frontend/src src\nCOPY frontend/theme theme\nRUN yarn run build\nRUN yarn run build:server\n\nFROM node:12-alpine AS frontend\nWORKDIR /app\nCOPY --from=frontend-build /app/build build\nCOPY --from=frontend-build /app/build-server build-server\nCOPY frontend/package.json .\n\nCMD [\"npm\", \"start\"]\n\n# ----\n\nFROM python:3.7-alpine AS build-backend\nARG EXTRA_DEPS\n\nRUN apk add --no-cache build-base musl-dev libffi-dev openssl-dev mariadb-dev\n\nWORKDIR /app\nRUN pip install --no-cache-dir -U setuptools 'cryptography>=3.0,<3.1' poetry==1.1.7\nCOPY backend/pyproject.toml backend/poetry.lock ./\nRUN poetry config virtualenvs.path /venv\nRUN poetry install --no-dev --no-ansi --no-interaction\nRUN poetry run pip install -U setuptools $EXTRA_DEPS\n\nCOPY backend/manage.py backend/gunicorn.conf.py ./\nCOPY backend/tabby tabby\nCOPY --from=frontend /app/build /frontend\n\nARG BUNDLED_TABBY=1.0.163\n\nRUN FRONTEND_BUILD_DIR=/frontend /venv/*/bin/python ./manage.py collectstatic --noinput\nRUN FRONTEND_BUILD_DIR=/frontend /venv/*/bin/python ./manage.py add_version ${BUNDLED_TABBY}\n\nFROM python:3.7-alpine AS backend\n\nENV DOCKERIZE_VERSION v0.6.1\nENV DOCKERIZE_ARCH amd64\nARG TARGETPLATFORM\nRUN if [ \"$TARGETPLATFORM\" = \"linux/arm64\" ]; \\\n    then export DOCKERIZE_ARCH=armhf; \\\n    else export DOCKERIZE_ARCH=amd64; \\\n    fi\nRUN wget https://github.com/jwilder/dockerize/releases/download/$DOCKERIZE_VERSION/dockerize-linux-$DOCKERIZE_ARCH-$DOCKERIZE_VERSION.tar.gz \\\n    && tar -C /usr/local/bin -xzvf dockerize-linux-$DOCKERIZE_ARCH-$DOCKERIZE_VERSION.tar.gz \\\n    && rm dockerize-linux-$DOCKERIZE_ARCH-$DOCKERIZE_VERSION.tar.gz\n\nRUN apk add --no-cache mariadb-connector-c\n\nCOPY --from=build-backend /app /app\nCOPY --from=build-backend /venv /venv\n\nCOPY backend/start.sh backend/manage.sh /\nRUN chmod +x /start.sh /manage.sh\nCMD [\"/start.sh\"]\n"
+}

@@ -1,0 +1,33 @@
+FROM phpdockerio/php:8.0-fpm
+# https://github.com/bitrixdock/bitrixdock/blob/master/php74/Dockerfile
+
+RUN apt-get update \
+    && apt-get -y --allow-downgrades --no-install-recommends install \
+    php8.0-memcached \
+    php8.0-memcache \
+    php8.0-mbstring \
+    php8.0-mysql \
+    php8.0-intl \
+    php8.0-interbase \
+    php8.0-soap \
+    php8.0-gd \
+    php8.0-imagick \
+    php8.0-opcache \
+    php8.0-zip \
+    php-pear php8.0-dev libmcrypt-dev gcc make autoconf libc-dev pkg-config \
+    msmtp \
+    msmtp-mta \
+    sudo \
+    cron \
+    && pecl install mcrypt-1.0.4 \
+    && apt-get clean; rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/* /usr/share/doc/*
+
+# msmtp to allow email sending
+# msmtp-mta to allow sendmail usage with msmtp
+# sudo to allow create logfile with www-data user
+# cron to run cronjobs in a separate container
+
+RUN usermod -u 1000 www-data
+RUN groupmod -g 1000 www-data
+
+EXPOSE 9000

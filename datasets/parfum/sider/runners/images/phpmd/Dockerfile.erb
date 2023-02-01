@@ -1,0 +1,5 @@
+<%= render_erb 'images/Dockerfile.php.erb' %>
+
+COPY --chown=<%= chown %> images/<%= analyzer %>/sider_recommended_phpmd.xml ${RUNNER_USER_HOME}/
+
+<%= render_erb 'images/Dockerfile.end.erb' %>

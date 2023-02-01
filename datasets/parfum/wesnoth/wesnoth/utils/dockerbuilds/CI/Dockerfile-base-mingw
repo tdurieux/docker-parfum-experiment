@@ -1,0 +1,13 @@
+FROM wesnoth/wesnoth:msys2-base
+
+RUN pacman -S --noconfirm scons mingw-w64-gcc pkg-config python-pefile expect nsis git
+
+RUN pacman-cross -S --noconfirm \
+    mingw-w64-x86_64-boost \
+    mingw-w64-x86_64-SDL2 \
+    mingw-w64-x86_64-SDL2_image \
+    mingw-w64-x86_64-SDL2_mixer \
+    mingw-w64-x86_64-pango
+
+#symlink for compatibility with previous Dockerfiles
+RUN ln -s /msys64 /windows

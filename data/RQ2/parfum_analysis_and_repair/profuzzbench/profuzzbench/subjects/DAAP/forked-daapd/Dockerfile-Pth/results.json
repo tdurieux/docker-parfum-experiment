@@ -1,0 +1,62 @@
+{
+  "startTime": 1674249354145,
+  "endTime": 1674249355496,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 58,
+        "lineEnd": 58,
+        "columnStart": 4,
+        "columnEnd": 26
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 75,
+        "lineEnd": 75,
+        "columnStart": 4,
+        "columnEnd": 32
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 106,
+        "lineEnd": 106,
+        "columnStart": 4,
+        "columnEnd": 360
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 118,
+        "lineEnd": 118,
+        "columnStart": 4,
+        "columnEnd": 396
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 4,
+        "lineEnd": 23,
+        "columnStart": 4,
+        "columnEnd": 54
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 4,
+        "lineEnd": 23,
+        "columnStart": 4,
+        "columnEnd": 54
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM ubuntu:18.04\n\n# Install common dependencies\nRUN apt-get -y update && \\\n    apt-get -y --no-install-recommends install sudo \\\n    apt-utils \\\n    build-essential \\\n    openssl \\\n    clang \\\n    graphviz-dev \\\n    git \\\n    libgnutls28-dev \\\n    python-pip \\\n    nano \\\n    net-tools \\\n    vim \\\n    bison \\\n    flex \\\n    autotools-dev autoconf automake libtool gettext gawk \\\n    gperf antlr3 libantlr3c-dev libconfuse-dev libunistring-dev libsqlite3-dev \\\n    libavcodec-dev libavformat-dev libavfilter-dev libswscale-dev libavutil-dev \\\n    libasound2-dev libmxml-dev libgcrypt20-dev libavahi-client-dev zlib1g-dev \\\n    libevent-dev libplist-dev libsodium-dev libjson-c-dev libwebsockets-dev \\\n    libcurl4-openssl-dev avahi-daemon cmake libpth-dev && rm -rf /var/lib/apt/lists/*;\n\n# Add a new user ubuntu, pass: ubuntu\nRUN groupadd ubuntu && \\\n    useradd -rm -d /home/ubuntu -s /bin/bash -g ubuntu -G sudo -u 1000 ubuntu -p \"$(openssl passwd -1 ubuntu)\"\n\n# Use ubuntu as default username\nUSER ubuntu\nWORKDIR /home/ubuntu\n\n# Download and compile AFLNet\nENV LLVM_CONFIG=\"llvm-config-6.0\"\n\n# Set up fuzzers\nRUN git clone https://github.com/profuzzbench/aflnet.git && \\\n    cd aflnet && \\\n    make clean all && \\\n    cd llvm_mode && make\n\nRUN git clone https://github.com/profuzzbench/aflnwe.git && \\\n    cd aflnwe && \\\n    make clean all && \\\n    cd llvm_mode && make\n\n# Set up environment variables for AFLNet\nENV WORKDIR=\"/home/ubuntu/experiments\"\nENV AFLNET=\"/home/ubuntu/aflnet\"\nENV PATH=\"${PATH}:${AFLNET}:/home/ubuntu/.local/bin:${WORKDIR}\"\nENV AFL_PATH=\"${AFLNET}\"\nENV AFL_I_DONT_CARE_ABOUT_MISSING_CRASHES=1 \\\n    AFL_SKIP_CPUFREQ=1 \\\n    AFL_NO_AFFINITY=1\nENV LD_LIBRARY_PATH=$WORKDIR/libwebsockets/build/lib/:$WORKDIR/libevent/build/lib/:$WORKDIR/gnu-pth/.libs/\n\nRUN mkdir $WORKDIR && \\\n    pip install --no-cache-dir gcovr==4.2\n\nCOPY --chown=ubuntu:ubuntu forked-daapd.patch ${WORKDIR}/forked-daapd.patch\nCOPY --chown=ubuntu:ubuntu forked-daapd-gcov.patch ${WORKDIR}/forked-daapd-gcov.patch\nCOPY --chown=ubuntu:ubuntu libevent.patch ${WORKDIR}/libevent.patch\nCOPY --chown=ubuntu:ubuntu libwebsockets.patch ${WORKDIR}/libwebsockets.patch\nCOPY --chown=ubuntu:ubuntu in-daap ${WORKDIR}/in-daap\nCOPY --chown=ubuntu:ubuntu cov_script.sh ${WORKDIR}/cov_script\nCOPY --chown=ubuntu:ubuntu run.sh ${WORKDIR}/run\nCOPY --chown=ubuntu:ubuntu MP3 ${WORKDIR}/MP3\nCOPY --chown=ubuntu:ubuntu forked-daapd.conf ${WORKDIR}/forked-daapd.conf\n\n# Compile dependencies\nRUN cd $WORKDIR && \\\n    git clone https://github.com/danluu/gnu-pth.git && \\\n    cd gnu-pth && \\\n    git checkout 5e514e1 && \\\n    ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" --enable-pthread && \\\n    make\n\nRUN cd $WORKDIR && \\\n    git clone https://github.com/libevent/libevent.git && \\\n    cd libevent && \\\n    git checkout 5df3037 && \\\n    patch -p1 < $WORKDIR/libevent.patch && \\\n    mkdir build && \\\n    cd build && \\\n    cmake -DEVENT__DISABLE_TESTS=ON -DEVENT__DISABLE_SAMPLES=ON -DEVENT__DISABLE_REGRESS=ON -DEVENT__DISABLE_BENCHMARK=ON .. && \\\n    perl -p -i -e 'if(/POLL|EVENTFD|KQUEUE/) { $_ = \"//\".$_; }' include/event2/event-config.h && \\\n    make\n\nRUN cd $WORKDIR && \\\n    git clone https://github.com/warmcat/libwebsockets.git && \\\n    cd libwebsockets && \\\n    git checkout 5a247a5 && \\\n    patch -p1 < $WORKDIR/libwebsockets.patch && \\\n    mkdir build && \\\n    cd build && \\\n    cmake -DLWS_WITHOUT_TESTAPPS=ON -DLWS_WITHOUT_TEST_CLIENT=ON -DLWS_WITHOUT_TEST_ECHO=ON -DLWS_WITHOUT_TEST_FRAGGLE=ON -DLWS_WITHOUT_TEST_PING=ON -DLWS_WITHOUT_TEST_SERVER=ON -DLWS_WITHOUT_TEST_SERVER_EXTPOLL=ON .. && \\\n    make\n\n# Download and compile forked-daapd for fuzzing\nRUN cd $WORKDIR && \\\n    git clone https://github.com/ejurgensen/forked-daapd.git && \\\n    cd forked-daapd && \\\n    git checkout 2ca10d9 && \\\n    patch -p1 < $WORKDIR/forked-daapd.patch && \\\n    autoreconf -i && \\\n    CC=$AFLNET/afl-clang-fast CFLAGS=\"-DSQLITE_CORE\" LDFLAGS=\"-L$WORKDIR/libevent/build/lib/ -L$WORKDIR/gnu-pth/.libs/ -L$WORKDIR/libwebsockets/build/lib/\" LIBS=\"-lpth\" ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" --prefix=/usr --sysconfdir=/etc --localstatedir=/var --disable-mpd --disable-itunes --disable-lastfm --disable-spotify --disable-verification --disable-shared --enable-static && \\\n    make clean all\n\n\n# Download and compile forked-daapd for code coverage analysis\nRUN cd $WORKDIR && \\\n    git clone https://github.com/ejurgensen/forked-daapd.git forked-daapd-gcov && \\\n    cd forked-daapd-gcov && \\\n    git checkout 2ca10d9 && \\\n    patch -p1 < $WORKDIR/forked-daapd.patch && \\\n    patch -p1 < $WORKDIR/forked-daapd-gcov.patch && \\\n    autoreconf -i && \\\n    CFLAGS=\"-DSQLITE_CORE -fprofile-arcs -ftest-coverage\" LDFLAGS=\"-fprofile-arcs -ftest-coverage -L$WORKDIR/libevent/build/lib/ -L$WORKDIR/gnu-pth/.libs/ -L$WORKDIR/libwebsockets/build/lib/\" LIBS=\"-lpth\" ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" --prefix=/usr --sysconfdir=/etc --localstatedir=/var --disable-mpd --disable-itunes --disable-lastfm --disable-spotify --disable-verification --disable-shared --enable-static && \\\n    make clean all\n\n# Setting up the environment using root account\nUSER root\n\nRUN touch /var/log/forked-daapd.log && \\\n    chown ubuntu.root /var/log/forked-daapd.log\n\nRUN touch /var/run/forked-daapd.pid && \\\n    chown ubuntu.root /var/run/forked-daapd.pid\n\nRUN update-rc.d avahi-daemon defaults\n\nRUN mkdir /usr/share/forked-daapd/ && \\\n    cp -R $WORKDIR/forked-daapd/htdocs /usr/share/forked-daapd/htdocs\n\nRUN ln -s $WORKDIR/MP3 /tmp/MP3\n\n#The script needs to launch dbus and avahi-daemon using sudo\nRUN echo \"ALL ALL=(ALL) NOPASSWD: ALL\" >> /etc/sudoers\n\n# Switch back to ubuntu account\nUSER ubuntu\nRUN mkdir ${WORKDIR}/db\n"
+}

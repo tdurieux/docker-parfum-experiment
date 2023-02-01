@@ -1,0 +1,16 @@
+FROM milmove/circleci-docker:milmove-cypress-f678d1c6a5e2085f733f5408b7affd628f9f3576
+
+# use the WORKDIR from the CI image
+# hadolint ignore=DL3045
+COPY . ./cypress
+# hadolint ignore=DL3045
+COPY cypress.json ./cypress.json
+# hadolint ignore=DL3045
+COPY mocha-reporter-config.json ./mocha-reporter-config.json
+
+USER root
+RUN chown -R circleci:circleci ./cypress cypress.json mocha-reporter-config.json
+USER circleci
+
+ENTRYPOINT ["./node_modules/.bin/cypress"]
+CMD ["run"]

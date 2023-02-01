@@ -1,0 +1,80 @@
+{
+  "startTime": 1674248910988,
+  "endTime": 1674248912471,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 79,
+        "lineEnd": 79,
+        "columnStart": 4,
+        "columnEnd": 145
+      }
+    },
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 35,
+        "lineEnd": 35,
+        "columnStart": 4,
+        "columnEnd": 43
+      }
+    },
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 37,
+        "lineEnd": 37,
+        "columnStart": 4,
+        "columnEnd": 59
+      }
+    },
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 54,
+        "lineEnd": 54,
+        "columnStart": 4,
+        "columnEnd": 43
+      }
+    },
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 60,
+        "lineEnd": 60,
+        "columnStart": 4,
+        "columnEnd": 72
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 77,
+        "lineEnd": 77,
+        "columnStart": 4,
+        "columnEnd": 27
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 34,
+        "lineEnd": 34,
+        "columnStart": 4,
+        "columnEnd": 85
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 77,
+        "lineEnd": 77,
+        "columnStart": 4,
+        "columnEnd": 27
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Copyright 2022 Google LLC\n#\n# Licensed under the Apache License, Version 2.0 (the \"License\");\n# you may not use this file except in compliance with the License.\n# You may obtain a copy of the License at\n#\n#      http://www.apache.org/licenses/LICENSE-2.0\n#\n# Unless required by applicable law or agreed to in writing, software\n# distributed under the License is distributed on an \"AS IS\" BASIS,\n# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.\n# See the License for the specific language governing permissions and\n# limitations under the License.\n\n# Stage 1 - Create yarn install skeleton layer\nFROM node:16-bullseye-slim AS packages\n\nWORKDIR /app\nCOPY package.json yarn.lock ./\n\nCOPY packages packages\nCOPY plugins plugins\n\nRUN find packages \\! -name \"package.json\" -mindepth 2 -maxdepth 2 -exec rm -rf {} \\+\n\n\n# Stage 2 - Install dependencies and build packages\nFROM node:16-bullseye-slim AS build\n\nWORKDIR /app\nCOPY --from=packages /app .\n\n# Install sqlite3 dependencies (required for the Backstage application)\nRUN apt-get update && \\\n    apt-get install -y --no-install-recommends libsqlite3-dev python3 build-essential && \\\n    yarn config set python /usr/bin/python3 && yarn cache clean; && rm -rf /var/lib/apt/lists/*;\n\nRUN yarn install --frozen-lockfile --network-timeout 600000 && rm -rf \"$(yarn cache dir)\" && yarn cache clean;\n\nCOPY . .\n\nRUN yarn tsc\nRUN yarn --cwd packages/backend build\n\n\n# Stage 3 - Build the base image\nFROM node:16-bullseye-slim as base-backstage-app\n\nWORKDIR /app\n\n# Install sqlite3 dependencies (required for the Backstage application)\nRUN apt-get update && \\\n    apt-get install -y --no-install-recommends libsqlite3-dev python3 build-essential && \\\n    rm -rf /var/lib/apt/lists/* && \\\n    yarn config set python /usr/bin/python3 && yarn cache clean;\n\n# Copy the install dependencies from the build stage and context\nCOPY --from=build /app/yarn.lock /app/package.json /app/packages/backend/dist/skeleton.tar.gz ./\nRUN tar xzf skeleton.tar.gz && rm skeleton.tar.gz\n\nRUN yarn install --frozen-lockfile --production --network-timeout 600000 && rm -rf \"$(yarn cache dir)\" && yarn cache clean;\n\n# Copy the built packages from the build stage\nCOPY --from=build /app/packages/backend/dist/bundle.tar.gz .\nRUN tar xzf bundle.tar.gz && rm bundle.tar.gz\n\n\n# backstage-app-local: Build the actual image with gke-gcloud-auth-plugin to allow the image to be ran locally\nFROM base-backstage-app as backstage-app-local\n\n# Copy configuration file\nCOPY app-config.yaml ./\n\n# Install gcloud and gke-gcloud-auth-plugin\n# https://cloud.google.com/sdk/docs/install#other_installation_options\n\nRUN apt-get update && \\\n    apt-get install --no-install-recommends -y curl && rm -rf /var/lib/apt/lists/*;\n\nRUN curl -f https://dl.google.com/dl/cloudsdk/channels/rapid/downloads/google-cloud-cli-392.0.0-linux-x86_64.tar.gz --output google-cloud-sdk.tar.gz && \\\n    tar -xzf ./google-cloud-sdk.tar.gz && \\\n    google-cloud-sdk/install.sh && \\\n    rm -rf ./google-cloud-sdk.tar.gz\n\nRUN google-cloud-sdk/bin/gcloud components install gke-gcloud-auth-plugin\n\nENV PATH=\"/app/google-cloud-sdk/bin:${PATH}\"\n\nCMD [\"node\", \"packages/backend\", \"--config\", \"app-config.yaml\"]\n\n\n# backstage-app: Build the actual image that can be deployed to GKE\nFROM base-backstage-app as backstage-app\n\n# Copy any other files that we need at runtime\nCOPY app-config.yaml app-config.production.yaml ./\n\nCMD [\"node\", \"packages/backend\", \"--config\", \"app-config.yaml\", \"--config\", \"app-config.production.yaml\"]\n"
+}

@@ -1,0 +1,31 @@
+FROM ubuntu:xenial
+
+RUN apt-get update \
+  && apt-get install --no-install-recommends -y wget software-properties-common \
+  && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /root
+
+RUN add-apt-repository -y ppa:ethereum/ethereum
+
+ARG binary
+RUN apt-get update \
+  && apt-get install --no-install-recommends -y ethereum && rm -rf /var/lib/apt/lists/*;
+
+ARG password
+ARG privatekey
+RUN echo $password > ~/.accountpassword
+RUN echo $privatekey > ~/.privatekey
+ADD ./genesis.json ./genesis.json
+RUN geth init genesis.json
+RUN geth account import --password ~/.accountpassword  ~/.privatekey
+
+ENV address=""
+ENV bootnodeId=""
+ENV bootnodeIp=""
+
+CMD exec geth --bootnodes "enode://$bootnodeId@$bootnodeIp:30301" --nodekeyhex $nodekeyhex --networkid "6660001" --verbosity 4  --http --http.addr "0.0.0.0" --http.port 8545 --http.api "eth,web3,net,admin,debug,miner,personal" --http.corsdomain "*" --ws --ws.addr "0.0.0.0" --ws.port 8546 --ws.api "eth,web3,net,admin,debug,miner,personal" --ws.origins "*" --syncmode full --mine --miner.gasprice 0 --miner.etherbase $address --unlock $address --password ~/.accountpassword --allow-insecure-unlock
+
+EXPOSE 8545
+EXPOSE 8546
+EXPOSE 30303

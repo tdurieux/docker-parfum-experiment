@@ -1,0 +1,35 @@
+{
+  "startTime": 1674220312582,
+  "endTime": 1674220314879,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 42,
+        "lineEnd": 42,
+        "columnStart": 4,
+        "columnEnd": 92
+      }
+    },
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 110,
+        "lineEnd": 110,
+        "columnStart": 4,
+        "columnEnd": 51
+      }
+    },
+    {
+      "rule": "gpgUseBatchFlag",
+      "position": {
+        "lineStart": 28,
+        "lineEnd": 28,
+        "columnStart": 62,
+        "columnEnd": 107
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM girder/tox-and-node\nLABEL maintainer=\"Kitware, Inc. <kitware@kitware.com>\"\n\nENV LANG en_US.UTF-8\n\n# Install some additional packages\nRUN apt-get update && \\\n    apt-get install -y --no-install-recommends \\\n    # For ease of running tox tests inside containers \\\n    iptables \\\n    dnsutils \\\n    # Install some additional packages for convenience when testing \\\n    bsdmainutils \\\n    iputils-ping \\\n    telnet-ssl \\\n    tmux \\\n    # For developer convenience \\\n    nano \\\n    # Needed for su command\n    # sudo \\\n    && \\\n    apt-get clean && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/* && \\\n    find / -xdev -name '*.py[oc]' -type f -exec rm {} \\+ && \\\n    find / -xdev -name __pycache__ -type d -exec rm -r {} \\+\n\n# Install docker command line tools.  If docker is unavailable, this will do no\n# harm.  If the host system isn't ubuntu, this should still allow debug.\nRUN mkdir -p /etc/apt/keyrings && \\\n    curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --batch --dearmor -o /etc/apt/keyrings/docker.gpg && \\\n    echo \\\n    \"deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \\\n    $(lsb_release -cs) stable\" | tee /etc/apt/sources.list.d/docker.list >/dev/null && \\\n    ls -al /etc/apt/sources.list.d && \\\n    cat /etc/apt/sources.list.d/docker.list && \\\n    apt-get update && \\\n    apt-get install -y --no-install-recommends \\\n    docker-ce-cli \\\n    && \\\n    apt-get clean && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/* && \\\n    find / -xdev -name '*.py[oc]' -type f -exec rm {} \\+ && \\\n    find / -xdev -name __pycache__ -type d -exec rm -r {} \\+\n\nRUN curl -f -LJ https://github.com/krallin/tini/releases/download/v0.19.0/tini -o /usr/bin/tini && \\\n    chmod +x /usr/bin/tini\n\n# Make a virtualenv with our preferred python\nRUN virtualenv --python 3.9 /opt/venv\nENV PATH=\"/opt/venv/bin:$PATH\"\n\n# Make sure core packages are up to date\nRUN python --version && \\\n    pip install --no-cache-dir -U pip && \\\n    pip install --no-cache-dir -U tox wheel\n\n# Clone packages and pip install what we want to be local\nRUN cd /opt && \\\n    git clone https://github.com/girder/girder && \\\n    cd /opt/girder && \\\n    pip install --no-cache-dir -e .[mount] && \\\n    pip install --no-cache-dir -e clients/python\n\nRUN cd /opt && \\\n    git clone https://github.com/girder/girder_worker_utils && \\\n    cd /opt/girder_worker_utils && \\\n    pip install --no-cache-dir -e .\n\nRUN cd /opt && \\\n    git clone https://github.com/girder/girder_worker && \\\n    cd /opt/girder_worker && \\\n    pip install --no-cache-dir -e .[girder,worker]\n\nRUN cd /opt && \\\n    git clone https://github.com/DigitalSlideArchive/import-tracker.git && \\\n    cd /opt/import-tracker && \\\n    pip install --no-cache-dir -e .\n\nRUN cd /opt && \\\n    git clone https://github.com/girder/slicer_cli_web && \\\n    cd /opt/slicer_cli_web && \\\n    pip install --no-cache-dir -e .\n\nRUN cd /opt && \\\n    git clone https://github.com/girder/large_image && \\\n    cd /opt/large_image && \\\n    pip install --no-cache-dir --find-links https://girder.github.io/large_image_wheels -e .[memcached] -rrequirements-dev.txt\n\nRUN cd /opt && \\\n    git clone https://github.com/DigitalSlideArchive/HistomicsUI && \\\n    cd /opt/HistomicsUI && \\\n    pip install --no-cache-dir -e .[analysis]\n\n# Install additional girder plugins\nRUN pip install --no-cache-dir --pre \\\n    girder-archive-access \\\n    girder-dicom-viewer \\\n    girder-homepage \\\n    girder-ldap \\\n    girder-resource-path-tools \\\n    girder-virtual-folders \\\n    girder-xtk-demo\n\n# Build the girder web client\nRUN NPM_CONFIG_FUND=false NPM_CONFIG_AUDIT=false NPM_CONFIG_AUDIT_LEVEL=high NPM_CONFIG_LOGLEVEL=warn NPM_CONFIG_PROGRESS=false NPM_CONFIG_PREFER_OFFLINE=true \\\n    girder build --dev && \\\n    # Get rid of unnecessary files to keep the docker image smaller \\\n    find /opt -xdev -name node_modules -exec rm -rf {} \\+ && \\\n    find /opt -name package-lock.json -exec rm -f {} \\+ && \\\n    rm -rf /tmp/* ~/.npm\n\n# Install phantomjs for testing\nRUN npm install -g phantomjs-prebuilt --unsafe-perm && \\\n    rm -rf /tmp/* ~/.npm && npm cache clean --force;\n\n# When running the worker, adjust some settings\nRUN echo 'task_reject_on_worker_lost = True' >> /opt/girder_worker/girder_worker/celeryconfig.py\nRUN echo 'task_acks_late = True' >> /opt/girder_worker/girder_worker/celeryconfig.py\n\nCOPY . /opt/digital_slide_archive\n\nENV PATH=\"/opt/digital_slide_archive/devops/dsa/utils:$PATH\"\n\nWORKDIR /opt/HistomicsUI\n\n# add a variety of directories\nRUN mkdir -p /fuse --mode=a+rwx && \\\n    mkdir /logs && \\\n    mkdir /assetstore && \\\n    mkdir /mounts --mode=a+rwx\n\nRUN cp /opt/digital_slide_archive/devops/dsa/utils/.vimrc ~/.vimrc && \\\n    cp /opt/digital_slide_archive/devops/dsa/girder.cfg /etc/girder.cfg && \\\n    cp /opt/digital_slide_archive/devops/dsa/worker.local.cfg /opt/girder_worker/girder_worker/.\n\n# Better shutdown signalling\nENTRYPOINT [\"/usr/bin/tini\", \"--\"]\n\nCMD bash\n"
+}

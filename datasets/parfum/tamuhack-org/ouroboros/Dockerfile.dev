@@ -1,0 +1,11 @@
+FROM python:3.6
+
+WORKDIR /app
+
+COPY hiss /app
+
+RUN python3 -m pip install -r requirements.txt
+
+RUN python3 manage.py collectstatic --no-input
+
+CMD python3 manage.py runserver 0.0.0.0:$PORT

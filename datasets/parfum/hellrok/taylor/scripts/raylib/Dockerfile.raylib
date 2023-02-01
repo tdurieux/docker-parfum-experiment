@@ -1,0 +1,54 @@
+FROM debian:stable as raylib_base
+
+WORKDIR /app
+
+RUN \
+  apt-get update -y && \
+  apt-get upgrade -y && \
+  apt-get install -y --no-install-recommends \
+    ca-certificates \
+    git && \
+  apt-get clean -y && apt-get autoremove -y && \
+  git clone --branch 4.0.0 --depth 1 https://github.com/raysan5/raylib.git .
+
+#RUN apt-get update && \
+#  apt-get install \
+#  build-essential \
+#  -y
+
+COPY ./scripts/raylib/tweaks.patch /app/
+RUN git apply tweaks.patch
+
+FROM taylor/build-linux AS raylib_linux
+WORKDIR /app
+COPY --from=raylib_base /app /app
+RUN cd src && \
+  make PLATFORM=PLATFORM_DESKTOP
+
+FROM taylor/build-windows AS raylib_mingw
+WORKDIR /app
+COPY --from=raylib_base /app /app
+RUN cd src && \
+  make PLATFORM=PLATFORM_DESKTOP CROSS=MINGW
+
+FROM taylor/build-osx AS raylib_osx
+WORKDIR /app
+COPY --from=raylib_base /app /app
+RUN cd src && \
+  make clean && \
+  MACOSX_DEPLOYMENT_TARGET=10.11 make PLATFORM=PLATFORM_DESKTOP CROSS=OSX
+
+FROM taylor/build-web as raylib_web
+WORKDIR /app
+COPY --from=raylib_base /app /app
+COPY ./scripts/mruby/emscripten.rb /app/build_config/
+RUN cd src && \
+  make PLATFORM=PLATFORM_WEB -B
+
+FROM scratch AS export
+
+COPY --from=raylib_base /app/src/raylib.h ./vendor/raylib/include/
+COPY --from=raylib_linux /app/libraylib.a ./vendor/linux/raylib/lib/
+COPY --from=raylib_mingw /app/libraylib.a ./vendor/windows/raylib/lib/
+COPY --from=raylib_osx /app/libraylib.a ./vendor/osx/raylib/lib/
+COPY --from=raylib_web /app/src/libraylib.a ./vendor/web/raylib/lib/

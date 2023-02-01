@@ -1,0 +1,9 @@
+FROM node:15-alpine
+
+WORKDIR /app
+
+ENV NODE_ENV=development
+
+USER 1000
+
+CMD [ "yarn", "workspace", "@emjpm/app", "dev" ]

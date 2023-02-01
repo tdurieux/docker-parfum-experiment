@@ -1,0 +1,91 @@
+FROM ubuntu:18.04
+
+RUN apt-get update -qq
+RUN apt-get install --no-install-recommends -y software-properties-common && rm -rf /var/lib/apt/lists/*;
+RUN add-apt-repository ppa:apt-fast/stable
+RUN apt-get update -qq
+RUN apt-get -y --no-install-recommends install apt-fast && rm -rf /var/lib/apt/lists/*;
+
+# Prevent tzdata from prompting us for a timezone and hanging the build.
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN \
+  apt-fast update -qq && \
+  apt-fast install -y \
+  ed \
+  git \
+  python3 \
+  python3-pip \
+  libcurl4-openssl-dev \
+  libpq-dev \
+  zlib1g-dev \
+  curl \
+  wget && \
+  rm -rf /var/lib/apt/lists/*
+
+RUN groupadd user && useradd --create-home --home-dir /home/user -g user user
+WORKDIR /home/user
+
+# It's annoying that this can only be installed via git.
+RUN git clone https://github.com/deweylab/RSEM.git
+
+RUN cd RSEM && make install
+
+RUN rm -rf RSEM
+
+# Install Salmon
+
+# Tximport requires all experiments to be processed with the same version of Salmon to work https://github.com/AlexsLemonade/refinebio/issues/1496
+# This is something that should be considered when updating salmon, because
+# all samples from incomplete experiments must have salmon run on them again.
+ENV SALMON_VERSION 0.13.1
+
+# Doesn't work:
+# salmon: relocation error: /usr/local/bin/../lib/librt.so.1: symbol __vdso_clock_gettime, version GLIBC_PRIVATE not defined in file libc.so.6 with link time reference
+# ENV SALMON_VERSION 0.10.0
+
+# Binary releases moved to bioconda, doesn't work anymore.
+# ENV SALMON_VERSION 0.10.2
+
+RUN wget https://github.com/COMBINE-lab/salmon/releases/download/v${SALMON_VERSION}/Salmon-${SALMON_VERSION}_linux_x86_64.tar.gz
+
+RUN tar -xzf Salmon-${SALMON_VERSION}_linux_x86_64.tar.gz && rm Salmon-${SALMON_VERSION}_linux_x86_64.tar.gz
+
+# Salmon can extract to a different directory than the name of the tar file.
+RUN cp `tar -tzf Salmon-${SALMON_VERSION}_linux_x86_64.tar.gz | head -1 | cut -f1 -d"/"`/bin/salmon /usr/local/bin && rm Salmon-${SALMON_VERSION}_linux_x86_64.tar.gz
+
+RUN cp `tar -tzf Salmon-${SALMON_VERSION}_linux_x86_64.tar.gz | head -1 | cut -f1 -d"/"`/lib/* /usr/local/lib && rm Salmon-${SALMON_VERSION}_linux_x86_64.tar.gz
+
+RUN rm -r Salmon*
+# End Salmon installation.
+
+# Source: https://github.com/thisbejim/Pyrebase/issues/87#issuecomment-354452082
+# For whatever reason this worked and 'en_US.UTF-8' did not.
+ENV LANG C.UTF-8
+
+RUN pip3 install --no-cache-dir --upgrade pip
+
+COPY config/ config/
+COPY .boto .boto
+
+COPY workers/data_refinery_workers/processors/requirements.txt .
+
+RUN pip3 install --no-cache-dir -r requirements.txt
+
+COPY common/dist/data-refinery-common-* common/
+
+# Get the latest version from the dist directory.
+RUN pip3 install --no-cache-dir common/$(ls common -1 | sort --version-sort | tail -1)
+
+# Clear our the pip3 cache
+RUN rm -rf /root/.cache
+
+ARG SYSTEM_VERSION
+
+ENV SYSTEM_VERSION $SYSTEM_VERSION
+
+USER user
+
+COPY workers/ .
+
+ENTRYPOINT []

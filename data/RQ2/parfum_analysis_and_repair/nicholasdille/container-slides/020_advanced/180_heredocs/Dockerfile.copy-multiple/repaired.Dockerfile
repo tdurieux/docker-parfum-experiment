@@ -1,0 +1,19 @@
+# syntax=docker/dockerfile:1.3-labs
+
+FROM ubuntu:21.04
+
+COPY <<no-recommends <<no-suggests /etc/apt/apt.conf.d/
+APT::Install-Recommends "false";
+no-recommends
+APT::Install-Suggests "false";
+no-suggests
+
+RUN <<EOF
+apt-get update
+apt-get -y install \
+    python3
+EOF
+
+RUN python3 <<EOF
+print("bar")
+EOF

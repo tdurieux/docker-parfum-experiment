@@ -1,0 +1,107 @@
+FROM python:3.6.13
+ENV PYTHONUNBUFFERED 1
+ENV DEBIAN_FRONTEND noninteractive
+ENV MESSAGELEVEL QUIET
+
+ARG ENABLE_LDAP=false
+ARG ENABLE_PAM=false
+ARG ENABLE_PGP=false
+ARG ENABLE_GOOGLEBUILD=false
+ARG ENABLE_GLOBUS=false
+ARG ENABLE_SAML=false
+
+################################################################################
+# CORE
+# Do not modify this section
+
+RUN apt-get update && apt-get install --no-install-recommends -y \
+    pkg-config \
+    cmake \
+    openssl \
+    wget \
+    git \
+    vim && rm -rf /var/lib/apt/lists/*;
+
+RUN apt-get update && apt-get install --no-install-recommends -y \
+    anacron \
+    autoconf \
+    automake \
+    libarchive-dev \
+    libtool \
+    libopenblas-dev \
+    libglib2.0-dev \
+    gfortran \
+    libxml2-dev \
+    libxmlsec1-dev \
+    libhdf5-dev \
+    libgeos-dev \
+    libsasl2-dev \
+    libldap2-dev \
+    squashfs-tools \
+    build-essential && rm -rf /var/lib/apt/lists/*;
+
+# Install Python requirements out of /tmp so not triggered if other contents of /code change
+COPY requirements.txt /tmp/requirements.txt
+RUN pip install --no-cache-dir --upgrade pip
+RUN pip install --no-cache-dir -r /tmp/requirements.txt
+
+COPY . /code/
+
+################################################################################
+# PLUGINS
+# You are free to uncomment the plugins that you want to use
+
+# Install LDAP (uncomment if wanted)
+RUN if $ENABLE_LDAP; then \
+ pip install --no-cache-dir python3-ldap; fi;
+RUN if $ENABLE_LDAP; then \
+ pip install --no-cache-dir django-auth-ldap; fi;
+
+# Install PAM Authentication (uncomment if wanted)
+RUN if $ENABLE_PAM; then \
+ pip install --no-cache-dir django-pam; fi;
+
+# PGP keystore dependencies
+RUN if $ENABLE_PGP; then \
+ pip install --no-cache-dir pgpdump >=1.4; fi;
+
+# Ensure Google Build Installed
+RUN if $ENABLE_GOOGLEBUILD; then \
+ pip install --no-cache-dir sregistry[google-build]; fi;
+ENV SREGISTRY_GOOGLE_STORAGE_PRIVATE=true
+
+# Install Globus (uncomment if wanted)
+RUN if $ENABLE_GLOBUS; then /bin/bash /code/scripts/globus/globus-install.sh ; fi;
+
+# Install SAML (uncomment if wanted)
+RUN if $ENABLE_SAML; then \
+ pip install --no-cache-dir python3-saml; fi;
+RUN if $ENABLE_SAML; then \
+ pip install --no-cache-dir social-auth-core[saml]; fi;
+
+################################################################################
+# BASE
+
+RUN mkdir -p /code && mkdir -p /code/images
+RUN mkdir -p /var/www/images && chmod -R 0755 /code/images/
+
+WORKDIR /code
+RUN apt-get remove -y gfortran
+
+RUN apt-get autoremove -y
+RUN apt-get clean
+RUN rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
+
+# Install crontab to setup jobs
+RUN echo "0 0 * * * /usr/local/bin/python /code/manage.py reset_container_limits > /var/log/reset_container_limits.log 2>&1 " >> /code/cronjob
+RUN echo "0 1 * * * /bin/bash /code/scripts/backup_db.sh > /var/log/backup_db.log 2>&1 " >> /code/cronjob
+RUN echo "0 2 * * * /usr/local/bin/python /code/manage.py cleanup_dummy > /var/log/cleanup_dummy.log 2>&1 " >> /code/cronjob
+RUN crontab /code/cronjob
+RUN rm /code/cronjob
+
+# Create hashed temporary upload locations
+RUN mkdir -p /var/www/images/_upload/{0..9} && chmod 777 -R /var/www/images/_upload
+
+CMD /code/run_uwsgi.sh
+
+EXPOSE 3031

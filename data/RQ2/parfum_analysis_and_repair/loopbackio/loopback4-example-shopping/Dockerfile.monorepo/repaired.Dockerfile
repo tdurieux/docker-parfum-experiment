@@ -1,0 +1,13 @@
+# Stage 1: build the monorepo
+# Use the full image so that binary modules can be built
+FROM node:18
+
+# Set to a non-root built-in user `node`
+USER node
+
+# Create app directory (with user `node`)
+RUN mkdir -p /home/node/app
+
+WORKDIR /home/node/app
+
+# Bundle app source code

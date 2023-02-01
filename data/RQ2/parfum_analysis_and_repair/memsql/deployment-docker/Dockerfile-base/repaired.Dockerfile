@@ -1,0 +1,41 @@
+ARG BASE_IMAGE
+FROM ${BASE_IMAGE}
+
+COPY licenses /licenses
+
+# we need to create the memsql user with uid 999 and gid 998 to be compatible with previous centos images
+# user-change.sh does this
+COPY setup/user-change.sh /
+RUN /user-change.sh
+RUN rm /user-change.sh
+
+# Tell yum to yell on missing packages.
+# https://serverfault.com/a/923357
+RUN yum install yum-utils -y && rm -rf /var/cache/yum
+RUN yum-config-manager --save --setopt=skip_missing_names_on_install=0
+
+# updates and basic utilities
+ARG RELEASE_CHANNEL=production
+RUN yum -y update-minimal --setopt=tsflags=nodocs \
+      --security --sec-severity=Important --sec-severity=Critical \
+ && yum install -y yum-utils wget procps && rm -rf /var/cache/yum
+
+RUN yum-config-manager --add-repo https://release.memsql.com/${RELEASE_CHANNEL}/rpm/x86_64/repodata/memsql.repo \
+ && yum clean all
+
+RUN dnf --enablerepo=* clean all && dnf update -y; exit 0
+
+RUN yum remove vim-minimal platform-python-pip.noarch -y
+
+# jq 1.6
+ENV JQ_VERSION='1.6'
+RUN wget --no-check-certificate https://raw.githubusercontent.com/stedolan/jq/master/sig/jq-release.key -O /tmp/jq-release.key && \
+    wget --no-check-certificate https://raw.githubusercontent.com/stedolan/jq/master/sig/v${JQ_VERSION}/jq-linux64.asc -O /tmp/jq-linux64.asc && \
+    wget --no-check-certificate https://github.com/stedolan/jq/releases/download/jq-${JQ_VERSION}/jq-linux64 -O /tmp/jq-linux64 && \
+    gpg --batch --import /tmp/jq-release.key && \
+    gpg --batch --verify /tmp/jq-linux64.asc /tmp/jq-linux64 && \
+    cp /tmp/jq-linux64 /usr/bin/jq && \
+    chmod +x /usr/bin/jq && \
+    rm -f /tmp/jq-release.key && \
+    rm -f /tmp/jq-linux64.asc && \
+    rm -f /tmp/jq-linux64

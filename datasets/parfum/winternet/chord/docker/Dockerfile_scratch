@@ -1,0 +1,55 @@
+FROM ubuntu:20.04 AS build
+
+#
+# install dependencies
+#
+ENV DEBIAN_FRONTEND=noninteractive 
+RUN apt-get update \
+    && apt-get -y install build-essential \
+            git \
+            cmake \
+            ninja-build \
+            autoconf \
+            pkg-config \
+            python3 \
+            python3-pip && pip3 install conan
+
+#
+# build project
+#
+COPY . /opt/chord
+WORKDIR /opt/chord
+
+RUN rm -rf build && mkdir build && cd build \
+    && conan config set general.revisions_enabled=True \
+    && conan remote add bincrafters https://bincrafters.jfrog.io/artifactory/api/conan/public-conan \
+    && conan config set general.revisions_enabled=1 \
+    && conan install .. --build=missing -s compiler.libcxx=libstdc++11 \
+    && cmake .. \
+        -G Ninja \
+        -DBUILD_GMOCK=OFF \
+        -DBUILD_TESTING=OFF \
+        -DINSTALL_GTEST=OFF \
+        -Dchord_BUILD_TESTS=OFF \
+        -DCMAKE_BUILD_TYPE=Release \
+    && cmake --build . -- -j$(nproc)
+
+#
+# create chroot env
+#
+WORKDIR /opt/chord/build/bin
+RUN mkdir -p /chroot/bin \
+    && cp ./chord /chroot/bin \
+    && ldd ./chord | grep -oP '/[^ ]*' | xargs -I '{}' cp --parents -v '{}' /chroot/
+
+#
+# node image
+#
+FROM scratch
+
+COPY --from=build /chroot /
+
+EXPOSE 50050
+
+ENTRYPOINT ["/bin/chord"]
+CMD ["-b"]

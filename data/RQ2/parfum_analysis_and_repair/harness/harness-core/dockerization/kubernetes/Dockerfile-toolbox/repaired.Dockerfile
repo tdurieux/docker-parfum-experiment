@@ -1,0 +1,24 @@
+FROM ubuntu:18.04
+
+RUN apt-get update && apt-get -y upgrade && apt-get -y --no-install-recommends install apt-utils curl unzip apt-transport-https gnupg2 libssl1.0.0 jq gcc python-dev python-setuptools libffi-dev python-pip && rm -rf /var/lib/apt/lists/*;
+RUN curl -f -s https://packages.cloud.google.com/apt/doc/apt-key.gpg | apt-key add -
+COPY apt-source-list /etc/apt/sources.list.d/kubernetes.list
+RUN apt-get update && apt-get install --no-install-recommends -y kubectl && rm -rf /var/lib/apt/lists/*;
+
+ENV PATH ${PATH}:/opt/gsutil
+
+#
+# mongo
+#
+RUN curl -f -O https://repo.mongodb.com/apt/ubuntu/dists/xenial/mongodb-enterprise/4.0/multiverse/binary-amd64/mongodb-enterprise-shell_4.0.4_amd64.deb
+RUN dpkg -i mongodb-enterprise-shell_4.0.4_amd64.deb
+
+#
+# gsutil
+#
+RUN pip install --no-cache-dir pyasn1 --upgrade
+RUN curl -f -o gsutil.tar.gz https://storage.googleapis.com/pub/gsutil.tar.gz \
+    && tar -xzf gsutil.tar.gz -C /opt && rm gsutil.tar.gz
+# RUN pip install gsutil
+
+CMD bash -c 'while true; do sleep 10; done'

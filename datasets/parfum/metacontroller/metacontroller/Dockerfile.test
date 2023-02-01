@@ -1,0 +1,12 @@
+FROM golang:1.18.3 as tester
+
+COPY . /go/src/metacontroller/
+WORKDIR /go/src/metacontroller/
+RUN mkdir tmp
+RUN test/integration/hack/get-kube-binaries.sh
+RUN make vendor
+RUN make unit-test
+RUN make integration-test
+
+FROM scratch as artifact
+COPY --from=tester /go/src/metacontroller/test/integration/hack/tmp/*.out  /

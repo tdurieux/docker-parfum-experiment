@@ -1,0 +1,3 @@
+# gradle cosid-proxy-server:installDist
+# docker buildx build --push --platform linux/amd64,linux/arm64 -t ahoowang/cosid-proxy:TAG .
+# docker run --name cosid-proxy -d -p 8688:8688 --link redis -e SPRING_REDIS_URL=redis://redis:6379 ahoowang/cosid-proxy:main --health-cmd "curl --fail --silent localhost:8688/actuator/health | grep UP || exit 1" --health-interval 10s --health-timeout 5s --health-retries 5

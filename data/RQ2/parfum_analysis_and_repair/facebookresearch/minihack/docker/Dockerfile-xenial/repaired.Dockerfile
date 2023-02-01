@@ -1,0 +1,55 @@
+# -*- mode: dockerfile -*-
+
+FROM nvidia/cuda:10.2-cudnn7-devel-ubuntu16.04
+
+ARG PYTHON_VERSION=3.8
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install --no-install-recommends -yq \
+        apt-transport-https \
+        bison \
+        build-essential \
+        cmake \
+        curl \
+        flex \
+        git \
+        libbz2-dev \
+        ninja-build \
+        software-properties-common \
+        wget && rm -rf /var/lib/apt/lists/*;
+
+WORKDIR /opt/conda_setup
+
+RUN wget -O - https://apt.kitware.com/keys/kitware-archive-latest.asc 2>/dev/null \
+    | gpg --batch -dearmor - \
+    | tee /etc/apt/trusted.gpg.d/kitware.gpg >/dev/null
+
+RUN apt-add-repository 'deb https://apt.kitware.com/ubuntu/ xenial main'
+RUN apt-get update && apt-get --allow-unauthenticated --no-install-recommends install -yq cmake && rm -rf /var/lib/apt/lists/*;
+
+RUN curl -f -o miniconda.sh https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh && \
+     chmod +x miniconda.sh && \
+     ./miniconda.sh -b -p /opt/conda && \
+     /opt/conda/bin/conda install -y python=$PYTHON_VERSION && \
+     /opt/conda/bin/conda clean -ya
+ENV PATH /opt/conda/bin:$PATH
+
+RUN python -m pip install --upgrade pip ipython ipdb
+
+COPY . /opt/minihack/
+
+WORKDIR /opt/minihack
+
+RUN pip install --no-cache-dir '.[all]'
+
+WORKDIR /workspace
+
+CMD ["/bin/bash"]
+
+
+# Docker commands:
+#   docker rm minihack -v
+#   docker build -t minihack -f docker/Dockerfile .
+#   docker run --rm --name minihack minihack
+# or
+#   docker run -it --entrypoint /bin/bash minihack

@@ -1,0 +1,45 @@
+{
+  "startTime": 1674217530392,
+  "endTime": 1674217531246,
+  "originalSmells": [
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 28,
+        "lineEnd": 28,
+        "columnStart": 5,
+        "columnEnd": 57
+      }
+    },
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 29,
+        "lineEnd": 29,
+        "columnStart": 5,
+        "columnEnd": 61
+      }
+    },
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 30,
+        "lineEnd": 30,
+        "columnStart": 5,
+        "columnEnd": 38
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 30,
+        "lineEnd": 30,
+        "columnStart": 42,
+        "columnEnd": 58
+      }
+    }
+  ],
+  "repairedDockerfile": "# Start with a NodeJS base image that also contains yarn.\nFROM node:16.14.2-alpine as nodejsbuilder\n\n# Pass a tag, branch or a commit using build-arg. This allows a docker image to\n# be built from a specified Git state. The default image will use the Git tip of\n# master by default.\nARG checkout=\"master\"\n\n# The public URL the static files should be served under. This must be empty to\n# work for the root path (/).\nARG public_url=\"\"\n\n# There seem to be multiple problems when using yarn for a build inside of a\n# docker image:\n#   1. For building and installing node-gyp, python is required. This seems to\n#      be missing from the NodeJS base image for ARM builds (or is just required\n#      when building for ARM?).\n#   2. Because of a problem in the docker internal network on ARM, some TCP\n#      packages are being dropped and the yarn installation times out. This can\n#      be mitigated by switching to HTTP and increasing the network timeout.\n#      See https://github.com/yarnpkg/yarn/issues/5259 for more info.\nRUN apk add --no-cache --update alpine-sdk \\\n  git \\\n  && git clone https://github.com/lightninglabs/lightning-terminal /go/src/github.com/lightninglabs/lightning-terminal \\\n  && cd /go/src/github.com/lightninglabs/lightning-terminal \\\n  && git checkout $checkout \\\n  && cd app \\\n  && npm config set registry \"http://registry.npmjs.org\" \\\n  && yarn config set registry \"http://registry.npmjs.org\" \\\n  && yarn install --frozen-lockfile --network-timeout 1000000 \\\n  && PUBLIC_URL=$public_url yarn build && yarn cache clean;\n\n# The first stage is already done and all static assets should now be generated\n# in the app/build sub directory.\n# If you change this value, please also update:\n# /dev.Dockerfile\n# /.github/workflows/main.yml\nFROM golang:1.17.6-alpine as golangbuilder\n\n# Instead of checking out from git again, we just copy the whole working\n# directory of the previous stage that includes the generated static assets.\nCOPY --from=nodejsbuilder /go/src/github.com/lightninglabs/lightning-terminal /go/src/github.com/lightninglabs/lightning-terminal\n\n# Force Go to use the cgo based DNS resolver. This is required to ensure DNS\n# queries required to connect to linked containers succeed.\nENV GODEBUG netdns=cgo\n\n# Explicitly turn on the use of modules (until this becomes the default).\nENV GO111MODULE on\n\n# Install dependencies and install/build lightning-terminal.\nRUN apk add --no-cache --update alpine-sdk \\\n  make \\\n  && cd /go/src/github.com/lightninglabs/lightning-terminal \\\n  && make go-install PUBLIC_URL=$public_url \\\n  && make go-install-cli\n\n# Start a new, final image to reduce size.\nFROM alpine as final\n\n# Define a root volume for data persistence.\nVOLUME /root/.lnd\n\n# Expose lightning-terminal and lnd ports (server, rpc).\nEXPOSE 8443 10009 9735\n\n# Copy the binaries and entrypoint from the builder image.\nCOPY --from=golangbuilder /go/bin/litd /bin/\nCOPY --from=golangbuilder /go/bin/litcli /bin/\nCOPY --from=golangbuilder /go/bin/lncli /bin/\nCOPY --from=golangbuilder /go/bin/frcli /bin/\nCOPY --from=golangbuilder /go/bin/loop /bin/\nCOPY --from=golangbuilder /go/bin/pool /bin/\n\n# Add bash.\nRUN apk add --no-cache \\\n  bash \\\n  jq \\\n  ca-certificates\n\n# Specify the start command and entrypoint as the lightning-terminal daemon.\nENTRYPOINT [\"litd\"]\n"
+}

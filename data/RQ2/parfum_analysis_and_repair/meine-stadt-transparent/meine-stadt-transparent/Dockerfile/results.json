@@ -1,0 +1,44 @@
+{
+  "startTime": 1674218175030,
+  "endTime": 1674218175909,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 21,
+        "lineEnd": 21,
+        "columnStart": 4,
+        "columnEnd": 93
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 20,
+        "lineEnd": 20,
+        "columnStart": 4,
+        "columnEnd": 125
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 39,
+        "lineEnd": 39,
+        "columnStart": 4,
+        "columnEnd": 114
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 20,
+        "lineEnd": 20,
+        "columnStart": 4,
+        "columnEnd": 125
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Stage 1: Build the frontend assets\nFROM node:16 AS front-end\n\nENV NODE_ENV=production\nWORKDIR /app\n\nCOPY package.json /app/package.json\nCOPY package-lock.json /app/package-lock.json\n\nRUN npm ci --also=dev\n\nCOPY etc /app/etc\nCOPY customization /app/customization\nCOPY mainapp/assets /app/mainapp/assets\nRUN npm run build:prod && mkdir -p mainapp/templates/email/ && npm run build:email\n\n# Stage 2: Build the .venv folder\nFROM python:3.8-slim-bullseye AS venv-build\n\nRUN apt-get update && \\\n    apt-get install --no-install-recommends -y curl gnupg git default-libmysqlclient-dev libmagickwand-dev poppler-utils libssl-dev libpq-dev gettext && \\\n    curl -f -sSL https://raw.githubusercontent.com/python-poetry/poetry/master/install-poetry.py | python - --version 1.1.8 && rm -rf /var/lib/apt/lists/*;\n\nCOPY pyproject.toml /app/pyproject.toml\nCOPY poetry.lock /app/poetry.lock\nWORKDIR /app\n\n# Poetry needs the __init__.py files\nRUN mkdir cms importer mainapp meine_stadt_transparent && \\\n    touch Readme.md cms/__init__.py importer/__init__.py mainapp/__init__.py meine_stadt_transparent/__init__.py && \\\n    $HOME/.local/bin/poetry config virtualenvs.in-project true && \\\n    $HOME/.local/bin/poetry install --no-dev -E import-json\n\n# Stage 3: The actual container\nFROM python:3.8-slim-bullseye\n\nENV PYTHONUNBUFFERED=1\n\nRUN apt-get update && \\\n    apt-get install --no-install-recommends -y git default-libmysqlclient-dev libmagickwand-dev poppler-utils libssl-dev libpq-dev gettext && \\\n    apt-get autoremove -y && \\\n    apt-get clean && \\\n    rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/* && \\\n    mkdir /static && \\\n    chown www-data:www-data -R /static\n\nUSER www-data\n\nCOPY --chown=www-data:www-data --from=venv-build /app/.venv /app/.venv\nCOPY --chown=www-data:www-data --from=front-end /app/mainapp/assets /app/mainapp/assets\nCOPY --chown=www-data:www-data --from=front-end /app/node_modules/pdfjs-dist /app/node_modules/pdfjs-dist\nCOPY --chown=www-data:www-data . /app/\n\nWORKDIR /app\n\n# Generate all static files and clean up all node stuff\nRUN cp etc/template.env .env && \\\n    mkdir -p /app/log && \\\n    /app/.venv/bin/python manage.py compilemessages -l de -l en && \\\n    /app/.venv/bin/python manage.py collectstatic --noinput && \\\n    rm .env\n\n# We inject DOCKER_GIT_SHA in github actions\nARG DOCKER_GIT_SHA\nENV DOCKER_GIT_SHA $DOCKER_GIT_SHA\n\nEXPOSE 8000\n\nENTRYPOINT [\"/app/.venv/bin/python\"]\nCMD [\"/app/.venv/bin/gunicorn\", \"--config\", \"etc/gunicorn.conf.py\", \"meine_stadt_transparent.wsgi:application\"]\n"
+}

@@ -1,0 +1,17 @@
+{
+  "startTime": 1674251403549,
+  "endTime": 1674251404152,
+  "originalSmells": [
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 40,
+        "lineEnd": 40,
+        "columnStart": 4,
+        "columnEnd": 29
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM nixos/nix as builder\n\nRUN mkdir /app\nWORKDIR /app\n\nCOPY shell.nix shell.nix\n\nRUN mkdir -p /output/store\nRUN nix-env -f shell.nix -i -A buildInputs\nRUN nix-env -f shell.nix -i -A dependencies --profile /output/profile\nRUN cp -va $(nix-store -qR /output/profile) /output/store\n\nCOPY requirements.txt requirements.txt\n\nRUN virtualenv .venv && .venv/bin/pip install -r requirements.txt\n\nCOPY package.json .\nCOPY yarn.lock .\n\nRUN yarn\n\n# RUN rm -rf node_modules/reactivated/*\n# COPY node_modules/reactivated node_modules/reactivated\n\nCOPY .babelrc.json .\nCOPY manage.py .\nCOPY server server\nCOPY static static\nCOPY client client\nCOPY tsconfig.json .\n\nRUN .venv/bin/python manage.py generate_client_assets\nRUN .venv/bin/python manage.py build\nRUN .venv/bin/python manage.py collectstatic --no-input\nRUN rm collected/dist/*.map\n\n\nFROM alpine\n\n# Nix package is very heavy and includes the full DB.\nRUN apk add --no-cache postgresql-client\n\nCOPY --from=builder /output/store /nix/store\nCOPY --from=builder /output/profile/ /usr/local/\n\nRUN mkdir /app\nWORKDIR /app\n\nENV NODE_ENV production\n\nCOPY requirements.txt requirements.txt\nRUN virtualenv .venv && .venv/bin/pip install -r requirements.txt\n\nCOPY manage.py .\nCOPY server server\n\nRUN mkdir -p node_modules/_reactivated/\nRUN mkdir -p static/\nCOPY --from=builder /app/node_modules/_reactivated/renderer.js node_modules/_reactivated/\nCOPY --from=builder /app/node_modules/_reactivated/renderer.js.map node_modules/_reactivated/\nCOPY --from=builder /app/collected collected\n\nENV PYTHONUNBUFFERED 1\nENV PATH=\"/app/.venv/bin:$PATH\"\nENV ENVIRONMENT=production\nRUN rm server/settings/__init__.py && echo 'export DJANGO_SETTINGS_MODULE=server.settings.$ENVIRONMENT' > /etc/profile\nENTRYPOINT [\"/bin/sh\", \"-lc\"]\n# SSH commands are weird with fly for now, so we use this dirty script at the root level.\nRUN echo \"source /etc/profile; cd /app; python manage.py migrate\" > /migrate.sh && chmod +x /migrate.sh\nRUN echo \"source /etc/profile; cd /app; python manage.py dumpdata --indent=4\" > /backup.sh && chmod +x /backup.sh\n\nCMD [\"gunicorn server.wsgi --forwarded-allow-ips='*' --bind 0.0.0.0:8080 --workers 1 --preload --timeout 90\"]\n"
+}

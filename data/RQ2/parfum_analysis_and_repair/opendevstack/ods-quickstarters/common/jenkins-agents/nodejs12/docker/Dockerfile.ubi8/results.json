@@ -1,0 +1,81 @@
+{
+  "startTime": 1674215398193,
+  "endTime": 1674215399944,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 54,
+        "lineEnd": 54,
+        "columnStart": 4,
+        "columnEnd": 48
+      }
+    },
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 68,
+        "lineEnd": 68,
+        "columnStart": 4,
+        "columnEnd": 59
+      }
+    },
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 72,
+        "lineEnd": 72,
+        "columnStart": 25,
+        "columnEnd": 39
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 38,
+        "lineEnd": 38,
+        "columnStart": 4,
+        "columnEnd": 38
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 47,
+        "lineEnd": 47,
+        "columnStart": 4,
+        "columnEnd": 32
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 49,
+        "lineEnd": 49,
+        "columnStart": 4,
+        "columnEnd": 130
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 59,
+        "lineEnd": 59,
+        "columnStart": 7,
+        "columnEnd": 126
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 72,
+        "lineEnd": 72,
+        "columnStart": 44,
+        "columnEnd": 60
+      }
+    }
+  ],
+  "repairedDockerfile": "FROM opendevstackorg/ods-jenkins-agent-base-ubi8:latest\n\n# Labels consumed by Red Hat build service\nLABEL com.redhat.component=\"jenkins-agent-nodejs-12-rhel7-container\" \\\n      name=\"openshift4/jenkins-agent-nodejs-12-rhel7\" \\\n      architecture=\"x86_64\" \\\n      io.k8s.display-name=\"Jenkins Agent Nodejs\" \\\n      io.k8s.description=\"The jenkins agent nodejs image has the nodejs tools on top of the jenkins slave base image.\" \\\n      io.openshift.tags=\"openshift,jenkins,agent,nodejs\" \\\n      maintainer=\"openshift-dev-services+jenkins@redhat.com\"\n\nARG nexusUrl\nARG nexusAuth\n\nENV NODEJS_VERSION=12 \\\n    YARN_VERSION=1.22.5 \\\n    NPM_CONFIG_PREFIX=$HOME/.npm-global \\\n    PATH=$HOME/.yarn/bin:$HOME/.config/yarn/global/node_modules/.bin:$HOME/node_modules/.bin/:$HOME/.npm-global/bin/:$PATH \\\n    LANG=en_US.UTF-8 \\\n    LC_ALL=en_US.UTF-8\n\nENV INSTALL_PKGS=\"make gcc-c++ GConf2 nss libXScrnSaver alsa-lib \"\nENV INSTALL_CENTOS_PKGS=\"nodejs nodejs-nodemon xorg-x11-server-Xvfb gtk2-devel gtk3-devel libnotify-devel\"\n\n# Workaroud we use when running behind proxy\n# Basically we put the proxy certificate in certs folder\n# COPY certs/* /etc/pki/ca-trust/source/anchors/\n# RUN update-ca-trust force-enable && update-ca-trust extract\n\nCOPY contrib/bin/configure-agent /usr/local/bin/configure-agent\n\nCOPY yum.repos.d/*.repo /etc/yum.repos.d/\nRUN sed -i 's@^\\s*enabled\\s*=.*$@enabled = 1@g' /etc/yum.repos.d/*.repo \\\n    && sed -i 's@^\\s*enabled\\s*=.*$@enabled = 0@g' /etc/yum.repos.d/centos*.repo \\\n    && sed -i 's@^\\s*enabled\\s*=.*$@enabled = 0@g' /etc/yum.repos.d/google-chrome*.repo \\\n    && grep -i '\\(name\\|enabled\\)' /etc/yum.repos.d/*.repo\n\n# Install Python 3 (because node-gyp, an ionic dependency, uses it) and set it as default\nRUN yum install -y python3 python3-pip || true && rm -rf /var/cache/yum\n# update-alternatives --install /usr/bin/python python /usr/bin/python3 1 && \\\nRUN bash -c \"python -V 2>&1 | grep -q 'Python 3.*' || update-alternatives --install /usr/bin/python python /usr/bin/python3 1 \" && \\\n    bash -c \"python -V 2>&1 | grep 'Python 3.*' || echo 'ERROR: Invalid python version'\"\n\n# Generate machine ID\nRUN dbus-uuidgen > /etc/machine-id\n\n# Install NodeJS (https://rpm.nodesource.com/setup_12.x does NOT work)\nRUN yum install -y $INSTALL_PKGS && \\\n    yum module enable -y nodejs:${NODEJS_VERSION} && \\\n    yum install -y --setopt=tsflags=nodocs --disableplugin=subscription-manager --enablerepo centos-appstream $INSTALL_CENTOS_PKGS && \\\n    rpm -V $INSTALL_PKGS && rm -rf /var/cache/yum\n\n# Install Yarn\n# https://classic.yarnpkg.com/en/docs/install\nRUN curl -f -o- -sSL https://yarnpkg.com/install.sh | bash -s -- --version $YARN_VERSION\n\n# Install Cypress dependencies\n# https://docs.cypress.io/guides/getting-started/installing-cypress.html#System-requirements\nRUN yum repolist \\\n    && yum install -y --enablerepo google-chrome --enablerepo centos-appstream --enablerepo centos-baseos google-chrome-stable \\\n    && yum clean all -y && rm -rf /var/cache/yum\n\nRUN npm config set registry=$nexusUrl/repository/npmjs/ && \\\n    npm config set always-auth=true && \\\n    npm config set _auth=$(echo -n $nexusAuth | base64) && \\\n    npm config set email=no-reply@opendevstack.org && \\\n    npm config set ca=null && \\\n    npm config set strict-ssl=false && \\\n    yarn config set registry $nexusUrl/repository/npmjs/ -g && \\\n    echo node version: $(node --version) && \\\n    echo npm version: $(npm --version) && \\\n    echo npx version: $(npx --version) && \\\n    echo yarn version: $(yarn --version) && yarn cache clean;\n\nRUN chown -R 1001:0 $HOME && \\\n    chmod -R g+rw $HOME\n\nUSER 1001\n"
+}

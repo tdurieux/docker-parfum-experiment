@@ -1,0 +1,99 @@
+{
+  "startTime": 1674255336114,
+  "endTime": 1674255336970,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseY",
+      "position": {
+        "lineStart": 30,
+        "lineEnd": 30,
+        "columnStart": 22,
+        "columnEnd": 74
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 63,
+        "lineEnd": 63,
+        "columnStart": 15,
+        "columnEnd": 89
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 73,
+        "lineEnd": 73,
+        "columnStart": 15,
+        "columnEnd": 86
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 63,
+        "lineEnd": 63,
+        "columnStart": 15,
+        "columnEnd": 89
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 73,
+        "lineEnd": 73,
+        "columnStart": 15,
+        "columnEnd": 86
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 30,
+        "lineEnd": 30,
+        "columnStart": 22,
+        "columnEnd": 74
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 63,
+        "lineEnd": 63,
+        "columnStart": 15,
+        "columnEnd": 89
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 73,
+        "lineEnd": 73,
+        "columnStart": 15,
+        "columnEnd": 86
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 63,
+        "lineEnd": 63,
+        "columnStart": 15,
+        "columnEnd": 113
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 73,
+        "lineEnd": 73,
+        "columnStart": 15,
+        "columnEnd": 110
+      }
+    }
+  ],
+  "repairedDockerfile": "# ################## #\n# ###### Base ###### #\n# ################## #\nFROM scratch AS agnos-base\nADD ubuntu-base-20.04.1-base-arm64.tar.gz /\n\n# Add aarch64 and arm support\nCOPY --from=multiarch/qemu-user-static:x86_64-aarch64 /usr/bin/qemu-aarch64-static /usr/bin\nCOPY --from=multiarch/qemu-user-static:x86_64-arm /usr/bin/qemu-arm-static /usr/bin\n\n# Build folder\nRUN mkdir -p /tmp/agnos\n\n# Stop on error\nRUN set -xe\n\nENV USERNAME=comma\nENV PASSWD=comma\nENV HOST=tici\n\n# Base system setup\nRUN echo \"resolvconf resolvconf/linkify-resolvconf boolean false\" | debconf-set-selections\nCOPY ./userspace/base_setup.sh /tmp/agnos\nRUN /tmp/agnos/base_setup.sh\n\n# ################## #\n# #### Compiler #### #\n# ################## #\nFROM agnos-base as agnos-compiler\n\nRUN apt-get update && apt-get install -y --no-install-recommends checkinstall && rm -rf /var/lib/apt/lists/*;\n# Install openpilot dependencies, probably needed for build,\n# but we don't want these in the base image\nCOPY ./userspace/openpilot_dependencies.sh /tmp/agnos/\nRUN /tmp/agnos/openpilot_dependencies.sh\n\n# Individual compiling images\nFROM agnos-compiler as agnos-compiler-capnp\nCOPY ./userspace/compile-capnp.sh /tmp/agnos/\nRUN /tmp/agnos/compile-capnp.sh\n\nFROM agnos-compiler as agnos-compiler-ffmpeg\nCOPY ./userspace/compile-ffmpeg.sh /tmp/agnos/\nRUN /tmp/agnos/compile-ffmpeg.sh\n\nFROM agnos-compiler as agnos-compiler-mapbox-gl-native\nCOPY ./userspace/compile-mapbox-gl-native.sh /tmp/agnos/\nRUN /tmp/agnos/compile-mapbox-gl-native.sh\n\n# ################### #\n# ###### AGNOS ###### #\n# ################### #\nFROM agnos-base\n\n# Hardware setup\nRUN mkdir -p /tmp/agnos/debs\nCOPY ./userspace/debs /tmp/agnos/debs\nCOPY ./userspace/hardware_setup.sh /tmp/agnos\nRUN /tmp/agnos/hardware_setup.sh\nRUN mv /data/persist /system/ && rm -rf /data/*\n\n# Pre-compiled capnp (must be before python install)\nCOPY --from=agnos-compiler-capnp /tmp/capnproto.deb /tmp/capnproto.deb\nRUN cd /tmp && apt-get -o Dpkg::Options::=\"--force-overwrite\" --no-install-recommends install -yq ./capnproto.deb && rm -rf /var/lib/apt/lists/*;\n\n# Install openpilot dependencies\nCOPY ./userspace/openpilot_dependencies.sh /tmp/agnos/\nRUN /tmp/agnos/openpilot_dependencies.sh\nCOPY ./userspace/openpilot_python_dependencies.sh /tmp/agnos/\nRUN /tmp/agnos/openpilot_python_dependencies.sh\n\n# Use other pre-compiled packages\nCOPY --from=agnos-compiler-ffmpeg /tmp/ffmpeg.deb /tmp/ffmpeg.deb\nRUN cd /tmp && apt-get -o Dpkg::Options::=\"--force-overwrite\" --no-install-recommends install -yq ./ffmpeg.deb && rm -rf /var/lib/apt/lists/*;\nCOPY --from=agnos-compiler-mapbox-gl-native /tmp/libqmapboxgl.so /lib/aarch64-linux-gnu/libqmapboxgl.so\n\n# Install openpilot python packages\nCOPY ./userspace/Pipfile* /tmp/agnos/\nRUN export PATH=\"/usr/local/pyenv/bin:/usr/local/pyenv/shims:$PATH\" && \\\n    export PYENV_ROOT=\"/usr/local/pyenv\" && \\\n    eval \"$(pyenv init -)\" && \\\n    pip3 install --no-cache-dir --upgrade pip==22.1 && \\\n    pip3 install --no-cache-dir --upgrade pipenv==2022.5.2 && \\\n    cd /tmp/agnos && \\\n    export PYOPENCL_CL_PRETEND_VERSION=\"2.0\" && \\\n    MAKEFLAGS=\"-j$(nproc)\" pipenv install --system --deploy --dev --clear && \\\n    pip uninstall -y pipenv && \\\n    pyenv rehash\n\n# Install nice to haves\nCOPY ./userspace/install_extras.sh /tmp/agnos/\nRUN /tmp/agnos/install_extras.sh\n\n# 16.04 libwayland-client + libffi6\nCOPY ./userspace/qtwayland/libffi.so.6 /lib/aarch64-linux-gnu/\nCOPY ./userspace/qtwayland/libwayland-client.so.0 /lib/aarch64-linux-gnu/libwayland-client.so.0\n\n# Patched qtwayland that does not use EGL EXT, and outputs a fixed screen size\n# Clone qtwayland submodule, checkout 5.12.9 (5.12.8 leaks timers, see https://bugreports.qt.io/browse/QTBUG-82914), apply patch, qmake, make\nCOPY ./userspace/qtwayland/libqwayland-egl.so /lib/aarch64-linux-gnu/qt5/plugins/platforms/libqwayland-egl.so\nCOPY ./userspace/qtwayland/libQt5WaylandClient.so.5.12.8 /lib/aarch64-linux-gnu/libQt5WaylandClient.so.5.12.8\n\n# Patched libeglSubDriverWayland with fixed nullptr deref in CommitBuffer\nCOPY ./userspace/files/libeglSubDriverWayland.so.patched /lib/aarch64-linux-gnu/libeglSubDriverWayland.so\n\nCOPY ./userspace/home/ /home/$USERNAME/\nCOPY ./userspace/home/.config/ /root/.config\nRUN chown -R $USERNAME: /home/$USERNAME/.config\n\n# populate /lib\nCOPY ./userspace/files/*.path /lib/systemd/system/\nCOPY ./userspace/files/*.mount /lib/systemd/system/\nCOPY ./userspace/files/*.service /lib/systemd/system/\nCOPY ./userspace/files/*.timer /lib/systemd/system/\nCOPY ./userspace/files/ssh_override.conf /lib/systemd/system/ssh.service.d/override.conf\nCOPY ./userspace/firmware/* /lib/firmware/\n\n# populate /etc\nCOPY ./userspace/files/fstab /etc\nCOPY ./userspace/files/profile /etc/profile\nCOPY ./userspace/files/ethernet.yaml /etc/netplan/\nCOPY ./userspace/files/allow-network-control.pkla /etc/polkit-1/localauthority/50-local.d/allow-network-control.pkla\nCOPY ./userspace/files/allow-modem-control.pkla /etc/polkit-1/localauthority/50-local.d/allow-modem-control.pkla\nCOPY ./userspace/files/*.rules /etc/udev/rules.d/\nCOPY ./userspace/files/default.pa /etc/pulse/default.pa\nCOPY ./userspace/files/ssh*_config /etc/ssh/\nCOPY ./userspace/files/logrotate.conf /etc/\nRUN chmod 644 /etc/logrotate.conf\n\n# populate /usr\nCOPY ./userspace/usr/comma/ /usr/$USERNAME/\nCOPY ./userspace/usr/share/fonts/* /usr/share/fonts/\nCOPY ./userspace/libs/* /usr/lib/aarch64-linux-gnu/\nCOPY ./userspace/libs32/* /usr/lib/arm-linux-gnueabihf/\n\n# Weston with hacked touch rotate and color correction\nCOPY ./userspace/files/weston /usr/bin/weston\nCOPY ./userspace/files/gl-renderer.so /usr/lib/arm-linux-gnueabihf/weston\n\n# Setup systemd services\nCOPY ./userspace/services.sh /tmp/agnos\nRUN /tmp/agnos/services.sh\n\n# MOTD\nRUN rm -r /etc/update-motd.d/*\nCOPY --chown=root:root ./userspace/motd/* /etc/update-motd.d/\n\n# Let NetworkManager manage eth0\nCOPY ./userspace/files/10-globally-managed-devices.conf /etc/NetworkManager/conf.d/10-globally-managed-devices.conf\nCOPY ./userspace/files/NetworkManager.conf /etc/NetworkManager/NetworkManager.conf\n\n# Add cellular connections\nCOPY ./userspace/files/*.nmconnection /usr/lib/NetworkManager/system-connections/\nRUN chmod 600 /usr/lib/NetworkManager/system-connections/*.nmconnection\n\n# Prefer ipv4 over ipv6\nRUN echo \"precedence ::ffff:0:0/96 100\" >> /etc/gai.conf\n\n# Don't let logind delete /dev/shm\nCOPY ./userspace/files/logind.conf /etc/systemd/logind.conf\n\n# Disable bootkick on shutdown\nCOPY ./userspace/files/disable_bootkick.py /lib/systemd/system-shutdown/\n\n# Remove qt network bearer plugins\nRUN rm -rf /usr/lib/aarch64-linux-gnu/qt5/plugins/bearer\n\n# Add iptable rules to block incoming traffic on wwan0\nCOPY ./userspace/etc/iptables/rules.v4 /etc/iptables/rules.v4\n\n# Build ModemManager\nCOPY ./userspace/compile-modemmanager.sh /tmp/agnos/\nRUN /tmp/agnos/compile-modemmanager.sh\n\n# Run ModemManager in debug mode to allow AT commands\nCOPY ./userspace/files/ModemManager.service /lib/systemd/system/\nRUN systemctl enable ModemManager\n\n# Add more T-Mobile networks to mobile-broadband-provider-info (do we still need the package?)\nCOPY ./userspace/files/serviceproviders.xml /usr/share/mobile-broadband-provider-info/serviceproviders.xml\n\n# TODO: move this to base_setup.sh or build gcc from source\n# Remove unused architectures from arm-none-eabi\nRUN cd /usr/lib/gcc/arm-none-eabi/9.2.1 && \\\n    rm -rf arm/ && \\\n    rm -rf thumb/nofp thumb/v6* thumb/v8* thumb/v7+fp thumb/v7-r+fp.sp\n\n# keep this last\nRUN ldconfig\n\n# Setup RO rootfs\nRUN mkdir -p /tmptmp\nCOPY ./userspace/files/comma.conf /usr/lib/tmpfiles.d/\nCOPY ./userspace/readonly_setup.sh /tmptmp/readonly_setup.sh\nRUN /tmptmp/readonly_setup.sh && rm -rf /tmptmp\n\n# copy at the end, after all apt usage\nCOPY ./userspace/files/apt.conf /etc/apt/apt.conf\n\n# Write version file\nRUN echo -n \"5.2\" > /VERSION\n\n# ################## #\n# #### Cleaunup #### #\n# ################## #\n\nRUN rm -rf /usr/share/icons/* && \\\n    rm -rf /var/lib/apt/lists/* && \\\n    rm -rf /home/$USERNAME/.cache && \\\n    rm -rf /root/.cache && \\\n    pyclean /usr && \\\n    apt-get clean\n"
+}

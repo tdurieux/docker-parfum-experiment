@@ -1,0 +1,35 @@
+{
+  "startTime": 1674252941676,
+  "endTime": 1674252942644,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 64,
+        "lineEnd": 64,
+        "columnStart": 4,
+        "columnEnd": 72
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 113,
+        "lineEnd": 114,
+        "columnStart": 4,
+        "columnEnd": 80
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 65,
+        "lineEnd": 65,
+        "columnStart": 4,
+        "columnEnd": 42
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "ARG ARCH=armv7hf\nARG VERSION=3.5\nARG UBUNTU_VERSION=20.04\nARG REPO=axisecp\nARG SDK=acap-sdk\n\nFROM ${REPO}/${SDK}:${VERSION}-${ARCH}-ubuntu${UBUNTU_VERSION} as sdk\n\n# Set arguments used in build of both libraries\nARG ARCH=armv7hf\nARG SDK_LIB_PATH_BASE=/opt/axis/acapsdk/sysroots/${ARCH}/usr\nARG APP_RPATH=/usr/local/packages/openssl_curl_example\nARG BUILD_DIR=/opt/build\nARG PEM_CERT_FILE=cacert.pem\n\n# Library versions\nARG OPENSSL_VER=1.1.1m\nARG CURL_VER=7_83_1\n\n# (Optional) If the network has a proxy\nARG APP_PROXY\nENV APP_PROXY ${APP_PROXY}\n\n# (Optional) Get more verbose logging when running the application\nARG APP_DEBUG\nENV APP_DEBUG ${APP_DEBUG}\n\n#-------------------------------------------------------------------------------\n# Prepare build environment\n#-------------------------------------------------------------------------------\n\n# Delete OpenSSL libraries in SDK to avoid linking to them in build time. This\n# is a safety precaution since all shared libraries should use the libc version\n# from the SDK in build time.\nWORKDIR ${SDK_LIB_PATH_BASE}/lib\nRUN [ -z \"$(ls libcrypto.so* libssl.so*)\" ] || \\\n    rm -f libcrypto.so* libssl.so*\n\nWORKDIR ${SDK_LIB_PATH_BASE}/lib/pkgcpnfig\nRUN [ -z \"$(ls libssl.pc libcrypto.pc openssl.pc)\" ] || \\\n    rm -f libssl.pc libcrypto.pc openssl.pc\n\nWORKDIR ${SDK_LIB_PATH_BASE}/include\nRUN [ -z \"$(ls openssl crypto)\" ] || \\\n    rm -rf openssl crypto\n\n# Install build dependencies for cross compiling OpenSSL and curl\nRUN apt-get update && \\\n    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \\\n    autoconf \\\n    libtool \\\n    automake && \\\n    apt-get clean && \\\n    rm -rf /var/lib/apt/lists/*\n\n#-------------------------------------------------------------------------------\n# Build OpenSSL libraries\n#-------------------------------------------------------------------------------\n\nARG OPENSSL_BUILD_PATH=${BUILD_DIR}/openssl\nARG OPENSSL_BUILD_DIR=${OPENSSL_BUILD_PATH}/openssl-${OPENSSL_VER}\nARG OPENSSL_INSTALL_DIR=${SDK_LIB_PATH_BASE}\n\nWORKDIR ${OPENSSL_BUILD_PATH}\nRUN curl -f -O https://www.openssl.org/source/openssl-${OPENSSL_VER}.tar.gz && \\\n    tar xzvf openssl-${OPENSSL_VER}.tar.gz && rm openssl-${OPENSSL_VER}.tar.gz\n\nWORKDIR ${OPENSSL_BUILD_DIR}\nRUN if [ \"$ARCH\" = \"armv7hf\" ]; then \\\n        ARCH_LIB=linux-armv4 ;\\\n    elif [ \"$ARCH\" = \"aarch64\" ]; then \\\n        ARCH_LIB=linux-aarch64 ;\\\n    else \\\n        echo \"Error: ARCH '${ARCH}' is not supported\"; \\\n        exit 1; \\\n    fi && \\\n    # Sourcing the SDK environment to get correct cross compiler, but unset\n    # conflicting environment variables used by OpenSSL like CROSS_COMPILE\n    . /opt/axis/acapsdk/environment-setup* && \\\n    unset CROSS_COMPILE && \\\n    # Configure build options\n    ./Configure \\\n        ${ARCH_LIB} \\\n        no-deprecated \\\n        shared \\\n        --strict-warnings \\\n        # Install the OpenSSL shared object(.so), header(.h) and pkgconfig(.pc)\n        # files to the SDK library path in order to help curl link to them and\n        # other dependencies like libc correctly in build time.\n        --prefix=${OPENSSL_INSTALL_DIR} \\\n        --openssldir=${APP_RPATH} \\\n        \"-Wl,-rpath,${APP_RPATH}/lib\" && \\\n    ./configdata.pm --dump\nRUN make && \\\n    make install_sw\n\n#-------------------------------------------------------------------------------\n# Build curl library\n#-------------------------------------------------------------------------------\n\nARG CURL_BUILD_PATH=${BUILD_DIR}/curl\nARG CURL_BUILD_DIR=${CURL_BUILD_PATH}/curl-${CURL_VER}\nARG CURL_INSTALL_DIR=${CURL_BUILD_PATH}/install\n\n# Clone a curl tag in to a versioned directory\nWORKDIR ${CURL_BUILD_PATH}\nRUN git clone https://github.com/curl/curl.git --branch=curl-${CURL_VER} curl-${CURL_VER}\n\nWORKDIR ${CURL_BUILD_DIR}\n# CONFIGURE_FLAGS need to be split\n# hadolint ignore=SC2086\nRUN . /opt/axis/acapsdk/environment-setup* && \\\n    autoreconf -fi && \\\n    LDFLAGS=\"${LDFLAGS} -Wl,-rpath,${APP_RPATH}/lib\" \\\n    ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" \\\n    --prefix=\"${CURL_INSTALL_DIR}\" ${CONFIGURE_FLAGS} --with-openssl && \\\n    make && \\\n    make install\n\n#-------------------------------------------------------------------------------\n# Copy the built library files to application directory\n#-------------------------------------------------------------------------------\n\nWORKDIR /opt/app\nCOPY ./app .\nRUN mkdir lib && \\\n    cp -r ${CURL_INSTALL_DIR}/lib/libcurl.so* lib && \\\n    cp -r ${OPENSSL_BUILD_DIR}/libssl.so* lib && \\\n    cp -r ${OPENSSL_BUILD_DIR}/libcrypto.so* lib\n\n#-------------------------------------------------------------------------------\n# Get CA certificate for the web server we want to transfer data from\n#-------------------------------------------------------------------------------\n\n# Use the 'openssl' tool from the Ubuntu container to get a CA certificate from\n# the web server of interest. Why not use the compiled 'openssl' binary to do\n# this? It's cross compiled and will not run on a standard desktop.\nSHELL [\"/bin/bash\", \"-o\", \"pipefail\", \"-c\"]\n# APP_PROXY_SETTING need to be split\n# hadolint ignore=SC2086\nRUN APP_PROXY_SETTING= ; \\\n    [ -z \"$APP_PROXY\" ] || APP_PROXY_SETTING=\"-proxy $APP_PROXY\" ; \\\n    echo quit | openssl s_client \\\n    -showcerts \\\n    -servername www.example.com \\\n    -connect www.example.com:443 \\\n    $APP_PROXY_SETTING \\\n    > ${PEM_CERT_FILE}\n\n#-------------------------------------------------------------------------------\n# Finally build the ACAP application\n#-------------------------------------------------------------------------------\n\nRUN . /opt/axis/acapsdk/environment-setup* && \\\n    acap-build . -a ${PEM_CERT_FILE}\n"
+}

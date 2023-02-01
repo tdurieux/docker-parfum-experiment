@@ -1,0 +1,31 @@
+# CI test image for unit/lint/type tests
+FROM node:14-alpine as node-feature-builder
+
+RUN apk add --no-cache --update bash python3 make gcc g++ musl-dev xvfb-run
+
+WORKDIR /app
+
+COPY package*.json ./
+RUN npm install && npm cache clean --force;
+
+COPY babel.config.js lerna.json .eslintignore .eslintrc.js jest.config.js tsconfig.json ./
+ADD min_packages.tar .
+COPY bin ./bin
+RUN npx lerna bootstrap
+COPY packages ./packages
+RUN npm run build
+
+RUN npm pack --verbose packages/node/
+RUN npm pack --verbose packages/plugin-express/
+RUN npm pack --verbose packages/plugin-koa/
+RUN npm pack --verbose packages/plugin-restify/
+
+# The maze-runner node tests
+FROM 855461928731.dkr.ecr.us-west-1.amazonaws.com/maze-runner-releases:latest-v6-cli as node-maze-runner
+WORKDIR /app/
+COPY packages/node/ .
+COPY test/node/features test/node/features
+COPY --from=node-feature-builder /app/*.tgz ./
+RUN for d in test/node/features/fixtures/*/; do cp /app/*.tgz "$d"; done
+
+WORKDIR /app/test/node

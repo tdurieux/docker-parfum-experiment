@@ -1,0 +1,35 @@
+{
+  "startTime": 1674238956060,
+  "endTime": 1674238956461,
+  "originalSmells": [
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 53,
+        "lineEnd": 53,
+        "columnStart": 4,
+        "columnEnd": 53
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 79,
+        "lineEnd": 79,
+        "columnStart": 5,
+        "columnEnd": 39
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 9,
+        "lineEnd": 11,
+        "columnStart": 5,
+        "columnEnd": 13
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM buildpack-deps:xenial\n\n#============\n# Packages\n#============\nRUN  echo \"deb http://archive.ubuntu.com/ubuntu xenial main universe\\n\" > /etc/apt/sources.list \\\n  && echo \"deb http://archive.ubuntu.com/ubuntu xenial-updates main universe\\n\" >> /etc/apt/sources.list \\\n  && echo \"deb http://security.ubuntu.com/ubuntu xenial-security main universe\\n\" >> /etc/apt/sources.list\nRUN apt-get update -qqy \\\n  && apt-get install -y --no-install-recommends nodejs swftools git xvfb wget bzip2 ca-certificates tzdata sudo unzip cron locales \\\n    rsyslog \\\n    coreutils && rm -rf /var/lib/apt/lists/*;\n# rsyslog: for get cron error logs\n# coreutils: for sleep command\n\n#=========\n# Ruby\n# see Dockerfiles on https://hub.docker.com/_/ruby/\n#=========\n# skip installing gem documentation\nRUN mkdir -p /usr/local/etc \\\n\t&& { \\\n\t\techo 'install: --no-document'; \\\n\t\techo 'update: --no-document'; \\\n\t} >> /usr/local/etc/gemrc\n\nENV RUBY_MAJOR 2.4\nENV RUBY_VERSION 2.4.2\nENV RUBYGEMS_VERSION 2.7.2\n\n# some of ruby's build scripts are written in ruby\n#   we purge system ruby later to make sure our final image uses what we just built\nRUN set -ex \\\n\t&& buildDeps=' \\\n\t\tbison \\\n\t\tlibgdbm-dev \\\n\t\truby \\\n\t' \\\n\t&& apt-get update \\\n\t&& apt-get install -y --no-install-recommends $buildDeps \\\n\t&& rm -rf /var/lib/apt/lists/* \\\n\t&& wget -O ruby.tar.xz \"https://cache.ruby-lang.org/pub/ruby/${RUBY_MAJOR%-rc}/ruby-$RUBY_VERSION.tar.xz\" \\\n\t&& mkdir -p /usr/src/ruby \\\n\t&& tar -xJf ruby.tar.xz -C /usr/src/ruby --strip-components=1 \\\n\t&& rm ruby.tar.xz \\\n\t&& cd /usr/src/ruby \\\n\t&& { \\\n\t\techo '#define ENABLE_PATH_CHECK 0'; \\\n\t\techo; \\\n\t\tcat file.c; \\\n\t} > file.c.new \\\n\t&& mv file.c.new file.c \\\n\t&& autoconf \\\n\t&& ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" --disable-install-doc --enable-shared \\\n\t&& make -j\"$(nproc)\" \\\n\t&& make install \\\n\t&& apt-get purge -y --auto-remove $buildDeps \\\n\t&& cd / \\\n\t&& rm -r /usr/src/ruby\n\nENV BUNDLER_VERSION 1.16.0\n\nRUN gem install bundler --version \"$BUNDLER_VERSION\"\n\n# install things globally, for great justice\n# and don't create \".bundle\" in all our apps\nENV GEM_HOME /usr/local/bundle\nENV BUNDLE_PATH=\"$GEM_HOME\" \\\n\tBUNDLE_BIN=\"$GEM_HOME/bin\" \\\n\tBUNDLE_SILENCE_ROOT_WARNING=1 \\\n\tBUNDLE_APP_CONFIG=\"$GEM_HOME\"\nENV PATH $BUNDLE_BIN:$PATH\nRUN mkdir -p \"$GEM_HOME\" \"$BUNDLE_BIN\" \\\n\t&& chmod 777 \"$GEM_HOME\" \"$BUNDLE_BIN\"\n\n#=========\n# ffmpeg\n#=========\nRUN wget --no-verbose -O /tmp/ffmpeg.tar.gz https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz \\\n  && tar -C /tmp -xf /tmp/ffmpeg.tar.gz \\\n  && mv /tmp/ffmpeg-*-amd64-static/ffmpeg /usr/bin \\\n  && rm -rf /tmp/ffmpeg* && rm /tmp/ffmpeg.tar.gz\n\n#=========\n# rtmpdump\n#=========\nRUN git clone git://git.ffmpeg.org/rtmpdump \\\n  && cd /rtmpdump \\\n  && make \\\n  && make install\n\n#=========\n# youtube-dl\n#=========\nRUN wget https://yt-dl.org/downloads/latest/youtube-dl -O /usr/local/bin/youtube-dl && chmod a+rx /usr/local/bin/youtube-dl\n\n#=========\n# livedl\n#=========\nRUN wget https://github.com/yayugu/livedl/releases/download/20181107.38/livedl -O /usr/local/bin/livedl \\\n  && chmod a+rx /usr/local/bin/livedl\n\n#============\n# Timezone\n# see: https://bugs.launchpad.net/ubuntu/+source/tzdata/+bug/1554806\n#============\nENV TZ \"Asia/Tokyo\"\nRUN echo 'Asia/Tokyo' > /etc/timezone \\\n  && rm /etc/localtime \\\n  && dpkg-reconfigure --frontend noninteractive tzdata\n\n#============\n# Locale\n#============\nENV LC_ALL C.UTF-8\n\n#============\n# Copy bundler env to /etc/environment to load on cron\n#============\nRUN printenv | grep -E \"^BUNDLE\" >> /etc/environment\n\n#============\n# Rails\n#============\nRUN mkdir /myapp\nWORKDIR /myapp\nADD Gemfile /myapp/Gemfile\nADD Gemfile.lock /myapp/Gemfile.lock\nADD niconico /myapp/niconico\nRUN bundle install -j4 --without development test\nADD . /myapp\nRUN RAILS_ENV=production bundle exec rake db:create db:migrate \\\n  && RAILS_ENV=production bundle exec whenever --update-crontab \\\n  && chmod 0600 /var/spool/cron/crontabs/root\n\nCMD rsyslogd && /usr/sbin/cron -f\n"
+}

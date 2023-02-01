@@ -1,0 +1,25 @@
+# builder
+FROM            golang:1.17-alpine as builder
+RUN             apk --no-cache --update add npm make gcc g++ musl-dev openssl-dev git perl-utils curl
+WORKDIR         /go/src/pathwar.land
+ENV             GO111MODULE=on GOPROXY=https://proxy.golang.org,direct
+COPY            go.mod go.sum ./
+RUN             go mod download
+COPY            . .
+WORKDIR         ./go
+RUN             make install
+
+# runtime
+FROM devago/docker-compose
+ENV GLIBC_VERSION 2.34-r0
+RUN apk add --update curl && \
+    curl -f -Lo /etc/apk/keys/sgerrand.rsa.pub https://alpine-pkgs.sgerrand.com/sgerrand.rsa.pub && \
+    curl -f -Lo glibc.apk "https://github.com/sgerrand/alpine-pkg-glibc/releases/download/${GLIBC_VERSION}/glibc-${GLIBC_VERSION}.apk" && \
+    curl -f -Lo glibc-bin.apk "https://github.com/sgerrand/alpine-pkg-glibc/releases/download/${GLIBC_VERSION}/glibc-bin-${GLIBC_VERSION}.apk" && \
+    apk add --force glibc-bin.apk glibc.apk && \
+    /usr/glibc-compat/sbin/ldconfig /lib /usr/glibc-compat/lib && \
+    echo 'hosts: files mdns4_minimal [NOTFOUND=return] dns mdns4' >> /etc/nsswitch.conf && \
+    apk del curl && \
+    rm -rf glibc.apk glibc-bin.apk /var/cache/apk/*
+COPY --from=builder /go/bin/pathwar /bin/
+ENTRYPOINT ["/bin/pathwar"]

@@ -1,0 +1,72 @@
+FROM node:16-buster AS build-dep
+WORKDIR /srv/app
+COPY package.json yarn.lock ./
+RUN yarn install --production=true && yarn cache clean;
+
+FROM ruby:2.7.4-buster
+
+LABEL maintainer="quepid_admin@opensourceconnections.com"
+
+# Must have packages
+# The next line is a list of dependencies if we move to slim-buster, however it only shaves 80MB off the image.
+# mariadb-server libmariadbclient-dev mariadb-client mysql-common ruby-mysql2 libmariadbd-dev build-essential patch ruby-dev zlib1g-dev liblzma-dev gnupg
+RUN apt-get update -qq && apt-get install -y --no-install-recommends vim curl apt-transport-https ca-certificates \
+  && rm -rf /var/lib/apt/lists/*
+
+# Node and Yarn
+RUN wget --no-check-certificate -qO - https://dl.yarnpkg.com/debian/pubkey.gpg | apt-key add -
+RUN echo "deb https://dl.yarnpkg.com/debian/ stable main" | tee /etc/apt/sources.list.d/yarn.list
+RUN curl -f -sL https://deb.nodesource.com/setup_16.x | bash -
+
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends \
+    nodejs                                      \
+    yarn                                        \
+    ca-certificates                             \
+    bzip2                                       \
+    libfontconfig                               \
+  && apt-get clean all                          \
+  && rm -rf /var/lib/apt/lists/*
+
+# Install dependencies
+WORKDIR /srv/app
+COPY Gemfile Gemfile.lock ./
+RUN gem install bundler:1.17.3
+
+# Clean up Bundle
+RUN bundle config set without 'development test'
+RUN bundle install && \
+  bundle clean --force && \
+  rm -rf /app/.bundle/cache && \
+  rm -rf /app/vendor/bundle/ruby/*/cache
+
+COPY --from=build-dep /srv/app/node_modules ./node_modules/
+#COPY . .
+COPY ./app ./app
+COPY ./app.json ./app.json
+COPY ./babel.config.js ./babel.config.js
+COPY ./bin ./bin
+COPY ./config ./config
+COPY ./config.ru ./config.ru
+COPY ./db ./db
+COPY ./Gemfile ./Gemfile
+COPY ./Gemfile.lock ./Gemfile.lock
+COPY ./lib ./lib
+COPY ./LICENSE ./LICENSE
+COPY ./package.json ./package.json
+COPY ./postcss.config.js ./postcss.config.js
+COPY ./Procfile ./Procfile
+COPY ./public ./public
+COPY ./Rakefile ./Rakefile
+COPY ./README.md ./README.md
+COPY ./vendor ./vendor
+COPY ./yarn.lock ./yarn.lock
+
+RUN mkdir -p tmp/pids
+
+RUN RAILS_ENV=production SECRET_KEY_BASE=fake_out_devise bundle exec rake assets:precompile
+
+# Remove some files not needed in resulting image
+RUN rm package.json yarn.lock
+
+CMD ["foreman", "s", "-f", "Procfile"]

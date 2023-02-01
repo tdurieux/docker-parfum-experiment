@@ -1,0 +1,26 @@
+# quay.io/vouch/vouch-proxy
+# https://github.com/vouch/vouch-proxy
+FROM golang:1.16 AS builder
+
+ARG UID=999
+ARG GID=999
+LABEL maintainer="vouch@bnf.net"
+
+RUN mkdir -p ${GOPATH}/src/github.com/vouch/vouch-proxy
+WORKDIR ${GOPATH}/src/github.com/vouch/vouch-proxy
+
+COPY . .
+
+RUN ./do.sh goget
+RUN ./do.sh gobuildstatic # see `do.sh` for vouch-proxy build details
+RUN ./do.sh install
+
+RUN groupadd -g $GID vouch \
+    && useradd --system vouch --uid=$UID --gid=$GID
+
+FROM alpine:latest
+LABEL maintainer="vouch@bnf.net"
+ENV VOUCH_ROOT=/
+COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
+
+#  do.sh requires bash

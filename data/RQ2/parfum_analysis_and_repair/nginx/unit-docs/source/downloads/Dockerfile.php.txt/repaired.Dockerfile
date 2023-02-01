@@ -1,0 +1,24 @@
+FROM docker.io/nginx/unit:1.27.0-php8.1
+# Alternatively, you can download the base image from AWS ECR:
+# FROM public.ecr.aws/nginx/unit:1.27.0-php8.1
+
+# port used by the listener in config.json
+EXPOSE 8080
+
+# application setup
+RUN mkdir /www/                                                            \
+    && echo '<?php echo "Hello, PHP on Unit!"; ?>' > /www/index.php        \
+# prepare the app config for Unit
+    && echo '{                                                             \
+    "listeners": {                                                         \
+        "*:8080": {                                                        \
+            "pass": "applications/php_app"                                 \
+        }                                                                  \
+    },                                                                     \
+    "applications": {                                                      \
+        "php_app": {                                                       \
+            "type": "php",                                                 \
+            "root": "/www/"                                                \
+        }                                                                  \
+    }                                                                      \
+    }' > /docker-entrypoint.d/config.json

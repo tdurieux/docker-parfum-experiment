@@ -1,0 +1,26 @@
+{
+  "startTime": 1674242806586,
+  "endTime": 1674242806981,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 26,
+        "lineEnd": 26,
+        "columnStart": 25,
+        "columnEnd": 359
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 26,
+        "lineEnd": 26,
+        "columnStart": 25,
+        "columnEnd": 359
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "################################################################################\n# vim: filetype=dockerfile:\n#\n# \\file      tools/docker/Dockerfile.quinoa-build-debian-executabl-only\n# \\copyright 2012-2015 J. Bakosi,\n#            2016-2018 Los Alamos National Security, LLC.,\n#            2019 Triad National Security, LLC.\n#            All rights reserved. See the LICENSE file for details.\n# \\brief     Dockerfile for a testing a single executable of Quinoa on Debian\n# \\details   Dockerfile for a building and testing a single executable of\n#            Quinoa on Debian Linux using the native system-wide compiler and\n#            MPI wrappers.\n#\n# We start from a Debian Linux distribution and install all possible\n# prerequisites, then build the required but missing third-party libraries,\n# build the code, and test.\n#\n# This docker image is intended to test building a single executable, preceded\n# by cloning and building only those third-party libraries that are required\n# for the executable.\n#\n################################################################################\n\nFROM debian:stable\n\n# Install system-wide prerequisites\nRUN apt-get update -y && apt-get install --no-install-recommends -y m4 autoconf git cmake gfortran gcc g++ openmpi-bin libopenmpi-dev gmsh libpugixml-dev libpstreams-dev libboost-all-dev libblas-dev liblapack-dev liblapacke-dev zlib1g-dev libhdf5-dev libhdf5-openmpi-dev binutils-dev libx11-dev libxpm-dev libxft-dev libxext-dev ninja-build flex bison libdw-dev libdwarf-dev vim wget && rm -rf /var/lib/apt/lists/*;\n\n# Setup user\nRUN adduser --gecos \"\" --disabled-password quinoa\nUSER quinoa\nWORKDIR /home/quinoa\nCMD [\"/bin/bash\"]\nSHELL [\"/bin/bash\", \"-c\"]\n\n# Clone quinoa non-recursively\nRUN git clone http://github.com/quinoacomputing/quinoa.git\n# Checkout commit to be tested\nARG COMMIT\nRUN cd quinoa && git checkout $COMMIT && git log -1 HEAD\n# Update submodules required by executable tested\nRUN wget https://raw.githubusercontent.com/quinoacomputing/quinoa/$COMMIT/doc/pages/build.dox\nARG EXECUTABLE\nENV EXECUTABLE $EXECUTABLE\n# Get git update submodule command for executable\nRUN grep \"^@ref $EXECUTABLE\" build.dox -A2 | grep -v $EXECUTABLE | grep -v -e \"^$\" > submodule_update.sh\nRUN cat submodule_update.sh\n# Pull in submodules required for the executable\nRUN cd quinoa && git submodule init && git submodule update && cd external && sh ../../submodule_update.sh && cd .. && git submodule status --recursive\n# Build TPLs\nRUN cd quinoa && mkdir -p external/build && cd external/build && cmake -D${EXECUTABLE^^}_ONLY=true -DCMAKE_BUILD_TYPE=Release .. && make -sj$(grep -c processor /proc/cpuinfo)\n# Build code\nRUN cd quinoa && mkdir -p build && cd build && cmake -DCMAKE_CXX_FLAGS=-Werror -DCMAKE_BUILD_TYPE=Release -GNinja -DRUNNER=mpirun -DRUNNER_NCPUS_ARG=-n -DRUNNER_ARGS=-oversubscribe ../src && ninja ${EXECUTABLE,,}\n# Run tests\nRUN cd quinoa/build && npe=$(grep -c processor /proc/cpuinfo) && if [ ${EXECUTABLE} = unittest ]; then mpirun -n $npe Main/unittest -v -q; else ctest -j $npe --output-on-failure -LE extreme -R ${EXECUTABLE,,}; fi\n"
+}

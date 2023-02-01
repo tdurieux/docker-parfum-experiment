@@ -1,0 +1,89 @@
+{
+  "startTime": 1674253471149,
+  "endTime": 1674253472153,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 14,
+        "lineEnd": 14,
+        "columnStart": 7,
+        "columnEnd": 111
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 17,
+        "lineEnd": 17,
+        "columnStart": 7,
+        "columnEnd": 110
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 39,
+        "lineEnd": 39,
+        "columnStart": 4,
+        "columnEnd": 106
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 63,
+        "lineEnd": 63,
+        "columnStart": 4,
+        "columnEnd": 43
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 74,
+        "lineEnd": 74,
+        "columnStart": 4,
+        "columnEnd": 43
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 21,
+        "lineEnd": 21,
+        "columnStart": 4,
+        "columnEnd": 15
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 18,
+        "lineEnd": 18,
+        "columnStart": 7,
+        "columnEnd": 42
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 40,
+        "lineEnd": 40,
+        "columnStart": 7,
+        "columnEnd": 56
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 71,
+        "lineEnd": 72,
+        "columnStart": 22,
+        "columnEnd": 43
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM schachr/raspbian-stretch\n\n# Allows you to add additional packages via build-arg\nARG ADDITIONAL_PACKAGE\n\n# Alternatively use ADD https:// (which will not be cached by Docker builder)\nRUN apt-get update && apt-get install -y --no-install-recommends \\\n    curl git unzip \\\n    python3-pip python3-dev python3-setuptools build-essential python3-tk \\\n    libblas-dev liblapack-dev libatlas-base-dev gfortran python-setuptools \\\n    libfreetype6-dev libjpeg-dev libpng-dev \\\n    && apt-get clean \\\n    && rm -rf /var/lib/apt/lists/* \\\n    && echo \"Pulling watchdog binary from Github.\" \\\n    && curl -f -sSL https://github.com/openfaas/faas/releases/download/0.9.14/fwatchdog-armhf > /usr/bin/fwatchdog \\\n    && chmod +x /usr/bin/fwatchdog \\\n    && git clone https://github.com/tensorflow/models.git --branch v1.13.0 \\\n    && curl -f -LO https://github.com/protocolbuffers/protobuf/releases/download/v3.7.0/protobuf-all-3.7.0.tar.gz \\\n    && tar -zxvf protobuf-all-3.7.0.tar.gz && rm protobuf-all-3.7.0.tar.gz\n\nWORKDIR /protobuf-3.7.0\nRUN ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\"\nRUN make\nRUN make check\nRUN make install\nRUN ldconfig\n\nWORKDIR /protobuf-3.7.0/python\nENV LD_LIBRARY_PATH=/protobuf-3.7.0/src/.libs\nRUN python3 setup.py build --cpp_implementation \\\n    && python3 setup.py test --cpp_implementation \\\n    && python3 setup.py install --cpp_implementation\nENV PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION=cpp\nENV PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION_VERSION=2\n\nWORKDIR /models/research/\nRUN protoc object_detection/protos/*.proto --python_out=.\n\nWORKDIR /\nRUN curl -f -O http://download.tensorflow.org/models/object_detection/ssd_mobilenet_v1_coco_11_06_2017.tar.gz \\\n    && tar -zxvf ssd_mobilenet_v1_coco_11_06_2017.tar.gz && rm ssd_mobilenet_v1_coco_11_06_2017.tar.gz\n\nENV PYTHONPATH=/model/research:/model/research/slim\n# Disable TensorFlow warning messages\nENV TF_CPP_MIN_LOG_LEVEL=3\n\n# Add non root user\nRUN adduser --disabled-password --gecos '' app\nRUN chown app /home/app\n\nUSER app\nENV PATH=$PATH:/home/app/.local/bin\n\nWORKDIR /home/app/\n\nCOPY index.py           .\nCOPY requirements.txt   .\n\nUSER root\nRUN chown -R app /home/app\n\nUSER app\nENV PATH=$PATH:/home/app/.local/bin\nRUN pip3 install --no-cache-dir --user -r requirements.txt\n\nRUN mkdir -p function\nRUN touch ./function/__init__.py\n\nWORKDIR /home/app/function/\nCOPY function/requirements.txt    .\nUSER root\nRUN apt-get update && apt-get install -y --no-install-recommends \\\n    libfreetype6-dev pkg-config libhdf5-dev && rm -rf /var/lib/apt/lists/*;\nUSER app\nRUN pip3 install --no-cache-dir --user -r requirements.txt\n\nWORKDIR /home/app/\n\nUSER root\nCOPY function           function\nRUN chown -R app:app ./\nRUN chown -R app:app /ssd_mobilenet_v1_coco_11_06_2017\nUSER app\n\n# Make sure to allow enough time for the function to run\nENV read_timeout=10s\nENV write_timeout=10s\nENV exec_timeout=30s\n\nENV fprocess=\"python3 index.py\"\nEXPOSE 8080\n\nENV mode=\"http\"\nENV upstream_url=\"http://127.0.0.1:5000\"\n\n\nHEALTHCHECK --interval=3s CMD [ -e /tmp/.lock ] || exit 1\n\nCMD [\"fwatchdog\"]\n"
+}

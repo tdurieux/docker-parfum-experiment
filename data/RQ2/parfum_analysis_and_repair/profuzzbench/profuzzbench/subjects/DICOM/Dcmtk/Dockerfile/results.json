@@ -1,0 +1,72 @@
+{
+  "startTime": 1674215848381,
+  "endTime": 1674215849456,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 31,
+        "lineEnd": 31,
+        "columnStart": 4,
+        "columnEnd": 27
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 5,
+        "lineEnd": 23,
+        "columnStart": 4,
+        "columnEnd": 8
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 64,
+        "lineEnd": 64,
+        "columnStart": 4,
+        "columnEnd": 28
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 64,
+        "lineEnd": 64,
+        "columnStart": 4,
+        "columnEnd": 28
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 5,
+        "lineEnd": 23,
+        "columnStart": 4,
+        "columnEnd": 8
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 64,
+        "lineEnd": 64,
+        "columnStart": 4,
+        "columnEnd": 28
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 64,
+        "lineEnd": 64,
+        "columnStart": 4,
+        "columnEnd": 52
+      }
+    }
+  ],
+  "repairedDockerfile": "FROM ubuntu:20.04\n\n# Install common dependencies\nENV DEBIAN_FRONTEND=noninteractive\nRUN apt-get -y update && \\\n    apt-get -y --no-install-recommends install sudo \\\n    apt-utils \\\n    build-essential \\\n    openssl \\\n    clang \\\n    graphviz-dev \\\n    git \\\n    autoconf \\\n    libgnutls28-dev \\\n    libssl-dev \\\n    llvm \\\n    python3-pip \\\n    nano \\\n    net-tools \\\n    vim \\\n    gdb \\\n    netcat \\\n    strace \\\n    wget && rm -rf /var/lib/apt/lists/*;\n\n# Add a new user ubuntu, pass: ubuntu\nRUN groupadd ubuntu && \\\n    useradd -rm -d /home/ubuntu -s /bin/bash -g ubuntu -G sudo -u 1000 ubuntu -p \"$(openssl passwd -1 ubuntu)\"\n\nRUN chmod 777 /tmp\n\nRUN pip3 install --no-cache-dir gcovr==4.2\n\n# Use ubuntu as default username\nUSER ubuntu\nWORKDIR /home/ubuntu\n\n# Import environment variable to pass as parameter to make (e.g., to make parallel builds with -j)\nARG MAKE_OPT\n\n# Set up fuzzers\nRUN git clone https://github.com/profuzzbench/aflnet.git && \\\n    cd aflnet && \\\n    make clean all $MAKE_OPT && \\\n    cd llvm_mode && make $MAKE_OPT\n\nRUN git clone https://github.com/profuzzbench/aflnwe.git && \\\n    cd aflnwe && \\\n    make clean all $MAKE_OPT && \\\n    cd llvm_mode && make $MAKE_OPT\n\n# Set up environment variables for AFLNet\nENV WORKDIR=\"/home/ubuntu/experiments\"\nENV AFLNET=\"/home/ubuntu/aflnet\"\nENV PATH=\"${PATH}:${AFLNET}:/home/ubuntu/.local/bin:${WORKDIR}\"\nENV AFL_PATH=\"${AFLNET}\"\nENV AFL_I_DONT_CARE_ABOUT_MISSING_CRASHES=1 \\\n    AFL_SKIP_CPUFREQ=1 \\\n    AFL_NO_AFFINITY=1\n\n\nRUN mkdir $WORKDIR\n\nUSER root\nRUN apt-get -y --no-install-recommends install cmake && rm -rf /var/lib/apt/lists/*;\n\nCOPY --chown=ubuntu:ubuntu fuzzing.patch ${WORKDIR}/fuzzing.patch\nCOPY --chown=ubuntu:ubuntu normal.patch ${WORKDIR}/normal.patch\n\n# Set up environment variables for ASAN\nenv ASAN_OPTIONS='abort_on_error=1:symbolize=0:detect_leaks=0:detect_stack_use_after_return=1:detect_container_overflow=0:poison_array_cookie=0:malloc_fill_byte=0:max_malloc_fill_size=16777216'\n\n# Download and compile Dcmtk for fuzzing\nRUN cd $WORKDIR && \\\n    git clone https://github.com/DCMTK/dcmtk && \\\n    cd dcmtk && \\\n    git checkout 7f8564c && \\\n    patch -p1 < $WORKDIR/fuzzing.patch && \\\n    mkdir build && cd build && \\\n    cmake .. && \\\n    AFL_USE_ASAN=1 make dcmqrscp $MAKE_OPT\n\n\n# Download and compile Dcmtk for coverage analysis\nRUN cd $WORKDIR && \\\n    git clone https://github.com/DCMTK/dcmtk dcmtk-gcov && \\\n    cd dcmtk-gcov && \\\n    git checkout 7f8564c && \\\n    patch -p1 < $WORKDIR/normal.patch && \\\n    mkdir build && cd build && \\\n    cmake -G\"Unix Makefiles\" .. -DCMAKE_C_FLAGS=\"-g -fprofile-arcs -ftest-coverage\" -DCMAKE_CXX_FLAGS=\"-g -fprofile-arcs -ftest-coverage\" && \\\n    make dcmqrscp $MAKE_OPT\n\n\n# Setup server\n\nCOPY --chown=ubuntu:ubuntu dcmqrscp.cfg ${WORKDIR}/dcmqrscp.cfg\nCOPY --chown=ubuntu:ubuntu in-dicom ${WORKDIR}/in-dicom\nCOPY --chown=ubuntu:ubuntu cov_script.sh ${WORKDIR}/cov_script\nCOPY --chown=ubuntu:ubuntu run.sh ${WORKDIR}/run\nCOPY --chown=ubuntu:ubuntu clean.sh ${WORKDIR}/clean\nCOPY --chown=ubuntu:ubuntu dicom.dic ${WORKDIR}/dcmtk/dcmdata/data/dicom.dic\n\nENV DCMDICTPATH=${WORKDIR}/dcmtk/dcmdata/data/dicom.dic\n\nRUN cd $WORKDIR/dcmtk/build/bin && \\\n    mkdir ACME_STORE && \\\n    cp $WORKDIR/dcmqrscp.cfg ./\n\nRUN cd $WORKDIR/dcmtk-gcov/build/bin && \\\n    mkdir ACME_STORE && \\\n    cp $WORKDIR/dcmqrscp.cfg ./\n"
+}

@@ -1,0 +1,17 @@
+{
+  "startTime": 1674250072088,
+  "endTime": 1674250072853,
+  "originalSmells": [
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 9,
+        "lineEnd": 12,
+        "columnStart": 4,
+        "columnEnd": 26
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM ubuntu:20.04 as ovs-debs\n\n# Some patches may not apply cleanly if a non-default version is provided.\n# See build/images/deps/ovs-version for the default version.\nARG OVS_VERSION\n\n# Install dependencies for building OVS deb packages\n# We only install python3 packages and we only support building OVS >= 2.13.0.\nRUN apt-get update && \\\n    DEBIAN_FRONTEND=\"noninteractive\" apt-get install -y --no-install-recommends wget curl git ca-certificates build-essential fakeroot graphviz \\\n            bzip2 autoconf automake debhelper dh-python dh-autoreconf libssl-dev libtool openssl procps \\\n            python3-all python3-twisted python3-zope.interface python3-sphinx \\\n            libunbound-dev && rm -rf /var/lib/apt/lists/*;\n\nCOPY apply-patches.sh /\n\n# Download OVS source code and build debs\nRUN wget -q -O - https://www.openvswitch.org/releases/openvswitch-$OVS_VERSION.tar.gz  | tar xz -C /tmp && \\\n    cd /tmp/openvswitch* && \\\n    /apply-patches.sh && \\\n    DEB_BUILD_OPTIONS='parallel=8 nocheck' fakeroot debian/rules binary && \\\n    cd /tmp && mkdir ovs-debs && \\\n    mv libopenvswitch_*.deb openvswitch-common_*.deb openvswitch-switch_*.deb python*-openvswitch_*.deb \\\n       openvswitch-ipsec_*.deb ovs-debs/ && \\\n    cd / && rm -rf /tmp/openvswitch*\n\n\nFROM ubuntu:20.04\n\nLABEL maintainer=\"Antrea <projectantrea-dev@googlegroups.com>\"\nLABEL description=\"A Docker image based on Ubuntu 20.04 which includes Open vSwitch built from source.\"\n\nCOPY --from=ovs-debs /tmp/ovs-debs/* /tmp/ovs-debs/\nCOPY charon-logging.conf /tmp\n\n# Install OVS debs, iptables, logrotate, and strongSwan; update the OVS\n# logrotate config file; update the strongSwan logging config.\n# We clean-up apt cache after installing packages to reduce the size of the\n# final image.\nRUN apt-get update && \\\n    apt-get install -y --no-install-recommends iptables logrotate libstrongswan-standard-plugins && \\\n    (dpkg -i /tmp/ovs-debs/*.deb || apt-get -f -y --no-install-recommends install) && \\\n    rm -rf /var/cache/apt/* /var/lib/apt/lists/* && \\\n    sed -i \"/rotate /a\\    #size 100M\" /etc/logrotate.d/openvswitch-switch && \\\n    sed -i \"/^.*filelog.*{/r /tmp/charon-logging.conf\" /etc/strongswan.d/charon-logging.conf && \\\n    rm -rf /tmp/*\n"
+}

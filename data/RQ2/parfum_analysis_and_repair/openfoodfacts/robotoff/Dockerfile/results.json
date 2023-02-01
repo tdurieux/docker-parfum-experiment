@@ -1,0 +1,17 @@
+{
+  "startTime": 1674248285254,
+  "endTime": 1674248286035,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 26,
+        "lineEnd": 26,
+        "columnStart": 4,
+        "columnEnd": 93
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "ARG PYTHON_VERSION=3.7\n\n# base python setup\n# -----------------\nFROM python:$PYTHON_VERSION-slim as python-base\nRUN apt-get update && \\\n    apt-get install --no-install-suggests --no-install-recommends -y gettext curl build-essential && \\\n    apt-get autoremove --purge && \\\n    apt-get clean && \\\n    rm -rf /var/lib/apt/lists/*\nENV PYTHONUNBUFFERED=1 \\\n    PYTHONDONTWRITEBYTECODE=1 \\\n    PIP_NO_CACHE_DIR=off \\\n    PIP_DISABLE_PIP_VERSION_CHECK=on \\\n    PIP_DEFAULT_TIMEOUT=100 \\\n    PYSETUP_PATH=\"/opt/pysetup\" \\ \n    VENV_PATH=\"/opt/pysetup/.venv\" \\\n    POETRY_HOME=\"/opt/poetry\" \\\n    POETRY_VERSION=1.1.8 \\\n    POETRY_VIRTUALENVS_IN_PROJECT=true \\\n    POETRY_NO_INTERACTION=1\nENV PATH=\"$POETRY_HOME/bin:$VENV_PATH/bin:$PATH\"\n\n# building packages\n# -----------------\nFROM python-base as builder-base\nRUN curl -f -sSL https://raw.githubusercontent.com/python-poetry/poetry/master/install-poetry.py | python3 -\nWORKDIR $PYSETUP_PATH\nCOPY poetry.lock  pyproject.toml poetry.toml ./\nRUN poetry install --no-dev\n\n# This is our final image\n# ------------------------\nFROM python-base as runtime\nCOPY --from=builder-base $VENV_PATH $VENV_PATH\nCOPY --from=builder-base $POETRY_HOME $POETRY_HOME\nRUN poetry config virtualenvs.create false\nENV POETRY_VIRTUALENVS_IN_PROJECT=false\n\n# create off user\nARG OFF_UID=1000\nARG OFF_GID=$OFF_UID\nRUN groupadd -g $OFF_GID off && \\\n    useradd -u $OFF_UID -g off -m off\n\nCOPY --chown=off:off i18n /opt/robotoff/i18n\nRUN cd /opt/robotoff/i18n && \\\n    bash compile.sh && \\\n    chown off:off -R /opt/robotoff/\nCOPY --chown=off:off robotoff /opt/robotoff/robotoff/\nCOPY --chown=off:off data /opt/robotoff/data\nCOPY --chown=off:off gunicorn.py /opt/robotoff/\n\nCOPY docker/docker-entrypoint.sh /docker-entrypoint.sh\nRUN chmod +x /docker-entrypoint.sh\n\nCOPY --chown=off:off poetry.lock pyproject.toml poetry.toml /opt/robotoff/\n\nUSER off\nWORKDIR /opt/robotoff\nENTRYPOINT /docker-entrypoint.sh $0 $@\nCMD [ \"gunicorn\", \"--config /opt/robotoff/gunicorn.py\", \"--log-file=-\", \"robotoff.app.api:api\"]\n\n\n# building dev packages\n# ----------------------\nFROM builder-base as builder-dev\nWORKDIR $PYSETUP_PATH\nCOPY poetry.lock  pyproject.toml poetry.toml ./\n# full install\nRUN poetry install\n\n# image with dev tooling\n# ----------------------\nFROM runtime as runtime-dev\nCOPY --from=builder-dev $VENV_PATH $VENV_PATH\nCOPY --from=builder-dev $POETRY_HOME $POETRY_HOME\n# Handle possible issue with Docker being too eager after copying files\nRUN true\nCOPY .flake8 pyproject.toml ./\n# create folders that we mount in dev to avoid permission problems\nUSER root\nRUN \\\n    mkdir -p /opt/robotoff/gh_pages /opt/robotoff/doc /opt/robotoff/.cov && \\\n    chown -R off:off /opt/robotoff/gh_pages /opt/robotoff/doc /opt/robotoff/.cov\nUSER off\n"
+}

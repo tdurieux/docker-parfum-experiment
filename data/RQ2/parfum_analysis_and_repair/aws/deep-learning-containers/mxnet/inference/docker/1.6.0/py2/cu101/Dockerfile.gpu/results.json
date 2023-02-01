@@ -1,0 +1,62 @@
+{
+  "startTime": 1674252161117,
+  "endTime": 1674252162102,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 103,
+        "lineEnd": 103,
+        "columnStart": 4,
+        "columnEnd": 94
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 45,
+        "lineEnd": 45,
+        "columnStart": 4,
+        "columnEnd": 47
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 43,
+        "lineEnd": 44,
+        "columnStart": 4,
+        "columnEnd": 19
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 64,
+        "lineEnd": 66,
+        "columnStart": 4,
+        "columnEnd": 17
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 43,
+        "lineEnd": 44,
+        "columnStart": 4,
+        "columnEnd": 19
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 64,
+        "lineEnd": 66,
+        "columnStart": 4,
+        "columnEnd": 17
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM nvidia/cuda:10.1-cudnn7-runtime-ubuntu16.04\n\nLABEL maintainer=\"Amazon AI\"\nLABEL dlc_major_version=\"3\"\n\n# Specify accept-bind-to-port LABEL for inference pipelines to use SAGEMAKER_BIND_TO_PORT\n# https://docs.aws.amazon.com/sagemaker/latest/dg/inference-pipeline-real-time.html\nLABEL com.amazonaws.sagemaker.capabilities.accept-bind-to-port=true\n\nARG MMS_VERSION=1.1.2\nARG MX_URL=https://aws-mxnet-pypi.s3-us-west-2.amazonaws.com/1.6.0/aws_mxnet_cu101mkl-1.6.0-py2.py3-none-manylinux1_x86_64.whl\nARG PYTHON=python\nARG PYTHON_PIP=python-pip\nARG PIP=pip\nARG OPENSSL_VERSION=1.1.1k\n\nENV PYTHONDONTWRITEBYTECODE=1 \\\n    PYTHONUNBUFFERED=1 \\\n    LD_LIBRARY_PATH=\"${LD_LIBRARY_PATH}:/usr/local/lib\" \\\n    PYTHONIOENCODING=UTF-8 \\\n    LANG=C.UTF-8 \\\n    LC_ALL=C.UTF-8 \\\n    TEMP=/home/model-server/tmp\n\nRUN apt-get update \\\n && apt-get -y install --no-install-recommends \\\n    build-essential \\\n    ca-certificates \\\n    curl \\\n    emacs \\\n    git \\\n    libopencv-dev \\\n    openjdk-8-jdk-headless \\\n    vim \\\n    wget \\\n    zlib1g-dev \\\n && apt-get clean \\\n && rm -rf /var/lib/apt/lists/*\n\nRUN wget -c https://www.openssl.org/source/openssl-${OPENSSL_VERSION}.tar.gz \\\n && apt-get update \\\n && apt remove -y --purge openssl \\\n && rm -rf /usr/include/openssl \\\n && apt-get install --no-install-recommends -y \\\n    ca-certificates \\\n && tar -xzvf openssl-${OPENSSL_VERSION}.tar.gz \\\n && cd openssl-${OPENSSL_VERSION} \\\n && ./config && make && make test \\\n && make install \\\n && ldconfig \\\n && cd .. && rm -rf openssl-* && rm openssl-${OPENSSL_VERSION}.tar.gz && rm -rf /var/lib/apt/lists/*;\n\n# when we remove previous openssl, the ca-certificates pkgs and its symlinks gets deleted\n# causing sslcertverificationerror the below steps are to fix that\nRUN ln -s /etc/ssl/certs/*.* /usr/local/ssl/certs/\n\nRUN apt-get update \\\n && apt-get -y install --no-install-recommends \\\n    openjdk-8-jdk \\\n    openjdk-8-jre \\\n && apt-get clean \\\n && rm -rf /var/lib/apt/lists/*\n\nRUN apt-get update \\\n && apt-get install --no-install-recommends -y \\\n    ${PYTHON} \\\n    ${PYTHON_PIP} && rm -rf /var/lib/apt/lists/*;\n\nRUN ${PIP} --no-cache-dir install --upgrade \\\n    pip \\\n    setuptools==44.1.0\n\nWORKDIR /\n\nRUN ${PIP} install --no-cache-dir \\\n    ${MX_URL} \\\n    # setuptools<45.0.0 because support for py2 stops with 45.0.0\n    # https://github.com/pypa/setuptools/blob/master/CHANGES.rst#v4500\n    \"setuptools<45.0.0\" \\\n    multi-model-server==$MMS_VERSION \\\n    keras-mxnet==2.2.4.1 \\\n    numpy==1.16.5 \\\n    onnx==1.4.1 \\\n    \"sagemaker-mxnet-inference<2\"\n\n# This is here to make our installed version of OpenCV work.\n# https://stackoverflow.com/questions/29274638/opencv-libdc1394-error-failed-to-initialize-libdc1394\n# TODO: Should we be installing OpenCV in our image like this? Is there another way we can fix this?\nRUN ln -s /dev/null /dev/raw1394\n\nRUN useradd -m model-server \\\n && mkdir -p /home/model-server/tmp \\\n && chown -R model-server /home/model-server\n\nCOPY mms-entrypoint.py /usr/local/bin/dockerd-entrypoint.py\nCOPY config.properties /home/model-server\n\nRUN chmod +x /usr/local/bin/dockerd-entrypoint.py\n\nADD https://raw.githubusercontent.com/aws/deep-learning-containers/master/src/deep_learning_container.py /usr/local/bin/deep_learning_container.py\n\nRUN chmod +x /usr/local/bin/deep_learning_container.py\n\nRUN curl -f https://aws-dlc-licenses.s3.amazonaws.com/aws-mxnet-1.6.0/license.txt -o /license.txt\n\nEXPOSE 8080 8081\nENTRYPOINT [\"python\", \"/usr/local/bin/dockerd-entrypoint.py\"]\nCMD [\"multi-model-server\", \"--start\", \"--mms-config\", \"/home/model-server/config.properties\"]\n"
+}

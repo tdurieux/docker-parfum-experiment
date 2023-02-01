@@ -1,0 +1,35 @@
+{
+  "startTime": 1674249383014,
+  "endTime": 1674249383845,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 43,
+        "lineEnd": 43,
+        "columnStart": 4,
+        "columnEnd": 93
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 130,
+        "lineEnd": 130,
+        "columnStart": 4,
+        "columnEnd": 102
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 31,
+        "lineEnd": 38,
+        "columnStart": 7,
+        "columnEnd": 23
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "###############################################\n# Base Image\n###############################################\nFROM python:3.10-slim as python-base\n\nENV MEALIE_HOME=\"/app\"\n\nENV PYTHONUNBUFFERED=1 \\\n    PYTHONDONTWRITEBYTECODE=1 \\\n    PIP_NO_CACHE_DIR=off \\\n    PIP_DISABLE_PIP_VERSION_CHECK=on \\\n    PIP_DEFAULT_TIMEOUT=100 \\\n    POETRY_HOME=\"/opt/poetry\" \\\n    POETRY_VIRTUALENVS_IN_PROJECT=true \\\n    POETRY_NO_INTERACTION=1 \\\n    PYSETUP_PATH=\"/opt/pysetup\" \\\n    VENV_PATH=\"/opt/pysetup/.venv\"\n\n# prepend poetry and venv to path\nENV PATH=\"$POETRY_HOME/bin:$VENV_PATH/bin:$PATH\"\n\n# create user account\nRUN useradd -u 911 -U -d $MEALIE_HOME -s /bin/bash abc \\\n    && usermod -G users abc \\\n    && mkdir $MEALIE_HOME\n\n###############################################\n# Builder Image\n###############################################\nFROM python-base as builder-base\nRUN apt-get update \\\n    && apt-get install --no-install-recommends -y \\\n    curl \\\n    build-essential \\\n    libpq-dev \\\n    libwebp-dev \\\n    # LDAP Dependencies\n    libsasl2-dev libldap2-dev libssl-dev \\\n    gnupg gnupg2 gnupg1 \\\n    && pip install -U --no-cache-dir pip && rm -rf /var/lib/apt/lists/*;\n\n# install poetry - respects $POETRY_VERSION & $POETRY_HOME\nENV POETRY_VERSION=1.1.6\nRUN curl -f -sSL https://raw.githubusercontent.com/python-poetry/poetry/master/install-poetry.py | python -\n\n# copy project requirement files here to ensure they will be cached.\nWORKDIR $PYSETUP_PATH\nCOPY ./poetry.lock ./pyproject.toml ./\n\n# install runtime deps - uses $POETRY_VIRTUALENVS_IN_PROJECT internally\nRUN poetry install -E pgsql --no-dev\n\n###############################################\n# Development Image\n###############################################\nFROM python-base as development\nENV PRODUCTION=false\nENV TESTING=false\n\n# copying poetry and venv into image\nCOPY --from=builder-base $POETRY_HOME $POETRY_HOME\nCOPY --from=builder-base $PYSETUP_PATH $PYSETUP_PATH\n\n# copy backend\nCOPY ./mealie $MEALIE_HOME/mealie\nCOPY ./poetry.lock ./pyproject.toml $MEALIE_HOME/\n\n# Alembic\nCOPY ./alembic $MEALIE_HOME/alembic\nCOPY ./alembic.ini $MEALIE_HOME/\n\n# venv already has runtime deps installed we get a quicker install\nWORKDIR $MEALIE_HOME\nRUN . $VENV_PATH/bin/activate && poetry install\nWORKDIR /\n\nRUN chmod +x $MEALIE_HOME/mealie/run.sh\nENTRYPOINT $MEALIE_HOME/mealie/run.sh \"reload\"\n\n###############################################\n# CRFPP Image\n###############################################\nFROM hkotel/crfpp as crfpp\n\nRUN echo \"crfpp-container\"\n\n###############################################\n# Production Image\n###############################################\nFROM python-base as production\nENV PRODUCTION=true\nENV TESTING=false\n\nARG COMMIT\nENV GIT_COMMIT_HASH=$COMMIT\n\n# curl for used by healthcheck\nRUN apt-get update \\\n    && apt-get install --no-install-recommends -y \\\n    curl \\\n    && apt-get autoremove \\\n    && rm -rf /var/lib/apt/lists/*\n\n# copying poetry and venv into image\nCOPY --from=builder-base $POETRY_HOME $POETRY_HOME\nCOPY --from=builder-base $PYSETUP_PATH $PYSETUP_PATH\n\n# copy CRF++ Binary from crfpp\nENV CRF_MODEL_URL=https://github.com/mealie-recipes/nlp-model/releases/download/v1.0.0/model.crfmodel\n\nENV LD_LIBRARY_PATH=/usr/local/lib\nCOPY --from=crfpp /usr/local/lib/ /usr/local/lib\nCOPY --from=crfpp /usr/local/bin/crf_learn /usr/local/bin/crf_learn\nCOPY --from=crfpp /usr/local/bin/crf_test /usr/local/bin/crf_test\n\n# copy backend\nCOPY ./mealie $MEALIE_HOME/mealie\nCOPY ./poetry.lock ./pyproject.toml $MEALIE_HOME/\nCOPY ./gunicorn_conf.py $MEALIE_HOME\n\n# Alembic\nCOPY ./alembic $MEALIE_HOME/alembic\nCOPY ./alembic.ini $MEALIE_HOME/\n\n# venv already has runtime deps installed we get a quicker install\nWORKDIR $MEALIE_HOME\nRUN . $VENV_PATH/bin/activate && poetry install -E pgsql --no-dev\nWORKDIR /\n\n# Grab CRF++ Model Release\nRUN curl -f -L0 $CRF_MODEL_URL --output $MEALIE_HOME/mealie/services/parser_services/crfpp/model.crfmodel\n\nVOLUME [ \"$MEALIE_HOME/data/\" ]\nENV APP_PORT=9000\n\nEXPOSE ${APP_PORT}\n\nHEALTHCHECK CMD curl -f http://localhost:${APP_PORT}/docs || exit 1\n\nRUN chmod +x $MEALIE_HOME/mealie/run.sh\nENTRYPOINT $MEALIE_HOME/mealie/run.sh\n"
+}

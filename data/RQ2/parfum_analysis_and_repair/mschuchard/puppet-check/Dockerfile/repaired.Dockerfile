@@ -1,0 +1,1 @@
+# PuppetCheck: automated rake testing in reproducible environment

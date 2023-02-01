@@ -1,0 +1,26 @@
+{
+  "startTime": 1674219442152,
+  "endTime": 1674219442987,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 7,
+        "lineEnd": 9,
+        "columnStart": 22,
+        "columnEnd": 17
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 7,
+        "lineEnd": 9,
+        "columnStart": 22,
+        "columnEnd": 17
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM golang:1.16.0-buster\nMAINTAINER Textile <contact@textile.io>\n\n# This is (in large part) copied (with love) from\n# https://hub.docker.com/r/ipfs/go-ipfs/dockerfile\n\n# Install deps\nRUN apt-get update && apt-get install --no-install-recommends -y \\\n  libssl-dev \\\n  ca-certificates && rm -rf /var/lib/apt/lists/*;\n\nENV SRC_DIR /textile\n\n# Download packages first so they can be cached.\nCOPY go.mod go.sum $SRC_DIR/\nRUN cd $SRC_DIR \\\n  && go mod download\n\nCOPY . $SRC_DIR\n\n# Build the thing.\nRUN cd $SRC_DIR \\\n  && TXTL_BUILD_FLAGS=\"CGO_ENABLED=0 GOOS=linux\" make build-mindexd\n\n# Get su-exec, a very minimal tool for dropping privileges,\n# and tini, a very minimal init daemon for containers\nENV SUEXEC_VERSION v0.2\nENV TINI_VERSION v0.19.0\nRUN set -eux; \\\n    dpkgArch=\"$(dpkg --print-architecture)\"; \\\n    case \"${dpkgArch##*-}\" in \\\n        \"amd64\" | \"armhf\" | \"arm64\") tiniArch=\"tini-static-$dpkgArch\" ;;\\\n        *) echo >&2 \"unsupported architecture: ${dpkgArch}\"; exit 1 ;; \\\n    esac; \\\n  cd /tmp \\\n  && git clone https://github.com/ncopa/su-exec.git \\\n  && cd su-exec \\\n  && git checkout -q $SUEXEC_VERSION \\\n  && make su-exec-static \\\n  && cd /tmp \\\n  && wget -q -O tini https://github.com/krallin/tini/releases/download/$TINI_VERSION/$tiniArch \\\n  && chmod +x tini\n\n# Now comes the actual target image, which aims to be as small as possible.\nFROM busybox:1.31.1-glibc\nLABEL maintainer=\"Textile <contact@textile.io>\"\n\n# Get the textile binary, entrypoint script, and TLS CAs from the build container.\nENV SRC_DIR /textile\nCOPY --from=0 $SRC_DIR/mindexd /usr/local/bin/mindexd\nCOPY --from=0 /tmp/su-exec/su-exec-static /sbin/su-exec\nCOPY --from=0 /tmp/tini /sbin/tini\nCOPY --from=0 /etc/ssl/certs /etc/ssl/certs\n\n# This shared lib (part of glibc) doesn't seem to be included with busybox.\nCOPY --from=0 /lib/*-linux-gnu*/libdl.so.2 /lib/\n\n# Copy over SSL libraries.\nCOPY --from=0 /usr/lib/*-linux-gnu*/libssl.so* /usr/lib/\nCOPY --from=0 /usr/lib/*-linux-gnu*/libcrypto.so* /usr/lib/\n\n# addrApi; can be exposed to the public\nEXPOSE 5000\n# rest-api\nEXPOSE 8081\n\n# Create the repo directory.\nENV MINDEXD_PATH /data/mindexd\nRUN mkdir -p $MINDEXD_PATH \\\n  && adduser -D -h $MINDEXD_PATH -u 1000 -G users mindexd \\\n  && chown mindexd:users $MINDEXD_PATH\n\nCOPY --from=0 $SRC_DIR/api/mindexd/pb/mindexd.swagger.json /swagger.json\n\n# Switch to a non-privileged user.\nUSER mindexd\n\nENTRYPOINT [\"/sbin/tini\", \"--\", \"mindexd\"]\n"
+}

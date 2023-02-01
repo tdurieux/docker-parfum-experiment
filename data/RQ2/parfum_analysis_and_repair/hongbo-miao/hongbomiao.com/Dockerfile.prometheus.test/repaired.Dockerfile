@@ -1,0 +1,5 @@
+FROM prom/prometheus:v2.36.2
+WORKDIR /usr/src/app
+
+COPY ["docker/prometheus/*.yml", "./"]
+RUN promtool test rules ./*.test.yml

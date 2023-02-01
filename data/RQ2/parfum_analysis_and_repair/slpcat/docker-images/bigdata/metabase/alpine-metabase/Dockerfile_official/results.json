@@ -1,0 +1,35 @@
+{
+  "startTime": 1674254823644,
+  "endTime": 1674254824142,
+  "originalSmells": [
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 18,
+        "lineEnd": 18,
+        "columnStart": 4,
+        "columnEnd": 52
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 42,
+        "lineEnd": 42,
+        "columnStart": 4,
+        "columnEnd": 33
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 63,
+        "lineEnd": 63,
+        "columnStart": 4,
+        "columnEnd": 47
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "###################\n# STAGE 1: builder\n###################\n\nFROM openjdk:8-jdk-alpine as builder\n\nWORKDIR /app/source\n\nENV FC_LANG en-US\nENV LC_CTYPE en_US.UTF-8\n\n# bash:    various shell scripts\n# wget:    installing lein\n# git:     ./bin/version\n# yarn:  frontend building\n# make:    backend building\n# gettext: translations\n\nRUN apk add --no-cache --update bash yarn git wget make gettext\n\n# lein:    backend dependencies and building\nADD https://raw.github.com/technomancy/leiningen/stable/bin/lein /usr/local/bin/lein\nRUN chmod 744 /usr/local/bin/lein\nRUN lein upgrade\n\n# install dependencies before adding the rest of the source to maximize caching\n\n# backend dependencies\nADD project.clj .\nRUN lein deps\n\n# frontend dependencies\nADD yarn.lock package.json .yarnrc ./\nRUN yarn\n\n# add the rest of the source\nADD . .\n\n# build the app\nRUN bin/build\n\n# install updated cacerts to /etc/ssl/certs/java/cacerts\nRUN apk add --no-cache --update java-cacerts\n\n# import AWS RDS cert into /etc/ssl/certs/java/cacerts\nADD https://s3.amazonaws.com/rds-downloads/rds-combined-ca-bundle.pem .\nRUN keytool -noprompt -import -trustcacerts -alias aws-rds \\\n  -file rds-combined-ca-bundle.pem \\\n  -keystore /etc/ssl/certs/java/cacerts \\\n  -keypass changeit -storepass changeit\n\n# ###################\n# # STAGE 2: runner\n# ###################\n\nFROM adoptopenjdk/openjdk11:alpine-jre as runner\n\nWORKDIR /app\n\nENV FC_LANG en-US\nENV LC_CTYPE en_US.UTF-8\n\n# dependencies\nRUN apk add --no-cache --update bash ttf-dejavu fontconfig\n\n# add fixed cacerts\nCOPY --from=builder /etc/ssl/certs/java/cacerts /opt/java/openjdk/lib/security/cacerts\n\n# add Metabase script and uberjar\nRUN mkdir -p bin target/uberjar\nCOPY --from=builder /app/source/target/uberjar/metabase.jar /app/target/uberjar/\nCOPY --from=builder /app/source/bin/start /app/bin/\n\n# create the plugins directory, with writable permissions\nRUN mkdir -p /plugins\nRUN chmod a+rwx /plugins\n\n# expose our default runtime port\nEXPOSE 3000\n\n# run it\nENTRYPOINT [\"/app/bin/start\"]\n"
+}

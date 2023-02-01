@@ -1,0 +1,72 @@
+{
+  "startTime": 1674217998894,
+  "endTime": 1674218000177,
+  "originalSmells": [
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 57,
+        "lineEnd": 57,
+        "columnStart": 4,
+        "columnEnd": 63
+      }
+    },
+    {
+      "rule": "gpgUseBatchFlag",
+      "position": {
+        "lineStart": 50,
+        "lineEnd": 50,
+        "columnStart": 4,
+        "columnEnd": 71
+      }
+    },
+    {
+      "rule": "gpgUseBatchFlag",
+      "position": {
+        "lineStart": 56,
+        "lineEnd": 56,
+        "columnStart": 4,
+        "columnEnd": 37
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 27,
+        "lineEnd": 27,
+        "columnStart": 4,
+        "columnEnd": 42
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 27,
+        "lineEnd": 27,
+        "columnStart": 4,
+        "columnEnd": 42
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 27,
+        "lineEnd": 27,
+        "columnStart": 4,
+        "columnEnd": 42
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 27,
+        "lineEnd": 27,
+        "columnStart": 4,
+        "columnEnd": 66
+      }
+    }
+  ],
+  "repairedDockerfile": "FROM toniher/nginx-php:nginx-1.16-php-7.3\n\nARG MEDIAWIKI_VERSION=1.31\nARG MEDIAWIKI_FULL_VERSION=1.31.10\nARG DB_CONTAINER=db\nARG PARSOID_CONTAINER=parsoid\nARG MYSQL_HOST=127.0.0.1\nARG MYSQL_DATABASE=mediawiki\nARG MYSQL_USER=mediawiki\nARG MYSQL_PASSWORD=mediawiki\nARG MYSQL_PREFIX=mw_\nARG MW_PASSWORD=prova\nARG MW_SCRIPTPATH=/w\nARG MW_WIKILANG=en\nARG MW_WIKINAME=Test\nARG MW_WIKIUSER=WikiSysop\nARG MW_EMAIL=hello@localhost\nARG DOMAIN_NAME=localhost\nARG PROTOCOL=http://\nARG MW_NEW=true\n\n# Forcing Invalidate cache\nARG CACHE_INSTALL=2020-06-19\n\nRUN set -x; \\\n    apt-get update && apt-get -y upgrade;\nRUN set -x; \\\n    apt-get install --no-install-recommends -y gnupg jq php-redis; rm -rf /var/lib/apt/lists/*;\nRUN set -x; \\\n    rm -rf /var/lib/apt/lists/*\n\n# Starting processes\nCOPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf\n\n# Copy helpers\nCOPY download-extension.sh /usr/local/bin/\nCOPY download-extension-git.sh /usr/local/bin/\n\nCOPY nginx-default.conf /etc/nginx/conf.d/default.conf\n# Adding extra domain name\nRUN sed -i \"s/localhost/localhost $DOMAIN_NAME/\" /etc/nginx/conf.d/default.conf\n\nRUN mkdir -p /var/www/w; chown www-data:www-data /var/www/w\nUSER www-data\n\nWORKDIR /tmp\n\nENV GNUPGHOME /tmp\n\n# https://www.mediawiki.org/keys/keys.txt\nRUN gpg --batch --no-tty --fetch-keys \"https://www.mediawiki.org/keys/keys.txt\"\n\nRUN MEDIAWIKI_DOWNLOAD_URL=\"https://releases.wikimedia.org/mediawiki/$MEDIAWIKI_VERSION/mediawiki-$MEDIAWIKI_FULL_VERSION.tar.gz\"; \\\n\tset -x; \\\n\tcurl -fSL \"$MEDIAWIKI_DOWNLOAD_URL\" -o mediawiki.tar.gz \\\n\t&& curl -fSL \"${MEDIAWIKI_DOWNLOAD_URL}.sig\" -o mediawiki.tar.gz.sig \\\n\t&& gpg --batch --verify mediawiki.tar.gz.sig \\\n\t&& tar -xf mediawiki.tar.gz -C /var/www/w --strip-components=1 \\\n\t&& rm -f mediawiki* && rm mediawiki.tar.gz\n\nCOPY composer.local.json /var/www/w\n\nRUN set -x; echo \"Host is $MYSQL_HOST\"\n\nRUN if [ \"$MW_NEW\" = \"true\" ] ; then cd /var/www/w; php maintenance/install.php \\\n\t\t--dbname \"$MYSQL_DATABASE\" \\\n\t\t--dbpass \"$MYSQL_PASSWORD\" \\\n\t\t--dbserver \"$MYSQL_HOST\" \\\n\t\t--dbtype mysql \\\n\t\t--dbprefix \"$MYSQL_PREFIX\" \\\n\t\t--dbuser \"$MYSQL_USER\" \\\n\t\t--installdbpass \"$MYSQL_PASSWORD\" \\\n\t\t--installdbuser \"$MYSQL_USER\" \\\n\t\t--pass \"$MW_PASSWORD\" \\\n\t\t--scriptpath \"$MW_SCRIPTPATH\" \\\n\t\t--lang \"$MW_WIKILANG\" \\\n\"${MW_WIKINAME}\" \"${MW_WIKIUSER}\" ; fi\n\n# VisualEditor extension\nRUN ENVEXT=$MEDIAWIKI_VERSION && ENVEXT=$(echo $ENVEXT | sed -r \"s/\\./_/g\") && bash /usr/local/bin/download-extension.sh VisualEditor $ENVEXT /var/www/w/extensions\n\n\n# Addding extra stuff to LocalSettings. Only if new installation\nRUN if [ \"$MW_NEW\" = \"true\" ] ; then echo \"\\n\\\nenableSemantics( '${DOMAIN_NAME}' );\\n \" >> /var/www/w/LocalSettings.php ; fi\n\nRUN cd /var/www/w; composer update --no-dev;\n\nRUN cd /var/www/w; php maintenance/update.php\n\n# Update Semantic MediaWiki\nRUN cd /var/www/w; php extensions/SemanticMediaWiki/maintenance/rebuildData.php -ftpv\nRUN cd /var/www/w; php extensions/SemanticMediaWiki/maintenance/rebuildData.php -v\n\nRUN cd /var/www/w; php maintenance/runJobs.php\n\nRUN sed -i \"s/$MYSQL_HOST/$DB_CONTAINER/\" /var/www/w/LocalSettings.php\n\n# File LocalSettings.local.php\nRUN if [ \"$MW_NEW\" = \"true\" ] ; then echo \"\\n\\\ninclude_once \\\"\\$IP/LocalSettings.local.php\\\"; \" >> /var/www/w/LocalSettings.php ; fi\n\n# Redis configuration\n# Adding redis config. Only if new installation\nRUN if [ \"$MW_NEW\" = \"true\" ] ;  then echo \"\\n\\\ninclude_once \\\"\\$IP/LocalSettings.redis.php\\\"; \" >> /var/www/w/LocalSettings.php ; fi\n\n# VOLUME image\nVOLUME /var/www/w/images\n\nWORKDIR /var/www/w\n\nUSER root\nRUN mkdir -p /run/php\n\nCMD [\"/usr/bin/supervisord\"]\n\n\n"
+}

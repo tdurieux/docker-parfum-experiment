@@ -1,0 +1,31 @@
+FROM golang:1.15.2-buster
+
+ENV PKG_VER 0.17.1
+ENV PKG bitcoin-${PKG_VER}-x86_64-linux-gnu.tar.gz
+ENV PKG_URL https://bitcoincore.org/bin/bitcoin-core-${PKG_VER}/${PKG}
+
+COPY . $GOPATH/src/mainstay
+
+RUN set -x \
+    && apt update \
+    && apt install --no-install-recommends -y libzmq3-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN set -x \
+    && cd $GOPATH/src/mainstay \
+    && go get ./... \
+    && go get github.com/stretchr/testify/assert \
+    && go build \
+    && go install
+
+RUN set -ex \
+    && cd $HOME \
+    && wget ${PKG_URL} \
+    && tar zxvf ${PKG} \
+    && export PATH=$PATH:$HOME/bitcoin-${PKG_VER}/bin \
+    && /go/src/mainstay/scripts/run-tests.sh
+
+COPY docker-entrypoint.sh /
+
+ENTRYPOINT ["/docker-entrypoint.sh"]
+CMD ["mainstay"]

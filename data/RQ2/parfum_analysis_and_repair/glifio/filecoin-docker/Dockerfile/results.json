@@ -1,0 +1,35 @@
+{
+  "startTime": 1674252714831,
+  "endTime": 1674252715507,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 10,
+        "lineEnd": 10,
+        "columnStart": 4,
+        "columnEnd": 134
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 33,
+        "lineEnd": 33,
+        "columnStart": 5,
+        "columnEnd": 46
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 10,
+        "lineEnd": 10,
+        "columnStart": 4,
+        "columnEnd": 134
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# build container stage\nFROM golang:1.17.9-buster AS build-env\n\n# branch or tag of the lotus version to build\nARG BRANCH\nARG NETWORK\n\nRUN echo \"Building lotus from branch $BRANCH in network $NETWORK\"\n\nRUN apt-get update -y && \\\n    apt-get install --no-install-recommends sudo cron git mesa-opencl-icd gcc bzr jq pkg-config clang libhwloc-dev ocl-icd-opencl-dev build-essential hwloc -y && rm -rf /var/lib/apt/lists/*;\n\nENV CGO_CFLAGS=\"-D__BLST_PORTABLE__\"\nENV RUSTFLAGS=\"-C target-cpu=native -g\"\nENV FFI_BUILD_FROM_SOURCE=1\n\nRUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y\nENV PATH=\"/root/.cargo/bin:${PATH}\"\n\nRUN git clone https://github.com/filecoin-project/lotus.git --depth 1 --branch $BRANCH && \\\n    cd lotus && \\\n    git submodule update --init --recursive && \\\n    make clean && \\\n    make $NETWORK lotus-shed lotus-gateway && \\\n    install -C ./lotus /usr/local/bin/lotus && \\\n    install -C ./lotus-gateway /usr/local/bin/lotus-gateway && \\\n    install -C ./lotus-shed /usr/local/bin/lotus-shed\n\n# runtime container stage\nFROM ubuntu:20.04\nENV DEBIAN_FRONTEND noninteractive\n#creating cron job to check lotus sync status and restart it if process is killed\nRUN apt-get update && \\\n     apt-get install --no-install-recommends curl nano libhwloc-dev -y && \\\n     rm -rf /var/lib/apt/lists/*\n\nCOPY --from=build-env /usr/local/bin/lotus /usr/local/bin/lotus\nCOPY --from=build-env /usr/local/bin/lotus-gateway /usr/local/bin/lotus-gateway\nCOPY --from=build-env /usr/local/bin/lotus-shed /usr/local/bin/lotus-shed\nCOPY --from=build-env /etc/ssl/certs /etc/ssl/certs\nCOPY --from=build-env /lib/x86_64-linux-gnu /lib/\nCOPY LOTUS_VERSION /VERSION\n# lotus libraries\nCOPY --from=build-env   /lib/x86_64-linux-gnu/libutil.so.1 \\\n                        /lib/x86_64-linux-gnu/librt.so.1 \\\n                        /lib/x86_64-linux-gnu/libgcc_s.so.1 \\\n                        /lib/x86_64-linux-gnu/libdl.so.2 \\\n                        /usr/lib/x86_64-linux-gnu/libltdl.so.7 \\\n                        /usr/lib/x86_64-linux-gnu/libnuma.so.1 \\\n                        /usr/lib/x86_64-linux-gnu/libhwloc.so.5 /lib/\nCOPY --from=build-env   /usr/lib/x86_64-linux-gnu/libOpenCL.so.1.0.0 /lib/libOpenCL.so.1\n# jq libraries\nCOPY --from=build-env   /usr/lib/x86_64-linux-gnu/libjq.so.1 /usr/lib/x86_64-linux-gnu/\nCOPY --from=build-env /usr/lib/x86_64-linux-gnu/libonig.so.5.0.0 /usr/lib/x86_64-linux-gnu/libonig.so.5\n\n# create nonroot user and lotus folder\nRUN     adduser --uid 2000 --gecos \"\" --disabled-password --quiet lotus_user\n\n# copy jq, script/config files\nCOPY --from=build-env /usr/bin/jq /usr/bin/\nCOPY config/config.toml /home/lotus_user/config.toml\nCOPY scripts/healthcheck /bin/\nCOPY scripts/bash-config scripts/configure scripts/run scripts/launch scripts/ensure /etc/lotus/docker/\n\nUSER lotus_user\n\n# API port\nEXPOSE 1234/tcp\n\n# P2P port\nEXPOSE 1235/tcp\n\nENTRYPOINT [\"/etc/lotus/docker/run\"]\n"
+}

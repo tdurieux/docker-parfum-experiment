@@ -1,0 +1,44 @@
+{
+  "startTime": 1674246871130,
+  "endTime": 1674246879234,
+  "originalSmells": [
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 16,
+        "lineEnd": 16,
+        "columnStart": 4,
+        "columnEnd": 15
+      }
+    },
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 16,
+        "lineEnd": 16,
+        "columnStart": 19,
+        "columnEnd": 50
+      }
+    },
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 41,
+        "lineEnd": 41,
+        "columnStart": 2,
+        "columnEnd": 13
+      }
+    },
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 85,
+        "lineEnd": 85,
+        "columnStart": 5,
+        "columnEnd": 16
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "ARG FOUNDRY_PASSWORD\nARG FOUNDRY_RELEASE_URL\nARG FOUNDRY_USERNAME\nARG FOUNDRY_VERSION=9.269\nARG NODE_IMAGE_VERSION=16-alpine3.15\nARG VERSION\n\nFROM node:${NODE_IMAGE_VERSION} as compile-typescript-stage\n\nWORKDIR /root\n\nCOPY \\\n  package.json \\\n  package-lock.json \\\n  tsconfig.json \\\n  ./\nRUN npm install && npm install --global typescript && npm cache clean --force;\nCOPY /src/*.ts src/\nRUN tsc\nRUN grep -l \"#!\" dist/*.js | xargs chmod a+x\n\nFROM node:${NODE_IMAGE_VERSION} as optional-release-stage\n\nARG FOUNDRY_PASSWORD\nARG FOUNDRY_RELEASE_URL\nARG FOUNDRY_USERNAME\nARG FOUNDRY_VERSION\nENV ARCHIVE=\"foundryvtt-${FOUNDRY_VERSION}.zip\"\n\nWORKDIR /root\nCOPY --from=compile-typescript-stage \\\n  /root/package.json \\\n  /root/package-lock.json \\\n  /root/dist/authenticate.js \\\n  /root/dist/get_release_url.js \\\n  /root/dist/logging.js \\\n  ./\n# .placeholder file to mitigate https://github.com/moby/moby/issues/37965\nRUN mkdir dist && touch dist/.placeholder\nRUN \\\n  if [ -n \"${FOUNDRY_USERNAME}\" ] && [ -n \"${FOUNDRY_PASSWORD}\" ]; then \\\n  npm install && \\\n  ./authenticate.js \"${FOUNDRY_USERNAME}\" \"${FOUNDRY_PASSWORD}\" cookiejar.json && \\\n  s3_url=$(./get_release_url.js cookiejar.json \"${FOUNDRY_VERSION}\") && \\\n  wget -O ${ARCHIVE} \"${s3_url}\" && \\\n  unzip -d dist ${ARCHIVE} 'resources/*'; npm cache clean --force; \\\n  elif [ -n \"${FOUNDRY_RELEASE_URL}\" ]; then \\\n  wget -O ${ARCHIVE} \"${FOUNDRY_RELEASE_URL}\" && \\\n  unzip -d dist ${ARCHIVE} 'resources/*'; \\\n  fi\n\nFROM node:${NODE_IMAGE_VERSION} as final-stage\n\nARG FOUNDRY_UID=421\nARG FOUNDRY_VERSION\nARG TARGETPLATFORM\nARG VERSION\n\nLABEL com.foundryvtt.version=${FOUNDRY_VERSION}\nLABEL org.opencontainers.image.authors=\"markf+github@geekpad.com\"\nLABEL org.opencontainers.image.vendor=\"Geekpad\"\n\nENV FOUNDRY_HOME=\"/home/foundry\"\nENV FOUNDRY_VERSION=${FOUNDRY_VERSION}\n\nWORKDIR ${FOUNDRY_HOME}\n\nCOPY --from=optional-release-stage /root/dist/ .\nCOPY --from=compile-typescript-stage /root/dist/ .\nCOPY \\\n  package.json \\\n  package-lock.json \\\n  src/check_health.sh \\\n  src/entrypoint.sh \\\n  src/launcher.sh \\\n  src/logging.sh \\\n  ./\nRUN addgroup --system --gid ${FOUNDRY_UID} foundry \\\n  && adduser --system --uid ${FOUNDRY_UID} --ingroup foundry foundry \\\n  && apk --update --no-cache add \\\n  curl \\\n  jq \\\n  sed \\\n  su-exec \\\n  tzdata \\\n  && npm install && echo ${VERSION} > image_version.txt && npm cache clean --force;\n\nVOLUME [\"/data\"]\n# HTTP Server\nEXPOSE 30000/TCP\n# TURN Server\n# Not exposing TURN ports due to bug in Docker.\n# See: https://github.com/moby/moby/issues/11185\n# EXPOSE 33478/UDP\n# EXPOSE 49152-65535/UDP\n\nENTRYPOINT [\"./entrypoint.sh\"]\nCMD [\"resources/app/main.mjs\", \"--port=30000\", \"--headless\", \"--noupdate\",\\\n  \"--dataPath=/data\"]\nHEALTHCHECK --start-period=3m --interval=30s --timeout=5s CMD ./check_health.sh\n"
+}

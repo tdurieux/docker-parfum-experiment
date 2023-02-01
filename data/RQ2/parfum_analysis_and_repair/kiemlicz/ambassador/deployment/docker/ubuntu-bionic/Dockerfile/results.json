@@ -1,0 +1,89 @@
+{
+  "startTime": 1674249444908,
+  "endTime": 1674249446135,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 16,
+        "lineEnd": 16,
+        "columnStart": 4,
+        "columnEnd": 70
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 57,
+        "lineEnd": 57,
+        "columnStart": 8,
+        "columnEnd": 111
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 13,
+        "lineEnd": 13,
+        "columnStart": 4,
+        "columnEnd": 40
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 14,
+        "lineEnd": 14,
+        "columnStart": 4,
+        "columnEnd": 41
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 53,
+        "lineEnd": 53,
+        "columnStart": 8,
+        "columnEnd": 50
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 60,
+        "lineEnd": 60,
+        "columnStart": 8,
+        "columnEnd": 39
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 88,
+        "lineEnd": 88,
+        "columnStart": 4,
+        "columnEnd": 52
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 12,
+        "lineEnd": 12,
+        "columnStart": 22,
+        "columnEnd": 120
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 12,
+        "lineEnd": 12,
+        "columnStart": 22,
+        "columnEnd": 120
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "ARG tag=\"bionic\"\nFROM ubuntu:$tag AS salt-base\n# \"\" == latest\nARG salt_ver=\"\"\nARG master_user=\"root\"\nARG minion_user=\"root\"\nENV DEBIAN_FRONTEND noninteractive\n\nCOPY config/requirements.txt /tmp\n# fixme install using install script\n# receiving a lot of issues when not upgrading `six` and `pip` prior to salt run...\nRUN useradd -ms /bin/bash salt && \\\n    apt-get update && apt-get install --no-install-recommends -y curl dirmngr procps iproute2 dumb-init python3-pip python3-apt rustc libssl-dev && \\\n    pip3 install --no-cache-dir setuptools-rust~=0.12.1 && \\\n    pip3 install --no-cache-dir -r /tmp/requirements.txt && \\\n    mkdir -p /var/cache/salt /var/log/salt && \\\n    curl -f -o /tmp/bootstrap-salt.sh -L https://bootstrap.saltproject.io && \\\n    sh /tmp/bootstrap-salt.sh -x python3 -X -n $salt_ver && \\\n    chown -R salt.salt /etc/salt /var/cache/salt /var/log/salt && rm -rf /var/lib/apt/lists/*;\n\nCOPY --chown=salt:salt salt /srv/salt\nRUN rm -rf /tmp/bootstrap-salt.sh && rm -rf /tmp/requirements.txt\n\nWORKDIR /srv\n\n\nFROM salt-base AS salt-minion\n# hostname from `docker run -h` must be used as minion ID\n\n#RUN pip3 install --upgrade docker\n\nVOLUME /etc/salt/minion.d\n\nUSER $minion_user:$minion_user\nENTRYPOINT [\"/usr/bin/dumb-init\", \"--\"]\nCMD [ \"/usr/local/bin/salt-minion\" ]\n\n\nFROM salt-base AS salt-master\n\nARG api_enabled=false\nARG k8s_api_enabled=false\nARG kubectl_ver\nARG saltenv\nENV API_ENABLED=$api_enabled\nENV K8S_API_ENABLED=$k8s_api_enabled\nENV SALTENV=$saltenv\n\n# minimalistic config\nCOPY .travis/config/master.conf /etc/salt/master.d/01-master.conf\nCOPY .travis/entrypoint.sh /opt/\n\nRUN if [ \"$API_ENABLED\" = true ]; then \\\n        pip3 install --no-cache-dir --upgrade pyOpenSSL cherrypy; \\\n    fi\n\nRUN if [ \"$K8S_API_ENABLED\" = true ]; then \\\n        curl -f -LO https://storage.googleapis.com/kubernetes-release/release/$kubectl_ver/bin/linux/amd64/kubectl && \\\n        chmod +x kubectl && \\\n        mv kubectl /usr/bin/ && \\\n        pip3 install --no-cache-dir kubernetes~=10.0.1 && \\\n        salt-run saltutil.sync_all; \\\n    fi\n\nEXPOSE 4505:4505 4506:4506\n\nVOLUME /etc/salt/pki/master\nVOLUME /var/cache/salt/master/queues\nVOLUME /etc/pki/tls/certs\nVOLUME /etc/salt/cloud.providers.d\nVOLUME /srv/thorium\nVOLUME /srv/pillar\nVOLUME /etc/salt/master.d\n\nUSER $master_user:$master_user\nENTRYPOINT [\"/usr/bin/dumb-init\", \"--\"]\nCMD [ \"/opt/entrypoint.sh\" ]\n\n\nFROM salt-base AS salt-test\n\nARG log_level=\"INFO\"\nARG saltenv\nENV SALTENV=$saltenv\nENV LOG_LEVEL=$log_level\n\n# installing setuptools before tests since google-auth requires > 40.3 and bionic python3-setuptools is 39\n# pip3 installing setuptools during test run (with module reload and apt-get purge of python3-setuptools) doesn't help (in the one run)\nRUN pip3 install --no-cache-dir --upgrade pytest pytest-xdist redis\n\n# workaround for salt's service state\n# somehow in masterless config the service provider cannot be overriden\n# https://github.com/saltstack/salt/issues/33256\nRUN printf '#!/bin/bash\\necho \"N 5\"' > /sbin/runlevel && \\\n    chmod 775 /sbin/runlevel\n\nCOPY .travis/top.sls /srv/salt/base/top.sls\nCOPY .travis/config/masterless.conf /etc/salt/minion.d/masterless.conf\nCOPY .travis/conftest.py .travis/test-runner-pytest.py .travis/pytest.ini .travis/test_pillar.py /opt/\n\nWORKDIR /opt\n\n# tests are extensive, root required\nUSER root:root\nENTRYPOINT [ \"pytest\", \"test-runner-pytest.py\" ]\nCMD [\"--log-level\", \"INFO\" ]\n"
+}

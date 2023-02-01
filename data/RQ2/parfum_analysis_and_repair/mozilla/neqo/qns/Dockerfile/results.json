@@ -1,0 +1,17 @@
+{
+  "startTime": 1674250238235,
+  "endTime": 1674250239170,
+  "originalSmells": [
+    {
+      "rule": "sha256sumEchoOneSpaces",
+      "position": {
+        "lineStart": 19,
+        "lineEnd": 19,
+        "columnStart": 4,
+        "columnEnd": 106
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM martenseemann/quic-network-simulator-endpoint:latest AS buildimage\n\n# Which branch to build from.\nARG NEQO_BRANCH=main\n\nRUN apt-get update && apt-get install -y --no-install-recommends \\\n    ca-certificates coreutils curl git make mercurial ssh \\\n    build-essential clang llvm libclang-dev lld \\\n    gyp ninja-build pkg-config zlib1g-dev python \\\n && apt-get autoremove -y && apt-get clean -y \\\n && rm -rf /var/lib/apt/lists/*\n\nENV RUSTUP_HOME=/usr/local/rustup \\\n    CARGO_HOME=/usr/local/cargo \\\n    PATH=/usr/local/cargo/bin:$PATH \\\n    RUST_VERSION=1.45.2\n\nRUN set -eux; \\\n    curl -sSLf \"https://static.rust-lang.org/rustup/archive/1.22.1/x86_64-unknown-linux-gnu/rustup-init\" -o rustup-init; \\\n    echo '49c96f3f74be82f4752b8bffcf81961dea5e6e94ce1ccba94435f12e871c3bdb  *rustup-init' | sha256sum -c -; \\\n    chmod +x rustup-init; \\\n    ./rustup-init -y -q --no-modify-path --profile minimal --default-toolchain \"$RUST_VERSION\"; \\\n    rm -f rustup-init; \\\n    chmod -R a+w \"$RUSTUP_HOME\" \"$CARGO_HOME\"\n\nENV NSS_DIR=/nss \\\n    NSPR_DIR=/nspr \\\n    LD_LIBRARY_PATH=/dist/Release/lib\n\nRUN set -eux; \\\n    hg clone https://hg.mozilla.org/projects/nss \"$NSS_DIR\"; \\\n    hg clone https://hg.mozilla.org/projects/nspr \"$NSPR_DIR\"\n\nRUN \"$NSS_DIR\"/build.sh --static -Ddisable_tests=1 -o\n\n# Copy the .git directory from the local clone so that it is possible to create\n# an image that includes local updates.\nRUN mkdir -p /neqo-reference\nADD . /neqo-reference\nRUN if [ -d /neqo-reference/.git ]; then \\\n      source=/neqo-reference; \\\n    else \\\n      source=https://github.com/mozilla/neqo; \\\n    fi; \\\n    git clone --depth 1 --branch \"$NEQO_BRANCH\" \"$source\" /neqo; \\\n    rm -rf /neqo-reference\n\nRUN set -eux; \\\n    cd /neqo; \\\n    RUSTFLAGS=\"-g -C link-arg=-fuse-ld=lld\" cargo build --release \\\n      --bin neqo-client --bin neqo-server; \\\n    cp target/release/neqo-client target; \\\n    cp target/release/neqo-server target; \\\n    rm -rf target/release\n\n# Copy only binaries to the final image to keep it small.\n\nFROM martenseemann/quic-network-simulator-endpoint:latest\n\nENV LD_LIBRARY_PATH=/neqo/lib\nCOPY --from=buildimage /neqo/target/neqo-client /neqo/target/neqo-server /neqo/bin/\nCOPY --from=buildimage /dist/Release/lib/*.so /neqo/lib/\nCOPY --from=buildimage /dist/Release/bin/certutil /dist/Release/bin/pk12util /neqo/bin/\n\nCOPY interop.sh /neqo/\nRUN chmod +x /neqo/interop.sh\nENTRYPOINT [ \"/neqo/interop.sh\" ]\n"
+}

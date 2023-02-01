@@ -1,0 +1,64 @@
+ARG CONTAINER_IMAGE=fedora:latest
+FROM ${CONTAINER_IMAGE}
+
+ARG LINT=false
+
+WORKDIR /build
+COPY ci/dnf_install_lint_pkgs.sh .
+COPY ci/entrypoint.sh .
+COPY tox-requirements.txt .
+COPY test-requirements.txt .
+
+RUN uname -a
+RUN rpm -q rpm
+RUN echo -e "deltarpm=0\ninstall_weak_deps=0\ntsflags=nodocs" >> /etc/dnf/dnf.conf
+# Disable modular repositories to save a running time of "dnf upgrade"
+# if they exists.
+RUN ls -1 /etc/yum.repos.d/*.repo
+RUN sed -i '/^enabled=1$/ s/1/0/' /etc/yum.repos.d/*-modular.repo || true
+# When kernel and user space architecture is different,
+# Need to use "--forcearch <user space arch>" option.
+RUN ARCH=$(rpm -q rpm --qf "%{arch}") \
+  && dnf -y --forcearch "${ARCH}" upgrade \
+  && dnf -y --forcearch "${ARCH}" install \
+  # -- RPM packages required for installing --
+  rpm-libs \
+  redhat-rpm-config \
+  gcc \
+  python3-devel \
+  python2-devel \
+  /usr/bin/python3.9 \
+  /usr/bin/python3.8 \
+  /usr/bin/python3.7 \
+  /usr/bin/python3.6 \
+  /usr/bin/python3.5 \
+  /usr/bin/python2.7 \
+  # -- RPM packages required for a specified case --
+  # Used to get the rpm-python by git commmand,
+  # if a target rpm archive URL is not found on the server.
+  /usr/bin/git \
+  # rpm-build-libs or DNF download plugin is required for building.
+  # rpm-build-libs might be always installed.
+  rpm-build-libs \
+  'dnf-command(download)' \
+  # Used if downloading and extracting build dependency packages in installing.
+  /usr/bin/cpio \
+  # -- RPM packages for testing --
+  apt \
+  which
+# Optinally installed in some cases.
+RUN ARCH=$(rpm -q rpm --qf "%{arch}") \
+  && dnf -y --forcearch "${ARCH}" install \
+  /usr/bin/python2.6 \
+  || true
+
+RUN ./dnf_install_lint_pkgs.sh
+RUN dnf clean all
+RUN python3 -m ensurepip
+RUN python3 -m pip install --upgrade -rtox-requirements.txt
+# Install testing dependencies at this timing for no netowrk test.
+RUN python3 -m pip install --upgrade -rtest-requirements.txt
+
+# fedora:25, 26 tox is installed to /usr/bin/tox
+# fedora:rawhide tox is installed to /usr/local/bin/tox
+ENTRYPOINT ["/build/entrypoint.sh"]

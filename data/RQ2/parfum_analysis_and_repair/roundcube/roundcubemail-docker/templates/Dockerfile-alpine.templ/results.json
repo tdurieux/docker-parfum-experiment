@@ -1,0 +1,35 @@
+{
+  "startTime": 1674255372757,
+  "endTime": 1674255373827,
+  "originalSmells": [
+    {
+      "rule": "gpgUseBatchFlag",
+      "position": {
+        "lineStart": 77,
+        "lineEnd": 77,
+        "columnStart": 1,
+        "columnEnd": 89
+      }
+    },
+    {
+      "rule": "gpgUseBatchFlag",
+      "position": {
+        "lineStart": 78,
+        "lineEnd": 78,
+        "columnStart": 1,
+        "columnEnd": 89
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 53,
+        "lineEnd": 53,
+        "columnStart": 1,
+        "columnEnd": 70
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM php:7.4-%%VARIANT%%\nLABEL maintainer=\"Thomas Bruederli <thomas@roundcube.net>\"\n\n# entrypoint.sh and installto.sh dependencies\nRUN set -ex; \\\n\t\\\n\tapk add --no-cache \\\n\t\tbash \\\n\t\tcoreutils \\\n\t\trsync \\\n\t\ttzdata \\\n\t\taspell \\\n\t\taspell-en\n\nRUN set -ex; \\\n\n\tapk add --no-cache --virtual .build-deps \\\n\t\t$PHPIZE_DEPS \\\n\t\ticu-dev \\\n\t\tfreetype-dev \\\n\t\timagemagick-dev \\\n\t\tlibjpeg-turbo-dev \\\n\t\tlibpng-dev \\\n\t\tlibzip-dev \\\n\t\tlibtool \\\n\t\topenldap-dev \\\n\t\tpostgresql-dev \\\n\t\tsqlite-dev \\\n\t\taspell-dev \\\n\t; \\\n\n\tdocker-php-ext-configure gd --with-jpeg --with-freetype; \\\n\tdocker-php-ext-configure ldap; \\\n\tdocker-php-ext-install \\\n\t\texif \\\n\t\tgd \\\n\t\tintl \\\n\t\tldap \\\n\t\tpdo_mysql \\\n\t\tpdo_pgsql \\\n\t\tpdo_sqlite \\\n\t\tzip \\\n\t\tpspell \\\n\t; \\\n\tpecl install imagick redis; \\\n\tdocker-php-ext-enable imagick opcache redis; \\\n\n\trunDeps=\"$( \\\n\t\tscanelf --needed --nobanner --format '%n#p' --recursive /usr/local/lib/php/extensions \\\n\t\t| tr ',' '\\n' \\\n\t\t| sort -u \\\n\t\t| awk 'system(\"[ -e /usr/local/lib/\" $1 \" ]\") == 0 { next } { print \"so:\" $1 }' \\\n\t\t)\"; \\\n\tapk add --no-cache --virtual .roundcubemail-phpext-rundeps imagemagick $runDeps; \\\n\tapk del .build-deps\n\nCOPY --from=composer:2 /usr/bin/composer /usr/bin/composer\n%%EXTRAS%%\n\n# Define Roundcubemail version\nENV ROUNDCUBEMAIL_VERSION %%VERSION%%\n\n# Define the GPG key used for the bundle verification process\nENV ROUNDCUBEMAIL_KEYID \"F3E4 C04B B3DB 5D42 15C4  5F7F 5AB2 BAA1 41C4 F7D5\"\n\n# Download package and extract to web volume\nRUN set -ex; \\\n\tapk add --no-cache --virtual .fetch-deps \\\n\t\tgnupg \\\n\t; \\\n\n\tcurl -o roundcubemail.tar.gz -fSL https://github.com/roundcube/roundcubemail/releases/download/${ROUNDCUBEMAIL_VERSION}/roundcubemail-${ROUNDCUBEMAIL_VERSION}-complete.tar.gz; \\\n\tcurl -o roundcubemail.tar.gz.asc -fSL https://github.com/roundcube/roundcubemail/releases/download/${ROUNDCUBEMAIL_VERSION}/roundcubemail-${ROUNDCUBEMAIL_VERSION}-complete.tar.gz.asc; \\\n\texport GNUPGHOME=\"$(mktemp -d)\"; \\\n\t# workaround for \"Cannot assign requested address\", see e.g. https://github.com/inversepath/usbarmory-debian-base_image/issues/9\n\techo \"disable-ipv6\" > \"$GNUPGHOME/dirmngr.conf\"; \\\n\tcurl -fSL https://roundcube.net/download/pubkey.asc -o /tmp/pubkey.asc; \\\n\tLC_ALL=C.UTF-8 gpg --batch -n --show-keys --with-fingerprint --keyid-format=long /tmp/pubkey.asc | if [ $(grep -c -o 'Key fingerprint') != 1 ]; then echo 'The key file should contain only one GPG key'; exit 1; fi; \\\n\tLC_ALL=C.UTF-8 gpg --batch -n --show-keys --with-fingerprint --keyid-format=long /tmp/pubkey.asc | if [ $(grep -c -o \"${ROUNDCUBEMAIL_KEYID}\") != 1 ]; then echo 'The key ID should be the roundcube one'; exit 1; fi; \\\n\tgpg --batch --import /tmp/pubkey.asc; \\\n\trm /tmp/pubkey.asc; \\\n\tgpg --batch --verify roundcubemail.tar.gz.asc roundcubemail.tar.gz; \\\n\tgpgconf --kill all; \\\n\tmkdir /usr/src/roundcubemail; \\\n\ttar -xf roundcubemail.tar.gz -C /usr/src/roundcubemail --strip-components=1 --no-same-owner; \\\n\trm -r \"$GNUPGHOME\" roundcubemail.tar.gz.asc roundcubemail.tar.gz; \\\n\trm -rf /usr/src/roundcubemail/installer; \\\n\tchown -R www-data:www-data /usr/src/roundcubemail/logs; \\\n\tapk del .fetch-deps\n\n# copy the latest version of initdb.sh which supports the --update flag\nRUN curl -fL https://raw.githubusercontent.com/roundcube/roundcubemail/master/bin/initdb.sh > /usr/src/roundcubemail/bin/initdb.sh && chmod +x /usr/src/roundcubemail/bin/initdb.sh\n\n# include the wait-for-it.sh script\nRUN curl -fL https://raw.githubusercontent.com/vishnubob/wait-for-it/master/wait-for-it.sh > /wait-for-it.sh && chmod +x /wait-for-it.sh\n\n# use custom PHP settings\nCOPY php.ini /usr/local/etc/php/conf.d/roundcube-defaults.ini\n\nCOPY --chmod=0755 docker-entrypoint.sh /\n\nRUN mkdir -p /var/roundcube/config\n\nENTRYPOINT [\"/docker-entrypoint.sh\"]\nCMD [\"%%CMD%%\"]\n"
+}

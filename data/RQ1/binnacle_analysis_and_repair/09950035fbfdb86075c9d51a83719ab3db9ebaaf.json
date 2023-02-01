@@ -1,0 +1,90 @@
+{
+  "startTime": 1674245333250,
+  "endTime": 1674245333405,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 15,
+        "lineEnd": 15,
+        "columnStart": 4,
+        "columnEnd": 78
+      }
+    },
+    {
+      "rule": "curlUseHttpsUrl",
+      "position": {
+        "lineStart": 15,
+        "lineEnd": 15,
+        "columnStart": 4,
+        "columnEnd": 78
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 3,
+        "lineEnd": 3,
+        "columnStart": 22,
+        "columnEnd": 51
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 12,
+        "lineEnd": 12,
+        "columnStart": 4,
+        "columnEnd": 106
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 23,
+        "lineEnd": 23,
+        "columnStart": 4,
+        "columnEnd": 53
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 12,
+        "lineEnd": 12,
+        "columnStart": 4,
+        "columnEnd": 106
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 3,
+        "lineEnd": 3,
+        "columnStart": 22,
+        "columnEnd": 51
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 12,
+        "lineEnd": 12,
+        "columnStart": 4,
+        "columnEnd": 106
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 12,
+        "lineEnd": 12,
+        "columnStart": 4,
+        "columnEnd": 130
+      }
+    }
+  ],
+  "repairedDockerfile": "FROM debian:jessie\n\n# install and configure supervisor\nRUN apt-get update && apt-get install --no-install-recommends -y supervisor && mkdir -p /var/log/supervisor && rm -rf /var/lib/apt/lists/*;\nCOPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf\n\n# install java & curl\nRUN echo \"deb http://ppa.launchpad.net/webupd8team/java/ubuntu trusty main\" > /etc/apt/sources.list.d/webupd8team-java.list\nRUN echo \"deb-src http://ppa.launchpad.net/webupd8team/java/ubuntu trusty main\" >> /etc/apt/sources.list.d/webupd8team-java.list\nRUN apt-key adv --keyserver keyserver.ubuntu.com --recv-keys EEA14886\nRUN apt-get -y update\nRUN /bin/echo debconf shared/accepted-oracle-license-v1-1 select true | /usr/bin/debconf-set-selections\nRUN DEBIAN_FRONTEND=noninteractive apt-get --no-install-recommends -y install oracle-java7-installer oracle-java7-set-default curl && rm -rf /var/lib/apt/lists/*;\n\n# download and install spark\nRUN curl -f -s https://d3kbcqa49mib13.cloudfront.net/spark-1.3.0-bin-hadoop2.4.tgz | tar -xz -C /usr/local/\nRUN cd /usr/local && ln -s spark-1.3.0-bin-hadoop2.4 spark\n\n# install cassandra\nENV CASSANDRA_VERSION 2.1.8\nRUN apt-key adv --keyserver ha.pool.sks-keyservers.net --recv-keys 514A2AD631A57A16DD0047EC749D6EEC0353B12C\nRUN echo 'deb http://www.apache.org/dist/cassandra/debian 21x main' >> /etc/apt/sources.list.d/cassandra.list\nRUN apt-get update \\\n\t&& apt-get install --no-install-recommends -y cassandra=\"$CASSANDRA_VERSION\" \\\n\t&& rm -rf /var/lib/apt/lists/*\n\n# copy some script to run spark\nCOPY scripts/start-master.sh /start-master.sh\nCOPY scripts/start-worker.sh /start-worker.sh\nCOPY scripts/spark-shell.sh /spark-shell.sh\nCOPY scripts/spark-cassandra-connector-assembly-1.3.0-RC1-SNAPSHOT.jar /spark-cassandra-connector-assembly-1.3.0-RC1-SNAPSHOT.jar\nCOPY scripts/spark-defaults.conf /spark-defaults.conf\n\n# configure spark\nENV SPARK_HOME /usr/local/spark\nENV SPARK_MASTER_OPTS=\"-Dspark.driver.port=7001 -Dspark.fileserver.port=7002 -Dspark.broadcast.port=7003 -Dspark.replClassServer.port=7004 -Dspark.blockManager.port=7005 -Dspark.executor.port=7006 -Dspark.ui.port=4040 -Dspark.broadcast.factory=org.apache.spark.broadcast.HttpBroadcastFactory\"\nENV SPARK_WORKER_OPTS=$SPARK_MASTER_OPTS\nENV SPARK_MASTER_PORT 7077\nENV SPARK_MASTER_WEBUI_PORT 8080\nENV SPARK_WORKER_PORT 8888\nENV SPARK_WORKER_WEBUI_PORT 8081\n\n# configure cassandra\nENV CASSANDRA_CONFIG /etc/cassandra\n\n# listen to all rpc\nRUN sed -ri ' \\\n\t\ts/^(rpc_address:).*/\\1 0.0.0.0/; \\\n\t' \"$CASSANDRA_CONFIG/cassandra.yaml\"\n\nCOPY cassandra-configurator.sh /cassandra-configurator.sh\nENTRYPOINT [\"/cassandra-configurator.sh\"]\n\nVOLUME /var/lib/cassandra\n\n### Spark\n# 4040: spark ui\n# 7001: spark driver\n# 7002: spark fileserver\n# 7003: spark broadcast\n# 7004: spark replClassServer\n# 7005: spark blockManager\n# 7006: spark executor\n# 7077: spark master\n# 8080: spark master ui\n# 8081: spark worker ui\n# 8888: spark worker\n### Cassandra\n# 7000: C* intra-node communication\n# 7199: C* JMX\n# 9042: C* CQL\n# 9160: C* thrift service\nEXPOSE 4040 7000 7001 7002 7003 7004 7005 7006 7077 7199 8080 8081 8888 9042 9160\n\nCMD [\"/usr/bin/supervisord\"]"
+}

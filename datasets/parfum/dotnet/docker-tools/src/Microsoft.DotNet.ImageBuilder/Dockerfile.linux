@@ -1,0 +1,45 @@
+# Use this Dockerfile to create a runner image
+#     docker build -t image-builder .
+#     docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v <local path to build>:/repo -w /repo image-builder <image-build args>
+
+ARG ALPINE_TAG_SUFFIX=""
+
+# build Microsoft.DotNet.ImageBuilder
+FROM mcr.microsoft.com/dotnet/sdk:6.0 AS build-env
+
+ARG RID_ARCH=x64
+# The rid must be version-specific to workaround a libgit2sharp issue (see https://github.com/dotnet/dotnet-docker/pull/2111)
+ARG RID=alpine.3.14-${RID_ARCH}
+
+WORKDIR /image-builder
+
+# restore packages before copying entire source - provides optimizations when rebuilding
+COPY NuGet.config ./
+COPY src/Microsoft.DotNet.ImageBuilder.csproj ./src/
+RUN dotnet restore -r $RID ./src/Microsoft.DotNet.ImageBuilder.csproj
+
+# copy everything else and publish
+COPY . ./
+RUN dotnet publish ./src/Microsoft.DotNet.ImageBuilder.csproj -c Release -o out -r $RID --no-restore --self-contained
+
+
+# build runtime image
+FROM mcr.microsoft.com/dotnet/runtime-deps:6.0-alpine$ALPINE_TAG_SUFFIX
+
+ARG MANIFEST_TOOL_ARCH=amd64
+
+# install tooling
+RUN apk add --no-cache \
+        docker \
+        git
+
+# install manifest-tool
+RUN wget -O /usr/local/bin/manifest-tool \
+        "https://github.com/estesp/manifest-tool/releases/download/v1.0.3/manifest-tool-linux-$MANIFEST_TOOL_ARCH" \
+    && chmod +x /usr/local/bin/manifest-tool
+
+# install image-builder
+WORKDIR /image-builder
+COPY --from=build-env /image-builder/out ./
+
+ENTRYPOINT ["/image-builder/Microsoft.DotNet.ImageBuilder"]

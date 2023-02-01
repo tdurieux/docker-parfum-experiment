@@ -1,0 +1,1 @@
+# Dockerfile Bareos client/file daemon

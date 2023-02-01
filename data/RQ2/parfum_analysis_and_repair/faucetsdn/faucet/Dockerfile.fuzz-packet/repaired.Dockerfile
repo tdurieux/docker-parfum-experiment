@@ -1,0 +1,22 @@
+## Image name: faucet/packet-fuzzer
+
+FROM faucet/test-base:10.0.3
+
+ENV PIP3="pip3 --no-cache-dir install --upgrade"
+ENV PATH="/venv/bin:$PATH"
+
+COPY ./ /faucet-src/
+WORKDIR /faucet-src
+
+RUN \
+  apt-get update && \
+  apt-get install --no-install-recommends -y afl cython3 && \
+  $PIP3 -r requirements.txt && \
+  $PIP3 -r fuzz-requirements.txt && \
+  $PIP3 . && rm -rf /var/lib/apt/lists/*;
+
+VOLUME ["/var/log/faucet/", "/var/log/afl/", "/etc/faucet/", "/var/run/faucet/"]
+
+EXPOSE 6653 9302
+
+CMD ["docker/fuzz_packet.sh"]

@@ -1,0 +1,26 @@
+{
+  "startTime": 1674216337775,
+  "endTime": 1674216338460,
+  "originalSmells": [
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 46,
+        "lineEnd": 46,
+        "columnStart": 4,
+        "columnEnd": 78
+      }
+    },
+    {
+      "rule": "mkdirUsrSrcThenRemove",
+      "position": {
+        "lineStart": 22,
+        "lineEnd": 22,
+        "columnStart": 4,
+        "columnEnd": 36
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "ARG ARCH=amd64\nARG NODE_VERSION=14\nARG OS=alpine3.12\n\n#### Stage BASE ########################################################################################################\nFROM ${ARCH}/node:${NODE_VERSION}-${OS} AS base\n\n# Copy scripts\nCOPY scripts/*.sh /tmp/\n\n# Install tools, create Node-RED app and data dir, add user and set rights\nRUN set -ex && \\\n    apk add --no-cache \\\n        bash \\\n        tzdata \\\n        iputils \\\n        curl \\\n        nano \\\n        git \\\n        openssl \\\n        openssh-client \\\n        ca-certificates && \\\n    mkdir -p /usr/src/node-red /data && \\\n    deluser --remove-home node && \\\n    adduser -h /usr/src/node-red -D -H node-red -u 1000 && \\\n    chown -R node-red:root /data && chmod -R g+rwX /data && \\\n    chown -R node-red:root /usr/src/node-red && chmod -R g+rwX /usr/src/node-red && rm -rf /usr/src/node-red\n    # chown -R node-red:node-red /data && \\\n    # chown -R node-red:node-red /usr/src/node-red\n\n# Set work directory\nWORKDIR /usr/src/node-red\n\n# Setup SSH known_hosts file\nCOPY known_hosts.sh .\nRUN ./known_hosts.sh /etc/ssh/ssh_known_hosts && rm /usr/src/node-red/known_hosts.sh\n\n# package.json contains Node-RED NPM module and node dependencies\nCOPY package.json .\nCOPY flows.json /data\n\n#### Stage BUILD #######################################################################################################\nFROM base AS build\n\n# Install Build tools\nRUN apk add --no-cache --virtual buildtools build-base linux-headers udev python2 && \\\n    npm install --unsafe-perm --no-update-notifier --no-fund --only=production && \\\n    /tmp/remove_native_gpio.sh && \\\n    cp -R node_modules prod_node_modules && npm cache clean --force;\n\n#### Stage RELEASE #####################################################################################################\nFROM base AS RELEASE\nARG BUILD_DATE\nARG BUILD_VERSION\nARG BUILD_REF\nARG NODE_RED_VERSION\nARG ARCH\nARG TAG_SUFFIX=default\n\nLABEL org.label-schema.build-date=${BUILD_DATE} \\\n    org.label-schema.docker.dockerfile=\".docker/Dockerfile.alpine\" \\\n    org.label-schema.license=\"Apache-2.0\" \\\n    org.label-schema.name=\"Node-RED\" \\\n    org.label-schema.version=${BUILD_VERSION} \\\n    org.label-schema.description=\"Low-code programming for event-driven applications.\" \\\n    org.label-schema.url=\"https://nodered.org\" \\\n    org.label-schema.vcs-ref=${BUILD_REF} \\\n    org.label-schema.vcs-type=\"Git\" \\\n    org.label-schema.vcs-url=\"https://github.com/node-red/node-red-docker\" \\\n    org.label-schema.arch=${ARCH} \\\n    authors=\"Dave Conway-Jones, Nick O'Leary, James Thomas, Raymond Mouthaan\"\n\nCOPY --from=build /usr/src/node-red/prod_node_modules ./node_modules\n\n# Chown, install devtools & Clean up\nRUN chown -R node-red:root /usr/src/node-red && \\\n    /tmp/install_devtools.sh && \\\n    rm -r /tmp/*\n\nUSER node-red\n\n# Env variables\nENV NODE_RED_VERSION=$NODE_RED_VERSION \\\n    NODE_PATH=/usr/src/node-red/node_modules:/data/node_modules \\\n    PATH=/usr/src/node-red/node_modules/.bin:${PATH} \\\n    FLOWS=flows.json\n\n# ENV NODE_RED_ENABLE_SAFE_MODE=true    # Uncomment to enable safe start mode (flows not running)\n# ENV NODE_RED_ENABLE_PROJECTS=true     # Uncomment to enable projects option\n\n# Expose the listening port of node-red\nEXPOSE 1880\n\n# Add a healthcheck (default every 30 secs)\n# HEALTHCHECK CMD curl http://localhost:1880/ || exit 1\n\nENTRYPOINT [\"npm\", \"start\", \"--cache\", \"/data/.npm\", \"--\", \"--userDir\", \"/data\"]\n"
+}

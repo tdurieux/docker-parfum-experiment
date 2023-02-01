@@ -1,0 +1,53 @@
+FROM node:16-alpine3.15 as build
+
+WORKDIR /tmp
+
+# RUN sed -i -e 's/http:/https:/' /etc/apk/repositories
+
+RUN apk update && apk add --no-cache --virtual .build-deps \
+  python3 \
+  g++ \
+  make \
+  git \
+  file
+
+COPY ./ndid-logger/package*.json /tmp/api/ndid-logger/
+COPY ./mq-server/package*.json /tmp/api/mq-server/
+
+WORKDIR /tmp/api/ndid-logger
+RUN npm install && npm prune --production && npm cache clean --force;
+
+WORKDIR /tmp/api/mq-server
+RUN npm install && npm cache clean --force;
+
+COPY ./ndid-error /tmp/api/ndid-error
+COPY ./ndid-logger /tmp/api/ndid-logger
+COPY ./mq-server /tmp/api/mq-server
+
+RUN npm run build && npm prune --production
+
+RUN apk del .build-deps
+
+
+FROM node:16-alpine3.15
+LABEL maintainer="NDID IT Team <it@ndid.co.th>"
+
+# Set umask to 027
+RUN umask 027 && echo "umask 0027" >> /etc/profile
+
+# RUN sed -i -e 's/http:/https:/' /etc/apk/repositories
+COPY --from=build /var/cache/apk /var/cache/apk
+RUN apk add --no-cache bash openssl && rm -rf /var/cache/apk
+
+COPY --from=build /tmp/api/ndid-error /api/ndid-error
+COPY --from=build /tmp/api/ndid-logger /api/ndid-logger
+COPY --from=build /tmp/api/mq-server /api/mq-server
+
+COPY ./protos /api/protos
+COPY ./dev_cert /api/dev_cert
+COPY COPYING /api/
+COPY VERSION /api/
+
+WORKDIR /api/mq-server
+
+ENTRYPOINT [ "node", "/api/mq-server/build/server.js" ]

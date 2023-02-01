@@ -1,0 +1,80 @@
+{
+  "startTime": 1674252611131,
+  "endTime": 1674252612070,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 102,
+        "lineEnd": 102,
+        "columnStart": 5,
+        "columnEnd": 116
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 109,
+        "lineEnd": 109,
+        "columnStart": 5,
+        "columnEnd": 82
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 73,
+        "lineEnd": 74,
+        "columnStart": 7,
+        "columnEnd": 36
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 82,
+        "lineEnd": 83,
+        "columnStart": 7,
+        "columnEnd": 37
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 94,
+        "lineEnd": 94,
+        "columnStart": 7,
+        "columnEnd": 42
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 11,
+        "lineEnd": 20,
+        "columnStart": 7,
+        "columnEnd": 56
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 32,
+        "lineEnd": 53,
+        "columnStart": 7,
+        "columnEnd": 37
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 94,
+        "lineEnd": 94,
+        "columnStart": 7,
+        "columnEnd": 42
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# rebuild in #33610\n# docker build -t clickhouse/binary-builder .\nFROM ubuntu:20.04\n\n# ARG for quick switch to a given ubuntu mirror\nARG apt_archive=\"http://archive.ubuntu.com\"\nRUN sed -i \"s|http://archive.ubuntu.com|$apt_archive|g\" /etc/apt/sources.list\n\nENV DEBIAN_FRONTEND=noninteractive LLVM_VERSION=14\n\nRUN apt-get update \\\n    && apt-get install \\\n        apt-transport-https \\\n        apt-utils \\\n        ca-certificates \\\n        dnsutils \\\n        gnupg \\\n        iputils-ping \\\n        lsb-release \\\n        wget \\\n        --yes --no-install-recommends --verbose-versions \\\n    && export LLVM_PUBKEY_HASH=\"bda960a8da687a275a2078d43c111d66b1c6a893a3275271beedf266c1ff4a0cdecb429c7a5cccf9f486ea7aa43fd27f\" \\\n    && wget -nv -O /tmp/llvm-snapshot.gpg.key https://apt.llvm.org/llvm-snapshot.gpg.key \\\n    && echo \"${LLVM_PUBKEY_HASH} /tmp/llvm-snapshot.gpg.key\" | sha384sum -c \\\n    && apt-key add /tmp/llvm-snapshot.gpg.key \\\n    && export CODENAME=\"$(lsb_release --codename --short | tr 'A-Z' 'a-z')\" \\\n    && echo \"deb [trusted=yes] https://apt.llvm.org/${CODENAME}/ llvm-toolchain-${CODENAME}-${LLVM_VERSION} main\" >> \\\n        /etc/apt/sources.list \\\n    && apt-get clean && rm -rf /var/lib/apt/lists/*;\n\n# initial packages\nRUN apt-get update \\\n    && apt-get install \\\n        bash \\\n        build-essential \\\n        ccache \\\n        clang-${LLVM_VERSION} \\\n        clang-tidy-${LLVM_VERSION} \\\n        cmake \\\n        curl \\\n        fakeroot \\\n        gdb \\\n        git \\\n        gperf \\\n        lld-${LLVM_VERSION} \\\n        llvm-${LLVM_VERSION} \\\n        llvm-${LLVM_VERSION}-dev \\\n        moreutils \\\n        ninja-build \\\n        pigz \\\n        rename \\\n        software-properties-common \\\n        tzdata \\\n        --yes --no-install-recommends \\\n    && apt-get clean && rm -rf /var/lib/apt/lists/*;\n\n# This symlink required by gcc to find lld compiler\nRUN ln -s /usr/bin/lld-${LLVM_VERSION} /usr/bin/ld.lld\n\nENV CC=clang-${LLVM_VERSION}\nENV CXX=clang++-${LLVM_VERSION}\n\n# libtapi is required to support .tbh format from recent MacOS SDKs\nRUN git clone --depth 1 https://github.com/tpoechtrager/apple-libtapi.git \\\n    && cd apple-libtapi \\\n    && INSTALLPREFIX=/cctools ./build.sh \\\n    && ./install.sh \\\n    && cd .. \\\n    && rm -rf apple-libtapi\n\n# Build and install tools for cross-linking to Darwin (x86-64)\nRUN git clone --depth 1 https://github.com/tpoechtrager/cctools-port.git \\\n    && cd cctools-port/cctools \\\n    && ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" --prefix=/cctools --with-libtapi=/cctools \\\n        --target=x86_64-apple-darwin \\\n    && make install \\\n    && cd ../.. \\\n    && rm -rf cctools-port\n\n# Build and install tools for cross-linking to Darwin (aarch64)\nRUN git clone --depth 1 https://github.com/tpoechtrager/cctools-port.git \\\n    && cd cctools-port/cctools \\\n    && ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" --prefix=/cctools --with-libtapi=/cctools \\\n        --target=aarch64-apple-darwin \\\n    && make install \\\n    && cd ../.. \\\n    && rm -rf cctools-port\n\n# Download toolchain and SDK for Darwin\nRUN wget -nv https://github.com/phracker/MacOSX-SDKs/releases/download/11.3/MacOSX11.0.sdk.tar.xz\n\n# NOTE: Seems like gcc-11 is too new for ubuntu20 repository\nRUN add-apt-repository ppa:ubuntu-toolchain-r/test --yes \\\n    && apt-get update \\\n    && apt-get install --no-install-recommends gcc-11 g++-11 --yes \\\n    && apt-get clean && rm -rf /var/lib/apt/lists/*;\n\n# Architecture of the image when BuildKit/buildx is used\nARG TARGETARCH\nARG NFPM_VERSION=2.16.0\n\nRUN arch=${TARGETARCH:-amd64} \\\n  && curl -f -Lo /tmp/nfpm.deb \"https://github.com/goreleaser/nfpm/releases/download/v${NFPM_VERSION}/nfpm_${arch}.deb\" \\\n  && dpkg -i /tmp/nfpm.deb \\\n  && rm /tmp/nfpm.deb\n\nARG GO_VERSION=1.18.3\n# We need go for clickhouse-diagnostics\nRUN arch=${TARGETARCH:-amd64} \\\n  && curl -f -Lo /tmp/go.tgz \"https://go.dev/dl/go${GO_VERSION}.linux-${arch}.tar.gz\" \\\n  && tar -xzf /tmp/go.tgz -C /usr/local/ \\\n  && rm /tmp/go.tgz\n\nENV PATH=\"$PATH:/usr/local/go/bin\"\nENV GOPATH=/workdir/go\nENV GOCACHE=/workdir/\n\nRUN mkdir /workdir && chmod 777 /workdir\nWORKDIR /workdir\n\nCOPY build.sh /\nCMD [\"bash\", \"-c\", \"/build.sh 2>&1\"]\n"
+}

@@ -1,0 +1,25 @@
+FROM python:3.8-buster
+LABEL zimfarm=true
+LABEL org.opencontainers.image.source https://github.com/openzim/zimfarm
+
+WORKDIR /usr/src
+
+COPY task-requirements.txt requirements.txt
+RUN pip3 install --no-cache-dir -r requirements.txt
+
+COPY app app
+RUN ln -s /usr/src/app/task_worker.py /usr/local/bin/task-worker
+RUN chmod +x /usr/local/bin/task-worker
+
+ENV TASK_WORKER_IMAGE ""
+ENV DNSCACHE_IMAGE ""
+ENV UPLOADER_IMAGE ""
+ENV CHECKER_IMAGE ""
+ENV MONITOR_IMAGE ""
+
+ENV WEB_API_URI https://api.farm.openzim.org/v1
+ENV WORKDIR /data
+VOLUME /var/run/docker.sock
+VOLUME /data
+
+CMD ["task-worker"]

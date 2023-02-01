@@ -1,0 +1,17 @@
+{
+  "startTime": 1674254832133,
+  "endTime": 1674254832795,
+  "originalSmells": [
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 4,
+        "lineEnd": 9,
+        "columnStart": 4,
+        "columnEnd": 21
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Container for packages that need to be built from source but have massive dev dependencies.\nFROM python:3.9.12-slim-bullseye as builder\nRUN set -e && \\\n    apt-get update && \\\n    apt-get install -y --no-install-recommends \\\n        build-essential \\\n        gcc \\\n        libmemcached-dev \\\n        patchelf \\\n        python3.9-dev && rm -rf /var/lib/apt/lists/*;\n\n# pylibmc doesn't have wheels for >3.7\n# (https://github.com/lericson/pylibmc/issues/269). Just building the wheel\n# fails to pull in all the required libmemcached headers, this is fixed with\n# auditwheel.\nRUN pip config set global.disable-pip-version-check true && \\\n    pip wheel --wheel-dir=/root/wheels uwsgi==2.0.19.1 && \\\n    pip wheel --wheel-dir=/root/wheels regex==2021.11.10 && \\\n    pip wheel --wheel-dir=/tmp/wheels pylibmc==1.6.1 && \\\n    pip install --no-cache-dir auditwheel && \\\n    auditwheel repair /tmp/wheels/pylibmc-*.whl -w /root/wheels --plat manylinux_2_27_x86_64\n\n# The actual container.\nFROM python:3.9.12-slim-bullseye\nRUN set -e && \\\n    apt-get update && \\\n    apt-get install -y --no-install-recommends \\\n        nginx \\\n        memcached \\\n        supervisor && \\\n    rm -rf /var/lib/apt/lists/*\n\nCOPY --from=builder /root/wheels /root/wheels\nCOPY requirements.txt /app/requirements.txt\nRUN pip install \\\n        --no-index \\\n        --no-cache-dir \\\n        --disable-pip-version-check \\\n        --find-links=/root/wheels \\\n        uwsgi regex pylibmc && \\\n    pip install --no-cache-dir --disable-pip-version-check -r /app/requirements.txt && \\\n        rm -rf /root/.cache/pip/* && \\\n        rm root/wheels/* && \\\n        rm /app/requirements.txt\n\nWORKDIR /app\nCOPY . /app/\n\nRUN echo > /etc/nginx/sites-available/default && \\\n    cp /app/docker/nginx.conf /etc/nginx/conf.d/nginx.conf && \\\n    cp /app/docker/supervisord.conf /etc/supervisor/conf.d/supervisord.conf\n\nCMD [\"sh\", \"/app/docker/run.sh\"]\nEXPOSE 5000\n\nENV CURL_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt\nENV GDAL_DISABLE_READDIR_ON_OPEN=TRUE\nENV GDAL_NUM_THREADS=ALL_CPUS\nENV GDAL_CACHEMAX=512\n"
+}

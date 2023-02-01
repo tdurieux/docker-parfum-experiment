@@ -1,0 +1,1 @@
+# Use the Kafka client image as base

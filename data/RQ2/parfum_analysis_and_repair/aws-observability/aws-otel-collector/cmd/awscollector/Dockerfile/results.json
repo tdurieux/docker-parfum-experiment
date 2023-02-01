@@ -1,0 +1,17 @@
+{
+  "startTime": 1674249684041,
+  "endTime": 1674249685223,
+  "originalSmells": [
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 11,
+        "lineEnd": 11,
+        "columnStart": 4,
+        "columnEnd": 36
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# The build mode (options: build, copy) passed in as a --build-arg. If build is specified, then the copy\n# stage will be skipped and vice versa. The build mode builds the binary from the source files, while\n# the copy mode copies in a pre-built binary.\nARG BUILDMODE=build\n\n################################\n#\tCertificate Stage      #\n#\t\t\t       #\n################################\nFROM alpine:latest AS certs\n\nRUN apk --update --no-cache add ca-certificates\n\n################################\n#\tBuild Stage            #\n#\t\t\t       #\n################################\nFROM golang:1.17 AS prep-build\n\nARG TARGETARCH\n\n# pass in the GOPROXY as a --build-arg (e.g. --build-arg GOPROXY=direct)\nARG GOPROXY\nENV GOPROXY=${GOPROXY}\n\n# download go modules ahead to speed up the building\nWORKDIR /workspace\nCOPY go.mod .\nCOPY go.sum .\nRUN go mod download -x\n\n# copy source\nCOPY . .\n\n# build\nRUN make ${TARGETARCH}-build\n\n# move\nRUN mv /workspace/build/linux/$TARGETARCH/aoc /workspace/awscollector\n\n################################\n#\tCopy Stage             #\n#\t\t\t       #\t\n################################\nFROM scratch AS prep-copy\n\nWORKDIR /workspace\n\nARG TARGETARCH\n\n# copy artifacts\n# always assume binary is created\nCOPY build/linux/$TARGETARCH/aoc /workspace/awscollector\n\n################################\n#\tPacking Stage          #\n#\t\t\t       #\n################################\nFROM prep-${BUILDMODE} AS package\n\nCOPY config.yaml /workspace/config/otel-config.yaml\nCOPY config/ /workspace/config/\n\n################################\n#\tFinal Stage            #\t\n#\t\t\t       #\t\n################################\nFROM scratch\n\nCOPY --from=certs /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt\nCOPY --from=package /workspace/awscollector /awscollector\nCOPY --from=package /workspace/config/ /etc/\n\nENV RUN_IN_CONTAINER=\"True\"\n# aws-sdk-go needs $HOME to look up shared credentials\nENV HOME=/root\nENTRYPOINT [\"/awscollector\"]\nCMD [\"--config=/etc/otel-config.yaml\"]\nEXPOSE 4317 55681 2000\n"
+}

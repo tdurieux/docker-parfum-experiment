@@ -1,0 +1,53 @@
+{
+  "startTime": 1674248172066,
+  "endTime": 1674248172757,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 42,
+        "lineEnd": 42,
+        "columnStart": 4,
+        "columnEnd": 35
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 44,
+        "lineEnd": 44,
+        "columnStart": 4,
+        "columnEnd": 35
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 60,
+        "lineEnd": 60,
+        "columnStart": 4,
+        "columnEnd": 46
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 95,
+        "lineEnd": 95,
+        "columnStart": 4,
+        "columnEnd": 35
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 94,
+        "lineEnd": 94,
+        "columnStart": 4,
+        "columnEnd": 36
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "ARG build_packages=\"\\\n    gcc \\\n    g++ \\\n    make \\\n    file \\\n    libc-dev \\\n    libffi-dev \\\n    curl \\\n    openssl-dev \\\n    make \\\n    rust \\\n    cargo \\\n    rrdtool-dev \\\n    \"\n\nARG runtime_packages=\"fping librrd \\\n    zeromq \\\n    \"\n# vaping extras to be installed\nARG vaping_extras=all\n\nARG poetry_pin=\">=1,<=2\"\n\nFROM python:3.9-alpine as base\n\nARG runtime_packages\nARG virtual_env=/venv\n\nENV VIRTUAL_ENV=\"$virtual_env\"\nENV PATH=\"$VIRTUAL_ENV/bin:$PATH\"\n\n\n# image that builds vaping and deps\nFROM base as builder\n\nARG build_packages\nARG runtime_packages\nARG vaping_extras\n\nRUN apk upgrade --available && apk --update --no-cache add $build_packages $runtime_packages\n\n# install poetry outside of the venv\nRUN pip install --no-cache-dir --upgrade pip wheel\n# alpine package is currently only in edge\nRUN pip install --no-cache-dir \"poetry$poetry_pin\"\n\n# Create a VENV\nRUN python3 -m venv \"$VIRTUAL_ENV\"\n\nWORKDIR /src/vaping\n\nCOPY Ctl/VERSION Ctl/\nCOPY pyproject.toml poetry.lock README.md ./\nCOPY src src\n\n# Need to upgrade pip and wheel within Poetry for all its installs\nRUN poetry run pip install --upgrade pip wheel\n# poetry installs a pth for root\nRUN poetry install --no-dev --no-root\nRUN poetry build -f wheel\nRUN pip install --no-cache-dir \"$(ls dist/vaping-*.whl)[all]\"\n\n# TODO testing stage in container for package deps, etc\n\n\n# prep final running image\nFROM base as final\n\nARG runtime_packages\nARG vaping_uid=1000\n\nRUN apk upgrade --available \\\n    && apk --update --no-cache add $runtime_packages \\\n    && rm -rf /var/cache/apk/*\n\nCOPY --from=builder \"$VIRTUAL_ENV\" \"$VIRTUAL_ENV\"\n\nRUN adduser -Du $vaping_uid vaping\n\n\n# test against final image\nFROM final as tester\n\nARG build_packages\nARG vaping_extras\n\nWORKDIR /src/vaping\n\nCOPY pyproject.toml poetry.lock README.md ./\nCOPY src src\nCOPY tests tests\n\nRUN env\n# install dev\nRUN apk --update --no-cache add $build_packages\nRUN pip install --no-cache-dir \"poetry$poetry_pin\"\nRUN poetry install --no-root\n\n\n# execute from final image\nFROM final\n\nARG vaping_home=/vaping\n\nENV VAPING_HOME=$vaping_home\n\nWORKDIR /vaping\nRUN chown vaping:vaping /vaping\n\nUSER vaping\nCOPY --chown=vaping:vaping examples examples\nCOPY --chown=vaping:vaping examples/standalone_dns/config.yml .\n\nEXPOSE 7021\n\n# The process just silently exits without --debug in docker.\nCMD [\"vaping\", \"start\", \"--no-fork\"]\n"
+}

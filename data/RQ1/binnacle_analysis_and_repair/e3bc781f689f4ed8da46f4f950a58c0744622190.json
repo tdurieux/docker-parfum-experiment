@@ -1,0 +1,26 @@
+{
+  "startTime": 1674242382075,
+  "endTime": 1674242382193,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 38,
+        "lineEnd": 38,
+        "columnStart": 22,
+        "columnEnd": 45
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 38,
+        "lineEnd": 38,
+        "columnStart": 22,
+        "columnEnd": 45
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "################################\n# STEP 1 build executable binary\n################################\n\nFROM golang:1.12-alpine AS builder\n\n# Install git + SSL ca certificates.\n# Git is required for fetching the dependencies.\n# Ca-certificates is required to call HTTPS endpoints.\nRUN apk update && apk add --no-cache git ca-certificates tzdata && update-ca-certificates\n\nWORKDIR $GOPATH/src/saferwall/kaspersky/\nCOPY . .\n\n# Fetch dependencies.\nRUN go get -d -v\n\n# Build the binary.\nRUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -a -installsuffix cgo -ldflags '-extldflags \"-static\"' -o /go/bin/kasperskyscanner .\n\n\n############################\n# STEP 2 build a small image\n############################\n\nFROM saferwall/kaspersky:0.0.1 AS final\nLABEL maintainer=\"https://github.com/saferwall\"\nLABEL version=\"0.0.1\"\nLABEL description=\"Kaspersky Anti-Virus for Linux File Servers in a docker container\"\n\n# Vars\nENV KASPERSKY_BIN \t\t\t/opt/kaspersky/kesl/bin/kesl-control\nENV KASPERSKY_SETUP \t\t/opt/kaspersky/kesl/bin/kesl-setup.pl\nENV KASPERSKY_INSTALL_DIR   /opt/kaspersky\n# ENV KASPERSKY_VAR_DIR       /var/opt/kaspersky\n# ENV KASPERSKY_LOG_DIR       /var/log/kaspersky\n\n# Required packages\nRUN apt-get update && apt-get install --no-install-recommends -y sudo && rm -rf /var/lib/apt/lists/*;\n\n# Update VDF\nRUN service kesl-supervisor start \\\n    && $KASPERSKY_BIN --start-task 6 \\\n    && sleep 2m \\\n    && $KASPERSKY_BIN --app-info\n\n# Create an app user so our program doesn't run as root.\nRUN groupadd -r saferwall && useradd --no-log-init -r -g saferwall saferwall\n\n# Copy our binary\nCOPY --from=builder /go/bin/kasperskyscanner /bin/kasperskyscanner\n\n# Update permissions\nRUN usermod -aG sudo saferwall\nRUN echo 'saferwall    ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers\nRUN usermod -u 101 saferwall\nRUN groupmod -g 102 saferwall\n# RUN chown -R saferwall:saferwall $KASPERSKY_INSTALL_DIR\n# RUN chown -R saferwall:saferwall $KASPERSKY_VAR_DIR\n\n# Switch to our user\nUSER saferwall\n\nENTRYPOINT [\"/bin/kasperskyscanner\"]\n"
+}

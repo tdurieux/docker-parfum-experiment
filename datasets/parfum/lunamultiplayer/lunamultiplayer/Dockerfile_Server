@@ -1,0 +1,59 @@
+#Build this image with: docker build --file Dockerfile_Server -t lmpsrv:latest .
+#Delete the image with the command: docker image rm lmpsrv:latest
+
+#Create a container with: docker run -td -p 8800:8800 -p 8900:8900 --name lmpsrv lmpsrv:latest
+# the -t (tty) flag is needed so docker can send SIGINT for proper shutdown.
+#Attach to a container with: docker exec -it lmpsrv /bin/ash
+#When inside a container, you can dettach with: CONTROL+P+Q
+#Check logs with: docker logs -f lmpsrv
+
+#Stop a container with: docker stop lmpsrv
+#Start a container with: docker start lmpsrv
+#Remove a container with: docker container rm lmpsrv
+
+ARG OS_BASE=alpine
+ARG OS_VERSION=3.14
+ARG OS_ARCH=x64
+
+FROM mcr.microsoft.com/dotnet/sdk:5.0-${OS_BASE}${OS_VERSION} as base
+ARG OS_BASE
+ARG OS_VERSION
+ARG OS_ARCH
+
+COPY .nuget                           /LunaMultiplayer/.nuget
+COPY LmpCommon/LmpCommon.shproj       /LunaMultiplayer/LmpCommon/LmpCommon.shproj
+COPY Lidgren/Lidgren.shproj           /LunaMultiplayer/Lidgren/Lidgren.shproj
+COPY LmpGlobal/LmpGlobal.shproj       /LunaMultiplayer/LmpGlobal/LmpGlobal.shproj
+COPY Lidgren.Core/Lidgren.Core.csproj /LunaMultiplayer/Lidgren.Core/Lidgren.Core.csproj
+COPY Lidgren.Net/Lidgren.Net.csproj   /LunaMultiplayer/Lidgren.Net/Lidgren.Net.csproj
+COPY uhttpsharp/uhttpsharp2.csproj    /LunaMultiplayer/uhttpsharp/uhttpsharp2.csproj
+COPY uhttpsharp/uhttpsharp.csproj     /LunaMultiplayer/uhttpsharp/uhttpsharp.csproj
+COPY LmpUpdater/LmpUpdater.csproj     /LunaMultiplayer/LmpUpdater/LmpUpdater.csproj
+COPY Server/Server.csproj             /LunaMultiplayer/Server/Server.csproj
+
+RUN cd /LunaMultiplayer/Server && \
+    dotnet restore -r ${OS_BASE}.${OS_VERSION}-${OS_ARCH}
+
+COPY . /LunaMultiplayer
+
+FROM base as debug
+WORKDIR /LunaMultiplayer/Server
+ENV DOTNET_PerfMapEnabled=1
+ENV COMPlus_PerfMapEnabled=1
+CMD [ "/bin/ash" ]
+
+FROM base as builder
+ARG OS_BASE
+ARG OS_VERSION
+ARG OS_ARCH
+WORKDIR /LunaMultiplayer/Server
+RUN dotnet publish -c Release -r ${OS_BASE}.${OS_VERSION}-${OS_ARCH} -o Publish
+
+FROM ${OS_BASE}:${OS_VERSION}
+RUN apk add icu-libs libstdc++ libgcc
+COPY --from=builder /LunaMultiplayer/Server/Publish/ /LMPServer/
+EXPOSE 8800/udp 8900/tcp
+VOLUME "/LMPServer/Config" "/LMPServer/Plugins" "/LMPServer/Universe" "/LMPServer/logs"
+STOPSIGNAL sigint
+WORKDIR /LMPServer
+CMD ./Server

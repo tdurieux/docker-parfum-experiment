@@ -1,0 +1,103 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+#
+# This source code is licensed under the MIT license found in the
+# LICENSE file in the root directory of this source tree.
+ARG os_release="latest"
+ARG tag="latest"
+FROM fbpcs/data-processing:${tag} as data_processing
+FROM fbpcs/emp-games:${tag} as emp_games
+# Tag for private-id is always latest
+FROM ghcr.io/facebookresearch/private-id:latest as private_id
+
+FROM ubuntu:${os_release}
+# Set the timezone
+ENV TZ=America/Los_Angeles
+RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
+
+# Install Dependencies
+ARG DEBIAN_FRONTEND=noninteractive
+RUN apt-get -y update && apt-get install -y --no-install-recommends \
+    # onedocker
+    git \
+    wget \
+    python3.8 \
+    python3-pip \
+    # emp_games and data_processing dependencies
+    ca-certificates \
+    libboost-regex1.71.0 \
+    libcurl4 \
+    libdouble-conversion3 \
+    libgflags2.2 \
+    libgmp10 \
+    libgoogle-glog0v5 \
+    libssl1.1 \
+    libre2-5 \
+    zlib1g \
+    # pyinstaller
+    gcc \
+    python3-dev
+
+# Install pip packages
+RUN pip install pyinstaller
+
+# Create the pcs user
+RUN useradd -ms /bin/bash pcs
+
+# Copy emp_games and data_processing executables
+COPY --from=emp_games /usr/local/bin/. /usr/local/bin/.
+COPY --from=data_processing /usr/local/bin/. /usr/local/bin/.
+
+# Copy private_id executables: private-id-client, private-id-server,
+#                              private-id-multi-key-client, private-id-multi-key-server
+COPY --from=private_id /opt/private-id/bin/private-id-client /usr/local/bin/private-id-client
+COPY --from=private_id /opt/private-id/bin/private-id-server /usr/local/bin/private-id-server
+COPY --from=private_id /opt/private-id/bin/private-id-multi-key-client /usr/local/bin/private-id-multi-key-client
+COPY --from=private_id /opt/private-id/bin/private-id-multi-key-server /usr/local/bin/private-id-multi-key-server
+
+# OneDocker likes to change permissions as 'pcs' in /usr/local/bin, set these to be owned by 'pcs' to prevent an error
+RUN chown pcs:pcs /usr/local/bin/*
+
+# Copy fbpcs for building the pc_pre_validation_cli binary later
+COPY fbpcs/ /tmp/fbpcs-temp/fbpcs/
+RUN chown -R pcs:pcs /tmp/fbpcs-temp/fbpcs/
+
+# Switch to pcs user
+USER pcs
+
+# installing fbpcp (onedocker)
+RUN python3.8 -m pip install 'git+https://github.com/facebookresearch/fbpcp.git'
+
+# installing pip requirements
+RUN mkdir -p /home/pcs/src/
+WORKDIR /home/pcs/src
+COPY fbpcs/pip_requirements.txt /home/pcs/src/.
+RUN python3.8 -m pip install --user -r pip_requirements.txt
+
+# Build and copy the pc_pre_validation_cli binary
+USER pcs
+WORKDIR /tmp/fbpcs-temp/fbpcs/pc_pre_validation/
+RUN pyinstaller pc_pre_validation_cli.py --onefile
+
+USER root
+RUN cp ./dist/pc_pre_validation_cli /usr/local/bin/
+RUN chown pcs:pcs /usr/local/bin/pc_pre_validation_cli
+WORKDIR /
+RUN rm -rf /tmp/fbpcs-temp/fbpcs/
+USER pcs
+
+# Link all the binaries into /home/pcs/onedocker/package
+RUN mkdir -p /home/pcs/onedocker/package
+WORKDIR /usr/local/bin
+RUN for b in $(ls attribution* lift* pid* shard* private-id* decoupled* pcf2* pc_pre*); do ln -s $(pwd)/$b /home/pcs/onedocker/package/$b; done
+
+# Link binaries name to match with onedocker binaries name
+RUN ln -s decoupled_attribution_calculator /home/pcs/onedocker/package/decoupled_attribution
+RUN ln -s decoupled_aggregation_calculator /home/pcs/onedocker/package/decoupled_aggregation
+RUN ln -s pcf2_attribution_calculator /home/pcs/onedocker/package/pcf2_attribution
+RUN ln -s pcf2_aggregation_calculator /home/pcs/onedocker/package/pcf2_aggregation
+RUN ln -s lift_calculator /home/pcs/onedocker/package/lift
+RUN ln -s pcf2_lift_calculator /home/pcs/onedocker/package/pcf2_lift
+RUN ln -s shard_aggregator /home/pcs/onedocker/package/shard-aggregator
+
+WORKDIR /home/pcs
+CMD ["/bin/bash"]

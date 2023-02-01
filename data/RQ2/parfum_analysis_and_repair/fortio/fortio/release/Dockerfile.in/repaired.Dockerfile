@@ -1,0 +1,34 @@
+# Concatenated after ../Dockerfile to create the tgz
+FROM docker.io/fortio/fortio.build:v41 as stage
+ARG archs="amd64 arm64 ppc64le s390x"
+ENV archs=${archs}
+
+WORKDIR /stage
+#COPY --from=release /usr/share/fortio usr/share/fortio
+COPY docs/fortio.1 usr/share/man/man1/fortio.1
+
+RUN mkdir -p /tgz usr/bin
+
+WORKDIR /go/src/fortio.org
+COPY . fortio
+# Check macos does not break
+RUN make -C fortio official-build BUILD_DIR=/build OFFICIAL_DIR=/tmp/fortio_mac GOOS=darwin GO_BIN=/usr/local/go/bin/go
+# Windows release
+RUN make -C fortio official-build BUILD_DIR=/build OFFICIAL_DIR=/tmp/fortio_win GOOS=windows
+RUN mv /tmp/fortio_win/fortio.exe /tmp/fortio.exe
+# Linux per-architecture binaries building
+RUN sh -c \
+    'set -ex; for arch in ${archs}; do \
+       make -C fortio official-build BUILD_DIR=/build GOARCH=${arch} OFFICIAL_DIR=/tmp/fortio_${arch}; \
+    done'
+
+RUN cd fortio && /tmp/fortio_$(go env GOARCH)/fortio version -s > /tmp/version
+
+WORKDIR /stage
+
+# Make per-architecture .tgz files
+RUN sh -c \
+    'set -ex; for arch in ${archs}; do \
+        cp /tmp/fortio_${arch}/fortio usr/bin/fortio; \
+        # Make sure the list here is both minimal and complete \
+        # we could take all of * but that adds system directories to the tar \

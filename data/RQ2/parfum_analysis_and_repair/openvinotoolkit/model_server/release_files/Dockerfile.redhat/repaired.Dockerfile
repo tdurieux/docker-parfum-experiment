@@ -1,0 +1,103 @@
+#
+# Copyright (c) 2020-2021 Intel Corporation
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+
+ARG BASE_IMAGE=registry.access.redhat.com/ubi8/ubi:8.5
+FROM $BASE_IMAGE as base_build
+RUN yum install -y xz && rm -rf /var/cache/yum
+WORKDIR /
+COPY ovms.tar.xz /
+RUN env
+RUN tar -xf ovms.tar.xz && rm ovms.tar.xz
+RUN groupadd --gid 5000 ovms && \
+    useradd --home-dir /home/ovms --create-home --uid 5000 --gid 5000 --shell /bin/bash --skel /dev/null ovms && \
+    chown -R ovms:ovms /ovms
+RUN mkdir /licenses && ln -s /ovms/LICENSE /licenses && ln -s /ovms/thirdparty-licenses /licenses/thirdparty-licenses
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ #
+
+FROM registry.access.redhat.com/ubi8/ubi-minimal:8.5 as release
+LABEL "name"="OVMS"
+LABEL "vendor"="Intel Corporation"
+LABEL "version"="2022.1"
+LABEL "release"="2022"
+LABEL "summary"="OpenVINO(TM) Model Server"
+LABEL "description"="OpenVINO(TM) Model Server is a solution for serving AI models"
+
+ARG INSTALL_RPMS_FROM_URL=
+ENV INSTALL_RPMS_FROM_URL=$INSTALL_RPMS_FROM_URL
+
+ARG INSTALL_DRIVER_VERSION="21.38.21026"
+ENV INSTALL_DRIVER_VERSION=$INSTALL_DRIVER_VERSION
+ARG GPU=1
+ENV GPU=$GPU
+WORKDIR /
+RUN set -e ; \
+        set -x ; \
+        microdnf install -y pkg-config; \
+        if [ "$GPU" == "1" ] ; then \
+                case $INSTALL_DRIVER_VERSION in \
+                "20.35.17767" \
+                        mkdir /tmp/gpu_deps ; \
+                        curl -f -L --output /tmp/gpu_deps/intel-opencl-20.35.17767-1.el7.x86_64.rpm https://sourceforge.net/projects/intel-compute-runtime/files/20.35.17767/centos-7/intel-opencl-20.35.17767-1.el7.x86_64.rpm/download; \
+                        curl -f -L --output /tmp/gpu_deps/level-zero-1.0.0-1.el7.x86_64.rpm https://sourceforge.net/projects/intel-compute-runtime/files/20.35.17767/centos-7/level-zero-1.0.0-1.el7.x86_64.rpm/download; \
+                        curl -f -L --output /tmp/gpu_deps/level-zero-devel-1.0.0-1.el7.x86_64.rpm https://sourceforge.net/projects/intel-compute-runtime/files/20.35.17767/centos-7/level-zero-devel-1.0.0-1.el7.x86_64.rpm/download; \
+                        curl -f -L --output /tmp/gpu_deps/intel-igc-opencl-1.0.4756-1.el7.x86_64.rpm https://sourceforge.net/projects/intel-compute-runtime/files/20.35.17767/centos-7/intel-igc-opencl-1.0.4756-1.el7.x86_64.rpm/download; \
+                        curl -f -L --output /tmp/gpu_deps/intel-igc-opencl-devel-1.0.4756-1.el7.x86_64.rpm https://sourceforge.net/projects/intel-compute-runtime/files/20.35.17767/centos-7/intel-igc-opencl-devel-1.0.4756-1.el7.x86_64.rpm/download; \
+                        curl -f -L --output /tmp/gpu_deps/intel-igc-core-1.0.4756-1.el7.x86_64.rpm https://sourceforge.net/projects/intel-compute-runtime/files/20.35.17767/centos-7/intel-igc-core-1.0.4756-1.el7.x86_64.rpm/download; \
+                        curl -f -L --output /tmp/gpu_deps/intel-gmmlib-20.2.4-1.el7.x86_64.rpm https://sourceforge.net/projects/intel-compute-runtime/files/20.35.17767/centos-7/intel-gmmlib-20.2.4-1.el7.x86_64.rpm/download; \
+                        curl -f -L --output /tmp/gpu_deps/intel-gmmlib-devel-20.2.4-1.el7.x86_64.rpm https://sourceforge.net/projects/intel-compute-runtime/files/20.35.17767/centos-7/intel-gmmlib-devel-20.2.4-1.el7.x86_64.rpm/download; \
+                        cd /tmp/gpu_deps && rpm -iv *.rpm && rm -Rf /tmp/gpu_deps ; \
+                ;; \
+                "21.38.21026" \
+                        mkdir /tmp/gpu_deps ; \
+                        curl -f -L --output /tmp/gpu_deps/intel-igc-core-1.0.8708-1.el8.x86_64.rpm https://download.copr.fedorainfracloud.org/results/jdanecki/intel-opencl/centos-stream-8-x86_64/02870435-intel-igc/intel-igc-core-1.0.8708-1.el8.x86_64.rpm; \
+                        curl -f -L --output /tmp/gpu_deps/intel-opencl-21.38.21026-1.el8.x86_64.rpm https://download.copr.fedorainfracloud.org/results/jdanecki/intel-opencl/centos-stream-8-x86_64/02871549-intel-opencl/intel-opencl-21.38.21026-1.el8.x86_64.rpm; \
+                        curl -f -L --output /tmp/gpu_deps/intel-igc-opencl-devel-1.0.8708-1.el8.x86_64.rpm https://download.copr.fedorainfracloud.org/results/jdanecki/intel-opencl/centos-stream-8-x86_64/02870435-intel-igc/intel-igc-opencl-devel-1.0.8708-1.el8.x86_64.rpm; \
+                        curl -f -L --output /tmp/gpu_deps/intel-igc-opencl-1.0.8708-1.el8.x86_64.rpm https://download.copr.fedorainfracloud.org/results/jdanecki/intel-opencl/centos-stream-8-x86_64/02870435-intel-igc/intel-igc-opencl-1.0.8708-1.el8.x86_64.rpm; \
+                        curl -f -L --output /tmp/gpu_deps/intel-gmmlib-21.2.1-1.el7.x86_64.rpm https://download.copr.fedorainfracloud.org/results/jdanecki/intel-opencl/centos-stream-8-x86_64/02320646-intel-gmmlib/intel-gmmlib-21.2.1-1.el8.x86_64.rpm; \
+                        curl -f -L --output /tmp/gpu_deps/intel-gmmlib-devel-21.2.1-1.el8.x86_64.rpm https://download.copr.fedorainfracloud.org/results/jdanecki/intel-opencl/centos-stream-8-x86_64/02320646-intel-gmmlib/intel-gmmlib-devel-21.2.1-1.el8.x86_64.rpm; \
+                        cd /tmp/gpu_deps && rpm -iv *.rpm && rm -Rf /tmp/gpu_deps ; \
+                ;; \
+                        *) \
+                        echo "ERROR: Unrecognized driver ${INSTALL_DRIVER_VERSION}." ; \
+                        exit 1 ; \
+                       esac; \
+                echo "Installed opencl driver version:" ; \
+                echo `rpm -qa | grep intel-opencl` ; \
+        fi; \
+        if [ "$INSTALL_RPMS_FROM_URL" == "" ] ;then \
+                rpm -ivh http://mirror.centos.org/centos/8-stream/BaseOS/x86_64/os/Packages/numactl-libs-2.0.12-11.el8.x86_64.rpm; \
+                rpm -ivh http://mirror.centos.org/centos/8-stream/BaseOS/x86_64/os/Packages/numactl-2.0.12-11.el8.x86_64.rpm; \
+                rpm -ivh http://mirror.centos.org/centos/8-stream/AppStream/x86_64/os/Packages/ocl-icd-2.2.12-1.el8.x86_64.rpm; \
+        else \
+                microdnf install tar gzip; \
+                mkdir /tmp_ovms ; \
+                cd /tmp_ovms ; \
+                curl -L --fail -o deps.tar.xz "$INSTALL_RPMS_FROM_URL" ; \
+                tar -xf deps.tar.xz ; rm deps.tar.xz \
+                ls -Rahl . ; \
+                rpm -vi pkg/bin/*.rpm ; \
+                cd / ; \
+                rm -rf /tmp_ovms ; \
+        fi; \
+        microdnf install shadow-utils; \
+        cp -v /etc/ssl/certs/ca-bundle.crt /etc/ssl/certs/ca-certificates.crt ; \
+        groupadd --gid 5000 ovms && groupadd --gid 44 video1 && \
+        useradd --home-dir /home/ovms --create-home --uid 5000 --gid 5000 --groups 39,44 --shell /bin/bash --skel /dev/null ovms
+
+COPY --from=base_build /ovms /ovms
+COPY --from=base_build /licenses /licenses
+USER ovms
+ENTRYPOINT ["/ovms/bin/ovms"]

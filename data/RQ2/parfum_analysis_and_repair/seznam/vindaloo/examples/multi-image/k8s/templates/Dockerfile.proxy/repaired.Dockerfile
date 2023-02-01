@@ -1,0 +1,27 @@
+FROM foo-registry.com/debian:stretch
+LABEL maintainer="{{{maintainer}}}"
+LABEL description="avengers web proxy"
+
+EXPOSE 8000
+
+# Nasetujeme český UTF-8 locale a globální jazyk.
+RUN echo "cs_CZ.UTF-8 UTF-8" >> /etc/locale.gen
+RUN echo "en_US.UTF-8 UTF-8" >> /etc/locale.gen
+RUN locale-gen
+# Tohle je nasetovani jazyka pouze lokalne behem buildu.
+ENV LANG="en_US.UTF-8"
+ENV LC_CTYPE="en_US.UTF-8"
+
+RUN apt-get update && apt-get upgrade -y
+
+RUN apt-get install --no-install-recommends -y nginx && rm -rf /var/lib/apt/lists/*;
+
+RUN groupadd -r --gid=1000 avengers-web-proxy && \
+    useradd -r --uid=1000 -b /home/avengers-web-proxy -d /home/avengers-web-proxy -m -s /bin/bash -g avengers-web-proxy avengers-web-proxy
+ENV USER="avengers-web-proxy"
+
+RUN mkdir -p /srv/http/web
+COPY web-proxy /srv/http/web
+
+ENTRYPOINT ["nginx", "-c", "/srv/http/web/conf/nginx-proxy-docker.conf"]
+LABEL version="{{version}}"

@@ -1,0 +1,89 @@
+{
+  "startTime": 1674217699726,
+  "endTime": 1674217700822,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 11,
+        "lineEnd": 11,
+        "columnStart": 4,
+        "columnEnd": 87
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 28,
+        "lineEnd": 28,
+        "columnStart": 4,
+        "columnEnd": 70
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 33,
+        "lineEnd": 33,
+        "columnStart": 4,
+        "columnEnd": 108
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 38,
+        "lineEnd": 38,
+        "columnStart": 4,
+        "columnEnd": 111
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 43,
+        "lineEnd": 43,
+        "columnStart": 4,
+        "columnEnd": 108
+      }
+    },
+    {
+      "rule": "sha256sumEchoOneSpaces",
+      "position": {
+        "lineStart": 12,
+        "lineEnd": 12,
+        "columnStart": 4,
+        "columnEnd": 49
+      }
+    },
+    {
+      "rule": "sha256sumEchoOneSpaces",
+      "position": {
+        "lineStart": 44,
+        "lineEnd": 44,
+        "columnStart": 2,
+        "columnEnd": 98
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 40,
+        "lineEnd": 40,
+        "columnStart": 2,
+        "columnEnd": 18
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 45,
+        "lineEnd": 45,
+        "columnStart": 2,
+        "columnEnd": 39
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM photon:4.0\n\nARG KCTRL_VER=development\n\n# adapted from golang docker image\nENV PATH /usr/local/go/bin:$PATH\nENV GOLANG_VERSION 1.17.6\nENV GO_REL_ARCH linux-amd64\nENV GO_REL_SHA 231654bbf2dab3d86c1619ce799e77b03d96f9b50770297c8f4dff8836fc8ca2\n\nRUN set eux; \\\n    curl -f -sLo go.tgz \"https://golang.org/dl/go${GOLANG_VERSION}.${GO_REL_ARCH}.tar.gz\"; \\\n    echo \"${GO_REL_SHA}  go.tgz\" | sha256sum -c -; \\\n    tar -C /usr/local -xzf go.tgz; \\\n    rm go.tgz; \\\n    go version\n\nENV GOPATH /go\nENV PATH $GOPATH/bin:$PATH\nRUN mkdir -p \"$GOPATH/src\" \"$GOPATH/bin\" && chmod -R 777 \"$GOPATH\"\n\nWORKDIR /go/src/github.com/vmware-tanzu/carvel-kapp-controller/\n\n# carvel\nCOPY ./hack/install-deps.sh .\nCOPY ./hack/dependencies.yml .\nRUN ./install-deps.sh\n\nRUN curl -f -sLo /helm https://get.helm.sh/helm-v3.8.0-linux-amd64.tar.gz && \\\n  echo \"8408c91e846c5b9ba15eb6b1a5a79fc22dd4d33ac6ea63388e5698d1b2320c8b  /helm\" | sha256sum -c - && \\\n  mkdir /helm-unpacked && tar -C /helm-unpacked -xzvf /helm\n\n# sops\nRUN curl -f -sLo /usr/local/bin/sops https://github.com/mozilla/sops/releases/download/v3.7.2/sops-v3.7.2.linux && \\\n  echo \"0f54a5fc68f82d3dcb0d3310253f2259fef1902d48cfa0a8721b82803c575024  /usr/local/bin/sops\" | sha256sum -c - && \\\n  chmod +x /usr/local/bin/sops && sops -v\n\n# age (encryption for sops)\nRUN curl -f -sLo age.tgz https://github.com/FiloSottile/age/releases/download/v1.0.0/age-v1.0.0-linux-amd64.tar.gz && \\\n  echo \"6414f71ce947fbbea1314f6e9786c5d48436ebc76c3fd6167bf018e432b3b669  age.tgz\" | sha256sum -c - && \\\n  tar -xzf age.tgz && cp age/age /usr/local/bin && \\\n  chmod +x /usr/local/bin/age && age --version && rm age.tgz\n\nRUN curl -f -sLo cue.tgz https://github.com/cue-lang/cue/releases/download/v0.4.2/cue_v0.4.2_linux_amd64.tar.gz && \\\n  echo \"d43cf77e54f42619d270b8e4c1836aec87304daf243449c503251e6943f7466a  cue.tgz\" | sha256sum -c - && \\\n  tar -xf cue.tgz -C /usr/local/bin cue && cue version && rm cue.tgz\n\n# kapp-controller\nCOPY . .\n# helpful ldflags reference: https://www.digitalocean.com/community/tutorials/using-ldflags-to-set-version-information-for-go-applications\nRUN CGO_ENABLED=0 GOOS=linux go build -mod=vendor -ldflags=\"-X 'main.Version=$KCTRL_VER' -buildid=\" -trimpath -o controller ./cmd/main.go\n\n# --- run image ---\nFROM photon:4.0\n\n# Install openssh for git\n# TODO(bmo): why do we need sed?\nRUN tdnf install -y git openssh-clients sed\n\n# Create the kapp-controller user in the root group, the home directory will be mounted as a volume\nRUN echo \"kapp-controller:x:1000:0:/home/kapp-controller:/usr/sbin/nologin\" > /etc/passwd\n# Give the root group write access to the openssh's root bundle directory\n# so we can rename the certs file with our dynamic config, and append custom roots at runtime\nRUN chmod g+w /etc/pki/tls/certs\n\n# fetchers\nCOPY --from=0 /helm-unpacked/linux-amd64/helm .\nCOPY --from=0 /usr/local/bin/imgpkg .\nCOPY --from=0 /usr/local/bin/vendir .\n\n# templaters\nCOPY --from=0 /usr/local/bin/ytt .\nCOPY --from=0 /usr/local/bin/kbld .\nCOPY --from=0 /usr/local/bin/sops .\nCOPY --from=0 /usr/local/bin/age .\nCOPY --from=0 /usr/local/bin/cue .\n\n# deployers\nCOPY --from=0 /usr/local/bin/kapp .\n\n# Name it kapp-controller to identify it easier in process tree\nCOPY --from=0 /go/src/github.com/vmware-tanzu/carvel-kapp-controller/controller kapp-controller\n\n# Copy the ca-bundle so we have an original\nRUN cp /etc/pki/tls/certs/ca-bundle.crt /etc/pki/tls/certs/ca-bundle.crt.orig\n\n# Run as kapp-controller by default, will be overridden to a random uid on OpenShift\nUSER 1000\nENV PATH=\"/:${PATH}\"\nENTRYPOINT [\"/kapp-controller\"]\n"
+}

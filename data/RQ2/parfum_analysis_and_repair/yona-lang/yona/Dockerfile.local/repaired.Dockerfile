@@ -1,0 +1,12 @@
+FROM ghcr.io/graalvm/graalvm-ce:ol8-java17-22
+
+MAINTAINER Adam Kovari <kovariadam@gmail.com>
+
+#RUN gu install native-image
+
+ADD component/yona-component.jar .
+RUN gu install -L yona-component.jar
+
+WORKDIR /sources
+
+ENTRYPOINT ["/opt/graalvm-ce-java17-22.0.0.2/bin/yona"]

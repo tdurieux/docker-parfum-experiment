@@ -1,0 +1,26 @@
+{
+  "startTime": 1674215298103,
+  "endTime": 1674215298828,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 36,
+        "lineEnd": 36,
+        "columnStart": 4,
+        "columnEnd": 43
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 19,
+        "lineEnd": 19,
+        "columnStart": 4,
+        "columnEnd": 147
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "#\n# This Dockerfile builds OpenMemex to run in a docker container.\n#\n# The container will serve http on container port 3000, and stores user data in a volume at /data.\n#\n# Dockerfile ARGs enable customizing aspects of the resulting image directly from the cli `docker build ...` step:\n#\n# --build-arg LIBTORCH_VERSION=<value>\n# --build-arg LIBTOKENIZERS_VERSION=<value>\n#\n\n#\n# Install and setup runtime dependencies\n#\nFROM ubuntu:20.04 as base\n\n# Install apt packages, clearing package cache in same layer\nARG DEBIAN_FRONTEND=noninteractive\nRUN apt update -qq \\\n\t&& apt -y install --no-install-recommends curl wget imagemagick libva-dev snapd chromium-browser libtinfo-dev neovim ripgrep unzip ca-certificates \\\n\t&& rm -rf /var/cache/apt/lists && rm -rf /var/lib/apt/lists/*;\n\n# Install libtorch, removing the package download in the same layer\nARG LIBTORCH_VERSION=1.9.0+cpu-1\nRUN wget -q -O libtorch.deb -q https://github.com/hasktorch/libtorch-binary-for-ci/releases/download/apt/libtorch_${LIBTORCH_VERSION}_amd64.deb \\\n\t&& dpkg -i libtorch.deb \\\n\t&& rm libtorch.deb\n\n#\n# Install and setup build & dev dependencies\n#\nFROM base as build\n\n# Install haskell\n# TODO: Install a specific version (or range) of haskell stack, specified by an ARG. (e.g. `ARG STACK_VERSION=xyz`)\nENV PATH=\"/root/.local/bin:/root/.stack/bin:$PATH\"\nRUN curl -f -sSL https://get.haskellstack.org/ | sh\n\n# Install rust\n# TODO: Install a specific version (or range) of rust, specified by an ARG. (e.g. `ARG RUST_VERSION=abc`)\nENV PATH=\"/root/.cargo/bin:$PATH\"\nRUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y \\\n\t&& curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh\n\n# Print out selected & installed versions of dev tools\nRUN cargo --version; wasm-pack --version; stack --version\n\n#\n# Build Rust Frontend\n#\nFROM build as build-rust\nWORKDIR /src\n\n# Dummy build to cache dep builds -- only rebuilds when Cargo.toml changes\n# RUN USER=root cargo new --lib frontend\n# ADD ./frontend/Cargo.toml ./frontend/Makefile ./frontend/\n# RUN cd ./frontend && make build\n\n# Copy all app files over and build, using cache from the previous step\nADD ./frontend ./frontend/\nRUN cd ./frontend && make build\n\n#\n# Build Haskell Backend\n#\nFROM build as build-haskell\nWORKDIR /app\n\n# Install libtokenizers, and remove download file in the same step\n# ARG LIBTOKENIZERS_VERSION=libtokenizers-v0.1\n# RUN wget -q -O libtokenizers-linux.zip https://github.com/hasktorch/tokenizers/releases/download/$LIBTOKENIZERS_VERSION/libtokenizers-linux.zip \\\n#\t&& mkdir -p ./deps/tokenizers \\\n#\t&& unzip -p libtokenizers-linux.zip libtokenizers/lib/libtokenizers_haskell.so >./deps/tokenizers/libtokenizers_haskell.so \\\n#\t&& rm libtokenizers-linux.zip\n\n# Copy over all haskell app files\n# TODO: Move haskell files into a dir that is a sibling to the rust dir (./frontend) so this can be done in 1 command\nCOPY ./frontend ./frontend\nCOPY ./crawler ./crawler\nCOPY ./deps ./deps\nCOPY ./experimental ./experimental\nCOPY ./server ./server\nCOPY ./shared ./shared\nCOPY ./stack.yaml ./Setup.hs ./package.json ./openmemex.cabal ./README.md ./LICENSE ./\n\n# Run stack build; this seems to download and install and compile ghc every time\n# TODO: figure out how to move ghc setup into the 'base' layer\nRUN stack setup && stack build openmemex:server --ghc-options=\"-O2\"\n\n#\n# Package together the outputs from both the rust and haskell stages\n#\n# Having the previous stages start from the 'build' stage indpendently means that either part of the projct that has\n# been built before will build instantly, by resolving directly from the docker cache which is keyed on on the hash\n# of all the input files.\n#\n# TODO: Create the final / output stage from the 'base' stage, omitting dev dependencies. This should be possible\n# since everything is statically compiled.\nFROM build-haskell as final\n\nADD ./frontend/static /app/static\nCOPY --from=build-rust /src/frontend/static /app/static\nADD startup.sh /app\nRUN chmod +x /app/startup.sh\nRUN find\n\nEXPOSE 3000\n# TODO: Adjust the backend to accept a parameter for the data storage dir, and set it to /data in startup.sh.\n# Using a volume will automatically persist data for docker users by default, clearly communicates and simplifies\n# customization of the storage location, enables easy version upgrades by attaching the data volume from the previous\n# container in a new container running the newer-version image, and facilitates compact backups of user data.\nVOLUME /data\n\nCMD [\"/app/startup.sh\"]\n"
+}

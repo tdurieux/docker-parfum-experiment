@@ -1,0 +1,99 @@
+{
+  "startTime": 1674252136376,
+  "endTime": 1674252137780,
+  "originalSmells": [
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 44,
+        "lineEnd": 44,
+        "columnStart": 5,
+        "columnEnd": 57
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 15,
+        "lineEnd": 17,
+        "columnStart": 5,
+        "columnEnd": 11
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 30,
+        "lineEnd": 30,
+        "columnStart": 25,
+        "columnEnd": 68
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 58,
+        "lineEnd": 58,
+        "columnStart": 5,
+        "columnEnd": 44
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 70,
+        "lineEnd": 70,
+        "columnStart": 22,
+        "columnEnd": 77
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 58,
+        "lineEnd": 58,
+        "columnStart": 5,
+        "columnEnd": 44
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 30,
+        "lineEnd": 30,
+        "columnStart": 25,
+        "columnEnd": 68
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 58,
+        "lineEnd": 58,
+        "columnStart": 5,
+        "columnEnd": 44
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 70,
+        "lineEnd": 70,
+        "columnStart": 22,
+        "columnEnd": 77
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 58,
+        "lineEnd": 58,
+        "columnStart": 5,
+        "columnEnd": 68
+      }
+    }
+  ],
+  "repairedDockerfile": "FROM ubuntu:bionic\n\n# Lovingly borrowed and modified from https://github.com/StackStorm/st2-dockerfiles/blob/master/base/Dockerfile\n\nARG DEBIAN_FRONTEND=noninteractive\n\nARG ST2_VERSION=3.2.0\nRUN : \"${ST2_VERSION:?Docker build argument needs to be set and non-empty.}\"\n\nENV container docker\nENV ENV /etc/skel/.profile\nENV TERM xterm\n\n# Generate and set locale to UTF-8\nRUN apt-get -qq update \\\n  && apt-get install --no-install-recommends -y gnupg wget \\\n    curl \\\n    locales \\\n  && rm -rf /var/lib/apt/lists/* \\\n  && locale-gen en_US.UTF-8 \\\n  && update-locale LANG=en_US.UTF-8 LANGUAGE=en_US:en LC_ALL=en_US.UTF-8\n\n# The LC_ALL variable must be defined after executing update-local\nENV LANG='en_US.UTF-8' LANGUAGE='en_US:en' LC_ALL='en_US.UTF-8'\n\n#####################################################################################################\n## External Deps              \n#####################################################################################################\n\nRUN mkdir -p /data/db\nRUN apt-get update -y && apt-get install --no-install-recommends -y crudini rabbitmq-server && rm -rf /var/lib/apt/lists/*;\n\n#####################################################################################################\n# Install Mongo\n#\n# Mongo started adding a dependency on systemd in their packages, so we're installing from tarball now\n# https://www.mongodb.com/try/download/community\n# https://docs.mongodb.com/manual/tutorial/install-mongodb-on-ubuntu-tarball/\n#\n# Careful not to use 4.4 - https://stackoverflow.com/questions/64059795/mongodb-get-error-message-mongoerror-path-collision-at-activity\n#\n#####################################################################################################\n\nRUN wget https://fastdl.mongodb.org/linux/mongodb-linux-x86_64-ubuntu1804-4.0.21.tgz \\\n  && tar -zxvf mongodb-linux-x86_64-ubuntu1804-4.0.21.tgz \\\n  && cp mongodb-linux-x86_64-ubuntu1804-4.0.21/bin/* /usr/local/bin/ \\\n  && mkdir -p /var/lib/mongo \\\n  && mkdir -p /var/log/mongo \\\n  && rm -rf mongodb-linux-x86_64-ubuntu1804-4.0.21/ && rm mongodb-linux-x86_64-ubuntu1804-4.0.21.tgz\n\n#####################################################################################################\n## Install StackStorm                \n#####################################################################################################\n\nENV ST2_PASSWORD=antidotepassword\n\n# Install StackStorm, but without UI\nRUN curl -sf https://packagecloud.io/install/repositories/StackStorm/stable/script.deb.sh | bash \\\n  && apt-get install --no-install-recommends -y st2=${ST2_VERSION}-* \\\n  && rm -f /etc/apt/sources.list.d/StackStorm_*.list && rm -rf /var/lib/apt/lists/*;\n\nADD htpasswd /etc/st2/htpasswd\n\nRUN echo \"stanley:stanley\" | chpasswd\nADD start_st2_services.sh start_st2_services_and_ssh.sh /\n\n#####################################################################################################\n## Additional installations / configuration            \n#####################################################################################################\n\nRUN apt-get update && apt-get install --no-install-recommends -y openssh-server python git vim screen && rm -rf /var/lib/apt/lists/*;\nADD napalm.yaml /opt/stackstorm/configs\n\n# For some reason, in 3.x, /usr/share/doc/st2/examples/ is empty other than the directory structure. So I'm doing this to get\n# the examples pack.\nRUN git clone -b v${ST2_VERSION} https://github.com/StackStorm/st2 && cp -r st2/contrib/examples/ /opt/stackstorm/packs/\nRUN ls -lha /opt/stackstorm/packs/examples/actions/workflows/\n\nARG CACHEBUST=1\nRUN /start_st2_services.sh && sleep 15 \\\n    && st2ctl reload --register-all \\\n    && st2 run packs.setup_virtualenv packs=examples \\ \n    && st2 pack remove napalm && st2 pack install https://github.com/nre-learning/stackstorm-napalm.git\n\nARG CACHEBUST=0\n\n#####################################################################################################\n## Security options (copied from Utility)     \n#####################################################################################################\n\nRUN mkdir /var/run/sshd\n\n# Antidote user\nRUN mkdir -p /home/antidote\nRUN useradd antidote -p antidotepassword\nRUN mkdir -p /home/antidote/.st2/\nADD st2config /home/antidote/.st2/config\nRUN chown antidote:antidote /home/antidote /home/antidote/.st2 /home/antidote/.st2/config\nRUN chsh antidote --shell=/bin/bash\nRUN echo 'antidote:antidotepassword' | chpasswd\nRUN echo 'root:$(uuidgen)' | chpasswd\n\n# Adjust MOTD\nRUN rm -f /etc/update-motd.d/*\nRUN rm -f /etc/legal\nADD .welcome.sh /etc/update-motd.d/00-antidote-motd\nRUN chmod +x /etc/update-motd.d/00-antidote-motd\n\n# Disable root Login\nRUN sed -i 's/PermitRootLogin prohibit-password/PermitRootLogin no/' /etc/ssh/sshd_config\nRUN sed -i 's/PermitRootLogin yes/PermitRootLogin no/' /etc/ssh/sshd_config\n\n# SSH login fix. Otherwise user is kicked off after login\nRUN sed 's@session\\s*required\\s*pam_loginuid.so@session optional pam_loginuid.so@g' -i /etc/pam.d/sshd\n\n# Disable su for everyone not in the wheel group (no one is in the wheel group)\nRUN echo \"auth required pam_wheel.so use_uid\" >> /etc/pam.d/su\n\nENV NOTVISIBLE \"in users profile\"\nRUN echo \"export VISIBLE=now\" >> /etc/profile\n\nCMD /start_st2_services_and_ssh.sh\n"
+}

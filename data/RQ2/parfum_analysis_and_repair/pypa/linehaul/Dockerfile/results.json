@@ -1,0 +1,17 @@
+{
+  "startTime": 1674253464417,
+  "endTime": 1674253465465,
+  "originalSmells": [
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 13,
+        "lineEnd": 15,
+        "columnStart": 7,
+        "columnEnd": 63
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# We're going to build our actual application, but not the actual production\n# image that it gets deployed into.\nFROM pypy:3-6.0.0-slim as build\n\n# Define whether we're building a production or a development image. This will\n# generally be used to control whether or not we install our development and\n# test dependencies.\nARG DEVEL=no\n\n# Install System level Linehaul build requirements, this is done before\n# everything else because these are rarely ever going to change.\nRUN set -x \\\n    && apt-get update \\\n    && apt-get install --no-install-recommends -y \\\n        build-essential libffi-dev libssl-dev \\\n        $(if [ \"$DEVEL\" = \"yes\" ]; then echo 'libjpeg-dev'; fi) && rm -rf /var/lib/apt/lists/*;\n\n# We create an /opt directory with a virtual environment in it to store our\n# application in.\nRUN set -x \\\n    && pypy3 -m venv /opt/linehaul\n\n\n# Now that we've created our virtual environment, we'll go ahead and update\n# our $PATH to refer to it first.\nENV PATH=\"/opt/linehaul/bin:${PATH}\"\n\n# Next, we want to update pip, setuptools, and wheel inside of this virtual\n# environment to ensure that we have the latest versions of them.\n# TODO: We use --require-hashes in our requirements files, but not here, making\n#       the ones in the requirements files kind of a moot point. We should\n#       probably pin these too, and update them as we do anything else.\nRUN pip --no-cache-dir --disable-pip-version-check install --upgrade pip setuptools wheel\n\n# We copy this into the docker container prior to copying in the rest of our\n# application so that we can skip installing requirements if the only thing\n# that has changed is the Linehaul code itself.\nCOPY requirements /tmp/requirements\n\n# Install the Python level Linehaul requirements, this is done after copying\n# the requirements but prior to copying Linehaul itself into the container so\n# that code changes don't require triggering an entire install of all of\n# Linehaul's dependencies.\nRUN set -x \\\n    && pip --no-cache-dir --disable-pip-version-check \\\n        install -r /tmp/requirements/main.txt \\\n                $(if [ \"$DEVEL\" = \"yes\" ]; then echo '-r /tmp/requirements/tests.txt'; fi) \\\n    && find /opt/linehaul -name '*.pyc' -delete\n\n\n\n\n\n# Now we're going to build our actual application image, which will eventually\n# pull in the static files that were built above.\nFROM pypy:3-6.0.0-slim\n\n# Setup some basic environment variables that are ~never going to change.\nENV PYTHONUNBUFFERED 1\nENV PYTHONPATH /opt/linehaul/src/\nENV PATH=\"/opt/linehaul/bin:${PATH}\"\n\nWORKDIR /opt/linehaul/src/\n\n# Copy the directory into the container, this is done last so that changes to\n# Linehaul itself require the least amount of layers being invalidated from\n# the cache. This is most important in development, but it also useful for\n# deploying new code changes.\nCOPY --from=build /opt/linehaul/ /opt/linehaul/\nCOPY . /opt/linehaul/src/\n"
+}

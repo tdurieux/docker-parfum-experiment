@@ -1,0 +1,26 @@
+{
+  "startTime": 1674246750958,
+  "endTime": 1674246752055,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 5,
+        "lineEnd": 15,
+        "columnStart": 26,
+        "columnEnd": 19
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 59,
+        "lineEnd": 62,
+        "columnStart": 26,
+        "columnEnd": 19
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# ============================== BUILD ======================================\nFROM ubuntu:18.04 as build\n\nRUN apt-get update -qq && apt-get install --no-install-recommends -y \\\n    git \\\n    cmake \\\n    g++ \\\n    pkg-config \\\n    libssl-dev \\\n    curl \\\n    llvm \\\n    clang \\\n    libpq-dev \\\n    ca-certificates \\\n    && rm -rf /var/lib/apt/lists/*\n\nCOPY ./rust-toolchain /tmp/rust-toolchain\n\nENV RUSTUP_HOME=/usr/local/rustup \\\n    CARGO_HOME=/usr/local/cargo \\\n    PATH=/usr/local/cargo/bin:$PATH\n\nRUN curl https://sh.rustup.rs -sSf | \\\n    sh -s -- -y --no-modify-path --default-toolchain \"$(cat /tmp/rust-toolchain)\"\n\nRUN cargo install diesel_cli --no-default-features --features \"postgres\" --bin diesel\n\nWORKDIR /near\n\n# This is some clever stuff we do to build JUST the Cargo.toml dependencies first, so that Docker can cache them so long as Cargo.toml doesn't change\n# We do this because building dependencies takes ~45 minutes\nRUN cargo +\"$(cat /tmp/rust-toolchain)\" new --bin indexer-explorer\nWORKDIR /near/indexer-explorer\n\nCOPY ./Cargo.toml ./Cargo.toml\nCOPY ./Cargo.lock ./Cargo.lock\n\nENV CARGO_TARGET_DIR=/tmp/target\nENV RUSTC_FLAGS='-C target-cpu=x86-64'\nENV PORTABLE=ON\nRUN cargo +\"$(cat /tmp/rust-toolchain)\" build --release\nRUN rm src/*.rs\nRUN rm /tmp/target/release/indexer-explorer*\n\n# Now that the dependencies are built, copy just the rest of the Rust code in and build\n# that too (so that a change in the run-in-docker.sh script doesn't invalidate the entire\n# Docker cache for the Rust build)\nCOPY ./src ./src\n\n# This touch is necessary so that Rust doesn't skip the build (even though the source has completely changed... Rust cache is weird :P)\nRUN touch src/main.rs\n\nRUN cargo +\"$(cat /tmp/rust-toolchain)\" build --release -p indexer-explorer\n\n# ============================== EXECUTION ======================================\nFROM ubuntu:18.04 as execution\n\nRUN apt-get update -qq && apt-get install --no-install-recommends -y \\\n    libssl-dev \\\n    libpq-dev \\\n    ca-certificates \\\n    && rm -rf /var/lib/apt/lists/*\n\nWORKDIR /near/indexer-explorer\n\nCOPY --from=build /tmp/target/release/indexer-explorer .\n\nCOPY --from=build /usr/local/cargo/bin/diesel .\n\nCOPY ./migrations ./migrations\n\nCOPY ./run-in-docker.sh .\n\n# Pass the BOOT_NODES environment variable to set boot nodes in the initialized genesis\n# An arbitrary number of extra parameters to the indexer that runs can be set via CMD\nENTRYPOINT bash run-in-docker.sh ./diesel \"${DATABASE_URL}\" ./indexer-explorer\n"
+}

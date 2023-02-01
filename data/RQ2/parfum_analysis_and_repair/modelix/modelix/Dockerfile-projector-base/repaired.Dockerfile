@@ -1,0 +1,23 @@
+FROM modelix/projector-mps:2020.3.5-202202281349
+
+USER root
+COPY install-plugins.sh /
+COPY build/branding.zip /projector/ide/lib/branding.jar
+
+RUN apt-get update \
+    && apt-get install --no-install-recommends unzip -y \
+    && rm -rf /var/lib/apt/lists/* \
+    && rm -rf /var/cache/apt
+
+RUN echo "-agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=5071" >> /projector/ide/bin/mps64.vmoptions
+RUN sed -i.bak '/-Xmx/d' /projector/ide/bin/mps64.vmoptions
+RUN echo "-XX:MaxRAMPercentage=85" >> /projector/ide/bin/mps64.vmoptions
+
+RUN mkdir -p /mps-plugins
+RUN mkdir -p /mps-languages
+RUN chown -R projector-user:projector-user /home/projector-user
+RUN chown -R projector-user:projector-user /mps-plugins
+RUN chown -R projector-user:projector-user /mps-languages
+RUN chown -R projector-user:projector-user /projector/ide/
+
+USER projector-user

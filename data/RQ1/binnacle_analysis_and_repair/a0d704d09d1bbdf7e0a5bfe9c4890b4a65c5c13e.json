@@ -1,0 +1,89 @@
+{
+  "startTime": 1674241806296,
+  "endTime": 1674241806519,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 46,
+        "lineEnd": 46,
+        "columnStart": 4,
+        "columnEnd": 82
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 54,
+        "lineEnd": 54,
+        "columnStart": 4,
+        "columnEnd": 62
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 64,
+        "lineEnd": 64,
+        "columnStart": 4,
+        "columnEnd": 72
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 59,
+        "lineEnd": 59,
+        "columnStart": 4,
+        "columnEnd": 35
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 48,
+        "lineEnd": 48,
+        "columnStart": 4,
+        "columnEnd": 29
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 23,
+        "lineEnd": 43,
+        "columnStart": 4,
+        "columnEnd": 11
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 55,
+        "lineEnd": 55,
+        "columnStart": 22,
+        "columnEnd": 57
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 23,
+        "lineEnd": 43,
+        "columnStart": 4,
+        "columnEnd": 11
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 55,
+        "lineEnd": 55,
+        "columnStart": 22,
+        "columnEnd": 57
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Copyright 2019 Google LLC\n#\n# Licensed under the Apache License, Version 2.0 (the \"License\");\n# you may not use this file except in compliance with the License.\n# You may obtain a copy of the License at\n#\n# http://www.apache.org/licenses/LICENSE-2.0\n#\n# Unless required by applicable law or agreed to in writing, software\n# distributed under the License is distributed on an \"AS IS\" BASIS,\n# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.\n# See the License for the specific language governing permissions and\n# limitations under the License.\nFROM ubuntu:16.04\n\nRUN mkdir /data\nWORKDIR /data\n\nENV DEBIAN_FRONTEND noninteractive\n\nRUN apt-get update && \\\n    apt-get upgrade -y && \\\n    apt-get autoremove -y && \\\n    apt-get install --no-install-recommends -y \\\n        apt-transport-https \\\n        build-essential \\\n        curl \\\n        gdb \\\n        libcurl4-openssl-dev \\\n        libffi-dev \\\n        libssl-dev \\\n        locales \\\n        lsb-release \\\n        net-tools \\\n        python \\\n        python-dbg \\\n        python-dev \\\n        python-pip \\\n        socat \\\n        sudo \\\n        unzip \\\n        util-linux \\\n        wget \\\n        zip && rm -rf /var/lib/apt/lists/*;\n\n# Install patchelf.\nRUN curl -f -sS https://nixos.org/releases/patchelf/patchelf-0.9/patchelf-0.9.tar.bz2 | tar -C /tmp -xj && \\\n    cd /tmp/patchelf-*/ && \\\n    ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" --prefix=/usr && \\\n    make install\n\n# Install Google Cloud SDK.\nRUN CLOUD_SDK_REPO=\"cloud-sdk-$(lsb_release -c -s)\" && \\\n    echo \"deb https://packages.cloud.google.com/apt $CLOUD_SDK_REPO main\" | tee -a /etc/apt/sources.list.d/google-cloud-sdk.list && \\\n    curl -f https://packages.cloud.google.com/apt/doc/apt-key.gpg | apt-key add - && \\\n    apt-get update && apt-get install --no-install-recommends -y google-cloud-sdk && rm -rf /var/lib/apt/lists/*;\n\n# Only upgrade python packages used by fuzzers and infrastructure.\nCOPY requirements.txt .\nRUN pip install --no-cache-dir -r requirements.txt\n\n# Set up google-fluentd\n# We ignore errors in install-logging-agent.sh as it always fails to start\n# after installation without a metadata server.\nRUN curl -f -sSO https://dl.google.com/cloudagents/install-logging-agent.sh && \\\n    bash install-logging-agent.sh || true && \\\n    sed -i 's/flush_interval 5s/flush_interval 60s/' /etc/google-fluentd/google-fluentd.conf\nCOPY clusterfuzz-fluentd.conf /etc/google-fluentd/config.d/clusterfuzz.conf\n\n# Install App Engine SDK.\nENV APPENGINE_FILE=google_appengine_1.9.75.zip \\\n    APPENGINE_SDK_PATH=/data/google_appengine\nRUN wget https://commondatastorage.googleapis.com/clusterfuzz-data/$APPENGINE_FILE && \\\n    unzip $APPENGINE_FILE && \\\n    rm $APPENGINE_FILE\n\n# Hack to force google to be a namespace package.\n# https://github.com/google/protobuf/issues/1296#issuecomment-264264926\nRUN echo \"import google; import pkgutil; pkgutil.extend_path(google.__path__, google.__name__)\" > /usr/local/lib/python2.7/dist-packages/gae.pth\n\n# Common environment variables.\nENV USER=clusterfuzz\nENV INSTALL_DIRECTORY /mnt/scratch0\nENV BOT_TMPDIR $INSTALL_DIRECTORY/tmp\nENV ROOT_DIR $INSTALL_DIRECTORY/clusterfuzz\nENV UPDATE_WEB_TESTS True\nENV PYTHONPATH $APPENGINE_SDK_PATH:$INSTALL_DIRECTORY/clusterfuzz/src\nENV RUN_CMD \"python $ROOT_DIR/src/python/bot/startup/run.py\"\n\n# Passwordless sudo (needed for AFL launcher).\nRUN groupadd nopwsudo && \\\n    echo \"%nopwsudo ALL=(ALL:ALL) NOPASSWD:ALL\" > /etc/sudoers.d/mysudoers\n\n# Make sure GSUtil uses the GCE service account.\nRUN echo '[GoogleCompute]\\nservice_account = default' > /etc/boto.cfg\n\nVOLUME $INSTALL_DIRECTORY\nWORKDIR $INSTALL_DIRECTORY\n\nRUN locale-gen en_US.UTF-8\nENV LANG en_US.UTF-8\n\nCOPY setup_common.sh setup_clusterfuzz.sh setup_nfs.sh start_clusterfuzz.sh setup_mock_metadata.sh start.sh /data/\nCMD [\"bash\", \"-ex\", \"/data/start.sh\"]\n"
+}

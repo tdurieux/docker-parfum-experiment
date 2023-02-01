@@ -1,0 +1,22 @@
+FROM {{ "ci-buster" | image_tag }}
+
+ENV HELM_HOME=/tmp/helm \
+    HELM_CONFIG_HOME=/tmp/helm3/config \
+    HELM_DATA_HOME=/tmp/helm3/data \
+    HELM_CACHE_HOME=/tmp/helm3/cache
+
+USER root
+
+RUN {{ "helm3 rake kubeyaml envoyproxy helmfile helm-diff ruby-git istioctl python3-minimal python3-yaml kubeconform" | apt_install }} && \
+    mkdir -p /etc/envoy/ssl $HELM_HOME $HELM_CONFIG_HOME $HELM_DATA_HOME $HELM_CACHE_HOME && \
+    chmod -R 777 /etc/envoy /var/log/envoy && \
+    helm3 repo list | tail -n +2 | awk '{print $1}' | xargs --no-run-if-empty helm3 repo remove && \
+    chown -R nobody $HELM_HOME /tmp/helm3 && \
+    chmod -R 777 /tmp/helm3 $HELM_HOME && \
+    ln -s /usr/bin/true /usr/local/bin/helmfile_log_sal && \
+    /usr/bin/update-kubeconform-json-schema
+
+USER nobody
+
+WORKDIR /src
+ENTRYPOINT ["rake"]

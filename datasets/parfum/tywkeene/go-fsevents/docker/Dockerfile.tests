@@ -1,0 +1,8 @@
+FROM golang:1.13
+
+COPY . /go-fsevents/src/github.com/tywkeene/go-fsevents
+
+WORKDIR /go-fsevents/src/github.com/tywkeene/go-fsevents
+
+ENV GOPATH="/go-fsevents"
+CMD go test -v ./...

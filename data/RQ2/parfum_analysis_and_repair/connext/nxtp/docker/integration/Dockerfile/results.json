@@ -1,0 +1,26 @@
+{
+  "startTime": 1674250599935,
+  "endTime": 1674250601004,
+  "originalSmells": [
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 30,
+        "lineEnd": 30,
+        "columnStart": 4,
+        "columnEnd": 28
+      }
+    },
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 45,
+        "lineEnd": 45,
+        "columnStart": 4,
+        "columnEnd": 50
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM node:14-alpine3.11 as node\n\n# ----------------------------------------\n# Builds Docker container for nxtp-router package.\n# @dev configuraion located ./config.json (relative to this file)\n\n# ----------------------------------------\n\nFROM node as build\n\nENV HOME=/tmp/build \\\n    PATH=/tmp/build/node_modules/.bin:./node_modules/.bin:${PATH}\n\nWORKDIR /tmp/build\n\nARG TEMP_DEPS_DIR\n\n# ----- Copy only the files that affect yarn install -----\n# Allows docker to use cache and skip install if dependencies are unchanged.\n# Assumes that ./packages/*/package.json files have been copied to TEMP_DEPS_DIR\n# with that same directory structure. build.sh does this.\nCOPY .yarn /tmp/build/.yarn/\nCOPY .yarnrc.yml /tmp/build/\nCOPY yarn.lock /tmp/build/\nCOPY package.json /tmp/build/\nCOPY ${TEMP_DEPS_DIR} /tmp/build/\n\n\n# ----- Install dependencies -----\n# Install dependencies exactly as in the yarn.lock file - no updates.\nRUN yarn install --immutable && yarn cache clean;\n\n# ----- Copy source and all other files that affect lint, test, build -----\nCOPY config config/\nCOPY packages packages/\nCOPY .eslintignore ./\nCOPY .eslintrc.js ./\n\n\n\n# ----- Lint, test and build -----\nRUN yarn build:all\n\n# ----- Bundle the app for deployment -----\nARG APP_NAME\nRUN yarn workspaces focus --production ${APP_NAME} && yarn cache clean;\nRUN yarn dlx -p @jtbennett/ts-project-scripts tsp bundle $APP_NAME --out-dir /tmp/bundle\n\n\n# ----------------------------------------\n# Copy files to the deployment image.\n# ----------------------------------------\n\nFROM node as runtime\n\nENV NODE_ENV=production \\\n    PORT=8001\n\nARG COMMIT_HASH\nENV COMMIT_HASH ${COMMIT_HASH:-unknown}\n\n# ----- Copy files required at runtime by the app -----\nCOPY --from=build --chown=node:node /tmp/bundle /home/node\n#copy config\nCOPY docker/integration/config.json /home/node/integration/ops/config/load/\n\n\n# This user is created in the base image with uid and gid = 1000.\nUSER node\n\nARG SHORT_APP_DIR\nWORKDIR /home/node/${SHORT_APP_DIR}\n\nEXPOSE 8001\n\nCMD [\"node\", \"dist/load/routerCyclical.js\"]\n\n"
+}

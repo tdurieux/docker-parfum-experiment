@@ -1,0 +1,12 @@
+# Building Cactus on Gitlab is slow and often crashes with errors like:
+# E: Failed to fetch http://archive.ubuntu.com/ubuntu/pool/main/m/make-dfsg/make_4.1-9.1ubuntu1_amd64.deb  Undetermined Error [IP: 91.189.88.142 80]
+# E: Unable to fetch some archives, maybe run apt-get update or try with --fix-missing?
+# So we try to avoid that by keeping a base image around with dependencies pre-installed that CI can use.
+
+FROM quay.io/vgteam/dind
+
+# apt dependencies for build
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get --no-install-recommends install -y build-essential git python3 python3-dev python3-pip zlib1g-dev wget libbz2-dev pkg-config libhdf5-dev liblzo2-dev libtokyocabinet-dev wget liblzma-dev libxml2-dev libssl-dev libpng-dev uuid-dev libcurl4-gnutls-dev libffi-dev && rm -rf /var/lib/apt/lists/*;
+
+# apt dependencies for ci
+RUN DEBIAN_FRONTEND=noninteractive apt-get --no-install-recommends install -y default-jre wget docker.io python3-virtualenv libcurl4-gnutls-dev libgnutls28-dev && rm -rf /var/lib/apt/lists/*;

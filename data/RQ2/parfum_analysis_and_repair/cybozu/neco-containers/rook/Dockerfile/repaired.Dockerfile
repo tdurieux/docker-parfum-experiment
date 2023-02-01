@@ -1,0 +1,42 @@
+# Rook container
+
+# Stage1: build from source
+FROM quay.io/cybozu/golang:1.17-focal AS build
+
+ARG ROOK_VERSION=1.9.6
+ARG ROOK_DIR=/work/go/src/github.com/rook/rook
+
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+ENV GOPATH=/work/go
+ENV PATH $PATH:${ROOK_DIR}/.cache/tools/linux_amd64
+RUN git clone https://github.com/rook/rook.git ${ROOK_DIR}
+
+WORKDIR ${ROOK_DIR}
+
+RUN mkdir -p ${ROOK_DIR}/.cache/tools/linux_amd64
+# Make a symbolic link of helm to allow the build script to use `helm` command without specifying the version.
+RUN HELM_VERSION=$(grep "^HELM_VERSION"  ${ROOK_DIR}/build/makelib/helm.mk | cut -d " " -f 3) && \
+    ln -s ${ROOK_DIR}/.cache/tools/linux_amd64/helm-${HELM_VERSION} ${ROOK_DIR}/.cache/tools/linux_amd64/helm
+
+RUN git checkout v${ROOK_VERSION}
+RUN mkdir -p /tmp/rook
+# Don't delete temporary directory to save output artifacts
+RUN sed -i -e '/@rm -fr $(TEMP)/d' images/ceph/Makefile
+RUN make build IMAGES="ceph" BUILD_CONTAINER_IMAGE=false TEMP=/tmp/rook
+# Copy output artifacts to root directory to minimize differences between Stage2 and upstream Dockerfile.
+RUN cp -r /tmp/rook/* /
+
+# Stage2: setup runtime container
+FROM quay.io/cybozu/ceph:17.2.1.2
+
+ARG ROOK_DIR=/work/go/src/github.com/rook/rook
+COPY --from=build ${ROOK_DIR}/LICENSE /usr/local/rook/LICENSE
+
+# Followings are based on upstream Dockerfile
+# Note: s5cmd is not installed because teleport node image has s3cmd.
+COPY --from=build rook toolbox.sh set-ceph-debug-level /usr/local/bin/
+COPY --from=build ceph-monitoring /etc/ceph-monitoring
+COPY --from=build rook-external /etc/rook-external/
+COPY --from=build ceph-csv-templates /etc/ceph-csv-templates
+
+# create or modify owner and permissions to make a watch-active container of a MGR work properly

@@ -1,0 +1,44 @@
+{
+  "startTime": 1674254908279,
+  "endTime": 1674254909010,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 15,
+        "lineEnd": 15,
+        "columnStart": 2,
+        "columnEnd": 34
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 66,
+        "lineEnd": 66,
+        "columnStart": 18,
+        "columnEnd": 93
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 15,
+        "lineEnd": 15,
+        "columnStart": 2,
+        "columnEnd": 34
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 66,
+        "lineEnd": 66,
+        "columnStart": 18,
+        "columnEnd": 93
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Scancode version and info\nARG SCANCODE_VERSION=\"3.2.3\"\nARG SCANCODE_RELEASE_CANDIDATE=\"\"\nARG SCANCODE_PROJECT_NAME=\"scancode-toolkit\"\nARG SCANCODE_INSTALLATION_FOLDER=\"scancode\"\n\n################################################################################\n# STAGE 1a: Build master binaries                                              #\n################################################################################\n\nFROM golang:1.12-buster as gobuilder\nENV GOPROXY=\"https://proxy.golang.org\"\n\nRUN set -e && \\\n  apt update && \\\n  apt install --no-install-recommends -y protobuf-compiler && \\\n  mkdir /root/qmstr/ && rm -rf /var/lib/apt/lists/*;\n\nWORKDIR /root/qmstr\n\nCOPY ./ ./\n\nRUN set -e && \\\n  go build -o ./out/scancode-analyzer ./modules/analyzers/scancode-analyzer && \\\n  go build -o ./out/qmstr-master ./masterserver/\n\n################################################################################\n# STAGE 1b: Downloading scancode                                               #\n################################################################################\n\nFROM alpine as scancode\n\nARG SCANCODE_VERSION\nARG SCANCODE_RELEASE_CANDIDATE\nARG SCANCODE_PROJECT_NAME\nARG SCANCODE_INSTALLATION_FOLDER\nENV SCANCODE_ZIP_LINK=\"https://github.com/nexB/${SCANCODE_PROJECT_NAME}/releases/download/v${SCANCODE_VERSION}${SCANCODE_RELEASE_CANDIDATE}/${SCANCODE_PROJECT_NAME}-${SCANCODE_VERSION}${SCANCODE_RELEASE_CANDIDATE}.zip\"\nENV SCANCODE_ZIP_NAME=\"scancode.zip\"\n\nRUN wget ${SCANCODE_ZIP_LINK} --output-document ${SCANCODE_ZIP_NAME} && \\\n  mkdir ${SCANCODE_INSTALLATION_FOLDER} && \\\n  unzip -q ${SCANCODE_ZIP_NAME} -d ${SCANCODE_INSTALLATION_FOLDER}\n\n################################################################################\n# STAGE 2: Build master container image (deploy)                               #\n################################################################################\n\nFROM python:3.6-slim-buster as deploy\n\n# Required QMSTR directories\nENV QMSTR_DIRS=\"/var/qmstr/ /var/cache/qmstr/ /var/lib/qmstr/\"\n\n# Copy binaries from build stage\nCOPY --from=gobuilder /root/qmstr/out/* /usr/local/bin/\n\n# Copying scancode binary\nARG SCANCODE_VERSION\nARG SCANCODE_RELEASE_CANDIDATE\nARG SCANCODE_PROJECT_NAME\nARG SCANCODE_INSTALLATION_FOLDER\nENV SCANCODE_LOCAL_DIRECTORY=\"/usr/local/bin/scancode/\"\nRUN mkdir -p ${SCANCODE_LOCAL_DIRECTORY}\nCOPY --from=scancode /${SCANCODE_INSTALLATION_FOLDER}/${SCANCODE_PROJECT_NAME}-${SCANCODE_VERSION}${SCANCODE_RELEASE_CANDIDATE}/ ${SCANCODE_LOCAL_DIRECTORY}\nENV PATH=\"${SCANCODE_LOCAL_DIRECTORY}:${PATH}\"\n\n# Installing scancode dependencies\nRUN apt update && apt install --no-install-recommends -y libgomp1 libbz2-1.0 xz-utils zlib1g libxml2-dev libxslt1-dev && rm -rf /var/lib/apt/lists/*;\n\nRUN set -e && \\\n  addgroup qmstr && \\\n  adduser --system qmstr --ingroup qmstr && \\\n  mkdir -p ${QMSTR_DIRS} && \\\n  chown -R qmstr ${QMSTR_DIRS}\n\n# Configuring scancode (must be launched at least once)\nRUN chown -R qmstr ${SCANCODE_LOCAL_DIRECTORY} && \\\n  scancode --help\n\nWORKDIR /home/qmstr\nUSER qmstr\n\nEXPOSE 50051\n\nVOLUME /home/qmstr/config\nVOLUME /var/qmstr/buildroot\n\nENTRYPOINT [\"/usr/local/bin/qmstr-master\"]\n"
+}

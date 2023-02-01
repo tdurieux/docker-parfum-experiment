@@ -1,0 +1,1 @@
+# fetch the vendor with the builder platform to avoid qemu issues

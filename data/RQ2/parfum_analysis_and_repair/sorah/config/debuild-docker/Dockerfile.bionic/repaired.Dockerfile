@@ -1,0 +1,18 @@
+# See also: https://github.com/sorah/config/blob/master/bin/sorah-debuild
+FROM ubuntu:18.04
+
+# just to invalidate cache
+ARG BUILDDATE=99999999
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN sed -i -e 's|archive\.ubuntu\.com/ubuntu|ap-northeast-1.ec2.archive.ubuntu.com/ubuntu|g' /etc/apt/sources.list
+
+# Allow use of debhelper-compat 13 in backport
+# https://help.ubuntu.com/community/UbuntuBackports
+RUN /bin/echo -e "Package: debhelper libdebhelper-perl dh-autoreconf dwz\nPin: release a=bionic-backports\nPin-Priority: 500\n" | tee -a /etc/apt/preferences
+
+RUN mkdir -p /build \
+  && apt-get update \
+  && apt-get install --no-install-recommends -y tzdata debhelper dh-make devscripts gnupg2 vim equivs && rm -rf /var/lib/apt/lists/*;
+RUN mkdir -p -m700 /root/.gnupg
+

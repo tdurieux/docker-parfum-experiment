@@ -1,0 +1,49 @@
+ARG CLI_IMAGE
+ARG LAGOON_IMAGE_VERSION
+ARG COMPOSER_AUTH
+FROM ${CLI_IMAGE} as cli
+
+FROM uselagoon/php-8.1-cli-drupal:${LAGOON_IMAGE_VERSION}
+
+ENV DOCKERIZE_VERSION v0.6.1
+RUN wget https://github.com/jwilder/dockerize/releases/download/$DOCKERIZE_VERSION/dockerize-alpine-linux-amd64-$DOCKERIZE_VERSION.tar.gz \
+    && tar -C /usr/local/bin -xzvf dockerize-alpine-linux-amd64-$DOCKERIZE_VERSION.tar.gz \
+    && rm dockerize-alpine-linux-amd64-$DOCKERIZE_VERSION.tar.gz
+
+COPY --from=cli /app /app
+COPY .docker/scripts/ /usr/bin/
+
+# Don't restrict the memory limit for the test image.
+RUN echo "memory_limit=-1" >> /usr/local/etc/php/conf.d/99-memory-limit.ini
+
+RUN cp -r /app/web/profiles/contrib/govcms/tests /app/ \
+    && composer install -d /app/tests -n --ansi --prefer-dist --no-suggest \
+    && chmod +x /usr/bin/lint-govcms \
+    && chmod +x /usr/bin/lint-theme \
+    && chmod +x /usr/bin/behat \
+    && chmod +x /usr/bin/phpunit
+
+COPY .docker/images/test/drutiny /usr/bin/drutiny
+
+COPY .docker/images/test/phpunit/phpunit.xml /app/tests/phpunit/
+COPY .docker/images/test/phpunit/bootstrap.php /app/tests/phpunit/
+
+# Ensure MySQL client can accept server max_allowed_packet
+COPY .docker/images/govcms/mariadb-client.cnf /etc/my.cnf.d
+
+ARG SITE_AUDIT_VERSION
+RUN git clone --single-branch --branch=$SITE_AUDIT_VERSION https://github.com/govcms/audit-site.git /app/web/sites/all/drutiny \
+    && php -d memory_limit=-1 /usr/local/bin/composer --working-dir=/app/web/sites/all/drutiny/ install --ignore-platform-reqs \
+    && rm -Rf /app/web/sites/all/drutiny/.git \
+    && chmod +x /usr/bin/drutiny
+
+RUN mkdir -p /usr/share/ca-certificates/letsencrypt \
+    && curl -f -o /usr/share/ca-certificates/letsencrypt/lets-encrypt-r3.crt https://letsencrypt.org/certs/lets-encrypt-r3.pem \
+    && echo -e "\nletsencrypt/lets-encrypt-r3.crt" >> /etc/ca-certificates.conf \
+    && update-ca-certificates
+
+# Ensure that drush and drush.launcher both work
+ENV WEBROOT=web
+
+# Add custom drutiny profiles from test folder for local development
+COPY .docker/images/test/*.yml /app/web/sites/all/drutiny/Profiles

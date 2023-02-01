@@ -1,0 +1,22 @@
+FROM centos:7
+
+# Needed for python-pip package
+RUN yum update -y
+RUN yum install -y epel-release && rm -rf /var/cache/yum
+
+RUN yum update -y
+RUN yum install -y initscripts gcc && rm -rf /var/cache/yum
+RUN yum install -y python2 python2-devel python2-pip && rm -rf /var/cache/yum
+RUN yum install -y python3 python3-devel python3-pip && rm -rf /var/cache/yum
+
+COPY dev-requirements.txt dev-requirements.txt
+ADD agent_build/requirement-files agent_build/requirement-files
+
+RUN python2 -m pip install -r dev-requirements.txt
+# We need newer version of pip since old version don't support manylinux wheels
+RUN python3 -m pip install --upgrade "pip==21.0"
+RUN python3 -m pip --version
+RUN python3 -m pip install -r dev-requirements.txt
+
+# we create symlink to python3.6 with different name only to run tests.
+RUN ln -sf /usr/bin/python3.6 /usr/bin/python_for_tests

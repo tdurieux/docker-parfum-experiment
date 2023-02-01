@@ -1,0 +1,19 @@
+FROM debian:testing
+RUN echo fubar > /etc/machine-id
+
+RUN apt-get update -qq && apt-get install -yq --no-install-recommends \
+	gnutls-bin \
+	gnutls-dev \
+	gobject-introspection \
+	gtk-doc-tools \
+	libgirepository1.0-dev \
+	libglib2.0-dev \
+	libglib2.0-dev-bin \
+	libgpgme11-dev \
+	libjson-glib-dev \
+	meson \
+	ninja-build \
+	pkg-config \
+	valac && rm -rf /var/lib/apt/lists/*;
+
+WORKDIR /build

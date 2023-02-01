@@ -1,0 +1,98 @@
+{
+  "startTime": 1674253873024,
+  "endTime": 1674253873733,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 5,
+        "lineEnd": 5,
+        "columnStart": 22,
+        "columnEnd": 45
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 7,
+        "lineEnd": 7,
+        "columnStart": 2,
+        "columnEnd": 27
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 12,
+        "lineEnd": 12,
+        "columnStart": 20,
+        "columnEnd": 63
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 43,
+        "lineEnd": 43,
+        "columnStart": 22,
+        "columnEnd": 45
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 5,
+        "lineEnd": 5,
+        "columnStart": 22,
+        "columnEnd": 45
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 7,
+        "lineEnd": 7,
+        "columnStart": 2,
+        "columnEnd": 27
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 12,
+        "lineEnd": 12,
+        "columnStart": 20,
+        "columnEnd": 63
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 43,
+        "lineEnd": 43,
+        "columnStart": 22,
+        "columnEnd": 45
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 65,
+        "lineEnd": 66,
+        "columnStart": 20,
+        "columnEnd": 17
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 37,
+        "lineEnd": 37,
+        "columnStart": 4,
+        "columnEnd": 16
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "ARG UBUNTU_VERSION=20.04\n\nFROM ubuntu:${UBUNTU_VERSION} as ubuntu-nodejs\nARG NODEJS_MAJOR_VERSION=14\nENV DEBIAN_FRONTEND=nonintercative\nRUN apt-get update && apt-get install --no-install-recommends curl -y && \\\n  curl --proto '=https' --tlsv1.2 -sSf -L https://deb.nodesource.com/setup_${NODEJS_MAJOR_VERSION}.x | bash - && \\\n  apt-get install --no-install-recommends nodejs -y && rm -rf /var/lib/apt/lists/*;\n\nFROM ubuntu-nodejs as nodejs-builder\nRUN curl --proto '=https' --tlsv1.2 -sSf -L https://dl.yarnpkg.com/debian/pubkey.gpg | apt-key add - &&\\\n  echo \"deb https://dl.yarnpkg.com/debian/ stable main\" | tee /etc/apt/sources.list.d/yarn.list &&\\\n  apt-get update && apt-get install --no-install-recommends gcc g++ make gnupg2 yarn -y && rm -rf /var/lib/apt/lists/*;\nRUN mkdir -p /app/packages\nWORKDIR /app\nCOPY packages-cache packages-cache\nCOPY packages/api-cardano-db-hasura packages/api-cardano-db-hasura\nCOPY packages/chain-follower packages/chain-follower\nCOPY packages/server packages/server\nCOPY packages/util packages/util\nCOPY packages/util-dev packages/util-dev\nCOPY packages/worker packages/worker\nCOPY \\\n  .yarnrc \\\n  package.json \\\n  yarn.lock \\\n  tsconfig.json \\\n  /app/\n\nFROM nodejs-builder as cardano-graphql-builder\nRUN yarn --offline --frozen-lockfile --non-interactive &&\\\n  yarn build\n\nFROM nodejs-builder as cardano-graphql-production-deps\nRUN yarn --offline --frozen-lockfile --non-interactive --production\n\nFROM frolvlad/alpine-glibc:alpine-3.11_glibc-2.30 as downloader\nRUN apk add --no-cache curl\nRUN curl --proto '=https' --tlsv1.2 -sSf -L https://github.com/hasura/graphql-engine/raw/stable/cli/get.sh | sh\nENV HASURA_GRAPHQL_ENABLE_TELEMETRY=false\nRUN hasura --skip-update-check update-cli --version v1.3.3\n\nFROM nodejs-builder as dev\nRUN apt-get update && apt-get install --no-install-recommends yarn -y && rm -rf /var/lib/apt/lists/*;\nRUN mkdir src\nRUN mkdir /node-ipc\nCOPY --from=downloader /usr/local/bin/hasura /usr/local/bin/hasura\nENV \\\n  CARDANO_NODE_CONFIG_PATH=/config/cardano-node/config.json \\\n  CARDANO_NODE_SOCKET_PATH=/node-ipc/node.socket \\\n  HASURA_CLI_PATH=/usr/local/bin/hasura \\\n  HASURA_URI=\"http://hasura:8080\" \\\n  LD_LIBRARY_PATH=\"/usr/local/lib:$LD_LIBRARY_PATH\" \\\n  POSTGRES_DB_FILE=/run/secrets/postgres_db \\\n  POSTGRES_HOST=postgres \\\n  POSTGRES_PASSWORD_FILE=/run/secrets/postgres_password \\\n  POSTGRES_PORT=5432 \\\n  POSTGRES_USER_FILE=/run/secrets/postgres_user\nWORKDIR /src\n\nFROM ubuntu-nodejs as server\nARG NETWORK=mainnet\nARG METADATA_SERVER_URI=\"https://tokens.cardano.org\"\nRUN curl --proto '=https' --tlsv1.2 -sSf -L https://www.postgresql.org/media/keys/ACCC4CF8.asc | apt-key add - &&\\\n  echo \"deb http://apt.postgresql.org/pub/repos/apt/ `lsb_release -cs`-pgdg main\" | tee  /etc/apt/sources.list.d/pgdg.list &&\\\n  apt-get update && apt-get install -y --no-install-recommends \\\n  ca-certificates && rm -rf /var/lib/apt/lists/*;\nCOPY --from=downloader /usr/local/bin/hasura /usr/local/bin/hasura\nENV \\\n  CARDANO_NODE_CONFIG_PATH=/config/cardano-node/config.json \\\n  HASURA_CLI_PATH=/usr/local/bin/hasura \\\n  HASURA_GRAPHQL_ENABLE_TELEMETRY=false \\\n  HASURA_URI=\"http://hasura:8080\" \\\n  LD_LIBRARY_PATH=\"/usr/local/lib:$LD_LIBRARY_PATH\" \\\n  METADATA_SERVER_URI=${METADATA_SERVER_URI} \\\n  NETWORK=${NETWORK} \\\n  OGMIOS_HOST=\"cardano-node-ogmios\" \\\n  POSTGRES_DB_FILE=/run/secrets/postgres_db \\\n  POSTGRES_HOST=postgres \\\n  POSTGRES_PASSWORD_FILE=/run/secrets/postgres_password \\\n  POSTGRES_PORT=5432 \\\n  POSTGRES_USER_FILE=/run/secrets/postgres_user\nCOPY --from=cardano-graphql-builder /app/packages/api-cardano-db-hasura/dist /app/packages/api-cardano-db-hasura/dist\nCOPY --from=cardano-graphql-builder /app/packages/api-cardano-db-hasura/hasura/project /app/packages/api-cardano-db-hasura/hasura/project\nCOPY --from=cardano-graphql-builder /app/packages/api-cardano-db-hasura/package.json /app/packages/api-cardano-db-hasura/package.json\nCOPY --from=cardano-graphql-builder /app/packages/api-cardano-db-hasura/schema.graphql /app/packages/api-cardano-db-hasura/schema.graphql\nCOPY --from=cardano-graphql-builder /app/packages/server/dist /app/packages/server/dist\nCOPY --from=cardano-graphql-builder /app/packages/server/package.json /app/packages/server/package.json\nCOPY --from=cardano-graphql-builder /app/packages/util/dist /app/packages/util/dist\nCOPY --from=cardano-graphql-builder /app/packages/util/package.json /app/packages/util/package.json\nCOPY --from=cardano-graphql-production-deps /app/node_modules /app/node_modules\nCOPY --from=cardano-graphql-production-deps /app/packages/api-cardano-db-hasura/node_modules /app/packages/api-cardano-db-hasura/node_modules\nCOPY config/network/${NETWORK}/genesis /config/genesis/\nCOPY config/network/${NETWORK}/cardano-node /config/cardano-node/\nWORKDIR /app/packages/server/dist\nEXPOSE 3100\nCMD [\"node\", \"index.js\"]\n\nFROM ubuntu-nodejs as chain-follower\nENV \\\n  OGMIOS_HOST=\"cardano-node-ogmios\"\nCOPY --from=cardano-graphql-builder /app/packages/chain-follower/dist /app/packages/chain-follower/dist\nCOPY --from=cardano-graphql-builder /app/packages/chain-follower/package.json /app/packages/chain-follower/package.json\nCOPY --from=cardano-graphql-builder /app/packages/util/dist /app/packages/util/dist\nCOPY --from=cardano-graphql-builder /app/packages/util/package.json /app/packages/util/package.json\nCOPY --from=cardano-graphql-production-deps /app/node_modules /app/node_modules\nWORKDIR /app/packages/chain-follower/dist\nCMD [\"node\", \"index.js\"]\n\nFROM ubuntu-nodejs as worker\nENV \\\n  OGMIOS_HOST=\"cardano-node-ogmios\"\nCOPY --from=cardano-graphql-builder /app/packages/worker/dist /app/packages/worker/dist\nCOPY --from=cardano-graphql-builder /app/packages/worker/package.json /app/packages/worker/package.json\nCOPY --from=cardano-graphql-builder /app/packages/util/dist /app/packages/util/dist\nCOPY --from=cardano-graphql-builder /app/packages/util/package.json /app/packages/util/package.json\nCOPY --from=cardano-graphql-production-deps /app/node_modules /app/node_modules\nWORKDIR /app/packages/worker/dist\nCMD [\"node\", \"index.js\"]\n"
+}

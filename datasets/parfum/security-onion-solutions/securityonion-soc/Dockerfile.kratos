@@ -1,0 +1,65 @@
+# Copyright 2019 Jason Ertel (jertel). All rights reserved.
+# Copyright 2020-2022 Security Onion Solutions, LLC. All rights reserved.
+#
+# This program is distributed under the terms of version 2 of the
+# GNU General Public License.  See LICENSE for further details.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+
+FROM ghcr.io/security-onion-solutions/golang:alpine AS builder
+
+ARG OWNER=ory
+ARG VERSION=v0.9.0-alpha.3
+
+RUN addgroup -S ory; \
+    adduser -S ory -G ory -D -H -s /bin/nologin
+RUN apk -U --no-cache add build-base git gcc bash
+
+RUN mkdir -p /go/src/github.com/$OWNER
+WORKDIR /go/src/github.com/$OWNER
+RUN git clone https://github.com/$OWNER/kratos.git
+
+WORKDIR /go/src/github.com/$OWNER/kratos
+
+RUN git checkout $VERSION
+
+ENV GO111MODULE on
+ENV CGO_ENABLED 1
+
+RUN go mod download
+RUN go build -tags sqlite -a
+
+FROM ghcr.io/security-onion-solutions/alpine:latest
+
+ENV DSN=sqlite:///kratos-data/db.sqlite?_fk=true
+
+ARG UID=928
+ARG GID=928
+ARG OWNER=ory
+
+RUN addgroup --gid "$GID" -S kratos; \
+    adduser -u "$UID" -S kratos -G kratos -D -H -s /bin/nologin
+RUN apk add -U --no-cache ca-certificates
+
+RUN [ ! -e /etc/nsswitch.conf ] && echo 'hosts: files dns' > /etc/nsswitch.conf
+
+RUN echo "#!/bin/sh" > /start-kratos.sh
+RUN echo "kratos -c /kratos-conf/kratos.yaml migrate sql -e --yes >> /kratos-log/kratos-migrate.log 2>&1" >> /start-kratos.sh
+RUN echo "chown kratos:kratos /kratos-data/db.sqlite" >> /start-kratos.sh
+RUN echo "chmod 600 /kratos-data/db.sqlite" >> /start-kratos.sh
+RUN echo "kratos -c /kratos-conf/kratos.yaml serve --sqa-opt-out=true >> /kratos-log/kratos.log 2>&1" >> /start-kratos.sh
+RUN chmod a+x /start-kratos.sh
+
+COPY --from=builder /go/src/github.com/$OWNER/kratos/kratos /usr/bin/kratos
+COPY --from=builder /go/src/github.com/$OWNER/kratos/.schema /.schema
+USER kratos
+
+
+EXPOSE 4433
+EXPOSE 4434
+
+VOLUME ["/kratos-conf", "/kratos-data", "/kratos-log"]
+
+ENTRYPOINT ["/start-kratos.sh"]

@@ -1,0 +1,17 @@
+FROM webhippie/alpine:latest-amd64@sha256:cf9f805729975a07489df76d012a07401cd0bcad7603456f003c0f35371d3e2b
+
+VOLUME ["/var/lib/mysql", "/var/lib/backup", "/etc/mysql/conf.d", "/etc/mysql/init.d"]
+EXPOSE 3306
+
+WORKDIR /var/lib/mysql
+CMD ["/usr/bin/container"]
+
+RUN apk update && \
+  apk upgrade && \
+  mkdir -p /var/lib/mysql && \
+  groupadd -g 1000 mysql && \
+  useradd -u 1000 -d /var/lib/mysql -g mysql mysql -s /bin/bash -m && \
+  apk add --no-cache mariadb mariadb-client mariadb-server-utils tzdata && \
+  rm -rf /var/cache/apk/* /etc/mysql/* /etc/my.cnf* /var/lib/mysql/*
+
+COPY ./overlay /

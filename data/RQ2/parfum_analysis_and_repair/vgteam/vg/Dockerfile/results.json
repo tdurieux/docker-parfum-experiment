@@ -1,0 +1,107 @@
+{
+  "startTime": 1674250750425,
+  "endTime": 1674250751924,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 88,
+        "lineEnd": 88,
+        "columnStart": 4,
+        "columnEnd": 50
+      }
+    },
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 88,
+        "lineEnd": 88,
+        "columnStart": 96,
+        "columnEnd": 120
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 24,
+        "lineEnd": 24,
+        "columnStart": 4,
+        "columnEnd": 31
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 35,
+        "lineEnd": 41,
+        "columnStart": 55,
+        "columnEnd": 30
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 88,
+        "lineEnd": 88,
+        "columnStart": 63,
+        "columnEnd": 92
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 116,
+        "lineEnd": 139,
+        "columnStart": 4,
+        "columnEnd": 8
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 88,
+        "lineEnd": 88,
+        "columnStart": 63,
+        "columnEnd": 92
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 24,
+        "lineEnd": 24,
+        "columnStart": 4,
+        "columnEnd": 31
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 35,
+        "lineEnd": 41,
+        "columnStart": 55,
+        "columnEnd": 30
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 88,
+        "lineEnd": 88,
+        "columnStart": 63,
+        "columnEnd": 92
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 116,
+        "lineEnd": 139,
+        "columnStart": 4,
+        "columnEnd": 8
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Multi-container Dockerfile for build and run containers for vg\n\n# Use Google's non-rate-limited mirror of Docker Hub to get our base image.\n# This helps automated Quay builds because Quay hasn't built a caching system\n# and exposes pull rate limits to users.\nFROM mirror.gcr.io/library/ubuntu:20.04 AS base\nMAINTAINER vgteam\n\nRUN echo base > /stage.txt\n\nWORKDIR /vg\n\n# Prevent dpkg from trying to ask any questions, ever\nENV DEBIAN_FRONTEND noninteractive\nENV DEBCONF_NONINTERACTIVE_SEEN true\n\nFROM base AS build\nARG THREADS=8\nARG TARGETARCH\n\nRUN echo build > /stage.txt\n\nRUN apt-get -qq -y update && \\\n    apt-get -qq -y upgrade && \\\n    apt-get -qq --no-install-recommends -y install sudo && rm -rf /var/lib/apt/lists/*;\n\n# Install all vg's dependencies.\n# The Makefile will come parse the Dockerfile to get the correct dependencies;\n# this is the One True Depencency List.\n# We don't need to clean the package index since we don't ship this image and\n# don't care about its size.\n# We clip out everything between these begin and end markers, except the line\n# that starts with RUN, or comments. And we pull out line continuation slashes.\n# TODO: can we read them here and in the Makefile from the README instead?\n###DEPS_BEGIN###\nRUN apt-get -qq -y update && apt-get -qq -y upgrade && apt-get -qq --no-install-recommends -y install \\\n    make git build-essential protobuf-compiler libprotoc-dev libjansson-dev libbz2-dev \\\n    libncurses5-dev automake gettext autopoint libtool jq bsdmainutils bc rs parallel npm \\\n    samtools curl unzip redland-utils librdf-dev cmake pkg-config wget gtk-doc-tools \\\n    raptor2-utils rasqal-utils bison flex gawk libgoogle-perftools-dev liblz4-dev liblzma-dev \\\n    libcairo2-dev libpixman-1-dev libffi-dev libcairo-dev libprotobuf-dev libboost-all-dev \\\n    tabix bcftools libzstd-dev && rm -rf /var/lib/apt/lists/*;\n###DEPS_END###\n\n# Prepare to build submodule dependencies\nCOPY source_me.sh /vg/source_me.sh\nCOPY deps /vg/deps\n# To increase portability of the docker image, when building for amd64, set the\n# target CPU architecture to Nehalem (2008) rather than auto-detecting the\n# build machine's CPU. This has no AVX1, AVX2, or PCLMUL, but it does have\n# SSE4.2. UCSC has a Nehalem machine that we want to support.\nRUN if [ -z \"${TARGETARCH}\" ] || [ \"${TARGETARCH}\" = \"amd64\" ] ; then sed -i s/march=native/march=nehalem/ deps/sdsl-lite/CMakeLists.txt; fi\n# Clear any CMake caches in case we are building from someone's checkout\nRUN find . -name CMakeCache.txt | xargs rm -f\n# Build the dependencies\nCOPY Makefile /vg/Makefile\nRUN . ./source_me.sh && CXXFLAGS=\"$(if [ -z \"${TARGETARCH}\" ] || [ \"${TARGETARCH}\" = \"amd64\" ] ; then echo \" -march=nehalem \"; fi)\" make -j $((THREADS < $(nproc) ? THREADS : $(nproc))) deps\n\n# Bring in the sources, which we need in order to build\nCOPY src /vg/src\n\n# Build all the object files for vg, but don't link.\n# Also pass the arch here\nRUN . ./source_me.sh && CXXFLAGS=\"$(if [ -z \"${TARGETARCH}\" ] || [ \"${TARGETARCH}\" = \"amd64\" ] ; then echo \" -march=nehalem \"; fi)\" make -j $((THREADS < $(nproc) ? THREADS : $(nproc))) objs\n\n# Bring in any includes we pre-made, like the git version, if present\nCOPY include /vg/include\n\n# Make sure version introspection is up to date\nRUN rm -f obj/version.o && . ./source_me.sh && CXXFLAGS=\"$(if [ -z \"${TARGETARCH}\" ] || [ \"${TARGETARCH}\" = \"amd64\" ] ; then echo \" -march=nehalem \"; fi)\" make -j $((THREADS < $(nproc) ? THREADS : $(nproc))) obj/version.o\n\n# Announce the version file, which must exist by now\nRUN ls /vg/include && cat /vg/include/vg_git_version.hpp\n\n# Do the final build and link, knowing the version. Trim down the resulting binary but make sure to include enough debug info for profiling.\nRUN . ./source_me.sh && CXXFLAGS=\"$(if [ -z \"${TARGETARCH}\" ] || [ \"${TARGETARCH}\" = \"amd64\" ] ; then echo \" -march=nehalem \"; fi)\" make -j $((THREADS < $(nproc) ? THREADS : $(nproc))) static && strip -d bin/vg\n\n# Ship the scripts\nCOPY scripts /vg/scripts\n\nENV PATH /vg/bin:$PATH\n\n############################################################################################\nFROM build AS test\nARG THREADS=8\n\nRUN echo test > /stage.txt\n\nRUN curl -f -sL https://deb.nodesource.com/setup_16.x | bash - && apt-get -qq --no-install-recommends -y install nodejs && npm install -g txm@7.4.5 && npm cache clean --force; && rm -rf /var/lib/apt/lists/*;\n\n# Fail if any non-portable instructions were used\nRUN /bin/bash -e -c 'if objdump -d /vg/bin/vg | grep vperm2i128 ; then exit 1 ; else exit 0 ; fi'\n\n# Bring in the tests and docs, which have doctests\nCOPY test /vg/test\nCOPY doc /vg/doc\n# We test the README so bring it along.\nCOPY README.md /vg/\n\n# Run tests in the middle so the final container that gets tagged is the run container.\n# Tests may not actually be run by smart builders like buildkit.\nRUN /bin/bash -e -c \"export OMP_NUM_THREADS=$((THREADS < $(nproc) ? THREADS : $(nproc))); make test\"\n\n\n############################################################################################\nFROM base AS run\n\nRUN echo run > /stage.txt\n\n# Install packages which toil-vg needs to be available inside the image, for\n# pipes and profiling, and good usability on Kubernetes.\n# TODO: which of these can be removed?\n# Make sure to clean so we don't ship old apt package indexes in our Docker.\nRUN ls -lah /vg && \\\n    apt-get -qq -y update && \\\n    apt-get -qq -y upgrade && \\\n    apt-get -qq --no-install-recommends -y install --no-upgrade \\\n    curl \\\n    wget \\\n    pigz \\\n    dstat \\\n    pv \\\n    jq \\\n    samtools \\\n    tabix \\\n    parallel \\\n    fontconfig-config \\\n    awscli \\\n    binutils \\\n    libpython2.7 \\\n    libperl-dev \\\n    libelf1 \\\n    libdw1 \\\n    libslang2 \\\n    libnuma1 \\\n    numactl \\\n    bc \\\n    linux-tools-common \\\n    linux-tools-generic \\\n    perl \\\n    && apt-get -qq -y clean && rm -rf /var/lib/apt/lists/*;\n\nCOPY --from=build /vg/bin/vg /vg/bin/\n\nCOPY --from=build /vg/scripts/* /vg/scripts/\n# Make sure we have the flame graph scripts so we can do self-profiling\nCOPY --from=build /vg/deps/FlameGraph /vg/deps/FlameGraph\n\nENV PATH /vg/bin:$PATH\n\n\n\n"
+}

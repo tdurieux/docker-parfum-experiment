@@ -1,0 +1,6 @@
+#
+FROM davegill/wrf-coop:sixthtry
+MAINTAINER Dave Gill <gill@ucar.edu>
+
+#	DO NOT CHANGE UNDERSCORE GIT STRINGS
+#	THESE ARE USED FOR JENKINS TESTING

@@ -1,0 +1,13 @@
+FROM node:16-bullseye
+
+ARG USER_ID=1000
+ARG GROUP_ID=1000
+
+RUN usermod -u $USER_ID node && \
+  groupmod -g $GROUP_ID node
+
+USER node
+WORKDIR /code
+
+COPY entrypoint-frontend.sh /
+ENTRYPOINT [ "/entrypoint-frontend.sh" ]

@@ -1,0 +1,24 @@
+#docker.aws
+ARG image_tag
+FROM 0chain_build_base:${image_tag} as zchain_build_base
+FROM alpine:3.15
+RUN apk add --no-cache bash
+RUN apk add --no-cache libbz2 lz4-libs snappy zstd-libs# For RocksDB
+RUN apk add --no-cache gmp libcrypto1.1 libssl1.1# For Herumi
+
+COPY --from=zchain_build_base \
+                    /usr/local/lib/librocksdb.so.*.*.* \
+                    /usr/local/lib/libmcl*.so \
+                    /usr/local/lib/libbls*.so \
+                    /usr/local/lib/
+
+# Following standard Unix convention, the file librocksdb.x.y is a symbolic link
+# to librocksdb.x.y.z. Unfortunately, the Docker COPY command reads through
+# symbolic links and copies the file to which they point. Additionally, there is
+# no glob syntax to specify that we want to COPY the .x.y file without also
+# copying the .x.y.z file. But since librocksdb is 25 MB, we don't want to
+# duplicate it.
+#
+# Above, we copied the .x.y.z file. Now we can manually rename it from .x.y.z
+# to .x.y.
+RUN mv /usr/local/lib/librocksdb.so* $(ls /usr/local/lib/librocksdb.so* | cut -f1-4 -d.)

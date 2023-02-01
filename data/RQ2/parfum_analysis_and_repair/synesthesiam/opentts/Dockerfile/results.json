@@ -1,0 +1,45 @@
+{
+  "startTime": 1674249369691,
+  "endTime": 1674249370773,
+  "originalSmells": [
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 48,
+        "lineEnd": 48,
+        "columnStart": 8,
+        "columnEnd": 64
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 17,
+        "lineEnd": 18,
+        "columnStart": 4,
+        "columnEnd": 61
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 48,
+        "lineEnd": 48,
+        "columnStart": 8,
+        "columnEnd": 64
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 48,
+        "lineEnd": 48,
+        "columnStart": 8,
+        "columnEnd": 64
+      }
+    }
+  ],
+  "repairedDockerfile": "# -----------------------------------------------------------------------------\n# Dockerfile for OpenTTS (https://github.com/synesthesiam/opentts)\n#\n# Requires Docker buildx: https://docs.docker.com/buildx/working-with-buildx/\n# -----------------------------------------------------------------------------\n\nFROM debian:bullseye as build\nARG TARGETARCH\nARG TARGETVARIANT\n\nENV LANG C.UTF-8\nENV DEBIAN_FRONTEND=noninteractive\n\nRUN echo \"Dir::Cache var/cache/apt/${TARGETARCH}${TARGETVARIANT};\" > /etc/apt/apt.conf.d/01cache\nRUN --mount=type=cache,id=apt-build,target=/var/cache/apt \\\n    mkdir -p /var/cache/apt/${TARGETARCH}${TARGETVARIANT}/archives/partial && \\\n    apt-get update && \\\n    apt-get install --yes --no-install-recommends \\\n        build-essential python3 python3-venv python3-dev wget && rm -rf /var/lib/apt/lists/*;\n\n# Install extra Debian build packages added from ./configure\nCOPY build_packages /build_packages\nRUN --mount=type=cache,id=apt-build,target=/var/cache/apt \\\n    if [ -s /build_packages ]; then \\\n        cat /build_packages | xargs apt-get install --yes --no-install-recommends; \\\n    fi\n\nRUN mkdir -p /home/opentts/app\nWORKDIR /home/opentts/app\n\n# Create virtual environment\nRUN --mount=type=cache,id=pip-venv,target=/root/.cache/pip \\\n    python3 -m venv .venv && \\\n    .venv/bin/pip3 install --upgrade pip && \\\n    .venv/bin/pip3 install --upgrade wheel setuptools\n\n# Put cached Python wheels here\nCOPY download/ /download/\n\nCOPY requirements.txt requirements.txt\n\n# Install base Python requirements\nRUN --mount=type=cache,id=pip-requirements,target=/root/.cache/pip \\\n    grep -v '^torch' requirements.txt | \\\n    xargs .venv/bin/pip3 install -f /download\n\nRUN --mount=type=cache,id=apt-build,target=/var/cache/apt \\\n    if [ \"${TARGETARCH}${TARGETVARIANT}\" = 'armv7' ]; then \\\n        apt-get install --yes --no-install-recommends llvm-dev ; rm -rf /var/lib/apt/lists/*; \\\n    fi\n\nCOPY python_packages /python_packages\n\n# Use CPU-only PyTorch to save space.\nRUN if [ \"${TARGETARCH}${TARGETVARIANT}\" = 'amd64' ]; then \\\n        sed -i 's/^torch[~=]\\+\\(.\\+\\)$/torch==\\1+cpu/' /python_packages ; \\\n    fi\n\n# Install extra Python packages added from ./configure\nRUN --mount=type=cache,id=pip-extras,target=/root/.cache/pip \\\n    if [ -s /python_packages ]; then \\\n        cat /python_packages | xargs .venv/bin/pip3 install \\\n        -f /download \\\n        -f 'https://synesthesiam.github.io/prebuilt-apps/' \\\n        -f 'https://download.pytorch.org/whl/cpu/torch_stable.html' ; \\\n    fi\n\n# Install prebuilt nanoTTS\nRUN mkdir -p /nanotts && \\\n    wget -O - --no-check-certificate \\\n        \"https://github.com/synesthesiam/prebuilt-apps/releases/download/v1.0/nanotts-20200520_${TARGETARCH}${TARGETVARIANT}.tar.gz\" | \\\n        tar -C /nanotts -xzf -\n\n# -----------------------------------------------------------------------------\n\nFROM debian:bullseye as run\nARG TARGETARCH\nARG TARGETVARIANT\n\nENV LANG C.UTF-8\nENV DEBIAN_FRONTEND=noninteractive\n\nCOPY packages /packages\n\nRUN echo 'deb http://deb.debian.org/debian bullseye contrib non-free' > /etc/apt/sources.list.d/contrib.list\n\n# Install extra Debian packages added from ./configure\nRUN echo \"Dir::Cache var/cache/apt/${TARGETARCH}${TARGETVARIANT};\" > /etc/apt/apt.conf.d/01cache\nRUN --mount=type=cache,id=apt-run,target=/var/cache/apt \\\n    mkdir -p /var/cache/apt/${TARGETARCH}${TARGETVARIANT}/archives/partial && \\\n    apt-get update && \\\n    cat /packages | xargs apt-get install --yes --no-install-recommends\n\n# Copy nanotts\nCOPY --from=build /nanotts/ /usr/\n\n# Clean up\nRUN rm -f /etc/apt/apt.conf.d/01cache\n\n# Add a user to run the application (non-root)\nRUN useradd -ms /bin/bash opentts\n\n# Copy virtual environment and files\nCOPY voices/ /home/opentts/app/voices/\nCOPY --from=build /home/opentts/app/.venv /home/opentts/app/.venv\nCOPY css/ /home/opentts/app/css/\nCOPY img/ /home/opentts/app/img/\nCOPY js/ /home/opentts/app/js/\nCOPY templates/ /home/opentts/app/templates/\nCOPY glow_speak/ /home/opentts/app/glow_speak/\nCOPY larynx/ /home/opentts/app/larynx/\nCOPY TTS/ /home/opentts/app/TTS/\nCOPY app.py tts.py VERSION swagger.yaml /home/opentts/app/\n\nARG DEFAULT_LANGUAGE='en'\nRUN echo \"${DEFAULT_LANGUAGE}\" > /home/opentts/app/LANGUAGE\n\n# Post-installation\nRUN if [ -d '/usr/share/festival' ] && [ -d '/home/opentts/app/voices/festival/ar' ]; then \\\n    cp \"/home/opentts/app/voices/festival/ar/languages/language_arabic.scm\" \\\n       \"/usr/share/festival/languages/\" && \\\n    mkdir -p \"/usr/share/festival/voices/arabic\" && \\\n    cp -r \"/home/opentts/app/voices/festival/ar/voices/ara_norm_ziad_hts\" \"/usr/share/festival/voices/arabic/\"; \\\n    fi\n\nUSER opentts\nWORKDIR /home/opentts/app\n\n# Sanity check\nRUN .venv/bin/python3 app.py --version\n\nEXPOSE 5500\n\nENTRYPOINT [\".venv/bin/python3\", \"app.py\"]\n\n# -----------------------------------------------------------------------------\n"
+}

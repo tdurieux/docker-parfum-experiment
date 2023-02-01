@@ -1,0 +1,11 @@
+FROM python:3.10
+
+RUN mkdir -p /usr/src/app && rm -rf /usr/src/app
+WORKDIR /usr/src/app
+
+RUN --mount=type=cache,target=/var/cache/apt \
+  apt-get update && \
+  apt-get upgrade -y
+
+RUN --mount=type=cache,target=/root/.cache/pip \
+  python3 -m pip install --upgrade pip

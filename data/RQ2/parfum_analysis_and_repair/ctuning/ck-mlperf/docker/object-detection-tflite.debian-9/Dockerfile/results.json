@@ -1,0 +1,44 @@
+{
+  "startTime": 1674255752974,
+  "endTime": 1674255753942,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 15,
+        "lineEnd": 15,
+        "columnStart": 4,
+        "columnEnd": 28
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 17,
+        "lineEnd": 22,
+        "columnStart": 4,
+        "columnEnd": 4
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 15,
+        "lineEnd": 15,
+        "columnStart": 4,
+        "columnEnd": 28
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 17,
+        "lineEnd": 22,
+        "columnStart": 4,
+        "columnEnd": 4
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM debian:9\n\nLABEL maintainer=\"Anton Lokhmotov <anton@dividiti.com>\"\n\n# Use the Bash shell.\nSHELL [\"/bin/bash\", \"-c\"]\n\n# Allow stepping into the Bash shell interactively.\nENTRYPOINT [\"/bin/bash\", \"-c\"]\n\n# Install known system dependencies and immediately clean up to make the image smaller.\n# CK needs: git, wget, zip.\n# TF needs: curl.\n# TensorFlow Object Detection API needs ProtoBuf 3.0 which needs CMake.\nRUN apt update -y \\\n && apt install --no-install-recommends -y apt-utils \\\n && apt upgrade -y \\\n && apt install --no-install-recommends -y \\\n git wget zip libz-dev \\\n curl \\\n cmake \\\n python3 python3-pip \\\n vim \\\n && apt clean && rm -rf /var/lib/apt/lists/*;\n\n# Create non-root user.\nRUN useradd --create-home --user-group --shell /bin/bash dvdt\nUSER dvdt:dvdt\nWORKDIR /home/dvdt\n\n# Install Collective Knowledge (CK).\nENV CK_ROOT=/home/dvdt/CK \\\n    CK_REPOS=/home/dvdt/CK_REPOS \\\n    CK_TOOLS=/home/dvdt/CK_TOOLS \\\n    PATH=${CK_ROOT}/bin:/home/dvdt/.local/bin:${PATH} \\\n    CK_PYTHON=python3 \\\n    CK_CC=gcc \\\n    GIT_USER=\"dividiti\" \\\n    GIT_EMAIL=\"info@dividiti.com\" \\\n    LANG=C.UTF-8\nRUN mkdir -p ${CK_ROOT} ${CK_REPOS} ${CK_TOOLS}\nRUN git config --global user.name ${GIT_USER} && git config --global user.email ${GIT_EMAIL}\nRUN git clone https://github.com/ctuning/ck.git ${CK_ROOT}\nRUN cd ${CK_ROOT} \\\n && ${CK_PYTHON} setup.py install --user \\\n && ${CK_PYTHON} -c \"import ck.kernel as ck; print ('Collective Knowledge v%s' % ck.__version__)\"\n\n# Pull CK repositories (including ck-env, ck-autotuning and ck-tensorflow).\nRUN ck pull repo:ck-mlperf\n\n# Use generic Linux settings with dummy frequency setting scripts.\nRUN ck detect platform.os --platform_init_uoa=generic-linux-dummy\n\n# Detect C/C++ compiler (gcc).\nRUN ck detect soft:compiler.gcc --full_path=`which ${CK_CC}`\n# Install TFLite.\nRUN ck install package --tags=lib,tensorflow-lite,tensorflow-static,v1.13.1\n\n# Detect Python.\nRUN ck detect soft:compiler.python --full_path=`which ${CK_PYTHON}`\n# Install the latest Python package installer (pip).\nRUN ${CK_PYTHON} -m pip install --ignore-installed pip setuptools --user\n# Install Python dependencies.\nRUN ck install package --tags=lib,python-package,numpy\nRUN ck install package --tags=lib,python-package,scipy --force_version=1.2.1\nRUN ck install package --tags=lib,python-package,pillow\nRUN ck install package --tags=lib,python-package,matplotlib\nRUN ck install package --tags=lib,python-package,cython\nRUN ck show env --tags=python-package\n# Install Python COCO API.\nRUN ck install package --tags=tool,coco,api\n\n# Download the SSD-MobileNet TF/TFLite models (non-quantized and quantized).\n# https://github.com/mlperf/inference/blob/master/edge/object_detection/ssd_mobilenet/tflite/README.md#install-the-ssd-mobilenet-models-for-tflite\nRUN ck install package --tags=model,tflite,object-detection,mlperf,ssd-mobilenet,non-quantized\n\n# Download the COCO 2017 validation dataset (5,000 images) to the default path;\n# preprocess all the 5000 images (as the user may want to run full evaluation);\n# remove the original images and training annotations while taking care to preserve\n# 'val2017/000000000139.jpg' used to detect COCO 2017 (ck-env:soft:dataset.coco.2017.val).\nRUN echo | ck install package --tags=object-detection,dataset,coco.2017,val,original,full \\\n && ck install package --tags=object-detection,dataset,coco.2017,preprocessed,full \\\n && ck virtual env --tags=object-detection,dataset,coco.2017,val,original,full --shell_cmd=\\\n'mv $CK_ENV_DATASET_IMAGE_DIR/000000000139.jpg $CK_ENV_DATASET_COCO/;\\\n rm $CK_ENV_DATASET_IMAGE_DIR/*;\\\n mv $CK_ENV_DATASET_COCO/000000000139.jpg $CK_ENV_DATASET_IMAGE_DIR/;\\\n rm $CK_ENV_DATASET_COCO_LABELS_DIR/*train2017.json'\n\n# Compile the Object Detection TFLite program.\nRUN ck compile program:object-detection-tflite\n\n# Run the Object Detection TFLite program\n# with the non-quantized SSD-MobileNet model with regular non-max-suppression\n# on the first 50 images of the COCO 2017 validation dataset.\nCMD [\"ck run program:object-detection-tflite \\\n--dep_add_tags.weights=ssd-mobilenet,non-quantized --env.USE_NMS=regular \\\n--dep_add_tags.dataset=coco.2017,full --env.CK_BATCH_COUNT=50\"]\n"
+}

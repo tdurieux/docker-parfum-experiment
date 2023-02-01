@@ -1,0 +1,53 @@
+{
+  "startTime": 1674218295810,
+  "endTime": 1674218297066,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 88,
+        "lineEnd": 88,
+        "columnStart": 4,
+        "columnEnd": 120
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 82,
+        "lineEnd": 82,
+        "columnStart": 1,
+        "columnEnd": 12
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 89,
+        "lineEnd": 89,
+        "columnStart": 1,
+        "columnEnd": 33
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 40,
+        "lineEnd": 69,
+        "columnStart": 22,
+        "columnEnd": 11
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 40,
+        "lineEnd": 69,
+        "columnStart": 22,
+        "columnEnd": 11
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Copyright (c) 2019 Stellar Project\n\n# Permission is hereby granted, free of charge, to any person\n# obtaining a copy of this software and associated documentation\n# files (the \"Software\"), to deal in the Software without\n# restriction, including without limitation the rights to use, copy,\n# modify, merge, publish, distribute, sublicense, and/or sell copies\n# of the Software, and to permit persons to whom the Software is\n# furnished to do so, subject to the following conditions:\n\n# The above copyright notice and this permission notice shall be\n# included in all copies or substantial portions of the Software.\n\n# THE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND,\n# EXPRESS OR IMPLIED,\n# INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\n# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.\n# IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT\n# HOLDERS BE LIABLE FOR ANY CLAIM,\n# DAMAGES OR OTHER LIABILITY,\n# WHETHER IN AN ACTION OF CONTRACT,\n# TORT OR OTHERWISE,\n# ARISING FROM, OUT OF OR IN CONNECTION WITH\n# THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.\n\nARG KERNEL_VERSION\nARG VERSION\nARG REPO\n\n# ------------------ imports ------------------------------ #\nFROM $REPO/kernel:$KERNEL_VERSION as kernel\n\n# ------------------ pxe build --------------------------- #\n\nFROM ubuntu:18.10 as pxe\n\nARG KERNEL_VERSION\n\nRUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get --no-install-recommends install -y \\\n\tsyslinux \\\n\tcurl \\\n\tgit \\\n\tmake \\\n\tca-certificates \\\n\txz-utils \\\n\tsyslinux-utils \\\n\topen-iscsi \\\n\tisc-dhcp-common \\\n\tisc-dhcp-client \\\n\tinitramfs-tools \\\n\tzfs-initramfs \\\n\tbuild-essential \\\n\tautoconf \\\n\tautomake \\\n\tlibtool \\\n\tgawk \\\n\talien \\\n\tzlib1g-dev \\\n\tuuid-dev \\\n\tlibattr1-dev \\\n\tlibblkid-dev \\\n\tlibselinux-dev \\\n\tlibudev-dev \\\n\tlibacl1-dev \\\n\tlibaio-dev \\\n\tlibdevmapper-dev \\\n\tlibssl-dev \\\n\tlibelf-dev && rm -rf /var/lib/apt/lists/*;\n\nRUN rm -r /lib/modules && mkdir /lib/modules\n\nRUN --mount=type=bind,from=kernel,target=/tmp dpkg -i \\\n\t/tmp/linux-headers-$KERNEL_VERSION-terra_$KERNEL_VERSION-terra-1_amd64.deb \\\n\t/tmp/linux-libc-dev_$KERNEL_VERSION-terra-1_amd64.deb \\\n\t/tmp/linux-image-$KERNEL_VERSION-terra_$KERNEL_VERSION-terra-1_amd64.deb\n\n# install zfs module\nRUN git clone https://github.com/zfsonlinux/zfs\nWORKDIR /zfs\nRUN ./autogen.sh && \\\n\t./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" && \\\n\t./scripts/make_gitrev.sh && \\\n\tcd module && \\\n\tmake -s -j \"$(getconf _NPROCESSORS_ONLN)\" && \\\n\tmake install\n\nRUN curl -f -sSL https://mirrors.edge.kernel.org/pub/linux/utils/boot/syslinux/syslinux-6.03.tar.xz -o /tmp/syslinux.tar.xz && \\\n\ttar xf /tmp/syslinux.tar.xz -C / && rm /tmp/syslinux.tar.xz\n\nRUN mkdir -p /tftp/syslinux /tftp/pxelinux.cfg\n\nWORKDIR /syslinux-6.03\n\nRUN cp -r bios/core/isolinux.bin \\\n\tbios/mbr/mbr.bin \\\n\tbios/com32/elflink/ldlinux/ldlinux.c32 \\\n\tbios/com32/menu/vesamenu.c32  \\\n\tbios/com32/menu/menu.c32 \\\n\tbios/com32/chain/chain.c32 \\\n\tbios/com32/libutil/libutil.c32 \\\n\tbios/com32/lib/libcom32.c32 \\\n\tbios/com32/modules/sanboot.c32 /tftp/syslinux/\n\nADD syslinux.cfg /tftp/syslinux/syslinux.cfg\nADD splash.png /tftp/syslinux/splash.png\n\nRUN cp -r bios/core/pxelinux.0 \\\n\tbios/com32/cmenu/libmenu/libmenu.c32 \\\n\tbios/com32/menu/menu.c32 \\\n\tbios/com32/modules/sanboot.c32 \\\n\tbios/memdisk/memdisk \\\n\tbios/com32/elflink/ldlinux/ldlinux.c32 \\\n\tbios/com32/libutil/libutil.c32 /tftp/\n\nWORKDIR /\n\nADD terra /etc/initramfs-tools/scripts/terra\nADD modules /etc/initramfs-tools/modules\nRUN touch /etc/iscsi/iscsi.initramfs\nADD default /tftp/pxelinux.cfg/default\nADD 00_bonding_init /etc/initramfs-tools/scripts/local-top/\nRUN chmod 0755 /etc/initramfs-tools/scripts/local-top/00_bonding_init\n\nRUN update-initramfs -u\n\nRUN mv /boot/vmlinuz-$KERNEL_VERSION-terra /tftp/vmlinuz && \\\n\tmv /boot/initrd.img-$KERNEL_VERSION-terra /tftp/initrd.img\n\n# ------------------------ output -----------------------------\n\nFROM scratch\n\nCOPY --from=pxe /tftp/ /tftp/\nCOPY --from=pxe /lib/modules/ /lib/modules/\nCOPY --from=pxe /usr/src/ /usr/src/\n"
+}

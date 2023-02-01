@@ -1,0 +1,17 @@
+{
+  "startTime": 1674249293503,
+  "endTime": 1674249294153,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 10,
+        "lineEnd": 10,
+        "columnStart": 37,
+        "columnEnd": 94
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Generate python client\nFROM quay.io/edge-infrastructure/swagger-codegen-cli:2.4.18 as swagger_py\nCOPY swagger.yaml .\nCOPY tools/generate_python_client.sh .\nRUN chmod +x ./generate_python_client.sh && SWAGGER_FILE=swagger.yaml OUTPUT=/build ./generate_python_client.sh\n\n# TODO: Find a pure Python3 base image, rather than relying on the golang one\nFROM registry.ci.openshift.org/openshift/release:golang-1.17 as pybuilder\nCOPY . /assisted-service\nCOPY --from=swagger_py /build /assisted-service/build\nRUN python3 -m pip install -I pip && pip3 install --no-cache-dir -I -r /assisted-service/dev-requirements.txt\nRUN cd /assisted-service/build && python3 ../tools/client_package_initializer.py ./ https://github.com/openshift/assisted-service\n\n# TODO: Currently, the Python package is included in the service image for testing purposes. It conveniently allows matching a service version to a specific Python client version. In the future, once the Python package is published on pip, it should (probably) be removed from the Assisted Service image (this dockerfile).\n\n# Build binaries\nFROM registry.ci.openshift.org/openshift/release:golang-1.17 as builder\n# Bring in the go dependencies before anything else so we can take\n# advantage of caching these layers in future builds.\nCOPY api/go.mod ./api/go.mod\nCOPY api/go.sum ./api/go.sum\nCOPY models/go.mod ./models/go.mod\nCOPY models/go.sum ./models/go.sum\nCOPY go.mod go.mod\nCOPY go.sum go.sum\nRUN go mod download\nCOPY . .\nRUN CGO_ENABLED=1 GOFLAGS=\"\" GO111MODULE=on go build -o /build/assisted-service cmd/main.go\nRUN CGO_ENABLED=0 GOFLAGS=\"\" GO111MODULE=on go build -o /build/assisted-service-operator cmd/operator/main.go\nRUN CGO_ENABLED=0 GOFLAGS=\"\" GO111MODULE=on go build -o /build/assisted-service-admission cmd/webadmission/main.go\nRUN CGO_ENABLED=0 GOFLAGS=\"\" GO111MODULE=on go build -o /build/agent-installer-client cmd/agentbasedinstaller/client/main.go\n\nFROM quay.io/ocpmetal/oc-image:bug-1823143-multi-arch-ai-bug-2069976 as oc-image\n\n# Create final image\nFROM quay.io/centos/centos:stream8\n\n# openshift-install requires this\nRUN dnf install -y libvirt-libs nmstate &&\\\n    dnf clean all\n\nARG WORK_DIR=/data\n\nRUN mkdir $WORK_DIR && chmod 775 $WORK_DIR\n\n#TODO: Use official oc client once it has ICSP support https://bugzilla.redhat.com/show_bug.cgi?id=1823143\nCOPY --from=oc-image /oc /usr/local/bin/\n\nCOPY --from=builder /build/assisted-service /assisted-service\nCOPY --from=builder /build/assisted-service-operator /assisted-service-operator\nCOPY --from=builder /build/assisted-service-admission /assisted-service-admission\nCOPY --from=builder /build/agent-installer-client /usr/local/bin/agent-installer-client\nRUN ln -s /usr/local/bin/agent-installer-client /agent-based-installer-register-cluster-and-infraenv\nCOPY --from=pybuilder /assisted-service/build/dist/* /clients/\nENV GODEBUG=madvdontneed=1\nENV GOGC=50\nCMD [\"/assisted-service\"]\n"
+}

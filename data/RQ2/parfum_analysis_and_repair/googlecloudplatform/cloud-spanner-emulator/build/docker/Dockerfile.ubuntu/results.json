@@ -1,0 +1,44 @@
+{
+  "startTime": 1674252884013,
+  "endTime": 1674252885174,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 27,
+        "lineEnd": 27,
+        "columnStart": 4,
+        "columnEnd": 50
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 28,
+        "lineEnd": 28,
+        "columnStart": 4,
+        "columnEnd": 54
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 27,
+        "lineEnd": 27,
+        "columnStart": 4,
+        "columnEnd": 50
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 28,
+        "lineEnd": 28,
+        "columnStart": 4,
+        "columnEnd": 54
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "#\n# Copyright 2020 Google LLC\n#\n# Licensed under the Apache License, Version 2.0 (the \"License\");\n# you may not use this file except in compliance with the License.\n# You may obtain a copy of the License at\n#\n#     http://www.apache.org/licenses/LICENSE-2.0\n#\n# Unless required by applicable law or agreed to in writing, software\n# distributed under the License is distributed on an \"AS IS\" BASIS,\n# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.\n# See the License for the specific language governing permissions and\n# limitations under the License.\n#\n\n################################################################################\n#                                     BUILD                                    #\n################################################################################\n\n# We use the bazel base image which comes with all bazel dependencies.\nFROM marketplace.gcr.io/google/bazel:3.4.1 as build\n\n# Unfortunately ZetaSQL has issues with clang (default bazel compiler), so\n# we install GCC. Also install make for rules_foreign_cc bazel rules.\nRUN add-apt-repository ppa:ubuntu-toolchain-r/test                          && \\\n    apt-get -qq update && \\\n    apt-get -qq --no-install-recommends install -y gcc-8 g++-8 make tzdata && \\\n    apt-get -qq --no-install-recommends install -y ca-certificates libgnutls30 && \\\n    update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-8 90           \\\n                        --slave   /usr/bin/g++ g++ /usr/bin/g++-8 && \\\n    update-alternatives --set gcc /usr/bin/gcc-8 && rm -rf /var/lib/apt/lists/*;\n\n# Copy over the emulator code base into the container. We explicitly copy only\n# the required files to maximize chances that the layer will be cached. There\n# does not seem to be a nicer way to do this than multiple COPY commands as\n# COPY copies the contents of the source, not the directory itself.\nCOPY BUILD.bazel WORKSPACE .bazelrc src/\nCOPY common      src/common/\nCOPY gateway     src/gateway/\nCOPY frontend    src/frontend/\nCOPY backend     src/backend/\nCOPY binaries    src/binaries/\nCOPY tests       src/tests/\nCOPY build/bazel src/build/bazel/\n\n# Build the emulator.\nRUN cd src                                                                  && \\\n    CC=/usr/bin/gcc CXX=/usr/bin/g++                                           \\\n    bazel build -c opt ...\n\n# Generate licenses file.\nRUN for file in $(find -L src/bazel-src/external                               \\\n                       -name \"LICENSE\" -o -name \"COPYING\")                   ; \\\n    do                                                                         \\\n      echo \"----\"                                                            ; \\\n      echo $file                                                             ; \\\n      echo \"----\"                                                            ; \\\n      cat $file                                                              ; \\\n    done > licenses.txt                                                     && \\\n    gzip licenses.txt\n\n################################################################################\n#                                   RELEASE                                    #\n################################################################################\n\n# Now build the release image from the build image.\nFROM gcr.io/distroless/cc\n\n# Copy binaries.\nCOPY --from=build /src/bazel-bin/binaries/emulator_main .\nCOPY --from=build /src/bazel-bin/binaries/gateway_main_/gateway_main .\n\n# Copy licenses\nCOPY --from=build /licenses.txt.gz .\n\n# Expose the default ports 9010 (gRPC) and 9020 (REST)\nEXPOSE 9010 9020\n\n# Run the gateway process, bind to 0.0.0.0 as under MacOS, listening on\n# localhost will make the server invisible outside the container.\nCMD [\"./gateway_main\", \"--hostname\", \"0.0.0.0\"]\n"
+}

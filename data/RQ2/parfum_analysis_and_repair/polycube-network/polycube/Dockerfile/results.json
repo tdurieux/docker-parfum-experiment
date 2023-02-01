@@ -1,0 +1,44 @@
+{
+  "startTime": 1674248879008,
+  "endTime": 1674248879779,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 17,
+        "lineEnd": 17,
+        "columnStart": 4,
+        "columnEnd": 147
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 18,
+        "lineEnd": 18,
+        "columnStart": 4,
+        "columnEnd": 23
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 66,
+        "lineEnd": 66,
+        "columnStart": 22,
+        "columnEnd": 90
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 66,
+        "lineEnd": 66,
+        "columnStart": 22,
+        "columnEnd": 90
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "###############################################\n# STEP 1: using an Ubuntu 18.04 image to install the entire Polycube framework with all dependencies.\n#\n# During this step an ubuntu image is used to compile Polycube with all its dependencies.\n# This dockerfile is reused for all the DEFAULT_MODE (default, pcn-iptables, pcn-k8s) which, thanks to install.sh and pre-requirements.sh scripts,\n# enable/disable Polycube services and install specific tools.\nFROM ubuntu:18.04 AS builder\n\nARG DEFAULT_MODE=default\nENV MODE=$DEFAULT_MODE\nRUN --mount=target=/polycube cp -r /polycube /tmp/polycube && cd /tmp/polycube && \\\nmkdir -p /usr/local/share/polycube /usr/local/include/polycube /opt/cni/bin /cni && touch /cni-conf /pcn_k8s /opt/cni/bin/polycube && \\\nSUDO=\"\" USER=\"root\" WORKDIR=\"/tmp/dev\" ./scripts/install.sh $MODE && \\\n# install pcn-k8s only components\nif [ \"$MODE\" = \"pcn-k8s\" ] ; then \\\n    cd /tmp && mkdir -p tmp && cd tmp && \\\n    curl -f -sS -L https://storage.googleapis.com/kubernetes-release/network-plugins/cni-0799f5732f2a11b329d9e3d51b9c8f2e3759f2ff.tar.gz -o cni.tar.gz && \\\n    tar -xvf cni.tar.gz && \\\n    cp bin/loopback /cni && \\\n    cd /tmp/polycube/src/components/k8s/cni/polycube && \\\n    GOOS=linux go build -o /opt/cni/bin/polycube . && \\\n    cd /tmp/polycube/src/components/k8s/cni/conf && \\\n    GOOS=linux go build -o /cni-conf . && \\\n    cd /tmp/polycube/src/components/k8s/pcn_k8s/ && \\\n    GOOS=linux go build -o /pcn_k8s .; rm cni.tar.gz \\\nfi\n\n# copying cni scripts (will be removed if not needed)\nADD src/components/k8s/cni/cni-install.sh src/components/k8s/cni/cni-uninstall.sh src/components/k8s/pcn_k8s/cleanup.sh src/components/k8s/pcn_k8s/init.sh /\n\n###############################################\n# STEP 2: using an Ubuntu 18.04 image and extracting executables obtained by the image created at STEP 1.\n#\n# During this final step a new fresh ubuntu image is used and all the previously generated executables/libraries are copied.\n# This way, this final image contains only the result of the compilation and NOT the entire softwares/scripts needed at compile-time.\n# Moreover, depending on the DEFAULT_MODE, some tools that are needed at runtime (like iptables and iproute2 for the DEFAULT_MODE=pcn-k8s) are\n# installed.\n\nFROM ubuntu:18.04\n\nARG DEFAULT_MODE=default\nENV MODE=$DEFAULT_MODE\n# copying binaries\nCOPY --from=builder /usr/local/bin /usr/local/bin\nCOPY --from=builder /usr/local/share/polycube /usr/local/share/polycube\n# copying polycube services\nCOPY --from=builder /usr/lib/lib*.so /usr/lib/\n# copying libpistache libyang libtins libprometheus .so\nCOPY --from=builder /usr/local/lib/lib*.so /usr/local/lib/\n# copying libyang folder containing plugins (needed for yanglint)\nCOPY --from=builder /usr/local/lib/libyang /usr/local/lib/libyang\n# copying main OS libraries\nCOPY --from=builder /usr/lib/x86_64-linux-gnu/libnl*.so /usr/lib/x86_64-linux-gnu/libcrypto*.so\\\n\t/usr/lib/x86_64-linux-gnu/libelf*.so /usr/lib/x86_64-linux-gnu/libssl*.so \\\n\t/usr/lib/x86_64-linux-gnu/libpcap*.so /usr/lib/x86_64-linux-gnu/\nCOPY --from=builder /lib/x86_64-linux-gnu/libnl*.so /lib/x86_64-linux-gnu/\n# copying base yang model\nCOPY --from=builder /usr/local/include/polycube /usr/local/include/polycube\n# copying k8s scripts and cni if present\nCOPY --from=builder /*.sh /cni* /pcn_k8s /\nCOPY --from=builder /opt/cni/bin/polycube /opt/cni/bin/\n# creating log dir and file + configuring links for libraries + installing essential runtime tools\nRUN mkdir -p /var/log/polycube && touch /var/log/polycube/polycubed.log && \\\n# install pcn-k8s only essential tools, else remove useless scripts\nif [ \"$MODE\" = \"pcn-k8s\" ] ; then \\\n    apt-get update && DEBIAN_FRONTEND=noninteractive apt-get --no-install-recommends install -yq iptables iproute2 && \\\n    apt-get purge --auto-remove && apt-get clean; rm -rf /var/lib/apt/lists/*; \\\nelse \\\n    rm -rf /opt/cni/bin/polycube /*.sh /pcn_k8s /cni*; \\\nfi && ldconfig\n\n# by running nsenter --mount=/host/proc/1/ns/mnt polycubed, the daemon has a complete view of the namespaces of the host and it is able to manipulate them (needed for shadow services)\nCMD [\"nsenter\",\"--mount=/host/proc/1/ns/mnt\",\"polycubed\"]\n"
+}

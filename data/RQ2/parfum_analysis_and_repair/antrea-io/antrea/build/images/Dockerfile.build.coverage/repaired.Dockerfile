@@ -1,0 +1,26 @@
+ARG GO_VERSION
+ARG OVS_VERSION
+FROM golang:${GO_VERSION} as antrea-build
+
+WORKDIR /antrea
+
+COPY go.mod /antrea/go.mod
+
+RUN go mod download
+
+COPY . /antrea
+
+RUN make antrea-agent antrea-controller antrea-cni antctl-linux antrea-controller-instr-binary antrea-agent-instr-binary antctl-instr-binary
+RUN mv bin/antctl-linux bin/antctl
+
+FROM antrea/base-ubuntu:${OVS_VERSION}
+
+LABEL maintainer="Antrea <projectantrea-dev@googlegroups.com>"
+LABEL description="The Docker image to deploy the Antrea CNI with code coverage measurement enabled (used for testing)."
+
+USER root
+
+COPY build/images/scripts/* /usr/local/bin/
+COPY --from=antrea-build /antrea/bin/* /usr/local/bin/
+COPY --from=antrea-build /antrea/test/e2e/coverage/controller-arg-file /
+COPY --from=antrea-build /antrea/test/e2e/coverage/agent-arg-file /

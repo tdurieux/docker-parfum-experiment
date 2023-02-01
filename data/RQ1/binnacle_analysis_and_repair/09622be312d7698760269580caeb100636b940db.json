@@ -1,0 +1,35 @@
+{
+  "startTime": 1674246129637,
+  "endTime": 1674246130130,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 35,
+        "lineEnd": 46,
+        "columnStart": 7,
+        "columnEnd": 16
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 116,
+        "lineEnd": 127,
+        "columnStart": 7,
+        "columnEnd": 16
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 35,
+        "lineEnd": 46,
+        "columnStart": 7,
+        "columnEnd": 16
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "ARG PG_VERSION\n############################\n# Build tools binaries in separate image\n############################\nFROM golang:alpine AS tools\n\nENV TOOLS_VERSION 0.4.1\n\nRUN apk update && apk add --no-cache git \\\n    && mkdir -p ${GOPATH}/src/github.com/timescale/ \\\n    && cd ${GOPATH}/src/github.com/timescale/ \\\n    && git clone https://github.com/timescale/timescaledb-tune.git \\\n    && git clone https://github.com/timescale/timescaledb-parallel-copy.git \\\n    # Build timescaledb-tune\n    && cd timescaledb-tune/cmd/timescaledb-tune \\\n    && git fetch && git checkout --quiet $(git describe --abbrev=0) \\\n    && go get -d -v \\\n    && go build -o /go/bin/timescaledb-tune \\\n    # Build timescaledb-parallel-copy\n    && cd ${GOPATH}/src/github.com/timescale/timescaledb-parallel-copy/cmd/timescaledb-parallel-copy \\\n    && git fetch && git checkout --quiet $(git describe --abbrev=0) \\\n    && go get -d -v \\\n    && go build -o /go/bin/timescaledb-parallel-copy\n\n############################\n# Build old versions in a separate stage\n############################\nARG PG_VERSION\nFROM bitnami/postgresql:${PG_VERSION} AS oldversions\nARG PG_VERSION\n\nUSER 0\nRUN set -ex \\\n    && mkdir -p /var/lib/apt/lists/partial \\\n    && apt-get update \\\n    && apt-get -y --no-install-recommends install \\\n\n            build-essential \\\n            libssl-dev \\\n            git \\\n\n            dpkg-dev \\\n            gcc \\\n            libc-dev \\\n            make \\\n            cmake \\\n            wget \\\n    && mkdir -p /build/ \\\n    && git clone https://github.com/timescale/timescaledb /build/timescaledb \\\n\n    && cd /build/timescaledb \\\n    # This script is a bit ugly, but once all the old versions are buildable\n    # on PG11, we can remove the 'if' guard\n    && echo \"if [ \\\"$(echo ${PG_VERSION} | cut -c1-2)\\\" != \\\"11\\\" ] || [ \"\\${OLD_VERSION}\" \\> \"1.0.1\" ]; then cd /build/timescaledb && rm -fr build && git reset HEAD --hard && git fetch && git checkout \\${OLD_VERSION} && ./bootstrap -DPROJECT_INSTALL_METHOD=\\\"docker\\\" && cd build && make install; fi\" > ./build_old.sh \\\n    && chmod +x ./build_old.sh && rm -rf /var/lib/apt/lists/*;\n\n#####\n# Add the latest previous version to the end of the list for each new build\n#####\nRUN OLD_VERSION=1.0.0 /build/timescaledb/build_old.sh\nRUN OLD_VERSION=1.0.1 /build/timescaledb/build_old.sh\nRUN OLD_VERSION=1.1.0 /build/timescaledb/build_old.sh\nRUN OLD_VERSION=1.1.1 /build/timescaledb/build_old.sh\nRUN OLD_VERSION=1.2.0 /build/timescaledb/build_old.sh\nRUN OLD_VERSION=1.2.1 /build/timescaledb/build_old.sh\n\n# Cleanup\nRUN \\\n    # Remove update files and mock files; not needed for old versions\n    echo $(pg_config --pkglibdir) \\\n    && rm -f $(pg_config --sharedir)/extension/timescaledb--*--*.sql \\\n    && rm -f $(pg_config --sharedir)/extension/timescaledb*mock*.sql \\\n    # Remove all but the last several versiosn ()\n    && KEEP_NUM_VERSIONS=5   # This number should be reduced to 5 eventually \\\n    && rm -f $(ls -1 $(pg_config --pkglibdir)/timescaledb-*.so | head -n -${KEEP_NUM_VERSIONS}) \\\n    && rm -f $(ls -1 $(pg_config --sharedir)/extension/timescaledb-*.sql | head -n -${KEEP_NUM_VERSIONS}) \\\n    # Clean up the rest of the image\n    && cd ~ \\\n    && apt-get autoremove --purge -y \\\n            \\\n            build-essential \\\n            libssl-dev \\\n            \\\n            dpkg-dev \\\n            gcc \\\n            libc-dev \\\n            make \\\n            cmake \\\n    && apt-get clean -y \\\n    && rm -rf \\\n      \"${HOME}/.cache\" \\\n        /var/lib/apt/lists/* \\\n        /tmp/*               \\\n        /var/tmp/*\n\n############################\n# Now build image and copy in tools\n############################\nARG PG_VERSION\nFROM bitnami/postgresql:${PG_VERSION}\nARG PG_VERSION\n\nMAINTAINER Timescale https://www.timescale.com\n\n# Update list below to include previous versions when changing this\nENV TIMESCALEDB_VERSION 1.2.2\n\nCOPY docker-entrypoint-initdb.d/* /docker-entrypoint-initdb.d/\nCOPY --from=tools /go/bin/* /usr/local/bin/\nCOPY --from=oldversions /opt/bitnami/postgresql/lib/timescaledb-*.so /usr/local/lib/postgresql/\nCOPY --from=oldversions /opt/bitnami/postgresql/share/extension/timescaledb--*.sql /usr/local/share/postgresql/extension/\n\nUSER 0\nRUN set -ex \\\n    && mkdir -p /var/lib/apt/lists/partial \\\n    && apt-get update \\\n    && apt-get -y --no-install-recommends install \\\n\n            build-essential \\\n            libssl-dev \\\n            git \\\n\n            dpkg-dev \\\n            gcc \\\n            libc-dev \\\n            make \\\n            cmake \\\n            wget \\\n    && mkdir -p /build/ \\\n    && git clone https://github.com/timescale/timescaledb /build/timescaledb \\\n\n    # Build current version \\\n    && cd /build/timescaledb && rm -fr build \\\n    && git checkout ${TIMESCALEDB_VERSION} \\\n    && ./bootstrap -DPROJECT_INSTALL_METHOD=\"docker\" \\\n    && cd build && make install \\\n    && cd ~ \\\n\n    && apt-get autoremove --purge -y \\\n            \\\n            build-essential \\\n            libssl-dev \\\n            \\\n            dpkg-dev \\\n            gcc \\\n            libc-dev \\\n            make \\\n            cmake \\\n    && apt-get clean -y \\\n    && rm -rf \\\n      \"${HOME}/.cache\" \\\n        /var/lib/apt/lists/* \\\n        /tmp/*               \\\n        /var/tmp/*\n\nUSER 1001\n"
+}

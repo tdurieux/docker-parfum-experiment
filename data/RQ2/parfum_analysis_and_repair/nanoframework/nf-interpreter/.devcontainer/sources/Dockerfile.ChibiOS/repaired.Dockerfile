@@ -1,0 +1,82 @@
+FROM ghcr.io/linuxcontainers/debian-slim:latest AS downloader
+RUN apt-get update \
+    && apt-get -y install --no-install-recommends apt-utils \
+    && apt-get install --no-install-recommends -y \
+    curl \
+    bzip2 \
+    unzip && rm -rf /var/lib/apt/lists/*;
+
+ARG GCC_URI=https://armkeil.blob.core.windows.net/developer/Files/downloads/gnu-rm/10.3-2021.10/gcc-arm-none-eabi-10.3-2021.10-x86_64-linux.tar.bz2
+RUN mkdir -p /tmp/dc-downloads /tmp/dc-extracted/gcc /tmp/dc-extracted/cmake \
+    && curl -f -o /tmp/dc-downloads/gcc-arm.tar.bz2 $GCC_URI \
+    && bunzip2 -d /tmp/dc-downloads/gcc-arm.tar.bz2 \
+    && tar -xvf /tmp/dc-downloads/gcc-arm.tar -C /tmp/dc-extracted/gcc --strip-components 1 \
+    && rm -rf /tmp/dc-extracted/gcc/share/doc/ /tmp/dc-extracted/gcc/share/gcc-arm-none-eabi/samples/ && rm /tmp/dc-downloads/gcc-arm.tar
+
+ARG CMAKE_SCRIPT=https://cmake.org/files/v3.23/cmake-3.23.0-linux-x86_64.sh
+RUN curl -f -o /tmp/dc-downloads/cmake.sh $CMAKE_SCRIPT \
+    && chmod +x /tmp/dc-downloads/cmake.sh \
+    && bash /tmp/dc-downloads/cmake.sh --skip-license --prefix=/tmp/dc-extracted/cmake
+
+FROM ghcr.io/linuxcontainers/debian-slim:latest AS devcontainer
+
+# Avoid warnings by switching to noninteractive
+ENV DEBIAN_FRONTEND=noninteractive
+
+# You can set up non-root user
+# ARG USERNAME=vscode
+# ARG USER_UID=1000
+# ARG USER_GID=$USER_UID
+
+# Configure apt and install packages
+RUN apt-get update \
+    && apt-get -y install --no-install-recommends apt-utils dialog icu-devtools 2>&1 \
+    && apt-get install --no-install-recommends -y \
+    git \
+    git-svn \
+    subversion \
+    curl \
+    ninja-build \
+    srecord && rm -rf /var/lib/apt/lists/*;
+
+# Create needed directories
+RUN mkdir -p /usr/local/bin/gcc \
+    && mkdir -p /usr/local/bin/xtensa \
+    && mkdir -p /usr/local/bin/titools
+
+# Clone repos for STM32 including AzureRTOS
+RUN git clone --branch nf-build https://github.com/nanoframework/STM32CubeL4.git --depth 1 ./sources/STM32CubeL4 \
+    && git clone --branch nf-build https://github.com/nanoframework/STM32CubeF7.git --depth 1 ./sources/STM32CubeF7 \
+    && git clone --branch nf-build https://github.com/nanoframework/STM32CubeF4.git --depth 1 ./sources/STM32CubeF4 \
+    && git clone --branch nf-build https://github.com/nanoframework/STM32CubeH7.git --depth 1 ./sources/STM32CubeH7 \    
+    && git svn clone https://svn.osdn.net/svnroot/chibios/branches/stable_21.11.x -rHEAD ./sources/ChibiOs \
+    && git clone --branch nanoframework https://github.com/nanoframework/ChibiOS-Contrib.git --depth 1 ./sources/ChibiOs-Contrib
+# Clone mbedtls and fatfs
+RUN git clone --branch mbedtls-2.28.0 https://github.com/ARMmbed/mbedtls.git --depth 1 ./sources/mbedtls \
+    && git clone --branch R0.14 https://github.com/abbrev/fatfs.git --depth 1 ./sources/fatfs \
+    && git clone --branch nf-build https://github.com/nanoframework/spiffs.git --depth 1 ./sources/spiffs
+
+# set gcc location
+ENV ARM_GCC_PATH=/usr/local/bin/gcc
+ENV PATH=$ARM_GCC_PATH/bin:${PATH}
+
+# Copy from our other container
+COPY --from=downloader /tmp/dc-extracted/gcc $ARM_GCC_PATH
+COPY --from=downloader /tmp/dc-extracted/cmake /usr
+# COPY ./scripts/git-pull-repos.sh /usr/local/git-pull-repos.sh
+
+# Putting hex2dfu in the container
+ENV HEX2DFU_PATH=/usr/local/bin/hex2dfu
+
+ARG HEX2DFU=https://github.com/nanoframework/hex2dfu/releases/download/v2.0.9/hex2dfu
+RUN mkdir -p  $HEX2DFU_PATH \
+    && curl -f -o  $HEX2DFU_PATH/hex2dfu $HEX2DFU -L \
+    && chmod +x  $HEX2DFU_PATH/hex2dfu
+
+# Clean up downloaded files
+RUN apt-get autoremove -y \
+    && apt-get clean -y \
+    && rm -rf /var/lib/apt/lists/*
+
+# Switch back to dialog for any ad-hoc use of apt-get
+ENV DEBIAN_FRONTEND=dialog

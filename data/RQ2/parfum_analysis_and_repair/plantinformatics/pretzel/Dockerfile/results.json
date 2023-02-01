@@ -1,0 +1,71 @@
+{
+  "startTime": 1674250355905,
+  "endTime": 1674250357413,
+  "originalSmells": [
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 62,
+        "lineEnd": 62,
+        "columnStart": 5,
+        "columnEnd": 25
+      }
+    },
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 108,
+        "lineEnd": 108,
+        "columnStart": 16,
+        "columnEnd": 42
+      }
+    },
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 113,
+        "lineEnd": 113,
+        "columnStart": 31,
+        "columnEnd": 42
+      }
+    },
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 115,
+        "lineEnd": 115,
+        "columnStart": 15,
+        "columnEnd": 41
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 23,
+        "lineEnd": 23,
+        "columnStart": 4,
+        "columnEnd": 15
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 21,
+        "lineEnd": 21,
+        "columnStart": 4,
+        "columnEnd": 48
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 15,
+        "lineEnd": 17,
+        "columnStart": 18,
+        "columnEnd": 52
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# ------------------------------------------------------------------------------\n#     samtools\tfaidx is used for DNA lookup\n\n# samtools build layer is based on https://hub.docker.com/r/bschiffthaler/samtools/dockerfile\n\nARG NODE_ALPINE_VERSION 12\n\n# ${NODE_ALPINE_VERSION}\nFROM node:12-alpine as node-alpine-build-samtools\n\nARG NODE_ALPINE_VERSION 12\nARG SAMTOOLS_VERSION=1.15.1\nARG BUILD_NCPU=1\n\nRUN apk update && apk add --no-cache build-base wget zlib-dev tar bzip2-dev xz-dev \\\n    curl-dev ncurses-dev ncurses-static curl-static zlib-static bzip2-static \\\n    nghttp2-static openssl-libs-static brotli-static\n\nWORKDIR /build\nRUN wget https://github.com/samtools/samtools/releases/download/${SAMTOOLS_VERSION}/samtools-${SAMTOOLS_VERSION}.tar.bz2\nRUN tar -xf samtools-${SAMTOOLS_VERSION}.tar.bz2 && rm samtools-${SAMTOOLS_VERSION}.tar.bz2\nWORKDIR /build/samtools-${SAMTOOLS_VERSION}\nRUN ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" && \\\n    make -j${BUILD_NCPU}\nRUN strip samtools\n\n\n# ------------------------------------------------------------------------------\n\n# ${NODE_ALPINE_VERSION}\nFROM node:12-alpine as node-alpine-pretzel\n\nARG PRETZEL_VERSION 2.14.1\nARG NODE_ALPINE_VERSION 12\n\n# node-sass version is selected so that the binary can be downloaded;\n# otherwise, node-gyp will be built, and hence the following dependencies on python, make, c++.\n# from : https://github.com/nodejs/docker-node/issues/610 :\n#  node-sass is built using node-gyp, which is built using python.\n# required for an NPM repo\n#\n# alpine image uses libmusl (C stdlib) so linux_musl-x64-* is required.\n# The version can be indicated either by $SASS_BINARY_NAME or --sass-binary-name :\n# export SASS_BINARY_NAME=linux_musl-x64-64; npm install node-sass@^5.0.0 --sass-binary-name=linux_musl-x64-64 --scripts-prepend-node-path=true\n\n# These packages are for importing spreadsheets (xlsx etc) :\n# bash is now used by /backend/scripts/uploadSpreadsheet.bash\n# and perl by /resources/tools/dev/snps2Dataset.pl\n# gnumeric provides ssconvert, used by uploadSpreadsheet.bash\n# terminus-font is required by ssconvert.\nRUN apk add --no-cache git \\\n     --virtual .gyp \\\n     py3-pip \\\n     make \\\n     g++ \\\n     bash\t\\\n     perl\t\\\n     gnumeric\t\\\n     terminus-font\t\\\n     curl\t\\\n     jq \\\n  && npm install bower -g && npm cache clean --force;\n\n\n# ------------------------------------------------------------------------------\n\nARG SAMTOOLS_VERSION=1.15.1\n\n# RUN apk add --no-cache bash\nRUN apk add --no-cache libbz2 zlib libcurl xz-libs\nWORKDIR /\nCOPY --from=node-alpine-build-samtools /build/samtools-${SAMTOOLS_VERSION}/samtools /usr/local/bin/samtools\n\n# ------------------------------------------------------------------------------\n\n\n# to compile node.js from source, apk add linux-headers\n# for debugging binaries : add strace\n\nENV scriptsDir /app/lb3app/scripts\n\n# add backend to image\nCOPY ./lb4app /app\n\n# add frontend to image\nCOPY ./frontend /frontend\n# uploadSpreadsheet.bash is in $scriptsDir/.\nCOPY ./resources/tools/dev/snps2Dataset.pl $scriptsDir/.\n\n# additional node version for lb4app (backend)\nENV NODE_BE /usr/local/node16\nRUN mkdir $NODE_BE $NODE_BE/bin $NODE_BE/lib\n\n# To copy these symbolic links successfully, copy the whole directory, not individual files :\n# /usr/local/bin\n#   npm -> ../lib/node_modules/npm/bin/npm-cli.js\n#   npx -> ../lib/node_modules/npm/bin/npx-cli.js\nCOPY --from=node:16-alpine /usr/local/bin  $NODE_BE/bin\nCOPY --from=node:16-alpine /usr/local/lib  $NODE_BE/lib\n\n\nRUN date \\\n  && ls -sF $NODE_BE/lib \\\n  && export PATH=$NODE_BE/bin:$PATH \\\n  && export NODE_PATH=$NODE_BE/lib/node_modules \\\n  && cd $NODE_BE/lib && npm -v && node -v \\\n  && npm config set scripts-prepend-node-path true \\\n  && cd /app && npm install nodemon@1.18.8 && npm ci \\\n  && date && npm cache clean --force;\n\n\nRUN node --version\nRUN cd /frontend && (npm ci || npm install) && bower install --allow-root && npm cache clean --force;\n\nRUN cd /app && npm install nodemon@1.18.8 && npm ci && npm cache clean --force;\n\nRUN cd /frontend && node_modules/ember-cli/bin/ember build --environment production\n\nRUN ( [ ! -L /app/client ] || rm /app/client ) && \\\n  mv /frontend/dist /app/client \\\n  && cd / \\\n  && rm -rf /frontend \\\n  && npm uninstall -g bower \\\n  && npm cache clean --force\n\nENV EMAIL_VERIFY=NONE AUTH=ALL\n\n# $NODE_BE/bin/node\nENTRYPOINT [\"/usr/local/node16/bin/node\", \"/app/lb3app/server/server.js\"]\n\n# ------------------------------------------------------------------------------\n\nARG SAMTOOLS_VERSION=1.15.1\n\nLABEL maintainer='github.com/plantinformatics'\nLABEL software.version=${PRETZEL_VERSION}\nLABEL samtools.version=${SAMTOOLS_VERSION}\nLABEL nodeAlpine.version=${NODE_ALPINE_VERSION}\n\n# ------------------------------------------------------------------------------\n"
+}

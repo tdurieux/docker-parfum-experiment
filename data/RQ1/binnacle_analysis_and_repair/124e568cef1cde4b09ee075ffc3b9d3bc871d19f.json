@@ -1,0 +1,53 @@
+{
+  "startTime": 1674241990544,
+  "endTime": 1674241990946,
+  "originalSmells": [
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 58,
+        "lineEnd": 60,
+        "columnStart": 4,
+        "columnEnd": 49
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 88,
+        "lineEnd": 88,
+        "columnStart": 4,
+        "columnEnd": 110
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 85,
+        "lineEnd": 85,
+        "columnStart": 4,
+        "columnEnd": 39
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 19,
+        "lineEnd": 20,
+        "columnStart": 4,
+        "columnEnd": 11
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 21,
+        "lineEnd": 23,
+        "columnStart": 4,
+        "columnEnd": 19
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM alpine:3.9\nARG APPLE_LIBTAPI_VERSION=e56673694db395e25b31808b4fbb9a7005e6875f\nARG CCTOOLS_PORT_VERSION=1e3f614aff4eaae01b6cc4d29c3237c93f3322f8\nARG DARWIN_VERSION\nARG MACOS_SDK_VERSION\nARG MAKE_OPTS=-j12\nARG OSXCROSS_VERSION=6525b2b7d33abc371ad889f205377dc5cf81f23e\nARG XAR_VERSION=1.6.1\n\nCOPY platform/macos/osxcross /tmp\nCOPY vendor/MacOSX${MACOS_SDK_VERSION}.sdk.tar.xz /tmp\nCOPY vendor/apple-libtapi-${APPLE_LIBTAPI_VERSION}.zip /tmp\nCOPY vendor/cctools-port-${CCTOOLS_PORT_VERSION}.zip /tmp\nCOPY vendor/osxcross-${OSXCROSS_VERSION}.zip /tmp\nCOPY vendor/xar-${XAR_VERSION}.tar.gz /tmp\n\n# So this is in a bit of a sorry state:\n# https://github.com/tpoechtrager/osxcross/issues/103#issuecomment-300769589\nRUN apk update \\\n && apk add --no-cache autoconf automake cdrkit clang clang-dev fts libressl libuuid llvm-dev make pkgconf \\\n    xz-libs \\\n && apk add --no-cache --virtual dev-deps autoconf automake bsd-compat-headers cmake dev-deps fts-dev g++ \\\n    libressl-dev libtool libxml2-dev linux-headers musl-dev patch python tar util-linux-dev xz \\\n    xz-dev zlib-dev \\\n && ln -s /usr/include/linux/sysctl.h /usr/include/sys \\\n && cd /tmp \\\n && tar xzf /tmp/xar-${XAR_VERSION}.tar.gz \\\n && cd xar-xar-${XAR_VERSION}/xar \\\n && ./autogen.sh LDFLAGS=-lfts \\\n && make ${MAKE_OPTS} \\\n && make install \\\n && cd /tmp \\\n && rm -rf xar-${XAR_VERSION}.tar.gz xar-xar-${XAR_VERSION} \\\n # 1. Bulid osxcross.  Its test compile will fail since we don't have a good linker yet.\n && unzip osxcross-${OSXCROSS_VERSION}.zip \\\n && cd osxcross-${OSXCROSS_VERSION} \\\n && mv /tmp/MacOSX${MACOS_SDK_VERSION}.sdk.tar.xz tarballs \\\n && cp /tmp/patches/* patches \\\n && patch -p0 </tmp/build-new-patches.patch \\\n # Build script always fails:\n && UNATTENDED=1 ./build.sh || true \\\n # 2. Build apple-libtapi, required by the new linker to use newer frameworks\n && cd /tmp \\\n && unzip apple-libtapi-${APPLE_LIBTAPI_VERSION}.zip \\\n && cd apple-libtapi-${APPLE_LIBTAPI_VERSION} \\\n && INSTALLPREFIX=/tmp/osxcross-${OSXCROSS_VERSION}/target ./build.sh \\\n && ./install.sh \\\n && cd /tmp \\\n # 3. Build the replacement linker\n && unzip cctools-port-${CCTOOLS_PORT_VERSION}.zip \\\n && cd cctools-port-${CCTOOLS_PORT_VERSION}/cctools \\\n && libtoolize -c -i --force \\\n && ./autogen.sh \\\n # musl-related patches (same as those used when building osxcross the first time)\n && patch -p0 </tmp/patches/cctools-ld64-3.patch \\\n && patch -p0 </tmp/patches/cctools-ar-1.patch \\\n && patch -p0 </tmp/patches/cctools-ar-2.patch \\\n && patch -p0 </tmp/patches/cctools-libstuff-1.patch \\\n && ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" --prefix=/tmp/osxcross-${OSXCROSS_VERSION}/target \\\n    --with-libtapi=/tmp/osxcross-${OSXCROSS_VERSION}/target \\\n    --target=x86_64-apple-darwin${DARWIN_VERSION} \\\n && make ${MAKE_OPTS} \\\n && make install \\\n && mkdir /opt/osxcross \\\n && cp -a /tmp/osxcross-${OSXCROSS_VERSION}/target/* /opt/osxcross \\\n # 4. Clean up\n && cd /tmp \\\n && rm -rf apple-libtapi-${APPLE_LIBTAPI_VERSION}* \\\n    build-new-patches.patch \\\n    cctools-port-${CCTOOLS_PORT_VERSION}* \\\n    fix_gen_sdk_package_for_xcode8.patch \\\n    osxcross-${OSXCROSS_VERSION}* \\\n    patches \\\n && apk del dev-deps \\\n && rm /usr/include/sys/sysctl.h\n\nENV PATH=$PATH:/opt/osxcross/bin\nENV LD_LIBRARY_PATH=/opt/osxcross/lib\n\n\n# Now that we have a toolchain, we can build SDL\n\nARG SDL_VERSION\nCOPY vendor/SDL2-${SDL_VERSION}.tar.gz /tmp\nRUN cd /tmp \\\n && tar xvzf SDL2-${SDL_VERSION}.tar.gz \\\n && cd SDL2-${SDL_VERSION} \\\n && export MACOSX_DEPLOYMENT_TARGET=10.6 \\\n && ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" --host=x86_64-apple-darwin16 --prefix=/opt/osxcross CC=o64-clang AR=llvm-ar RANLIB=llvm-ranlib \\\n && make ${MAKE_OPTS} \\\n && make install \\\n && rm -rf /tmp/SDL2-${SDL_VERSION}* && rm SDL2-${SDL_VERSION}.tar.gz\n"
+}

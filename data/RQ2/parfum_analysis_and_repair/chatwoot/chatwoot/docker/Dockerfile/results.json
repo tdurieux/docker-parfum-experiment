@@ -1,0 +1,27 @@
+{
+  "startTime": 1674218375226,
+  "endTime": 1674218375952,
+  "originalSmells": [
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 48,
+        "lineEnd": 48,
+        "columnStart": 4,
+        "columnEnd": 16
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 48,
+        "lineEnd": 48,
+        "columnStart": 20,
+        "columnEnd": 36
+      }
+    }
+  ],
+  "repairedDockerfile": "# pre-build stage\nFROM ruby:3.0.4-alpine AS pre-builder\n\n# ARG default to production settings\n# For development docker-compose file overrides ARGS\nARG BUNDLE_WITHOUT=\"development:test\"\nENV BUNDLE_WITHOUT ${BUNDLE_WITHOUT}\nENV BUNDLER_VERSION=2.1.2\n\nARG RAILS_SERVE_STATIC_FILES=true\nENV RAILS_SERVE_STATIC_FILES ${RAILS_SERVE_STATIC_FILES}\n\nARG RAILS_ENV=production\nENV RAILS_ENV ${RAILS_ENV}\n\nENV BUNDLE_PATH=\"/gems\"\n\nRUN apk add --no-cache \\\n    openssl \\\n    tar \\\n    build-base \\\n    tzdata \\\n    postgresql-dev \\\n    postgresql-client \\\n    nodejs \\\n    yarn \\\n    git \\\n  && mkdir -p /var/app \\\n  && gem install bundler\n\nWORKDIR /app\n\nCOPY Gemfile Gemfile.lock ./\n\n# natively compile grpc and protobuf to support alpine musl (dialogflow-docker workflow)\n# https://github.com/googleapis/google-cloud-ruby/issues/13306\n# adding xz as nokogiri was failing to build libxml\n# https://github.com/chatwoot/chatwoot/issues/4045\nRUN apk add --no-cache musl ruby-full ruby-dev gcc make musl-dev openssl openssl-dev g++ linux-headers xz\nRUN bundle config set --local force_ruby_platform true\n\n# Do not install development or test gems in production\nRUN if [ \"$RAILS_ENV\" = \"production\" ]; then \\\n  bundle config set without 'development test'; bundle install -j 4 -r 3; \\\n  else bundle install -j 4 -r 3; \\\n  fi\n\nCOPY package.json yarn.lock ./\nRUN yarn install && yarn cache clean;\n\nCOPY . /app\n\n# creating a log directory so that image wont fail when RAILS_LOG_TO_STDOUT is false\n# https://github.com/chatwoot/chatwoot/issues/701\nRUN mkdir -p /app/log\n\n# generate production assets if production environment\nRUN if [ \"$RAILS_ENV\" = \"production\" ]; then \\\n  SECRET_KEY_BASE=precompile_placeholder RAILS_LOG_TO_STDOUT=enabled bundle exec rake assets:precompile \\\n  && rm -rf spec node_modules tmp/cache; \\\n  fi\n\n# Remove unnecessary files\nRUN rm -rf /gems/ruby/3.0.0/cache/*.gem \\\n  && find /gems/ruby/3.0.0/gems/ \\( -name \"*.c\" -o -name \"*.o\" \\) -delete\n\n# final build stage\nFROM ruby:3.0.4-alpine\n\nARG BUNDLE_WITHOUT=\"development:test\"\nENV BUNDLE_WITHOUT ${BUNDLE_WITHOUT}\nENV BUNDLER_VERSION=2.1.2\n\nARG EXECJS_RUNTIME=\"Disabled\"\nENV EXECJS_RUNTIME ${EXECJS_RUNTIME}\n\nARG RAILS_SERVE_STATIC_FILES=true\nENV RAILS_SERVE_STATIC_FILES ${RAILS_SERVE_STATIC_FILES}\n\nARG BUNDLE_FORCE_RUBY_PLATFORM=1\nENV BUNDLE_FORCE_RUBY_PLATFORM ${BUNDLE_FORCE_RUBY_PLATFORM}\n\nARG RAILS_ENV=production\nENV RAILS_ENV ${RAILS_ENV}\nENV BUNDLE_PATH=\"/gems\"\n\nRUN apk add --no-cache \\\n    openssl \\\n    tzdata \\\n    postgresql-client \\\n    imagemagick \\\n    git \\\n  && gem install bundler\n\nRUN if [ \"$RAILS_ENV\" != \"production\" ]; then \\\n  apk add --no-cache nodejs yarn; \\\n  fi\n\nCOPY --from=pre-builder /gems/ /gems/\nCOPY --from=pre-builder /app /app\n\nWORKDIR /app\n\nEXPOSE 3000\n"
+}

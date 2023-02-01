@@ -1,0 +1,89 @@
+{
+  "startTime": 1674246186951,
+  "endTime": 1674246188961,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 36,
+        "lineEnd": 36,
+        "columnStart": 7,
+        "columnEnd": 72
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 64,
+        "lineEnd": 64,
+        "columnStart": 4,
+        "columnEnd": 80
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 71,
+        "lineEnd": 71,
+        "columnStart": 4,
+        "columnEnd": 95
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 72,
+        "lineEnd": 72,
+        "columnStart": 4,
+        "columnEnd": 112
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 85,
+        "lineEnd": 85,
+        "columnStart": 4,
+        "columnEnd": 154
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 116,
+        "lineEnd": 116,
+        "columnStart": 4,
+        "columnEnd": 107
+      }
+    },
+    {
+      "rule": "curlUseHttpsUrl",
+      "position": {
+        "lineStart": 72,
+        "lineEnd": 72,
+        "columnStart": 4,
+        "columnEnd": 112
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 147,
+        "lineEnd": 147,
+        "columnStart": 2,
+        "columnEnd": 24
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 103,
+        "lineEnd": 103,
+        "columnStart": 25,
+        "columnEnd": 73
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM ubuntu:18.04 as base\nENV DEBIAN_FRONTEND noninteractive\n\nRUN apt-get update && apt-get install -y --no-install-recommends \\\n    perl \\\n    imagemagick \\\n    parallel \\\n    locales \\\n    gdebi-core curl unzip \\\n    tcsh \\\n    xfonts-base \\\n    gsl-bin\\\n    netpbm \\\n    libjpeg62 \\\n    xvfb \\\n    libglw1-mesa \\\n    libxm4 \\\n    libgfortran4 \\\n    sudo \\\n    ca-certificates \\\n    rsync \\\n    gnupg software-properties-common \\\n  && rm -rf /var/lib/apt/lists/* \\\n  && localedef -i en_US -c -f UTF-8 -A /usr/share/locale/locale.alias en_US.UTF-8\n\n# add user to build all tools\nRUN useradd -ms /bin/bash rabies && \\\n    echo \"rabies ALL=(ALL) NOPASSWD: ALL\" > /etc/sudoers.d/rabies && \\\n    chmod 0440 /etc/sudoers.d/rabies\n\n#Fix silly AFNI not being properly built for modern ubuntu\nRUN ln -sf /usr/lib/x86_64-linux-gnu/libgsl.so.23 /usr/lib/x86_64-linux-gnu/libgsl.so.19\n\n####################################################################################################\nFROM base as builder\nRUN apt-get update && apt-get install -y gnupg software-properties-common --no-install-recommends \\\n    && curl -f -sSL https://apt.kitware.com/keys/kitware-archive-latest.asc | apt-key add - \\\n    && apt-add-repository 'deb https://apt.kitware.com/ubuntu/ bionic main' \\\n    && apt-get update && apt-get install -y --no-install-recommends \\\n      git cmake \\\n      build-essential automake libtool bison \\\n      libz-dev libjpeg-dev libpng-dev libtiff-dev \\\n      liblcms2-dev flex libx11-dev freeglut3-dev libxmu-dev \\\n      libxi-dev libqt4-dev libxml2-dev ninja-build \\\n    && rm -rf /var/lib/apt/lists/*\n\n\n#Download and build ANTs\nRUN mkdir -p /opt/ANTs/build && git clone https://github.com/ANTsX/ANTs.git /opt/ANTs/src \\\n    && cd /opt/ANTs/src \\\n    && git checkout 1759e5e23772e114a490cfa33a5764b400307b9d \\\n    && cd /opt/ANTs/build \\\n    && cmake -GNinja -DITK_BUILD_MINC_SUPPORT=ON -DBUILD_TESTING=OFF ../src \\\n    && cmake --build . \\\n    && cd ANTS-build \\\n    && cmake --install .\n\n\n####################################################################################################\nFROM base\n#We only copy the ANTs commands we use, otherwise the container is huge\nCOPY --from=builder /opt/ANTs/bin/ /opt/quarantine/ANTs/bin/\n\n#Install afni\nRUN curl -f -L -O https://afni.nimh.nih.gov/pub/dist/bin/misc/@update.afni.binaries && \\\n    tcsh @update.afni.binaries -package linux_ubuntu_16_64 -apsearch yes -bindir /opt/quarantine/afni && \\\n    rm -f @update.afni.binaries\n\nENV PATH=/opt/quarantine/afni${PATH:+:$PATH}\n\n#Install FSL\nRUN curl -f -sSL https://raw.githubusercontent.com/nipy/nipype/master/docker/files/neurodebian.gpg | apt-key add - && \\\n    curl -f -sSL https://neuro.debian.net/lists/bionic.us-nh.full > /etc/apt/sources.list.d/neurodebian.sources.list && \\\n    apt-get update && apt-get install -y --no-install-recommends fsl-core && \\\n    rm -rf /var/lib/apt/lists/*\n\n# Configure FSL environment\nENV FSLDIR=\"/usr/share/fsl/5.0/\"\nENV FSL_DIR=\"${FSLDIR}\" \\\n  FSLOUTPUTTYPE=NIFTI_GZ \\\n  PATH=\"/usr/share/fsl/5.0/bin:$PATH\" \\\n  LD_LIBRARY_PATH=/usr/lib/fsl/5.0:$LD_LIBRARY_PATH\nENV PATH=/usr/lib/fsl/5.0:$PATH\n\n#Install minc-toolkit\nRUN curl -f -L --output /tmp/minc-toolkit-1.9.18.deb https://packages.bic.mni.mcgill.ca/minc-toolkit/min/minc-toolkit-1.9.18-20200813-Ubuntu_18.04-x86_64.deb && \\\n  gdebi -n /tmp/minc-toolkit-1.9.18.deb && \\\n  rm -f /tmp/minc-toolkit-1.9.18.deb\n\n# minc-toolkit configuration parameters for 1.9.18-20200813\nENV MINC_TOOLKIT=/opt/minc/1.9.18 \\\n  MINC_TOOLKIT_VERSION=\"1.9.18-20200813\"\nENV PATH=${MINC_TOOLKIT}/bin:${MINC_TOOLKIT}/pipeline:${PATH} \\\n  PERL5LIB=${MINC_TOOLKIT}/perl:${MINC_TOOLKIT}/pipeline${PERL5LIB:+:$PERL5LIB} \\\n  LD_LIBRARY_PATH=${MINC_TOOLKIT}/lib:${MINC_TOOLKIT}/lib/InsightToolkit${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH} \\\n  MNI_DATAPATH=${MINC_TOOLKIT}/../share:${MINC_TOOLKIT}/share \\\n  MINC_FORCE_V2=1 \\\n  MINC_COMPRESS=4 \\\n  VOLUME_CACHE_THRESHOLD=-1 \\\n  MANPATH=${MINC_TOOLKIT}/man${MANPATH:+:$MANPATH}\n\n# add a patch to nu_estimate_np_and_em\nCOPY patch/nu_estimate_np_and_em.diff nu_estimate_np_and_em.diff\nRUN apt-get update -y && apt-get install -y --no-install-recommends patch && rm -rf /var/lib/apt/lists/*;\nRUN (cd / && sudo patch -p0) < nu_estimate_np_and_em.diff && rm nu_estimate_np_and_em.diff\n\n#Enable ANTs\nENV PATH=/opt/quarantine/ANTs/bin${PATH:+:$PATH} \\\n  ANTSPATH=/opt/quarantine/ANTs/bin\nENV PATH=/opt/ANTs/bin${PATH:+:$PATH}\n\nUSER rabies\nWORKDIR /home/rabies\nENV HOME=\"/home/rabies\"\n\n#install conda\nRUN curl -f -L -O https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-Linux-x86_64.sh && \\\n    bash Miniforge3-Linux-x86_64.sh -b -p ${HOME}/miniforge && \\\n    rm -f Miniforge3-Linux-x86_64.sh\nENV CONDA_DIR=${HOME}/miniforge\n\n#enable conda\nRUN echo '. ${HOME}/miniforge/etc/profile.d/conda.sh' >> ${HOME}/.bashrc\nRUN echo 'conda activate' >> ${HOME}/.bashrc\n\nENV CONDA_EXE='${CONDA_DIR}/bin/conda' \\\n  CONDA_PYTHON_EXE='${CONDA_DIR}/bin/python' \\\n  # override the path with the conda environment so that it becomes the default\n  PATH=${CONDA_DIR}/bin:$PATH\n\n# install RABIES\nENV RABIES=${HOME}/RABIES\nRUN mkdir $RABIES\n\nCOPY rabies_environment.yml setup.py MANIFEST.in README.md LICENSE dependencies.txt $RABIES/\n\nRUN . ${HOME}/miniforge/etc/profile.d/conda.sh && \\\n  conda activate && \\\n  conda env update -f $RABIES/rabies_environment.yml\n\nCOPY rabies $RABIES/rabies\nCOPY minc-toolkit-extras $RABIES/minc-toolkit-extras\nCOPY optimized_antsMultivariateTemplateConstruction $RABIES/optimized_antsMultivariateTemplateConstruction\nCOPY scripts $RABIES/scripts\n\nRUN . ${HOME}/miniforge/etc/profile.d/conda.sh && \\\n  conda activate && \\\n  pip install --no-cache-dir -e $RABIES && \\\n  conda clean --all -y\n\nRUN . ${HOME}/miniforge/etc/profile.d/conda.sh && conda activate && conda config --set auto_activate_base true\n\n# adding 'agg' as default backend to avoid matplotlib errors\nENV MPLBACKEND agg\n\n# pre-install the template defaults\nENV XDG_DATA_HOME=$HOME/.local/share\n\nRUN install_DSURQE.sh $XDG_DATA_HOME/rabies\n\nSHELL [\"/bin/bash\", \"--login\", \"-c\"]\nENTRYPOINT [\"rabies\"]\n"
+}

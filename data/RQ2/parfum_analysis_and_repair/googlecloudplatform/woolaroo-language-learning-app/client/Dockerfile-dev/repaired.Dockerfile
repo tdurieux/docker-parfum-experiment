@@ -1,0 +1,13 @@
+FROM node:14-buster-slim
+
+RUN npm install -g @angular/cli && npm cache clean --force;
+
+RUN mkdir -p /var/www/app
+COPY ./ /var/www/app/
+
+WORKDIR /var/www/app
+RUN npm install && npm cache clean --force;
+
+EXPOSE 4200
+
+ENTRYPOINT ng serve --host=0.0.0.0 --poll=1000 --ssl=true --disable-host-check

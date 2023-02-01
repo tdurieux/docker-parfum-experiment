@@ -1,0 +1,17 @@
+{
+  "startTime": 1674241409034,
+  "endTime": 1674241409125,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 22,
+        "lineEnd": 22,
+        "columnStart": 4,
+        "columnEnd": 63
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM theomn/rustup-base:latest as builder\n\n# Stage 1: produce static binaries\n\n# Based loosely on a combination of:\n# * https://github.com/liuchong/docker-rustup/blob/master/dockerfiles/nightly_musl/Dockerfile\n# * https://github.com/emk/rust-musl-builder/blob/master/Dockerfile\n\nWORKDIR /root\n\nRUN apt-get update && \\\n    apt-get install --no-install-recommends -y \\\n    ca-certificates curl file \\\n    build-essential musl-tools \\\n    autoconf automake autotools-dev libtool xutils-dev && \\\n    rm -rf /var/lib/apt/lists/*\n\n# Build a static library version of OpenSSL using musl-libc.  This is\n# needed by the popular Rust `hyper` crate.\n# Note: the $SSL_VERSION var is set in rustup-base\nRUN echo \"Building OpenSSL\" && \\\n    VERS=$SSL_VERSION && \\\n    curl -f -O https://www.openssl.org/source/openssl-$VERS.tar.gz && \\\n    tar xvzf openssl-$VERS.tar.gz && cd openssl-$VERS && \\\n    env CC=musl-gcc ./Configure no-shared no-zlib -fPIC --prefix=/usr/local/musl linux-x86_64 && \\\n    env C_INCLUDE_PATH=/usr/local/musl/include/ make depend && \\\n    make && make install && \\\n    cd .. && rm -rf openssl-$VERS.tar.gz openssl-$VERS\n\n# Any other native deps needed for your binary should be built for\n# static linking here...\n\n# Add all the env required to configure the static build.\nENV OPENSSL_DIR=/usr/local/musl/ \\\n    OPENSSL_INCLUDE_DIR=/usr/local/musl/include/ \\\n    DEP_OPENSSL_INCLUDE=/usr/local/musl/include/ \\\n    OPENSSL_LIB_DIR=/usr/local/musl/lib/ \\\n    OPENSSL_STATIC=1 \\\n    PKG_CONFIG_ALLOW_CROSS=true \\\n    PKG_CONFIG_ALL_STATIC=true\n\nRUN rustup target add x86_64-unknown-linux-musl \\\n    && echo \"[build]\\ntarget = \\\"x86_64-unknown-linux-musl\\\"\" > $CARGO_HOME/config\n\nENV RUST_BACKTRACE=1\n\nADD . /code\nWORKDIR /code\n\nRUN cargo clean && cargo build --all --release\n\n# Stage 2: Add to a small deploy container\n\nFROM scratch\n# Borrow the ca certs from the builder\nCOPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt\n# You'd also want to copy whatever your binaries are called\nCOPY --from=builder /code/target/x86_64-unknown-linux-musl/release/my-binary .\nENTRYPOINT [\"./my-binary\"]\n\n"
+}

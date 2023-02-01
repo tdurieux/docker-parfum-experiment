@@ -1,0 +1,27 @@
+{
+  "startTime": 1674220962150,
+  "endTime": 1674220963354,
+  "originalSmells": [
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 82,
+        "lineEnd": 82,
+        "columnStart": 4,
+        "columnEnd": 16
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 81,
+        "lineEnd": 81,
+        "columnStart": 20,
+        "columnEnd": 36
+      }
+    }
+  ],
+  "repairedDockerfile": "# https://codefresh.io/blog/node_docker_multistage/\n\n# docker build --pull --target image_ruby_run   -t vikyai/app .\n# docker build        --target image_ruby_test  -t vikyai/app_test .\n\n#####################################################################\n# Include fluentbit in webapp to bufferize stats collection\n#####################################################################\nFROM fluent/fluent-bit:1.3 AS fluent-bit\n\n#####################################################################\n# image_ruby_base : ruby + sys dependencies\n#####################################################################\nFROM ruby:2.6-slim-buster AS image_ruby_base\n\n# Same has buildpack-deps-buster-curl\nRUN set -ex; \\\n    apt-get update ; \\\n    apt-get install -y --no-install-recommends \\\n      build-essential \\\n      ca-certificates \\\n      curl \\\n      cron \\\n      dirmngr \\\n      gnupg2 \\\n      nodejs \\\n      vim \\\n      wget \\\n      yarnpkg \\\n    ; \\\n    rm -rf /var/lib/apt/lists/* ; \\\n    ln -s /usr/bin/yarnpkg  /usr/local/bin/yarn\n\n# postgresql-client\n# Temporary fix for postgresql-client install fail\n# https://github.com/dalibo/temboard/commit/ff98d6740ae11345658508b02052294d6cffd448\nRUN set -ex; \\\n    mkdir -p /usr/share/man/man1; \\\n    mkdir -p /usr/share/man/man7;\n\n# Needed system dependencies for gem compilation\nRUN set -ex; \\\n    apt-get update; \\\n    apt-get install -y --no-install-recommends \\\n      file \\\n      graphicsmagick-imagemagick-compat \\\n      graphviz \\\n      libcurl4-openssl-dev \\\n      libfontconfig \\\n      libgmp-dev \\\n      libpq-dev \\\n      libyaml-dev \\\n      postgresql-client \\\n      rsync \\\n      zlib1g-dev \\\n    ; \\\n    rm -rf /var/lib/apt/lists/*\n\n# dockerize : https://github.com/jwilder/dockerize\nENV DOCKERIZE_VERSION v0.6.1\nRUN wget https://github.com/jwilder/dockerize/releases/download/$DOCKERIZE_VERSION/dockerize-linux-amd64-$DOCKERIZE_VERSION.tar.gz \\\n    && tar -C /usr/local/bin -xzvf dockerize-linux-amd64-$DOCKERIZE_VERSION.tar.gz \\\n    && rm dockerize-linux-amd64-$DOCKERIZE_VERSION.tar.gz\n\n# install fluient-bit within the webapp\nCOPY --from=fluent-bit /fluent-bit /fluent-bit\n\nWORKDIR /\n\n#####################################################################\n# image_ruby_common : image_ruby_base + app + app dependencies\n#####################################################################\nFROM image_ruby_base AS image_ruby_common\n\n# App specific\nRUN mkdir -p /webapp\nWORKDIR /webapp\n\n# Yarn install\nCOPY package.json /webapp\nCOPY yarn.lock /webapp\nRUN yarn install && yarn cache clean;\n\n# setup env\nENV PATH=\"/webapp/bin:${PATH}\"\n\n# Firstly bundle install (faster build)\nCOPY Gemfile /webapp\nCOPY Gemfile.lock /webapp\n\n# Get correct bundler version\nRUN gem install bundler -v 2.1.4\n\n# Production dependencies\nRUN bundle config set without 'development test'\nRUN bundle install --jobs=$(nproc)\n\n# Copy application code\nCOPY . /webapp\n\n# create static assets echange dir\nRUN mkdir -p /tmp/public/\n\n# create temporary dir for sidekiq\nRUN mkdir -p /webapp/tmp/\nRUN mkdir -p /webapp/tmp/pids/\nRUN mkdir -p /webapp/log/\n\n# Use a dummy SECRET_KEY_BASE\nENV SECRET_KEY_BASE=dummy\n\n#####################################################################\n# image_ruby_run : image_ruby_common + production setup\n#####################################################################\nFROM image_ruby_common AS image_ruby_run\n\nENV RAILS_ENV=production\n\n# Precompile assets\nRUN ./bin/rails assets:precompile\n\n# Check shared\nRUN set -ex; \\\n    mkdir -p ./public/uploads/ ; \\\n    touch ./public/uploads/.readable ; \\\n    mkdir -p ./public/packs/ ; \\\n    touch ./public/packs/.readable ; \\\n    mkdir -p ./public/assets/ ; \\\n    touch ./public/assets/.readable ;\n\nENV RAILS_SERVE_STATIC_FILES=true\nENV RAILS_LOG_TO_STDOUT=1\n\nEXPOSE 3000\nCMD [\"./bin/docker_run.sh\"]\n\n#####################################################################\n# image_ruby_test : image_ruby_common + test dependencies + test setup\n#####################################################################\nFROM image_ruby_common AS image_ruby_test\n\n# Install test dependencies\nRUN bundle config unset without && bundle config set without 'development'\nRUN bundle install --jobs=$(nproc)\n\nENV RAILS_ENV=test\n\n# Precompile assets\nRUN ./bin/rails assets:precompile\n\n# Run test\nCMD [\"./bin/docker_run_test.sh\"]\n"
+}

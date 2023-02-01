@@ -1,0 +1,1 @@
+# A "Hello, World" Docker image used in automated tests for the docker.Build command.

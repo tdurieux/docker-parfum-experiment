@@ -1,0 +1,50 @@
+FROM ubuntu:bionic
+LABEL maintainer="sig-platform@spinnaker.io"
+
+ENV KUSTOMIZE_VERSION=3.8.6
+ENV KUSTOMIZE4_VERSION=4.5.5
+ENV PACKER_VERSION=1.6.6
+
+ARG TARGETARCH
+
+WORKDIR /packer
+
+RUN apt-get update && apt-get -y --no-install-recommends install openjdk-11-jre-headless wget unzip curl git openssh-client && \
+  wget https://releases.hashicorp.com/packer/${PACKER_VERSION}/packer_${PACKER_VERSION}_linux_${TARGETARCH}.zip && \
+  unzip packer_${PACKER_VERSION}_linux_${TARGETARCH}.zip && \
+  rm packer_${PACKER_VERSION}_linux_${TARGETARCH}.zip && rm -rf /var/lib/apt/lists/*;
+
+ENV PATH "/packer:$PATH"
+
+# Install Helm 3
+RUN wget https://raw.githubusercontent.com/kubernetes/helm/master/scripts/get-helm-3 && \
+  chmod +x get-helm-3 && \
+  ./get-helm-3 && \
+  rm get-helm-3 && \
+  mv /usr/local/bin/helm /usr/local/bin/helm3
+
+# Install Helm 2
+RUN wget https://raw.githubusercontent.com/kubernetes/helm/master/scripts/get && \
+  chmod +x get && \
+  ./get --version v2.17.0 && \
+  rm get
+
+RUN mkdir kustomize && \
+  curl -f -s -L https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize/v${KUSTOMIZE_VERSION}/kustomize_v${KUSTOMIZE_VERSION}_linux_${TARGETARCH}.tar.gz | \
+  tar xvz -C kustomize/ && \
+  mv ./kustomize/kustomize /usr/local/bin/kustomize && \
+  rm -rf ./kustomize
+
+RUN mkdir kustomize && \
+  curl -f -s -L https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize/v${KUSTOMIZE4_VERSION}/kustomize_v${KUSTOMIZE4_VERSION}_linux_${TARGETARCH}.tar.gz | \
+  tar xvz -C kustomize/ && \
+  mv ./kustomize/kustomize /usr/local/bin/kustomize4 && \
+  rm -rf ./kustomize
+
+RUN adduser --system --uid 10111 --group spinnaker
+COPY rosco-web/build/install/rosco /opt/rosco
+COPY rosco-web/config              /opt/rosco
+COPY halconfig/packer              /opt/rosco/config/packer
+RUN mkdir -p /opt/rosco/plugins && chown -R spinnaker:nogroup /opt/rosco/plugins
+USER spinnaker
+CMD ["/opt/rosco/bin/rosco"]

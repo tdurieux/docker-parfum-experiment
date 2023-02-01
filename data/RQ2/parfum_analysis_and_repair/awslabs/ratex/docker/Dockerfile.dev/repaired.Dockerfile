@@ -1,0 +1,11 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: Apache-2.0
+# The development docker image is built on the top of the CI image,
+# so it requires CI image to be built and available locally in advance.
+FROM ratex.ci_gpu:latest
+
+# Install RMM
+COPY install/ubuntu_install_rmm.sh /install/ubuntu_install_rmm.sh
+RUN bash /install/ubuntu_install_rmm.sh
+
+# Install more Python packages

@@ -1,0 +1,18 @@
+ARG GSTREAMER_VERSION
+
+FROM livekit/gstreamer:${GSTREAMER_VERSION}-base
+
+ENV DEBUG=true
+ENV OPTIMIZATIONS=false
+
+COPY compile /
+
+RUN ["/compile"]
+
+FROM ubuntu:21.04
+
+COPY install-dependencies /
+
+RUN ["/install-dependencies"]
+
+COPY --from=0 /compiled-binaries /

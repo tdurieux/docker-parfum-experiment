@@ -1,0 +1,1 @@
+# Used for dependabot to detect new golang versions

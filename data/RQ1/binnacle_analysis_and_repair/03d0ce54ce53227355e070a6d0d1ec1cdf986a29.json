@@ -1,0 +1,45 @@
+{
+  "startTime": 1674253043516,
+  "endTime": 1674253044019,
+  "originalSmells": [
+    {
+      "rule": "rmRecursiveAfterMktempD",
+      "position": {
+        "lineStart": 40,
+        "lineEnd": 40,
+        "columnStart": 21,
+        "columnEnd": 30
+      }
+    },
+    {
+      "rule": "rmRecursiveAfterMktempD",
+      "position": {
+        "lineStart": 53,
+        "lineEnd": 53,
+        "columnStart": 21,
+        "columnEnd": 30
+      }
+    },
+    {
+      "rule": "wgetUseHttpsUrl",
+      "position": {
+        "lineStart": 119,
+        "lineEnd": 119,
+        "columnStart": 1,
+        "columnEnd": 87
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "rmRecursiveAfterMktempD",
+      "position": {
+        "lineStart": 53,
+        "lineEnd": 53,
+        "columnStart": 21,
+        "columnEnd": 30
+      }
+    }
+  ],
+  "repairedDockerfile": "FROM ruby:2.6-slim-stretch\n\n# add our user and group first to make sure their IDs get assigned consistently, regardless of whatever dependencies get added\nRUN groupadd -r redmine && useradd -r -g redmine redmine\n\nRUN set -eux; \\\n\tapt-get update; \\\n\tapt-get install -y --no-install-recommends \\\n\t\tca-certificates \\\n\t\twget \\\n\t\t\\\n\t\tbzr \\\n\t\tgit \\\n\t\tmercurial \\\n\t\topenssh-client \\\n\t\tsubversion \\\n\t\t\\\n# https://github.com/docker-library/redmine/issues/132\n# (without \"gsfonts\" we get \"Magick::ImageMagickError (non-conforming drawing primitive definition `text' @ error/draw.c/DrawImage/3265):\")\n\t\tgsfonts \\\n\t\timagemagick \\\n\t; \\\n\trm -rf /var/lib/apt/lists/*\n\nRUN set -eux; \\\n\tsavedAptMark=\"$(apt-mark showmanual)\"; \\\n\tapt-get update; \\\n\tapt-get install -y --no-install-recommends \\\n\t\tdirmngr \\\n\t\tgnupg \\\n\t; \\\n\trm -rf /var/lib/apt/lists/*; \\\n\n\tdpkgArch=\"$(dpkg --print-architecture | awk -F- '{ print $NF }')\"; \\\n\n# grab gosu for easy step-down from root\n# https://github.com/tianon/gosu/releases\n\texport GOSU_VERSION='1.11'; \\\n\twget -O /usr/local/bin/gosu \"https://github.com/tianon/gosu/releases/download/$GOSU_VERSION/gosu-$dpkgArch\"; \\\n\twget -O /usr/local/bin/gosu.asc \"https://github.com/tianon/gosu/releases/download/$GOSU_VERSION/gosu-$dpkgArch.asc\"; \\\n\texport GNUPGHOME=\"$(mktemp -d)\"; rm -rf -d \\\n\tgpg --batch --keyserver ha.pool.sks-keyservers.net --recv-keys B42F6819007F00F88E364FD4036A9C25BF357DD4; \\\n\tgpg --batch --verify /usr/local/bin/gosu.asc /usr/local/bin/gosu; \\\n\tgpgconf --kill all; \\\n\trm -r \"$GNUPGHOME\" /usr/local/bin/gosu.asc; \\\n\tchmod +x /usr/local/bin/gosu; \\\n\tgosu nobody true; \\\n\n# grab tini for signal processing and zombie killing\n# https://github.com/krallin/tini/releases\n\texport TINI_VERSION='0.18.0'; \\\n\twget -O /usr/local/bin/tini \"https://github.com/krallin/tini/releases/download/v$TINI_VERSION/tini-$dpkgArch\"; \\\n\twget -O /usr/local/bin/tini.asc \"https://github.com/krallin/tini/releases/download/v$TINI_VERSION/tini-$dpkgArch.asc\"; \\\n\texport GNUPGHOME=\"$(mktemp -d)\"; \\\n\tgpg --batch --keyserver ha.pool.sks-keyservers.net --recv-keys 6380DC428747F6C393FEACA59A84159D7001A4E5; \\\n\tgpg --batch --verify /usr/local/bin/tini.asc /usr/local/bin/tini; \\\n\tgpgconf --kill all; \\\n\trm -r \"$GNUPGHOME\" /usr/local/bin/tini.asc; \\\n\tchmod +x /usr/local/bin/tini; \\\n\ttini -h; \\\n\n# reset apt-mark's \"manual\" list so that \"purge --auto-remove\" will remove all build dependencies\n\tapt-mark auto '.*' > /dev/null; \\\n\t[ -z \"$savedAptMark\" ] || apt-mark manual $savedAptMark; \\\n\tapt-get purge -y --auto-remove -o APT::AutoRemove::RecommendsImportant=false\n\nENV RAILS_ENV production\nWORKDIR /usr/src/redmine\n\n# https://github.com/docker-library/redmine/issues/138#issuecomment-438834176\n# (bundler needs this for running as an arbitrary user)\nENV HOME /home/redmine\nRUN set -eux; \\\n\t[ ! -d \"$HOME\" ]; \\\n\tmkdir -p \"$HOME\"; \\\n\tchown redmine:redmine \"$HOME\"; \\\n\tchmod 1777 \"$HOME\"\n\nENV REDMINE_VERSION 4.0.4\nENV REDMINE_DOWNLOAD_MD5 35a4f60b35fed2b10d14cb12fc8aef50\n\nRUN wget -O redmine.tar.gz \"https://www.redmine.org/releases/redmine-${REDMINE_VERSION}.tar.gz\" \\\n\t&& echo \"$REDMINE_DOWNLOAD_MD5 redmine.tar.gz\" | md5sum -c - \\\n\t&& tar -xvf redmine.tar.gz --strip-components=1 \\\n\t&& rm redmine.tar.gz files/delete.me log/delete.me \\\n\t&& mkdir -p log public/plugin_assets sqlite tmp/pdf tmp/pids \\\n\t&& chown -R redmine:redmine ./ \\\n# log to STDOUT (https://github.com/docker-library/redmine/issues/108)\n\t&& echo 'config.logger = Logger.new(STDOUT)' > config/additional_environment.rb \\\n# fix permissions for running as an arbitrary user\n\t&& chmod -R ugo=rwX config db sqlite \\\n\t&& find log tmp -type d -exec chmod 1777 '{}' +\n\nRUN set -eux; \\\n\n\tsavedAptMark=\"$(apt-mark showmanual)\"; \\\n\tapt-get update; \\\n\tapt-get install -y --no-install-recommends \\\n\t\tdpkg-dev \\\n\t\tgcc \\\n\t\tlibmagickcore-dev \\\n\t\tlibmagickwand-dev \\\n\t\tlibmariadbclient-dev \\\n\t\tlibpq-dev \\\n\t\tlibsqlite3-dev \\\n\t\tmake \\\n\t\tpatch \\\n\t\t\\\n# tiny_tds 1.0.x requires OpenSSL 1.0\n# see https://github.com/rails-sqlserver/tiny_tds/commit/3269dd3bcfbe4201ab51aa2870a6aaddfcbdfa5d (tiny_tds 1.2.x+ is required for OpenSSL 1.1 support)\n\t\tlibssl1.0-dev \\\n\t; \\\n\trm -rf /var/lib/apt/lists/*; \\\n\n# https://github.com/travis-ci/travis-ci/issues/9391 (can't let \"tiny_tds\" download FreeTDS for us because FTP)\n# https://github.com/rails-sqlserver/tiny_tds/pull/384 (newer version uses HTTP!)\n# https://github.com/rails-sqlserver/tiny_tds/pull/345 (... but then can't download it for us)\n# http://www.freetds.org/files/stable/?C=M;O=D\n# (if/when we update to Debian Buster and thus get FreeTDS newer than 0.95 in the distro, we can switch back to simply installing \"freetds-dev\" from Debian)\n\twget -O freetds.tar.bz2 'https://www.freetds.org/files/stable/freetds-1.00.91.tar.bz2'; \\\n\techo '8d71f9f29be0fe0637e443dd3807b3fd *freetds.tar.bz2' | md5sum -c -; \\\n\tmkdir freetds; \\\n\ttar -xf freetds.tar.bz2 -C freetds --strip-components=1; \\\n\trm freetds.tar.bz2; \\\n\t( cd freetds && gnuArch=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" && ./configure --build=\"$gnuArch\" --enable-silent-rules && make -j \"$(nproc)\" && make -C src install && make -C include install ); \\\n\trm -rf freetds; \\\n\tgosu redmine bundle config build.tiny_tds --enable-system-freetds; \\\n\n\tgosu redmine bundle install --without development test; \\\n\tfor adapter in mysql2 postgresql sqlserver sqlite3; do \\\n\t\techo \"$RAILS_ENV:\" > ./config/database.yml; \\\n\t\techo \"  adapter: $adapter\" >> ./config/database.yml; \\\n\t\tgosu redmine bundle install --without development test; \\\n\t\tcp Gemfile.lock \"Gemfile.lock.${adapter}\"; \\\n\tdone; \\\n\trm ./config/database.yml; \\\n# fix permissions for running as an arbitrary user\n\tchmod -R ugo=rwX Gemfile.lock \"$GEM_HOME\"; \\\n\trm -rf ~redmine/.bundle; \\\n\n# reset apt-mark's \"manual\" list so that \"purge --auto-remove\" will remove all build dependencies\n\tapt-mark auto '.*' > /dev/null; \\\n\t[ -z \"$savedAptMark\" ] || apt-mark manual $savedAptMark; \\\n\tfind /usr/local -type f -executable -exec ldd '{}' ';' \\\n\t\t| awk '/=>/ { print $(NF-1) }' \\\n\t\t| sort -u \\\n\t\t| grep -v '^/usr/local/' \\\n\t\t| xargs -r dpkg-query --search \\\n\t\t| cut -d: -f1 \\\n\t\t| sort -u \\\n\t\t| xargs -r apt-mark manual \\\n\t; \\\n\tapt-get purge -y --auto-remove -o APT::AutoRemove::RecommendsImportant=false\n\nVOLUME /usr/src/redmine/files\n\nCOPY docker-entrypoint.sh /\nENTRYPOINT [\"/docker-entrypoint.sh\"]\n\nEXPOSE 3000\nCMD [\"rails\", \"server\", \"-b\", \"0.0.0.0\"]\n"
+}

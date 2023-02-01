@@ -1,0 +1,61 @@
+FROM public.ecr.aws/docker/library/alpine:3
+
+ARG CURL_VERSION
+
+RUN apk update && \
+    apk add --no-cache \
+        openjdk11 \
+        cmake \
+        file \
+        g++ \
+        gcc \
+        make \
+        libexecinfo-dev \
+        perl
+
+# Install curl dependency
+COPY ./deps/curl-$CURL_VERSION.tar.gz /src/deps/
+RUN tar xzf /src/deps/curl-$CURL_VERSION.tar.gz -C /src/deps && mv /src/deps/curl-$CURL_VERSION /src/deps/curl && rm /src/deps/curl-$CURL_VERSION.tar.gz
+WORKDIR /src/deps/curl
+RUN ./configure --build="$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)" \
+        --prefix $(pwd)/../artifacts \
+        --disable-shared \
+        --without-ssl \
+        --with-pic \
+        --without-zlib && \
+    make && \
+    make install
+
+# Install aws-lambda-cpp dependency
+ADD ./deps/aws-lambda-cpp-* /src/deps/aws-lambda-cpp
+RUN mkdir -p /src/deps/aws-lambda-cpp/build
+WORKDIR /src/deps/aws-lambda-cpp/build
+RUN cmake .. \
+        -DCMAKE_CXX_FLAGS="-fPIC -DBACKWARD_SYSTEM_UNKNOWN" \
+        -DCMAKE_CXX_STANDARD=11 \
+        -DCMAKE_INSTALL_PREFIX=$(pwd)/../../artifacts\
+        -DCMAKE_MODULE_PATH=$(pwd)/../../artifacts/lib/pkgconfig && \
+    make && \
+    make install
+
+# Build native client
+ADD *.cpp *.h /src/
+WORKDIR /src
+
+ENV JAVA_HOME=/usr/lib/jvm/java-11-openjdk
+RUN /usr/bin/c++ -c \
+        -std=gnu++11 \
+        -fPIC \
+        -I${JAVA_HOME}/include \
+        -I${JAVA_HOME}/include/linux \
+        -I ./deps/artifacts/include \
+        com_amazonaws_services_lambda_runtime_api_client_runtimeapi_NativeClient.cpp -o com_amazonaws_services_lambda_runtime_api_client_runtimeapi_NativeClient.o && \
+    /usr/bin/c++ -shared \
+        -std=gnu++11 \
+        -o aws-lambda-runtime-interface-client.so com_amazonaws_services_lambda_runtime_api_client_runtimeapi_NativeClient.o \
+        -L ./deps/artifacts/lib64/ \
+        -L ./deps/artifacts/lib/ \
+        -laws-lambda-runtime \
+        -lcurl \
+        -static-libstdc++ \
+        -static-libgcc

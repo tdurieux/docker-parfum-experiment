@@ -1,0 +1,35 @@
+{
+  "startTime": 1674249548993,
+  "endTime": 1674249549569,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 39,
+        "lineEnd": 39,
+        "columnStart": 4,
+        "columnEnd": 104
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 20,
+        "lineEnd": 26,
+        "columnStart": 4,
+        "columnEnd": 6
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 20,
+        "lineEnd": 26,
+        "columnStart": 4,
+        "columnEnd": 6
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Copyright 2019 Cargill Incorporated\n#\n# Licensed under the Apache License, Version 2.0 (the \"License\");\n# you may not use this file except in compliance with the License.\n# You may obtain a copy of the License at\n#\n#     http://www.apache.org/licenses/LICENSE-2.0\n#\n# Unless required by applicable law or agreed to in writing, software\n# distributed under the License is distributed on an \"AS IS\" BASIS,\n# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.\n# See the License for the specific language governing permissions and\n# limitations under the License.\n\nFROM ubuntu:bionic\n\n# Install base dependencies\nENV VERSION=AUTO_STRICT\n\nRUN apt-get update \\\n && apt-get install --no-install-recommends -y \\\n curl \\\n gcc \\\n libssl-dev \\\n libzmq3-dev \\\n pkg-config \\\n unzip && rm -rf /var/lib/apt/lists/*;\n\nENV PATH=$PATH:/protoc3/bin:/root/.cargo/bin\n\n# Install Rust\nRUN curl https://sh.rustup.rs -sSf > /usr/bin/rustup-init \\\n && chmod +x /usr/bin/rustup-init \\\n && rustup-init -y\n\nRUN rustup update \\\n && rustup target add wasm32-unknown-unknown\n\n# Install protoc\nRUN curl -f -OLsS https://github.com/google/protobuf/releases/download/v3.7.1/protoc-3.7.1-linux-x86_64.zip \\\n && unzip -o protoc-3.7.1-linux-x86_64.zip -d /usr/local \\\n && rm protoc-3.7.1-linux-x86_64.zip\n\n# Create empty cargo project for sdk\nWORKDIR /build/sdks\nRUN USER=root cargo new --lib rust\n\n# Copy over Cargo.toml, build.rs and protos\nCOPY sdks/rust/Cargo.toml /build/sdks/rust/Cargo.toml\nCOPY sdks/rust/build.rs /build/sdks/rust/build.rs\nCOPY sdks/rust/protos /build/sdks/rust/protos\n\n# Do a release build to cache dependencies\nWORKDIR /build/sdks/rust\nRUN cargo build --target wasm32-unknown-unknown --release\n\nWORKDIR /build\n\n# Create empty cargo project for intkey multiply\nRUN USER=root cargo new --bin example/intkey_multiply/processor\n\n# Copy over Cargo.toml file\nCOPY example/intkey_multiply/processor/Cargo.toml \\\n     /build/example/intkey_multiply/processor/Cargo.toml\n\n# Do a release build to cache dependencies\nWORKDIR /build/example/intkey_multiply/processor\nRUN cargo build --target wasm32-unknown-unknown --release\n\n# Remove the auto-generated .rs files and the built files\nRUN rm src/*.rs\nRUN rm target/wasm32-unknown-unknown/release/intkey* \\\n    target/wasm32-unknown-unknown/release/deps/intkey*\n\n# Copy over source files\nCOPY sdks/rust/src /build/sdks/rust/src\nCOPY example/intkey_multiply/processor/src \\\n     /build/example/intkey_multiply/processor/src\n\n# Build the contract\nARG REPO_VERSION\nRUN sed -i -e s/version.*$/version\\ =\\ \\\"${REPO_VERSION}\\\"/ Cargo.toml\nRUN cargo build --target wasm32-unknown-unknown --release\n\n# Copy the packaging directory\nCOPY example/intkey_multiply/processor/packaging/scar/* \\\n     /build/example/intkey_multiply/processor/packaging/scar/\n\n# Copy the contract to the packaging directory\nRUN cp target/wasm32-unknown-unknown/release/intkey-multiply.wasm \\\n    packaging/scar\n\nWORKDIR /build/example/intkey_multiply/processor/packaging/scar\n\n# Create .scar file\nRUN tar -jcvf /tmp/intkey-multiply_${REPO_VERSION}.scar .\n"
+}

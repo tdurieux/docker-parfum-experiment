@@ -1,0 +1,90 @@
+{
+  "startTime": 1674216851402,
+  "endTime": 1674216852551,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 31,
+        "lineEnd": 31,
+        "columnStart": 4,
+        "columnEnd": 27
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 74,
+        "lineEnd": 74,
+        "columnStart": 4,
+        "columnEnd": 89
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 82,
+        "lineEnd": 82,
+        "columnStart": 4,
+        "columnEnd": 211
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 5,
+        "lineEnd": 23,
+        "columnStart": 4,
+        "columnEnd": 8
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 102,
+        "lineEnd": 102,
+        "columnStart": 4,
+        "columnEnd": 26
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 102,
+        "lineEnd": 102,
+        "columnStart": 4,
+        "columnEnd": 26
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 5,
+        "lineEnd": 23,
+        "columnStart": 4,
+        "columnEnd": 8
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 102,
+        "lineEnd": 102,
+        "columnStart": 4,
+        "columnEnd": 26
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 102,
+        "lineEnd": 102,
+        "columnStart": 4,
+        "columnEnd": 50
+      }
+    }
+  ],
+  "repairedDockerfile": "FROM ubuntu:20.04\n\n# Install common dependencies\nENV DEBIAN_FRONTEND=noninteractive\nRUN apt-get -y update && \\\n    apt-get -y --no-install-recommends install sudo \\\n    apt-utils \\\n    build-essential \\\n    openssl \\\n    clang \\\n    graphviz-dev \\\n    git \\\n    autoconf \\\n    libgnutls28-dev \\\n    libssl-dev \\\n    llvm \\\n    python3-pip \\\n    nano \\\n    net-tools \\\n    vim \\\n    gdb \\\n    netcat \\\n    strace \\\n    wget && rm -rf /var/lib/apt/lists/*;\n\n# Add a new user ubuntu, pass: ubuntu\nRUN groupadd ubuntu && \\\n    useradd -rm -d /home/ubuntu -s /bin/bash -g ubuntu -G sudo -u 1000 ubuntu -p \"$(openssl passwd -1 ubuntu)\"\n\nRUN chmod 777 /tmp\n\nRUN pip3 install --no-cache-dir gcovr==4.2\n\n# Use ubuntu as default username\nUSER ubuntu\nWORKDIR /home/ubuntu\n\n# Import environment variable to pass as parameter to make (e.g., to make parallel builds with -j)\nARG MAKE_OPT\n\n# Set up fuzzers\nRUN git clone https://github.com/profuzzbench/aflnet.git && \\\n    cd aflnet && \\\n    make clean all $MAKE_OPT && \\\n    cd llvm_mode && make $MAKE_OPT\n\nRUN git clone https://github.com/profuzzbench/aflnwe.git && \\\n    cd aflnwe && \\\n    make clean all $MAKE_OPT && \\\n    cd llvm_mode && make $MAKE_OPT\n\n# Set up environment variables for AFLNet\nENV WORKDIR=\"/home/ubuntu/experiments\"\nENV AFLNET=\"/home/ubuntu/aflnet\"\nENV PATH=\"${PATH}:${AFLNET}:/home/ubuntu/.local/bin:${WORKDIR}\"\nENV AFL_PATH=\"${AFLNET}\"\nENV AFL_I_DONT_CARE_ABOUT_MISSING_CRASHES=1 \\\n    AFL_SKIP_CPUFREQ=1 \\\n    AFL_NO_AFFINITY=1\n\n\n# Set up environment variables for ASAN\nenv ASAN_OPTIONS='abort_on_error=1:symbolize=0:detect_leaks=0:detect_stack_use_after_return=1:detect_container_overflow=0:poison_array_cookie=0:malloc_fill_byte=0:max_malloc_fill_size=16777216'\n\n\nRUN mkdir $WORKDIR\n\n# Use \"--enable-devel=...:coredump:stacktrace\" for debugging\n\n# Set up ProFTPD for fuzzing\nRUN cd ${WORKDIR} && \\\n    git clone https://github.com/proftpd/proftpd.git && \\\n    cd proftpd && \\\n    git checkout 4017eff8 && \\\n    CC=\"afl-clang-fast\" CXX=\"afl-clang-fast++\" ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" --enable-devel=nodaemon:nofork && \\\n    AFL_USE_ASAN=1 make $MAKE_OPT\n\n# Set up ProFTPD for coverage analysis\nRUN cd ${WORKDIR} && \\\n    git clone https://github.com/proftpd/proftpd.git proftpd-gcov && \\\n    cd proftpd-gcov && \\\n    git checkout 4017eff8 && \\\n    CFLAGS=\"-fprofile-arcs -ftest-coverage\" CPPFLAGS=\"-fprofile-arcs -ftest-coverage\" CXXFLAGS=\"-fprofile-arcs -ftest-coverage\" LDFLAGS=\"-fprofile-arcs -ftest-coverage\" ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" --enable-devel=nodaemon:nofork && \\\n    make $MAKE_OPT\n\n\nCOPY --chown=ubuntu:ubuntu basic.conf ${WORKDIR}/\nCOPY --chown=ubuntu:ubuntu in-ftp ${WORKDIR}/in-ftp\nCOPY --chown=ubuntu:ubuntu ftp.dict ${WORKDIR}/ftp.dict\nCOPY --chown=ubuntu:ubuntu run.sh ${WORKDIR}/run\nCOPY --chown=ubuntu:ubuntu clean.sh ${WORKDIR}/clean\nCOPY --chown=ubuntu:ubuntu cov_script.sh ${WORKDIR}/cov_script\n\nRUN mkdir /home/ubuntu/ftpshare && \\\n    chown -R ubuntu:ubuntu /home/ubuntu/ftpshare\n\n\n# Switch default user to root\nUSER root\nWORKDIR /home/ubuntu\n\n# For debugging purposes\nRUN apt-get -y --no-install-recommends install ftp && rm -rf /var/lib/apt/lists/*;\n"
+}

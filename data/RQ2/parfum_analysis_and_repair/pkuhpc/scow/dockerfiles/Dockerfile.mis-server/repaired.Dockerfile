@@ -1,0 +1,61 @@
+FROM node:gallium-alpine@sha256:554142f9a6367f1fbd776a1b2048fab3a2cc7aa477d7fe9c00ce0f110aa45716 AS builder
+
+RUN apk update && apk add --no-cache libc6-compat python3 make gcc g++
+
+RUN corepack enable
+
+WORKDIR /app
+
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
+
+COPY libs/config/package.json ./libs/config/
+COPY libs/auth/package.json ./libs/auth/
+COPY libs/decimal/package.json ./libs/decimal/
+COPY apps/mis-server/package.json ./apps/mis-server/
+
+RUN pnpm i --frozen-lockfile
+
+COPY tsconfig.json .eslintrc.json ./
+
+COPY protos ./protos
+
+COPY libs/config ./libs/config
+COPY libs/auth ./libs/auth
+COPY libs/decimal ./libs/decimal
+COPY apps/mis-server ./apps/mis-server
+
+RUN pnpm run build
+
+RUN rm -rf node_modules && pnpm i --prod --frozen-lockfile --offline
+
+FROM node:gallium-alpine@sha256:554142f9a6367f1fbd776a1b2048fab3a2cc7aa477d7fe9c00ce0f110aa45716 AS runner
+
+WORKDIR /app
+COPY --from=builder /app/node_modules ./node_modules
+
+WORKDIR /app/libs/auth
+COPY --from=builder /app/libs/auth/package.json .
+COPY --from=builder /app/libs/auth/node_modules/ ./node_modules
+COPY --from=builder /app/libs/auth/build/ ./build
+
+WORKDIR /app/libs/decimal
+COPY --from=builder /app/libs/decimal/package.json .
+COPY --from=builder /app/libs/decimal/node_modules/ ./node_modules
+COPY --from=builder /app/libs/decimal/build/ ./build
+
+WORKDIR /app/libs/config
+COPY --from=builder /app/libs/config/package.json .
+COPY --from=builder /app/libs/config/node_modules/ ./node_modules
+COPY --from=builder /app/libs/config/build/ ./build
+
+WORKDIR /app/apps/mis-server
+COPY --from=builder /app/apps/mis-server/package.json .
+COPY --from=builder /app/apps/mis-server/node_modules/ ./node_modules
+COPY --from=builder /app/apps/mis-server/build/ ./src
+
+ENV NODE_ENV production
+
+ENTRYPOINT [ "node", "src/index.js" ]
+
+
+

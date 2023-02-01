@@ -1,0 +1,31 @@
+FROM gradle:6.9.2-jdk11 AS build
+WORKDIR /home/gradle/graphql-api
+COPY --chown=gradle:gradle ./.git ./.git
+WORKDIR /home/gradle/graphql-api/backend
+COPY --chown=gradle:gradle backend/gradle ./gradle
+COPY --chown=gradle:gradle backend/*.gradle ./
+
+# Download the application insights JAR
+RUN wget https://github.com/microsoft/ApplicationInsights-Java/releases/download/3.0.3/applicationinsights-agent-3.0.3.jar -O insights.jar
+
+# nice optimization opportunity: get the dependencies cached in an intermediate
+# docker layer (have to tickle gradle, may not be worth it)
+
+# This is only useful if we have the git-info actuator, in which case we have
+# to rearrange some files because we're in a subdirectory
+# COPY --chown=gradle:gradle ./.git ./.git
+COPY --chown=gradle:gradle ./backend/config ./config
+COPY --chown=gradle:gradle ./backend/src ./src
+COPY --chown=gradle:gradle ./backend/gradle.properties gradle.properties
+
+RUN gradle --no-daemon assemble
+
+FROM adoptopenjdk/openjdk11:alpine-jre
+EXPOSE 8080
+COPY --from=build /home/gradle/graphql-api/backend/build/libs/*.jar app.jar
+COPY --from=build  /home/gradle/graphql-api/backend/insights.jar insights.jar
+
+RUN addgroup -S appgroup && adduser -S appuser -G appgroup
+USER appuser
+
+ENTRYPOINT ["java", "-javaagent:insights.jar", "-XX:MaxRAMPercentage=75", "-XX:InitialRAMPercentage=40", "-jar", "app.jar"]

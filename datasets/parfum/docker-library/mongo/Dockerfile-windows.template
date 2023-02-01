@@ -1,0 +1,97 @@
+FROM mcr.microsoft.com/windows/{{ env.windowsVariant }}:{{ env.windowsRelease }}
+
+{{ if env.windowsVariant == "servercore" then ( -}}
+SHELL ["powershell", "-Command", "$ErrorActionPreference = 'Stop';"]
+
+{{ if .notes then ( -}}
+# {{ .notes }}
+{{ ) else "" end -}}
+ENV MONGO_VERSION {{ .version }}
+{{ if .date or .githash then ( -}}
+# {{ [ .date // empty, "https://github.com/mongodb/mongo/tree/" + .githash // empty ] | join(", ") }}
+{{ ) else "" end -}}
+
+ENV MONGO_DOWNLOAD_URL {{ .targets.windows.msi }}
+ENV MONGO_DOWNLOAD_SHA256={{ .targets.windows.sha256 }}
+
+RUN Write-Host ('Downloading {0} ...' -f $env:MONGO_DOWNLOAD_URL); \
+	[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; \
+	(New-Object System.Net.WebClient).DownloadFile($env:MONGO_DOWNLOAD_URL, 'mongo.msi'); \
+	\
+	if ($env:MONGO_DOWNLOAD_SHA256) { \
+		Write-Host ('Verifying sha256 ({0}) ...' -f $env:MONGO_DOWNLOAD_SHA256); \
+		if ((Get-FileHash mongo.msi -Algorithm sha256).Hash -ne $env:MONGO_DOWNLOAD_SHA256) { \
+			Write-Host 'FAILED!'; \
+			exit 1; \
+		}; \
+	}; \
+	\
+	Write-Host 'Installing ...'; \
+# https://docs.mongodb.com/manual/tutorial/install-mongodb-on-windows/#install-mongodb-community-edition
+	Start-Process msiexec -Wait \
+		-ArgumentList @( \
+			'/i', \
+			'mongo.msi', \
+			'/quiet', \
+			'/qn', \
+			'/l*v', 'install.log', \
+# https://docs.mongodb.com/manual/tutorial/install-mongodb-on-windows-unattended/#run-the-windows-installer-from-the-windows-command-interpreter
+			'INSTALLLOCATION=C:\mongodb', \
+			'ADDLOCAL={{ .targets.windows.features | join(",") }}' \
+		); \
+	if (-Not (Test-Path C:\mongodb\bin\mongo.exe -PathType Leaf)) { \
+		Write-Host 'Installer failed!'; \
+		Get-Content install.log; \
+		exit 1; \
+	}; \
+	Remove-Item install.log; \
+	\
+	$env:PATH = 'C:\mongodb\bin;' + $env:PATH; \
+	[Environment]::SetEnvironmentVariable('PATH', $env:PATH, [EnvironmentVariableTarget]::Machine); \
+	\
+	Write-Host 'Verifying install ...'; \
+	Write-Host '  mongo --version'; mongo --version; \
+	Write-Host '  mongod --version'; mongod --version; \
+	\
+	Write-Host 'Removing ...'; \
+	Remove-Item C:\windows\installer\*.msi -Force; \
+	Remove-Item mongo.msi -Force; \
+	\
+	Write-Host 'Complete.';
+
+# TODO docker-entrypoint.ps1 ? (for "docker run <image> --flag --flag --flag")
+{{ ) else ( -}}
+SHELL ["cmd", "/S", "/C"]
+
+# PATH isn't actually set in the Docker image, so we have to set it from within the container
+USER ContainerAdministrator
+RUN setx /m PATH "C:\mongodb\bin;%PATH%"
+USER ContainerUser
+# doing this first to share cache across versions more aggressively
+
+{{ def copy_from: "mongo:" + .version + "-windowsservercore-" + env.windowsRelease -}}
+COPY --from={{ copy_from }} \
+	C:\\Windows\\System32\\msvcp140.dll \
+	C:\\Windows\\System32\\vcruntime140.dll \
+{{ if [ "4.0", "4.2" ] | index(env.rcVersion) then "" else ( -}}
+{{ # https://github.com/docker-library/mongo/pull/470#discussion_r633701963 -}}
+	C:\\Windows\\System32\\vcruntime140_1.dll \
+{{ ) end -}}
+	C:\\Windows\\System32\\
+
+{{ if .notes then ( -}}
+# {{ .notes }}
+{{ ) else "" end -}}
+ENV MONGO_VERSION {{ .version }}
+{{ if .date or .githash then ( -}}
+# {{ [ .date // empty, "https://github.com/mongodb/mongo/tree/" + .githash // empty ] | join(", ") }}
+{{ ) else "" end -}}
+
+COPY --from={{ copy_from }} C:\\mongodb C:\\mongodb
+RUN mongo --version && mongod --version
+{{ ) end -}}
+
+VOLUME C:\\data\\db C:\\data\\configdb
+
+EXPOSE 27017
+CMD ["mongod", "--bind_ip_all"]

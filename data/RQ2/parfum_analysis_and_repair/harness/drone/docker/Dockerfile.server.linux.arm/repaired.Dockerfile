@@ -1,0 +1,1 @@
+# docker build --rm -f docker/Dockerfile -t drone/drone .

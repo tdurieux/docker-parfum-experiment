@@ -1,0 +1,17 @@
+{
+  "startTime": 1674249775815,
+  "endTime": 1674249776731,
+  "originalSmells": [
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 20,
+        "lineEnd": 20,
+        "columnStart": 5,
+        "columnEnd": 16
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "ARG ELIXIR_VERSION=1.13.3\nARG ERLANG_VERSION=24.3.3\nARG ALPINE_VERSION=3.15.3\nARG NODE_VERSION=16.14.2\n\n# Fetch deps for building web assets\nFROM hexpm/elixir:${ELIXIR_VERSION}-erlang-${ERLANG_VERSION}-alpine-${ALPINE_VERSION} as deps\nRUN apk --no-cache add git\nRUN mix local.hex --force && mix local.rebar --force\nADD . /build\nWORKDIR /build\nRUN mix deps.clean --all && mix deps.get\n\n# Build web assets\nFROM node:${NODE_VERSION} as assets\nRUN mkdir -p /priv/static\nWORKDIR /build\nCOPY apps/nerves_hub_www/assets apps/nerves_hub_www/assets\nCOPY --from=deps /build/deps deps\nRUN cd apps/nerves_hub_www/assets \\\n  && npm install \\\n  && npm run deploy && npm cache clean --force;\n\n# Elixir build container\nFROM hexpm/elixir:${ELIXIR_VERSION}-erlang-${ERLANG_VERSION}-alpine-${ALPINE_VERSION} as builder\n\nENV MIX_ENV=prod\n\nRUN apk --no-cache add make gcc musl-dev git\nRUN mix local.hex --force && mix local.rebar --force\nRUN mkdir /build\nADD . /build\nWORKDIR /build\nCOPY --from=deps /build/deps deps\nCOPY --from=assets /build/apps/nerves_hub_www/priv/static apps/nerves_hub_www/priv/static\n\nRUN mix do phx.digest, release nerves_hub_www --overwrite\n\n# Release Container\nFROM nerveshub/runtime:alpine-${ALPINE_VERSION} as release\n\nRUN apk add 'fwup~=1.9' \\\n  --repository http://nl.alpinelinux.org/alpine/edge/community/ \\\n  --no-cache\n\nRUN apk --no-cache add xdelta3 zip unzip\n\nEXPOSE 80\nEXPOSE 443\n\nENV LOCAL_IPV4=127.0.0.1\n\nCOPY --from=builder /build/_build/$MIX_ENV/rel/nerves_hub_www/ ./\nCOPY --from=builder /build/rel/scripts/docker-entrypoint.sh .\nCOPY --from=builder /build/rel/scripts/s3-sync.sh .\nCOPY --from=builder /build/rel/scripts/ecs-cluster.sh .\n\nRUN [\"chmod\", \"+x\", \"/app/docker-entrypoint.sh\"]\nRUN [\"chmod\", \"+x\", \"/app/s3-sync.sh\"]\nRUN [\"chmod\", \"+x\", \"/app/ecs-cluster.sh\"]\n\nENTRYPOINT [\"/app/docker-entrypoint.sh\"]\n\nCMD [\"/app/ecs-cluster.sh\"]\n"
+}

@@ -1,0 +1,117 @@
+{
+  "startTime": 1674218353196,
+  "endTime": 1674218354085,
+  "originalSmells": [
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 14,
+        "lineEnd": 14,
+        "columnStart": 4,
+        "columnEnd": 42
+      }
+    },
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 15,
+        "lineEnd": 15,
+        "columnStart": 4,
+        "columnEnd": 34
+      }
+    },
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 20,
+        "lineEnd": 20,
+        "columnStart": 4,
+        "columnEnd": 14
+      }
+    },
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 44,
+        "lineEnd": 44,
+        "columnStart": 4,
+        "columnEnd": 42
+      }
+    },
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 45,
+        "lineEnd": 45,
+        "columnStart": 4,
+        "columnEnd": 16
+      }
+    },
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 52,
+        "lineEnd": 52,
+        "columnStart": 4,
+        "columnEnd": 14
+      }
+    },
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 131,
+        "lineEnd": 131,
+        "columnStart": 7,
+        "columnEnd": 23
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 15,
+        "lineEnd": 15,
+        "columnStart": 38,
+        "columnEnd": 54
+      }
+    },
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 20,
+        "lineEnd": 20,
+        "columnStart": 18,
+        "columnEnd": 34
+      }
+    },
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 45,
+        "lineEnd": 45,
+        "columnStart": 20,
+        "columnEnd": 36
+      }
+    },
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 52,
+        "lineEnd": 52,
+        "columnStart": 18,
+        "columnEnd": 34
+      }
+    },
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 132,
+        "lineEnd": 132,
+        "columnStart": 30,
+        "columnEnd": 46
+      }
+    }
+  ],
+  "repairedDockerfile": "#\n# This Dockerfile is used for self-hosted production builds.\n#\n# Note: for 'posthog/posthog-cloud' remember to update 'prod.web.Dockerfile' as appropriate\n#\n\n#\n# Build the frontend artifacts\n#\nFROM node:16.15-alpine3.14 AS frontend\n\nWORKDIR /code\n\nCOPY package.json yarn.lock ./\nRUN yarn config set network-timeout 300000 && \\\n    yarn install --frozen-lockfile && yarn cache clean;\n\nCOPY frontend/ frontend/\nCOPY ./bin/ ./bin/\nCOPY babel.config.js tsconfig.json webpack.config.js ./\nRUN yarn build && yarn cache clean;\n\n#\n# Build the plugin-server artifacts. Note that we still need to install the\n# runtime deps in the main image\n#\nFROM node:16.15-alpine3.14 AS plugin-server\n\nWORKDIR /code/plugin-server\n\n# Install python, make and gcc as they are needed for the yarn install\nRUN apk --update --no-cache add \\\n    \"make~=4.3\" \\\n    \"g++~=10.3\" \\\n    \"gcc~=10.3\" \\\n    \"python3~=3.9\"\n\n# Compile and install Yarn dependencies.\n#\n# Notes:\n#\n# - we explicitly COPY the files so that we don't need to rebuild\n#   the container every time a dependency changes\nCOPY ./plugin-server/package.json ./plugin-server/yarn.lock ./plugin-server/tsconfig.json ./\nRUN yarn config set network-timeout 300000 && \\\n    yarn install && yarn cache clean;\n\n# Build the plugin server\n#\n# Note: we run the build as a separate actions to increase\n# the cache hit ratio of the layers above.\nCOPY ./plugin-server/src/ ./src/\nRUN yarn build && yarn cache clean;\n\n# Build the posthog image, incorporating the Django app along with the frontend,\n# as well as the plugin-server\nFROM python:3.8.12-alpine3.14\n\nENV PYTHONUNBUFFERED 1\n\nWORKDIR /code\n\n# Install OS dependencies needed to run PostHog\n#\n# Note: please add in this section runtime dependences only.\n# If you temporary need a package to build a Python or npm\n# dependency take a look at the sections below.\nRUN apk --update --no-cache add \\\n    \"libpq~=13\" \\\n    \"libxslt~=1.1\" \\\n    \"nodejs-current~=16\" \\\n    \"chromium~=93\" \\\n    \"chromium-chromedriver~=93\" \\\n    \"xmlsec~=1.2\"\n\n\n# Compile and install Python dependencies.\n#\n# Notes:\n#\n# - we explicitly COPY the files so that we don't need to rebuild\n#   the container every time a dependency changes\n#\n# - we need few additional OS packages for this. Let's install\n#   and then uninstall them when the compilation is completed.\nCOPY requirements.txt ./\nRUN apk --update --no-cache --virtual .build-deps add \\\n    \"bash~=5.1\" \\\n    \"g++~=10.3\" \\\n    \"gcc~=10.3\" \\\n    \"cargo~=1.52\" \\\n    \"git~=2\" \\\n    \"make~=4.3\" \\\n    \"libffi-dev~=3.3\" \\\n    \"libxml2-dev~=2.9\" \\\n    \"libxslt-dev~=1.1\" \\\n    \"xmlsec-dev~=1.2\" \\\n    \"postgresql-dev~=13\" \\\n    && \\\n    pip install -r requirements.txt --compile --no-cache-dir \\\n    && \\\n    apk del .build-deps\n\nRUN addgroup -S posthog && \\\n    adduser -S posthog -G posthog\n\nRUN chown posthog.posthog /code\n\nUSER posthog\n\n# Add in Django deps and generate Django's static files\nCOPY manage.py manage.py\nCOPY posthog posthog/\nCOPY ee ee/\nCOPY --from=frontend /code/frontend/dist /code/frontend/dist\n\nRUN SKIP_SERVICE_VERSION_REQUIREMENTS=1 SECRET_KEY='unsafe secret key for collectstatic only' DATABASE_URL='postgres:///' REDIS_URL='redis:///' python manage.py collectstatic --noinput\n\n# Add in the plugin-server compiled code, as well as the runtime dependencies\nWORKDIR /code/plugin-server\nCOPY ./plugin-server/package.json ./plugin-server/yarn.lock ./\n\n# Switch to root and install yarn so we can install runtime deps. Node that we\n# still need yarn to run the plugin-server so we do not remove it.\nUSER root\nRUN apk --update --no-cache add \"yarn~=1\"\n\n# NOTE: we need make and g++ for node-gyp\n# NOTE: npm is required for re2\nRUN apk --update --no-cache add \"make~=4.3\" \"g++~=10.3\" \"npm~=7\" --virtual .build-deps \\\n    && yarn install --frozen-lockfile --production=true \\\n    && yarn cache clean \\\n    && apk del .build-deps && yarn cache clean;\n\nUSER posthog\n\n# Add in the compiled plugin-server\nCOPY --from=plugin-server /code/plugin-server/dist/ ./dist/\n\nWORKDIR /code/\nUSER root\nCOPY ./plugin-server/package.json ./plugin-server/\n\n# We need bash to run the bin scripts\nRUN apk --update --no-cache add \"bash~=5.1\"\nCOPY ./bin ./bin/\nUSER posthog\n\nENV CHROME_BIN=/usr/bin/chromium-browser \\\n    CHROME_PATH=/usr/lib/chromium/ \\\n    CHROMEDRIVER_BIN=/usr/bin/chromedriver\n\nCOPY gunicorn.config.py ./\n\n# Expose container port and run entry point script\nEXPOSE 8000\nCMD [\"./bin/docker\"]\n"
+}

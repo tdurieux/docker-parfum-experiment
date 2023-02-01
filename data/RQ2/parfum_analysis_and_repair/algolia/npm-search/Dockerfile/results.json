@@ -1,0 +1,26 @@
+{
+  "startTime": 1674250880052,
+  "endTime": 1674250880948,
+  "originalSmells": [
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 37,
+        "lineEnd": 37,
+        "columnStart": 5,
+        "columnEnd": 17
+      }
+    },
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 47,
+        "lineEnd": 47,
+        "columnStart": 5,
+        "columnEnd": 45
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# ---- Base ----\nFROM node:16.16.0-alpine AS base\n\n# ------------------\n# package.json cache\n# ------------------\nFROM apteno/alpine-jq:2022-03-27 AS deps\n\n# To prevent cache invalidation from changes in fields other than dependencies\nCOPY package.json /tmp\nRUN jq 'walk(if type == \"object\" then with_entries(select(.key | test(\"^jest|prettier|eslint|semantic|dotenv|nodemon|renovate\") | not)) else . end) | { name, dependencies, devDependencies, packageManager }' < /tmp/package.json > /tmp/deps.json\n\n# ------------------\n# New base image\n# ------------------\nFROM base as tmp\n\nENV IN_DOCKER true\nENV PLAYWRIGHT_BROWSERS_PATH=\"/ms-playwright\"\nENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=\"true\"\n\n# Setup the app WORKDIR\nWORKDIR /app/tmp\n\n# Copy and install dependencies separately from the app's code\n# To leverage Docker's cache when no dependency has change\nCOPY --from=deps /tmp/deps.json ./package.json\nCOPY yarn.lock .yarnrc.yml ./\nCOPY .yarn .yarn\n\n# Install dependencies for native deps\nRUN apk add --no-cache bash python3\n\n# Install dev dependencies\nRUN true \\\n  # Use local version instead of letting yarn auto upgrade itself\n  && yarn set version $(ls -d $PWD/.yarn/releases/*) \\\n  && yarn install && yarn cache clean;\n\n# This step will invalidates cache\nCOPY . ./\nRUN ls -lah /app/tmp\n\n# Builds the code and reinstall node_modules in prod mode\nRUN true \\\n  && yarn build \\\n  # Finally remove all dev packages\n  && yarn workspaces focus --all --production \\\n  && rm -rf src/ \\\n  && rm -rf .yarn/ && yarn cache clean;\n\n# ---- Final ----\n# Resulting new, minimal image\n# This image must have the minimum amount of layers\nFROM node:16.16.0-alpine as final\n\nENV NODE_ENV production\n\n# Do not use root to run the app\nUSER node\n\nWORKDIR /app\n\nCOPY --from=tmp --chown=node:node /app/tmp /app\n\nEXPOSE 8000\n\nCMD [ \"node\", \"dist/src/index.js\" ]\n"
+}

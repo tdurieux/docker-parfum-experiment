@@ -1,0 +1,26 @@
+{
+  "startTime": 1674245375834,
+  "endTime": 1674245377055,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 114,
+        "lineEnd": 114,
+        "columnStart": 4,
+        "columnEnd": 41
+      }
+    },
+    {
+      "rule": "sha256sumEchoOneSpaces",
+      "position": {
+        "lineStart": 56,
+        "lineEnd": 56,
+        "columnStart": 1,
+        "columnEnd": 41
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM python:3.10.4-alpine3.14\n\n### COPYPASTA ###\nRUN apk add --no-cache \\\n\t\tca-certificates\n\n# set up nsswitch.conf for Go's \"netgo\" implementation\n# - https://github.com/golang/go/blob/go1.9.1/src/net/conf.go#L194-L275\n# - docker run --rm debian:stretch grep '^hosts:' /etc/nsswitch.conf\nRUN [ ! -e /etc/nsswitch.conf ] && echo 'hosts: files dns' > /etc/nsswitch.conf\n\nENV PATH /usr/local/go/bin:$PATH\n\nENV GOLANG_VERSION 1.18.1\n\nRUN set -eux; \\\n\tapk add --no-cache --virtual .build-deps \\\n\t\tbash \\\n\t\tgcc \\\n\t\tgnupg \\\n\t\tgo \\\n\t\tmusl-dev \\\n\t\topenssl \\\n\t; \\\n\tapkArch=\"$(apk --print-arch)\"; \\\n\tcase \"$apkArch\" in \\\n\t\t'x86_64') \\\n\t\t\texport GOARCH='amd64' GOOS='linux'; \\\n\t\t\t;; \\\n\t\t'armhf') \\\n\t\t\texport GOARCH='arm' GOARM='6' GOOS='linux'; \\\n\t\t\t;; \\\n\t\t'armv7') \\\n\t\t\texport GOARCH='arm' GOARM='7' GOOS='linux'; \\\n\t\t\t;; \\\n\t\t'aarch64') \\\n\t\t\texport GOARCH='arm64' GOOS='linux'; \\\n\t\t\t;; \\\n\t\t'x86') \\\n\t\t\texport GO386='softfloat' GOARCH='386' GOOS='linux'; \\\n\t\t\t;; \\\n\t\t'ppc64le') \\\n\t\t\texport GOARCH='ppc64le' GOOS='linux'; \\\n\t\t\t;; \\\n\t\t's390x') \\\n\t\t\texport GOARCH='s390x' GOOS='linux'; \\\n\t\t\t;; \\\n\t\t*) echo >&2 \"error: unsupported architecture '$apkArch' (likely packaging update needed)\"; exit 1 ;; \\\n\tesac; \\\n\n# https://github.com/golang/go/issues/38536#issuecomment-616897960\n\turl='https://dl.google.com/go/go1.18.1.src.tar.gz'; \\\n\tsha256='efd43e0f1402e083b73a03d444b7b6576bb4c539ac46208b63a916b69aca4088'; \\\n\n\twget -O go.tgz.asc \"$url.asc\"; \\\n\twget -O go.tgz \"$url\"; \\\n\techo \"$sha256  *go.tgz\" | sha256sum -c -; \\\n\n# https://github.com/golang/go/issues/14739#issuecomment-324767697\n\texport GNUPGHOME=\"$(mktemp -d)\"; \\\n# https://www.google.com/linuxrepositories/\n\tgpg --batch --keyserver keyserver.ubuntu.com --recv-keys 'EB4C 1BFD 4F04 2F6D DDCC EC91 7721 F63B D38B 4796'; \\\n\tgpg --batch --verify go.tgz.asc go.tgz; \\\n\tgpgconf --kill all; \\\n\trm -rf \"$GNUPGHOME\" go.tgz.asc; \\\n\n\ttar -C /usr/local -xzf go.tgz; \\\n\trm go.tgz; \\\n\n\t( \\\n\t\tcd /usr/local/go/src; \\\n# set GOROOT_BOOTSTRAP + GOHOST* such that we can build Go successfully\n\t\texport GOROOT_BOOTSTRAP=\"$(go env GOROOT)\" GOHOSTOS=\"$GOOS\" GOHOSTARCH=\"$GOARCH\"; \\\n\t\t./make.bash; \\\n\t\tif [ -n \"${GO386:-}\" ]; then \\\n\t\t\trm -rf \"$GOROOT_BOOTSTRAP\"; \\\n\t\tfi; \\\n\t); \\\n\n# pre-compile the standard library, just like the official binary release tarballs do\n\tgo install std; \\\n# go install: -race is only supported on linux/amd64, linux/ppc64le, linux/arm64, freebsd/amd64, netbsd/amd64, darwin/amd64 and windows/amd64\n#\tgo install -race std; \\\n\n\tapk del --no-network .build-deps; \\\n\n# remove a few intermediate / bootstrapping files the official binary release tarballs do not contain\n\trm -rf \\\n\t\t/usr/local/go/pkg/*/cmd \\\n\t\t/usr/local/go/pkg/bootstrap \\\n\t\t/usr/local/go/pkg/obj \\\n\t\t/usr/local/go/pkg/tool/*/api \\\n\t\t/usr/local/go/pkg/tool/*/go_bootstrap \\\n\t\t/usr/local/go/src/cmd/dist/dist \\\n\t; \\\n\n\tgo version\n\nENV GOPATH /go\nENV PATH $GOPATH/bin:$PATH\nRUN mkdir -p \"$GOPATH/src\" \"$GOPATH/bin\" && chmod -R 777 \"$GOPATH\"\nWORKDIR $GOPATH\n### /COPYPASTA ###\n\nRUN go install golang.org/x/tools/cmd/goimports@latest\nRUN go install mvdan.cc/gofumpt@latest\nRUN go install github.com/segmentio/golines@latest\n\n\nENV PYTHONUNBUFFERED True\nENV APP_HOME /app\nWORKDIR $APP_HOME\nCOPY . $APP_HOME\n\nRUN pip install --no-cache-dir -r requirements-web.txt .\n\nCMD exec gunicorn --bind :$PORT --workers 1 --threads 8 --timeout 0 --chdir $APP_HOME/pytago pytago.app:app\n"
+}

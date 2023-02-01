@@ -1,0 +1,39 @@
+# Build the csi binary
+FROM golang:1.17.8 as builder
+
+WORKDIR /go/src/github.com/fluid-cloudnative/fluid
+COPY . .
+
+# Build
+# RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 GO111MODULE=on go build -a -o csi main.go
+#RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 GO111MODULE=off go build -a -o /go/bin/fluid-csi cmd/csi/*.go
+RUN make csi-build && \
+    cp bin/fluid-csi /go/bin/fluid-csi
+
+# RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 GO111MODULE=off go build -gcflags="all=-N -l" -a -o /go/bin/fluid-csi cmd/csi/*.go
+
+# Debug
+RUN go install github.com/go-delve/delve/cmd/dlv@v1.8.2
+
+# Use distroless as minimal base image to package the csi binary
+# Refer to https://github.com/GoogleContainerTools/distroless for more details
+FROM alpine:3.10
+RUN apk add --no-cache --update curl tzdata iproute2 bash libc6-compat vim && \
+  rm -rf /var/cache/apk/* && \
+  cp /usr/share/zoneinfo/Asia/Shanghai /etc/localtime && \
+  echo "Asia/Shanghai" >  /etc/timezone
+
+WORKDIR /
+COPY --from=builder /go/bin/fluid-csi /usr/local/bin/fluid-csi
+COPY --from=builder /go/bin/dlv /usr/local/bin/dlv
+ADD csi/shell/check_mount.sh /usr/local/bin/check_mount.sh
+ADD csi/shell/entrypoint.sh /usr/local/bin/entrypoint.sh
+ADD csi/shell/check_bind_mounts.sh /usr/local/bin/check_bind_mounts.sh
+RUN chmod u+x /usr/local/bin/fluid-csi && \
+    chmod u+x /usr/local/bin/check_mount.sh && \
+    chmod u+x /usr/local/bin/entrypoint.sh && \
+    chmod u+x /usr/local/bin/check_bind_mounts.sh
+
+ENTRYPOINT ["entrypoint.sh"]
+
+# ENTRYPOINT ["dlv", "--listen=:12345", "exec", "/usr/local/bin/fluid-csi", "--"]

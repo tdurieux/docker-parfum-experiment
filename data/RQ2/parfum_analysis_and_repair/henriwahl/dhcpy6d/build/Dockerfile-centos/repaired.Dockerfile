@@ -1,0 +1,16 @@
+FROM rockylinux:8
+LABEL maintainer=henri@dhcpy6d.de
+
+# get build requirements
+RUN yum -y install createrepo \
+                   git \
+                   gpg \
+                   python3-devel \
+                   python3-docutils \
+                   rpm-build \
+                   rpm-sign \
+                   sudo \
+                   which && rm -rf /var/cache/yum
+
+# flexible entrypoint, mounted as volume
+ENTRYPOINT ["/entrypoint.sh"]

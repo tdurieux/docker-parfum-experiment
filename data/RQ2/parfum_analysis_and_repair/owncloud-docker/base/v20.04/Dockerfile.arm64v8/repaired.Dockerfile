@@ -1,0 +1,26 @@
+FROM owncloud/php:20.04-arm64v8@sha256:3c1f177b70aab8bdb29dd44d81bce5626a649691e7034305a6b4756ecce2a2a9
+
+LABEL maintainer="ownCloud GmbH <devops@owncloud.com>" \
+  org.opencontainers.image.authors="ownCloud DevOps <devops@owncloud.com>" \
+  org.opencontainers.image.title="ownCloud Base" \
+  org.opencontainers.image.url="https://hub.docker.com/r/owncloud/base" \
+  org.opencontainers.image.source="https://github.com/owncloud-docker/base" \
+  org.opencontainers.image.documentation="https://github.com/owncloud-docker/base"
+
+VOLUME ["/mnt/data"]
+EXPOSE 8080
+
+ENTRYPOINT ["/usr/bin/entrypoint"]
+CMD ["/usr/bin/owncloud", "server"]
+
+RUN mkdir -p /home/owncloud /var/www/owncloud /mnt/data/files /mnt/data/config /mnt/data/certs /mnt/data/sessions && \
+  chown -R www-data:www-data /var/www/owncloud /mnt/data && \
+  chgrp root /home/owncloud /var/run /var/lock/apache2 /var/run/apache2 /etc/environment  && \
+  chmod g+w /home/owncloud /var/run /var/lock/apache2 /var/run/apache2 /etc/environment && \
+  chsh -s /bin/bash www-data
+
+COPY ./overlay /
+WORKDIR /var/www/owncloud
+
+RUN chgrp root /etc/apache2/sites-enabled/default.conf /etc/php/7.4/mods-available/owncloud.ini && \
+  chmod g+w /etc/apache2/sites-enabled/default.conf /etc/php/7.4/mods-available/owncloud.ini

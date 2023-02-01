@@ -1,0 +1,89 @@
+{
+  "startTime": 1674235435091,
+  "endTime": 1674235435334,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 15,
+        "lineEnd": 15,
+        "columnStart": 4,
+        "columnEnd": 158
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 29,
+        "lineEnd": 29,
+        "columnStart": 7,
+        "columnEnd": 101
+      }
+    },
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 53,
+        "lineEnd": 53,
+        "columnStart": 7,
+        "columnEnd": 18
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 40,
+        "lineEnd": 40,
+        "columnStart": 4,
+        "columnEnd": 45
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 41,
+        "lineEnd": 41,
+        "columnStart": 4,
+        "columnEnd": 51
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 45,
+        "lineEnd": 45,
+        "columnStart": 4,
+        "columnEnd": 94
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 58,
+        "lineEnd": 58,
+        "columnStart": 33,
+        "columnEnd": 61
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 30,
+        "lineEnd": 30,
+        "columnStart": 7,
+        "columnEnd": 39
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 8,
+        "lineEnd": 10,
+        "columnStart": 4,
+        "columnEnd": 208
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM ubuntu:16.04\nMAINTAINER Overhang.io <contact@overhang.io>\n\n############ common to lms & cms\n\n# Install system requirements\nRUN apt update && \\\n    # Global requirements\n    apt install --no-install-recommends -y language-pack-en git python-virtualenv build-essential software-properties-common curl git-core libxml2-dev libxslt1-dev python-virtualenv libmysqlclient-dev python-apt python-dev libxmlsec1-dev libfreetype6-dev swig gcc g++ \\\n    # openedx requirements\n    gettext gfortran graphviz graphviz-dev libffi-dev libfreetype6-dev libgeos-dev libjpeg8-dev liblapack-dev libpng12-dev libsqlite3-dev libxml2-dev libxmlsec1-dev libxslt1-dev lynx nodejs npm ntp pkg-config \\\n    && rm -rf /var/lib/apt/lists/*\n\n# Dockerize will be useful to wait for mysql DB availability\nARG DOCKERIZE_VERSION=v0.6.1\nRUN curl -f -L -o /tmp/dockerize.tar.gz https://github.com/jwilder/dockerize/releases/download/$DOCKERIZE_VERSION/dockerize-linux-amd64-$DOCKERIZE_VERSION.tar.gz \\\n    && tar -C /usr/local/bin -xzvf /tmp/dockerize.tar.gz \\\n    && rm /tmp/dockerize.tar.gz\n\n# Checkout edx-platform code\nARG EDX_PLATFORM_REPOSITORY=https://github.com/edx/edx-platform.git\nARG EDX_PLATFORM_VERSION=open-release/ironwood.2\nRUN mkdir -p /openedx/edx-platform && \\\n    git clone $EDX_PLATFORM_REPOSITORY --branch $EDX_PLATFORM_VERSION --depth 1 /openedx/edx-platform\nWORKDIR /openedx/edx-platform\n\n# Download extra locales to /openedx/locale\n# TODO upgrade this to ironwood\nRUN cd /tmp \\\n    && curl -f -L -o openedx-i18n.tar.gz https://github.com/openedx/openedx-i18n/archive/hawthorn.tar.gz \\\n    && tar xzf /tmp/openedx-i18n.tar.gz \\\n    && mv openedx-i18n-hawthorn/edx-platform/locale/ /openedx/locale/ \\\n    && rm -rf openedx-i18n* && rm /tmp/openedx-i18n.tar.gz\n\n# Install python requirements (clone source repos in a separate dir, otherwise\n# they will be overwritten when we mount edx-platform)\nENV NO_PYTHON_UNINSTALL 1\nRUN virtualenv /openedx/venv\nENV PATH /openedx/venv/bin:${PATH}\nENV VIRTUAL_ENV /openedx/venv/\nRUN pip install --no-cache-dir setuptools==39.0.1 pip==9.0.3\nRUN pip install --no-cache-dir -r requirements/edx/development.txt\n\n# Install patched version of ora2\nRUN pip uninstall -y ora2 && \\\n    pip install --no-cache-dir git+https://github.com/overhangio/edx-ora2.git@2.2.0-patched#egg=ora2==2.2.0\n\n# Install a recent version of nodejs\nRUN nodeenv /openedx/nodeenv --node=8.9.3 --prebuilt\nENV PATH /openedx/nodeenv/bin:${PATH}\n\n# Install nodejs requirements\nRUN npm set progress=false \\\n    && npm install && npm cache clean --force;\nENV PATH ./node_modules/.bin:${PATH}\n\n# Install private requirements: this is useful for installing custom xblocks.\nCOPY ./requirements/ /openedx/requirements\nRUN cd /openedx/requirements/ && pip install --no-cache-dir -r ./private.txt\n\n# Create folder that will store *.env.json and *.auth.json files, as well as\n# the tutor-specific settings files.\nRUN mkdir -p /openedx/config ./lms/envs/tutor ./cms/envs/tutor\nENV CONFIG_ROOT /openedx/config\nCOPY settings/lms/*.py ./lms/envs/tutor/\nCOPY settings/cms/*.py ./cms/envs/tutor/\n\n# Copy scripts\nCOPY ./bin /openedx/bin\nENV PATH /openedx/bin:${PATH}\n\n# Collect production assets. By default, only assets from the default theme\n# will be processed. This makes the docker image lighter and faster to build.\n# Only the custom themes added to /openedx/themes will be compiled.\n# Here, we don't run \"paver update_assets\" which is slow, compiles all themes\n# and requires a complex settings file. Instead, we decompose the commands\n# and run each one individually to collect the production static assets to\n# /openedx/staticfiles.\nRUN openedx-assets xmodule \\\n    && openedx-assets npm \\\n    && openedx-assets webpack --env=prod \\\n    && openedx-assets common\nCOPY ./themes/ /openedx/themes/\nRUN openedx-assets themes \\\n    && openedx-assets collect --settings=tutor.assets\n\n# Create a data directory, which might be used (or not)\nRUN mkdir /openedx/data\n\n# service variant is \"lms\" or \"cms\"\nENV SERVICE_VARIANT lms\nENV SETTINGS tutor.production\n\n# Entrypoint will fix permissions of all files and run commands as openedx\nENTRYPOINT [\"docker-entrypoint.sh\"]\n\n# Run server\nCOPY gunicorn_conf.py /openedx/gunicorn_conf.py\nEXPOSE 8000\nCMD gunicorn -c /openedx/gunicorn_conf.py --name ${SERVICE_VARIANT} --bind=0.0.0.0:8000 --max-requests=1000 ${SERVICE_VARIANT}.wsgi:application\n"
+}

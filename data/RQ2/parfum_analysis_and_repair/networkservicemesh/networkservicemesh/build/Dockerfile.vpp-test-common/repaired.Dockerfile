@@ -1,0 +1,19 @@
+ARG VPP_AGENT
+FROM ${VPP_AGENT} as runtime
+RUN rm /opt/vpp-agent/dev/etcd.conf; echo "disabled: true" > /opt/vpp-agent/dev/linux-plugin.conf
+RUN  mkdir -p /run/vpp
+COPY startup.conf /etc/vpp/vpp.conf
+COPY supervisord.conf /opt/vpp-agent/dev/supervisor.conf
+RUN  mkdir -p /etc/govpp
+COPY govpp.conf /etc/govpp/govpp.conf
+COPY run.sh /bin/vpp-run.sh
+
+RUN mkdir /tmp/vpp/
+
+COPY ["vppagent-nsc", "/bin/"]
+COPY ["vppagent-icmp-responder-nse", "/bin/"]
+COPY ["vppagent-firewall-nse", "/bin/"]
+
+RUN mkdir /tmp/vpp/vppagent-nsc/; echo 'Endpoint: "0.0.0.0:9113"' > /tmp/vpp/vppagent-nsc/grpc.conf
+RUN mkdir /tmp/vpp/vppagent-icmp-responder-nse/; echo 'Endpoint: "0.0.0.0:9112"' > /tmp/vpp/vppagent-icmp-responder-nse/grpc.conf
+RUN mkdir /tmp/vpp/vppagent-firewall-nse/; echo 'Endpoint: "0.0.0.0:9112"' > /tmp/vpp/vppagent-firewall-nse/grpc.conf

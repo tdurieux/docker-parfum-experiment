@@ -1,0 +1,40 @@
+INCLUDE+ Dockerfile.ros-ubuntu:20.04
+
+RUN sudo apt-get update && \
+    sudo apt-get install --no-install-recommends -y ros-noetic-pcl-conversions ros-noetic-pcl-ros ros-noetic-octomap-server && \
+    sudo rm -rf /var/lib/apt/lists/*
+
+    # remove ros-noetic-moveit-ros-perception / http://repositories.ros.org/status_page/ros_noetic_default.html?q=moveit_ros_perception
+RUN sudo apt-get update && \
+    sudo apt-get install --no-install-recommends -y ros-noetic-rviz ros-noetic-robot-self-filter && \
+    sudo rm -rf /var/lib/apt/lists/*
+RUN sudo apt-get update && \
+    sudo apt-get install --no-install-recommends -y libopencv-dev liblapack-dev && \
+    sudo rm -rf /var/lib/apt/lists/*
+RUN sudo apt-get update && \
+    sudo apt-get install --no-install-recommends -y emacs cython && \
+    sudo rm -rf /var/lib/apt/lists/*
+
+# image_view
+RUN sudo apt-get update && \
+    rosdep update --include-eol-distros && \
+    rosdep resolve gtk2 | sed -e "s/^#.*//g" | xargs sudo apt-get install -y && \
+    sudo rm -rf /var/lib/apt/lists/*
+# RUN rosdep resolve python-qt-bindings | sed -e "s/^#.*//g" | xargs sudo apt-get install -y # qt_gui_core
+
+# fix latest pip install fcn errors
+RUN curl -f https://bootstrap.pypa.io/pip/2.7/get-pip.py | sudo python -; sudo -H pip install --no-cache-dir 'pip<10'
+RUN sudo pip install --no-cache-dir fcn chainercv chainer==6.7.0 cupy-cuda91 decorator==4.4.2
+
+# install common package to speedup
+RUN sudo pip install --no-cache-dir freezegun
+RUN sudo apt-get update && \
+    sudo apt-get install --no-install-recommends -y libshiboken2-dev shiboken2 \
+                                python3-pyside2.qtgui \
+                                ros-noetic-rqt-reconfigure python3-matplotlib imagemagick \
+                                ros-noetic-pcl-msgs ros-noetic-octomap-msgs && \
+    sudo rm -rf /var/lib/apt/lists/*
+
+ARG CACHEBUST=1
+RUN echo $CACHBUST
+RUN sudo apt-get update && sudo apt-get dist-upgrade -y && sudo rm -rf /var/lib/apt/lists/*

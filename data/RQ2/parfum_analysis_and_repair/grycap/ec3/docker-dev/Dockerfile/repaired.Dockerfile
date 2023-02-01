@@ -1,0 +1,1 @@
+# Dockerfile to create a container with EC3 

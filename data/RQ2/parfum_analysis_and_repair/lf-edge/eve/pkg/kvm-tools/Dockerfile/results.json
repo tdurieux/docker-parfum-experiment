@@ -1,0 +1,35 @@
+{
+  "startTime": 1674250560302,
+  "endTime": 1674250561749,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 30,
+        "lineEnd": 30,
+        "columnStart": 4,
+        "columnEnd": 71
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 38,
+        "lineEnd": 38,
+        "columnStart": 4,
+        "columnEnd": 52
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 18,
+        "lineEnd": 18,
+        "columnStart": 4,
+        "columnEnd": 46
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM lfedge/eve-alpine:6.7.0 as build\n# Building qemu in strip-down mirovm only mode: curl\n# qemu 5.1 dependencies: python3 glib-dev pixman-dev\n# qemu 5.2+ dependencies: py3-setuptools bash perl\n# ninja dependencies: cmake g++\nENV BUILD_PKGS gcc make libc-dev binutils-dev patch libaio-dev zlib-dev zlib-static linux-headers libvncserver-dev curl python3 glib-dev pixman-dev py3-setuptools bash perl cmake g++\nENV BUILD_PKGS_arm64 dtc dtc-dev\n# libgcc, pixman and glib are required for qemu\n# it maybe possible to get rid of libgcc & pixman\nENV PKGS libgcc pixman glib libvncserver libaio musl-utils\nENV PKGS_arm64 libfdt libstdc++\nRUN eve-alpine-deploy.sh\n\nENV KVMTOOL_VERSION=90b2d3adadf218dfc6bdfdfcefe269843360223c\n\nADD  https://git.kernel.org/pub/scm/linux/kernel/git/will/kvmtool.git/snapshot/kvmtool-${KVMTOOL_VERSION}.tar.gz /kvmtool.tar.gz\nCOPY *.patch /\n\nRUN tar xzvf kvmtool.tar.gz > /dev/null 2>&1 ; rm kvmtool.tar.gz \\\n    mv kvmtool-${KVMTOOL_VERSION} kvmtool\n\nWORKDIR /kvmtool\n\nRUN patch -p1 < /0001-Makefile-Update-bfd-detection.patch ;\\\n    patch -p1 < /0002-alpine-define-workaround.patch      ;\\\n    make -j \"$(getconf _NPROCESSORS_ONLN)\" && make install DESTDIR=/usr HOME=\n\n# building ninja\nWORKDIR /ninja-1.10.1\n# hadolint ignore=DL4006\nRUN curl -f -L https://github.com/ninja-build/ninja/archive/v1.10.1.tar.gz | tar -C / -xzf -\nRUN cmake -Bbuild-cmake -H.\nRUN cmake --build build-cmake\nRUN cmake --install build-cmake --prefix /usr\n\n# building qemu\nWORKDIR /qemu-5.2.0\n# hadolint ignore=DL4006\nRUN curl -f https://download.qemu.org/qemu-5.2.0.tar.xz | tar -C / -xJf -\n\nCOPY i386-softmmu.mak default-configs/devices/i386-softmmu.mak\nCOPY meson.build hw/acpi/meson.build\n\nRUN patch -p1 < /0003-vhost-nvme.patch\n\n# systemtap is not available on Alpine, so we're putting together dtrace tooling\n# by hand. More instruction on qemu systemtap probes here:\n#    https://www.berrange.com/posts/2019/02/18/easier-qemu-live-tracing-using-systemtap/\nCOPY dtrace /usr/bin/dtrace\nCOPY include /usr/include\n\n# --block-drv-whitelist=L --block-drv-rw-whitelist=L --block-drv-ro-whitelist=L\n# --with-coroutine\n# --disable-system\n# --audio-drv-list=none\n# ? --disable-vxhs\n# T --disable-slirp\nENV CONF_aarch64 --enable-fdt=git\nENV CONF_x86_64 --disable-tcg --disable-fdt --without-default-devices --enable-trace-backends=dtrace\n\nRUN eval ./configure '$CONF_'$(uname -m) --target-list=$(uname -m)-softmmu --enable-kvm --disable-user --disable-linux-user --disable-bsd-user --disable-docs --disable-guest-agent --disable-guest-agent-msi --disable-pie --disable-modules --disable-module-upgrades --disable-debug-tcg --disable-debug-info --disable-sparse --disable-gnutls --disable-nettle --disable-gcrypt --disable-auth-pam --disable-sdl --disable-sdl-image --disable-gtk --disable-vte --disable-curses --disable-iconv --disable-vnc --disable-vnc-sasl --disable-vnc-jpeg --disable-vnc-png --disable-cocoa --disable-virtfs --disable-mpath --disable-xen --disable-xen-pci-passthrough --disable-brlapi --disable-curl --disable-membarrier --disable-hax --disable-hvf --disable-whpx --disable-rdma --disable-pvrdma --disable-vde --disable-netmap --disable-linux-aio --disable-linux-io-uring --disable-cap-ng --disable-attr --disable-vhost-net --disable-vhost-vsock --disable-vhost-scsi --disable-vhost-crypto --disable-spice --disable-rbd --disable-libiscsi --disable-libnfs --disable-smartcard --disable-libusb --disable-live-block-migration --disable-usb-redir --disable-lzo --disable-snappy --disable-bzip2 --disable-lzfse --disable-zstd --disable-seccomp --disable-coroutine-pool --disable-glusterfs --disable-tpm --disable-libssh --disable-numa --disable-libxml2 --disable-tcmalloc --disable-jemalloc --disable-avx2 --disable-avx512f --disable-replication --disable-opengl --disable-virglrenderer --disable-xfsctl --disable-qom-cast-debug --disable-tools --disable-bochs --disable-cloop --disable-dmg --disable-qcow1 --disable-vdi --disable-vvfat --disable-qed --disable-parallels --disable-sheepdog --disable-crypto-afalg --disable-capstone --disable-debug-mutex --disable-libpmem --disable-xkbcommon\n\n# qemu's configure script takes presence of as sys/signal.h as\n# a hint to set HAVE_SYS_SIGNAL_H=y, meanwhile the only reason\n# musl has sys/signal.h to begin with is to warn not to use it\nRUN sed -ie '/^HAVE_SYS_SIGNAL_H=y/d' build/config-host.mak\n\nRUN make -j \"$(getconf _NPROCESSORS_ONLN)\" V=1\nRUN strip build/qemu-system-$(uname -m)\n\nRUN mkdir /bios ; if [ $(uname -m) = x86_64 ]; then                                      \\\n      cp build/pc-bios/optionrom/linuxboot_dma.bin build/pc-bios/bios-microvm.bin /bios ;\\\n    fi\n\nFROM scratch\n\nCOPY --from=build /out/ /\nCOPY --from=build /usr/bin/lkvm /usr/bin/lkvm\nCOPY --from=build /qemu-5.2.0/build/qemu-system-* /usr/bin/\nCOPY --from=build /bios /usr/share/qemu\nRUN ln -sf lkvm /usr/bin/vm\nRUN ldd /usr/bin/lkvm\nRUN ldd /usr/bin/qemu-system-$(uname -m)\n\nENTRYPOINT [\"/bin/sh\", \"-c\", \"while true; do sleep 100000; done\"]\n#CMD [\"/usr/sbin/vm\",]\n"
+}

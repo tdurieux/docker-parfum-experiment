@@ -1,0 +1,20 @@
+FROM python:%%PYTHON_VERSION%%-slim-bullseye
+
+COPY requirements.txt /tmp/
+
+RUN set -ex \
+    && buildDeps=" \
+       build-essential \
+       libpq-dev \
+    " \
+    && deps=" \
+       gdal-bin \
+       gettext \
+       postgresql-client-13 \
+    " \
+    && apt-get update && apt-get install -y $buildDeps $deps --no-install-recommends \
+    && pip install --no-cache-dir -r /tmp/requirements.txt \
+    && apt-get purge -y --auto-remove $buildDeps \
+    && rm -rf /tmp/requirements.txt /var/lib/apt/lists/*
+
+ENTRYPOINT ["/usr/local/bin/gunicorn"]

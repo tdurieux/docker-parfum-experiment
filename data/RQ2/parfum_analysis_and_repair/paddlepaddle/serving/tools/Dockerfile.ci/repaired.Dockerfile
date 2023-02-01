@@ -1,0 +1,1 @@
+FROM hub.baidubce.com/paddlepaddle/serving:latest-cuda10.2-cudnn8-devel

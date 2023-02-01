@@ -1,0 +1,13 @@
+# Copyright (c) 2021 Gitpod GmbH. All rights reserved.
+# Licensed under the Gitpod Enterprise Source Code License,
+# See License.enterprise.txt in the project root folder.
+
+FROM node:16.13.0-slim as builder
+COPY components-ee-db-sync--app /installer/
+
+WORKDIR /app
+RUN /installer/install.sh
+
+FROM node:16.13.0-slim
+ENV NODE_OPTIONS=--unhandled-rejections=warn
+# '--no-log-init': see https://docs.docker.com/develop/develop-images/dockerfile_best-practices/#user

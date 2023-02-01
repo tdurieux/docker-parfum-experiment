@@ -1,0 +1,35 @@
+{
+  "startTime": 1674254474062,
+  "endTime": 1674254475600,
+  "originalSmells": [
+    {
+      "rule": "wgetUseHttpsUrl",
+      "position": {
+        "lineStart": 153,
+        "lineEnd": 153,
+        "columnStart": 4,
+        "columnEnd": 133
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 13,
+        "lineEnd": 13,
+        "columnStart": 22,
+        "columnEnd": 51
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 144,
+        "lineEnd": 150,
+        "columnStart": 4,
+        "columnEnd": 15
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# AUTHOR:           Nicholas Long\n# DESCRIPTION:      OpenStudio Server Docker Container\n# TO_BUILD_AND_RUN: docker-compose up\n# NOTES:            Currently this is one big dockerfile and non-optimal.\n\n#may include suffix\nARG OPENSTUDIO_VERSION=3.4.0\nFROM nrel/openstudio:dev-3.4.1-alpha as base\nMAINTAINER Nicholas Long nicholas.long@nrel.gov\n\nENV DEBIAN_FRONTEND=noninteractive\n# Install required libaries.\n#   realpath - needed for wait-for-it\nRUN apt-get update && apt-get install --no-install-recommends -y wget gnupg \\\n    && wget -qO - https://www.mongodb.org/static/pgp/server-4.4.asc | apt-key add - \\\n    && echo \"deb http://repo.mongodb.org/apt/ubuntu focal/mongodb-org/4.4 multiverse\" | \\\n    tee /etc/apt/sources.list.d/mongodb-org-4.4.list \\\n    && apt-get update \\\n    && apt-get install -y --no-install-recommends \\\n        apt-transport-https \\\n        autoconf \\\n        bison \\\n        shared-mime-info \\\n        build-essential \\\n        bzip2 \\\n        ca-certificates \\\n        curl \\\n        default-jdk \\\n        dos2unix \\\n        imagemagick \\\n        gdebi-core \\\n        git \\\n        libbz2-dev \\\n        libcurl4-openssl-dev \\\n        libdbus-glib-1-2 \\\n        libgdbm-dev \\\n        libglib2.0-dev \\\n        libglu1 \\\n        libgsl0-dev \\\n        libncurses-dev \\\n        libreadline-dev \\\n        libxml2-dev \\\n        libxslt-dev \\\n        libffi-dev \\\n        libssl-dev \\\n        libyaml-dev \\\n        libice-dev \\\n        libsm-dev \\\n        mongodb-database-tools \\\n        nodejs \\\n        procps \\\n        python-numpy \\\n        python3-numpy \\\n        tar \\\n        unzip \\\n        wget \\\n        zip \\\n        zlib1g-dev \\\n    && rm -rf /var/lib/apt/lists/*\n\n# Install passenger (this also installs nginx)\nENV PASSENGER_VERSION 6.0.2\n\nRUN gem install passenger -v $PASSENGER_VERSION\nRUN passenger-install-nginx-module\n\n# Configure the nginx server\nRUN mkdir /var/log/nginx\nADD /docker/server/nginx.conf /opt/nginx/conf/nginx.conf\n\n# Radiance env vars. RUBYLIB is set in the base openstudio container\nENV OPENSTUDIO_SERVER 'true'\nENV OS_RAYPATH /usr/local/openstudio-$OPENSTUDIO_VERSION/Radiance\nENV PERL_EXE_PATH /usr/bin\n\n# Specify a couple arguments here, after running the majority of the installation above\nARG rails_env=docker\nARG bundle_args=\"--without development test\"\nENV OS_BUNDLER_VERSION=2.1.4\n\n# Set the rails env var\nENV RAILS_ENV $rails_env\n\n# extension gem testing\n#ENV FAVOR_LOCAL_GEMS 1\n\n#### OpenStudio Server Code\n# First upload the Gemfile* so that it can cache the Gems -- do this first because it is slow\nADD /bin /opt/openstudio/bin\nADD /server/Gemfile /opt/openstudio/server/Gemfile\nWORKDIR /opt/openstudio/server\nRUN bundle _${OS_BUNDLER_VERSION}_ install --jobs=3 --retry=3 $bundle_args\n\n# Add the app assets and precompile assets. Do it this way so that when the app changes the assets don't\n# have to be recompiled everytime\nADD /server/Rakefile /opt/openstudio/server/Rakefile\nADD /server/config/ /opt/openstudio/server/config/\nADD /server/app/assets/ /opt/openstudio/server/app/assets/\n\n# Now call precompile\nRUN mkdir /opt/openstudio/server/log\nRUN bundle exec rake assets:precompile\n\n# Bundle app source\nADD /server /opt/openstudio/server\n# Add in /spec for testing\n#ADD /spec /opt/openstudio/spec\nADD .rubocop.yml /opt/openstudio/.rubocop.yml\n# Run bundle again, because if the user has a local Gemfile.lock it will have been overriden\nRUN rm Gemfile.lock\nRUN bundle install --jobs=3 --retry=3\n\n# Add in scripts for running server. This includes the wait-for-it scripts to ensure other processes (mongo, redis) have\n# started before starting the main process.\nCOPY /docker/server/wait-for-it.sh /usr/local/bin/wait-for-it\nCOPY /docker/server/start-server.sh /usr/local/bin/start-server\n\nCOPY /docker/server/rails-entrypoint.sh /usr/local/bin/rails-entrypoint\nCOPY /docker/server/start-web-background.sh /usr/local/bin/start-web-background\nCOPY /docker/server/start-workers.sh /usr/local/bin/start-workers\nRUN chmod 755 /usr/local/bin/wait-for-it\nRUN chmod +x /usr/local/bin/start-server\nRUN chmod 755 /usr/local/bin/rails-entrypoint\nRUN chmod 755 /usr/local/bin/start-web-background\nRUN chmod 755 /usr/local/bin/start-workers\n\n# set the permissions for windows users\nRUN chmod +x /opt/openstudio/server/bin/*\nENV OPENSTUDIO_EXE_PATH /usr/local/bin/openstudio\n\nENTRYPOINT [\"rails-entrypoint\"]\n\nCMD [\"/usr/local/bin/start-server\"]\n\n# Expose ports.\nEXPOSE 8080 9090\n\n# Multistage build includes test library. To build without testing run\n# docker build --target base -t some-tag .\nFROM base\nENV GECKODRIVER_VERSION v0.21.0\n# Install vfb and firefox requirement if docker-test env\nRUN echo \"Running in testing environment - Installing Firefox and Gecko Driver\" && \\\n    apt-get update && \\\n    apt-get install --no-install-recommends -y xvfb \\\n        x11-xkb-utils \\\n        xfonts-100dpi \\\n        xfonts-75dpi \\\n        xfonts-scalable \\\n        xfonts-cyrillic \\\n        firefox && \\\n    rm -rf /var/lib/apt/lists/* && \\\n    cd /usr/local/bin && \\\n    wget https://github.com/mozilla/geckodriver/releases/download/$GECKODRIVER_VERSION/geckodriver-$GECKODRIVER_VERSION-linux64.tar.gz && \\\n    tar -xvzf geckodriver-$GECKODRIVER_VERSION-linux64.tar.gz && \\\n    rm geckodriver-$GECKODRIVER_VERSION-linux64.tar.gz && \\\n    chmod +x geckodriver;\n\nCOPY /docker/server/run-server-tests.sh /usr/local/bin/run-server-tests\nRUN chmod +x /usr/local/bin/run-server-tests\n# Test adding the git repo to the container for coveralls\n# The #TEST# will be removed in the test script to be run in the test container\n#TEST#COPY .git /opt/openstudio/.git\n"
+}

@@ -1,0 +1,12 @@
+FROM debian:bullseye-slim
+LABEL maintainer="Alex Lytvynenko <oleksandr.lytvynenko@ibm.com>, Tomash Sidei <tomash.sidei@ibm.com>"
+
+RUN apt-get update && apt-get upgrade -y && apt-get install -y --no-install-recommends \
+    varnish \
+    varnish-modules \
+    && rm -rf /var/lib/apt/lists/* /etc/varnish/* \
+    && chown -R varnish /etc/varnish /var/lib/varnish
+
+USER varnish
+
+ENTRYPOINT ["varnishd"]

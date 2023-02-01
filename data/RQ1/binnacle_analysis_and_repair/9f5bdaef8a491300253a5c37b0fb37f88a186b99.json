@@ -1,0 +1,62 @@
+{
+  "startTime": 1674236065493,
+  "endTime": 1674236065906,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 23,
+        "lineEnd": 23,
+        "columnStart": 4,
+        "columnEnd": 71
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 10,
+        "lineEnd": 10,
+        "columnStart": 4,
+        "columnEnd": 91
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 11,
+        "lineEnd": 11,
+        "columnStart": 4,
+        "columnEnd": 96
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 17,
+        "lineEnd": 17,
+        "columnStart": 4,
+        "columnEnd": 155
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 18,
+        "lineEnd": 18,
+        "columnStart": 4,
+        "columnEnd": 162
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 19,
+        "lineEnd": 19,
+        "columnStart": 4,
+        "columnEnd": 131
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM centos:7\nMAINTAINER p.timmermans@evs.com\nENV MAJORVER=11\nENV MINORVER=2\nENV PGVER=11\nENV REPMGRVER=4.2\nENV PGPOOLMAJOR=4.0\nENV PGPOOLVER=4.0.3\nENV docker=yes\nRUN yum update -y ; yum clean all && rm -rf /var/yum/cache\nRUN yum install -y epel-release libxslt sudo openssh-server openssh-clients jq passwd rsync && \\\n    yum install -y systemd-sysv iproute python-setuptools hostname inotify-tools yum-utils which && \\\n    yum clean all && rm -rf /var/yum/cache && rm -rf /var/cache/yum\nRUN easy_install supervisor\nRUN mkdir /var/run/sshd\nRUN ssh-keygen -t rsa -f /etc/ssh/ssh_host_rsa_key -N ''\nRUN useradd -u 50010 postgres\nRUN yum install -y https://download.postgresql.org/pub/repos/yum/${MAJORVER}/redhat/rhel-7-x86_64/pgdg-centos${MAJORVER}-${MAJORVER}-${MINORVER}.noarch.rpm && rm -rf /var/cache/yum\nRUN yum install -y postgresql${MAJORVER}.${MINORVER} postgresql${MAJORVER}-server-${MAJORVER}.${MINORVER}  postgresql${MAJORVER}-contrib-${MAJORVER}.${MINORVER} ; rm -rf /var/cache/yum yum clean all\nRUN yum install -y http://www.pgpool.net/yum/rpms/${PGPOOLMAJOR}/redhat/rhel-7-x86_64/pgpool-II-release-${PGPOOLMAJOR}-1.noarch.rpm && rm -rf /var/cache/yum\n# pgpool extensions\nRUN yum install -y pgpool-II-pg${MAJORVER}-${PGPOOLVER} pgpool-II-pg${MAJORVER}-extensions-${PGPOOLVER}; yum clean all; rm -rf /var/cache/yum\n# repmgr: installed from 2ndquadrant repo will install repmgr4\nRUN curl -f https://dl.2ndquadrant.com/default/release/get/${MAJORVER}/rpm | bash\nRUN yum install -y --enablerepo=2ndquadrant-dl-default-release-pg${MAJORVER} --disablerepo=pgdg${MAJORVER} repmgr${MAJORVER}-${REPMGRVER} && yum clean all && rm -rf /var/cache/yum\nRUN chown postgres:postgres /var/log/repmgr\nRUN mkdir -p /data /backup /archive && chown -R postgres:postgres /data /backup /archive && chmod 755 /data /archive\nENV PGDATA /data\nENV PATH=$PATH:/usr/pgsql-${MAJORVER}/bin\nENV LANG=en_US.UTF-8\nRUN usermod -G wheel -a postgres\nRUN echo \"Defaults:postgres !requiretty\" > /etc/sudoers.d/postgres && \\\n    echo \"postgres ALL=(ALL) NOPASSWD: ALL\" >> /etc/sudoers.d/postgres\nRUN sed -i -e \"s/^%wheel/#%wheel/\" -e \"/^#.*%wheel.*NOPASSWD/s/^#.*%wheel/%wheel/\" /etc/sudoers\nRUN echo postgres:postgres | chpasswd\nRUN echo root:postgres | chpasswd\n# .bashrc is needed for connections via ssh\nRUN  echo \"export PATH=\\$PATH:/usr/pgsql-${MAJORVER}/bin\" >  /etc/profile.d/postgres.sh\nRUN  echo \"[ -f /etc/profile ] && source /etc/profile\" >> /home/postgres/.bashrc && \\\n     echo \"export PGDATA=/data PGVER=${PGVER} \" >> /home/postgres/.bashrc\n#\n# this localedef command is needed because of bug in centos docker image?\n#\nRUN localedef -i en_US -f UTF-8 en_US.UTF-8\nRUN echo \"*:*:postgres:postgres\" > /home/postgres/.pcppass && chown postgres:postgres /home/postgres/.pcppass && chmod 600 /home/postgres/.pcppass\nADD scripts /scripts\nADD pgconfig /opt/pgconfig\nRUN chown -R postgres:postgres /scripts\n#ADD ./bin/entrypoint.supervisor /entrypoint.sh\n#RUN chmod +x /entrypoint.sh\nADD get_master.sh /home/postgres/get_master.sh\nRUN chown postgres:postgres /home/postgres/get_master.sh && chmod 750 /home/postgres/get_master.sh\nADD supervisord.conf /etc/supervisor/supervisord.conf\n# Make ssh connection easier\nRUN echo \"StrictHostKeyChecking no\" >> /etc/ssh/ssh_config && \\\n    echo \"UserKnownHostsFile /dev/null\" >> /etc/ssh/ssh_config\n#    echo \"LogLevel QUIET\" >> /etc/ssh/ssh_config\n# ssh listen on port 222\nRUN sed -i -e \"s/^#Port 22/Port 222/\" /etc/ssh/sshd_config\nADD ssh_keys /home/postgres/.ssh\nRUN chown -R postgres:postgres /home/postgres/.ssh && chmod 700 /home/postgres/.ssh && chmod 644 /home/postgres/.ssh/* && chmod 600 /home/postgres/.ssh/id_rsa\nENV PATH=$PATH:/usr/pgsql-${MAJORVER}/bin\nADD initdb.sh /scripts/initdb.sh\nEXPOSE 5432\nEXPOSE 222\nVOLUME [\"/data\",\"/archive\",\"/backup\"]\n# if the file $PGDATA/postgres.conf does not exist initdb will initialize the cluster and create db phoenix\n#  and db users (two per microservice)\nCMD [\"/usr/bin/supervisord\",\"--configuration=/etc/supervisor/supervisord.conf\"]\n#CMD [\"tail\",\"-f\",\"/etc/supervisor/supervisord.conf\"]\n"
+}

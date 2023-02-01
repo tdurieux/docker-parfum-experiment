@@ -1,0 +1,71 @@
+{
+  "startTime": 1674254538527,
+  "endTime": 1674254539136,
+  "originalSmells": [
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 33,
+        "lineEnd": 33,
+        "columnStart": 4,
+        "columnEnd": 34
+      }
+    },
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 49,
+        "lineEnd": 49,
+        "columnStart": 4,
+        "columnEnd": 34
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 9,
+        "lineEnd": 9,
+        "columnStart": 4,
+        "columnEnd": 29
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 24,
+        "lineEnd": 24,
+        "columnStart": 4,
+        "columnEnd": 35
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 19,
+        "lineEnd": 20,
+        "columnStart": 4,
+        "columnEnd": 18
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 58,
+        "lineEnd": 60,
+        "columnStart": 4,
+        "columnEnd": 37
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 87,
+        "lineEnd": 88,
+        "columnStart": 4,
+        "columnEnd": 69
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Marsha, a FUN LTI video provider\n\n# ---- base image to inherit from ----\nFROM python:3.10-bullseye as base\n\n# ---- back-end builder image ----\nFROM base as back-builder\n\n# We want the most up-to-date stable pip release\nRUN pip install --no-cache-dir --upgrade pip\n\nWORKDIR /builder\n\n# Only copy the setup files for dependencies install\nCOPY src/backend/setup.* /builder/\n\n# Install Install xmlsec1 dependencies required for xmlsec (for SAML)\n# Needs to be kept before the `pip install`\nRUN apt-get update && \\\n    apt-get install --no-install-recommends -y \\\n    libxmlsec1-dev && \\\n    rm -rf /var/lib/apt/lists/*\n\nRUN mkdir /install && \\\n    pip install --no-cache-dir --prefix=/install .\n\n# ---- front-end builder image ----\nFROM node:16 as front-builder\n\nWORKDIR /app\n\nCOPY ./src/frontend /app/\n\nRUN yarn install --frozen-lockfile && \\\n    yarn compile-translations && \\\n    yarn sass scss/_main.scss /app/marsha/static/css/main.css --style=compressed --load-path=node_modules  && \\\n    mkdir -p /app/marsha/static/css/fonts && cp node_modules/katex/dist/fonts/* /app/marsha/static/css/fonts && \\\n    yarn build --mode=production --output-path /app/marsha/static/js/build/ && yarn cache clean;\n\n# ---- mails ----\nFROM node:16 as mail-builder\nRUN mkdir -p /app/backend/marsha/core/templates/core/mail/html/ && \\\n    mkdir -p /app/backend/marsha/core/templates/core/mail/text/ && \\\n    mkdir -p /app/mail\n\nCOPY ./src/mail /app/mail\n\nWORKDIR /app/mail\n\nRUN yarn install --frozen-lockfile && \\\n    yarn build-mails && yarn cache clean;\n\n# ---- static link collector ----\nFROM base as link-collector\nARG MARSHA_STATIC_ROOT=/data/static\n\n# Install rdfind & libxmlsec1 (required to run django)\nRUN apt-get update && \\\n    apt-get install --no-install-recommends -y \\\n    rdfind \\\n    libxmlsec1-dev libxmlsec1-openssl && \\\n    rm -rf /var/lib/apt/lists/*\n\n# Copy installed python dependencies\nCOPY --from=back-builder /install /usr/local\n\n# Copy marsha backend application (see .dockerignore)\nCOPY ./src/backend /app/src/backend\n# Copy front-end dependencies\nCOPY --from=front-builder /app/marsha/static /app/src/backend/marsha/static\nCOPY --from=mail-builder /app/backend/marsha/core/templates/core/mail /app/src/backend/marsha/core/templates/core/mail\n\nWORKDIR /app/src/backend\n\n# collecstatic\nRUN DJANGO_CONFIGURATION=Build python manage.py collectstatic --noinput\n\n# Replace duplicated file by a symlink to decrease the overall size of the\n# final image\nRUN rdfind -makesymlinks true -followsymlinks true -makeresultsfile false ${MARSHA_STATIC_ROOT}\n\n# ---- final application image ----\nFROM base\nARG MARSHA_STATIC_ROOT=/data/static\n# Install gettext & latex + dvisvgm\n# Also reinstall xmlsec1 dependency to provide .so required for runtime (SAML)\nRUN apt-get update && \\\n    apt-get install --no-install-recommends -y \\\n    gettext texlive-latex-extra dvisvgm libxmlsec1 libxmlsec1-openssl && \\\n    rm -rf /var/lib/apt/lists/*\n\n# Copy installed python dependencies\nCOPY --from=back-builder /install /usr/local\n\n# Copy application\nCOPY --from=link-collector /app /app\n\n# Copy statics\nCOPY --from=link-collector ${MARSHA_STATIC_ROOT} ${MARSHA_STATIC_ROOT}\n\n# Gunicorn\nRUN mkdir -p /usr/local/etc/gunicorn\nCOPY docker/files/usr/local/etc/gunicorn/marsha.py /usr/local/etc/gunicorn/marsha.py\nCOPY docker/files/usr/local/bin/entrypoint /usr/local/bin/entrypoint\n\n# Give the \"root\" group the same permissions as the \"root\" user on /etc/passwd\n# to allow a user belonging to the root group to add new users; typically the\n# docker user (see entrypoint).\nRUN chmod g=u /etc/passwd\n\nWORKDIR /app/src/backend\n\n# We wrap commands run in this container by the following entrypoint that\n# creates a user on-the-fly with the container user ID (see USER) and root group\n# ID.\nENTRYPOINT [ \"entrypoint\" ]\n\n# The default command runs gunicorn WSGI server\nCMD [\"gunicorn\", \"-c\", \"/usr/local/etc/gunicorn/marsha.py\", \"marsha.asgi:application\"]\n\n# Un-privileged user running the application\nUSER 10000\n"
+}

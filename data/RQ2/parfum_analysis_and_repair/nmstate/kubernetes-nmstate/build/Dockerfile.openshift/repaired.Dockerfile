@@ -1,0 +1,23 @@
+FROM registry.svc.ci.openshift.org/openshift/release:golang-1.15 AS builder
+WORKDIR /go/src/github.com/openshift/kubernetes-nmstate
+COPY . .
+RUN GO111MODULE=on go build --mod=vendor -o build/_output/bin/manager ./cmd/handler/
+
+FROM ubi8-minimal
+
+RUN \
+    microdnf -y update && \
+    microdnf -y install \
+        nmstate \
+        iputils \
+        iproute && \
+    microdnf clean all
+
+
+COPY --from=builder /go/src/github.com/openshift/kubernetes-nmstate/build/_output/bin/manager  /usr/bin/
+
+ENTRYPOINT ["/usr/bin/manager"]
+
+LABEL io.k8s.display-name="kubernetes-nmstate-handler" \
+      io.k8s.description="Configure node networking through Kubernetes API" \
+      maintainer="Yossi Boaron <yboaron@redhat.com>"

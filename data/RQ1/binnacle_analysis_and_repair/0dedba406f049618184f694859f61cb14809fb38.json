@@ -1,0 +1,26 @@
+{
+  "startTime": 1674243686226,
+  "endTime": 1674243686464,
+  "originalSmells": [
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 8,
+        "lineEnd": 8,
+        "columnStart": 5,
+        "columnEnd": 56
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 33,
+        "lineEnd": 33,
+        "columnStart": 22,
+        "columnEnd": 47
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM alpine:3.8 AS download-maven\nRUN apk add --no-cache curl\nARG MAVEN_VERSION=3.5.4\nARG SHA=ce50b1c91364cb77efe3776f756a6d92b76d9038b0a0782f7d53acf1e997a14d\nARG BASE_URL=https://apache.osuosl.org/maven/maven-3/${MAVEN_VERSION}/binaries\nRUN mkdir -p /app /app/ref \\\n  && curl -fsSL -o /maven.tar.gz ${BASE_URL}/apache-maven-\"${MAVEN_VERSION}\"-bin.tar.gz \\\n  && echo \"${SHA}  /maven.tar.gz\" | sha256sum -c - \\\n  && tar -xzf /maven.tar.gz -C /app --strip-components=1 && rm /maven.tar.gz\n\nFROM alpine:3.8 AS generate-gpg-key\nRUN apk add --no-cache gnupg1\nENV GNUPGHOME=/key\nRUN mkdir -p \"${GNUPGHOME}\"\nCOPY gpg-params /gpg-params\nRUN gpg --batch --gen-key /gpg-params\n\nFROM openjdk:9-jdk-slim AS build-jar\nRUN ln -s /etc/java-9-openjdk /usr/lib/jvm/java-9-openjdk-$(dpkg --print-architecture)/conf\nENV MAVEN_HOME /usr/share/maven\nENV MAVEN_CONFIG \"${HOME}/.m2\"\nCOPY --from=download-maven /app \"${MAVEN_HOME}\"\nRUN ln -s \"${MAVEN_HOME}\"/bin/mvn /usr/bin/mvn\n# Build app\nENV APP_SOURCE /app\nWORKDIR /app\nCOPY pom.xml pom.xml\nRUN mvn validate dependency:go-offline\nCOPY src src\nRUN mvn clean compile test\nRUN mvn -DskipTests=true package\n\nFROM build-jar AS build-signed-jar\nRUN apt-get update && apt-get install --no-install-recommends -y gnupg1 && rm -rf /var/lib/apt/lists/*\nENV GNUPGHOME=/key\nCOPY --from=generate-gpg-key /key \"${GNUPGHOME}\"\nCOPY settings.xml /root/.m2/\nRUN mvn -o -DskipTests=true verify\n\nFROM build-signed-jar AS deploy-snapshot\nRUN mvn -DskipTests=true deploy\n\nFROM build-signed-jar AS deploy-release\nRUN mvn -DskipTests=true deploy\n"
+}

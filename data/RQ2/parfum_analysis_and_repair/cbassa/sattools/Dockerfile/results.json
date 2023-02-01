@@ -1,0 +1,26 @@
+{
+  "startTime": 1674252003112,
+  "endTime": 1674252004409,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 105,
+        "lineEnd": 105,
+        "columnStart": 3,
+        "columnEnd": 49
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 107,
+        "lineEnd": 107,
+        "columnStart": 3,
+        "columnEnd": 49
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Best Practices for Writing Docker Files\n# https://docs.docker.com/develop/develop-images/dockerfile_best-practices/\n\n# Note that this currently is a larger-than-necessary image due to the the\n# intermediate RUN commands to compile the different pages\n# Stringing-it-all-together would reduce the size, but would make build\n# debugging more challenging\n\nFROM ubuntu:18.04\n\n# To avoid questions from tzdata\nARG DEBIAN_FRONTEND=noninteractive\n\n# Modify the following with your preferred COSPAR station ID\nENV ST_COSPAR 9999\n\n# Update these directories per your preferences\nENV HOME       /root\nENV SAT_DIR    $HOME/satellite\nENV ST_DATADIR $SAT_DIR/sattools\nENV ST_TLEDIR  $SAT_DIR/tle\nENV ST_OBSDIR  $SAT_DIR/satobs\n\n# Note that its convenient to mount your host filesystem to the ST_TLEDIR and ST_OBSDIR with\n# -V YOUR_EXTERNAL_TLE_DIR:/root/satellite/tle\n# -V YOUR_EXTERNAL_SATOBS_DIR:/root/satellite/satobs\n\nRUN echo \"Step 1.0: Install dependencies from APT\" \\\n& apt-get update && apt-get install -y --no-install-recommends \\\n    git \\\n    make \\\n    dos2unix \\\n    sextractor \\\n    wcslib-dev \\\n    pgplot5 \\\n    libgsl-dev \\\n    gfortran \\\n    g++ \\\n    libpng-dev \\\n    libx11-dev \\\n    libjpeg-dev \\\n    libexif-dev \\\n    unzip \\\n    vim \\\n    nano \\\n    wget \\\n# For hough3dlines\n    libeigen3-dev \\  \n# For STVID\n    python3 \\\n    python3-dev \\\n    astrometry.net \\\n    # For scipy\n    libblas3 \\\n    liblapack3 \\\n    liblapack-dev \\\n    libblas-dev \\\n# For STRF\n    libfftw3-dev \\\n# For pip \n    ca-certificates \\\n&& rm -rf /var/lib/apt/lists/*\n\n# For STVID package requirements.txt\nWORKDIR /tmp\nRUN [\"/bin/bash\", \"-c\", \"set -o pipefail && wget -O - https://bootstrap.pypa.io/get-pip.py | python3 -\"]\n\nRUN echo \"Step 2.0: Install qfits for SATTOOLS\"\nWORKDIR /usr/local/src\nRUN [\"/bin/bash\", \"-c\", \"set -o pipefail &&  wget -O - ftp://ftp.eso.org/pub/qfits/qfits-5.2.0.tar.gz | tar xzvf - \\\n&& cd qfits-5.2.0 \\\n&& chmod +w src/xmemory.c \\\n&& sed -i -e 's/swapfd = open(fname, O_RDWR | O_CREAT);/swapfd = open(fname, O_RDWR | O_CREAT, 0644);/g' src/xmemory.c \\\n&& ./configure \\\n&& make \\\n&& make install \\\n&& echo 'Step 2.1: clean up' \\\n&& rm -rf /usr/local/src/qfits-5.2.0\"]\n\nWORKDIR ${SAT_DIR}\nRUN echo \"Step 3.0: Install hough3dlines for STVID\" \\\n&& git clone https://gitlab.com/pierros/hough3d-code.git \\\n&& cd hough3d-code \\\n&& make \\\n&& rm *.o \\\n&& echo \"Done installing dependencies\" \\\n&& mkdir -p $SAT_DIR\n\n##\n## THIS SECTION BUILDS SATTOOLS SUITE\n##\n\nWORKDIR $SAT_DIR\nRUN echo \"Step 4.0: Build satools/strf/stvid\" \\\n&& echo \"Step 4.1: Build sattools: Satellite Tracking Toolkit\" \\\n&& git clone https://github.com/interplanetarychris/sattools.git \\\n&& cd sattools \\\n&& git checkout Docker \\\n&& make \\\n&& make clean\n\nRUN echo \"Step 4.2. Build stvid: Satellite tracking with video cameras\" \\\n&& git clone https://github.com/interplanetarychris/stvid.git \\\n&& cd $SAT_DIR/stvid \\\n&& git checkout Docker \\\n&& pip install --no-cache-dir -r $SAT_DIR/stvid/requirements.txt \\\n# Needed twice, because ppgplot installs correctly on the second try\n&& pip install --no-cache-dir -r $SAT_DIR/stvid/requirements.txt\n#WORKDIR /usr/local/src\n#RUN git clone https://github.com/haavee/ppgplot.git\n# WORKDIR /usr/local/src/ppgplot\n# RUN python3 setup.py install\n\nWORKDIR $SAT_DIR\nRUN echo \"Step 4.3. Build strf: Radio Frequency Satellite Tracking\" \\\n&& git clone https://github.com/cbassa/strf.git \\\n&& cd $SAT_DIR/strf \\\n&& make \\\n&& make clean\n\nRUN echo \"Step 4.4 Decrease container size after everything is compiled\" \\\n&& apt-get purge -y \\\n    wcslib-dev \\\n    libgsl-dev \\\n    gfortran \\\n    libpng-dev \\\n    libx11-dev \\\n    libjpeg-dev \\\n    libexif-dev \\\n# For hough3dlines\n    libeigen3-dev \\  \n# For STVID\n    python3-dev \\\n    # For scipy\n    liblapack-dev \\\n    libblas-dev \\\n# For STRF\n    libfftw3-dev \\\n&& apt-get autoremove -y\n\nWORKDIR $HOME\nRUN echo \"Step 5.0: set environment variables\" \\\n&& echo \"export ST_COSPAR=$ST_COSPAR\"   >>$HOME/.profile \\\n&& echo \"export ST_DATADIR=$ST_DATADIR\" >>$HOME/.profile \\\n&& echo \"export ST_TLEDIR=$ST_TLEDIR\"   >>$HOME/.profile \\\n&& echo \"export ST_OBSDIR=$ST_OBSDIR\"   >>$HOME/.profile \\\n&& mkdir -p $ST_OBSDIR \\\n&& mkdir $ST_OBSDIR/control \\\n&& echo \"Step 5.1: set path\" \\\n&& echo \"PATH=$ST_DATADIR:$ST_DATADIR/scripts:$SAT_DIR/hough3d-code:$SAT_DIR/strf:\\$PATH\" >>$HOME/.profile\n\nRUN echo \"Step 5.2: Download initial TLEs\" \\\n&& mkdir -p $ST_TLEDIR \\\n&& $ST_DATADIR/tleupdate \\\n&& echo \"Final step: run\" \\\n&& echo \"source $HOME/.profile\"\n\n# Run bash by default if everything else compiles\nENTRYPOINT /bin/bash\nCMD bash"
+}

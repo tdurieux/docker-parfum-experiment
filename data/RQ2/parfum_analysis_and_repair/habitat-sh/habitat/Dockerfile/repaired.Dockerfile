@@ -1,0 +1,1 @@
+# 17.10 (artful) will be EOL July 2018; update FROM directive before then

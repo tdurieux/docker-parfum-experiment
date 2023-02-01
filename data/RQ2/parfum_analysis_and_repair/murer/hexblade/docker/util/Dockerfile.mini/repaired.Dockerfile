@@ -1,0 +1,2 @@
+FROM hexblade/hexblade-base:dev
+COPY . /opt/hexblade

@@ -1,0 +1,107 @@
+{
+  "startTime": 1674253754052,
+  "endTime": 1674253755845,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 6,
+        "lineEnd": 6,
+        "columnStart": 4,
+        "columnEnd": 49
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 7,
+        "lineEnd": 7,
+        "columnStart": 4,
+        "columnEnd": 49
+      }
+    },
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 54,
+        "lineEnd": 54,
+        "columnStart": 2,
+        "columnEnd": 46
+      }
+    },
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 56,
+        "lineEnd": 56,
+        "columnStart": 2,
+        "columnEnd": 33
+      }
+    },
+    {
+      "rule": "gemUpdateSystemRmRootGem",
+      "position": {
+        "lineStart": 40,
+        "lineEnd": 40,
+        "columnStart": 4,
+        "columnEnd": 29
+      }
+    },
+    {
+      "rule": "gemUpdateNoDocument",
+      "position": {
+        "lineStart": 40,
+        "lineEnd": 40,
+        "columnStart": 4,
+        "columnEnd": 29
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 30,
+        "lineEnd": 30,
+        "columnStart": 22,
+        "columnEnd": 45
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 128,
+        "lineEnd": 130,
+        "columnStart": 2,
+        "columnEnd": 6
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 14,
+        "lineEnd": 16,
+        "columnStart": 2,
+        "columnEnd": 11
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 30,
+        "lineEnd": 30,
+        "columnStart": 22,
+        "columnEnd": 45
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 128,
+        "lineEnd": 130,
+        "columnStart": 2,
+        "columnEnd": 6
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# ------------------------------------------------------------------------------\n# Base\n# ------------------------------------------------------------------------------\nFROM ruby:2.7.4 as base\nLABEL org.opencontainers.image.authors=\"contact@dxw.com\"\n\nRUN curl -f -L https://deb.nodesource.com/setup_16.x | bash -\nRUN curl -f https://dl.yarnpkg.com/debian/pubkey.gpg | apt-key add -\nRUN \\\n  echo \"deb https://dl.yarnpkg.com/debian/ stable main\" | \\\n  tee /etc/apt/sources.list.d/yarn.list\n\nRUN \\\n  apt-get update && \\\n  apt-get install -y --fix-missing --no-install-recommends \\\n  build-essential \\\n  libpq-dev && rm -rf /var/lib/apt/lists/*;\n\nENV APP_HOME /srv/app\nENV DEPS_HOME /deps\n\nARG RAILS_ENV\nENV RAILS_ENV ${RAILS_ENV:-production}\nENV NODE_ENV ${RAILS_ENV:-production}\n\n# ------------------------------------------------------------------------------\n# Dependencies\n# ------------------------------------------------------------------------------\nFROM base AS dependencies\n\nRUN apt-get update && apt-get install --no-install-recommends -y yarn && rm -rf /var/lib/apt/lists/*;\n\nWORKDIR ${DEPS_HOME}\n\n# Install Ruby dependencies\nENV BUNDLE_GEM_GROUPS ${RAILS_ENV}\n\nCOPY Gemfile ${DEPS_HOME}/Gemfile\nCOPY Gemfile.lock ${DEPS_HOME}/Gemfile.lock\nRUN mkdir -p /usr/local/etc \\\n  && { \\\n    echo 'install: --no-document'; \\\n    echo 'update: --no-document'; \\\n  } >> /usr/local/etc/gemrc;\n\nRUN gem update --system 3.3.5 && rm -rf /root/.gem;\nRUN gem install bundler -v 2.3.5\nRUN bundle config set frozen \"true\"\nRUN bundle config set no-cache \"true\"\nRUN bundle config set with \"${BUNDLE_GEM_GROUPS}\"\nRUN bundle install --retry=10 --jobs=4\n# End\n\n# Install Javascript dependencies\nCOPY yarn.lock ${DEPS_HOME}/yarn.lock\nCOPY package.json ${DEPS_HOME}/package.json\n\nRUN \\\n  if [ ${RAILS_ENV} = \"production\" ]; then \\\n  yarn install --frozen-lockfile --production; yarn cache clean; \\\n  else \\\n  yarn install --frozen-lockfile; yarn cache clean; \\\n  fi\n# End\n\n# ------------------------------------------------------------------------------\n# Web\n# ------------------------------------------------------------------------------\nFROM base AS web\n\nWORKDIR ${APP_HOME}\n\n# Copy dependencies (relying on dependencies using the same base image as this)\nCOPY --from=dependencies ${DEPS_HOME}/Gemfile ${APP_HOME}/Gemfile\nCOPY --from=dependencies ${DEPS_HOME}/Gemfile.lock ${APP_HOME}/Gemfile.lock\nCOPY --from=dependencies ${GEM_HOME} ${GEM_HOME}\n\nCOPY --from=dependencies ${DEPS_HOME}/package.json ${APP_HOME}/package.json\nCOPY --from=dependencies ${DEPS_HOME}/yarn.lock ${APP_HOME}/yarn.lock\nCOPY --from=dependencies ${DEPS_HOME}/node_modules ${APP_HOME}/node_modules\n# End\n\n# Copy app code (sorted by vague frequency of change for caching)\nRUN mkdir -p ${APP_HOME}/log\nRUN mkdir -p ${APP_HOME}/tmp\n\nCOPY config.ru ${APP_HOME}/config.ru\nCOPY Rakefile ${APP_HOME}/Rakefile\nCOPY script ${APP_HOME}/script\nCOPY public ${APP_HOME}/public\nCOPY vendor ${APP_HOME}/vendor\nCOPY bin ${APP_HOME}/bin\nCOPY config ${APP_HOME}/config\nCOPY lib ${APP_HOME}/lib\nCOPY db ${APP_HOME}/db\nCOPY app ${APP_HOME}/app\n# End\n\n# Create tmp/pids\nRUN mkdir -p tmp/pids\n\nRUN \\\n  if [ \"$RAILS_ENV\" = \"production\" ]; then \\\n  SECRET_KEY_BASE=\"secret\" \\\n  bundle exec rake assets:precompile; \\\n  fi\n\n# TODO:\n# In order to expose the current git sha & time of build in the /healthcheck\n# endpoint, pass these values into your deployment script, for example:\n# --build-arg CURRENT_GIT_SHA=\"$GITHUB_SHA\" \\\n# --build-arg TIME_OF_BUILD=\"$(date -u +'%Y-%m-%dT%H:%M:%SZ')\" \\\nARG CURRENT_GIT_SHA\nARG TIME_OF_BUILD\n\nENV CURRENT_GIT_SHA ${CURRENT_GIT_SHA}\nENV TIME_OF_BUILD ${TIME_OF_BUILD}\n\nCOPY ./docker-entrypoint.sh /\nRUN chmod +x /docker-entrypoint.sh\nENTRYPOINT [\"/docker-entrypoint.sh\"]\n\nEXPOSE 3000\n\nCMD [\"bundle\", \"exec\", \"rails\", \"server\"]\n\n# ------------------------------------------------------------------------------\n# Test\n# ------------------------------------------------------------------------------\nFROM web as test\n\nRUN \\\n  apt-get update && \\\n  apt-get install --no-install-recommends -y \\\n  shellcheck \\\n  yarn && rm -rf /var/lib/apt/lists/*;\n\nCOPY .eslintignore ${APP_HOME}/.eslintignore\nCOPY .eslintrc.json ${APP_HOME}/.eslintrc.json\nCOPY .prettierignore ${APP_HOME}/.prettierignore\nCOPY .prettierrc ${APP_HOME}/.prettierrc\n\nCOPY .rspec ${APP_HOME}/.rspec\nCOPY spec ${APP_HOME}/spec\n"
+}

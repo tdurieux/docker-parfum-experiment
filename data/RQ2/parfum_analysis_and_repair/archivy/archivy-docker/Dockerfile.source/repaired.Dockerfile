@@ -1,0 +1,87 @@
+########    Dockerfile for Archivy Built On Alpine Linux     ########
+#                                                                   #
+#####################################################################
+#        CONTAINERISED ARCHIVY BUILT ON TOP OF ALPINE LINUX         #
+#####################################################################
+#                                                                   #
+# This Dockerfile does the following:                               #
+#                                                                   #
+#    1. Starts with a base image of Python3.9 built on Alpine       #
+#       Linux.                                                      #
+#    2. Adds 'testing' repository, and installs required packages.  #
+#    3. Clones the 'archivy' repository and installs Archivy.       #
+#    4. Cleans up by deleting packages and cloned repository.       #
+#    5. Adds a non-root user and group to run Archivy, creates the  #
+#       directory which Archivy uses to store its data, and changes #
+#       ownership of all files in the non-root user's home dir.     #
+#    6. The ownership of all copied files is set to                 #
+#       archivy user and group.                                     #
+#    7. Sets the 'run as' user to 'archivy'.                        #
+#    8. Exposes port 5000 on the container.                         #
+#    9. Runs Archivy                                                #
+#####################################################################
+
+# Start with python3.9-alpine
+FROM python:3.9-alpine
+
+# ARG values for injecting metadata during build time
+# NOTE: When using ARGS in a multi-stage build, remember to redeclare
+#       them for the stage that needs to use it. ARGs last only for the
+#       lifetime of the stage that they're declared in.
+ARG BUILD_DATE
+ARG VCS_REF
+
+# Setting VCS URL
+ARG ARCHIVY_VCS_URL="https://github.com/archivy/archivy"
+
+# Add 'testing' repository and install dependencies
+RUN echo "@testing http://dl-cdn.alpinelinux.org/alpine/edge/testing" >> /etc/apk/repositories \
+    && apk update && apk add --no-cache \
+      git \
+	  build-base \
+	  ripgrep \
+	  libxml2-dev \
+	  libxslt-dev \
+    # Clone the repository
+    && git clone ${ARCHIVY_VCS_URL} \
+    && cd archivy \
+    # Install all necessary files/packages
+    && python3.9 setup.py install \
+    # Delete git package
+    && apk del git --purge \
+    && cd ../ \
+    # Remove downloaded source code
+    && rm -rf archivy \
+    && addgroup -S -g 1000 archivy \
+    && adduser -h /archivy -g "User account for running Archivy" \
+    -s /sbin/nologin -S -D -G archivy -u 1000 archivy \
+    # Creating directory in which Archivy's files will be stored
+    # (If this directory isn't created, Archivy exits with a "permission denied" error)
+    && mkdir -p /archivy/data \
+    # Changing ownership of all files in user's home directory
+    && chown -R archivy:archivy /archivy
+
+# Copying entrypoint and healthcheck script from host
+COPY --chown=archivy:archivy entrypoint.sh /usr/local/bin/
+RUN chmod +x /usr/local/bin/entrypoint.sh
+COPY --chown=archivy:archivy config.yml /archivy/.local/share/archivy/config.yml
+
+# Run as user 'archivy'
+USER archivy
+
+# Exposing port 5000
+EXPOSE 5000
+
+# System call signal that will be sent to the container to exit
+STOPSIGNAL SIGTERM
+
+# Entrypoint - Run 'entrypoint.sh' script. Any command given to 'docker container run' will be added as an argument
+# to the ENTRYPOINT command below. The 'entrypoint.sh' script needs to receive 'start' as an argument in order to set up
+# the Archivy server.
+ENTRYPOINT ["entrypoint.sh"]
+
+# The 'run' CMD is required by the 'entrypoint.sh' script to set up the Archivy server.
+# Any command given to the 'docker container run' will override the CMD below.
+CMD ["run"]
+
+# Labels

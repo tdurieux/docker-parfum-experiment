@@ -1,0 +1,17 @@
+{
+  "startTime": 1674219746305,
+  "endTime": 1674219747354,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 25,
+        "lineEnd": 32,
+        "columnStart": 65,
+        "columnEnd": 11
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "ARG RAY_DOCKER_VERSION=nightly\nFROM rayproject/ray:${RAY_DOCKER_VERSION}-gpu\n\n# Arguments for the build. RAY_DOCKER_VERSION needs to be repeated because\n# the first usage only applies to the FROM tag.\n# TensorFlow version is tightly coupled to CUDA and cuDNN so it should be selected carefully\nARG RAY_DOCKER_VERSION=nightly\nARG TENSORFLOW_VERSION=2.6.5\nARG PYTORCH_VERSION=1.8.1+cu111\nARG PYTORCH_LIGHTNING_VERSION=1.5.9\nARG TORCHVISION_VERSION=0.9.1+cu111\n\n# to avoid interaction with apt-get\nENV DEBIAN_FRONTEND=noninteractive\n\n# Set default shell to /bin/bash\nSHELL [\"/bin/bash\", \"-euo\", \"pipefail\", \"-c\"]\n\n# Download the corresponding key for ubuntu1804.\n# This is to fix CI failures caused by the new rotating key mechanism rolled out by Nvidia.\n# Refer to https://forums.developer.nvidia.com/t/notice-cuda-linux-repository-key-rotation/212771 for more details.\nARG APT_KEY_DONT_WARN_ON_DANGEROUS_USAGE=1\nRUN sudo apt-key adv --fetch-keys https://developer.download.nvidia.com/compute/cuda/repos/ubuntu1804/x86_64/3bf863cc.pub\nRUN sudo apt-key adv --fetch-keys https://developer.download.nvidia.com/compute/machine-learning/repos/ubuntu1804/x86_64/7fa2af80.pub\n\nRUN sudo apt-get update && DEBIAN_FRONTEND=\"noninteractive\" sudo apt-get install --no-install-recommends -y \\\n        build-essential \\\n        cmake \\\n        wget \\\n        git \\\n        curl \\\n        rsync \\\n        vim \\\n    && sudo apt-get clean && sudo rm -rf /var/lib/apt/lists/*\n\n# Install PyTorch\nRUN pip install --no-cache-dir \\\n    torch==${PYTORCH_VERSION} \\\n    torchvision==${TORCHVISION_VERSION} \\\n    -f https://download.pytorch.org/whl/${PYTORCH_VERSION/*+/}/torch_stable.html\nRUN pip install --no-cache-dir pytorch_lightning==${PYTORCH_LIGHTNING_VERSION}\n\n# Install TensorFlow and Keras\nRUN pip install --no-cache-dir future typing packaging\nRUN pip install --no-cache-dir \\\n    tensorflow==${TENSORFLOW_VERSION} \\\n    keras \\\n    h5py\n\nUSER ray\nRUN sudo mkdir -p /horovod && sudo chown ray:users /horovod\nWORKDIR /horovod\n\n# Install Horovod, temporarily using CUDA stubs\nCOPY --chown=ray:users . .\nRUN python setup.py sdist && \\\n    sudo ldconfig /usr/local/cuda/targets/x86_64-linux/lib/stubs && \\\n    HOROVOD_GPU_OPERATIONS=NCCL HOROVOD_WITH_TENSORFLOW=1 HOROVOD_WITH_PYTORCH=1 pip install --no-cache-dir -v $(ls /horovod/dist/horovod-*.tar.gz)[ray] && \\\n    horovodrun --check-build && \\\n    sudo ldconfig\n\n# Check all frameworks are working correctly. Use CUDA stubs to ensure CUDA libs can be found correctly\n# when running on CPU machine\nWORKDIR \"/horovod/examples\"\nRUN sudo ldconfig /usr/local/cuda/targets/x86_64-linux/lib/stubs && \\\n    python -c \"import horovod.tensorflow as hvd; hvd.init()\" && \\\n    python -c \"import horovod.torch as hvd; hvd.init()\" && \\\n    sudo ldconfig\n"
+}

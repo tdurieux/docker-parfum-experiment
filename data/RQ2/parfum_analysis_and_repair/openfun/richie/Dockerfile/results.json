@@ -1,0 +1,62 @@
+{
+  "startTime": 1674253947054,
+  "endTime": 1674253947794,
+  "originalSmells": [
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 27,
+        "lineEnd": 27,
+        "columnStart": 4,
+        "columnEnd": 34
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 50,
+        "lineEnd": 50,
+        "columnStart": 4,
+        "columnEnd": 29
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 53,
+        "lineEnd": 53,
+        "columnStart": 4,
+        "columnEnd": 44
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 98,
+        "lineEnd": 98,
+        "columnStart": 4,
+        "columnEnd": 29
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 106,
+        "lineEnd": 106,
+        "columnStart": 4,
+        "columnEnd": 25
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 60,
+        "lineEnd": 61,
+        "columnStart": 4,
+        "columnEnd": 11
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Richie A FUN CMS for Open edX\n#\n# Nota bene:\n#\n# this container expects two volumes for statics and media files (that will be\n# served by nginx):\n#\n# * /data/media\n# * /data/static\n#\n# Once mounted, you will need to collect static files via the eponym django\n# admin command:\n#\n#     python sandbox/manage.py collectstatic\n#\n\n# ---- Base image to inherit from ----\nFROM python:3.10-buster as base\n\n# ---- Front-end builder image ----\nFROM node:16.15 as front-builder\n\n# Copy frontend app sources\nCOPY ./src/frontend /builder/src/frontend\n\nWORKDIR /builder/src/frontend\n\nRUN yarn install --frozen-lockfile && \\\n    yarn compile-translations && \\\n    yarn build-ts-production && \\\n    yarn build-sass-production && yarn cache clean;\n\n# ---- Back-end builder image ----\nFROM base as back-builder\n\nWORKDIR /builder\n\n# Copy required python dependencies\nCOPY setup.py setup.cfg MANIFEST.in /builder/\nCOPY ./src/richie /builder/src/richie/\n\n# Copy distributed application's statics\nCOPY --from=front-builder \\\n    /builder/src/richie/static/richie/js \\\n    /builder/src/richie/static/richie/js\nCOPY --from=front-builder \\\n    /builder/src/richie/static/richie/css/main.css \\\n    /builder/src/richie/static/richie/css/main.css\n\n# Upgrade pip to its latest release to speed up dependencies installation\nRUN pip install --no-cache-dir --upgrade pip\n\nRUN mkdir /install && \\\n    pip install --no-cache-dir --prefix=/install .[sandbox]\n\n# ---- Core application image ----\nFROM base as core\n\n# Install gettext\nRUN apt-get update && \\\n    apt-get install --no-install-recommends -y \\\n    gettext && \\\n    rm -rf /var/lib/apt/lists/*\n\n# Copy installed python dependencies\nCOPY --from=back-builder /install /usr/local\n\n# Copy runtime-required files\nCOPY ./sandbox /app/sandbox\nCOPY ./docker/files/usr/local/bin/entrypoint /usr/local/bin/entrypoint\n\n# Gunicorn\nRUN mkdir -p /usr/local/etc/gunicorn\nCOPY docker/files/usr/local/etc/gunicorn/richie.py /usr/local/etc/gunicorn/richie.py\n\n# Give the \"root\" group the same permissions as the \"root\" user on /etc/passwd\n# to allow a user belonging to the root group to add new users; typically the\n# docker user (see entrypoint).\nRUN chmod g=u /etc/passwd\n\n# Un-privileged user running the application\nARG DOCKER_USER\nUSER ${DOCKER_USER}\n\n# We wrap commands run in this container by the following entrypoint that\n# creates a user on-the-fly with the container user ID (see USER) and root group\n# ID.\nENTRYPOINT [ \"/usr/local/bin/entrypoint\" ]\n\n# ---- Development image ----\nFROM core as development\n\n# Switch back to the root user to install development dependencies\nUSER root:root\n\nWORKDIR /app\n\n# Upgrade pip to its latest release to speed up dependencies installation\nRUN pip install --no-cache-dir --upgrade pip\n\n# Copy all sources, not only runtime-required files\nCOPY . /app/\n\n# Uninstall richie and re-install it in editable mode along with development\n# dependencies\nRUN pip uninstall -y richie\nRUN pip install --no-cache-dir -e .[dev]\n\n# Restore the un-privileged user running the application\nARG DOCKER_USER\nUSER ${DOCKER_USER}\n\n# Target database host (e.g. database engine following docker-compose services\n# name) & port\nENV DB_HOST=postgresql \\\n    DB_PORT=5432\n\n# Run django development server\nCMD cd sandbox && python manage.py runserver 0.0.0.0:8000\n\n# ---- Production image ----\nFROM core as production\n\nWORKDIR /app/sandbox\n\n# The default command runs gunicorn WSGI server in the sandbox\nCMD gunicorn -c /usr/local/etc/gunicorn/richie.py wsgi:application\n"
+}

@@ -1,0 +1,53 @@
+{
+  "startTime": 1674254259058,
+  "endTime": 1674254260544,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 22,
+        "lineEnd": 22,
+        "columnStart": 12,
+        "columnEnd": 78
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 59,
+        "lineEnd": 61,
+        "columnStart": 12,
+        "columnEnd": 55
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 63,
+        "lineEnd": 67,
+        "columnStart": 12,
+        "columnEnd": 55
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 69,
+        "lineEnd": 72,
+        "columnStart": 12,
+        "columnEnd": 55
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 24,
+        "lineEnd": 24,
+        "columnStart": 17,
+        "columnEnd": 28
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM python:3.8-alpine3.15\n\nCOPY wait_for.sh kafka_wait_for_topics.py mysql_check.py /\nCOPY ashrc /root/.ashrc\n\nENV \\\n    ENV=\"/root/.ashrc\" \\\n    PIP_NO_CACHE_DIR=\"no\" \\\n    PIP_NO_COMPILE=\"no\" \\\n    PYTHONIOENCODING=\"utf-8\"\n\nARG BASE_CREATION_TIME\nARG BASE_GIT_COMMIT\n\nLABEL \\\n    org.opencontainers.image.created=\"$BASE_CREATION_TIME\" \\\n    org.opencontainers.image.title=\"monasca-base\" \\\n    org.opencontainers.image.revision=\"$BASE_GIT_COMMIT\" \\\n    org.opencontainers.image.licenses=\"Apache-2.0\"\n\nRUN \\\n    chmod +x /wait_for.sh /kafka_wait_for_topics.py /mysql_check.py && \\\n    apk add --no-cache \\\n        su-exec \\\n        tini \\\n        # We need this to allow users choose different time zone.\n        tzdata && \\\n    printf \"Monasca base build date: %s\\\\n\" $BASE_CREATION_TIME >> /VERSIONS && \\\n    printf \"Monasca base revision:   %s\\\\n\" $BASE_GIT_COMMIT >> /VERSIONS && \\\n    # Cleaning.\n    rm -rf /var/cache/apk/* && \\\n    rm -rf /var/log/* && \\\n    rm -rf /tmp/*\n\n# Get values from child images\nONBUILD ARG CREATION_TIME\nONBUILD ARG DOCKER_IMAGE\nONBUILD ARG APP_REPO\nONBUILD ARG GITHUB_REPO\nONBUILD ARG REPO_VERSION\nONBUILD ARG GIT_COMMIT\nONBUILD ARG CONSTRAINTS_FILE\nONBUILD ARG EXTRA_DEPS\nONBUILD ARG COMMON_REPO\nONBUILD ARG COMMON_VERSION\nONBUILD ARG COMMON_GIT_COMMIT\n\n# Build-time metadata as defined at\n# https://github.com/opencontainers/image-spec/blob/master/annotations.md\nONBUILD LABEL \\\n    org.opencontainers.image.created=\"$CREATION_TIME\" \\\n    org.opencontainers.image.title=\"$DOCKER_IMAGE\" \\\n    org.opencontainers.image.source=\"$APP_REPO\" \\\n    org.opencontainers.image.url=\"$GITHUB_REPO\" \\\n    org.opencontainers.image.version=\"$REPO_VERSION\" \\\n    org.opencontainers.image.revision=\"$GIT_COMMIT\" \\\n    org.opencontainers.image.licenses=\"Apache-2.0\" \\\n    org.openstack.constraints_uri=\"$CONSTRAINTS_FILE\" \\\n    org.openstack.monasca.python.extra_deps=\"$EXTRA_DEPS\" \\\n    org.openstack.monasca.common.source=\"$COMMON_REPO\" \\\n    org.openstack.monasca.common.version=\"$COMMON_VERSION\" \\\n    org.openstack.monasca.common.revision=\"$COMMON_GIT_COMMIT\"\n\n# Every child image need to provide starting and health check script.\n# If they're not provided build will fail. We want that for uniformity.\nONBUILD COPY start.sh health_check.py /\n\nONBUILD WORKDIR /\n\nONBUILD SHELL [\"/bin/ash\", \"-eo\", \"pipefail\", \"-c\"]\n \\\nRUN \\\n            chmod +x /start.sh && \\\n            apk add --no-cache --virtual .build-deps \\\n                cairo \\\n                g++ \\\n                git \\\n                libffi-dev \\\n                openssl-dev \\\n                libxml2-dev \\\n                libxslt-dev \\\n                linux-headers \\\n                make \\\n                rust && \\\n            # For librdkafka bigger than v1.8.0 we need newer versions of some\n            # libraries.\n            apk add --no-cache --virtual .build-librdkafka \\\n                libressl3.4-libcrypto \\\n                libressl3.4-libssl \\\n                --repository=http://dl-cdn.alpinelinux.org/alpine/edge/main \\\n                --repository=http://dl-cdn.alpinelinux.org/alpine/edge/community && \\\n            # Install librdkafka from source code.\n            apk add --no-cache curl bash && \\\n            curl -f https://codeload.github.com/edenhill/librdkafka/tar.gz/v1.8.0 | tar xzf - -C /tmp/ && \\\n                 cd /tmp/librdkafka-1.8.0/ && \\\n                 ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" && \\\n                 make && \\\n                 make install && \\\n            # Clone repository and checkout requested version.\n            # This many steps are needed to support gerrit patch sets.\n            mkdir -p /app && \\\n            git -C /app init && \\\n            git -C /app remote add origin \"$APP_REPO\" && \\\n            echo \"Cloning app in version: $REPO_VERSION\" && \\\n            git -C /app fetch origin \"$REPO_VERSION\" && \\\n            git -C /app reset --hard FETCH_HEAD && \\\n            wget --output-document /app/upper-constraints.txt \\\n                \"$CONSTRAINTS_FILE\" && \\\n            # Download monasca-common\n            mkdir -p /monasca-common && \\\n            git -C /monasca-common init && \\\n            git -C /monasca-common remote add origin \"$COMMON_REPO\" && \\\n            echo \"Cloning monasca-common in version: $COMMON_VERSION\" && \\\n            git -C /monasca-common fetch origin \"$COMMON_VERSION\" && \\\n            git -C /monasca-common reset --hard FETCH_HEAD && \\\n            # When creating image from master, stable branch or commit use\n            # monasca-common from git repository in /monasca-common,\n            # otherwise use the version from upper-constraints.txt\n            [ ! \"$(git -C /monasca-common tag -l ${COMMON_VERSION})\" ] && \\\n                sed -i \"s|monasca-common.*||\" \\\n                    /app/requirements.txt || true && \\\n            [ ! \"$(git -C /monasca-common tag -l ${COMMON_VERSION})\" ] && \\\n                sed -i \"s|monasca-common.*||\" \\\n                    /app/upper-constraints.txt || true && \\\n            [ $DOCKER_IMAGE = \"monasca/client\" ] && \\\n                sed -i \"s|python-monascaclient.*||\" \\\n                    /app/upper-constraints.txt || true && \\\n            [ $DOCKER_IMAGE = \"monasca/statsd\" ] && \\\n                sed -i \"s|monasca-statsd.*||\" \\\n                    /app/upper-constraints.txt || true && \\\n            pip3 install --no-cache-dir \\\n                --editable /monasca-common \\\n                --constraint /app/upper-constraints.txt && \\\n            # Install packages needed by wait scripts and used for templating.\n            pip3 install --no-cache-dir \\\n                pykafka \\\n                PyMySQL \\\n                Templer==1.1.4 \\\n                --constraint /app/upper-constraints.txt && \\\n            # Install our application with extra dependencies if provided.\n            pip3 install --no-cache-dir \\\n                /app/. $EXTRA_DEPS \\\n                --requirement /app/requirements.txt \\\n                --constraint /app/upper-constraints.txt && \\\n            # Save info about build to `/VERSIONS` file.\n            printf \"App:        %s\\\\n\" \"$DOCKER_IMAGE\" >> /VERSIONS && \\\n            printf \"Repository: %s\\\\n\" \"$APP_REPO\" >> /VERSIONS && \\\n            printf \"Version:    %s\\\\n\" \"$REPO_VERSION\" >> /VERSIONS && \\\n            printf \"Revision:   %s\\\\n\" \"$GIT_COMMIT\" >> /VERSIONS && \\\n            printf \"Build date: %s\\\\n\" \"$CREATION_TIME\" >> /VERSIONS && \\\n            printf \"Revision:   %s\\\\n\" \\\n                \"$(git -C /app rev-parse FETCH_HEAD)\" >> /VERSIONS && \\\n            printf \"Monasca-common version:     %s\\\\n\" \"$COMMON_VERSION\" \\\n                >> /VERSIONS && \\\n            printf \"Monasca-common pip version: %s\\\\n\" \\\n                \"$(pip3 freeze 2>&1 | grep 'monasca-common')\" >> /VERSIONS && \\\n            printf \"Monasca-common revision:    %s\\\\n\" \\\n                \"$COMMON_GIT_COMMIT\" >> /VERSIONS && \\\n            printf \"Constraints file: %s\\\\n\" \\\n                \"$CONSTRAINTS_FILE\" >> /VERSIONS && \\\n            # Clean after instalation.\n            apk del .build-deps .build-librdkafka && \\\n            rm -rf \\\n                /app \\\n                /root/.cache/ \\\n                /monasca-common/java/ \\\n                /tmp/* \\\n                /var/cache/apk/* \\\n                /var/log/* && \\\n            # Remove all Python pyc and pyo files. Don't remove tempest tests.\n            find /usr/local -depth \\\n                \\( \\\n                    \\( -type d -and \\( \\\n                        -name test -or -name tests \\\n                        -not -path '*/monasca_tempest_tests/*' \\) \\) \\\n                    -or \\\n                    \\( -type f -and \\( \\\n                        -name '*.pyc' -or -name '*.pyo' \\) \\) \\\n                \\) -exec rm -rf '{}' +ONBUILD\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\nONBUILD HEALTHCHECK --interval=5s --timeout=2s \\\n                   CMD python3 health_check.py || exit 1\n\nENTRYPOINT [\"/sbin/tini\", \"-s\", \"--\"]\n"
+}

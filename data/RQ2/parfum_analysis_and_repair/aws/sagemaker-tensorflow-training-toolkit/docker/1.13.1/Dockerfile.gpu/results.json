@@ -1,0 +1,53 @@
+{
+  "startTime": 1674252821826,
+  "endTime": 1674252823212,
+  "originalSmells": [
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 56,
+        "lineEnd": 56,
+        "columnStart": 4,
+        "columnEnd": 50
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 69,
+        "lineEnd": 69,
+        "columnStart": 4,
+        "columnEnd": 15
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 54,
+        "lineEnd": 54,
+        "columnStart": 4,
+        "columnEnd": 32
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 68,
+        "lineEnd": 68,
+        "columnStart": 4,
+        "columnEnd": 39
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 70,
+        "lineEnd": 70,
+        "columnStart": 22,
+        "columnEnd": 169
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM nvidia/cuda:10.0-base-ubuntu16.04\n\nLABEL maintainer=\"Amazon AI\"\n\nRUN apt-get update && apt-get install -y --no-install-recommends --allow-unauthenticated \\\n        ca-certificates \\\n        cuda-command-line-tools-10-0 \\\n        cuda-cublas-dev-10-0 \\\n        cuda-cudart-dev-10-0 \\\n        cuda-cufft-dev-10-0 \\\n        cuda-curand-dev-10-0 \\\n        cuda-cusolver-dev-10-0 \\\n        cuda-cusparse-dev-10-0 \\\n        curl \\\n        libcudnn7=7.5.1.10-1+cuda10.0 \\\n        # TensorFlow doesn't require libnccl anymore but Open MPI still depends on it\n        libnccl2=2.4.7-1+cuda10.0 \\\n        libgomp1 \\\n        libnccl-dev=2.4.7-1+cuda10.0 \\\n        libfreetype6-dev \\\n        libhdf5-serial-dev \\\n        libpng12-dev \\\n        libzmq3-dev \\\n        git \\\n        wget \\\n        vim \\\n        build-essential \\\n        openssh-client \\\n        openssh-server \\\n        zlib1g-dev && \\\n    # The 'apt-get install' of nvinfer-runtime-trt-repo-ubuntu1604-4.0.1-ga-cuda9.0\n    # adds a new list which contains libnvinfer library, so it needs another\n    # 'apt-get update' to retrieve that list before it can actually install the\n    # library.\n    # We don't install libnvinfer-dev since we don't need to build against TensorRT,\n    # and libnvinfer4 doesn't contain libnvinfer.a static library.\n    apt-get update && apt-get install -y --no-install-recommends --allow-unauthenticated  \\\n        nvinfer-runtime-trt-repo-ubuntu1604-5.0.2-ga-cuda10.0 && \\\n    apt-get update && apt-get install -y --no-install-recommends --allow-unauthenticated  \\\n        libnvinfer5=5.0.2-1+cuda10.0 && \\\n    rm /usr/lib/x86_64-linux-gnu/libnvinfer_plugin* && \\\n    rm /usr/lib/x86_64-linux-gnu/libnvcaffe_parser* && \\\n    rm /usr/lib/x86_64-linux-gnu/libnvparsers* && \\\n    rm -rf /var/lib/apt/lists/* && \\\n    mkdir -p /var/run/sshd\n\n###########################################################################\n# Horovod & its dependencies\n###########################################################################\n\n# Install Open MPI\nRUN mkdir /tmp/openmpi && \\\n    cd /tmp/openmpi && \\\n    curl -fSsL -O https://www.open-mpi.org/software/ompi/v3.1/downloads/openmpi-3.1.2.tar.gz && \\\n    tar zxf openmpi-3.1.2.tar.gz && \\\n    cd openmpi-3.1.2 && \\\n    ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" --enable-orterun-prefix-by-default && \\\n    make -j $(nproc) all && \\\n    make install && \\\n    ldconfig && \\\n    rm -rf /tmp/openmpi && rm openmpi-3.1.2.tar.gz\n\nARG PYTHON=python3\nARG PYTHON_PIP=python3-pip\nARG PIP=pip3\nARG PYTHON_VERSION=3.6.6\n\nRUN wget https://www.python.org/ftp/python/$PYTHON_VERSION/Python-$PYTHON_VERSION.tgz && \\\n    tar -xvf Python-$PYTHON_VERSION.tgz && cd Python-$PYTHON_VERSION && \\\n    ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" && make && make install && \\\n    apt-get update && apt-get install -y --no-install-recommends libreadline-gplv2-dev libncursesw5-dev libssl-dev libsqlite3-dev tk-dev libgdbm-dev libc6-dev libbz2-dev && \\\n    make && make install && rm -rf ../Python-$PYTHON_VERSION* && \\\n    ln -s /usr/local/bin/pip3 /usr/bin/pip && rm Python-$PYTHON_VERSION.tgz && rm -rf /var/lib/apt/lists/*;\n\n# Create a wrapper for OpenMPI to allow running as root by default\nRUN mv /usr/local/bin/mpirun /usr/local/bin/mpirun.real && \\\n    echo '#!/bin/bash' > /usr/local/bin/mpirun && \\\n    echo 'mpirun.real --allow-run-as-root \"$@\"' >> /usr/local/bin/mpirun && \\\n    chmod a+x /usr/local/bin/mpirun\n\n# Configure OpenMPI to run good defaults:\n#   --bind-to none --map-by slot --mca btl_tcp_if_exclude lo,docker0\nRUN echo \"hwloc_base_binding_policy = none\" >> /usr/local/etc/openmpi-mca-params.conf && \\\n    echo \"rmaps_base_mapping_policy = slot\" >> /usr/local/etc/openmpi-mca-params.conf\n\n# Set default NCCL parameters\nRUN echo NCCL_DEBUG=INFO >> /etc/nccl.conf\n\nENV LD_LIBRARY_PATH=/usr/local/openmpi/lib:$LD_LIBRARY_PATH\nENV PATH /usr/local/openmpi/bin/:$PATH\nENV PATH=/usr/local/nvidia/bin:$PATH\n\n# SSH login fix. Otherwise user is kicked off after login\nRUN mkdir -p /var/run/sshd && sed 's@session\\s*required\\s*pam_loginuid.so@session optional pam_loginuid.so@g' -i /etc/pam.d/sshd\n\n# Create SSH key.\nRUN mkdir -p /root/.ssh/ && \\\n  ssh-keygen -q -t rsa -N '' -f /root/.ssh/id_rsa && \\\n  cp /root/.ssh/id_rsa.pub /root/.ssh/authorized_keys && \\\n  printf \"Host *\\n  StrictHostKeyChecking no\\n\" >> /root/.ssh/config\n\n###########################################################################\n# Python won’t try to write .pyc or .pyo files on the import of source modules\nENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PYTHONIOENCODING=UTF-8 LANG=C.UTF-8 LC_ALL=C.UTF-8\n\nWORKDIR /\n\nARG TF_URL=\"https://tensorflow-aws.s3-us-west-2.amazonaws.com/1.13/AmazonLinux/gpu/latest-patch-latest-patch/tensorflow-1.13.1-cp36-cp36m-linux_x86_64.whl\"\n\nRUN ${PIP} --no-cache-dir install --upgrade pip setuptools\n\n# Some TF tools expect a \"python\" binary\nRUN ln -s $(which ${PYTHON}) /usr/local/bin/python\n\nARG framework_support_installable=sagemaker_tensorflow_container-2.0.0.tar.gz\nCOPY $framework_support_installable .\n\nRUN ${PIP} install --no-cache-dir -U \\\n    numpy==1.16.2 \\\n    scipy==1.2.1 \\\n    scikit-learn==0.20.3 \\\n    pandas==0.24.2 \\\n    Pillow==5.4.1 \\\n    h5py==2.9.0 \\\n    keras_applications==1.0.7 \\\n    keras_preprocessing==1.0.9 \\\n    requests==2.21.0 \\\n    keras==2.2.4 \\\n    awscli==1.16.130 \\\n    mpi4py==3.0.1 \\\n    \"sagemaker-tensorflow>=1.13,<1.14\" \\\n    # Let's install TensorFlow separately in the end to avoid\n    # the library version to be overwritten\n    && ${PIP} install --force-reinstall --no-cache-dir -U ${TF_URL} \\\n    && ${PIP} install --no-cache-dir -U $framework_support_installable && \\\n           rm -f $framework_support_installable \\\n    && ${PIP} uninstall -y --no-cache-dir \\\n    markdown \\\n    tensorboard\n\n# Install Horovod, temporarily using CUDA stubs\nRUN ldconfig /usr/local/cuda-10.0/targets/x86_64-linux/lib/stubs && \\\n    HOROVOD_GPU_ALLREDUCE=NCCL HOROVOD_WITH_TENSORFLOW=1 ${PIP} install --no-cache-dir horovod==0.16.4 && \\\n    ldconfig\n\n# Allow OpenSSH to talk to containers without asking for confirmation\nRUN cat /etc/ssh/ssh_config | grep -v StrictHostKeyChecking > /etc/ssh/ssh_config.new && \\\n    echo \"    StrictHostKeyChecking no\" >> /etc/ssh/ssh_config.new && \\\n    mv /etc/ssh/ssh_config.new /etc/ssh/ssh_config\n\nENV SAGEMAKER_TRAINING_MODULE sagemaker_tensorflow_container.training:main\n\nCMD [\"bin/bash\"]\n"
+}

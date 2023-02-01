@@ -1,0 +1,81 @@
+{
+  "startTime": 1674253265399,
+  "endTime": 1674253266339,
+  "originalSmells": [
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 116,
+        "lineEnd": 116,
+        "columnStart": 4,
+        "columnEnd": 23
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 46,
+        "lineEnd": 46,
+        "columnStart": 4,
+        "columnEnd": 35
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 74,
+        "lineEnd": 74,
+        "columnStart": 46,
+        "columnEnd": 80
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 138,
+        "lineEnd": 138,
+        "columnStart": 4,
+        "columnEnd": 58
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 37,
+        "lineEnd": 40,
+        "columnStart": 22,
+        "columnEnd": 8
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 113,
+        "lineEnd": 113,
+        "columnStart": 4,
+        "columnEnd": 29
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 113,
+        "lineEnd": 113,
+        "columnStart": 4,
+        "columnEnd": 29
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 114,
+        "lineEnd": 114,
+        "columnStart": 4,
+        "columnEnd": 53
+      }
+    }
+  ],
+  "repairedDockerfile": "# FROM must be called before other ARGS except for ARG BASE_IMAGE\nARG BASE_IMAGE=nvidia/cuda:11.0.3-cudnn8-devel-ubuntu18.04\nFROM ${BASE_IMAGE}\n\n# Customizable build arguments from cuda.yml\nARG DEVELOPER_BUILD\nARG CCACHE_TAR_NAME\nARG CMAKE_VERSION\nARG CCACHE_VERSION\nARG PYTHON_VERSION\n\n# Forward all ARG to ENV\n# ci_utils.sh requires these environment variables\nENV DEVELOPER_BUILD=${DEVELOPER_BUILD}\nENV CCACHE_TAR_NAME=${CCACHE_TAR_NAME}\nENV CMAKE_VERSION=${CMAKE_VERSION}\nARG CCACHE_VERSION=${CCACHE_VERSION}\nENV PYTHON_VERSION=${PYTHON_VERSION}\n\n# Prevent interactive inputs when installing packages\nENV DEBIAN_FRONTEND=noninteractive\nENV TZ=America/Los_Angeles\nENV SUDO=command\n\n# Miniconda requires bash as the default shell.\nSHELL [\"/bin/bash\", \"-c\"]\n\n# Fix Nvidia repo key rotation issue\n# https://forums.developer.nvidia.com/t/notice-cuda-linux-repository-key-rotation/212771\n# https://forums.developer.nvidia.com/t/18-04-cuda-docker-image-is-broken/212892/10\n# https://code.visualstudio.com/remote/advancedcontainers/reduce-docker-warnings#:~:text=Warning%3A%20apt%2Dkey%20output%20should,not%20running%20from%20a%20terminal.\nRUN export APT_KEY_DONT_WARN_ON_DANGEROUS_USAGE=DontWarn \\\n && apt-key del 7fa2af80 \\\n && apt-key adv --fetch-keys https://developer.download.nvidia.com/compute/cuda/repos/ubuntu1604/x86_64/3bf863cc.pub \\\n && apt-key adv --fetch-keys https://developer.download.nvidia.com/compute/machine-learning/repos/ubuntu1804/x86_64/7fa2af80.pub\n\n# Dependencies: basic\nRUN apt-get update && apt-get install --no-install-recommends -y \\\n    git \\\n    wget \\\n    curl \\\n && rm -rf /var/lib/apt/lists/*\n\n# Dependencies: cmake\nRUN CMAKE_VERSION_NUMBERS=$(echo \"${CMAKE_VERSION}\" | cut -d\"-\" -f2) \\\n && wget -q https://github.com/Kitware/CMake/releases/download/v${CMAKE_VERSION_NUMBERS}/${CMAKE_VERSION}.tar.gz \\\n && tar -xf ${CMAKE_VERSION}.tar.gz \\\n && cp -ar ${CMAKE_VERSION} ${HOME} && rm ${CMAKE_VERSION}.tar.gz\nENV PATH=${HOME}/${CMAKE_VERSION}/bin:${PATH}\n\n# Dependencies: ccache\nWORKDIR /root\nRUN git clone https://github.com/ccache/ccache.git \\\n && cd ccache \\\n && git checkout v${CCACHE_VERSION} -b ${CCACHE_VERSION} \\\n && mkdir build \\\n && cd build \\\n && cmake -DCMAKE_BUILD_TYPE=Release -DZSTD_FROM_INTERNET=ON .. \\\n && make install -j$(nproc) \\\n && which ccache \\\n && ccache --version \\\n && ccache -s\n\n# Download ccache from GCS bucket (optional)\n# Example directory structure:\n# CCACHE_DIR        = ~/.cache/ccache\n# CCACHE_DIR_NAME   = ccache\n# CCACHE_DIR_PARENT = ~/.cache\nRUN CCACHE_DIR=$(ccache -p | grep cache_dir | grep -oE \"[^ ]+$\") \\\n && CCACHE_DIR_NAME=$(basename ${CCACHE_DIR}) \\\n && CCACHE_DIR_PARENT=$(dirname ${CCACHE_DIR}) \\\n && mkdir -p ${CCACHE_DIR_PARENT} \\\n && cd ${CCACHE_DIR_PARENT} \\\n && (wget -q https://storage.googleapis.com/open3d-ci-cache/${CCACHE_TAR_NAME}.tar.gz || true) \\\n && if [ -f ${CCACHE_TAR_NAME}.tar.gz ]; then \\\n tar -xf ${CCACHE_TAR_NAME}.tar.gz; rm ${CCACHE_TAR_NAME}.tar.gzfi\n# We need to set ccache size explicitly with -M, otherwise the default size is\n# *not* determined by ccache's default, but the downloaded ccache file's config.\nRUN ccache -M 5G \\\n && ccache -s\n\n# Miniconda\nENV PATH=\"/root/miniconda3/bin:${PATH}\"\nRUN wget -q https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh \\\n && bash Miniconda3-latest-Linux-x86_64.sh -b \\\n && rm Miniconda3-latest-Linux-x86_64.sh \\\n && conda --version\nENV PATH=\"/root/miniconda3/envs/open3d/bin:${PATH}\"\nRUN conda create -y -n open3d python=${PYTHON_VERSION} \\\n && source activate open3d\nRUN which python \\\n && python --version\n\n# Checkout Open3D-ML master branch\n# TODO: We may add support for local Open3D-ML repo or pinned ML repo tag\nENV OPEN3D_ML_ROOT=/root/Open3D-ML\nRUN git clone https://github.com/isl-org/Open3D-ML.git ${OPEN3D_ML_ROOT}\n\n# Open3D C++ dependencies\n# Done before copying the full Open3D directory for better Docker caching\nCOPY ./util/install_deps_ubuntu.sh /root/Open3D/util/\nRUN /root/Open3D/util/install_deps_ubuntu.sh assume-yes \\\n && rm -rf /var/lib/apt/lists/*\n\n# Open3D Python dependencies\nCOPY ./util/ci_utils.sh /root/Open3D/util/\nCOPY ./python/requirements.txt /root/Open3D/python/\nCOPY ./python/requirements_jupyter_build.txt /root/Open3D/python/\nCOPY ./python/requirements_jupyter_install.txt /root/Open3D/python/\nRUN source /root/Open3D/util/ci_utils.sh \\\n && install_python_dependencies with-cuda with-jupyter\n\n# Open3D Jupyter dependencies\nRUN curl -fsSL https://deb.nodesource.com/setup_16.x | bash - \\\n && apt-get install --no-install-recommends -y nodejs \\\n && rm -rf /var/lib/apt/lists/* \\\n && node --version\nRUN npm install -g yarn \\\n && yarn --version && npm cache clean --force;\n\n# Open3D repo\n# Always keep /root/Open3D as the WORKDIR\nCOPY . /root/Open3D\nWORKDIR /root/Open3D\n\n# Build python wheel\nRUN export NPROC=$(nproc) \\\n && export BUILD_SHARED_LIBS=OFF \\\n && export BUILD_TENSORFLOW_OPS=ON \\\n && export BUILD_PYTORCH_OPS=ON \\\n && source /root/Open3D/util/ci_utils.sh \\\n && build_pip_package build_azure_kinect build_jupyter\n\n# Compress ccache folder, move to / directory\nRUN ccache -s \\\n && CCACHE_DIR=$(ccache -p | grep cache_dir | grep -oE \"[^ ]+$\") \\\n && CCACHE_DIR_NAME=$(basename ${CCACHE_DIR}) \\\n && CCACHE_DIR_PARENT=$(dirname ${CCACHE_DIR}) \\\n && cd ${CCACHE_DIR_PARENT} \\\n && tar -czf /${CCACHE_TAR_NAME}.tar.gz ${CCACHE_DIR_NAME} && rm /${CCACHE_TAR_NAME}.tar.gz\n\nRUN echo \"Docker build done.\"\n"
+}

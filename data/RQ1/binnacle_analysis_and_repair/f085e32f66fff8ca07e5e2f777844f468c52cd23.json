@@ -1,0 +1,71 @@
+{
+  "startTime": 1674236759934,
+  "endTime": 1674236760287,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 98,
+        "lineEnd": 98,
+        "columnStart": 12,
+        "columnEnd": 37
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 4,
+        "lineEnd": 20,
+        "columnStart": 7,
+        "columnEnd": 17
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 40,
+        "lineEnd": 40,
+        "columnStart": 7,
+        "columnEnd": 60
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 47,
+        "lineEnd": 55,
+        "columnStart": 7,
+        "columnEnd": 19
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 4,
+        "lineEnd": 20,
+        "columnStart": 7,
+        "columnEnd": 17
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 40,
+        "lineEnd": 40,
+        "columnStart": 7,
+        "columnEnd": 60
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 47,
+        "lineEnd": 55,
+        "columnStart": 7,
+        "columnEnd": 19
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM debian:9.6-slim\n\n# install package\nRUN apt-get -y update \\\n    && apt-get -y --no-install-recommends install \\\n    # prerequisite\n    build-essential \\\n    python-setuptools \\\n    wget \\\n    cron \\\n    sudo \\\n    locales \\\n    git \\\n    # production\n    supervisor \\\n    nginx \\\n    # used for envsubst, making nginx cnf from template\n    gettext-base \\\n    # fixed for wkhtmltopdf SSL problems\n    # https://github.com/pipech/erpnext-docker-debian/issues/31\n    libssl1.0-dev \\\n    # clean up\n    && apt-get autoremove --purge \\\n    && apt-get clean && rm -rf /var/lib/apt/lists/*;\n\n# [work around] for  \"cmd\": \"chsh frappe -s $(which bash)\", \"stderr\": \"Password: chsh: PAM: Authentication failure\"\n# caused by > bench/playbooks/create_user.yml > shell: \"chsh {{ frappe_user }} -s $(which bash)\"\nRUN sed -i 's/auth       required   pam_shells.so/auth       sufficient   pam_shells.so/' /etc/pam.d/chsh\n\n# set locales\nRUN sed -i -e 's/# en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/' /etc/locale.gen \\\n    && locale-gen\nENV LC_ALL=en_US.UTF-8 \\\n    LC_CTYPE=en_US.UTF-8 \\\n    LANG=en_US.UTF-8\n\n# manually install mariadb\nRUN apt-get update \\\n    # add repo from mariadb mirrors\n    # https://downloads.mariadb.org/mariadb/repositories \\\n    && apt-get install --no-install-recommends -y software-properties-common dirmngr \\\n    && apt-key adv --no-tty --recv-keys --keyserver hkp://keyserver.ubuntu.com:80 0xF1656F24C74CD1D8 \\\n    && add-apt-repository 'deb [arch=amd64,i386,ppc64el] http://nyc2.mirrors.digitalocean.com/mariadb/repo/10.3/debian stretch main' \\\n    # make frontend noninteractive to skip root password change\n    && export DEBIAN_FRONTEND=noninteractive \\\n    # install mariadb\n    && apt-get update \\\n    && apt-get install --no-install-recommends -y \\\n\n\n    mariadb-server \\\n    mariadb-client \\\n    mariadb-common \\\n    libmariadbclient18 \\\n    python-mysqldb \\\n    python3-mysqldb && rm -rf /var/lib/apt/lists/*;\n\n# add users without sudo password\nENV systemUser=frappe\nRUN adduser --disabled-password --gecos \"\" $systemUser \\\n    && usermod -aG sudo $systemUser \\\n    && echo \"%sudo  ALL=(ALL)  NOPASSWD: ALL\" > /etc/sudoers.d/sudoers\n\n# set user and workdir\nUSER $systemUser\nWORKDIR /home/$systemUser\n\nCOPY ./mariadb.cnf /etc/mysql/conf.d/mariadb.cnf\n\n# install prerequisite for bench with easy install script\nENV easyinstallRepo='https://raw.githubusercontent.com/frappe/bench/master/playbooks/install.py' \\\n    benchPath=bench-repo \\\n    benchBranch=master \\\n    benchFolderName=bench \\\n    benchRepo='https://github.com/frappe/bench' \\\n    frappeRepo='https://github.com/frappe/frappe' \\\n    erpnextRepo='https://github.com/frappe/erpnext' \\\n    siteName=site1.local \\\n    adminPass=12345 \\\n    mysqlPass=travis\n\n# for python 2 use = python\n# for python 3 use = python3 or python3.6 for centos\nARG pythonVersion=python\nARG appBranch=master\n\nRUN sudo service mysql start \\\n    && mysql --user=\"root\" --execute=\"ALTER USER 'root'@'localhost' IDENTIFIED BY 'travis';\" \\\n    && git clone $benchRepo /tmp/.bench --depth 1 --branch $benchBranch \\\n    # start easy install\n    && wget $easyinstallRepo \\\n    # remove mariadb from bench playbook\n    && sed -i '/mariadb/d' /tmp/.bench/playbooks/site.yml \\\n    && python install.py \\\n    --without-bench-setup \\\n    # install bench\n    && rm -rf bench \\\n    && git clone --branch $benchBranch --depth 1 --origin upstream $benchRepo $benchPath \\\n    && sudo pip install --no-cache-dir -e $benchPath \\\n    # init bench folder\n    && bench init $benchFolderName --frappe-path $frappeRepo --frappe-branch $appBranch --python $pythonVersion \\\n    # cd to bench folder\n    && cd $benchFolderName \\\n    # install erpnext\n    && bench get-app erpnext $erpnextRepo --branch $appBranch \\\n    # [work around] fix for Setup failed >> Could not start up: Error in setup\n    && bench update --patch \\\n    # delete unnecessary frappe apps\n    && rm -rf \\\n    apps/frappe_io \\\n    apps/foundation \\\n    && sed -i '/foundation\\|frappe_io/d' sites/apps.txt \\\n    # delete temp file\n    && sudo rm -rf /tmp/* \\\n    # clean up installation\n    && sudo apt-get autoremove --purge -y \\\n    && sudo apt-get clean \\\n    # start mariadb & init new site\n    && sudo service mysql start \\\n    && bench new-site $siteName \\\n    --mariadb-root-password $mysqlPass  \\\n    --admin-password $adminPass \\\n    && bench --site $siteName install-app erpnext\n\n# [work around] change back config for work around for  \"cmd\": \"chsh frappe -s $(which bash)\", \"stderr\": \"Password: chsh: PAM: Authentication failure\"\nRUN sudo sed -i 's/auth       sufficient   pam_shells.so/auth       required   pam_shells.so/' /etc/pam.d/chsh\n\n# set user and workdir\nUSER $systemUser\nWORKDIR /home/$systemUser/$benchFolderName\n\n# copy production config\nCOPY production_setup/conf/frappe-docker-conf /home/$systemUser/production_config\n\n# run start mysql service and start bench when container start\nCOPY entrypoint.sh /usr/local/bin/\n# fix for [docker Error response from daemon OCI runtime create failed starting container process caused \"permission denied\" unknown]\nRUN sudo chmod +x /home/$systemUser/production_config/entrypoint_prd.sh \\\n    && sudo chmod +x /usr/local/bin/entrypoint.sh\n# image entrypoint script\nCMD [\"/usr/local/bin/entrypoint.sh\"]\n\n# expose port\nEXPOSE 8000-8005 9000-9005 3306-3307\n"
+}

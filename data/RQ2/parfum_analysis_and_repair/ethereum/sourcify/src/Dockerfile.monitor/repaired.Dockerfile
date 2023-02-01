@@ -1,0 +1,11 @@
+FROM node:16
+WORKDIR /home/app
+
+COPY services/core ./services/core
+COPY services/validation ./services/validation
+COPY services/verification ./services/verification
+COPY src ./src
+COPY *.json ./
+RUN npx lerna bootstrap && npx lerna run build
+
+CMD ["npm", "run", "monitor:start"]

@@ -1,0 +1,35 @@
+{
+  "startTime": 1674235486239,
+  "endTime": 1674235486470,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 80,
+        "lineEnd": 80,
+        "columnStart": 4,
+        "columnEnd": 71
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 97,
+        "lineEnd": 97,
+        "columnStart": 4,
+        "columnEnd": 41
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 38,
+        "lineEnd": 38,
+        "columnStart": 4,
+        "columnEnd": 31
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Copyright 2019 HTCondor Team, Computer Sciences Department,\n# University of Wisconsin-Madison, WI.\n#\n# Licensed under the Apache License, Version 2.0 (the \"License\");\n# you may not use this file except in compliance with the License.\n# You may obtain a copy of the License at\n#\n#    http://www.apache.org/licenses/LICENSE-2.0\n#\n# Unless required by applicable law or agreed to in writing, software\n# distributed under the License is distributed on an \"AS IS\" BASIS,\n# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.\n# See the License for the specific language governing permissions and\n# limitations under the License.\n\n# this dockerfile builds a test environment for HTMap\n\nFROM ubuntu:bionic\n\n# switch to root to do root-level config\nUSER root\n\n# build config\nARG PYTHON_VERSION=3.7\nARG HTCONDOR_VERSION=8.9\nARG MINICONDA_VERSION=latest\n\n# environment setup\nENV DEBIAN_FRONTEND=noninteractive \\\n    LC_ALL=en_US.UTF-8 \\\n    LANG=en_US.UTF-8 \\\n    LANGUAGE=en_US.UTF-8\n\n# faster container builds\nRUN apt-get update \\\n && apt-get -y install --no-install-recommends software-properties-common \\\n && add-apt-repository ppa:apt-fast/stable \\\n && apt-get update \\\n && apt-get -y --no-install-recommends install apt-fast \\\n && apt-get -y clean \\\n && rm -rf /var/lib/apt/lists/*\n\n# install utils and dependencies\nRUN apt-fast update \\\n && apt-fast -y install --no-install-recommends sudo vim less build-essential git gnupg wget ca-certificates locales \\\n && apt-get -y clean \\\n && rm -rf /var/lib/apt/lists/* \\\n && echo \"en_US.UTF-8 UTF-8\" > /etc/locale.gen \\\n && locale-gen\n\n# install HTCondor version specified in config\nRUN wget -qO - https://research.cs.wisc.edu/htcondor/ubuntu/HTCondor-Release.gpg.key | apt-key add - \\\n && echo \"deb http://research.cs.wisc.edu/htcondor/ubuntu/${HTCONDOR_VERSION}/bionic bionic contrib\" >> /etc/apt/sources.list \\\n && apt-fast -y update \\\n && apt-fast -y install --no-install-recommends htcondor \\\n && apt-get -y clean \\\n && rm -rf /var/lib/apt/lists/*\n\n# create a user to be our submitter and set conda install location\nENV SUBMIT_USER=mapper\nENV CONDA_DIR=/home/${SUBMIT_USER}/conda\nENV PATH=${CONDA_DIR}/bin:${PATH}\nRUN groupadd ${SUBMIT_USER} \\\n && useradd -m -g ${SUBMIT_USER} ${SUBMIT_USER}\n\n# switch to submit user, don't need root anymore\nUSER ${SUBMIT_USER}\n\n# install miniconda and python version specified in config\n# (and ipython, which is nice for debugging inside the container)\nRUN cd /tmp \\\n && wget --quiet https://repo.continuum.io/miniconda/Miniconda3-${MINICONDA_VERSION}-Linux-x86_64.sh \\\n && bash Miniconda3-${MINICONDA_VERSION}-Linux-x86_64.sh -f -b -p $CONDA_DIR \\\n && rm Miniconda3-${MINICONDA_VERSION}-Linux-x86_64.sh \\\n && conda install python=${PYTHON_VERSION} ipython \\\n && conda clean -y -all\n\n# install htmap dependencies early for docker build caching\nCOPY requirements.txt /home/${SUBMIT_USER}/requirements.txt\nCOPY requirements_dev.txt /home/${SUBMIT_USER}/requirements_dev.txt\nRUN pip install --no-cache-dir --no-cache -r /home/${SUBMIT_USER}/requirements_dev.txt \\\n && rm /home/${SUBMIT_USER}/requirements*\n\n# set default entrypoint and command\n# the entrypoint is critical: it starts HTCondor in the container\nENTRYPOINT [\"tests/_inf/entrypoint.sh\"]\nCMD [\"pytest\"]\n\n# copy HTCondor and HTMap testing configs into place\nCOPY tests/_inf/condor_config.local /etc/condor/condor_config.local\nCOPY tests/_inf/.htmaprc /home/${SUBMIT_USER}/.htmaprc\n\n# copy htmap package into container and install it\n# this is the only part that can't be cached against editing the package\nCOPY --chown=mapper:mapper . /home/${SUBMIT_USER}/htmap\nWORKDIR /home/${SUBMIT_USER}/htmap\nRUN chmod +x /home/${SUBMIT_USER}/htmap/tests/_inf/entrypoint.sh /home/${SUBMIT_USER}/htmap/tests/_inf/travis.sh \\\n && pip install --no-cache-dir --no-cache --no-deps -e .\n"
+}

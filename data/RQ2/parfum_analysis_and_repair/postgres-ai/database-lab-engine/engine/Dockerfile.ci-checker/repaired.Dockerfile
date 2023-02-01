@@ -1,0 +1,10 @@
+FROM docker:20.10.12
+
+# Install dependencies.
+RUN apk update && apk add --no-cache bash
+
+WORKDIR /home/dblab
+
+COPY ./bin/run-ci ./bin/run-ci
+
+CMD ./bin/run-ci

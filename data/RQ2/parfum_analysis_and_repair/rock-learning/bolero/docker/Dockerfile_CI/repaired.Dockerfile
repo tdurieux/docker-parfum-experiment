@@ -1,0 +1,31 @@
+FROM ubuntu:18.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update -qq && apt-get install --no-install-recommends -y \
+  cmake \
+  wget \
+  sudo \
+  git \
+  unzip \
+  python \
+  python-dev \
+  python-pip \
+  python-yaml \
+  python-matplotlib \
+  python-tk \
+  python-distro \
+  libboost-all-dev \
+  libeigen3-dev \
+  libqt4-dev \
+  libtinyxml-dev \
+  pkg-config \
+  libyaml-cpp-dev \
+  libblas-dev \
+  liblapack-dev \
+  gfortran \
+  cython \
+  python-nose \
+  python-scipy \
+  python-sklearn \
+  libjsoncpp-dev && rm -rf /var/lib/apt/lists/*;
+RUN pip install --no-cache-dir gym scikit-optimize

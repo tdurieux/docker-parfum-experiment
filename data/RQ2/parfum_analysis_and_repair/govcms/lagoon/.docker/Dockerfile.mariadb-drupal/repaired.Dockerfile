@@ -1,0 +1,2 @@
+ARG LAGOON_IMAGE_VERSION
+FROM uselagoon/mariadb-drupal:${LAGOON_IMAGE_VERSION}

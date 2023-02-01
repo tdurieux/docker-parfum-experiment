@@ -1,0 +1,44 @@
+{
+  "startTime": 1674253726472,
+  "endTime": 1674253727659,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 52,
+        "lineEnd": 52,
+        "columnStart": 7,
+        "columnEnd": 120
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 56,
+        "lineEnd": 57,
+        "columnStart": 7,
+        "columnEnd": 34
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 28,
+        "lineEnd": 28,
+        "columnStart": 7,
+        "columnEnd": 29
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 106,
+        "lineEnd": 106,
+        "columnStart": 11,
+        "columnEnd": 64
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "## This Dockerfile is meant to aid in the building and debugging patroni whilst developing on your local machine\n## It has all the necessary components to play/debug with a single node appliance, running etcd\nARG PG_MAJOR=14\nARG COMPRESS=false\nARG PGHOME=/home/postgres\nARG PGDATA=$PGHOME/data\nARG LC_ALL=C.UTF-8\nARG LANG=C.UTF-8\n\nFROM postgres:$PG_MAJOR as builder\n\nARG PGHOME\nARG PGDATA\nARG LC_ALL\nARG LANG\n\nENV ETCDVERSION=3.3.13 CONFDVERSION=0.16.0\n\nRUN set -ex \\\n    && export DEBIAN_FRONTEND=noninteractive \\\n    && echo 'APT::Install-Recommends \"0\";\\nAPT::Install-Suggests \"0\";' > /etc/apt/apt.conf.d/01norecommend \\\n    && apt-get update -y \\\n    # postgres:10 is based on debian, which has the patroni package. We will install all required dependencies\n    && apt-cache depends patroni | sed -n -e 's/.*Depends: \\(python3-.\\+\\)$/\\1/p' \\\n            | grep -Ev '^python3-(sphinx|etcd|consul|kazoo|kubernetes)' \\\n            | xargs apt-get install -y vim curl less jq locales haproxy sudo \\\n                            python3-etcd python3-kazoo python3-pip busybox \\\n                            net-tools iputils-ping --fix-missing \\\n    && pip3 install --no-cache-dir dumb-init \\\n\n    # Cleanup all locales but en_US.UTF-8\n    && find /usr/share/i18n/charmaps/ -type f ! -name UTF-8.gz -delete \\\n    && find /usr/share/i18n/locales/ -type f ! -name en_US ! -name en_GB ! -name i18n* ! -name iso14651_t1 ! -name iso14651_t1_common ! -name 'translit_*' -delete \\\n    && echo 'en_US.UTF-8 UTF-8' > /usr/share/i18n/SUPPORTED \\\n\n    # Make sure we have a en_US.UTF-8 locale available\n    && localedef -i en_US -c -f UTF-8 -A /usr/share/locale/locale.alias en_US.UTF-8 \\\n\n    # haproxy dummy config\n    && echo 'global\\n        stats socket /run/haproxy/admin.sock mode 660 level admin' > /etc/haproxy/haproxy.cfg \\\n\n    # vim config\n    && echo 'syntax on\\nfiletype plugin indent on\\nset mouse-=a\\nautocmd FileType yaml setlocal ts=2 sts=2 sw=2 expandtab' > /etc/vim/vimrc.local \\\n\n    # Prepare postgres/patroni/haproxy environment\n    && mkdir -p $PGHOME/.config/patroni /patroni /run/haproxy \\\n    && ln -s ../../postgres0.yml $PGHOME/.config/patroni/patronictl.yaml \\\n    && ln -s /patronictl.py /usr/local/bin/patronictl \\\n    && sed -i \"s|/var/lib/postgresql.*|$PGHOME:/bin/bash|\" /etc/passwd \\\n    && chown -R postgres:postgres /var/log \\\n\n    # Download etcd\n    && curl -f -sL https://github.com/coreos/etcd/releases/download/v${ETCDVERSION}/etcd-v${ETCDVERSION}-linux-amd64.tar.gz \\\n            | tar xz -C /usr/local/bin --strip=1 --wildcards --no-anchored etcd etcdctl \\\n\n    # Download confd\n    && curl -f -sL https://github.com/kelseyhightower/confd/releases/download/v${CONFDVERSION}/confd-${CONFDVERSION}-linux-amd64 \\\n            > /usr/local/bin/confd && chmod +x /usr/local/bin/confd \\\n\n    # Clean up all useless packages and some files\n    && apt-get purge -y --allow-remove-essential python3-pip gzip bzip2 util-linux e2fsprogs \\\n                libmagic1 bsdmainutils login ncurses-bin libmagic-mgc e2fslibs bsdutils \\\n                exim4-config gnupg-agent dirmngr libpython2.7-stdlib libpython2.7-minimal \\\n    && apt-get autoremove -y \\\n    && apt-get clean -y \\\n    && rm -rf /var/lib/apt/lists/* \\\n        /root/.cache \\\n        /var/cache/debconf/* \\\n        /etc/rc?.d \\\n        /etc/systemd \\\n        /docker-entrypoint* \\\n        /sbin/pam* \\\n        /sbin/swap* \\\n        /sbin/unix* \\\n        /usr/local/bin/gosu \\\n        /usr/sbin/[acgipr]* \\\n        /usr/sbin/*user* \\\n        /usr/share/doc* \\\n        /usr/share/man \\\n        /usr/share/info \\\n        /usr/share/i18n/locales/translit_hangul \\\n        /usr/share/locale/?? \\\n        /usr/share/locale/??_?? \\\n        /usr/share/postgresql/*/man \\\n        /usr/share/postgresql-common/pg_wrapper \\\n        /usr/share/vim/vim80/doc \\\n        /usr/share/vim/vim80/lang \\\n        /usr/share/vim/vim80/tutor \\\n#        /var/lib/dpkg/info/* \\\n    && find /usr/bin -xtype l -delete \\\n    && find /var/log -type f -exec truncate --size 0 {} \\; \\\n    && find /usr/lib/python3/dist-packages -name '*test*' | xargs rm -fr \\\n    && find /lib/x86_64-linux-gnu/security -type f ! -name pam_env.so ! -name pam_permit.so ! -name pam_unix.so -delete\n\n# perform compression if it is necessary\nARG COMPRESS\nRUN if [ \"$COMPRESS\" = \"true\" ]; then \\\n        set -ex \\\n        # Allow certain sudo commands from postgres\n        && echo 'postgres ALL=(ALL) NOPASSWD: /bin/tar xpJf /a.tar.xz -C /, /bin/rm /a.tar.xz, /bin/ln -snf dash /bin/sh' >> /etc/sudoers \\\n        && ln -snf busybox /bin/sh \\\n        && files=\"/bin/sh /usr/bin/sudo /usr/lib/sudo/sudoers.so /lib/x86_64-linux-gnu/security/pam_*.so\" \\\n        && libs=\"$(ldd $files | awk '{print $3;}' | grep '^/' | sort -u) /lib/x86_64-linux-gnu/ld-linux-x86-64.so.* /lib/x86_64-linux-gnu/libnsl.so.* /lib/x86_64-linux-gnu/libnss_compat.so.*\" \\\n        && (echo /var/run $files $libs | tr ' ' '\\n' && realpath $files $libs) | sort -u | sed 's/^\\///' > /exclude \\\n        && find /etc/alternatives -xtype l -delete \\\n        && save_dirs=\"usr lib var bin sbin etc/ssl etc/init.d etc/alternatives etc/apt\" \\\n        && XZ_OPT=-e9v tar -X /exclude -cpJf a.tar.xz $save_dirs \\\n        # we call \"cat /exclude\" to avoid including files from the $save_dirs that are also among\n        # the exceptions listed in the /exclude, as \"uniq -u\" eliminates all non-unique lines.\n        # By calling \"cat /exclude\" a second time we guarantee that there will be at least two lines\n        # for each exception and therefore they will be excluded from the output passed to 'rm'.\n        && /bin/busybox sh -c \"(find $save_dirs -not -type d && cat /exclude /exclude && echo exclude) | sort | uniq -u | xargs /bin/busybox rm\" \\\n        && /bin/busybox --install -s \\\n        && /bin/busybox sh -c \"find $save_dirs -type d -depth -exec rmdir -p {} \\; 2> /dev/null\"; rm a.tar.xz \\\n    fi\n\nFROM scratch\nCOPY --from=builder / /\n\nLABEL maintainer=\"Alexander Kukushkin <alexander.kukushkin@zalando.de>\"\n\nARG PG_MAJOR\nARG COMPRESS\nARG PGHOME\nARG PGDATA\nARG LC_ALL\nARG LANG\n\nARG PGBIN=/usr/lib/postgresql/$PG_MAJOR/bin\n\nENV LC_ALL=$LC_ALL LANG=$LANG EDITOR=/usr/bin/editor\nENV PGDATA=$PGDATA PATH=$PATH:$PGBIN\n\nCOPY patroni /patroni/\nCOPY extras/confd/conf.d/haproxy.toml /etc/confd/conf.d/\nCOPY extras/confd/templates/haproxy.tmpl /etc/confd/templates/\nCOPY patroni*.py docker/entrypoint.sh /\nCOPY postgres?.yml $PGHOME/\n\nWORKDIR $PGHOME\n\nRUN sed -i 's/env python/&3/' /patroni*.py \\\n    # \"fix\" patroni configs\n    && sed -i 's/^\\(  connect_address:\\|  - host\\)/#&/' postgres?.yml \\\n    && sed -i 's/^  listen: 127.0.0.1/  listen: 0.0.0.0/' postgres?.yml \\\n    && sed -i \"s|^\\(  data_dir: \\).*|\\1$PGDATA|\" postgres?.yml \\\n    && sed -i \"s|^#\\(  bin_dir: \\).*|\\1$PGBIN|\" postgres?.yml \\\n    && sed -i 's/^  - encoding: UTF8/  - locale: en_US.UTF-8\\n&/' postgres?.yml \\\n    && sed -i 's/^\\(scope\\|name\\|etcd\\|  host\\|  authentication\\|  pg_hba\\|  parameters\\):/#&/' postgres?.yml \\\n    && sed -i 's/^    \\(replication\\|superuser\\|rewind\\|unix_socket_directories\\|\\(\\(  \\)\\{0,1\\}\\(username\\|password\\)\\)\\):/#&/' postgres?.yml \\\n    && sed -i 's/^      parameters:/      pg_hba:\\n      - local all all trust\\n      - host replication all all md5\\n      - host all all all md5\\n&\\n        max_connections: 100/'  postgres?.yml \\\n    && if [ \"$COMPRESS\" = \"true\" ]; then chmod u+s /usr/bin/sudo; fi \\\n    && chmod +s /bin/ping \\\n    && chown -R postgres:postgres $PGHOME /run /etc/haproxy\n\nUSER postgres\n\nENTRYPOINT [\"/bin/sh\", \"/entrypoint.sh\"]"
+}

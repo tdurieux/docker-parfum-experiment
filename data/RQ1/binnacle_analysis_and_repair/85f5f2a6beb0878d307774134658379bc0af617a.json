@@ -1,0 +1,17 @@
+{
+  "startTime": 1674236395363,
+  "endTime": 1674236395535,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 26,
+        "lineEnd": 29,
+        "columnStart": 11,
+        "columnEnd": 70
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM debian:jessie\nMAINTAINER Percona Development <info@percona.com>\n\nRUN apt-get update && apt-get install -y --no-install-recommends \\\n                apt-transport-https ca-certificates \\\n                pwgen \\\n        && rm -rf /var/lib/apt/lists/*\n\nRUN apt-key adv --keyserver ha.pool.sks-keyservers.net --recv-keys 8507EFA5\nRUN echo 'deb https://repo.percona.com/apt jessie testing' > /etc/apt/sources.list.d/percona.list\n\n# the numeric UID is needed for OpenShift\nRUN useradd -u 1001 -r -g 0 -s /sbin/nologin \\\n            -c \"Default Application User\" mysql\n\nENV PERCONA_MAJOR 5.7\nENV PERCONA_VERSION 5.7.18-16-4.jessie\n\n\n# the \"/var/lib/mysql\" stuff here is because the mysql-server postinst doesn't have an explicit way to disable the mysql_install_db codepath besides having a database already \"configured\" (ie, stuff in /var/lib/mysql/mysql)\n# also, we set debconf keys to make APT a little quieter\nRUN { \\\n                echo percona-server-server-$PERCONA_MAJOR percona-server-server/root_password password 'unused'; \\\n                echo percona-server-server-$PERCONA_MAJOR percona-server-server/root_password_again password 'unused'; \\\n        } | debconf-set-selections \\\n        && apt-get update \\\n        && DEBIAN_FRONTEND=noninteractive apt-get --no-install-recommends install -y --force-yes \\\n                percona-server-server-$PERCONA_MAJOR=$PERCONA_VERSION \\\n                percona-server-tokudb-$PERCONA_MAJOR=$PERCONA_VERSION \\\n                percona-server-rocksdb-$PERCONA_MAJOR=$PERCONA_VERSION \\\n        && rm -rf /var/lib/apt/lists/* \\\n        && mv /etc/mysql/percona-server.conf.d/mysqld.cnf /etc/mysql/my.cnf \\\n# comment out any \"user\" entires in the MySQL config (\"docker-entrypoint.sh\" or \"--user\" will handle user switching)\n        && sed -ri 's/^user\\s/#&/' /etc/mysql/my.cnf \\\n# purge and re-create /var/lib/mysql with appropriate ownership\n        && rm -rf /var/lib/mysql && mkdir -p /var/lib/mysql /var/run/mysqld \\\n        && chown -R 1001:0 /var/lib/mysql /var/run/mysqld \\\n# ensure that /var/run/mysqld (used for socket and lock files) is writable regardless of the UID our mysqld instance ends up having at runtime\n        && chmod 777 /var/run/mysqld\n\n# comment out a few problematic configuration values\n# don't reverse lookup hostnames, they are usually another container\nRUN sed -Ei 's/^(bind-address|log)/#&/' /etc/mysql/my.cnf \\\n        && echo 'skip-host-cache\\nskip-name-resolve' | awk '{ print } $1 == \"[mysqld]\" && c == 0 { c = 1; system(\"cat\") }' /etc/mysql/my.cnf > /tmp/my.cnf \\\n        && mv /tmp/my.cnf /etc/mysql/my.cnf\n\nRUN echo \"LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libjemalloc.so.1\" >> /etc/default/mysql\nRUN echo \"THP_SETTING=never\" >> /etc/default/mysql\n\nVOLUME [\"/var/lib/mysql\", \"/var/log/mysql\"]\n\nCOPY ps-entry.sh /entrypoint.sh\nENTRYPOINT [\"/entrypoint.sh\"]\n\n\nEXPOSE 3306\n\nUSER 1001\n\nCMD [\"\"]\n"
+}

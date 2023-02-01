@@ -1,0 +1,65 @@
+ARG DOCKER_OS
+
+FROM $DOCKER_OS
+
+ARG DOCKER_OS
+ARG USERID
+ARG CC
+ARG CXX
+
+# Install dependencies.
+#
+# Installing pip is a bit more complicated though:
+# * `apt install python3.7-pip` -> does not exist
+# * `python3.7 -m ensurepip` -> standard library module removed by Debian
+# * `apt install python3-pip` -> pulls in >100MB of unneeded stuff
+# * `get-pip.py` script -> depends on distutils standard library module, removed by Debian
+#
+# Solution: install python3-setuptools (includes Python 3.6),
+# then use the get-pip script from Python 3.7.
+RUN \
+    apt-get update && \
+    apt-get install -y sudo make $CC $CXX python3-setuptools $(if [ "$DOCKER_OS" != "ubuntu:22.04" ]; then echo python3.7; fi) ninja-build curl && \
+    apt-get clean
+
+# Install Python 3.7 as the default "python3" executable on older linux distribution
+RUN if [ "$DOCKER_OS" = "ubuntu:18.04" ]; then \
+       update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.7 10; \
+    fi; \
+    python3 --version
+
+# Install pip manually
+RUN \
+    curl -sSL https://bootstrap.pypa.io/get-pip.py -o get-pip.py && \
+    python3 get-pip.py && \
+    rm get-pip.py
+
+# Install nox
+RUN \
+  python3 -m pip install --no-cache-dir nox
+
+WORKDIR /gcovr
+
+ENV \
+  CC=$CC \
+  CXX=$CXX \
+  GCOVR_ISOLATED_TEST=zkQEVaBpXF1i \
+  NOX_ENV_DIR=/gcovr/.nox-containerized.$CC.uid_$USERID
+# Separate instruction because of reference to NOX_ENV_DIR
+ENV \
+  XDG_CACHE_HOME=$NOX_ENV_DIR/.cache
+
+# Create new user "docker" and set password to "docker"
+RUN addgroup docker
+RUN useradd -d $HOME -u $USERID -g docker -g sudo -s /bin/bash docker
+RUN echo "docker:docker" | chpasswd
+
+USER docker:docker
+
+# Select language-agnostic "C" locale.
+# Unicode is necessary for some tools like "black" to work.
+ENV LC_ALL=C.UTF-8 LANG=C.UTF-8
+
+CMD ( echo docker | sudo -S -p "Running chmod with sudo..." chown -R docker:docker /gcovr/gcovr ) && \
+  echo "\ndone\nStarting test..." && \
+  python3 -m nox --envdir $NOX_ENV_DIR --non-interactive $NOX_OPTIONS --

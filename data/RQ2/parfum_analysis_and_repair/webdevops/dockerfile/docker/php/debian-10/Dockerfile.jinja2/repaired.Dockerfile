@@ -1,0 +1,13 @@
+{{ docker.from("base-app", "debian-10") }}
+
+{{ environment.web() }}
+{{ environment.phpComposerVersion() }}
+
+{{ docker.copy('conf/', '/opt/docker/') }}
+
+RUN set -x \
+    {{ php7.debian10() }} \
+    {{ provision.runBootstrap() }} \
+    {{ docker.cleanup() }}
+
+{{ docker.expose('9000') }}

@@ -1,0 +1,8 @@
+FROM alpine
+WORKDIR /build
+ADD ./ /build/
+RUN  cd src && sh bootstrap.sh && cmake . && make -j
+
+FROM alpine
+COPY --from=0 /build/src/alligator /usr/bin/alligator
+ENTRYPOINT /usr/bin/alligator

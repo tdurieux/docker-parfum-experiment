@@ -1,0 +1,25 @@
+# Node image to use
+FROM node:16-alpine
+
+# Directory where we run all the commands
+WORKDIR /usr/local/apps/gateway-app
+
+# Copy the package.json file to out image's filesystem
+COPY ./gateway/package*.json ./
+
+# Run a npm install command based on node env
+RUN npm install && npm cache clean --force;
+
+# Set working directory to /prod
+WORKDIR /usr/local/apps/gateway-app/prod
+
+# Copy the rest of the source code
+COPY ./gateway ./
+
+# Build app
+RUN npx tsc -p ./tsconfig.json
+
+ENV PORT 3000
+EXPOSE $PORT
+
+CMD ["npm", "run", "start"]

@@ -1,0 +1,17 @@
+{
+  "startTime": 1674240749885,
+  "endTime": 1674240750032,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 4,
+        "lineEnd": 4,
+        "columnStart": 7,
+        "columnEnd": 104
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM golang:1.10.4-alpine3.8 as builder\n\nRUN apk --no-cache add curl \\\n    && echo \"Pulling watchdog binary from Github.\" \\\n    && curl -f -sSL https://github.com/openfaas/faas/releases/download/0.9.6/fwatchdog > /usr/bin/fwatchdog \\\n    && chmod +x /usr/bin/fwatchdog \\\n    && apk del curl --no-cache\n\nWORKDIR /go/src/handler\nCOPY . .\n\n# Run a gofmt and exclude all vendored code.\n# 11/02/2018: Commented out\n# RUN test -z \"$(gofmt -l $(find . -type f -name '*.go' -not -path \"./vendor/*\" -not -path \"./function/vendor/*\"))\" || { echo \"Run \\\"gofmt -s -w\\\" on your Golang code\"; exit 1; }\n\n# Update the metadata files specifically to run with OpenFaaS\nRUN for src in $(find . -type f -iname \"*_metadata.go\"); do     type=$(basename \"${src%.*}\");     if [ $type == \"activity_metadata\" ];     then       sed -i 's#activity.Register(NewActivity(md))#md.ID = fmt.Sprintf(\"handler/function/vendor/%s\", md.ID)\\n\\tactivity.Register(NewActivity(md))#g' $src;     else       sed -i 's#trigger.RegisterFactory(md.ID, factory)#trigger.RegisterFactory(fmt.Sprintf(\"handler/function/vendor/%s\", md.ID), factory)#g' $src;     fi; done\n\nRUN CGO_ENABLED=0 GOOS=linux \\\n    go build --ldflags \"-s -w\" -a -installsuffix cgo -o handler . && \\\n    go test $(go list ./... | grep -v /vendor/) -cover\n\nFROM alpine:3.8\nRUN apk --no-cache add ca-certificates\n\n# Add non root user\nRUN addgroup -S app && adduser -S -g app app\nRUN mkdir -p /home/app\n\nWORKDIR /home/app\n\nCOPY --from=builder /usr/bin/fwatchdog         .\n\nCOPY --from=builder /go/src/handler/function/  .\nCOPY --from=builder /go/src/handler/handler    .\n\nRUN chown -R app /home/app\n\nUSER app\n\nENV fprocess=\"./handler\"\nEXPOSE 8080\n\nHEALTHCHECK --interval=2s CMD [ -e /tmp/.lock ] || exit 1\n\nCMD [\"./fwatchdog\"]\n"
+}

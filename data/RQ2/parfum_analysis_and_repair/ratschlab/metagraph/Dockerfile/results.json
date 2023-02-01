@@ -1,0 +1,62 @@
+{
+  "startTime": 1674251242227,
+  "endTime": 1674251243221,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 40,
+        "lineEnd": 40,
+        "columnStart": 4,
+        "columnEnd": 51
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 97,
+        "lineEnd": 97,
+        "columnStart": 38,
+        "columnEnd": 65
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 106,
+        "lineEnd": 106,
+        "columnStart": 4,
+        "columnEnd": 50
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 107,
+        "lineEnd": 107,
+        "columnStart": 4,
+        "columnEnd": 49
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 7,
+        "lineEnd": 37,
+        "columnStart": 65,
+        "columnEnd": 14
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 89,
+        "lineEnd": 96,
+        "columnStart": 22,
+        "columnEnd": 15
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "ARG CODE_BASE=\"/opt/metagraph\"\n\nFROM ubuntu:20.04 AS metagraph_dev_env\n\n# contains all dependencies to build metagraph. Can also be used during development by mounting the code base and\n# build dir on the host (this is done in `make build-metagraph env=docker`)\n\nRUN export DEBIAN_FRONTEND=\"noninteractive\" && apt-get update && apt-get install --no-install-recommends -y \\\n    autoconf \\\n    automake \\\n    binutils-dev \\\n    ccache \\\n    curl \\\n    g++-10 \\\n    git \\\n    libboost-all-dev \\\n    libbrotli-dev \\\n    libbz2-dev \\\n    libdouble-conversion-dev \\\n    libevent-dev \\\n    libgflags-dev \\\n    libgoogle-glog-dev \\\n    libiberty-dev \\\n    libjemalloc-dev \\\n    liblz4-dev \\\n    liblzma-dev \\\n    libsnappy-dev \\\n    libssl-dev \\\n    libtool \\\n    libunwind-dev \\\n    make \\\n    pkg-config \\\n    python3 \\\n    python3-pip \\\n    python3-venv \\\n    vim \\\n    wget \\\n    zlib1g-dev \\\n    && rm -rf /var/lib/apt/lists/*\n\nRUN pip3 install --no-cache-dir parameterized==0.7.1 \"cmake>=3.19\"\n\nWORKDIR /opt\nENV LD_LIBRARY_PATH=/usr/local/lib\nENV CC /usr/bin/gcc-10\nENV CXX /usr/bin/g++-10\n\n### Compile our own libcurl (compiling from source to avoid linking issues in static builds)\nRUN git clone https://github.com/curl/curl.git \\\n    && mkdir curl/_build \\\n    && cd curl/_build \\\n    && cmake -DBUILD_SHARED_LIBS=on .. \\\n    && make -j $(nproc) \\\n    && make install \\\n    && cmake -DBUILD_SHARED_LIBS=off .. \\\n    && make -j $(nproc) \\\n    && make install \\\n    && cd /opt && rm -rf curl\n\n### Installing htslib (compiling from source to avoid linking issues in static builds)\nARG HTSLIB_VERSION=1.10.2\nRUN wget https://github.com/samtools/htslib/releases/download/$HTSLIB_VERSION/htslib-$HTSLIB_VERSION.tar.bz2 \\\n    && tar -vxjf htslib-$HTSLIB_VERSION.tar.bz2 \\\n    && cd htslib-$HTSLIB_VERSION \\\n    && make -j $(nproc) \\\n    && make install \\\n    && cd /opt && rm -rf htslib-$HTSLIB_VERSION htslib-${HTSLIB_VERSION}.tar.bz2\n\nRUN mkdir -p /opt/metagraph/build_docker /opt/ccache_docker\nRUN chmod o+rwx /opt/metagraph /opt/ccache_docker\n\nENV CCACHE_DIR=/opt/ccache_docker\n\nFROM metagraph_dev_env as metagraph_bin\nARG CODE_BASE\n\nCOPY . ${CODE_BASE}\n\nWORKDIR ${CODE_BASE}\nRUN make build-sdsl-lite \\\n    && make build-metagraph alphabet=Protein \\\n    && make build-metagraph alphabet=DNA\n\nFROM ubuntu:20.04\nARG CODE_BASE\n\n# the image used in production. It contains a basic runtime environment for metagraph without build tools along with\n# the metagraph binary and python API code. This image is published on github's container registry (`ghcr.io/ratschlab/metagraph`).\n\nRUN apt-get update && apt-get install --no-install-recommends -y \\\n    libatomic1 \\\n    libcurl4-nss-dev \\\n    libgomp1 \\\n    libhts-dev \\\n    libjemalloc2 \\\n    python3 \\\n    python3-pip \\\n    && rm -rf /var/lib/apt/lists/* && pip3 install --no-cache-dir -U \"pip>=22.1\"\n\nCOPY --from=metagraph_bin ${CODE_BASE}/metagraph/build/metagraph_* /usr/local/bin/\n\nRUN ln -s /usr/local/bin/metagraph_DNA /usr/local/bin/metagraph\n\nRUN mkdir ${CODE_BASE}\nCOPY . ${CODE_BASE}\n\nRUN pip3 install --no-cache-dir ${CODE_BASE}/metagraph/api/python\nRUN pip3 install --no-cache-dir ${CODE_BASE}/metagraph/workflows\n\nENTRYPOINT [\"metagraph\"]\n"
+}

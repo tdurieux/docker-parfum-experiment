@@ -1,0 +1,22 @@
+FROM {{ "composer-scratch" | image_tag }} as composer
+
+FROM {{ "ci-buster" | image_tag }}
+
+# Install composer
+COPY --from=composer /usr/bin/composer /usr/bin/composer
+
+USER root
+
+RUN {{ "build-essential pkg-config autoconf python3 php-cli php-mbstring php-intl php-xml php-zip unzip wget" | apt_install }} \
+    && install --directory --mode 777 /srv/demo /srv/emsdk
+
+USER nobody
+
+ENV NPM_CONFIG_cache=/tmp/cache
+RUN git clone --depth=1 https://github.com/emscripten-core/emsdk.git /srv/emsdk \
+    # Pin this to 2.0.21 which is known to work. Newer versions may not work out of the box, e.g. 2.0.34 (T295228)
+    && /srv/emsdk/emsdk install 2.0.21 \
+    && /srv/emsdk/emsdk activate 2.0.21
+
+COPY run.sh /run.sh
+ENTRYPOINT ["/run.sh"]

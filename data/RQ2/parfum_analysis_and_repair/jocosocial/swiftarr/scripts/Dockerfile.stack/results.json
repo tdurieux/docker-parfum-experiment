@@ -1,0 +1,26 @@
+{
+  "startTime": 1674219889548,
+  "endTime": 1674219890122,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 7,
+        "lineEnd": 8,
+        "columnStart": 26,
+        "columnEnd": 35
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 7,
+        "lineEnd": 8,
+        "columnStart": 26,
+        "columnEnd": 35
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Builder image\n#\n# This sets up the environment used to build swiftarr.\nFROM swift:5.6-bionic as builder\n\nARG env\n\nRUN apt-get -qq update && apt-get install --no-install-recommends -y \\\n    libssl-dev zlib1g-dev libgd-dev && rm -rf /var/lib/apt/lists/*;\nRUN mkdir -p /build/lib && cp -R /usr/lib/swift/linux/*.so* /build/lib\n\nWORKDIR /app\n\n# Not copying \".\" means that changes to the runtime scripts do not trigger\n# a complete application rebuild, which saves a lot of time.\n#\n# We copy some of the .build directory to prevent having to fetch state\n# from the internet during a rebuild. Note that this requires\n# the .build directory to exist which means you've seeded it from somewhere\n# or done a local build.\n#\n# The README.md here is a hack to conditionally copy based on whether you have\n# done a local build or not. This is pretty ghetto but I think it's the only\n# way to allow for an offline build while maintaining compatibility for\n# fresh users. The trailing / is important here so don't screw that up.\n# https://redgreenrepeat.com/2018/04/13/how-to-conditionally-copy-file-in-dockerfile/\nCOPY ./README.md ./.build/checkouts* /app/.build/checkouts/\nCOPY ./README.md ./.build/workspace-state.json* /app/.build/\n# We copy the app sources after the .build so that the image build can use\n# the cached image layer.\nCOPY ./Sources /app/Sources\nCOPY ./Package.* /app\nCOPY ./Tests /app/Tests\n\n# This runs the actual build.\nRUN swift build -c release && mv `swift build -c release --show-bin-path` /build/bin\n\n# Base image\n#\n# This has its own build stage to allow the depedencies from the internet\n# to be installed in a cached image. Otherwise it'd be running the steps\n# every time which we don't want.\nFROM ubuntu:18.04 as base\n\n# Prereqs\nCOPY scripts/init-prereqs.sh /\nCOPY scripts/run.sh /\nRUN mkdir -p /app/images\nRUN /init-prereqs.sh\n\n# User\nRUN useradd -U -d /app -c \"Swiftarr App User\" -s /bin/bash swiftarr\nRUN chown -R swiftarr:swiftarr /app\nUSER swiftarr:swiftarr\n\n# Run\nCMD [\"/run.sh\"]\n\n# Actual Swiftarr Image\n#\n# This sources from the base image we built above.\nFROM base\n\nARG env\nENV ENVIRONMENT=$env\nENV AUTO_MIGRATE=true\n\n# App installation\nWORKDIR /app\nCOPY --from=builder /build/bin/Run /app\nCOPY --from=builder /build/lib/* /usr/lib/\nCOPY --from=builder /build/bin/swiftarr_App.resources /app/swiftarr_App.resources\n# @TODO tests???\n"
+}

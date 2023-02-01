@@ -1,0 +1,35 @@
+{
+  "startTime": 1674248390346,
+  "endTime": 1674248391429,
+  "originalSmells": [
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 14,
+        "lineEnd": 17,
+        "columnStart": 7,
+        "columnEnd": 55
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 43,
+        "lineEnd": 43,
+        "columnStart": 30,
+        "columnEnd": 133
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 76,
+        "lineEnd": 76,
+        "columnStart": 11,
+        "columnEnd": 131
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM nginx:mainline as builder\n\nARG ENABLED_MODULES\n\nRUN set -ex \\\n    && if [ \"$ENABLED_MODULES\" = \"\" ]; then \\\n        echo \"No additional modules enabled, exiting\"; \\\n        exit 1; \\\n    fi\n\nCOPY ./ /modules/\n\nRUN set -ex \\\n    && apt update \\\n    && apt install -y --no-install-suggests --no-install-recommends \\\n                patch make wget mercurial devscripts debhelper dpkg-dev \\\n                quilt lsb-release build-essential libxml2-utils xsltproc \\\n                equivs git g++ libparse-recdescent-perl \\\n    && XSLSCRIPT_SHA512=\"f7194c5198daeab9b3b0c3aebf006922c7df1d345d454bd8474489ff2eb6b4bf8e2ffe442489a45d1aab80da6ecebe0097759a1e12cc26b5f0613d05b7c09ffa *stdin\" \\\n    && wget -O /tmp/xslscript.pl https://hg.nginx.org/xslscript/raw-file/01dc9ba12e1b/xslscript.pl \\\n    && if [ \"$(cat /tmp/xslscript.pl | openssl sha512 -r)\" = \"$XSLSCRIPT_SHA512\" ]; then \\\n        echo \"XSLScript checksum verification succeeded!\"; \\\n        chmod +x /tmp/xslscript.pl; \\\n        mv /tmp/xslscript.pl /usr/local/bin/; \\\n    else \\\n        echo \"XSLScript checksum verification failed!\"; \\\n        exit 1; \\\n    fi \\\n    && hg clone -r ${NGINX_VERSION}-${PKG_RELEASE%%~*} https://hg.nginx.org/pkg-oss/ \\\n    && cd pkg-oss \\\n    && mkdir /tmp/packages \\\n    && for module in $ENABLED_MODULES; do \\\n        echo \"Building $module for nginx-$NGINX_VERSION\"; \\\n        if [ -d /modules/$module ]; then \\\n            echo \"Building $module from user-supplied sources\"; \\\n            # check if module sources file is there and not empty\n            if [ ! -s /modules/$module/source ]; then \\\n                echo \"No source file for $module in modules/$module/source, exiting\"; \\\n                exit 1; \\\n            fi; \\\n            # some modules require build dependencies\n            if [ -f /modules/$module/build-deps ]; then \\\n                echo \"Installing $module build dependencies\"; \\\n                apt update && apt install -y --no-install-suggests --no-install-recommends $(cat /modules/$module/build-deps | xargs); \\\n            fi; \\\n            # if a module has a build dependency that is not in a distro, provide a\n            # shell script to fetch/build/install those\n            # note that shared libraries produced as a result of this script will\n            # not be copied from the builder image to the main one so build static\n            if [ -x /modules/$module/prebuild ]; then \\\n                echo \"Running prebuild script for $module\"; \\\n                /modules/$module/prebuild; \\\n            fi; \\\n            /pkg-oss/build_module.sh -v $NGINX_VERSION -f -y -o /tmp/packages -n $module $(cat /modules/$module/source); \\\n            BUILT_MODULES=\"$BUILT_MODULES $(echo $module | tr '[A-Z]' '[a-z]' | tr -d '[/_\\-\\.\\t ]')\"; \\\n        elif make -C /pkg-oss/debian list | grep -P \"^$module\\s+\\d\" > /dev/null; then \\\n            echo \"Building $module from pkg-oss sources\"; \\\n            cd /pkg-oss/debian; \\\n            make rules-module-$module BASE_VERSION=$NGINX_VERSION NGINX_VERSION=$NGINX_VERSION; \\\n            mk-build-deps --install --tool=\"apt-get -o Debug::pkgProblemResolver=yes --no-install-recommends --yes\" debuild-module-$module/nginx-$NGINX_VERSION/debian/control; \\\n            make module-$module BASE_VERSION=$NGINX_VERSION NGINX_VERSION=$NGINX_VERSION; \\\n            find ../../ -maxdepth 1 -mindepth 1 -type f -name \"*.deb\" -exec mv -v {} /tmp/packages/ \\;; \\\n            BUILT_MODULES=\"$BUILT_MODULES $module\"; \\\n        else \\\n            echo \"Don't know how to build $module module, exiting\"; \\\n            exit 1; \\\n        fi; \\\n    done \\\n    && echo \"BUILT_MODULES=\\\"$BUILT_MODULES\\\"\" > /tmp/packages/modules.env && rm -rf /var/lib/apt/lists/*;\n\nFROM nginx:mainline\nCOPY --from=builder /tmp/packages /tmp/packages\nRUN set -ex \\\n    && apt update \\\n    && . /tmp/packages/modules.env \\\n    && for module in $BUILT_MODULES; do \\\n           apt install --no-install-suggests --no-install-recommends -y /tmp/packages/nginx-module-${module}_${NGINX_VERSION}*.deb; \\\n       done \\\n    && rm -rf /tmp/packages \\\n    && rm -rf /var/lib/apt/lists/ && rm -rf /var/lib/apt/lists/*;\n"
+}

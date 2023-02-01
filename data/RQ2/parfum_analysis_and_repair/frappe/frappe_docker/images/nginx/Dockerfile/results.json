@@ -1,0 +1,27 @@
+{
+  "startTime": 1674217613043,
+  "endTime": 1674217614283,
+  "originalSmells": [
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 19,
+        "lineEnd": 19,
+        "columnStart": 7,
+        "columnEnd": 29
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 22,
+        "lineEnd": 22,
+        "columnStart": 31,
+        "columnEnd": 47
+      }
+    }
+  ],
+  "repairedDockerfile": "FROM node:14-bullseye-slim as assets_builder\n\nRUN apt-get update \\\n    && DEBIAN_FRONTEND=noninteractive apt-get install --no-install-recommends -y \\\n    git \\\n    build-essential \\\n    python \\\n    ca-certificates \\\n    && rm -rf /var/lib/apt/lists/*\n\nWORKDIR /frappe-bench\n\nRUN mkdir -p sites/assets /out/assets \\\n    && echo frappe >sites/apps.txt\n\nARG FRAPPE_VERSION\nARG FRAPPE_REPO=https://github.com/frappe/frappe\n# Install development node modules\nRUN git clone --depth 1 -b ${FRAPPE_VERSION} ${FRAPPE_REPO} apps/frappe \\\n    && yarn --cwd apps/frappe \\\n    # TODO: Currently `yarn run production` doesn't create .build on develop branch: https://github.com/frappe/frappe/issues/15396\n    && if [ ! -f sites/.build ]; then touch sites/.build; fi \\\n    && cp sites/.build /out && yarn cache clean;\n\nCOPY install-app.sh /usr/local/bin/install-app\n\n\nFROM assets_builder as frappe_assets\n\nRUN install-app frappe\n\n\nFROM assets_builder as erpnext_assets\n\nARG ERPNEXT_VERSION\nARG ERPNEXT_REPO=https://github.com/frappe/erpnext\nRUN git clone --depth 1 -b ${ERPNEXT_VERSION} ${ERPNEXT_REPO} apps/erpnext \\\n    && install-app erpnext\n\n\nFROM alpine/git as bench\n\n# Error pages\nARG BENCH_REPO=https://github.com/frappe/bench\nRUN git clone --depth 1 ${BENCH_REPO} /tmp/bench \\\n    && mkdir /out \\\n    && mv /tmp/bench/bench/config/templates/502.html /out/\n\n\nFROM nginxinc/nginx-unprivileged:1.23.0-alpine as frappe\n\n# https://github.com/nginxinc/docker-nginx-unprivileged/blob/main/stable/alpine/20-envsubst-on-templates.sh\nCOPY nginx-template.conf /etc/nginx/templates/default.conf.template\n# https://github.com/nginxinc/docker-nginx-unprivileged/blob/main/stable/alpine/docker-entrypoint.sh\nCOPY entrypoint.sh /docker-entrypoint.d/frappe-entrypoint.sh\n\nCOPY --from=bench /out /usr/share/nginx/html/\nCOPY --from=frappe_assets /out /usr/share/nginx/html\n\nUSER 1000\n\n\nFROM frappe as erpnext\n\nCOPY --from=erpnext_assets /out /usr/share/nginx/html\n"
+}

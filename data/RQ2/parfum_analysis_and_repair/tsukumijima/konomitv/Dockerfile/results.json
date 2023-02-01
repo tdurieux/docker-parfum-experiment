@@ -1,0 +1,54 @@
+{
+  "startTime": 1674251360720,
+  "endTime": 1674251362167,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 82,
+        "lineEnd": 82,
+        "columnStart": 4,
+        "columnEnd": 22
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 25,
+        "lineEnd": 25,
+        "columnStart": 96,
+        "columnEnd": 115
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 13,
+        "lineEnd": 19,
+        "columnStart": 4,
+        "columnEnd": 12
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 13,
+        "lineEnd": 19,
+        "columnStart": 4,
+        "columnEnd": 12
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 12,
+        "lineEnd": 18,
+        "columnStart": 4,
+        "columnEnd": 12
+      }
+    }
+  ],
+  "repairedDockerfile": "# サードパーティーライブラリのダウンロードを行うステージ\n# 念のため最終イメージに合わせて ubuntu20.04 にしておく\n# 中間イメージなので、サイズは（ビルドするマシンのディスク容量以外は）気にしなくて良い\nFROM ubuntu:20.04 AS thirdparty-downloader\n\n# apt-get に対話的に設定確認されないための設定\nENV DEBIAN_FRONTEND=noninteractive\n\n# パッケージ一覧更新、全体の更新\nRUN apt-get update -y && apt-get upgrade -y\n\n# ダウンロード・展開に必要なパッケージのインストール\nRUN apt-get install -y --no-install-recommends \\\n    aria2 \\\n    binutils \\\n    ca-certificates \\\n    gpg-agent \\\n    p7zip-full \\\n    xz-utils && rm -rf /var/lib/apt/lists/*;\n\n# VCEEncC が依存する AMD AMF ライブラリをダウンロードし、展開\n# サードパーティーライブラリよりも更新されにくいので先にする\nRUN aria2c -x10 https://drivers.amd.com/drivers/linux/amdgpu-pro-21.30-1290604-ubuntu-20.04.tar.xz --referer=www.amd.com\nRUN tar xvf amdgpu-pro-21.30-1290604-ubuntu-20.04.tar.xz && rm amdgpu-pro-21.30-1290604-ubuntu-20.04.tar.xz && \\\n    cd amdgpu-pro-21.30-1290604-ubuntu-20.04 && ar vx amf-amdgpu-pro_21.30-1290604_amd64.deb && tar xvf data.tar.xz && \\\n    cp -r opt/amdgpu-pro/lib/x86_64-linux-gnu/libamfrt64.so.0.0.0 /usr/lib/x86_64-linux-gnu/libamfrt64.so && rm data.tar.xz\nRUN ln -s /usr/lib/x86_64-linux-gnu/libamfrt64.so /usr/lib/x86_64-linux-gnu/libamfrt64.so.1\n\n# サードパーティーライブラリをダウンロード\nWORKDIR /thirdparty\nRUN aria2c -x10 https://github.com/tsukumijima/KonomiTV/releases/download/v0.5.0/thirdparty.7z\nRUN 7z x -y thirdparty.7z\n\n# サードパーティーライブラリに実行権限を付与\nRUN chmod 755 ./thirdparty/FFmpeg/ffmpeg.elf && \\\n    chmod 755 ./thirdparty/FFmpeg/ffprobe.elf && \\\n    chmod 755 ./thirdparty/QSVEncC/QSVEncC.elf && \\\n    chmod 755 ./thirdparty/NVEncC/NVEncC.elf && \\\n    chmod 755 ./thirdparty/tsreadex/tsreadex.elf && \\\n    chmod 755 ./thirdparty/VCEEncC/VCEEncC.elf\n\n# client のビルド\nFROM node:16 AS client-builder\n\n# 依存パッケージリストをコピー\nCOPY ./client/package.json ./client/yarn.lock /code/client/\nWORKDIR /code/client\nRUN yarn\n\n# アプリケーションをコピー\nCOPY ./client /code/client\n\n# クライアントをビルド、/code/client/dist に成果物が作成される\nRUN yarn build\n\n# server のセットアップ兼実行時のイメージ\n# Ubuntu 20.04 LTS をベースイメージとして利用\nFROM nvidia/cuda:11.4.1-runtime-ubuntu20.04\n\n# タイムゾーンを東京に設定\nENV TZ=Asia/Tokyo\n\n# apt-get に対話的に設定確認されないための設定\nENV DEBIAN_FRONTEND=noninteractive\n\n# パッケージのインストール（実行時イメージなのでRUNの最後に掃除する）\nRUN apt-get update -y && apt-get upgrade -y && apt-get install -y --no-install-recommends \\\n    python3.9 \\\n    python3-pip \\\n    ffmpeg \\\n    libv4l-0 \\\n    libxcb1 \\\n    libva2 \\\n    libmfx1 \\\n    intel-media-va-driver-non-free && \\\n    apt-get -y autoremove && \\\n    apt-get -y clean && \\\n    rm -rf /var/lib/apt/lists/* && \\\n    rm -rf /tmp/*\n\n# pipenv をインストール\nRUN pip install --no-cache-dir pipenv\n\n# NVEncC が依存する NVENC ライブラリにシンボリックリンクを付与\nRUN ln -s /usr/lib/x86_64-linux-gnu/libnvcuvid.so.1 /usr/lib/x86_64-linux-gnu/libnvcuvid.so\nRUN ln -s /usr/lib/x86_64-linux-gnu/libnvidia-encode.so.1 /usr/lib/x86_64-linux-gnu/libnvidia-encode.so\n\n# VCEEncC が依存する AMD AMF ライブラリにシンボリックリンクを付与\nCOPY --from=thirdparty-downloader /usr/lib/x86_64-linux-gnu/libamfrt64.so* /usr/lib/x86_64-linux-gnu/\n\n# パッケージリストだけをコピー\nCOPY ./server/Pipfile* /code/server/\nWORKDIR /code/server\n\n# 依存パッケージのインストール\n## 仮想環境 (.venv) をプロジェクト直下に作成する\nENV PIPENV_VENV_IN_PROJECT true\nRUN pipenv sync\n\n# 残りのアプリケーションをコピー\nCOPY ./server /code/server\n\n# ダウンロードしておいたサードパーティライブラリをコピー\nCOPY --from=thirdparty-downloader /thirdparty/thirdparty /code/server/thirdparty\n\n# client の成果物をコピー (dist だけで良い)\nCOPY --from=client-builder /code/client/dist /code/client/dist\n\n# データベースを必要な場合にアップグレードし、起動\nENTRYPOINT pipenv run aerich upgrade && exec pipenv run serve\n"
+}

@@ -1,0 +1,110 @@
+# This dockerfile builds the zap stable release
+FROM openjdk:8-jdk-alpine AS builder
+
+WORKDIR /zap
+
+RUN apk add --no-cache curl wget xmlstarlet bash
+
+# Download and expand the latest stable release
+RUN wget -qO- https://raw.githubusercontent.com/zaproxy/zap-admin/master/ZapVersions.xml | xmlstarlet sel -t -v //url |grep -i Linux | wget --content-disposition -i - -O - | tar zxv && \
+	mv ZAP*/* . && \
+	rm -R ZAP*
+
+# Update add-ons
+RUN ./zap.sh -cmd -silent -addonupdate
+# Copy them to installation directory
+RUN cp /root/.ZAP/plugin/*.zap plugin/ || :
+
+# Setup Webswing
+ENV WEBSWING_VERSION 22.1.2
+ARG WEBSWING_URL=""
+RUN if [ -z "$WEBSWING_URL" ] ; \
+	then curl -s -L  "https://dev.webswing.org/files/public/webswing-examples-eval-${WEBSWING_VERSION}-distribution.zip" > webswing.zip; \
+	else curl -s -L  "$WEBSWING_URL-${WEBSWING_VERSION}-distribution.zip" > webswing.zip; fi && \
+	unzip webswing.zip && \
+	rm webswing.zip && \
+	mv webswing-* webswing && \
+	# Remove Webswing bundled examples
+	rm -Rf webswing/apps/
+
+FROM ubuntu:20.04
+LABEL maintainer="psiinon@gmail.com"
+
+ARG DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -q -y --fix-missing \
+	make \
+	automake \
+	autoconf \
+	gcc g++ \
+	openjdk-11-jdk \
+	wget \
+	curl \
+	xmlstarlet \
+	unzip \
+	git \
+	openbox \
+	xterm \
+	net-tools \
+	python3-pip \
+	python-is-python3 \
+	firefox \
+	xvfb \
+	x11vnc && \
+	apt-get clean && \
+	rm -rf /var/lib/apt/lists/*
+
+RUN pip3 install --upgrade awscli pip python-owasp-zap-v2.4 pyyaml urllib3 zapcli
+
+RUN useradd -d /home/zap -m -s /bin/bash zap
+RUN echo zap:zap | chpasswd
+RUN mkdir /zap && chown zap:zap /zap
+
+WORKDIR /zap
+
+#Change to the zap user so things get done as the right person (apart from copy)
+USER zap
+
+RUN mkdir /home/zap/.vnc
+
+# Copy stable release
+COPY --from=builder /zap .
+
+COPY --from=builder /zap/webswing /zap/webswing
+
+ENV JAVA_HOME /usr/lib/jvm/java-11-openjdk-amd64/
+ENV PATH $JAVA_HOME/bin:/zap/:$PATH
+ENV ZAP_PATH /zap/zap.sh
+
+# Default port for use with zapcli
+ENV ZAP_PORT 8080
+ENV IS_CONTAINERIZED true
+ENV HOME /home/zap/
+ENV LC_ALL=C.UTF-8
+ENV LANG=C.UTF-8
+
+COPY zap* CHANGELOG.md /zap/
+COPY webswing.config /zap/webswing/
+COPY webswing.properties /zap/webswing/
+COPY policies /home/zap/.ZAP/policies/
+COPY policies /root/.ZAP/policies/
+# The scan script loads the scripts from dev home dir.
+COPY scripts /home/zap/.ZAP_D/scripts/
+COPY .xinitrc /home/zap/
+
+RUN echo "zap2docker-stable" > /zap/container
+
+#Copy doesn't respect USER directives so we need to chown and to do that we need to be root
+USER root
+
+RUN chown zap:zap /zap/* && \
+	chown zap:zap /zap/webswing/webswing.config && \
+	chown zap:zap /zap/webswing/webswing.properties && \
+	chown zap:zap -R /home/zap/.ZAP/ && \
+	chown zap:zap /home/zap/.xinitrc && \
+	chmod a+x /home/zap/.xinitrc
+
+#Change back to zap at the end
+USER zap
+
+HEALTHCHECK --retries=5 --interval=5s CMD zap-cli status

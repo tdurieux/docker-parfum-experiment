@@ -1,0 +1,20 @@
+FROM python:3.8-slim
+
+ARG DAGIT_BACKCOMPAT_VERSION
+
+COPY pins.txt pins.txt
+
+RUN pip install --no-cache-dir \
+    -r pins.txt \
+    dagster=="${DAGIT_BACKCOMPAT_VERSION}" \
+    dagster-postgres=="${DAGIT_BACKCOMPAT_VERSION}" \
+    dagster-docker=="${DAGIT_BACKCOMPAT_VERSION}" \
+    dagster-graphql=="${DAGIT_BACKCOMPAT_VERSION}" \
+    dagit=="${DAGIT_BACKCOMPAT_VERSION}"
+
+ENV DAGSTER_HOME=/opt/dagster/dagster_home/
+RUN mkdir -p $DAGSTER_HOME
+
+COPY dagster.yaml workspace.yaml $DAGSTER_HOME
+
+WORKDIR $DAGSTER_HOME

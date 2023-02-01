@@ -1,0 +1,53 @@
+{
+  "startTime": 1674252712926,
+  "endTime": 1674252714693,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 42,
+        "lineEnd": 42,
+        "columnStart": 15,
+        "columnEnd": 126
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 79,
+        "lineEnd": 79,
+        "columnStart": 4,
+        "columnEnd": 49
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 83,
+        "lineEnd": 83,
+        "columnStart": 4,
+        "columnEnd": 65
+      }
+    },
+    {
+      "rule": "sha256sumEchoOneSpaces",
+      "position": {
+        "lineStart": 71,
+        "lineEnd": 81,
+        "columnStart": 4,
+        "columnEnd": 30
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 9,
+        "lineEnd": 28,
+        "columnStart": 4,
+        "columnEnd": 13
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM ubuntu:20.04\n\nENV DEBIAN_FRONTEND=noninteractive\n\n# Make sure we have basic dev tools for building C libraries.  Our goal\n# here is to support the musl-libc builds and Cargo builds needed for a\n# large selection of the most popular crates.\n#\nRUN apt-get update && \\\n    apt-get install --no-install-recommends -y \\\n        build-essential \\\n        cmake \\\n        curl \\\n        file \\\n        git \\\n        sudo \\\n        xutils-dev \\\n        unzip \\\n        ca-certificates \\\n        python3 \\\n        python3-pip \\\n        autoconf \\\n        autoconf-archive \\\n        automake \\\n        flex \\\n        bison \\\n        llvm-dev \\\n        libclang-dev \\\n        clang \\\n        && \\\n    apt-get clean && rm -rf /var/lib/apt/lists/*\n\n# Install Let's Encrypt R3 CA certificate from https://letsencrypt.org/certificates/\nCOPY lets-encrypt-r3.crt /usr/local/share/ca-certificates\nRUN update-ca-certificates\n\nARG TARGET=x86_64-unknown-linux-musl\nENV RUST_MUSL_CROSS_TARGET=$TARGET\nARG RUST_MUSL_MAKE_VER=0.9.9\nARG RUST_MUSL_MAKE_CONFIG=config.mak\n\nCOPY $RUST_MUSL_MAKE_CONFIG /tmp/config.mak\nRUN cd /tmp && curl -f -Lsq -o musl-cross-make.zip https://github.com/richfelker/musl-cross-make/archive/v$RUST_MUSL_MAKE_VER.zip && \\\n    unzip -q musl-cross-make.zip && \\\n    rm musl-cross-make.zip && \\\n    mv musl-cross-make-$RUST_MUSL_MAKE_VER musl-cross-make && \\\n    cp /tmp/config.mak /tmp/musl-cross-make/config.mak && \\\n    cd /tmp/musl-cross-make && \\\n    export TARGET=$TARGET && \\\n    make -j$(nproc) > /tmp/musl-cross-make.log && \\\n    make install >> /tmp/musl-cross-make.log && \\\n    ln -s /usr/local/musl/bin/$TARGET-strip /usr/local/musl/bin/musl-strip && \\\n    cd /tmp && \\\n    rm -rf /tmp/musl-cross-make /tmp/musl-cross-make.log\n\nRUN mkdir -p /home/rust/libs /home/rust/src\n\n# Set up our path with all our binary directories, including those for the\n# musl-gcc toolchain and for our Rust toolchain.\nENV PATH=/root/.cargo/bin:/usr/local/musl/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin\nENV TARGET_CC=$TARGET-gcc\nENV TARGET_CXX=$TARGET-g++\nENV TARGET_AR=$TARGET-ar\nENV TARGET_RANLIB=$TARGET-ranlib\nENV TARGET_HOME=/usr/local/musl/$TARGET\nENV TARGET_C_INCLUDE_PATH=$TARGET_HOME/include/\n\n# We'll build our libraries in subdirectories of /home/rust/libs.  Please\n# clean up when you're done.\nWORKDIR /home/rust/libs\n\nRUN export CC=$TARGET_CC && \\\n    export C_INCLUDE_PATH=$TARGET_C_INCLUDE_PATH && \\\n    export AR=$TARGET_AR && \\\n    export RANLIB=$TARGET_RANLIB && \\\n    echo \"Building  zlib\" && \\\n    VERS=1.2.12 && \\\n    CHECKSUM=91844808532e5ce316b3c010929493c0244f3d37593afd6de04f71821d5136d9 && \\\n    cd /home/rust/libs && \\\n    curl -f -sqLO https://zlib.net/zlib-$VERS.tar.gz && \\\n    echo \"$CHECKSUM  zlib-$VERS.tar.gz\" > checksums.txt && \\\n    sha256sum -c checksums.txt && \\\n    tar xzf zlib-$VERS.tar.gz && cd zlib-$VERS && \\\n    CFLAGS=\"-O3 -fPIC\" ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" --static --prefix=$TARGET_HOME && \\\n    make -j$(nproc) && make install && \\\n    cd .. && rm -rf zlib-$VERS.tar.gz zlib-$VERS checksums.txt\n\n# The Rust toolchain to use when building our image\nARG TOOLCHAIN=stable\n# Install our Rust toolchain and the `musl` target.  We patch the\n# command-line we pass to the installer so that it won't attempt to\n# interact with the user or fool around with TTYs.  We also set the default\n# `--target` to musl so that our users don't need to keep overriding it\n# manually.\n# Chmod 755 is set for root directory to allow access execute binaries in /root/.cargo/bin (azure piplines create own user).\n#\n# Remove docs and more stuff not needed in this images to make them smaller\nRUN chmod 755 /root/ && \\\n    curl https://sh.rustup.rs -sqSf | \\\n    sh -s -- -y --profile minimal --default-toolchain $TOOLCHAIN && \\\n    rustup target add $TARGET || rustup component add --toolchain $TOOLCHAIN rust-src && \\\n    rustup component add --toolchain $TOOLCHAIN rustfmt clippy && \\\n    rm -rf /root/.rustup/toolchains/$TOOLCHAIN-$(uname -m)-unknown-linux-gnu/share/\n\nRUN echo \"[target.$TARGET]\\nlinker = \\\"$TARGET-gcc\\\"\\n\" > /root/.cargo/config\n\n# Build std sysroot for targets that doesn't have official std release\nADD Xargo.toml /tmp/Xargo.toml\nADD build-std.sh .\nCOPY compile-libunwind /tmp/compile-libunwind\nRUN bash build-std.sh\n\nENV RUSTUP_HOME=/root/.rustup\nENV CARGO_HOME=/root/.cargo\nENV CARGO_BUILD_TARGET=$TARGET\n\nENV CFLAGS_armv7_unknown_linux_musleabihf='-mfpu=vfpv3-d16'\n\n# Build statically linked binaries for MIPS targets\nENV CARGO_TARGET_MIPS_UNKNOWN_LINUX_MUSL_RUSTFLAGS='-C target-feature=+crt-static'\nENV CARGO_TARGET_MIPSEL_UNKNOWN_LINUX_MUSL_RUSTFLAGS='-C target-feature=+crt-static'\nENV CARGO_TARGET_MIPS64_UNKNOWN_LINUX_MUSLABI64_RUSTFLAGS='-C target-feature=+crt-static'\nENV CARGO_TARGET_MIPS64EL_UNKNOWN_LINUX_MUSLABI64_RUSTFLAGS='-C target-feature=+crt-static'\n\n# Expect our source code to live in /home/rust/src\nWORKDIR /home/rust/src\n"
+}

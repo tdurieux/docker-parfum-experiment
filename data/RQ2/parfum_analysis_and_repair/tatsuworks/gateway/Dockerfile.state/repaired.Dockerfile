@@ -1,0 +1,23 @@
+FROM golang:1.18.3
+
+COPY go.mod go.sum /go/src/github.com/tatsuworks/gateway/
+RUN cd /go/src/github.com/tatsuworks/gateway && go mod download
+
+ENV FDB_URL "https://github.com/apple/foundationdb/releases/download/6.2.27/foundationdb-clients_6.2.27-1_amd64.deb"
+RUN apt update && apt install --no-install-recommends -y wget zlib1g zlib1g-dev && rm -rf /var/lib/apt/lists/*;
+RUN wget -O fdb.deb $FDB_URL &&  dpkg -i fdb.deb
+
+COPY . /go/src/github.com/tatsuworks/gateway
+ENV GO111MODULE=on
+
+RUN cd /go/src/github.com/tatsuworks/gateway/cmd/state && go build -o /go/state .
+
+FROM ubuntu:18.04
+
+ENV FDB_URL "https://github.com/apple/foundationdb/releases/download/6.2.27/foundationdb-clients_6.2.27-1_amd64.deb"
+RUN apt update && apt install --no-install-recommends -y wget zlib1g zlib1g-dev && rm -rf /var/lib/apt/lists/*;
+RUN wget -O fdb.deb $FDB_URL &&  dpkg -i fdb.deb
+
+COPY --from=0 /go/state /
+COPY entrypoint-state.sh /
+CMD [ "/entrypoint-state.sh" ]

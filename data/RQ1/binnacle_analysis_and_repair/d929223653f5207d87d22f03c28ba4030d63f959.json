@@ -1,0 +1,26 @@
+{
+  "startTime": 1674238932805,
+  "endTime": 1674238933080,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 30,
+        "lineEnd": 30,
+        "columnStart": 2,
+        "columnEnd": 40
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 25,
+        "lineEnd": 25,
+        "columnStart": 8,
+        "columnEnd": 75
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "#\n# Docker container for Cuckoo Sandbox\n#\n\nFROM ubuntu:14.04\n\n\n# Container needs to know that it has no TTY\nENV DEBIAN_FRONTEND noninteractive\n\nWORKDIR /tmp\n\n############################# PACKAGE INSTALLATION ################################\nCOPY packages.txt /tmp/\nCOPY requirements.txt /tmp/\nCOPY libs/inetsim_1.2.6-1_all.deb /tmp/inetsim_1.2.6-1_all.deb\n\n# Also change policy-rc.d to fix errors:\nRUN echo \"#!/bin/sh\\nexit 0\" > /usr/sbin/policy-rc.d\n\nCOPY libs/volatility-2.5.tar.gz /tmp/\n\n# cgroup-lite fixup compensates for a ubuntu:trusty-docker:cgroup broken package\nRUN apt-get update &&\\\n  touch /etc/init/cgroup-lite.conf && ln /etc/init/cgroup-lite.conf /etc/init.d/cgroup-lite  &&\\\n  yes | apt-get install -y --force-yes --no-install-recommends  cgroup-lite &&\\\n  xargs apt-get install -y --force-yes --no-install-recommends < /tmp/packages.txt &&\\\n  dpkg -i /tmp/inetsim_1.2.6-1_all.deb &&\\\n  rm /tmp/inetsim_1.2.6-1_all.deb &&\\\n  xargs -n 1 pip install --upgrade < /tmp/requirements.txt && \\\n  pip install --no-cache-dir /tmp/volatility-2.5.tar.gz && \\\n  apt-get remove -y --force-yes python-dev libffi-dev libssl-dev libjpeg-dev zlib1g-dev libxml2-dev libxslt1-dev \\\n  libc6-dev libpython2.7 vim-tiny vim-common gcc cpp g++ make && \\\n  apt-get autoremove -y --force-yes && \\\n  apt-get clean && \\\n  rm /tmp/requirements.txt /tmp/packages.txt /tmp/volatility-2.5.tar.gz && rm -rf /var/lib/apt/lists/*;\n\n# tcpdump workaround\nRUN mv /usr/sbin/tcpdump /usr/bin/tcpdump &&\\\n  ln -s /usr/bin/tcpdump /usr/sbin/tcpdump &&\\\n  chmod +s /usr/sbin/tcpdump\n\n# Fix policykit-1\nRUN mkdir -p /var/run/dbus || /bin/true\nRUN sed -ie 's/auth_admin_keep/yes/' /usr/share/polkit-1/actions/org.libvirt.unix.policy\n\n#RUN cd /tmp/docker/build\n\n# Make sure deps are available\nRUN echo \"/usr/local/lib\" >> /etc/ld.so.conf\nRUN ldconfig\n\n# Create sandbox user\n# RUN addgroup libvirtd || /bin/true\nRUN mkdir /opt/sandbox &&\\\n  useradd sandbox &&\\\n  mkdir /home/sandbox &&\\\n  usermod -a -G libvirtd sandbox &&\\\n  usermod -G sandbox www-data &&\\\n  chown -R sandbox:sandbox /home/sandbox &&\\\n  chown -R sandbox:sandbox /opt/sandbox\n\n# Setup KVM user\n# RUN groupadd kvm || /bin/true\nRUN usermod -a -G libvirtd libvirt-qemu &&\\\n  usermod -a -G kvm libvirt-qemu\n\n# Setup libvirt\nCOPY conf/libvirtd.conf /etc/libvirt/libvirtd.conf\nRUN echo \"\" >> /home/sandbox/.bashrc &&\\\n  echo \"export LIBVIRT_DEFAULT_URI=qemu:///system\" >> /home/sandbox/.bashrc\n\n# Seems like there are issues running things in the container from /usr/sbin\n# Moving libvirt and tcpdump for now..\nRUN mv /usr/sbin/libvirtd /usr/bin/libvirtd &&\\\n  ln -s /usr/bin/libvirtd /usr/sbin/libvirtd\n\n# Disable slow ntpdate updating\nRUN rm /etc/network/if-up.d/ntpdate\n\n################################### CONFIGURATION ######################################\n\nCOPY startup.sh /home/sandbox/startup.sh\nCOPY bootstrap.py /home/sandbox/bootstrap.py\n\n# Make sure they're executable\nRUN chown -R sandbox: /home/sandbox &&\\\n  chmod +x /home/sandbox/startup.sh /home/sandbox/bootstrap.py\n\n# Run this portion of the build as the sandbox user\nUSER sandbox\nWORKDIR /home/sandbox/\n\n# Copy over configuration files\nRUN mkdir /home/sandbox/conf\nCOPY conf/* /home/sandbox/conf/\n\nRUN cuckoo &&\\\n  cuckoo community &&\\\n  mkdir /home/sandbox/supervisor &&\\\n  cp /home/sandbox/conf/processing.conf /home/sandbox/.cuckoo/conf/\n\nUSER root\n# Expose cuckoo/libvirt ports\nEXPOSE 80 2042 5353 8090 9040 16509\n\n# Set the entry point\nENTRYPOINT [\"/home/sandbox/startup.sh\"]\n\n\n"
+}

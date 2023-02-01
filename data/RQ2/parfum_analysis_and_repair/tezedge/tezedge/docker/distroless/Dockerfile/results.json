@@ -1,0 +1,35 @@
+{
+  "startTime": 1674250653368,
+  "endTime": 1674250654225,
+  "originalSmells": [
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 19,
+        "lineEnd": 19,
+        "columnStart": 32,
+        "columnEnd": 89
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 5,
+        "lineEnd": 5,
+        "columnStart": 22,
+        "columnEnd": 58
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 5,
+        "lineEnd": 5,
+        "columnStart": 22,
+        "columnEnd": 58
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "ARG BASE_IMAGE=tezedge/tezedge-libs:latest\n\nFROM tezedge/tezos-opam-builder:debian10 as build-env\n\nUSER root\nRUN apt-get update && apt-get install --no-install-recommends -y libssl-dev zlib1g && rm -rf /var/lib/apt/lists/*;\n\n# Checkout and compile tezedge source code\nARG tezedge_git=\"https://github.com/tezedge/tezedge.git\"\nARG rust_toolchain=\"1.58.1\"\nARG SOURCE_BRANCH\nRUN curl https://sh.rustup.rs -sSf | sh -s -- --default-toolchain ${rust_toolchain} -y\nENV PATH=/home/appuser/.cargo/bin:$PATH\nENV RUST_BACKTRACE=1\nENV SODIUM_USE_PKG_CONFIG=1\nENV OCAML_BUILD_CHAIN=remote\nARG RUSTFLAGS=\"\"\nENV OCAML_WHERE_PATH=/tmp/ocaml-includes\nRUN wget https://gitlab.com/tezedge/tezos/uploads/1bf4d1d130e75129be82a148149b04b3/libtezos-ffi-headers.tar.gz\nRUN mkdir -p $OCAML_WHERE_PATH; tar xvzf libtezos-ffi-headers.tar.gz -C $OCAML_WHERE_PATH && rm libtezos-ffi-headers.tar.gz\nRUN cd /home/appuser && git clone ${tezedge_git} --branch ${SOURCE_BRANCH} && cd tezedge && RUSTFLAGS=${RUSTFLAGS} cargo build --release #5\n\nWORKDIR /home/appuser/tezedge\nRUN mkdir /tmp/tezedge\nRUN mkdir /tmp/tezedge/light-node\nRUN chown appuser:appuser /tmp/tezedge\n\nFROM ${BASE_IMAGE} as light-node\nCOPY --from=build-env /tmp/tezedge /\n\n# Copy binaries\nCOPY --from=build-env /home/appuser/tezedge/target/release/light-node /\nCOPY --from=build-env /home/appuser/tezedge/target/release/protocol-runner /\nCOPY --from=build-env /home/appuser/tezedge/target/release/sandbox /\nCOPY --from=build-env /home/appuser/tezedge/target/release/tezedge-baker /\nCOPY --from=build-env /home/appuser/tezedge/sandbox/artifacts/tezos-client /\n\nCOPY --from=build-env /home/appuser/tezedge/docker/distroless/tezedge.config /\n\n# Copy shared libraries\nCOPY --from=build-env /home/appuser/tezedge/tezos/sys/lib_tezos/artifacts/libtezos.so /usr/lib/x86_64-linux-gnu/libtezos.so\nCOPY --from=build-env /usr/lib/x86_64-linux-gnu/libev.so.4 /usr/lib/x86_64-linux-gnu/libev.so.4\nCOPY --from=build-env /usr/lib/x86_64-linux-gnu/libffi.so.6 /usr/lib/x86_64-linux-gnu/libffi.so.6\nCOPY --from=build-env /usr/lib/x86_64-linux-gnu/libzstd.so.1 /usr/lib/x86_64-linux-gnu/libz.so.1\nCOPY --from=build-env /lib/x86_64-linux-gnu/libnss_dns.so.2 /lib/x86_64-linux-gnu/libnss_dns.so.2\nCOPY --from=build-env /lib/x86_64-linux-gnu/libnss_files.so.2 /usr/lib/x86_64-linux-gnu/libnss_files.so\nCOPY --from=build-env /lib/x86_64-linux-gnu/libresolv.so.2 /lib/x86_64-linux-gnu/libresolv.so.2\nCOPY --from=build-env /usr/lib/x86_64-linux-gnu/libssl.so.1.1 /usr/lib/x86_64-linux-gnu/libssl.so.1.1\nCOPY --from=build-env /usr/lib/x86_64-linux-gnu/libcrypto.so.1.1 /usr/lib/x86_64-linux-gnu/libcrypto.so.1.1\n\n# Copy zcash-params init files for sapling\nCOPY --from=build-env /home/appuser/tezedge/tezos/sys/lib_tezos/artifacts/sapling-spend.params /\nCOPY --from=build-env /home/appuser/tezedge/tezos/sys/lib_tezos/artifacts/sapling-output.params /\n\n# Default entry point runs node with default config + several default values, which can be overriden by CMD\nENTRYPOINT [ \"/light-node\", \"--config-file=/tezedge.config\", \"--p2p-port=9732\", \"--rpc-port=18732\", \"--init-sapling-spend-params-file=/sapling-spend.params\", \"--init-sapling-output-params-file=/sapling-output.params\"]\n\nFROM light-node as sandbox\n\n# Add aditional libs used by the sandbox module\n# Libs required by tezos-client\nCOPY --from=build-env /usr/lib/x86_64-linux-gnu/libhidapi-libusb.so.0 /usr/lib/x86_64-linux-gnu/libhidapi-libusb.so.0\nCOPY --from=build-env /lib/x86_64-linux-gnu/libusb-1.0.so.0 /lib/x86_64-linux-gnu/libusb-1.0.so.0\nCOPY --from=build-env /lib/x86_64-linux-gnu/libudev.so.1 /lib/x86_64-linux-gnu/libudev.so.1\n\nENV TEZOS_CLIENT_UNSAFE_DISABLE_DISCLAIMER=\"Y\"\n# Default entry point runs sandbox launcher with default config + several default values, which can be overriden by CMD\nENTRYPOINT [ \"/sandbox\", \"--light-node-path=/light-node\", \"--protocol-runner-path=/protocol-runner\", \"--tezos-client-path=/tezos-client\", \"--log-level=debug\", \"--sandbox-rpc-port=3030\", \"--init-sapling-spend-params-file=/sapling-spend.params\", \"--init-sapling-output-params-file=/sapling-output.params\"]\n"
+}

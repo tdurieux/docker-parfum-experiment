@@ -1,0 +1,71 @@
+{
+  "startTime": 1674256054979,
+  "endTime": 1674256056024,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 23,
+        "lineEnd": 23,
+        "columnStart": 2,
+        "columnEnd": 59
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 42,
+        "lineEnd": 42,
+        "columnStart": 2,
+        "columnEnd": 87
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 53,
+        "lineEnd": 53,
+        "columnStart": 2,
+        "columnEnd": 83
+      }
+    },
+    {
+      "rule": "curlUseHttpsUrl",
+      "position": {
+        "lineStart": 23,
+        "lineEnd": 23,
+        "columnStart": 2,
+        "columnEnd": 59
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 48,
+        "lineEnd": 48,
+        "columnStart": 2,
+        "columnEnd": 32
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 58,
+        "lineEnd": 58,
+        "columnStart": 2,
+        "columnEnd": 42
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 17,
+        "lineEnd": 17,
+        "columnStart": 4,
+        "columnEnd": 29
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM centos:8 as dpdk\nENV BUILD_DATE 20201021\nENV RPM_ARCH=x86_64\nENV PKG_CONFIG_PATH=/usr/local/lib64/pkgconfig\n\nENV DPDK_VERSION=20.11\nENV DPDK_SUBVERSION=1\nENV OVS_VERSION=2.15\nENV OVN_VERSION=20.12\n\nENV DPDK_DIR=/usr/src/dpdk-${DPDK_VERSION}\nENV OVS_DIR=/usr/src/openvswitch-${OVS_VERSION}\nENV OVN_DIR=/usr/src/ovn\n\nENV PATH=${PATH}:/usr/share/openvswitch/scripts\nENV PATH=${PATH}:/usr/share/ovn/scripts/\n\nRUN yum -y install dpdk-devel && \\\n  dnf install -y --enablerepo=powertools \\\n  gcc make numactl-devel meson \\\n  unbound nc iptables ipset hostname && \\\n# Install DPDK\n  cd /usr/src/ && \\\n  curl -f https://fast.dpdk.org/rel/dpdk-${DPDK_VERSION}.tar.gz | tar xz && \\\n  cd dpdk-${DPDK_VERSION} && \\\n  meson builddir && cd builddir && \\\n  meson configure -Dapps='pdump proc-info' -Dexamples='' -Dtests=false -Denable_kmods=false -Denable_docs=false && \\\n  ninja && ninja install && \\\n# Clean Up\n  dnf remove -y make meson gcc cpp && \\\n  dnf clean all && rm -rf /var/cache/yum\nRUN pkg-config --modversion libdpdk\n\n\n\nFROM dpdk as rpm-builder\n\nENV PKG_CONFIG_PATH=/usr/local/lib64/pkgconfig\nRUN dnf install -y --enablerepo=powertools 'dnf-command(builddep)' python3-sphinx groff rpm-build libpcap-devel libibverbs-devel\n\n# Build OVS-DPDK\nRUN cd /usr/src/ && \\\n  curl -f -L https://github.com/openvswitch/ovs/tarball/branch-${OVS_VERSION} > ovs.tar.gz && \\\n  mkdir ${OVS_DIR} && tar -xf ovs.tar.gz -C ${OVS_DIR} --strip-components 1 && \\\n  rm -f ovs.tar.gz && cd ${OVS_DIR} && \\\n  sed -e 's/@VERSION@/0.0.1/' rhel/openvswitch-fedora.spec.in > /tmp/ovs.spec && \\\n  dnf builddep -y /tmp/ovs.spec && \\\n  ./boot.sh && \\\n  ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" --with-dpdk=static && \\\n  make rpm-fedora RPMBUILD_OPT=\"--with dpdk --without check\"\n\n# Build OVN\nRUN cd /usr/src/ && \\\n  curl -f -L https://github.com/ovn-org/ovn/tarball/branch-${OVN_VERSION} > ovn.tar.gz && \\\n  mkdir ovn && tar -xf ovn.tar.gz -C ovn --strip-components 1 && \\\n  rm -f ovn.tar.gz && \\\n  cd ovn && \\\n  ./boot.sh && \\\n  ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" --with-ovs-source=${OVS_DIR} && \\\n  make rpm-fedora\n\nRUN mkdir -p /rpms && \\\n  cp ${OVS_DIR}/rpm/rpmbuild/RPMS/${RPM_ARCH}/* ${OVN_DIR}/rpm/rpmbuild/RPMS/${RPM_ARCH}/* /rpms && \\\n  cd /rpms && rm -f *debug* *docker* *vtep* *ipsec*\n\n\n\nFROM dpdk\n\nRUN dnf install -y kmod && dnf clean all\nCOPY --from=rpm-builder /rpms/* /rpms/\nCOPY start-ovs-dpdk.sh ovs-dpdk-healthcheck.sh uninstall.sh /kube-ovn/\n\nRUN rpm -ivh --nodeps /rpms/*.rpm && \\\n  rm -rf ${DPDK_DIR} /rpms && \\\n  unset DPDK_DIR OVS_DIR OVN_DIR\n"
+}

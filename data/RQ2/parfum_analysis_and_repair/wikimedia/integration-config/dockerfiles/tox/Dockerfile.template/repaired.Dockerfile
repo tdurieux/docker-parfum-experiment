@@ -1,0 +1,40 @@
+FROM {{ "ci-stretch" | image_tag }}
+{% set packages|replace('\n', ' ') -%}
+python-pip
+python-dev
+python-wheel
+python3-pip
+python3-dev
+python3.4-dev
+python3.6-dev
+python3.7-dev
+python3-lxml
+python3-wheel
+pypy
+gcc
+g++
+libc-dev
+make
+default-libmysqlclient-dev
+libssl-dev
+libcurl4-openssl-dev
+gettext
+{%- endset -%}
+
+ARG PIP_DISABLE_PIP_VERSION_CHECK=1
+
+ADD pyall.list /etc/apt/sources.list.d/pyall.list
+ADD cobertura-clover-transform.py /usr/bin/cobertura-clover-transform
+ADD cobertura-clover-transform.xslt /usr/bin/cobertura-clover-transform.xslt
+
+RUN {{ packages | apt_install }} \
+    && pip install --no-cache-dir setuptools \
+    && pip install --no-cache-dir tox==3.10.0 \
+    && rm -fR "$XDG_CACHE_HOME/pip"
+
+USER nobody
+# workaround https://github.com/pypa/virtualenv/issues/1640
+ENV XDG_DATA_HOME=/tmp
+WORKDIR /src
+ENTRYPOINT ["/run.sh"]
+COPY run.sh /run.sh

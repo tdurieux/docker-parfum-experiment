@@ -1,0 +1,35 @@
+{
+  "startTime": 1674249163385,
+  "endTime": 1674249163479,
+  "originalSmells": [
+    {
+      "rule": "mkdirUsrSrcThenRemove",
+      "position": {
+        "lineStart": 2,
+        "lineEnd": 2,
+        "columnStart": 4,
+        "columnEnd": 25
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 16,
+        "lineEnd": 16,
+        "columnStart": 4,
+        "columnEnd": 22
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 27,
+        "lineEnd": 27,
+        "columnStart": 4,
+        "columnEnd": 25
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM tokenmill/clojure:graalvm-ce-19.0.0-tools-deps-1.10.0.442 as builder\n\nRUN mkdir -p /usr/src/app && rm -rf /usr/src/app\nWORKDIR /usr/src/app\n\nCOPY deps.edn /usr/src/app/\nRUN clojure -R:native-image\nCOPY . /usr/src/app\nRUN clojure -A:native-image\nRUN cp $JAVA_HOME/jre/lib/amd64/libsunec.so .\nRUN cp target/app server\nRUN chmod 755 server bootstrap\n\n\nFROM amazonlinux:2 as archiver\n\nRUN yum -y install zip && rm -rf /var/cache/yum\n\nWORKDIR /usr/src/app\nCOPY --from=builder /usr/src/app/bootstrap bootstrap\nCOPY --from=builder /usr/src/app/server server\nCOPY --from=builder /usr/src/app/libsunec.so libsunec.so\nRUN zip function.zip bootstrap server libsunec.so\n\n\nFROM amazonlinux:2 as deployer\n\nRUN yum -y install awscli && rm -rf /var/cache/yum\n\nARG AWS_DEFAULT_REGION\nENV AWS_DEFAULT_REGION=$AWS_DEFAULT_REGION\n\nARG AWS_ACCESS_KEY_ID\nENV AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID\n\nARG AWS_SECRET_ACCESS_KEY\nENV AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY\n\nARG S3_BUCKET=bucket-name\nENV S3_BUCKET=$S3_BUCKET\n\nARG S3_FOLDER=folder-name\nENV S3_FOLDER=$S3_FOLDER\n\nARG STACK_NAME=lambda-custom-runtime-{{lambda-name}}\nENV STACK_NAME=$STACK_NAME\n\nCOPY --from=archiver /usr/src/app/function.zip function.zip\nCOPY lambda.yml lambda.yml\n\nRUN aws cloudformation package --template-file lambda.yml --s3-bucket ${S3_BUCKET} --s3-prefix ${S3_FOLDER} --output-template-file /tmp/lambda-packaged.yml\nRUN aws cloudformation deploy --template-file /tmp/lambda-packaged.yml --stack-name ${STACK_NAME} --capabilities CAPABILITY_IAM --no-fail-on-empty-changeset\n"
+}

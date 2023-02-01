@@ -1,0 +1,62 @@
+{
+  "startTime": 1674215338858,
+  "endTime": 1674215340089,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 31,
+        "lineEnd": 31,
+        "columnStart": 4,
+        "columnEnd": 250
+      }
+    },
+    {
+      "rule": "sha256sumEchoOneSpaces",
+      "position": {
+        "lineStart": 40,
+        "lineEnd": 40,
+        "columnStart": 22,
+        "columnEnd": 200
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 20,
+        "lineEnd": 20,
+        "columnStart": 4,
+        "columnEnd": 58
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 44,
+        "lineEnd": 44,
+        "columnStart": 20,
+        "columnEnd": 96
+      }
+    },
+    {
+      "rule": "gpgUseBatchFlag",
+      "position": {
+        "lineStart": 38,
+        "lineEnd": 38,
+        "columnStart": 21,
+        "columnEnd": 48
+      }
+    },
+    {
+      "rule": "gpgUseBatchFlag",
+      "position": {
+        "lineStart": 39,
+        "lineEnd": 39,
+        "columnStart": 21,
+        "columnEnd": 166
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "ARG BASE_REGISTRY=registry.access.redhat.com\nARG BASE_IMAGE=ubi8/ubi\nARG BASE_TAG=8.4\nFROM ${BASE_REGISTRY}/${BASE_IMAGE}:${BASE_TAG}\n\n### Required Atomic/OpenShift Labels - https://github.com/projectatomic/ContainerApplicationGenericLabels\nLABEL name=\"Solutions Delivery Platform: Jenkins Agent\" \\\n      maintainer=\"terrana_steven@bah.com\" \\\n      vendor=\"Booz Allen Hamilton\" \\\n      version=\"6.2.2\" \\\n      release=\"6.2.2\" \\\n      summary=\"OWASP Dependency Check  container\" \\\n      description=\"The OWASP Dependency Check container image for the Solutions Delivery Platform\"\n\n### add licenses to this directory\nCOPY LICENSE /licenses\n\n### Add necessary Red Hat repos and packages here\nRUN INSTALL_PKGS=\"java-1.8.0-openjdk-devel ruby glibc glibc-common\" && \\\n    yum -y update-minimal --setopt=tsflags=nodocs --security && \\\n    yum -y install --setopt=tsflags=nodocs ${INSTALL_PKGS} && rm -rf /var/cache/yum\n\nENV SDP_DCAR_OWASP_DEP_CHK_VERSION dcar-2.1\nENV OWASP_DEP_CHK_VERSION 6.2.2\nENV HOME /root\nENV JAVA_HOME /usr/lib/jvm/java\n\nARG user=dependencycheck\n\n# Pull dependencies from sdp-images release artifacts and verify contents\nRUN mkdir /root/tmp\nRUN curl -f -sSLo /root/tmp/owasp-dep-check-dependencies-$SDP_DCAR_OWASP_DEP_CHK_VERSION.tar.gz https://github.com/boozallen/sdp-images/releases/download/$SDP_DCAR_OWASP_DEP_CHK_VERSION/owasp-dep-check-dependencies-$SDP_DCAR_OWASP_DEP_CHK_VERSION.tar.gz\n#COPY prebuild/owasp-dep-check-dependencies-$SDP_DCAR_OWASP_DEP_CHK_VERSION.tar.gz /root/tmp/owasp-dep-check-dependencies-$SDP_DCAR_OWASP_DEP_CHK_VERSION.tar.gz\n\nCOPY prebuild/BAH-public.key /root/tmp/.\nCOPY prebuild/owasp-dep-check-dependencies-$SDP_DCAR_OWASP_DEP_CHK_VERSION.sig /root/tmp/.\nCOPY prebuild/owasp-dep-check-dependencies-$SDP_DCAR_OWASP_DEP_CHK_VERSION.sha256 /root/tmp/.\n\nRUN cd /root/tmp/ && gpg --batch --import BAH-public.key\nRUN cd /root/tmp/ && gpg --batch --verify owasp-dep-check-dependencies-$SDP_DCAR_OWASP_DEP_CHK_VERSION.sig owasp-dep-check-dependencies-$SDP_DCAR_OWASP_DEP_CHK_VERSION.tar.gz\nRUN cd /root/tmp/ && echo \"$(cat owasp-dep-check-dependencies-$SDP_DCAR_OWASP_DEP_CHK_VERSION.sha256)  owasp-dep-check-dependencies-$SDP_DCAR_OWASP_DEP_CHK_VERSION.tar.gz\" | sha256sum --check --status\n\n# Unpack dependencies and install packages\n\nRUN cd /root/tmp && tar -xzf owasp-dep-check-dependencies-$SDP_DCAR_OWASP_DEP_CHK_VERSION.tar.gz && \\\n    gem install --force --local /root/tmp/dependencies/bundle-audit/*.gem --no-document --no-rdoc --no-ri && \\\n    rm -rf /usr/local/share/gems/gems/rubygems-update-2.7.10/test && \\\n    gem cleanup && rm owasp-dep-check-dependencies-$SDP_DCAR_OWASP_DEP_CHK_VERSION.tar.gz\n\nRUN cd /root/tmp && rpm -ivh --replacepkgs --replacefiles --force  /root/tmp/dependencies/mono-complete/*.rpm\n\nRUN cd /root/tmp/dependencies/owasp && \\\n    unzip dependency-check-${OWASP_DEP_CHK_VERSION}-release.zip    && \\\n    rm dependency-check-${OWASP_DEP_CHK_VERSION}-release.zip       && \\\n    mv dependency-check /usr/share/                                         && \\\n    rm -rf /root/tmp/dependencies\n\n# Add user, create required directories  and cleanup\nRUN useradd -ms /bin/bash ${user}                                           && \\\n    chown -R ${user}:${user} /usr/share/dependency-check                    && \\\n    mkdir /report                                                           && \\\n    chown -R ${user}:${user} /report                                        && \\\n    yum --nogpgcheck --disableplugin=subscription-manager clean all\n\n### Insert Container Entry Point Script\nCOPY container-entrypoint.sh /usr/share/dependency-check/bin/container-entrypoint.sh\n\n### Set script as executable\nRUN chmod +x /usr/share/dependency-check/bin/container-entrypoint.sh\n\nUSER ${user}\n\nVOLUME [\"/src\" \"/usr/share/dependency-check/data\" \"/report\"]\nWORKDIR /src\n\nCMD []\nENTRYPOINT [ \"/bin/sh\", \"/usr/share/dependency-check/bin/container-entrypoint.sh\" ]\n"
+}

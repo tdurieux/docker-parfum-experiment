@@ -1,0 +1,26 @@
+{
+  "startTime": 1674252924202,
+  "endTime": 1674252925416,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 30,
+        "lineEnd": 30,
+        "columnStart": 4,
+        "columnEnd": 49
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 70,
+        "lineEnd": 70,
+        "columnStart": 4,
+        "columnEnd": 49
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "###\n### Container image that contains the objectiv-backend package, and can run that as collector\n### behind gunicorn.\n###\n\n\n### Two steps build process\n# We build the Docker Image in two steps:\n# 1. Build the objectiv-backend python package in a build container\n# 2. Install the objectiv-backend python package in the run container\n#\n# Both steps use the same base image, so that introduces some overhead. But the duplicated layers will be\n# cached by docker, so it shouldn't impact build time much.\n\n\n### Python Base Image\n# We'll build our own python base image here based on ubuntu:20.04, as that is what most of our devs use.\n# We could build this image in a separate Dockerfile and re-use it here. But building it here makes the\n# build process simpler.\n#\n\n### Start of the Pyhthon-base-image part\nFROM ubuntu:20.04 AS builder\n## Install python, and prepare a virtual environment\n# Using a virtual environment guarantees that we start with a clean slate, and python libraries that\n# e.g. apt-get might install won't conflict with our specific requirements.txt\nRUN \\\n\n    DEBIAN_FRONTEND=\"noninteractive\" && \\\n    apt-get update && \\\n    apt-get install --no-install-recommends -y python3 python3-virtualenv && \\\n    apt-get -y autoremove && \\\n    apt-get -y clean && \\\n    rm -rf /var/lib/apt/lists/* && \\\n    virtualenv -p python3.8 /venv_python_3_8/\n\n## Activate this virtualenv\n# Instead of using /venv_python_3_8/bin/activate we'll set the variables that activate would set.\n# The advantage of this approach is that it will work inside the running container too, even if we have\n# a shell in which bin/activate wasn't read.\n# The drawback of this manual method is that we cannot do 'deactivate', but that's of no importance to us.\nENV VIRTUAL_ENV=\"/venv_python_3_8/\"\nENV PATH=\"${VIRTUAL_ENV}bin:${PATH}\"\nENV PYTHONHOME=\"\"\n# Upgrade pip to what is currently the latest version\nRUN pip --no-cache-dir install pip==22.* --upgrade\n### End of the Pyhthon-base-image part\n\n# Install dependencies needed to build package\nCOPY requirements-build.txt /tmp/requirements-build.txt\nRUN pip --no-cache-dir install --require-hashes -r /tmp/requirements-build.txt && \\\n    rm /tmp/requirements-build.txt\n\n# Copy files\nWORKDIR /build_dir/\nCOPY setup.cfg pyproject.toml /build_dir/\nCOPY objectiv_backend/ /build_dir/objectiv_backend/\n\n# Build package\nRUN python3 -m build --wheel\n# Done. Resulting file can be found in /build_dir/dist/objectiv_backend-${VERSION}-py3-none-any.whl\n\n\n### Start of the Pyhthon-base-image part\n# Make sure these lines are exactly the same as for the above builder image. That will allow docker to\n# cache these layers efficiently.\nFROM ubuntu:20.04 AS result\nRUN \\\n    DEBIAN_FRONTEND=\"noninteractive\" && \\\n    apt-get update && \\\n    apt-get install --no-install-recommends -y python3 python3-virtualenv && \\\n    apt-get -y autoremove && \\\n    apt-get -y clean && \\\n    rm -rf /var/lib/apt/lists/* && \\\n    virtualenv -p python3.8 /venv_python_3_8/\nENV VIRTUAL_ENV=\"/venv_python_3_8/\"\nENV PATH=\"${VIRTUAL_ENV}bin:${PATH}\"\nENV PYTHONHOME=\"\"\nRUN pip --no-cache-dir install pip==22.* --upgrade\n### End of the Pyhthon-base-image part\n\nRUN \\\n    mkdir -p /services && \\\n    mkdir -p /services/jsons/OK/ && \\\n    mkdir -p /services/jsons/NOK/ && \\\n    chown -R www-data /services/jsons\nWORKDIR /services\n\n# entrypoint scripts\nCOPY docker/*.sh /services/\nCOPY docker/gunicorn.conf.py /etc/\n\n# python requirements\n# we use requirement.in, because the list with hashes is not cross-platform compatible\nCOPY requirements.in /services/\n\nRUN \\\n    pip --no-cache-dir install gunicorn && \\\n    pip --no-cache-dir install -r requirements.in\n\n# Install the objectiv-backend package\n# Use a wildcard, because the exact package name depends on the current version\nCOPY --from=builder /build_dir/dist/* /tmp/\nRUN pip --no-cache-dir install /tmp/objectiv_backend-*-py3-none-any.whl && \\\n    rm /tmp/*\n\nUSER www-data\nCMD /services/entry_point.sh\nENTRYPOINT /services/entry_point.sh\n"
+}

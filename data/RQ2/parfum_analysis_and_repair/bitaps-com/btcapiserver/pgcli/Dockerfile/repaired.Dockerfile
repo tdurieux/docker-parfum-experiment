@@ -1,0 +1,16 @@
+FROM ubuntu:18.04
+MAINTAINER Aleksey Karpov <admin@bitaps.com>
+RUN apt-get -y update && apt-get -y --no-install-recommends install libpq-dev build-essential && rm -rf /var/lib/apt/lists/*;
+RUN apt-get -y --no-install-recommends install locales && rm -rf /var/lib/apt/lists/*;
+RUN apt-get -y --no-install-recommends install python3 && rm -rf /var/lib/apt/lists/*;
+RUN apt-get -y --no-install-recommends install python3-pip && rm -rf /var/lib/apt/lists/*;
+
+RUN sed -i -e 's/# en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/' /etc/locale.gen && \
+    locale-gen
+ENV LANG en_US.UTF-
+ENV LANGUAGE en_US:e
+ENV LC_ALL en_US.UTF-8
+RUN pip3 install --no-cache-dir pgcli
+RUN pip3 install --no-cache-dir psycopg2-binary
+RUN mkdir /var/run/postgresql
+ENTRYPOINT ["pgcli"]

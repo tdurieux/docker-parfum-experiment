@@ -1,0 +1,116 @@
+{
+  "startTime": 1674220077026,
+  "endTime": 1674220078036,
+  "originalSmells": [
+    {
+      "rule": "wgetUseHttpsUrl",
+      "position": {
+        "lineStart": 36,
+        "lineEnd": 36,
+        "columnStart": 4,
+        "columnEnd": 80
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 37,
+        "lineEnd": 37,
+        "columnStart": 4,
+        "columnEnd": 50
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 8,
+        "lineEnd": 8,
+        "columnStart": 18,
+        "columnEnd": 84
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 65,
+        "lineEnd": 65,
+        "columnStart": 18,
+        "columnEnd": 76
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 68,
+        "lineEnd": 68,
+        "columnStart": 18,
+        "columnEnd": 78
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 71,
+        "lineEnd": 71,
+        "columnStart": 18,
+        "columnEnd": 100
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 88,
+        "lineEnd": 88,
+        "columnStart": 18,
+        "columnEnd": 83
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 8,
+        "lineEnd": 8,
+        "columnStart": 18,
+        "columnEnd": 84
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 65,
+        "lineEnd": 65,
+        "columnStart": 18,
+        "columnEnd": 76
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 68,
+        "lineEnd": 68,
+        "columnStart": 18,
+        "columnEnd": 78
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 71,
+        "lineEnd": 71,
+        "columnStart": 18,
+        "columnEnd": 100
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 88,
+        "lineEnd": 88,
+        "columnStart": 18,
+        "columnEnd": 83
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Define Mosquitto version\nARG MOSQUITTO_VERSION=1.6.14\n\n# Use debian:stable-slim as a builder for Mosquitto and dependencies.\nFROM debian:stable-slim as mosquitto_builder\nARG MOSQUITTO_VERSION\n\n# Get mosquitto build dependencies.\nRUN apt update && apt install --no-install-recommends -y wget build-essential cmake libssl-dev libcjson-dev && rm -rf /var/lib/apt/lists/*;\n\n# Get libwebsocket. Debian's libwebsockets is too old for Mosquitto version > 2.x so it gets built from source.\nRUN export LWS_VERSION=2.4.2  && \\\n    wget https://github.com/warmcat/libwebsockets/archive/v${LWS_VERSION}.tar.gz -O /tmp/lws.tar.gz && \\\n    mkdir -p /build/lws && \\\n    tar --strip=1 -xf /tmp/lws.tar.gz -C /build/lws && \\\n    rm /tmp/lws.tar.gz && \\\n    cd /build/lws && \\\n    cmake . \\\n        -DCMAKE_BUILD_TYPE=MinSizeRel \\\n        -DCMAKE_INSTALL_PREFIX=/usr \\\n        -DLWS_IPV6=ON \\\n        -DLWS_WITHOUT_BUILTIN_GETIFADDRS=ON \\\n        -DLWS_WITHOUT_CLIENT=ON \\\n        -DLWS_WITHOUT_EXTENSIONS=ON \\\n        -DLWS_WITHOUT_TESTAPPS=ON \\\n        -DLWS_WITH_HTTP2=OFF \\\n        -DLWS_WITH_SHARED=OFF \\\n        -DLWS_WITH_ZIP_FOPS=OFF \\\n        -DLWS_WITH_ZLIB=OFF && \\\n    make -j \"$(nproc)\" && \\\n    rm -rf /root/.cmake\n\nWORKDIR /app\n\nRUN mkdir -p mosquitto/auth mosquitto/conf.d\n\nRUN wget https://mosquitto.org/files/source/mosquitto-${MOSQUITTO_VERSION}.tar.gz\nRUN tar xzvf mosquitto-${MOSQUITTO_VERSION}.tar.gz && rm mosquitto-${MOSQUITTO_VERSION}.tar.gz\n\n# Build mosquitto.\nRUN if [ \"$(echo $MOSQUITTO_VERSION | head -c 1)\" != 2 ]; then \\\n   cd mosquitto-${MOSQUITTO_VERSION} && make CFLAGS=\"-Wall -O2 -I/build/lws/include\" LDFLAGS=\"-L/build/lws/lib\" WITH_WEBSOCKETS=yes && make install ; \\\n   else \\\n   cd mosquitto-${MOSQUITTO_VERSION} && make CFLAGS=\"-Wall -O2 -I/build/lws/include\" LDFLAGS=\"-L/build/lws/lib\" WITH_WEBSOCKETS=yes && make install ; \\\n   fi\n\n# Use golang:latest as a builder for the Mosquitto Go Auth plugin.\nFROM --platform=$BUILDPLATFORM golang:latest AS go_auth_builder\n\nENV CGO_CFLAGS=\"-I/usr/local/include -fPIC\"\nENV CGO_LDFLAGS=\"-shared -Wl,-unresolved-symbols=ignore-all\"\nENV CGO_ENABLED=1\n\n# Bring TARGETPLATFORM to the build scope\nARG TARGETPLATFORM\nARG BUILDPLATFORM\n\n# Install TARGETPLATFORM parser to translate its value to GOOS, GOARCH, and GOARM\nCOPY --from=tonistiigi/xx:golang / /\nRUN go env\n\n# Install needed libc and gcc for target platform.\nRUN if [ ! -z \"$TARGETPLATFORM\" ]; then \\\n    case \"$TARGETPLATFORM\" in \\\n  \"linux/arm64\" \\\n    apt update && apt install --no-install-recommends -y gcc-aarch64-linux-gnu libc6-dev-arm64-cross \\\n    ;; \\\n  \"linux/arm/v7\" \\\n    apt update && apt install --no-install-recommends -y gcc-arm-linux-gnueabihf libc6-dev-armhf-cross \\\n    ;; \\\n  \"linux/arm/v6\" \\\n    apt update && apt install --no-install-recommends -y gcc-arm-linux-gnueabihf libc6-dev-armel-cross libc6-dev-armhf-cross \\\n    ;; \\\n  esac && rm -rf /var/lib/apt/lists/*; \\\n  fi\n\nWORKDIR /app\nCOPY --from=mosquitto_builder /usr/local/include/ /usr/local/include/\n\nCOPY ./ ./\nRUN go build -buildmode=c-archive go-auth.go && \\\n    go build -buildmode=c-shared -o go-auth.so && \\\n\tgo build pw-gen/pw.go\n\n\n#Start from a new image.\nFROM debian:stable-slim\n\nRUN apt update && apt install --no-install-recommends -y libc-ares2 openssl uuid tini wget cmake libssl-dev && rm -rf /var/lib/apt/lists/*;\n\n# Get libwebsocket. Debian's libwebsockets is too old for Mosquitto version > 2.x so it gets built from source.\nRUN export LWS_VERSION=2.4.2  && \\\n    wget https://github.com/warmcat/libwebsockets/archive/v${LWS_VERSION}.tar.gz -O /tmp/lws.tar.gz && \\\n    mkdir -p /build/lws && \\\n    tar --strip=1 -xf /tmp/lws.tar.gz -C /build/lws && \\\n    rm /tmp/lws.tar.gz && \\\n    cd /build/lws && \\\n    cmake . \\\n        -DCMAKE_BUILD_TYPE=MinSizeRel \\\n        -DCMAKE_INSTALL_PREFIX=/usr \\\n        -DLWS_IPV6=ON \\\n        -DLWS_WITHOUT_BUILTIN_GETIFADDRS=ON \\\n        -DLWS_WITHOUT_CLIENT=ON \\\n        -DLWS_WITHOUT_EXTENSIONS=ON \\\n        -DLWS_WITHOUT_TESTAPPS=ON \\\n        -DLWS_WITH_HTTP2=OFF \\\n        -DLWS_WITH_SHARED=OFF \\\n        -DLWS_WITH_ZIP_FOPS=OFF \\\n        -DLWS_WITH_ZLIB=OFF && \\\n    make -j \"$(nproc)\" && \\\n    rm -rf /root/.cmake\n\nRUN mkdir -p /var/lib/mosquitto /var/log/mosquitto\nRUN groupadd mosquitto \\\n    && useradd -s /sbin/nologin mosquitto -g mosquitto -d /var/lib/mosquitto \\\n    && chown -R mosquitto:mosquitto /var/log/mosquitto/ \\\n    && chown -R mosquitto:mosquitto /var/lib/mosquitto/\n\n#Copy confs, plugin so and mosquitto binary.\nCOPY --from=mosquitto_builder /app/mosquitto/ /mosquitto/\nCOPY --from=go_auth_builder /app/pw /mosquitto/pw\nCOPY --from=go_auth_builder /app/go-auth.so /mosquitto/go-auth.so\nCOPY --from=mosquitto_builder /usr/local/sbin/mosquitto /usr/sbin/mosquitto\n\nEXPOSE 1883 1884\n\nENTRYPOINT [\"/usr/bin/tini\", \"--\"]\nCMD [ \"/usr/sbin/mosquitto\" ,\"-c\", \"/etc/mosquitto/mosquitto.conf\" ]\n"
+}

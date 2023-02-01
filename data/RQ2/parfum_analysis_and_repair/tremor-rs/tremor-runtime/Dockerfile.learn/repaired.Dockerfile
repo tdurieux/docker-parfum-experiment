@@ -1,0 +1,22 @@
+FROM rust:1.62-bullseye as builder
+
+RUN cargo install --features=ssl websocat
+
+FROM tremorproject/tremor:0.12.4
+
+COPY --from=builder /usr/local/cargo/bin/websocat /usr/local/bin/websocat
+
+# Install workshop related tools
+RUN apt-get update \
+    && apt-get install --no-install-recommends -y wget curl netcat \
+    && apt-get autoremove -y \
+    && apt-get clean -y \
+    && rm -rf /var/lib/apt/lists/*
+
+
+# setting TREMOR_PATH
+# /usr/local/share/tremor - for host-specific local tremor-script modules and libraries, takes precedence
+# /usr/share/tremor/lib - place for the tremor-script stdlib
+ENV TREMOR_PATH="/usr/local/share/tremor:/usr/share/tremor/lib"
+
+ENTRYPOINT ["/entrypoint.sh"]

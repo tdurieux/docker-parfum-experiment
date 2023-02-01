@@ -1,0 +1,21 @@
+# -*- dockerfile -*-
+
+FROM ubuntu:20.04
+MAINTAINER "Markus Stenberg <mstenber@aiven.io>"
+
+RUN apt-get update && apt-get install --no-install-recommends -y sudo make && rm -rf /var/lib/apt/lists/*;
+
+ADD Makefile /build/
+RUN cd /build && make build-dep-ubuntu
+
+ADD README.md setup.cfg setup.py requirements*.txt /build/
+RUN cd /build && pip3 install --no-cache-dir -e '.[cassandra]'
+RUN cd /build && pip3 install --no-cache-dir -r requirements.testing.txt
+
+# This step depends on pre-commit installed from requirements.txt
+ADD .pre-commit-config.yaml /build/
+# pre-commit install-hooks won't run without git directory
+RUN cd /build && git init && pre-commit install-hooks
+
+# Expect real 'src' to be mounted for CMD to do something useful
+CMD cd /src && make test

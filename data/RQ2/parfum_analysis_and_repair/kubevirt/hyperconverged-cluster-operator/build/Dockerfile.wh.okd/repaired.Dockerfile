@@ -1,0 +1,9 @@
+FROM quay.io/centos/centos:stream9
+
+ENV KUBEVIRT_CLIENT_GO_SCHEME_REGISTRATION_VERSION=v1
+
+COPY hyperconverged-cluster-webhook /usr/bin/
+COPY assets/dataImportCronTemplates dataImportCronTemplates/
+COPY ci-test-files/dataImportCronTemplatesWithImageStream.yaml dataImportCronTemplates/
+
+ENTRYPOINT /usr/bin/hyperconverged-cluster-webhook

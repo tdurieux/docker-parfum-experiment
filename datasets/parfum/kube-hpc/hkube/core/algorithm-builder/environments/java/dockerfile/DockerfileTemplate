@@ -1,0 +1,25 @@
+FROM  ${DOCKER_PULL_REGISTRY_USER}/maven:3.6.3-openjdk-11-slim
+LABEL maintainer="hkube.dev@gmail.com"
+ENV PACKAGES_REGISTRY_USER ${PACKAGES_REGISTRY_USER}
+ENV PACKAGES_TOKEN ${PACKAGES_TOKEN}
+ENV PACKAGES_REGISTRY ${PACKAGES_REGISTRY}
+COPY ./dockerfile/settings.xml  /root/.m2/settings.xml
+COPY algorithm_unique_folder/ /hkube/algorithm-runner/algorithm_unique_folder/
+COPY ./dockerfile/wrapper-download/ /hkube/algorithm-runner/algorithm_unique_folder/wrapper-download/
+RUN cp /hkube/algorithm-runner/algorithm_unique_folder/src/main/resources/settings.xml  /root/.m2/ || true
+WORKDIR /hkube/algorithm-runner/algorithm_unique_folder/wrapper-download/
+RUN mvn -Drevision=${WRAPPER_VERSION} package
+RUN mv ./target/wrapper-download-2.1.X-wide.jar /hkube/algorithm-runner/wrapper.jar  
+COPY ./runJava.sh /hkube/algorithm-runner/
+WORKDIR /hkube/algorithm-runner/algorithm_unique_folder/
+RUN mvn -q  package
+FROM ${baseImage} 
+RUN mkdir -p /hkube/algorithm-runner
+RUN mkdir -p /hkube/debs
+COPY ./debs /hkube/debs/
+WORKDIR /hkube/debs
+RUN  dpkg -i libpgm*.deb && dpkg -i libnorm*.deb && dpkg -i libsodium*.deb && dpkg -i libzmq5*.deb && dpkg -i libzmq-jni_*.deb && dpkg -i libzmq-java_*.deb
+COPY --from=0 /hkube/algorithm-runner/ /hkube/algorithm-runner
+WORKDIR /hkube/algorithm-runner
+RUN mkdir -p /hkube-logs
+CMD ["/bin/sh", "-c", "./runJava.sh"]

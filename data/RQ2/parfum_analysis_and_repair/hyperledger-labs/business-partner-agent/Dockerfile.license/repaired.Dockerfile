@@ -1,0 +1,1 @@
+# Dockerfile to ship 3rd party license information, mainly used withon the build pipeline

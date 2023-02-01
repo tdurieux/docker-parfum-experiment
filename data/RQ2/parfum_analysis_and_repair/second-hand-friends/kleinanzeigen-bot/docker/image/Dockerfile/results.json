@@ -1,0 +1,35 @@
+{
+  "startTime": 1674246559058,
+  "endTime": 1674246559920,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 56,
+        "lineEnd": 56,
+        "columnStart": 4,
+        "columnEnd": 19
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 67,
+        "lineEnd": 67,
+        "columnStart": 4,
+        "columnEnd": 51
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 39,
+        "lineEnd": 42,
+        "columnStart": 4,
+        "columnEnd": 51
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "#\n# Copyright (C) 2022 Sebastian Thomschke and contributors\n# SPDX-License-Identifier: AGPL-3.0-or-later\n#\n\n######################\n# runtime image base\n######################\nFROM debian:stable-slim as runtime-base-image\n\nLABEL maintainer=\"Sebastian Thomschke\"\n\nARG DEBIAN_FRONTEND=noninteractive\nARG LC_ALL=C\n\nRUN set -eu \\\n #\n && apt-get update -y \\\n && echo \"#################################################\" \\\n && echo \"Install Chromium + Driver...\" \\\n && echo \"#################################################\" \\\n && apt-get install --no-install-recommends -y chromium chromium-driver \\\n #\n && rm -rf \\\n    /var/cache/{apt,debconf} \\\n    /var/lib/apt/lists/* \\\n    /var/log/{apt,alternatives.log,bootstrap.log,dpkg.log} \\\n    /tmp/* /var/tmp/*\n\n\n######################\n# build image\n######################\n\n# https://hub.docker.com/_/python?tab=tags&name=3-slim\nFROM python:3-slim AS build-image\n\nRUN apt-get update \\\n # install required libraries\n && apt-get install --no-install-recommends -y \\\n    binutils `# required by pyinstaller` \\\n    #curl xz-utils `# required to install upx` \\\n    git `# required by pdm to generate app version` \\\n #\n # install upx\n # upx is currently not supported on Linux, see https://github.com/pyinstaller/pyinstaller/discussions/6275\n #&& mkdir /opt/upx \\\n #&& upx_download_url=$(curl -fsSL https://api.github.com/repos/upx/upx/releases/latest | grep browser_download_url | grep amd64_linux.tar.xz | cut \"-d\\\"\" -f4) \\\n #&& echo \"Downloading [$upx_download_url]...\" \\\n #&& curl -fL $upx_download_url | tar Jxv -C /opt/upx --strip-components=1 \\\n #\n # upgrade pip\n # don't upgrade PIP for now: https://github.com/pdm-project/pdm/issues/874\n #&& python -m pip install --upgrade pip \\\n #\n # install pdm \\\n && pip install --no-cache-dir pdm && rm -rf /var/lib/apt/lists/*;\n\nENV PATH=\"/opt/upx:${PATH}\"\n\nCOPY kleinanzeigen_bot /opt/app/kleinanzeigen_bot\nCOPY .git /opt/app/.git\nCOPY README.md pdm.lock pyinstaller.spec pyproject.toml /opt/app/\n\nRUN cd /opt/app \\\n && ls -la . \\\n # https://github.com/SeleniumHQ/selenium/issues/10022 / https://github.com/pdm-project/pdm/issues/728#issuecomment-1021771200 \\\n && pip install --no-cache-dir -t __pypackages__/3.10/lib selenium \\\n && pdm install -v \\\n && ls -la kleinanzeigen_bot \\\n && pdm run compile \\\n && ls -l dist\n\nRUN /opt/app/dist/kleinanzeigen-bot --help\n\n\n######################\n# final image\n######################\nFROM runtime-base-image\nCOPY --from=build-image /opt/app/dist/kleinanzeigen-bot /opt/kleinanzeigen-bot\n\nARG BUILD_DATE\nARG GIT_COMMIT_HASH\nARG GIT_COMMIT_DATE\nARG GIT_REPO_URL\n\nLABEL \\\n  org.label-schema.schema-version=\"1.0\" \\\n  org.label-schema.build-date=$BUILD_DATE \\\n  org.label-schema.vcs-ref=$GIT_COMMIT_HASH \\\n  org.label-schema.vcs-url=$GIT_REPO_URL\n\n# https://stackoverflow.com/a/59812588/5116073\nENV PYTHONUNBUFFERED=1\nENV DISPLAY=0:0\n\nENTRYPOINT [\"/bin/bash\", \"/opt/run.sh\"]\n\nENV \\\n  INIT_SH_FILE='' \\\n  CONFIG_FILE=/mnt/data/config.yaml\n\nCOPY docker/image/run.sh /opt/run.sh\n\nVOLUME /mnt/data\n"
+}

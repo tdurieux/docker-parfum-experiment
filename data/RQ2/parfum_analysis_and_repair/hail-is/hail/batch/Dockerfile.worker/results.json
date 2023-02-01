@@ -1,0 +1,26 @@
+{
+  "startTime": 1674252289984,
+  "endTime": 1674252291359,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 32,
+        "lineEnd": 32,
+        "columnStart": 4,
+        "columnEnd": 62
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 61,
+        "lineEnd": 61,
+        "columnStart": 3,
+        "columnEnd": 14
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM {{ hail_ubuntu_image.image }} AS base\n\nCOPY docker/hail-ubuntu/retry /bin/retry\nCOPY docker/hail-ubuntu/hail-apt-get-install /bin/hail-apt-get-install\nRUN chmod 755 /bin/retry && \\\n    chmod 755 /bin/hail-apt-get-install && \\\n    mkdir -p /usr/share/man/man1 /usr/share/man/man2\nRUN hail-apt-get-install \\\n    iproute2 \\\n    iptables \\\n    openjdk-8-jre-headless \\\n    liblapack3\n\nCOPY docker/hail-ubuntu/pip.conf /root/.config/pip/pip.conf\nCOPY docker/hail-ubuntu/hail-pip-install /bin/hail-pip-install\nCOPY docker/requirements.txt .\nRUN chmod 755 /bin/hail-pip-install && \\\n    hail-pip-install -r requirements.txt pyspark==3.2.1\n\nENV SPARK_HOME /usr/local/lib/python3.7/dist-packages/pyspark\nENV PATH \"$PATH:$SPARK_HOME/sbin:$SPARK_HOME/bin\"\nENV PYSPARK_PYTHON python3\n\nCOPY batch/download-gcs-connector.py /\nRUN python3 /download-gcs-connector.py\nCOPY docker/core-site.xml ${SPARK_HOME}/conf/core-site.xml\n\n{% if global.cloud == \"gcp\" %}\nRUN echo \"APT::Acquire::Retries \\\"5\\\";\" > /etc/apt/apt.conf.d/80-retries && \\\n    hail-apt-get-install curl gnupg && \\\n    export GCSFUSE_REPO=gcsfuse-bionic && \\\n    echo \"deb http://packages.cloud.google.com/apt $GCSFUSE_REPO main\" | tee /etc/apt/sources.list.d/gcsfuse.list && \\\n    curl -f https://packages.cloud.google.com/apt/doc/apt-key.gpg | apt-key add - && \\\n    hail-apt-get-install fuse gcsfuse\n\n{% elif global.cloud == \"azure\" %}\n# https://github.com/Azure/azure-storage-fuse/issues/603\nRUN hail-apt-get-install ca-certificates pkg-config libfuse-dev cmake libcurl4-gnutls-dev libgnutls28-dev uuid-dev libgcrypt20-dev wget && \\\n    wget https://packages.microsoft.com/config/ubuntu/20.04/packages-microsoft-prod.deb && \\\n    dpkg -i packages-microsoft-prod.deb && \\\n    apt-get update && \\\n    hail-apt-get-install blobfuse\n\n{% else %}\nRUN echo \"!!! UNEXPECTED CLOUD {{global.cloud}} !!!\" && exit 1\n{% endif %}\n\n# Install xfsprogs\nRUN hail-apt-get-install xfsprogs\n\n# Install crun runtime dependencies\nRUN hail-apt-get-install libyajl-dev\n\n# Build crun in separate build step\nFROM base AS crun_builder\nRUN hail-apt-get-install make git gcc build-essential pkgconf libtool \\\n   libsystemd-dev libcap-dev libseccomp-dev \\\n   go-md2man libtool autoconf automake\nRUN git clone --depth 1 --branch 1.4.4 https://github.com/containers/crun.git && \\\n   cd crun && \\\n   ./autogen.sh && \\\n   ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" && \\\n   make && \\\n   make install\n\nFROM base\nCOPY --from=crun_builder /usr/local/bin/crun /usr/local/bin/crun\nRUN python3 -m pip install --upgrade --no-cache-dir pip\n\nCOPY hail/python/setup-hailtop.py /hailtop/setup.py\nCOPY hail/python/hailtop /hailtop/hailtop/\nCOPY /hail_version /hailtop/hailtop/hail_version\nCOPY hail/python/MANIFEST.in /hailtop/MANIFEST.in\nRUN hail-pip-install --no-deps /hailtop && rm -rf /hailtop\n\nCOPY gear/setup.py /gear/setup.py\nCOPY gear/gear /gear/gear/\nRUN hail-pip-install --no-deps /gear && rm -rf /gear\n\nCOPY batch/setup.py batch/MANIFEST.in /batch/\nCOPY batch/batch /batch/batch/\nRUN hail-pip-install --no-deps /batch && rm -rf /batch\n\nCOPY batch/jars/junixsocket-selftest-2.3.3-jar-with-dependencies.jar /jvm-entryway/\nCOPY batch/src/main/java/is /jvm-entryway/is\nCOPY letsencrypt/subdomains.txt /\n"
+}

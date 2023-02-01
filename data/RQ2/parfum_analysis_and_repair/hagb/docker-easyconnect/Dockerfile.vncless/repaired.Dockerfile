@@ -1,0 +1,33 @@
+FROM debian:buster-slim
+
+ARG BUILD_ENV=local
+
+RUN if [ "${BUILD_ENV}" = "local" ]; then sed -i s/deb.debian.org/mirrors.aliyun.com/ /etc/apt/sources.list; fi &&\
+    apt-get update && \
+    apt-get install -y --no-install-recommends --no-install-suggests \
+	libgtk2.0-0 libx11-xcb1 libxtst6 libnss3 libasound2 libdbus-glib-1-2 iptables \
+	dante-server psmisc libxaw7 xclip busybox libssl-dev iproute2 tinyproxy-bin && rm -rf /var/lib/apt/lists/*;
+
+RUN cd tmp && apt update && apt download x11-utils && dpkg -x x11-utils_*.deb x11-utils &&\
+    mkdir -p /usr/local/bin && cp x11-utils/usr/bin/xmessage /usr/local/bin && rm -r x11-utils*
+
+ARG EC_URL
+
+RUN cd tmp && \
+    busybox wget "${EC_URL}" -O EasyConnect.deb &&\
+    dpkg -i EasyConnect.deb && rm EasyConnect.deb
+
+COPY ./docker-root /
+
+RUN rm -f /usr/share/sangfor/EasyConnect/resources/conf/easy_connect.json &&\
+    mv /usr/share/sangfor/EasyConnect/resources/conf/ /usr/share/sangfor/EasyConnect/resources/conf_backup &&\
+    ln -s /root/conf /usr/share/sangfor/EasyConnect/resources/conf
+
+COPY --from=fake-hwaddr fake-hwaddr/fake-hwaddr.so /usr/local/lib/fake-hwaddr.so
+
+#ENV PASSWORD="" LOOP=""
+#ENV DISPLAY
+
+VOLUME /root/ /usr/share/sangfor/EasyConnect/resources/logs/
+
+CMD TYPE=x11 start.sh

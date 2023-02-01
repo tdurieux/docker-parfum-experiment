@@ -1,0 +1,6 @@
+FROM postgres
+
+ADD ./datastore /datasources
+
+# Import data from datastore/ into the database
+ADD ./init-postgres /docker-entrypoint-initdb.d

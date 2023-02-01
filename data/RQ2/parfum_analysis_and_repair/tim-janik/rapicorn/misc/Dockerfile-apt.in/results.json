@@ -1,0 +1,45 @@
+{
+  "startTime": 1674252712631,
+  "endTime": 1674252714533,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 109,
+        "lineEnd": 109,
+        "columnStart": 4,
+        "columnEnd": 31
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 109,
+        "lineEnd": 109,
+        "columnStart": 4,
+        "columnEnd": 31
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 109,
+        "lineEnd": 109,
+        "columnStart": 4,
+        "columnEnd": 31
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 109,
+        "lineEnd": 109,
+        "columnStart": 4,
+        "columnEnd": 55
+      }
+    }
+  ],
+  "repairedDockerfile": "# This Source Code Form is licensed MPL-2.0: http://mozilla.org/MPL/2.0\n\n# Pick distribution to start from\nFROM @DIST@\nMAINTAINER Tim Janik <timj@gnu.org>\n\n# Automation tools and convenience commands\nENV DEBIAN_FRONTEND noninteractive\nRUN echo '#!/bin/bash\\n\"$@\" || { sleep 10 ; \"$@\" ; } || { sleep 90 ; \"$@\" ; }' > /bin/retry && \\\n    echo '#!/bin/sh\\ncase \"$INTENT\" in *$1*) echo true ;; *) echo \"exit 0\" ;; esac' > /bin/intent && \\\n    echo '#!/bin/sh\\nprintf \"\\\\033[31;1m\"\\nprintf %s \"$*\" | sed '\\''1{h;s/./*/g;p;x;};${p;x}'\\'' >&2\\nprintf \"\\\\033[0m\\\\n\"' > /bin/warn && \\\n    chmod +x /bin/retry /bin/intent /bin/warn && \\\n    echo '\\n' \\\n    \"\\nalias ls='ls --color=auto' ; alias l='ls -al' ;\" \\\n    \"\\nalias grep='grep --color=auto' ; alias fgrep='fgrep --color=auto' ; alias egrep='egrep --color=auto' ;\" \\\n    '\\nfunction regrep { (shopt -s globstar extglob; IFS=; set - ; /usr/bin/nice /bin/egrep --color=auto -d skip \"\") }' \\\n    | tee -a /etc/bash.bashrc >> /root/.bashrc\n\n# Add bintray.com repo key for which dirmngr is needed and enable https apt sources\nRUN retry apt-get update && \\\n    retry apt-get install -y apt-utils dirmngr apt-transport-https ca-certificates && \\\n    retry apt-key adv --keyserver keyserver.ubuntu.com --recv-keys 379CE192D401AB61 && \\\n    retry apt-get -y upgrade\n\n# Provide build essentials\nRUN retry apt-get install -y \\\n    build-essential devscripts lintian automake autoconf autoconf-archive libtool intltool \\\n    doxygen graphviz texlive-binaries pandoc git libxml2-utils\n\n# Provide clang++ if needed\nENV  INTENT\t\t\"@INTENT@\"\nRUN `intent clangbuild` && \\\n    retry apt-get install -y clang\n\n# Provide dependencies\nRUN retry apt-get install -y \\\n    bison flex cython xvfb \\\n    librsvg2-dev libpango1.0-dev python2.7-dev libxml2-dev libreadline6-dev \\\n    libreadline-dev python-all-dev python-enum34\nENV BINTRAY_REPO\t\"@BINTRAY_REPO@\"\nENV DISTRELEASE\t\t\"@DISTRELEASE@\"\n\n# Setup build environment and provide the git repository\nENV PROJECT\t@PROJECT@\nENV EMAIL\trapicorn@googlegroups.com\nCOPY tmp-mirror.git /tmp/$PROJECT.git\nRUN cd /usr/src/ && \\\n    git clone /tmp/$PROJECT.git\n\n# Build sources in project directory\nWORKDIR /usr/src/$PROJECT\n\n# Build sources, run tests and create distribution tarball\n# Carry out distcheck test if desired\nRUN : && \\\n    case $INTENT in \\\n      *clangbuild*) nice ./autogen.sh --prefix=/usr CC=clang CXX=clang++ ;; \\\n      *gccbuild*)   nice ./autogen.sh --prefix=/usr ;; \\\n    esac\nRUN nice make -j`nproc`\nRUN nice make check\nRUN nice make install\nRUN nice make installcheck\nRUN nice make dist\nRUN nice make uninstall\n\n# Carry out distcheck test if desired\nRUN `intent distcheck` && \\\n    nice make distcheck\n\n# Show tarball\nRUN ls -l *.tar.xz\n\n# Create deb packages as follows:\n# Figure Debian version, this must have a distribution specific suffix for bintray uploads.\n# Extract distribution from tarball, prepare debian source tarball, add debian/ directory,\n# update Debian's 'changelog', install build tools, build Debian packages in /usr/src/.\nENV  DIST\t\t\"@DIST@\"\nENV  TRAVIS_JOB_NUMBER\t\"@TRAVIS_JOB_NUMBER@\"\nRUN `intent package` && \\\n    TARBALL=`echo *.tar.xz` && \\\n    TARDIR=${TARBALL%.tar*} && \\\n    TARPACKAGE=${TARDIR%-*} && \\\n    TARVERSION=${TARDIR#*-} && \\\n    BUILDID=`misc/mkbuildid.sh -p` && \\\n    DEBVERSION=$BUILDID-0${DISTRELEASE:-local}${TRAVIS_JOB_NUMBER:+~travis${TRAVIS_JOB_NUMBER#*.}} && \\\n    DEB_TARBALL=\"$TARPACKAGE\"_\"${DEBVERSION%-*}.orig.tar.xz\" && \\\n    COMMITID=`git rev-parse HEAD` && \\\n    CHANGELOGMSG=\"Development snapshot, git commit $COMMITID\" && \\\n    cp $TARBALL ../$DEB_TARBALL && \\\n    cd ../ && \\\n    tar xf $DEB_TARBALL && \\\n    cd $TARDIR/ && \\\n    cp -r ../$TARPACKAGE/debian/ . && \\\n    dch -v \"$DEBVERSION\" \"$CHANGELOGMSG\" && \\\n    dch -r \"\" && \\\n    cat debian/changelog && \\\n    retry apt-get install -y $(dpkg-checkbuilddeps 2>&1 | sed 's/.*: //') && \\\n    nice debuild -j`nproc` -rfakeroot -us -uc && \\\n    cd .. && \\\n  rm -r $TARDIR/ && \\\n    ls -al\n\n# Test package installation from /usr/src/ and removal locally\nRUN `intent package` && \\\n    cd .. && \\\n    dpkg-scanpackages . /dev/null | gzip -9c > Packages.gz && \\\n    echo 'deb [trusted=yes] file:///usr/src ./' > /etc/apt/sources.list.d/usrsrc.list && \\\n    retry apt-get update && \\\n    apt-get install --no-install-recommends -y rapicorn && \\\n    apt-get purge -y rapicorn && \\\n    apt-get --purge -y autoremove && \\\n    rm /etc/apt/sources.list.d/usrsrc.list && \\\n    retry apt-get update && rm -rf /var/lib/apt/lists/*;\n\n# Upload packages\nCOPY tmp-bintray-token .bintraytoken\nRUN `intent bintrayup` && \\\n    ls -al .. && \\\n    misc/bintrayup.sh .bintraytoken $DIST $BINTRAY_REPO/rapicorn ../*.deb && \\\n    rm .bintraytoken\n\n# Test installation from remote (sleep & retry allow for extra bintray.com indexing time)\nRUN `intent bintrayup` && \\\n    sleep 60 && \\\n    echo \"deb [trusted=yes] https://dl.bintray.com/$BINTRAY_REPO $DISTRELEASE main\" | \\\n\ttee /etc/apt/sources.list.d/bintray-source-line.list && \\\n    retry /bin/sh -c 'apt-get update && apt-get install -y rapicorn' || \\\n\twarn '* WARNING: Failed package installation after bintray.com upload *'\n\n# docker build -t @PROJECT@ .\n# docker run -ti --rm @PROJECT@ /bin/bash\n"
+}

@@ -1,0 +1,1 @@
+# Add metadata to the image.

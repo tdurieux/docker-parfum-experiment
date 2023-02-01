@@ -1,0 +1,1 @@
+# Image build must be run from repository root directory

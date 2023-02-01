@@ -1,0 +1,44 @@
+{
+  "startTime": 1674234837594,
+  "endTime": 1674234837835,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 18,
+        "lineEnd": 18,
+        "columnStart": 2,
+        "columnEnd": 70
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 24,
+        "lineEnd": 24,
+        "columnStart": 4,
+        "columnEnd": 109
+      }
+    },
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 68,
+        "lineEnd": 68,
+        "columnStart": 15,
+        "columnEnd": 39
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 39,
+        "lineEnd": 41,
+        "columnStart": 22,
+        "columnEnd": 137
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Copyright (c) Microsoft Corporation and others. Licensed under the MIT license.\n# SPDX-License-Identifier: MIT\n\nFROM fossology/fossology:3.4.0 as fossology\nCOPY fossology_init.sh fossology_init.sh\nRUN ./fossology_init.sh\n\nFROM node:10\nENV APPDIR=/opt/service\n#RUN apk update && apk upgrade && \\\n#    apk add --no-cache bash git openssh\n\nARG BUILD_NUMBER=0\nENV CRAWLER_BUILD_NUMBER=$BUILD_NUMBER\n\n# Ruby\nRUN apt-get update && apt-get install -y --no-install-recommends --no-install-suggests curl bzip2 build-essential libssl-dev libreadline-dev zlib1g-dev cmake && \\\n  rm -rf /var/lib/apt/lists/* && \\\n  curl -f -L https://github.com/rbenv/ruby-build/archive/v20180822.tar.gz | tar -zxvf - -C /tmp/ && \\\n  cd /tmp/ruby-build-* && ./install.sh && cd / && \\\n  ruby-build -v 2.5.1 /usr/local && rm -rfv /tmp/ruby-build-* && \\\n  gem install bundler --no-rdoc --no-ri\n\n# Scancode\nRUN curl -f -sL https://github.com/nexB/scancode-toolkit/releases/download/v3.0.2/scancode-toolkit-3.0.2.tar.bz2 | tar -C /opt -jx \\\n  && /opt/scancode-toolkit-3.0.2/scancode --reindex-licenses \\\n  && /opt/scancode-toolkit-3.0.2/scancode --version\nENV SCANCODE_HOME=/opt/scancode-toolkit-3.0.2\n\n# Licensee\nRUN gem install licensee -v 9.11.0 --no-rdoc --no-ri\n\n# FOSSology\nWORKDIR /opt\nRUN git clone https://github.com/fossology/fossology.git\nRUN cd fossology && git checkout -b clearlydefined tags/3.4.0\n\n# See https://github.com/fossology/fossology/blob/faaaeedb9d08f00def00f9b8a68a5cffc5eaa657/utils/fo-installdeps#L103-L105\n# Additional libjsoncpp-dev https://github.com/fossology/fossology/blob/261d1a3e663b5fd20652a05b2d6360f4b31a17cb/src/copyright/mod_deps#L79-L80\nRUN apt-get update && apt-get install -y --no-install-recommends --no-install-suggests \\\n  libmxml-dev curl libxml2-dev libcunit1-dev libjsoncpp-dev \\\n  build-essential libtext-template-perl subversion rpm librpm-dev libmagic-dev libglib2.0 libboost-regex-dev libboost-program-options-dev && rm -rf /var/lib/apt/lists/*;\n\nWORKDIR /opt/fossology/src/nomos/agent\nRUN make -f Makefile.sa\nRUN echo $(./nomossa -V)\n\n# NOTE: must build copyright before Monk to cause libfossology to be built\nWORKDIR /opt/fossology/src/copyright/agent\nRUN make\n\nWORKDIR /opt/fossology/src/monk/agent\nRUN make\nRUN echo $(./monk -V)\nCOPY --from=fossology /tmp/monk_knowledgebase .\n\nENV FOSSOLOGY_HOME=/opt/fossology/src\n\n# Crawler config\nENV CRAWLER_DEADLETTER_PROVIDER=cd(azblob)\nENV CRAWLER_NAME=cdcrawlerprod\nENV CRAWLER_QUEUE_PREFIX=cdcrawlerprod\nENV CRAWLER_QUEUE_PROVIDER=storageQueue\nENV CRAWLER_STORE_PROVIDER=cdDispatch+cd(azblob)+azqueue\nENV CRAWLER_WEBHOOK_URL=https://api.clearlydefined.io/webhook\nENV CRAWLER_AZBLOB_CONTAINER_NAME=production\n\nCOPY package*.json /tmp/\nRUN cd /tmp && npm install --production && npm cache clean --force;\nRUN mkdir -p \"${APPDIR}\" && cp -a /tmp/node_modules \"${APPDIR}\"\n\nWORKDIR \"${APPDIR}\"\nCOPY . \"${APPDIR}\"\n\nENV PORT 5000\nEXPOSE 5000\nENTRYPOINT [\"npm\", \"start\"]\n"
+}

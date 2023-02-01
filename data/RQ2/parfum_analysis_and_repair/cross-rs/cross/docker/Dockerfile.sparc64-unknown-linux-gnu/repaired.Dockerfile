@@ -1,0 +1,40 @@
+FROM ubuntu:16.04
+ARG DEBIAN_FRONTEND=noninteractive
+
+COPY common.sh lib.sh /
+RUN /common.sh
+
+COPY cmake.sh /
+RUN /cmake.sh
+
+COPY xargo.sh /
+RUN /xargo.sh
+
+RUN apt-get update && apt-get install -y --assume-yes --no-install-recommends \
+    g++-sparc64-linux-gnu \
+    libc6-dev-sparc64-cross && rm -rf /var/lib/apt/lists/*;
+
+COPY deny-debian-packages.sh /
+RUN TARGET_ARCH=sparc64 /deny-debian-packages.sh \
+    binutils \
+    binutils-sparc64-linux-gnu
+
+COPY qemu.sh /
+RUN /qemu.sh sparc64 softmmu
+
+COPY dropbear.sh /
+RUN /dropbear.sh
+
+COPY linux-image.sh /
+RUN /linux-image.sh sparc64
+
+COPY linux-runner /
+
+ENV CARGO_TARGET_SPARC64_UNKNOWN_LINUX_GNU_LINKER=sparc64-linux-gnu-gcc \
+    CARGO_TARGET_SPARC64_UNKNOWN_LINUX_GNU_RUNNER="/linux-runner sparc64" \
+    CC_sparc64_unknown_linux_gnu=sparc64-linux-gnu-gcc \
+    CXX_sparc64_unknown_linux_gnu=sparc64-linux-gnu-g++ \
+    BINDGEN_EXTRA_CLANG_ARGS_sparc64_unknown_linux_gnu="--sysroot=/usr/sparc64-linux-gnu" \
+    QEMU_LD_PREFIX=/usr/sparc64-linux-gnu \
+    RUST_TEST_THREADS=1 \
+    PKG_CONFIG_PATH="/usr/lib/sparc64-linux-gnu/pkgconfig/:${PKG_CONFIG_PATH}"

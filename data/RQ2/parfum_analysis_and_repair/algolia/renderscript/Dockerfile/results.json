@@ -1,0 +1,62 @@
+{
+  "startTime": 1674253364750,
+  "endTime": 1674253366114,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 13,
+        "lineEnd": 13,
+        "columnStart": 2,
+        "columnEnd": 48
+      }
+    },
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 17,
+        "lineEnd": 17,
+        "columnStart": 2,
+        "columnEnd": 21
+      }
+    },
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 65,
+        "lineEnd": 65,
+        "columnStart": 5,
+        "columnEnd": 17
+      }
+    },
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 74,
+        "lineEnd": 74,
+        "columnStart": 5,
+        "columnEnd": 45
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 12,
+        "lineEnd": 12,
+        "columnStart": 2,
+        "columnEnd": 30
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 14,
+        "lineEnd": 14,
+        "columnStart": 2,
+        "columnEnd": 27
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# ------------------\n# Build playwright\n# ------------------\nFROM ubuntu:focal as base\n\n# For tzdata\nARG DEBIAN_FRONTEND=noninteractive\nARG TZ=America/Los_Angeles\n\n# === INSTALL Node.js ===\nRUN apt-get update && \\\n  # Install node16\n  apt-get install --no-install-recommends -y curl wget && \\\n  curl -f -sL https://deb.nodesource.com/setup_16.x | bash - && \\\n  apt-get install --no-install-recommends -y nodejs && \\\n  # Feature-parity with node.js base images.\n  apt-get install -y --no-install-recommends git openssh-client && \\\n  npm install -g yarn && \\\n  # clean apt cache\n  rm -rf /var/lib/apt/lists/* && \\\n  # Create the pwuser\n  adduser pwuser && npm cache clean --force;\n\n# === BAKE BROWSERS INTO IMAGE ===\nENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright\n\n# Browsers will be downloaded in `/ms-playwright`.\nRUN mkdir /ms-playwright \\\n  && npx playwright install chromium \\\n  && npx playwright install-deps chromium \\\n  # Clean cache\n  && rm -rf /var/lib/apt/lists/* \\\n  && chmod -R 777 /ms-playwright\n\n\n# ------------------\n# package.json cache\n# ------------------\nFROM apteno/alpine-jq:2022-03-27 AS deps\n\n# To prevent cache invalidation from changes in fields other than dependencies\nCOPY package.json /tmp\nRUN jq 'walk(if type == \"object\" then with_entries(select(.key | test(\"^jest|prettier|eslint|semantic|dotenv|nodemon\") | not)) else . end) | { name, dependencies, devDependencies, packageManager }' < /tmp/package.json > /tmp/deps.json\n\n\n# ------------------\n# New base image\n# ------------------\nFROM base as tmp\n\nENV IN_DOCKER true\nENV PLAYWRIGHT_BROWSERS_PATH=\"/ms-playwright\"\nENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=\"true\"\n\n# Setup the app WORKDIR\nWORKDIR /app/tmp\n\n# Copy and install dependencies separately from the app's code\n# To leverage Docker's cache when no dependency has change\nCOPY --from=deps /tmp/deps.json ./package.json\nCOPY yarn.lock .yarnrc.yml ./\nCOPY .yarn .yarn\n\n# Install dev dependencies\nRUN true \\\n  && yarn install && yarn cache clean;\n\n# This step will invalidates cache\nCOPY . ./\n\n# Builds the UI, install chrome and remove dev dependencies\nRUN true \\\n  && ls -lah /app/tmp \\\n  && yarn build \\\n  && yarn workspaces focus --all --production \\\n  && rm -rf .yarn/ && yarn cache clean;\n\n# ------------------\n#  New final image that only contains built code\n# ------------------\nFROM base as final\n\nARG VERSION\nENV VERSION ${VERSION:-dev}\n\n# Autolink repository https://docs.github.com/en/packages/learn-github-packages/connecting-a-repository-to-a-package\nLABEL org.opencontainers.image.source=https://github.com/algolia/renderscript\nLABEL org.opencontainers.image.revision=$VERSION\n\nENV NODE_ENV production\nENV IN_DOCKER true\nENV PLAYWRIGHT_BROWSERS_PATH=\"/ms-playwright\"\nENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=\"true\"\n\n# Do not use root to run the app\nUSER pwuser\n\n# Copy install from previous stage\nWORKDIR /app/renderscript\nCOPY --from=tmp --chown=pwuser:pwuser /app/tmp /app/renderscript\n\nCMD [ \"node\", \"dist/index.js\" ]\n"
+}

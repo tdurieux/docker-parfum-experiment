@@ -1,0 +1,98 @@
+{
+  "startTime": 1674255234573,
+  "endTime": 1674255235819,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 50,
+        "lineEnd": 50,
+        "columnStart": 4,
+        "columnEnd": 22
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 83,
+        "lineEnd": 83,
+        "columnStart": 4,
+        "columnEnd": 22
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 22,
+        "lineEnd": 22,
+        "columnStart": 7,
+        "columnEnd": 29
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 29,
+        "lineEnd": 29,
+        "columnStart": 7,
+        "columnEnd": 39
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 31,
+        "lineEnd": 31,
+        "columnStart": 7,
+        "columnEnd": 62
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 35,
+        "lineEnd": 35,
+        "columnStart": 22,
+        "columnEnd": 45
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 22,
+        "lineEnd": 22,
+        "columnStart": 7,
+        "columnEnd": 29
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 29,
+        "lineEnd": 29,
+        "columnStart": 7,
+        "columnEnd": 39
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 31,
+        "lineEnd": 31,
+        "columnStart": 7,
+        "columnEnd": 62
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 35,
+        "lineEnd": 35,
+        "columnStart": 22,
+        "columnEnd": 45
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# https://pythonspeed.com/articles/base-image-python-docker-images/\nFROM python:3.8-slim-buster\nLABEL maintainer=\"arthurf.flam@samsung.com\"\n\n\n    # Keeps Python from generating .pyc files for 1-time use in the container's unionFS\nENV PYTHONDONTWRITEBYTECODE=1 \\\n    # Turns off buffering for easier container logging\n    PYTHONUNBUFFERED=1 \\\n    # Tracebacks on segfaults\n    PYTHONFAULTHANDLER=1 \\\n    DEBIAN_FRONTEND=noninteractive\n\n\n# Install git, up-to-date.\n# The application manages a cache of all projects' repos, so it can be useful.\n# If we ran into scale issues, we could look into a service like Gitlab's gitaly.\nRUN apt-get update -qq \\\n#     && apt-get install -y gnupg2 software-properties-common apt-utils \\\n#     && apt-key adv --keyserver keyserver.ubuntu.com --recv-keys A1715D88E1DF1F24 \\\n#     && add-apt-repository -y ppa:git-core/ppa \\\n#     && apt-get update -qq \\\n    && apt-get install --no-install-recommends -y git && rm -rf /var/lib/apt/lists/*;\n\n\n# https://www.psycopg.org/docs/install.html#install-from-source\n# https://www.psycopg.org/docs/faq.html#faq-compile\nRUN apt-get update \\\n    # postgresql and toolchain \\\n    && apt-get install --no-install-recommends -y libpq-dev gcc \\\n    # login packages\n    && apt-get install --no-install-recommends -y libsasl2-dev libldap2-dev libssl-dev \\\n    && apt-get clean && rm -rf /var/lib/apt/lists/*;\n\n# At SIRC we need to be able to turn into any user to delete their output files\nRUN apt-get update && apt-get install --no-install-recommends -y sudo && rm -rf /var/lib/apt/lists/*;\n\n# If we want uwsgi's routing support\n# https://uwsgi-docs.readthedocs.io/en/latest/InternalRouting.html\n# RUN sudo apt-get install libpcre3 libpcre3-dev\n\n# we want /qaboard to \"look\" like a package for poetry not to fail\nWORKDIR /qaboard\nCOPY setup.py fastentrypoints.py  ./\n\n# We use the approch described in\n#   https://pythonspeed.com/articles/pipenv-docker/\n# There are other ways to do it, maybe faster\n#   https://github.com/python-poetry/poetry/issues/1301\n#   https://github.com/python-poetry/poetry/issues/856\nRUN pip install --no-cache-dir poetry\nWORKDIR /qaboard/backend\nCOPY backend/pyproject.toml backend/poetry.lock ./\n# Inside the docker container we don't care about isolating virtual environment\n# otherwise we end of with a random (but stable) virtual env name, and it makes\n# changing PATH to use the installed executable challenging.\n# There are other approaches\n# https://github.com/python-poetry/poetry/issues/1579\n# https://github.com/python-poetry/poetry/issues/214\nRUN poetry config virtualenvs.create false\nRUN poetry install --no-root\nENV QA_NO_CHECK_FOR_UPDATES=1\n\n# Copy-in everything else:\nCOPY backend ./\n\nWORKDIR /qaboard\nCOPY README.md MANIFEST.in ./\nWORKDIR /qaboard/qaboard\nCOPY qaboard/ ./\nWORKDIR /qaboard/tests\nCOPY tests/ ./\n\nWORKDIR /qaboard\n# We want to install \"qaboard\", but copying it ahead of time invalidates the build cache\n# this solution still has us install the pinned-deps of \"qaboard\" each time...\n# I guess we should bury our pride and list qaboard's deps as deps of the backend,\n# this way the install below would not install any 3rd parties :|\nWORKDIR /qaboard/backend\nCOPY backend/wait-for-it.sh backend/init.sh backend/uwsgi.ini ./\nRUN poetry install --extras qaboard\n\n# TODO: \"poetry add\" it\nRUN pip install --no-cache-dir celery\n\n\n\nWORKDIR /qaboard/backend\nCMD [\"/qaboard/backend/init.sh\"]\n\n# Where we keep a cache of application data (e.g. git clones)\nVOLUME /var/qaboard\n# It's useful to make it world-writable so that\n# we can run as a non-root user during dev and clone without issues\nRUN mkdir -p /var/qaboard/git && chmod -R 777 /var/qaboard/git\n\n\n# TODO:\n#   Projects can define their own iter_inputs() function to find inputs\n#   The use case it to connect to databases. However, at this stage the function is executed\n#   directly by the server. Not only is it unsecure (on our network let's say it's allright...),\n#   but it introduces a strong coupling between dependencies needed by projects and the server.\n#   Solutions could be:\n#   - [x] Short term, make those users call in a subprocess *their* python with dependencies, and read from STDOUT.\n#         we could read their projects's .envrc\n#   - [ ] Middle term, execute those functions in a docker container used by users to define their environment\n#   - [ ] The above makes things *slow* (?). What do we do? A sort of iter_input server?\n#         Limit the logic/connections available to users?\n"
+}

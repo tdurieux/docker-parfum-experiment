@@ -1,0 +1,63 @@
+{
+  "startTime": 1674214906541,
+  "endTime": 1674214907385,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 51,
+        "lineEnd": 51,
+        "columnStart": 4,
+        "columnEnd": 132
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 54,
+        "lineEnd": 54,
+        "columnStart": 4,
+        "columnEnd": 96
+      }
+    },
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 37,
+        "lineEnd": 37,
+        "columnStart": 4,
+        "columnEnd": 60
+      }
+    },
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 42,
+        "lineEnd": 42,
+        "columnStart": 4,
+        "columnEnd": 73
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 35,
+        "lineEnd": 35,
+        "columnStart": 64,
+        "columnEnd": 80
+      }
+    },
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 40,
+        "lineEnd": 40,
+        "columnStart": 77,
+        "columnEnd": 93
+      }
+    }
+  ],
+  "repairedDockerfile": "FROM golang:1.18 as builder\n\nRUN apt-get update && apt-get --no-install-recommends install -y \\\n    git \\\n    make \\\n    apt-utils \\\n    apt-transport-https \\\n    ca-certificates \\\n    wget \\\n    gcc && \\\n    apt-get clean \\\n    && rm -rf \\\n        /var/lib/apt/lists/* \\\n        /tmp/* \\\n        /var/tmp/* \\\n        /usr/share/man \\\n        /usr/share/doc \\\n        /usr/share/doc-base\n\nWORKDIR /tmp\n\n# https://blog.container-solutions.com/faster-builds-in-docker-with-go-1-11\nWORKDIR /go/src/github.com/argoproj/argo-workflows\nCOPY go.mod .\nCOPY go.sum .\nRUN go mod download\n\nCOPY . .\n\n####################################################################################################\n\nFROM node:16 as argo-ui\n\nCOPY ui/package.json ui/yarn.lock ui/\n\nRUN JOBS=max yarn --cwd ui install --network-timeout 1000000 && yarn cache clean;\n\nCOPY ui ui\nCOPY api api\n\nRUN NODE_OPTIONS=\"--max-old-space-size=2048\" JOBS=max yarn --cwd ui build && yarn cache clean;\n\n####################################################################################################\n\nFROM builder as argoexec-build\n\nCOPY hack/arch.sh hack/os.sh /bin/\n\n# NOTE: kubectl version should be one minor version less than https://storage.googleapis.com/kubernetes-release/release/stable.txt\nRUN curl -f -o /usr/local/bin/kubectl https://storage.googleapis.com/kubernetes-release/release/v1.22.3/bin/$(os.sh)/$(arch.sh)/kubectl && \\\n    chmod +x /usr/local/bin/kubectl\n\nRUN curl -f -o /usr/local/bin/jq https://github.com/stedolan/jq/releases/download/jq-1.6/jq-linux64 && \\\n  chmod +x /usr/local/bin/jq\n\n# Tell git to forget about all of the files that were not included because of .dockerignore in order to ensure that\n# the git state is \"clean\" even though said .dockerignore files are not present\nRUN cat .dockerignore >> .gitignore\nRUN git status --porcelain | cut -c4- | xargs git update-index --skip-worktree\n\nRUN --mount=type=cache,target=/root/.cache/go-build make dist/argoexec\n\n####################################################################################################\n\nFROM builder as workflow-controller-build\n\n# Tell git to forget about all of the files that were not included because of .dockerignore in order to ensure that\n# the git state is \"clean\" even though said .dockerignore files are not present\nRUN cat .dockerignore >> .gitignore\nRUN git status --porcelain | cut -c4- | xargs git update-index --skip-worktree\n\nRUN --mount=type=cache,target=/root/.cache/go-build make dist/workflow-controller\n\n####################################################################################################\n\nFROM builder as argocli-build\n\nRUN mkdir -p ui/dist\nCOPY --from=argo-ui ui/dist/app ui/dist/app\n# stop make from trying to re-build this without yarn installed\nRUN touch ui/dist/node_modules.marker\nRUN touch ui/dist/app/index.html\n\n# Tell git to forget about all of the files that were not included because of .dockerignore in order to ensure that\n# the git state is \"clean\" even though said .dockerignore files are not present\nRUN cat .dockerignore >> .gitignore\nRUN git status --porcelain | cut -c4- | xargs git update-index --skip-worktree\n\nRUN --mount=type=cache,target=/root/.cache/go-build make dist/argo\n\n####################################################################################################\n\nFROM gcr.io/distroless/static as argoexec\n\nCOPY --from=argoexec-build /usr/local/bin/kubectl /bin/\nCOPY --from=argoexec-build /usr/local/bin/jq /bin/\nCOPY --from=argoexec-build /go/src/github.com/argoproj/argo-workflows/dist/argoexec /bin/\nCOPY --from=argoexec-build /etc/mime.types /etc/mime.types\nCOPY hack/ssh_known_hosts /etc/ssh/\nCOPY hack/nsswitch.conf /etc/\n\nENTRYPOINT [ \"argoexec\" ]\n\n####################################################################################################\n\nFROM gcr.io/distroless/static as workflow-controller\n\nUSER 8737\n\nCOPY hack/ssh_known_hosts /etc/ssh/\nCOPY hack/nsswitch.conf /etc/\nCOPY --chown=8737 --from=workflow-controller-build /go/src/github.com/argoproj/argo-workflows/dist/workflow-controller /bin/\n\nENTRYPOINT [ \"workflow-controller\" ]\n\n####################################################################################################\n\nFROM gcr.io/distroless/static as argocli\n\nUSER 8737\n\nWORKDIR /home/argo\n\nCOPY hack/ssh_known_hosts /etc/ssh/\nCOPY hack/nsswitch.conf /etc/\nCOPY --from=argocli-build /go/src/github.com/argoproj/argo-workflows/dist/argo /bin/\n\nENTRYPOINT [ \"argo\" ]\n"
+}

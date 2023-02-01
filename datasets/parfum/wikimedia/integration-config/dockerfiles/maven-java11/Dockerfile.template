@@ -1,0 +1,26 @@
+FROM {{ "maven" | image_tag }} AS maven
+
+FROM {{ "java11" | image_tag }}
+USER root
+
+# Import Maven material
+COPY --from=maven /opt/apache-maven /opt/apache-maven
+
+# sonar:sonar does not support XDG_CACHE_HOME - T207046
+ENV SONAR_USER_HOME=$XDG_CACHE_HOME/sonar
+
+# maven wrapper does not support XDG_CACHE_HOME - T218099
+ENV MAVEN_USER_HOME=$XDG_CACHE_HOME/maven
+
+# Our wrapper has to be in PATH to take precedence
+COPY --from=maven /usr/local/bin/mvn /usr/local/bin/mvn
+ENV MAVEN_BIN=/opt/apache-maven/bin/mvn
+RUN /usr/local/bin/mvn --version
+
+COPY --from=maven /settings.xml /settings.xml
+COPY --from=maven /run.sh /run.sh
+
+USER nobody
+WORKDIR /src
+CMD ["clean package"]
+ENTRYPOINT ["/run.sh"]

@@ -1,0 +1,39 @@
+#
+# Sarus
+#
+# Copyright (c) 2018-2022, ETH Zurich. All rights reserved.
+#
+# Please, refer to the LICENSE file in the root directory.
+# SPDX-License-Identifier: BSD-3-Clause
+#
+# -------------------------------------------
+#
+# Docker Image used to run Sarus tests.
+# It expects the standalone already built (see Dockerfile.build)
+# See utility_docker_functions.bash.
+#
+FROM ubuntu:21.10
+
+RUN apt-get update --fix-missing \
+    && DEBIAN_FRONTEND=noninteractive \
+       apt-get install -y --no-install-recommends \
+          sudo rsync vim squashfs-tools build-essential cmake git gcc-10 python3 python3-pip python3-setuptools \
+          munge slurm-wlm skopeo umoci \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN ln -sfn /usr/bin/gcov-10 /usr/bin/gcov # use gcov-10 by default to be compatible with the CI build image
+
+COPY installation/requirements_tests.txt /tmp/requirements_tests.txt
+RUN pip3 install --no-cache-dir -r /tmp/requirements_tests.txt
+
+COPY installation/requirements_doc.txt /tmp/requirements_doc.txt
+RUN pip3 install --no-cache-dir -r /tmp/requirements_doc.txt
+
+RUN useradd -m docker && echo "docker:docker" | chpasswd
+RUN echo "docker ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
+
+USER docker
+WORKDIR /home/docker
+
+CMD ["/bin/bash"]

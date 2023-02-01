@@ -1,0 +1,44 @@
+{
+  "startTime": 1674236000318,
+  "endTime": 1674236000858,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 42,
+        "lineEnd": 42,
+        "columnStart": 5,
+        "columnEnd": 21
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 76,
+        "lineEnd": 76,
+        "columnStart": 4,
+        "columnEnd": 17
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 43,
+        "lineEnd": 43,
+        "columnStart": 5,
+        "columnEnd": 25
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 57,
+        "lineEnd": 57,
+        "columnStart": 5,
+        "columnEnd": 36
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM ubuntu:16.04\n\nLABEL maintainer \"Dan Robinson <dan.robinson@uk.ibm.com>\"\n\nLABEL \"ProductID\"=\"447aefb5fd1342d5b893f3934dfded73\" \\\n      \"ProductName\"=\"IBM Integration Bus\" \\\n      \"ProductVersion\"=\"10.0.0.11\"\n\n# The URL to download the MQ installer from in tar.gz format\nARG MQ_URL=https://public.dhe.ibm.com/ibmdl/export/pub/software/websphere/messaging/mqadv/mqadv_dev904_ubuntu_x86-64.tar.gz\n\n# The MQ packages to install\nARG MQ_PACKAGES=\"ibmmq-server ibmmq-java ibmmq-jre ibmmq-gskit ibmmq-msg-.* ibmmq-client ibmmq-sdk ibmmq-samples ibmmq-ft*\"\n\n# Install additional packages required by MQ and IIB, this install process and the runtime scripts\nRUN export DEBIAN_FRONTEND=noninteractive \\\n  && apt-get update -y \\\n  && apt-get install -y --no-install-recommends \\\n    bash \\\n    bc \\\n    ca-certificates \\\n    coreutils \\\n    curl \\\n    debianutils \\\n    file \\\n    findutils \\\n    gawk \\\n    grep \\\n    libc-bin \\\n    lsb-release \\\n    mount \\\n    passwd \\\n    procps \\\n    rsyslog \\\n    sed \\\n    sudo \\\n    tar \\\n    util-linux \\\n  # Download and extract the MQ installation files\n  && export DIR_EXTRACT=/tmp/mq \\\n  && mkdir -p ${DIR_EXTRACT} \\ \n  && cd ${DIR_EXTRACT} \\\n  && curl -f -LO $MQ_URL \\\n  && tar -zxvf ./*.tar.gz \\\n  # Recommended: Create the mqm user ID with a fixed UID and group, so that the file permissions work between different images\n  && groupadd --system --gid 999 mqm \\\n  && useradd --system --uid 999 --gid mqm mqm \\\n  && usermod -G mqm root \\\n  # Find directory containing .deb files\n  && export DIR_DEB=$(find ${DIR_EXTRACT} -name \"*.deb\" -printf \"%h\\n\" | sort -u | head -1) \\\n  # Find location of mqlicense.sh\n  && export MQLICENSE=$(find ${DIR_EXTRACT} -name \"mqlicense.sh\") \\\n  # Accept the MQ license\n  && ${MQLICENSE} -text_only -accept \\\n  && echo \"deb [trusted=yes] file:${DIR_DEB} ./\" > /etc/apt/sources.list.d/IBM_MQ.list \\\n  # Install MQ using the DEB packages\n  && apt-get update \\\n  && apt-get install --no-install-recommends -y $MQ_PACKAGES \\\n  # Remove tar.gz files unpacked by RPM postinst scripts\n  && find /opt/mqm -name '*.tar.gz' -delete \\\n  # Recommended: Set the default MQ installation (makes the MQ commands available on the PATH)\n  && /opt/mqm/bin/setmqinst -p /opt/mqm -i \\\n  # Clean up all the downloaded files\n  && rm -f /etc/apt/sources.list.d/IBM_MQ.list \\\n  && rm -rf ${DIR_EXTRACT} \\\n  && rm -rf /var/lib/apt/lists/* \\\n  && rm -rf /var/mqm \\\n  # Optional: Set these values for the Bluemix Vulnerability Report\n  && sed -i 's/PASS_MAX_DAYS\\t99999/PASS_MAX_DAYS\\t90/' /etc/login.defs \\\n  && sed -i 's/PASS_MIN_DAYS\\t0/PASS_MIN_DAYS\\t1/' /etc/login.defs \\\n  && sed -i 's/password\\t\\[success=1 default=ignore\\]\\tpam_unix\\.so obscure sha512/password\\t[success=1 default=ignore]\\tpam_unix.so obscure sha512 minlen=8/' /etc/pam.d/common-password && rm ./*.tar.gz\n\nARG IIB_URL=http://public.dhe.ibm.com/ibmdl/export/pub/software/websphere/integration/10.0.0.11-IIB-LINUX64-DEVELOPER.tar.gz\n\n# Install IIB V10 Developer edition\nRUN mkdir /opt/ibm && \\\n    curl -f $IIB_URL \\\n    | tar zx --exclude iib-10.0.0.11/tools --directory /opt/ibm && \\\n    /opt/ibm/iib-10.0.0.11/iib make registry global accept license silently\n\n# Configure system\nRUN echo \"IIB_10:\" > /etc/debian_chroot  && \\\n    touch /var/log/syslog && \\\n    chown syslog:adm /var/log/syslog\n\n# Create user to run as\nRUN groupadd -f mqbrkrs && \\\n    groupadd -f mqclient && \\\n    useradd --create-home --home-dir /home/iibuser -G mqbrkrs,sudo,mqm,mqclient iibuser && \\\n    sed -e 's/^%sudo\t.*/%sudo\tALL=NOPASSWD:ALL/g' -i /etc/sudoers\n\n# Copy in script files\nCOPY *.sh /usr/local/bin/\nCOPY mq-config /etc/mqm/mq-config\nRUN chmod 755 /usr/local/bin/*.sh \\\n  && chmod 755 /etc/mqm/mq-config\n\n# Set BASH_ENV to source mqsiprofile when using docker exec bash -c\nENV BASH_ENV=/usr/local/bin/iib_env.sh MQSI_MQTT_LOCAL_HOSTNAME=127.0.0.1 MQSI_DONT_RUN_LISTENER=true LANG=en_US.UTF-8\n\n# Expose default admin port and http ports\nEXPOSE 4414 7800 1414\n\nUSER iibuser\n\n# Set entrypoint to run management script\nENTRYPOINT [\"iib_manage.sh\"]\n"
+}

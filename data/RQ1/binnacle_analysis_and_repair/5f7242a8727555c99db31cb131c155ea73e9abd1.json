@@ -1,0 +1,35 @@
+{
+  "startTime": 1674249496697,
+  "endTime": 1674249496889,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 4,
+        "lineEnd": 4,
+        "columnStart": 4,
+        "columnEnd": 69
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 4,
+        "lineEnd": 4,
+        "columnStart": 4,
+        "columnEnd": 69
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 4,
+        "lineEnd": 4,
+        "columnStart": 4,
+        "columnEnd": 69
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM ubuntu\nMAINTAINER mateusz.kleina@intel.com\n\nRUN apt-get update && apt-get -y --no-install-recommends install wget curl make git vim netcat gcc mysql-client && rm -rf /var/lib/apt/lists/*;\n\nENV DOCKER_BUCKET get.docker.com\nENV DOCKER_VERSION 1.10.3\nENV DOCKER_SHA256 d0df512afa109006a450f41873634951e19ddabf8c7bd419caeb5a526032d86d\n\nRUN curl -fSL \"https://${DOCKER_BUCKET}/builds/Linux/x86_64/docker-$DOCKER_VERSION\" -o /usr/local/bin/docker \\\n\t&& echo \"${DOCKER_SHA256}  /usr/local/bin/docker\" | sha256sum -c - \\\n\t&& chmod +x /usr/local/bin/docker\n\n# get golang for building snap and plugins\nENV GOLANG_VERSION 1.6.2\nENV GOLANG_DOWNLOAD_URL https://golang.org/dl/go$GOLANG_VERSION.linux-amd64.tar.gz\nENV GOLANG_DOWNLOAD_SHA256 e40c36ae71756198478624ed1bb4ce17597b3c19d243f3f0899bb5740d56212a\n\nRUN curl -fsSL \"$GOLANG_DOWNLOAD_URL\" -o golang.tar.gz \\\n\t&& echo \"$GOLANG_DOWNLOAD_SHA256  golang.tar.gz\" | sha256sum -c - \\\n\t&& tar -C /usr/local -xzf golang.tar.gz \\\n\t&& rm golang.tar.gz\n\nENV GOPATH /go\nENV PATH $GOPATH/bin:/usr/local/go/bin:$PATH\nENV GOMAXPROCS=1\n\nRUN mkdir -p \"$GOPATH/src\" \"$GOPATH/bin\" && chmod -R 777 \"$GOPATH\"\n\n# build snap\nRUN git clone https://github.com/intelsdi-x/snap.git /go/src/github.com/intelsdi-x/snap\nWORKDIR /go/src/github.com/intelsdi-x/snap\nRUN git reset --hard 902b9aec57f72943a244a744da39ef3e145df104\nRUN make && make install\n\n# build heapster publisher\nCOPY kubesnap-plugin-publisher-heapster /go/src/github.com/intelsdi-x/kubesnap-plugin-publisher-heapster\nWORKDIR /go/src/github.com/intelsdi-x/kubesnap-plugin-publisher-heapster\nRUN make\n\n# build docker collector\nCOPY kubesnap-plugin-collector-docker /go/src/github.com/intelsdi-x/kubesnap-plugin-collector-docker\nWORKDIR /go/src/github.com/intelsdi-x/kubesnap-plugin-collector-docker\nRUN make\n\n# create directory for snap plugins and task autoload\nRUN mkdir -p /opt/snap/plugins\nRUN mkdir -p /opt/snap/tasks\nRUN mkdir -p /proc_host\n\n# build start_snap binary\nCOPY start_snap /go/src/start_snap\nWORKDIR /go/src/start_snap\nRUN go build -o start_snap\nRUN cp -a /go/src/start_snap/start_snap /usr/local/bin/start_snap\n\n# copy task\nCOPY tasks /opt/snap/tasks\n\n# Install plugins in autoload directory\nRUN cp -a /go/src/github.com/intelsdi-x/kubesnap-plugin-publisher-heapster/build/rootfs/snap-plugin-publisher-heapster /opt/snap/plugins\nRUN cp -a /go/src/github.com/intelsdi-x/kubesnap-plugin-collector-docker/build/rootfs/snap-plugin-collector-docker /opt/snap/plugins\nRUN cp -a /go/src/github.com/intelsdi-x/snap/build/plugin/snap-publisher-file /opt/snap/plugins\n\n# start snap daemon\nENV SNAPD_BIN /usr/local/bin/snapd\nENV SNAPCTL_BIN /usr/local/bin/snapctl\nENV PLUGINS_AUTOLOAD_DIR /opt/snap/plugins\nENV PLUGINS_TO_LOAD 3\nENV TASK_AUTOLOAD_FILE /opt/snap/tasks/heapster-docker.json\nENV PROCFS_MOUNT /proc_host\nEXPOSE 8181 8777\nENTRYPOINT [\"/usr/local/bin/start_snap\"]\n"
+}

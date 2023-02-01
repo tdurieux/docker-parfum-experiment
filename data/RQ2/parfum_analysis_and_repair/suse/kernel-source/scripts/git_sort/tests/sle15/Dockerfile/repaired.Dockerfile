@@ -1,0 +1,1 @@
+# http://registry.suse.de/

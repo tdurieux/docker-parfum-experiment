@@ -1,0 +1,1 @@
+# Dockerfile to build console image from pre-built front end.

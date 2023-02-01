@@ -1,0 +1,54 @@
+{
+  "startTime": 1674218131912,
+  "endTime": 1674218133173,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 98,
+        "lineEnd": 98,
+        "columnStart": 4,
+        "columnEnd": 125
+      }
+    },
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 26,
+        "lineEnd": 26,
+        "columnStart": 6,
+        "columnEnd": 45
+      }
+    },
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 34,
+        "lineEnd": 34,
+        "columnStart": 4,
+        "columnEnd": 16
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 26,
+        "lineEnd": 26,
+        "columnStart": 46,
+        "columnEnd": 63
+      }
+    },
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 34,
+        "lineEnd": 34,
+        "columnStart": 20,
+        "columnEnd": 36
+      }
+    }
+  ],
+  "repairedDockerfile": "FROM ruby:3.0-alpine as builder\n\nARG BUILD_PACKAGES=\"build-base libxml2 libxslt git\"\nARG DEV_PACKAGES=\"libxml2-dev libxslt-dev yaml-dev postgresql-dev nodejs npm yarn libwebp-dev libpng-dev tiff-dev\"\nARG RUBY_PACKAGES=\"tzdata\"\n\nARG REPLACE_CHINA_MIRROR=\"true\"\nARG ORIGINAL_REPO_URL=\"dl-cdn.alpinelinux.org\"\nARG MIRROR_REPO_URL=\"mirrors.ustc.edu.cn\"\nARG RUBYGEMS_SOURCE=\"https://gems.ruby-china.com/\"\nARG NPM_REGISTRY=\"https://registry.npm.taobao.org\"\nARG RUBY_GEMS=\"bundler\"\nARG APP_ROOT=\"/app\"\n\nENV BUNDLE_APP_CONFIG=\"$APP_ROOT/.bundle\" \\\n    RAILS_ENV=\"production\"\n\n# System dependencies\nRUN set -ex && \\\n    if [[ \"$REPLACE_CHINA_MIRROR\" == \"true\" ]]; then \\\n      sed -i \"s/$ORIGINAL_REPO_URL/$MIRROR_REPO_URL/g\" /etc/apk/repositories && \\\n      gem sources --add $RUBYGEMS_SOURCE --remove https://rubygems.org/ && \\\n      bundle config mirror.https://rubygems.org $RUBYGEMS_SOURCE; \\\n    fi && \\\n    apk --update --no-cache add $BUILD_PACKAGES $DEV_PACKAGES $RUBY_PACKAGES && \\\n    if [[ \"$REPLACE_CHINA_MIRROR\" == \"true\" ]]; then \\\n      yarn config set registry $NPM_REGISTRY; yarn cache clean; \\\n    fi && \\\n    gem install $RUBY_GEMS\n\nWORKDIR $APP_ROOT\n\n# Node dependencies\nCOPY package.json yarn.lock ./\nRUN yarn install && yarn cache clean;\n\n# Ruby dependencies\nCOPY Gemfile Gemfile.lock ./\nRUN bundle config --global frozen 1 && \\\n    bundle config set deployment 'true' && \\\n    bundle config set without 'development test' && \\\n    bundle config set --local path 'vendor/bundle' && \\\n    bundle install --jobs `expr $(cat /proc/cpuinfo | grep -c \"cpu cores\") - 1` --retry 3\n\nCOPY . $APP_ROOT\nRUN SECRET_TOKEN=precompile_placeholder bin/rails assets:precompile\n\n# Remove folders not needed in resulting image\nRUN rm -rf docker node_modules tmp/cache spec .browserslistrc babel.config.js \\\n    package.json postcss.config.js yarn.lock && \\\n    cd /app/vendor/bundle/ruby/3.0.0 && \\\n      rm -rf cache/*.gem && \\\n      find gems/ -name \"*.c\" -delete && \\\n      find gems/ -name \"*.o\" -delete\n\n##################################################################################\n\nFROM ruby:3.0-alpine\n\nARG BUILD_DATE\nARG VCS_REF\nARG TAG\n\nARG ZEALOT_VERSION=\"4.4.1\"\nARG REPLACE_CHINA_MIRROR=\"true\"\nARG ORIGINAL_REPO_URL=\"dl-cdn.alpinelinux.org\"\nARG MIRROR_REPO_URL=\"mirrors.ustc.edu.cn\"\nARG RUBYGEMS_SOURCE=\"https://gems.ruby-china.com/\"\nARG PACKAGES=\"tzdata curl logrotate postgresql-dev libwebp-dev libpng-dev tiff-dev postgresql-client openssl openssl-dev caddy\"\nARG RUBY_GEMS=\"bundler\"\nARG APP_ROOT=/app\nARG S6_OVERLAY_VERSION=\"2.2.0.3\"\n\nLABEL org.opencontainers.image.title=\"Zealot\" \\\n      org.opencontainers.image.description=\"Over The Air Server for deployment of Android and iOS apps\" \\\n      org.opencontainers.image.url=\"https://zealot.ews.im/\" \\\n      org.opencontainers.image.authors=\"icyleaf <icyleaf.cn@gmail.com>\" \\\n      org.opencontainers.image.source=\"https://github.com/tryzealot/zealot\" \\\n      org.opencontainers.image.created=$BUILD_DATE \\\n      org.opencontainers.image.revision=$VCS_REF \\\n      org.opencontainers.image.version=$ZEALOT_VERSION\n\nENV TZ=\"Asia/Shanghai\" \\\n    PS1=\"$(whoami)@$(hostname):$(pwd)$ \" \\\n    DOCKER_TAG=\"$TAG\" \\\n    BUNDLE_APP_CONFIG=\"$APP_ROOT/.bundle\" \\\n    ZEALOT_VCS_REF=\"$VCS_REF\" \\\n    ZEALOT_VERSION=\"$ZEALOT_VERSION\" \\\n    ZEALOT_BUILD_DATE=\"$BUILD_DATE\" \\\n    RAILS_ENV=\"production\"\n\n# System dependencies\nRUN set -ex && \\\n    if [[ \"$REPLACE_CHINA_MIRROR\" == \"true\" ]]; then \\\n      sed -i \"s/$ORIGINAL_REPO_URL/$MIRROR_REPO_URL/g\" /etc/apk/repositories && \\\n      gem sources --add $RUBYGEMS_SOURCE --remove https://rubygems.org/; \\\n    fi && \\\n    apk --update --no-cache add $PACKAGES && \\\n    curl -f -L -s https://github.com/just-containers/s6-overlay/releases/download/v${S6_OVERLAY_VERSION}/s6-overlay-amd64.tar.gz | tar xvzf - -C / && \\\n    gem install $RUBY_GEMS\n\nWORKDIR $APP_ROOT\n\nCOPY docker/rootfs /\nCOPY --from=builder $APP_ROOT $APP_ROOT\n\nRUN ln -s /app/bin/rails /usr/local/bin/\n\nEXPOSE 80\n\nVOLUME [ \"/app/public/uploads\", \"/app/public/backup\" ]\n\nENTRYPOINT [\"/init\"]\n"
+}

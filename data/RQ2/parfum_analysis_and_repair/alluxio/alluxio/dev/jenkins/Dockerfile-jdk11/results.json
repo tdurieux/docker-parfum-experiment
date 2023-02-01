@@ -1,0 +1,35 @@
+{
+  "startTime": 1674216452059,
+  "endTime": 1674216453267,
+  "originalSmells": [
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 112,
+        "lineEnd": 112,
+        "columnStart": 4,
+        "columnEnd": 38
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 107,
+        "lineEnd": 107,
+        "columnStart": 4,
+        "columnEnd": 74
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 107,
+        "lineEnd": 107,
+        "columnStart": 4,
+        "columnEnd": 74
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "#\n# The Alluxio Open Foundation licenses this work under the Apache License, version 2.0\n# (the \"License\"). You may not use this work except in compliance with the License, which is\n# available at www.apache.org/licenses/LICENSE-2.0\n#\n# This software is distributed on an \"AS IS\" basis, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND,\n# either express or implied, as more fully set forth in the License.\n#\n# See the NOTICE file distributed with this work for information regarding copyright ownership.\n#\n\n# See https://hub.docker.com/r/alluxio/alluxio-maven for instructions on running the image.\n\nFROM maven:3.6.3-jdk-11\n\n# reference: https://github.com/docker-library/openjdk/blob/master/8/jdk/buster/Dockerfile\n# we need jdk 8 in jdk 11 so that we can compile with jdk 8 and test with jdk 11\n\nENV JAVA_HOME /usr/local/openjdk-8\nENV PATH $JAVA_HOME/bin:$PATH\n\n# backwards compatibility shim\nRUN { echo '#/bin/sh'; echo 'echo \"$JAVA_HOME\"'; } > /usr/local/bin/docker-java-home && chmod +x /usr/local/bin/docker-java-home && [ \"$JAVA_HOME\" = \"$(docker-java-home)\" ]\n\nENV JAVA_VERSION 8u262\n\nRUN set -eux; \\\n\t\\\n\tarch=\"$(dpkg --print-architecture)\"; \\\n# this \"case\" statement is generated via \"update.sh\"\n\tcase \"$arch\" in \\\n# amd64\n\t\tamd64 | i386:x86-64) downloadUrl=https://github.com/AdoptOpenJDK/openjdk8-upstream-binaries/releases/download/jdk8u262-b10/OpenJDK8U-jdk_x64_linux_8u262b10.tar.gz ;; \\\n# fallback\n\t\t*) echo >&2 \"error: unsupported architecture: '$arch'\"; exit 1 ;; \\\n\tesac; \\\n\t\\\n\twget -O openjdk.tgz.asc \"$downloadUrl.sign\"; \\\n\twget -O openjdk.tgz \"$downloadUrl\" --progress=dot:giga; \\\n\t\\\n\texport GNUPGHOME=\"$(mktemp -d)\"; \\\n# TODO find a good link for users to verify this key is right (https://mail.openjdk.java.net/pipermail/jdk-updates-dev/2019-April/000951.html is one of the only mentions of it I can find); perhaps a note added to https://adoptopenjdk.net/upstream.html would make sense?\n# no-self-sigs-only: https://salsa.debian.org/debian/gnupg2/commit/c93ca04a53569916308b369c8b218dad5ae8fe07\n\tgpg --batch --keyserver hkps://keyserver.ubuntu.com --keyserver-options no-self-sigs-only --recv-keys CA5F11C6CE22644D42C6AC4492EF8D39DC13168F; \\\n# also verify that key was signed by Andrew Haley (the OpenJDK 8 and 11 Updates OpenJDK project lead)\n# (https://github.com/docker-library/openjdk/pull/322#discussion_r286839190)\n\tgpg --batch --keyserver hkps://keyserver.ubuntu.com --recv-keys EAC843EBD3EFDB98CC772FADA5CD6035332FA671; \\\n\tgpg --batch --list-sigs --keyid-format 0xLONG CA5F11C6CE22644D42C6AC4492EF8D39DC13168F \\\n\t\t| tee /dev/stderr \\\n\t\t| grep '0xA5CD6035332FA671' \\\n\t\t| grep 'Andrew Haley'; \\\n\tgpg --batch --verify openjdk.tgz.asc openjdk.tgz; \\\n\tgpgconf --kill all; \\\n\trm -rf \"$GNUPGHOME\"; \\\n\t\\\n\tmkdir -p \"$JAVA_HOME\"; \\\n\ttar --extract \\\n\t\t--file openjdk.tgz \\\n\t\t--directory \"$JAVA_HOME\" \\\n\t\t--strip-components 1 \\\n\t\t--no-same-owner \\\n\t; \\\n\trm openjdk.tgz*; \\\n\t\\\n# TODO strip \"demo\" and \"man\" folders?\n\t\\\n# update \"cacerts\" bundle to use Debian's CA certificates (and make sure it stays up-to-date with changes to Debian's store)\n# see https://github.com/docker-library/openjdk/issues/327\n#     http://rabexc.org/posts/certificates-not-working-java#comment-4099504075\n#     https://salsa.debian.org/java-team/ca-certificates-java/blob/3e51a84e9104823319abeb31f880580e46f45a98/debian/jks-keystore.hook.in\n#     https://git.alpinelinux.org/aports/tree/community/java-cacerts/APKBUILD?id=761af65f38b4570093461e6546dcf6b179d2b624#n29\n\t{ \\\n\t\techo '#!/usr/bin/env bash'; \\\n\t\techo 'set -Eeuo pipefail'; \\\n\t\techo 'if ! [ -d \"$JAVA_HOME\" ]; then echo >&2 \"error: missing JAVA_HOME environment variable\"; exit 1; fi'; \\\n# 8-jdk uses \"$JAVA_HOME/jre/lib/security/cacerts\" and 8-jre and 11+ uses \"$JAVA_HOME/lib/security/cacerts\" directly (no \"jre\" directory)\n\t\techo 'cacertsFile=; for f in \"$JAVA_HOME/lib/security/cacerts\" \"$JAVA_HOME/jre/lib/security/cacerts\"; do if [ -e \"$f\" ]; then cacertsFile=\"$f\"; break; fi; done'; \\\n\t\techo 'if [ -z \"$cacertsFile\" ] || ! [ -f \"$cacertsFile\" ]; then echo >&2 \"error: failed to find cacerts file in $JAVA_HOME\"; exit 1; fi'; \\\n\t\techo 'trust extract --overwrite --format=java-cacerts --filter=ca-anchors --purpose=server-auth \"$cacertsFile\"'; \\\n\t} > /etc/ca-certificates/update.d/docker-openjdk; \\\n\tchmod +x /etc/ca-certificates/update.d/docker-openjdk; \\\n\t/etc/ca-certificates/update.d/docker-openjdk; \\\n\t\\\n# https://github.com/docker-library/openjdk/issues/331#issuecomment-498834472\n\tfind \"$JAVA_HOME/lib\" -name '*.so' -exec dirname '{}' ';' | sort -u > /etc/ld.so.conf.d/docker-openjdk.conf; \\\n\tldconfig; \\\n\t\\\n# basic smoke test to see if the default is jdk 8\n\tjavac -version; \\\n\tjava -version\n\nENV JAVA_HOME /usr/local/openjdk-11\nENV PATH $JAVA_HOME/bin:$PATH\n\n# basic smoke test to see if the default is jdk 11\nRUN set -eux; \\\n\tjavac -version; \\\n\tjava -version\n\n# need to create /.config to avoid npm errors\nRUN mkdir -p /home/jenkins && \\\n    chmod -R 777 /home/jenkins && \\\n    chmod g+w /etc/passwd && \\\n    mkdir -p /.config && \\\n    chmod -R 777 /.config && \\\n    apt-get update -y && \\\n    apt-get upgrade -y ca-certificates && \\\n    apt-get install --no-install-recommends -y build-essential fuse libfuse-dev make ruby ruby-dev && rm -rf /var/lib/apt/lists/*;\n# jekyll for documentation\nRUN gem install jekyll bundler\n# golang for tooling\nRUN wget https://dl.google.com/go/go1.12.linux-amd64.tar.gz && \\\n    tar -xvf go1.12.linux-amd64.tar.gz && \\\n    mv go /usr/local && rm go1.12.linux-amd64.tar.gz\nENV GOROOT=/usr/local/go\nENV PATH=$GOROOT/bin:$PATH\n# terraform for deployment scripts\nRUN wget --quiet https://releases.hashicorp.com/terraform/0.12.24/terraform_0.12.24_linux_amd64.zip && \\\n    unzip -o ./terraform_0.12.24_linux_amd64.zip -d /usr/local/bin/ && \\\n    rm terraform_0.12.24_linux_amd64.zip\n"
+}

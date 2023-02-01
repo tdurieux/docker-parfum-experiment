@@ -1,0 +1,34 @@
+FROM debian:buster
+
+RUN apt-get update \
+ && apt-get upgrade -y \
+ && apt-get install --no-install-recommends -y \
+      binutils \
+      cmake \
+      make \
+      curl \
+      gcc \
+      gcc-8 \
+      gcc-8-plugin-dev \
+      clang-7 \
+      llvm-7 \
+      g++-8 \
+      libelf-dev \
+      kmod \
+      wget \
+      golang-go \
+      pkg-config \
+ ; rm -rf /var/lib/apt/lists/*;
+
+RUN rm -rf /usr/bin/clang \
+ && rm -rf /usr/bin/llc \
+ && ln -s /usr/bin/clang-7 /usr/bin/clang \
+ && ln -s /usr/bin/llc-7 /usr/bin/llc
+
+RUN mkdir -p /output
+COPY build-kos /scripts/
+COPY build-wrapper.sh /usr/bin/
+COPY prepare-src /usr/bin
+
+WORKDIR /scratch
+ENTRYPOINT [ "/bin/bash", "-c" ]

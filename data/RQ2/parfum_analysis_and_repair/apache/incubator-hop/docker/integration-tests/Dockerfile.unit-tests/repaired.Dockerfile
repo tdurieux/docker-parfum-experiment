@@ -1,0 +1,96 @@
+#
+# Licensed to the Apache Software Foundation (ASF) under one or more
+# contributor license agreements.  See the NOTICE file distributed with
+# this work for additional information regarding copyright ownership.
+# The ASF licenses this file to You under the Apache License, Version 2.0
+# (the "License"); you may not use this file except in compliance with
+# the License.  You may obtain a copy of the License at
+#
+#    http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+
+FROM ubuntu
+MAINTAINER Apache Hop
+
+# Argument Branch name, used to download correct version
+ARG BRANCH_NAME
+ENV BRANCH_NAME=$BRANCH_NAME
+# path to where the artefacts should be deployed to
+ENV DEPLOYMENT_PATH=/opt
+# volume mount point
+ENV VOLUME_MOUNT_POINT=/files
+#Jenkins user an group
+ARG JENKINS_USER=hop
+ARG JENKINS_GROUP=hop
+ARG JENKINS_UID=1000
+ARG JENKINS_GID=1000
+ARG GCP_KEY_FILE=
+# Set system properties
+ENV DEBIAN_FRONTEND=noninteractive
+
+# any JRE settings you want to pass on
+# The “-XX:+AggressiveHeap” tells the container to use all memory assigned to the container.
+# this removed the need to calculate the necessary heap Xmx
+ENV HOP_OPTIONS=-XX:+AggressiveHeap
+
+# INSTALL REQUIRED PACKAGES AND ADJUST LOCALE
+# procps: The package includes the programs ps, top, vmstat, w, kill, free, slabtop, and skill
+
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends --assume-yes \
+  bash \
+  curl \
+  procps \
+  git \
+  python3-pip \
+  openjdk-11-jre-headless \
+  unzip \
+  ttf-mscorefonts-installer \
+  locales \
+  && mkdir ${VOLUME_MOUNT_POINT} \
+  && addgroup -gid ${JENKINS_GID} ${JENKINS_GROUP} \
+  && useradd -m  -d /home/${JENKINS_USER} -u ${JENKINS_UID} -g ${JENKINS_GROUP} ${JENKINS_USER} \
+  && chown ${JENKINS_USER}:${JENKINS_GROUP} ${DEPLOYMENT_PATH} \
+  && chown ${JENKINS_USER}:${JENKINS_GROUP} ${VOLUME_MOUNT_POINT} && rm -rf /var/lib/apt/lists/*;
+
+# Set Locale correctly
+RUN sed -i '/en_US.UTF-8/s/^# //g' /etc/locale.gen && \
+    locale-gen
+ENV LANG en_US.UTF-8
+ENV LANGUAGE en_US:en
+ENV LC_ALL en_US.UTF-8
+
+# Install parquet-tools from Python
+
+RUN pip3 install --no-cache-dir parquet-tools
+
+# Copy the hop package from the local resources folder to the container image directory
+
+COPY --chown=${JENKINS_USER}:${JENKINS_GROUP} ./assemblies/client/target/hop-* ${DEPLOYMENT_PATH}/hop.zip
+
+# Copy gcp key
+COPY --chown=${JENKINS_USER}:${JENKINS_GROUP} ${GCP_KEY_FILE} /tmp/google-key-apache-hop-it.json
+
+# Unzip and install in correct location
+
+RUN unzip ${DEPLOYMENT_PATH}/hop.zip -d ${DEPLOYMENT_PATH} \
+  && rm ${DEPLOYMENT_PATH}/hop.zip \
+  && chown -R ${JENKINS_USER}:${JENKINS_GROUP} ${DEPLOYMENT_PATH}/hop \
+  && chmod 700 ${DEPLOYMENT_PATH}/hop/*.sh \
+  && cd ${DEPLOYMENT_PATH}/hop \
+  && ./hop-conf.sh --generate-fat-jar=/tmp/hop-fatjar.jar
+
+# make volume available so that hop pipeline and workflow files can be provided easily
+VOLUME ["/files"]
+USER ${JENKINS_USER}
+ENV PATH=$PATH:${DEPLOYMENT_PATH}/hop
+ENV GOOGLE_APPLICATION_CREDENTIALS="/tmp/google-key-apache-hop-it.json"
+WORKDIR /home/${JENKINS_USER}
+# CMD ["/bin/bash"]
+ENTRYPOINT []

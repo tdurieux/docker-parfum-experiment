@@ -1,0 +1,1 @@
+# Scanner base GPU image for Ubuntu 16.04 CUDA 9.X

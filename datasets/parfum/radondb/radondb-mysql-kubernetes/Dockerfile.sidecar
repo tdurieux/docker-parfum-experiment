@@ -1,0 +1,53 @@
+##############################################################################
+#  Build Sidecar
+###############################################################################
+# Build the manager binary
+FROM golang:1.16 as builder
+
+WORKDIR /workspace
+# Copy the Go Modules manifests
+COPY go.mod go.mod
+COPY go.sum go.sum
+
+# cache deps before building and copying source so that we don't need to re-download as much
+# and so that source changes don't invalidate our downloaded layer
+# RUN go env -w GOPROXY=https://goproxy.cn,direct; \
+#     go mod download
+RUN go mod download
+
+# Copy the go source
+COPY cmd/sidecar/main.go cmd/sidecar/main.go
+COPY sidecar/ sidecar/
+COPY utils/ utils/
+
+# Build
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -a -o bin/sidecar cmd/sidecar/main.go
+
+###############################################################################
+#  Docker image for Sidecar
+###############################################################################
+FROM ubuntu:focal
+
+RUN set -ex; \
+    groupadd --gid 1001 --system mysql; \
+    useradd \
+    --uid 1001 \
+    --system \
+    --home-dir /var/lib/mysql \
+    --no-create-home \
+    --gid mysql \
+    mysql;
+
+ARG XTRABACKUP_PKG=percona-xtrabackup-24
+RUN set -ex; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends gnupg2 wget lsb-release curl; \
+    wget -P /tmp --no-check-certificate https://repo.percona.com/apt/percona-release_latest.$(lsb_release -sc)_all.deb; \
+    dpkg -i /tmp/percona-release_latest.$(lsb_release -sc)_all.deb; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends ${XTRABACKUP_PKG}; \
+    rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
+
+WORKDIR /
+COPY --from=builder /workspace/bin/sidecar /usr/local/bin/sidecar
+ENTRYPOINT ["sidecar"]

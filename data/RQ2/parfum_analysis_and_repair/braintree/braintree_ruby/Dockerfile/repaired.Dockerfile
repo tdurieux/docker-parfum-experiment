@@ -1,0 +1,10 @@
+FROM debian:buster
+
+RUN apt-get update && apt-get -y --no-install-recommends install gnupg curl procps build-essential libxml2-dev && rm -rf /var/lib/apt/lists/*;
+RUN gpg --batch -vvvv --keyserver keys.openpgp.org --recv-keys 409B6B1796C275462A1703113804BB82D39DC0E3 7D2BAF1CF37B13E2069D6956105BD0E739499BDB
+RUN curl -f -sSL https://get.rvm.io | bash
+RUN bash -l -c "rvm requirements"
+RUN bash -l -c "rvm install 3.0.1"
+RUN bash -l -c "gem install bundler"
+
+WORKDIR /braintree-ruby

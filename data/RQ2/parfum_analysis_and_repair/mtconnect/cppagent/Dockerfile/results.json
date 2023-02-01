@@ -1,0 +1,53 @@
+{
+  "startTime": 1674252751603,
+  "endTime": 1674252752591,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 62,
+        "lineEnd": 62,
+        "columnStart": 5,
+        "columnEnd": 22
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 60,
+        "lineEnd": 61,
+        "columnStart": 5,
+        "columnEnd": 64
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 100,
+        "lineEnd": 100,
+        "columnStart": 22,
+        "columnEnd": 45
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 60,
+        "lineEnd": 61,
+        "columnStart": 5,
+        "columnEnd": 64
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 100,
+        "lineEnd": 100,
+        "columnStart": 22,
+        "columnEnd": 45
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# MTConnect C++ Public Agent Docker image build instructions\n\n# ---------------------------------------------------------------------\n# notes\n# ---------------------------------------------------------------------\n#\n# to build an image locally and run it\n#\n#   docker build --tag agent-image .\n#   docker run -it --rm --init --name agent-container -p5001:5000 agent-image\n#\n# to build a cross-platform image, push to docker hub, and run it -\n# (see CMakeLists.txt for current version number) -\n#\n#   docker buildx build \\\n#     --platform linux/amd64,linux/arm64 \\\n#     --tag mtconnect/agent:2.0.0.7 \\\n#     --tag mtconnect/agent:latest \\\n#     --push \\\n#     .\n#   docker run -it --rm --init --name agent -p5001:5000 mtconnect/agent\n#\n# visit http://localhost:5001 to see the demo output.\n#\n# to use a different configuration, use a volume mount point -\n#\n# eg on Windows,\n#\n#   docker run -it --rm --init --name agent -p5001:5000 ^\n#     -v %cd%:/foo mtconnect/agent ^\n#     /bin/sh -c \"cd /foo/simulator && agent run agent.cfg\"\n#\n# or on Mac/Linux,\n#\n#   docker run -it --rm --init --name agent -p5001:5000 \\\n#     -v \"$(pwd)\":/foo mtconnect/agent \\\n#     /bin/sh -c \"cd /foo/simulator && agent run agent.cfg\"\n\n\n# ---------------------------------------------------------------------\n# os\n# ---------------------------------------------------------------------\n\n# base image - ubuntu has amd64, arm64 etc.\n# 22.04 is the current long term support release, maintained until 2025-04.\nFROM ubuntu:22.04 AS os\n\n# tzinfo hangs without this\nARG DEBIAN_FRONTEND=noninteractive\n\n# ---------------------------------------------------------------------\n# build\n# ---------------------------------------------------------------------\n\nFROM os AS build\n\n# update os and add dependencies\n# note: Dockerfiles run as root by default, so don't need sudo\nRUN apt-get clean \\\n  && apt-get update \\\n  && apt-get install --no-install-recommends -y \\\n  build-essential python3.9 python3-pip git cmake make ruby rake \\\n  && pip install --no-cache-dir conan && rm -rf /var/lib/apt/lists/*;\n\n# make an agent directory and cd into it\nWORKDIR /root/agent\n\n# bring in the repo contents, minus .dockerignore files\nCOPY . .\n\n# set some variables\nENV PATH=$HOME/venv3.9/bin:$PATH\nENV CONAN_PROFILE=conan/profiles/docker\nENV WITH_RUBY=True\n\n# limit cpus so don't run out of memory on local machine\n# symptom: get error - \"c++: fatal error: Killed signal terminated program cc1plus\"\n# could turn off if building in cloud\nENV CONAN_CPU_COUNT=1\n\n# make installer\nRUN conan export conan/mqtt_cpp \\\n  && conan export conan/mruby \\\n  && conan install . -if build --build=missing \\\n  -pr $CONAN_PROFILE \\\n  -o run_tests=False \\\n  -o with_ruby=$WITH_RUBY\n\n# compile source (~20mins - 4hrs for qemu)\nRUN conan build . -bf build\n\n# ---------------------------------------------------------------------\n# release\n# ---------------------------------------------------------------------\n\nFROM os AS release\n\nLABEL author=\"mtconnect\" description=\"Docker image for MTConnect C++ Agent\"\n\n# install ruby for simulator\nRUN apt-get update && apt-get install --no-install-recommends -y ruby && rm -rf /var/lib/apt/lists/*;\n\n# change to a new non-root user for better security.\n# this also adds the user to a group with the same name.\n# --create-home creates a home folder, ie /home/<username>\nRUN useradd --create-home agent\nUSER agent\n\n# install agent executable\nCOPY --chown=agent:agent --from=build /root/agent/build/bin/agent /usr/local/bin/\n\n# copy data to /etc/mtconnect\nCOPY --chown=agent:agent --from=build /root/agent/schemas /etc/mtconnect/schemas\nCOPY --chown=agent:agent --from=build /root/agent/simulator /etc/mtconnect/simulator\nCOPY --chown=agent:agent --from=build /root/agent/styles /etc/mtconnect/styles\n\n# expose port\nEXPOSE 5000\n\nWORKDIR /home/agent\n\n# default command - can override with docker run or docker-compose command.\n# this runs the adapter simulator and the agent using the sample config file.\n# note: must use shell form here instead of exec form, since we're running\n# multiple statements using shell commands (& and &&).\n# see https://stackoverflow.com/questions/46797348/docker-cmd-exec-form-for-multiple-command-execution\nCMD /usr/bin/ruby /etc/mtconnect/simulator/run_scenario.rb -l \\\n  /etc/mtconnect/simulator/VMC-3Axis-Log.txt & \\\n  cd /etc/mtconnect/simulator && agent run agent.cfg\n\n\n# ---------------------------------------------------------------------\n# note\n# ---------------------------------------------------------------------\n\n# after setup, the dirs look like this -\n#\n# /usr/local/bin\n#  |-- agent - the cppagent application\n#\n# /etc/mtconnect\n#  |-- schemas - xsd files\n#  |-- simulator - agent.cfg, simulator.rb, vmc-3axis.xml, log.txt\n#  |-- styles - styles.xsl, styles.css, favicon.ico, etc\n#\n# /home/agent - the user's directory\n"
+}

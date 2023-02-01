@@ -1,0 +1,53 @@
+FROM quay.io/fedora/fedora:34-x86_64
+
+ENV GOPATH /go
+ENV GOBIN /go/bin
+ENV GOCACHE /go/.cache
+ENV GOVERSION=1.17.2
+ENV PATH=$PATH:/root/.gimme/versions/go"$GOVERSION".linux.amd64/bin:$GOBIN
+ARG GO_PACKAGE_PATH=github.com/openshift-kni/cnf-features-deploy
+
+# rpms required for building and running test suites
+RUN dnf -y install \
+    jq \
+    git \
+    make \
+    gettext \
+    which \
+    skopeo \
+    findutils \
+    gcc \
+    python2 \
+    diffutils \
+    && dnf clean all
+
+RUN mkdir ~/bin && \
+    # install Go using gimme
+    curl -f -sL -o /usr/local/bin/gimme https://raw.githubusercontent.com/travis-ci/gimme/master/gimme && \
+    chmod +x /usr/local/bin/gimme && \
+    eval "$(gimme $GOVERSION)" && \
+    cat $GIMME_ENV >> $HOME/.bashrc && \
+    # get required golang tools and OC client
+    go get github.com/onsi/ginkgo/ginkgo && \
+    go get github.com/onsi/gomega/... && \
+    go get -u golang.org/x/lint/golint && \
+    go install github.com/lack/mcmaker@v0.0.5 && \
+    export latest_oc_client_version=$( curl -f https://mirror.openshift.com/pub/openshift-v4/clients/ocp/latest/ 2>/dev/null | grep -o \"openshift-client-linux-4.*tar.gz\" | tr -d \") && \
+    curl -f -JL https://mirror.openshift.com/pub/openshift-v4/clients/ocp/latest/${latest_oc_client_version} -o oc.tar.gz && \
+    tar -xzvf oc.tar.gz && \
+    mv oc /usr/local/bin/oc && \
+    ln -s /usr/local/bin/oc /usr/local/bin/kubectl && \
+    rm -f oc.tar.gz
+
+RUN export TMP_BIN=$(mktemp -d) && \
+    mv $GOBIN/* $TMP_BIN/ && \
+    rm -rf ${GOPATH} ${GOCACHE} && \
+    mkdir -p ${GOPATH}/src/${GO_PACKAGE_PATH}/ && \
+    mkdir -p ${GOBIN} && \
+    chmod -R 775 ${GOPATH} && \
+    mv $TMP_BIN/* ${GOBIN} && \
+    rm -rf $TMP_BIN
+
+WORKDIR ${GOPATH}/src/${GO_PACKAGE_PATH}
+
+ENTRYPOINT [ "/bin/bash" ]

@@ -1,0 +1,62 @@
+{
+  "startTime": 1674250814348,
+  "endTime": 1674250815171,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 18,
+        "lineEnd": 18,
+        "columnStart": 4,
+        "columnEnd": 176
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 25,
+        "lineEnd": 25,
+        "columnStart": 4,
+        "columnEnd": 45
+      }
+    },
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 6,
+        "lineEnd": 6,
+        "columnStart": 4,
+        "columnEnd": 15
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 14,
+        "lineEnd": 14,
+        "columnStart": 4,
+        "columnEnd": 22
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 19,
+        "lineEnd": 19,
+        "columnStart": 4,
+        "columnEnd": 31
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 13,
+        "lineEnd": 13,
+        "columnStart": 4,
+        "columnEnd": 90
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "## FRONTEND BUILD STAGE\n\nFROM node:18-bullseye as frontend-build-stage\n\nWORKDIR /frontend\nADD frontend .\nRUN npm install && npm run build && npm cache clean --force;\n\n# BACKEND BUILD STAGE\n\nFROM python:3.10-slim-bullseye as backend-build-stage\n\nRUN apt-get update && \\\n    apt-get install --no-install-recommends -y curl git gcc linux-libc-dev libc6-dev unzip && \\\n    pip install --no-cache-dir poetry && rm -rf /var/lib/apt/lists/*;\n\nENV MAGIC_CASTLE_PATH=/magic_castle\nENV MAGIC_CASTLE_VERSION=11.9.3\nRUN curl -f -L https://github.com/ComputeCanada/magic_castle/releases/download/${MAGIC_CASTLE_VERSION}/magic_castle-openstack-${MAGIC_CASTLE_VERSION}.tar.gz -o magic_castle.tar.gz && \\\n    tar xvf magic_castle.tar.gz && \\\n    mv magic_castle-* ${MAGIC_CASTLE_PATH} && \\\n    chown -R root:root ${MAGIC_CASTLE_PATH} && rm magic_castle.tar.gz\n\nENV TERRAFORM_VERSION 1.1.9\nRUN TERRAFORM_URL=\"https://releases.hashicorp.com/terraform/${TERRAFORM_VERSION}/terraform_${TERRAFORM_VERSION}_linux_$(dpkg --print-architecture).zip\" && \\\n    curl -f -L ${TERRAFORM_URL} -o terraform.zip && \\\n    unzip terraform.zip -d /usr/local/bin\n\nENV POETRY_VIRTUALENVS_CREATE=false \\\n    POETRY_NO_INTERACTION=1 \\\n    POETRY_CACHE_DIR='/var/cache/pypoetry' \\\n    POETRY_HOME='/usr/local'\n\nWORKDIR /code\nADD poetry.lock pyproject.toml /code/\nCOPY mchub /code/mchub\n\nRUN poetry install --no-dev --no-ansi && \\\n    pip uninstall -y poetry\n\nFROM python:3.10-slim-bullseye as base-server\n\nCOPY --from=backend-build-stage /code /code\nCOPY --from=backend-build-stage /usr/local/lib/python3.10/site-packages /usr/local/lib/python3.10/site-packages\n\n## Magic Castle User\nRUN adduser --disabled-password mcu && \\\n    mkdir -p /home/mcu && \\\n    chown -R mcu:mcu /home/mcu\n\nFROM base-server as cleanup-daemon\nUSER mcu\nWORKDIR /home/mcu\nCMD python3 -m mchub.services.cull_expired_cluster\n\n## PRODUCTION IMAGE\nFROM base-server as production-server\n\nUSER root\nCOPY --from=backend-build-stage /magic_castle /magic_castle\nCOPY --from=backend-build-stage /usr/local/bin/terraform /usr/local/bin/terraform\nCOPY --from=frontend-build-stage /frontend/dist /code/frontend\n\nUSER mcu\nWORKDIR /home/mcu\n\nRUN mkdir -p /home/mcu/clusters /home/mcu/database /home/mcu/credentials /home/mcu/.terraform.d/plugin-cache\n\nADD .terraformrc /home/mcu\n\nENV MAGIC_CASTLE_PATH=/magic_castle\nENV MAGIC_CASTLE_VERSION=11.9.3\nENV MCH_DIST_PATH=/code/frontend\n\nCMD python3 -m mchub.schema_update --clean && \\\n    python3 -m gunicorn --workers 5 --bind 0.0.0.0:5000 --worker-class gevent \"mchub:create_app()\"\n#CMD python3 -m mchub.wsgi\n"
+}

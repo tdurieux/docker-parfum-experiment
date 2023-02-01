@@ -1,0 +1,10 @@
+ARG distro=fedora
+ARG version=34
+FROM ${distro}:${version}
+RUN yum -y install dbus gjs gtk3-devel sudo xorg-x11-server-Xvfb && rm -rf /var/cache/yum
+RUN dbus-uuidgen > /var/lib/dbus/machine-id || true \
+ && useradd -ms /bin/bash jiggle \
+ && mkdir -p /home/jiggle/.local/share/gnome-shell/extensions/jiggle@jeffchannell.com
+WORKDIR /home/jiggle/.local/share/gnome-shell/extensions/jiggle@jeffchannell.com
+COPY . .
+ENTRYPOINT [ "./entrypoint.sh" ]

@@ -1,0 +1,26 @@
+{
+  "startTime": 1674220304779,
+  "endTime": 1674220306126,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 58,
+        "lineEnd": 61,
+        "columnStart": 7,
+        "columnEnd": 93
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 50,
+        "lineEnd": 57,
+        "columnStart": 4,
+        "columnEnd": 40
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# This dockerfile can be configured via --build-arg\n# Build context must be the /navigation2 root folder for COPY.\n# Example build command:\n# export UNDERLAY_MIXINS=\"debug ccache lld\"\n# export OVERLAY_MIXINS=\"debug ccache coverage-gcc lld\"\n# docker build -t nav2:latest \\\n#   --build-arg UNDERLAY_MIXINS \\\n#   --build-arg OVERLAY_MIXINS ./\nARG FROM_IMAGE=ros:rolling\nARG UNDERLAY_WS=/opt/underlay_ws\nARG OVERLAY_WS=/opt/overlay_ws\n\n# multi-stage for caching\nFROM $FROM_IMAGE AS cacher\n\n# clone underlay source\nARG UNDERLAY_WS\nWORKDIR $UNDERLAY_WS/src\nCOPY ./tools/underlay.repos ../\nRUN vcs import ./ < ../underlay.repos\n\n# copy overlay source\nARG OVERLAY_WS\nWORKDIR $OVERLAY_WS/src\nCOPY ./ ./navigation2\n\n# copy manifests for caching\nWORKDIR /opt\nRUN find . -name \"src\" -type d \\\n      -mindepth 1 -maxdepth 2 -printf '%P\\n' \\\n      | xargs -I % mkdir -p /tmp/opt/% && \\\n    find . -name \"package.xml\" \\\n      | xargs cp --parents -t /tmp/opt && \\\n    find . -name \"COLCON_IGNORE\" \\\n      | xargs cp --parents -t /tmp/opt || true\n\n# multi-stage for building\nFROM $FROM_IMAGE AS builder\n\n# config dependencies install\nARG DEBIAN_FRONTEND=noninteractive\nRUN echo '\\\nAPT::Install-Recommends \"0\";\\n\\\nAPT::Install-Suggests \"0\";\\n\\\n' > /etc/apt/apt.conf.d/01norecommend\n\n# install CI dependencies\nARG RTI_NC_LICENSE_ACCEPTED=yes\nRUN apt-get update && \\\n    apt-get upgrade -y --with-new-pkgs && \\\n    apt-get install --no-install-recommends -y \\\n      ccache \\\n      lcov \\\n      lld \\\n      python3-pip \\\n      ros-$ROS_DISTRO-rmw-fastrtps-cpp \\\n      ros-$ROS_DISTRO-rmw-connextdds \\\n      ros-$ROS_DISTRO-rmw-cyclonedds-cpp \\\n    && pip3 install --no-cache-dir \\\n      fastcov \\\n      git+https://github.com/ruffsl/colcon-cache.git@a937541bfc496c7a267db7ee9d6cceca61e470ca \\\n      git+https://github.com/ruffsl/colcon-clean.git@a7f1074d1ebc1a54a6508625b117974f2672f2a9 \\\n    && rosdep update \\\n    && colcon mixin update \\\n    && colcon metadata update \\\n    && rm -rf /var/lib/apt/lists/*\n\n# install underlay dependencies\nARG UNDERLAY_WS\nENV UNDERLAY_WS $UNDERLAY_WS\nWORKDIR $UNDERLAY_WS\nCOPY --from=cacher /tmp/$UNDERLAY_WS ./\nRUN . /opt/ros/$ROS_DISTRO/setup.sh && \\\n    apt-get update && rosdep install -q -y \\\n      --from-paths src \\\n      --skip-keys \" \\\n        slam_toolbox \\\n        \" \\\n      --ignore-src \\\n    && rm -rf /var/lib/apt/lists/*\n\n# build underlay source\nCOPY --from=cacher $UNDERLAY_WS ./\nARG UNDERLAY_MIXINS=\"release ccache lld\"\nARG CCACHE_DIR=\"$UNDERLAY_WS/.ccache\"\nRUN . /opt/ros/$ROS_DISTRO/setup.sh && \\\n    colcon cache lock && \\\n    colcon build \\\n      --symlink-install \\\n      --mixin $UNDERLAY_MIXINS \\\n      --event-handlers console_direct+\n\n# install overlay dependencies\nARG OVERLAY_WS\nENV OVERLAY_WS $OVERLAY_WS\nWORKDIR $OVERLAY_WS\nCOPY --from=cacher /tmp/$OVERLAY_WS ./\nRUN . $UNDERLAY_WS/install/setup.sh && \\\n    apt-get update && rosdep install -q -y \\\n      --from-paths src \\\n      --skip-keys \" \\\n        slam_toolbox \\\n        \"\\\n      --ignore-src \\\n    && rm -rf /var/lib/apt/lists/*\n\n# multi-stage for testing\nFROM builder AS tester\n\n# build overlay source\nCOPY --from=cacher $OVERLAY_WS ./\nARG OVERLAY_MIXINS=\"release ccache lld\"\nARG CCACHE_DIR=\"$OVERLAY_WS/.ccache\"\nRUN . $UNDERLAY_WS/install/setup.sh && \\\n    colcon cache lock && \\\n    colcon build \\\n      --symlink-install \\\n      --mixin $OVERLAY_MIXINS\n\n# source overlay from entrypoint\nRUN sed --in-place \\\n      's|^source .*|source \"$OVERLAY_WS/install/setup.bash\"|' \\\n      /ros_entrypoint.sh\n\n# test overlay build\nARG RUN_TESTS\nARG FAIL_ON_TEST_FAILURE=True\nRUN if [ -n \"$RUN_TESTS\" ]; then \\\n        . install/setup.sh && \\\n        colcon test && \\\n        colcon test-result \\\n          || ([ -z \"$FAIL_ON_TEST_FAILURE\" ] || exit 1) \\\n    fi\n"
+}

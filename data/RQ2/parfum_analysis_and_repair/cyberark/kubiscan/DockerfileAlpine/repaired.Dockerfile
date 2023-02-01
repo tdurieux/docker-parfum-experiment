@@ -1,0 +1,7 @@
+FROM alpine:latest
+RUN apk update && apk upgrade && apk add --no-cache bash && apk add --no-cache python3 && pip3 install --no-cache-dir requests && pip3 install --no-cache-dir PTable
+RUN apk add --no-cache git && git clone --recursive https://github.com/kubernetes-client/python.git && cd python/ && python3 setup.py install
+RUN echo "alias kubiscan='python3 /KubiScan/KubiScan.py'" > /root/.bash_aliases && echo "alias kubiscan='python3 /KubiScan/KubiScan.py'" > /root/.bashrc
+RUN . /root/.bash_aliases
+COPY . /KubiScan
+ENTRYPOINT bash

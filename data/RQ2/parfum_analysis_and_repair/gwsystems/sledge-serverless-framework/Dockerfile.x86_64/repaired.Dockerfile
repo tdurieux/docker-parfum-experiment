@@ -1,0 +1,121 @@
+# using ubuntu 20 docker image
+FROM ubuntu:focal
+
+ARG DEBIAN_FRONTEND=noninteractive
+ARG HEY_URL=https://hey-release.s3.us-east-2.amazonaws.com/hey_linux_amd64
+ARG WASI_SDK_URL=https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-12/wasi-sdk_12.0_amd64.deb
+ARG SHFMT_URL=https://github.com/mvdan/sh/releases/download/v3.2.4/shfmt_v3.2.4_linux_amd64
+ARG SHELLCHECK_URL=https://github.com/koalaman/shellcheck/releases/download/stable/shellcheck-stable.linux.x86_64.tar.xz
+
+# Use bash, not sh
+SHELL ["/bin/bash", "-c"]
+
+# We run the dev container interactively, so unminimize and install missing packages
+RUN apt-get update && apt-get install -y --no-install-recommends \
+	apt-utils \
+	man-db \
+	&& yes | unminimize && rm -rf /var/lib/apt/lists/*;
+
+# General GCC C/C++ Build toolchain
+# pkg-config, libtool - used by PocketSphinx
+# cmake - used by cmsis
+RUN apt-get update && apt-get install -y --no-install-recommends \
+	automake \
+	build-essential \
+	binutils-dev \
+	cmake \
+	git \
+	libtinfo5 \
+	libtool \
+	pkg-config && rm -rf /var/lib/apt/lists/*;
+
+# Needed to install from http endpoints via curl or wget
+RUN apt-get update && apt-get install -y --no-install-recommends \
+	curl \
+	ca-certificates \
+	libssl-dev \
+	lsb-release \
+	gpg-agent \
+	software-properties-common \
+	wget && rm -rf /var/lib/apt/lists/*;
+
+# Test Script Stuff
+RUN apt-get update && apt-get install -y --no-install-recommends \
+	bc \
+	fonts-dejavu \
+	fonts-cascadia-code \
+	fonts-roboto \
+	gnuplot \
+	httpie \
+	imagemagick \
+	jq \
+	libz3-4 \
+	netpbm \
+	pango1.0-tools \
+	wamerican && rm -rf /var/lib/apt/lists/*;
+
+# Hey is a load generator we have to recklessly download from the 'net, as it is only published to brew
+# Binaries are only provided for AMD64 though, so ARM will have to build from source
+# See https://github.com/rakyll/hey
+RUN wget $HEY_URL -O hey && chmod +x hey && mv hey /usr/bin/hey
+
+# shfmt is a formatter for shell scripts
+RUN wget $SHFMT_URL -O shfmt && chmod +x shfmt && mv shfmt /usr/local/bin/shfmt
+RUN wget $SHELLCHECK_URL -O shellcheck && chmod +x shellcheck && mv shellcheck /usr/local/bin/shellcheck
+
+# Interactive Tools
+RUN apt-get update && apt-get install -y --no-install-recommends \
+	bsdmainutils \
+	gdb \
+	less \
+	openssh-client \
+	strace \
+	valgrind \
+	vim \
+	wabt && rm -rf /var/lib/apt/lists/*;
+
+ENV LLVM_VERSION=12
+ADD install_llvm.sh /sledge/install_llvm.sh
+RUN ./sledge/install_llvm.sh $LLVM_VERSION
+
+# WASI-SDK
+RUN curl -f -sS -L -O $WASI_SDK_URL && dpkg -i wasi-sdk_12.0_amd64.deb && rm -f wasi-sdk_12.0_amd64.deb
+ENV WASI_SDK_PATH=/opt/wasi-sdk
+
+# Create non-root user and add to sudoers
+ARG USERNAME=dev
+ARG USER_UID=1000
+ARG USER_GID=$USER_UID
+RUN groupadd --gid $USER_GID $USERNAME
+RUN useradd --uid $USER_UID --gid $USER_GID -m $USERNAME
+RUN apt-get update && apt-get install --no-install-recommends -y sudo && rm -rf /var/lib/apt/lists/*;
+RUN echo $USERNAME ALL=\(root\) NOPASSWD:ALL > /etc/sudoers.d/$USERNAME
+RUN chmod 0440 /etc/sudoers.d/$USERNAME
+
+# Make non-root user default user and use for rest of Dockerfile
+USER $USER_UID
+
+# Make sure the mount point and installation target and any files therein are owned by the non-root user
+RUN sudo chown $USER_GID:$USER_GID /sledge
+ADD fix_root.sh /sledge/fix_root.sh
+RUN cd sledge && ./fix_root.sh
+
+################################
+# Final Setup as non-root user #
+################################
+
+# Rust
+# Rustup does not cleanly support system installs, so install as non-root user
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- --default-toolchain stable --component rustfmt --target wasm32-wasi -y
+ENV PATH=/home/dev/.cargo/bin:$PATH
+RUN cargo install --debug cargo-audit cargo-watch rsign2
+
+# We need to set the locale for pango-view
+ENV LANG C.UTF-8
+ENV LANGUAGE C.UTF-8
+ENV LC_ALL C.UTF-8
+
+# Update PATH and LD_LIBRARY_PATH
+ENV PATH=/sledge/runtime/bin:$PATH
+ENV PATH=/sledge/awsm/target/release:$PATH
+ENV LD_LIBRARY_PATH=/sledge/runtime/bin:$LD_LIBRARY_PATH

@@ -1,0 +1,26 @@
+{
+  "startTime": 1674253145608,
+  "endTime": 1674253146369,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 2,
+        "lineEnd": 4,
+        "columnStart": 22,
+        "columnEnd": 31
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 2,
+        "lineEnd": 4,
+        "columnStart": 22,
+        "columnEnd": 31
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# multi-stage build\nFROM debian:9 AS proot\nRUN apt-get update && apt-get install --no-install-recommends -q -y build-essential git libseccomp-dev libtalloc-dev \\\n\n libprotobuf-c-dev libattr1-dev && rm -rf /var/lib/apt/lists/*;\nRUN git clone https://github.com/rootless-containers/PRoot.git \\\n  && cd PRoot \\\n  && git checkout 081bb63955eb4378e53cf4d0eb0ed0d3222bf66e \\\n  && cd src \\\n  && make && mv proot / && make clean\n\nFROM golang:1.9-alpine AS runc\nRUN apk add --no-cache git g++ linux-headers\nRUN git clone https://github.com/opencontainers/runc.git /go/src/github.com/opencontainers/runc \\\n  && cd /go/src/github.com/opencontainers/runc \\\n  && git checkout -q e6516b3d5dc780cb57a976013c242a9a93052543 \\\n  && go build -o /runc .\n\n#\n# build stage\n#\nFROM golang:1.17-alpine AS builder\n\n# Add Maintainer Info\nLABEL maintainer=\"ming\"\n\nRUN apk --no-cache add build-base git gcc\nWORKDIR /root/\nADD . /root\nRUN cd /root/src && go build -o pulsar-heartbeat\n\n# Add debug tool\nRUN go get github.com/google/gops\n\n#\n# Start a new stage from scratch\n#\nFROM alpine:3.7\nRUN adduser -u 1000 -S user -G root\nCOPY --from=proot --chown=1000:0 /proot /home/user/.runrootless/runrootless-proot\nCOPY --from=runc --chown=1000:0 /runc /home/user/bin/runc\n\nRUN apk --no-cache add ca-certificates\nCOPY --from=builder --chown=1000:0 /root/src/pulsar-heartbeat /home/user\n\n# Copy debug tools\nCOPY --from=builder --chown=1000:0 /go/bin/gops /home/user/gops\nRUN mkdir /home/user/run && chmod g=u /home/user/run\nRUN chmod g=u /home/user\nUSER 1000:0\nWORKDIR /home/user\nENV HOME=/home/user\nENV PATH=/home/user/bin:$PATH\nENV XDG_RUNTIME_DIR=/home/user/run\nENV PULSAR_OPS_MONITOR_CFG=/config/runtime.yml\nENTRYPOINT ./pulsar-heartbeat\n"
+}

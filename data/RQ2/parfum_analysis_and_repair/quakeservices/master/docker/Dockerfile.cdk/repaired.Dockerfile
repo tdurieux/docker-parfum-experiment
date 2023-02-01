@@ -1,0 +1,19 @@
+FROM quakeservices/base:latest
+
+WORKDIR /usr/src/app
+
+RUN --mount=type=cache,target=/var/cache/apt \
+  wget --quiet https://deb.nodesource.com/setup_current.x -O /tmp/setup_current.x && \
+  bash /tmp/setup_current.x && \
+  rm /tmp/setup_current.x
+
+RUN --mount=type=cache,target=/var/cache/apt \
+  apt-get install -y --no-install-recommends \
+    docker \
+    nodejs && rm -rf /var/lib/apt/lists/*;
+
+COPY deployment/package.json .
+COPY deployment/package-lock.json .
+
+RUN --mount=type=cache,target=/root/.npm \
+  npm install --global aws-cdk && npm cache clean --force;

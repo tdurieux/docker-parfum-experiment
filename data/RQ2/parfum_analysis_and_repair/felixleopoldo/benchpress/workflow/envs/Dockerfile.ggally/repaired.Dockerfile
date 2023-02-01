@@ -1,0 +1,3 @@
+FROM r-base
+
+RUN R -e "install.packages(\"GGally\")" --no-save

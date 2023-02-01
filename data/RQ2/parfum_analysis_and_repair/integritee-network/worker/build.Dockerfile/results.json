@@ -1,0 +1,26 @@
+{
+  "startTime": 1674254704678,
+  "endTime": 1674254705951,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 59,
+        "lineEnd": 59,
+        "columnStart": 18,
+        "columnEnd": 52
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 59,
+        "lineEnd": 59,
+        "columnStart": 18,
+        "columnEnd": 52
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Copyright 2021 Integritee AG\n#\n# Licensed under the Apache License, Version 2.0 (the \"License\");\n# you may not use this file except in compliance with the License.\n# You may obtain a copy of the License at\n#\n#           http://www.apache.org/licenses/LICENSE-2.0\n#\n# Unless required by applicable law or agreed to in writing, software\n# distributed under the License is distributed on an \"AS IS\" BASIS,\n# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.\n# See the License for the specific language governing permissions and\n# limitations under the License.\n\n# This is a multi-stage docker file, where the first stage is used\n# for building and the second deploys the built application.\n\n### Builder Stage\n##################################################\nFROM integritee/integritee-dev:0.1.9 AS builder\nLABEL maintainer=\"zoltan@integritee.network\"\n\n# set environment variables\nENV SGX_SDK /opt/sgxsdk\nENV PATH \"$PATH:${SGX_SDK}/bin:${SGX_SDK}/bin/x64:/root/.cargo/bin\"\nENV PKG_CONFIG_PATH \"${PKG_CONFIG_PATH}:${SGX_SDK}/pkgconfig\"\nENV LD_LIBRARY_PATH \"${LD_LIBRARY_PATH}:${SGX_SDK}/sdk_libs\"\nENV CARGO_NET_GIT_FETCH_WITH_CLI true\nENV SGX_MODE SW\n\nCOPY . /root/work/worker/\nWORKDIR /root/work/worker\n\n#RUN --mount=type=cache,target=/usr/local/cargo/registry \\\n#\t--mount=type=cache,target=/root/work/worker/target \\\n#\tmake\nRUN make\n\n### Enclave Test Stage\n##################################################\nFROM builder AS enclave-test\n\nWORKDIR /root/work/worker/bin\n\nCMD ./integritee-service test --all\n\n\n### Cargo Test Stage\n##################################################\nFROM builder AS cargo-test\n\nWORKDIR /root/work/worker\n\nCMD cargo test\n\n### Base Runner Stage\n##################################################\nFROM ubuntu:20.04 AS runner\n\nRUN apt update && apt install --no-install-recommends -y libssl-dev iproute2 && rm -rf /var/lib/apt/lists/*;\n\nCOPY --from=powerman/dockerize /usr/local/bin/dockerize /usr/local/bin/dockerize\n\n\n### Deployed CLI client\n##################################################\nFROM runner AS deployed-client\nLABEL maintainer=\"zoltan@integritee.network\"\n\nARG SCRIPT_DIR=/usr/local/worker-cli\nARG LOG_DIR=/usr/local/log\n\nENV SCRIPT_DIR ${SCRIPT_DIR}\nENV LOG_DIR ${LOG_DIR}\n\nCOPY --from=builder /root/work/worker/bin/integritee-cli /usr/local/bin\nCOPY ./cli/*.sh /usr/local/worker-cli/\n\nRUN chmod +x /usr/local/bin/integritee-cli ${SCRIPT_DIR}/*.sh\nRUN mkdir ${LOG_DIR}\n\nRUN ldd /usr/local/bin/integritee-cli && \\\n\t/usr/local/bin/integritee-cli --version\n\nENTRYPOINT [\"/usr/local/bin/integritee-cli\"]\n\n\n### Deployed worker service\n##################################################\nFROM runner AS deployed-worker\nLABEL maintainer=\"zoltan@integritee.network\"\n\nENV SGX_SDK /opt/sgxsdk\nENV LD_LIBRARY_PATH \"${LD_LIBRARY_PATH}:${SGX_SDK}/lib64\"\n\nWORKDIR /usr/local/bin\n\nCOPY --from=builder /opt/sgxsdk/lib64 /opt/sgxsdk/lib64\nCOPY --from=builder /root/work/worker/bin/* ./\n\nRUN touch spid.txt key.txt\nRUN chmod +x /usr/local/bin/integritee-service\nRUN ls -al /usr/local/bin\n\n# checks\nRUN ldd /usr/local/bin/integritee-service && \\\n\t/usr/local/bin/integritee-service --version\n\nENTRYPOINT [\"/usr/local/bin/integritee-service\"]\n"
+}

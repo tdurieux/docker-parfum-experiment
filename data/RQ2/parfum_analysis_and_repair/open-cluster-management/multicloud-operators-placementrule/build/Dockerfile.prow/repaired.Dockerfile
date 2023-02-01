@@ -1,0 +1,25 @@
+FROM registry.ci.openshift.org/stolostron/builder:go1.17-linux AS builder
+
+WORKDIR /go/src/github.com/stolostron/multicluster-operators-placementrule
+COPY . .
+RUN make -f Makefile.prow build
+
+FROM registry.access.redhat.com/ubi8/ubi-minimal:latest
+
+RUN microdnf update && \
+     microdnf clean all
+
+ENV OPERATOR=/usr/local/bin/multicluster-operators-placementrule \
+    USER_UID=1001 \
+    USER_NAME=multicluster-operators-placementrule
+
+# install operator binary
+COPY --from=builder /go/src/github.com/stolostron/multicluster-operators-placementrule/build/_output/bin/multicluster-operators-placementrule ${OPERATOR}
+COPY --from=builder /go/src/github.com/stolostron/multicluster-operators-placementrule/build/_output/bin/gitopscluster /usr/local/bin/gitopscluster
+
+COPY build/bin /usr/local/bin
+RUN  /usr/local/bin/user_setup
+
+ENTRYPOINT ["/usr/local/bin/entrypoint"]
+
+USER ${USER_UID}

@@ -1,0 +1,1 @@
+# Share the same base image to reduce layers used in testing

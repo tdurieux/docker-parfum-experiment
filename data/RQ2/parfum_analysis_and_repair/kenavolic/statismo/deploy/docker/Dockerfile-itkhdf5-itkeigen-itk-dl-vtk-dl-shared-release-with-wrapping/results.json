@@ -1,0 +1,62 @@
+{
+  "startTime": 1674250723501,
+  "endTime": 1674250724861,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 13,
+        "lineEnd": 13,
+        "columnStart": 5,
+        "columnEnd": 31
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 29,
+        "lineEnd": 29,
+        "columnStart": 4,
+        "columnEnd": 42
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 4,
+        "lineEnd": 4,
+        "columnStart": 22,
+        "columnEnd": 114
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 10,
+        "lineEnd": 10,
+        "columnStart": 5,
+        "columnEnd": 150
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 4,
+        "lineEnd": 4,
+        "columnStart": 22,
+        "columnEnd": 114
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 10,
+        "lineEnd": 10,
+        "columnStart": 5,
+        "columnEnd": 150
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM ubuntu:bionic\n\nARG git_branch=develop\n\nRUN apt-get update && apt-get install --no-install-recommends -y apt-transport-https ca-certificates gnupg software-properties-common wget && rm -rf /var/lib/apt/lists/*;\nRUN wget -O - https://apt.kitware.com/keys/kitware-archive-latest.asc 2>/dev/null | apt-key add -\n\nRUN apt-add-repository 'deb https://apt.kitware.com/ubuntu/ bionic main' && apt-get update\n\nRUN apt-get update \\\n  && apt-get install --no-install-recommends -y clang-6.0 clang-tidy-6.0 clang-format-6.0 python3-pip python3-dev git cmake mesa-common-dev freeglut3-dev swig build-essential \\\n  && cd /usr/local/bin \\\n  && ln -s /usr/bin/python3 python \\\n  && pip3 install --no-cache-dir --upgrade pip && rm -rf /var/lib/apt/lists/*;\n\nRUN ln -s /usr/bin/clang-tidy-6.0 /usr/bin/clang-tidy\nRUN ln -s /usr/bin/clang-format-6.0 /usr/bin/clang-format\n\n# Statismo\nRUN git clone https://github.com/kenavolic/statismo --branch $git_branch /usr/src/statismo\n\nRUN clang-tidy --version\n\nWORKDIR \"/usr/src/statismo\"\n\nRUN mkdir build\n\nWORKDIR \"/usr/src/statismo/modules/VTK/wrapping\"\n\nRUN pip3 install --no-cache-dir -r requirements_tests.txt\n\nWORKDIR \"/usr/src/statismo/build\"\n\nRUN cmake ../superbuild -DAUTOBUILD_STATISMO=OFF -DBUILD_WITH_TIDY=ON -DBUILD_WRAPPING=ON -DBUILD_DOCUMENTATION=OFF -DBUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON -DCMAKE_INSTALL_PREFIX=/usr/src/statismo/dist\n\n# Build externals\nRUN make -j4\n\n# Build statismo with clang-tidy\nWORKDIR \"/usr/src/statismo/build/Statismo-build\"\nRUN if [ $(make -j4 2>&1 | grep -o 'warning:' | wc -l) -gt 6 ] ; then echo \"too many warning, needs some tidy\" && exit 1 ; fi\n\n# Check format\nRUN make format-check\n\n# Install\nRUN make install\n\n# Tests\nENV PYTHONPATH \"${PYTHONPATH}:/usr/src/statismo/dist/lib/python3.6/site-packages:/usr/src/statismo/build/INSTALL/lib/python3.6/site-packages\"\nENV LD_LIBRARY_PATH \"${LD_LIBRARY_PATH}:/usr/src/statismo/dist/lib:/usr/src/statismo/build/INSTALL/lib/\"\n\nRUN ctest\n\nWORKDIR \"/usr/src/statismo/modules/VTK/wrapping/tests/statismoTests\"\n\nRUN python3 -m unittest test_builders test_managers test_models\n\n# Test app\nWORKDIR \"/usr/src\"\nRUN mkdir statismo-demo\nWORKDIR \"/usr/src/statismo-demo\"\nRUN echo 'cmake_minimum_required(VERSION 3.15)\\nproject(demo LANGUAGES CXX VERSION 0.1.0)\\nfind_package(statismo REQUIRED)\\ninclude(${STATISMO_USE_FILE})\\nadd_executable(demo main.cpp)\\ntarget_link_libraries(demo ${STATISMO_LIBRARIES} ${VTK_LIBRARIES} ${ITK_LIBRARIES})\\n' > CMakeLists.txt\nRUN echo \"#include \\\"statismo/VTK/vtkStandardMeshRepresenter.h\\\"\\n#include \\\"statismo/ITK/itkStandardMeshRepresenter.h\\\"\\n#include <iostream>\\nint main() {\\nauto itkrep = itk::StandardMeshRepresenter<float, 3>::New();\\nauto vtkrep = statismo::vtkStandardMeshRepresenter::SafeCreate();\\nstd::cout << \\\"itk rep: \\\" << itkrep << std::endl;\\nstd::cout << \\\"vtkrep rep: \\\" << vtkrep.get() << std::endl;\\nreturn 0;}\\n\" > main.cpp\nRUN mkdir build\nWORKDIR \"/usr/src/statismo-demo/build\"\nRUN cmake .. -Dstatismo_DIR=/usr/src/statismo/dist/lib/cmake/statismo\nRUN make\nRUN ./demo\n"
+}

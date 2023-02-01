@@ -1,0 +1,5 @@
+FROM wyrihaximusnet/php:7.4-zts-alpine3.13-slim-dev AS migration
+
+WORKDIR /opt/migration
+ENTRYPOINT ["wait-for", "postgres:5432", "-t", "600", "--"]
+CMD ["make", "install_db"]

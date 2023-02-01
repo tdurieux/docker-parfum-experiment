@@ -1,0 +1,98 @@
+{
+  "startTime": 1674214914039,
+  "endTime": 1674214915548,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 247,
+        "lineEnd": 247,
+        "columnStart": 5,
+        "columnEnd": 161
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 62,
+        "lineEnd": 62,
+        "columnStart": 2,
+        "columnEnd": 13
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 71,
+        "lineEnd": 71,
+        "columnStart": 2,
+        "columnEnd": 62
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 82,
+        "lineEnd": 82,
+        "columnStart": 4,
+        "columnEnd": 15
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 93,
+        "lineEnd": 93,
+        "columnStart": 2,
+        "columnEnd": 13
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 102,
+        "lineEnd": 102,
+        "columnStart": 2,
+        "columnEnd": 13
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 112,
+        "lineEnd": 112,
+        "columnStart": 2,
+        "columnEnd": 13
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 122,
+        "lineEnd": 122,
+        "columnStart": 2,
+        "columnEnd": 13
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 78,
+        "lineEnd": 78,
+        "columnStart": 4,
+        "columnEnd": 21
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 252,
+        "lineEnd": 252,
+        "columnStart": 4,
+        "columnEnd": 28
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM composer:2.0 as composer\n\nARG TESTING=false\nENV TESTING=$TESTING\n\nWORKDIR /usr/local/src/\n\nCOPY composer.lock /usr/local/src/\nCOPY composer.json /usr/local/src/\n\nRUN composer install --ignore-platform-reqs --optimize-autoloader \\\n    --no-plugins --no-scripts --prefer-dist \\\n    `if [ \"$TESTING\" != \"true\" ]; then echo \"--no-dev\"; fi`\n\nFROM node:16.14.2-alpine3.15 as node\n\nWORKDIR /usr/local/src/\n\nCOPY package-lock.json /usr/local/src/\nCOPY package.json /usr/local/src/\nCOPY gulpfile.js /usr/local/src/\nCOPY public /usr/local/src/public\n\nRUN npm ci\nRUN npm run build\n\nFROM php:8.0.18-cli-alpine3.15 as compile\n\nARG DEBUG=false\nENV DEBUG=$DEBUG\n\nENV PHP_REDIS_VERSION=5.3.7 \\\n    PHP_MONGODB_VERSION=1.13.0 \\\n    PHP_SWOOLE_VERSION=v4.8.10 \\\n    PHP_IMAGICK_VERSION=3.7.0 \\\n    PHP_YAML_VERSION=2.2.2 \\\n    PHP_MAXMINDDB_VERSION=v1.11.0\n\nRUN \\\n  apk add --no-cache --virtual .deps \\\n  make \\\n  automake \\\n  autoconf \\\n  gcc \\\n  g++ \\\n  git \\\n  zlib-dev \\\n  brotli-dev \\\n  openssl-dev \\\n  yaml-dev \\\n  imagemagick \\\n  imagemagick-dev \\\n  libmaxminddb-dev\n\nRUN docker-php-ext-install sockets\n\nFROM compile AS redis\nRUN \\\n\n  git clone --depth 1 --branch $PHP_REDIS_VERSION https://github.com/phpredis/phpredis.git && \\\n  cd phpredis && \\\n  phpize && \\\n  ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" && \\\n  make && make install\n\n## Swoole Extension\nFROM compile AS swoole\nRUN \\\n  git clone --depth 1 --branch $PHP_SWOOLE_VERSION https://github.com/swoole/swoole-src.git && \\\n  cd swoole-src && \\\n  phpize && \\\n  ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" --enable-sockets --enable-http2 --enable-openssl && \\\n  make && make install && \\\n  cd ..\n\n## Swoole Debugger setup\nRUN if [ \"$DEBUG\" == \"true\" ]; then \\\n    cd /tmp && \\\n    apk add --no-cache boost-dev && \\\n    git clone --depth 1 https://github.com/swoole/yasd && \\\n    cd yasd && \\\n    phpize && \\\n    ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" && \\\n    make && make install && \\\n    cd ..; \\\n  fi\n\n## Imagick Extension\nFROM compile AS imagick\nRUN \\\n  git clone --depth 1 --branch $PHP_IMAGICK_VERSION https://github.com/imagick/imagick && \\\n  cd imagick && \\\n  phpize && \\\n  ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" && \\\n  make && make install\n\n## YAML Extension\nFROM compile AS yaml\nRUN \\\n  git clone --depth 1 --branch $PHP_YAML_VERSION https://github.com/php/pecl-file_formats-yaml && \\\n  cd pecl-file_formats-yaml && \\\n  phpize && \\\n  ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" && \\\n  make && make install\n\n## Maxminddb extension\nFROM compile AS maxmind\nRUN \\\n  git clone --depth 1 --branch $PHP_MAXMINDDB_VERSION https://github.com/maxmind/MaxMind-DB-Reader-php.git && \\\n  cd MaxMind-DB-Reader-php && \\\n  cd ext && \\\n  phpize && \\\n  ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" && \\\n  make && make install\n\n# Mongodb Extension\nFROM compile as mongodb\nRUN \\\n  git clone --depth 1 --branch $PHP_MONGODB_VERSION https://github.com/mongodb/mongo-php-driver.git && \\\n  cd mongo-php-driver && \\\n  git submodule update --init && \\\n  phpize && \\\n  ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" && \\\n  make && make install\n\nFROM php:8.0.18-cli-alpine3.15 as final\n\nLABEL maintainer=\"team@appwrite.io\"\n\nARG VERSION=dev\nARG DEBUG=false\nENV DEBUG=$DEBUG\n\nENV DOCKER_CONFIG=${DOCKER_CONFIG:-$HOME/.docker}\nENV DOCKER_COMPOSE_VERSION=v2.5.0\n\nENV _APP_SERVER=swoole \\\n    _APP_ENV=production \\\n    _APP_LOCALE=en \\\n    _APP_WORKER_PER_CORE= \\\n    _APP_DOMAIN=localhost \\\n    _APP_DOMAIN_TARGET=localhost \\\n    _APP_HOME=https://appwrite.io \\\n    _APP_EDITION=community \\\n    _APP_CONSOLE_WHITELIST_ROOT=enabled \\\n    _APP_CONSOLE_WHITELIST_EMAILS= \\\n    _APP_CONSOLE_WHITELIST_IPS= \\\n    _APP_SYSTEM_EMAIL_NAME= \\\n    _APP_SYSTEM_EMAIL_ADDRESS= \\\n    _APP_SYSTEM_RESPONSE_FORMAT= \\\n    _APP_SYSTEM_SECURITY_EMAIL_ADDRESS= \\\n    _APP_OPTIONS_ABUSE=enabled \\\n    _APP_OPTIONS_FORCE_HTTPS=disabled \\\n    _APP_OPENSSL_KEY_V1=your-secret-key \\\n    _APP_STORAGE_LIMIT=10000000 \\\n    _APP_STORAGE_ANTIVIRUS=enabled \\\n    _APP_STORAGE_ANTIVIRUS_HOST=clamav \\\n    _APP_STORAGE_ANTIVIRUS_PORT=3310 \\\n    _APP_STORAGE_DEVICE=Local \\\n    _APP_STORAGE_S3_ACCESS_KEY= \\\n    _APP_STORAGE_S3_SECRET= \\\n    _APP_STORAGE_S3_REGION= \\\n    _APP_STORAGE_S3_BUCKET= \\\n    _APP_STORAGE_DO_SPACES_ACCESS_KEY= \\\n    _APP_STORAGE_DO_SPACES_SECRET= \\\n    _APP_STORAGE_DO_SPACES_REGION= \\\n    _APP_STORAGE_DO_SPACES_BUCKET= \\\n    _APP_STORAGE_BACKBLAZE_ACCESS_KEY= \\\n    _APP_STORAGE_BACKBLAZE_SECRET= \\\n    _APP_STORAGE_BACKBLAZE_REGION= \\\n    _APP_STORAGE_BACKBLAZE_BUCKET= \\\n    _APP_STORAGE_LINODE_ACCESS_KEY= \\\n    _APP_STORAGE_LINODE_SECRET= \\\n    _APP_STORAGE_LINODE_REGION= \\\n    _APP_STORAGE_LINODE_BUCKET= \\\n    _APP_STORAGE_WASABI_ACCESS_KEY= \\\n    _APP_STORAGE_WASABI_SECRET= \\\n    _APP_STORAGE_WASABI_REGION= \\\n    _APP_STORAGE_WASABI_BUCKET= \\\n    _APP_REDIS_HOST=redis \\\n    _APP_REDIS_PORT=6379 \\\n    _APP_DB_HOST=mariadb \\\n    _APP_DB_PORT=3306 \\\n    _APP_DB_USER=root \\\n    _APP_DB_PASS=password \\\n    _APP_DB_SCHEMA=appwrite \\\n    _APP_INFLUXDB_HOST=influxdb \\\n    _APP_INFLUXDB_PORT=8086 \\\n    _APP_STATSD_HOST=telegraf \\\n    _APP_STATSD_PORT=8125 \\\n    _APP_SMTP_HOST= \\\n    _APP_SMTP_PORT= \\\n    _APP_SMTP_SECURE= \\\n    _APP_SMTP_USERNAME= \\\n    _APP_SMTP_PASSWORD= \\\n    _APP_PHONE_PROVIDER= \\\n    _APP_PHONE_FROM= \\\n    _APP_FUNCTIONS_SIZE_LIMIT=30000000 \\\n    _APP_FUNCTIONS_TIMEOUT=900 \\\n    _APP_FUNCTIONS_CONTAINERS=10 \\\n    _APP_FUNCTIONS_CPUS=1 \\\n    _APP_FUNCTIONS_MEMORY=128 \\\n    _APP_FUNCTIONS_MEMORY_SWAP=128 \\\n    _APP_EXECUTOR_SECRET=a-random-secret \\\n    _APP_EXECUTOR_HOST=http://appwrite-executor/v1 \\\n    _APP_EXECUTOR_RUNTIME_NETWORK=appwrite_runtimes \\\n    _APP_SETUP=self-hosted \\\n    _APP_VERSION=$VERSION \\\n    _APP_USAGE_STATS=enabled \\\n    # 14 Days = 1209600 s\n    _APP_MAINTENANCE_RETENTION_EXECUTION=1209600 \\\n    _APP_MAINTENANCE_RETENTION_AUDIT=1209600 \\\n    # 1 Day = 86400 s\n    _APP_MAINTENANCE_RETENTION_ABUSE=86400 \\\n    _APP_MAINTENANCE_INTERVAL=86400 \\\n    _APP_LOGGING_PROVIDER= \\\n    _APP_LOGGING_CONFIG=\n\nRUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone\n\nRUN \\\n  apk update \\\n  && apk add --no-cache --virtual .deps \\\n  make \\\n  automake \\\n  autoconf \\\n  gcc \\\n  g++ \\\n  curl-dev \\\n  && apk add --no-cache \\\n  libstdc++ \\\n  certbot \\\n  brotli-dev \\\n  yaml-dev \\\n  imagemagick \\\n  imagemagick-dev \\\n  libmaxminddb-dev \\\n  certbot \\\n  docker-cli \\\n  libgomp \\\n  && docker-php-ext-install sockets opcache pdo_mysql \\\n  && apk del .deps \\\n  && rm -rf /var/cache/apk/*\n\nRUN \\\n  mkdir -p $DOCKER_CONFIG/cli-plugins \\\n  && ARCH=$(uname -m) && if [ $ARCH == \"armv7l\" ]; then ARCH=\"armv7\"; fi \\\n  && curl -f -SL https://github.com/docker/compose/releases/download/$DOCKER_COMPOSE_VERSION/docker-compose-linux-$ARCH -o $DOCKER_CONFIG/cli-plugins/docker-compose \\\n  && chmod +x $DOCKER_CONFIG/cli-plugins/docker-compose\n\nRUN \\\n  if [ \"$DEBUG\" == \"true\" ]; then \\\n    apk add --no-cache boost boost-dev; \\\n  fi\n\nWORKDIR /usr/src/code\n\nCOPY --from=composer /usr/local/src/vendor /usr/src/code/vendor\nCOPY --from=node /usr/local/src/public/dist /usr/src/code/public/dist\nCOPY --from=swoole /usr/local/lib/php/extensions/no-debug-non-zts-20200930/swoole.so /usr/local/lib/php/extensions/no-debug-non-zts-20200930/yasd.so* /usr/local/lib/php/extensions/no-debug-non-zts-20200930/\nCOPY --from=redis /usr/local/lib/php/extensions/no-debug-non-zts-20200930/redis.so /usr/local/lib/php/extensions/no-debug-non-zts-20200930/\nCOPY --from=imagick /usr/local/lib/php/extensions/no-debug-non-zts-20200930/imagick.so /usr/local/lib/php/extensions/no-debug-non-zts-20200930/\nCOPY --from=yaml /usr/local/lib/php/extensions/no-debug-non-zts-20200930/yaml.so /usr/local/lib/php/extensions/no-debug-non-zts-20200930/\nCOPY --from=maxmind /usr/local/lib/php/extensions/no-debug-non-zts-20200930/maxminddb.so /usr/local/lib/php/extensions/no-debug-non-zts-20200930/\nCOPY --from=mongodb /usr/local/lib/php/extensions/no-debug-non-zts-20200930/mongodb.so /usr/local/lib/php/extensions/no-debug-non-zts-20200930/\n\n# Add Source Code\nCOPY ./app /usr/src/code/app\nCOPY ./bin /usr/local/bin\nCOPY ./docs /usr/src/code/docs\nCOPY ./public/fonts /usr/src/code/public/fonts\nCOPY ./public/images /usr/src/code/public/images\nCOPY ./src /usr/src/code/src\n\n# Set Volumes\nRUN mkdir -p /storage/uploads && \\\n    mkdir -p /storage/cache && \\\n    mkdir -p /storage/config && \\\n    mkdir -p /storage/certificates && \\\n    mkdir -p /storage/functions && \\\n    mkdir -p /storage/debug && \\\n    chown -Rf www-data.www-data /storage/uploads && chmod -Rf 0755 /storage/uploads && \\\n    chown -Rf www-data.www-data /storage/cache && chmod -Rf 0755 /storage/cache && \\\n    chown -Rf www-data.www-data /storage/config && chmod -Rf 0755 /storage/config && \\\n    chown -Rf www-data.www-data /storage/certificates && chmod -Rf 0755 /storage/certificates && \\\n    chown -Rf www-data.www-data /storage/functions && chmod -Rf 0755 /storage/functions && \\\n    chown -Rf www-data.www-data /storage/debug && chmod -Rf 0755 /storage/debug\n\n# Executables\nRUN chmod +x /usr/local/bin/doctor && \\\n    chmod +x /usr/local/bin/maintenance && \\\n    chmod +x /usr/local/bin/usage && \\\n    chmod +x /usr/local/bin/install && \\\n    chmod +x /usr/local/bin/migrate && \\\n    chmod +x /usr/local/bin/realtime && \\\n    chmod +x /usr/local/bin/executor && \\\n    chmod +x /usr/local/bin/schedule && \\\n    chmod +x /usr/local/bin/sdks && \\\n    chmod +x /usr/local/bin/specs && \\\n    chmod +x /usr/local/bin/ssl && \\\n    chmod +x /usr/local/bin/test && \\\n    chmod +x /usr/local/bin/vars && \\\n    chmod +x /usr/local/bin/worker-audits && \\\n    chmod +x /usr/local/bin/worker-certificates && \\\n    chmod +x /usr/local/bin/worker-databases && \\\n    chmod +x /usr/local/bin/worker-deletes && \\\n    chmod +x /usr/local/bin/worker-functions && \\\n    chmod +x /usr/local/bin/worker-builds && \\\n    chmod +x /usr/local/bin/worker-mails && \\\n    chmod +x /usr/local/bin/worker-messaging && \\\n    chmod +x /usr/local/bin/worker-webhooks\n\n# Letsencrypt Permissions\nRUN mkdir -p /etc/letsencrypt/live/ && chmod -Rf 755 /etc/letsencrypt/live/\n\n# Enable Extensions\nRUN echo extension=swoole.so >> /usr/local/etc/php/conf.d/swoole.ini\nRUN echo extension=redis.so >> /usr/local/etc/php/conf.d/redis.ini\nRUN echo extension=imagick.so >> /usr/local/etc/php/conf.d/imagick.ini\nRUN echo extension=yaml.so >> /usr/local/etc/php/conf.d/yaml.ini\nRUN echo extension=maxminddb.so >> /usr/local/etc/php/conf.d/maxminddb.ini\nRUN if [ \"$DEBUG\" == \"true\" ]; then printf \"zend_extension=yasd \\nyasd.debug_mode=remote \\nyasd.init_file=/usr/local/dev/yasd_init.php \\nyasd.remote_port=9005 \\nyasd.log_level=-1\" >> /usr/local/etc/php/conf.d/yasd.ini; fi\n\nRUN if [ \"$DEBUG\" == \"true\" ]; then echo \"opcache.enable=0\" >> /usr/local/etc/php/conf.d/appwrite.ini; fi\nRUN echo \"opcache.preload_user=www-data\" >> /usr/local/etc/php/conf.d/appwrite.ini\nRUN echo \"opcache.preload=/usr/src/code/app/preload.php\" >> /usr/local/etc/php/conf.d/appwrite.ini\nRUN echo \"opcache.enable_cli=1\" >> /usr/local/etc/php/conf.d/appwrite.ini\nRUN echo \"default_socket_timeout=-1\" >> /usr/local/etc/php/conf.d/appwrite.ini\nRUN echo \"opcache.jit_buffer_size=100M\" >> /usr/local/etc/php/conf.d/appwrite.ini\nRUN echo \"opcache.jit=1235\" >> /usr/local/etc/php/conf.d/appwrite.ini\n\nEXPOSE 80\n\nCMD [ \"php\", \"app/http.php\", \"-dopcache.preload=opcache.preload=/usr/src/code/app/preload.php\" ]\n"
+}

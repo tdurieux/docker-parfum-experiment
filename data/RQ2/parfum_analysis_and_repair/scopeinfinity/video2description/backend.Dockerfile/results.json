@@ -1,0 +1,99 @@
+{
+  "startTime": 1674252848253,
+  "endTime": 1674252849006,
+  "originalSmells": [
+    {
+      "rule": "wgetUseHttpsUrl",
+      "position": {
+        "lineStart": 17,
+        "lineEnd": 17,
+        "columnStart": 4,
+        "columnEnd": 50
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 10,
+        "lineEnd": 10,
+        "columnStart": 4,
+        "columnEnd": 31
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 2,
+        "lineEnd": 2,
+        "columnStart": 4,
+        "columnEnd": 79
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 25,
+        "lineEnd": 25,
+        "columnStart": 4,
+        "columnEnd": 79
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 2,
+        "lineEnd": 2,
+        "columnStart": 4,
+        "columnEnd": 79
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 25,
+        "lineEnd": 25,
+        "columnStart": 4,
+        "columnEnd": 79
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 2,
+        "lineEnd": 2,
+        "columnStart": 4,
+        "columnEnd": 79
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 25,
+        "lineEnd": 25,
+        "columnStart": 4,
+        "columnEnd": 79
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 2,
+        "lineEnd": 2,
+        "columnStart": 4,
+        "columnEnd": 103
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 25,
+        "lineEnd": 25,
+        "columnStart": 4,
+        "columnEnd": 103
+      }
+    }
+  ],
+  "repairedDockerfile": "FROM ubuntu:xenial as my_base\nRUN apt-get update\nRUN apt-get install --no-install-recommends -y libsamplerate0 curl libsndfile1 pkg-config nasm wget zip && rm -rf /var/lib/apt/lists/*;\n\nFROM my_base as ffmpeg_builder\nWORKDIR /tmp\nRUN wget https://github.com/FFmpeg/FFmpeg/archive/master.zip -O ffmpeg.zip\nRUN unzip ffmpeg.zip\nRUN rm ffmpeg.zip\nWORKDIR /tmp/FFmpeg-master/\nRUN ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" --enable-shared\nRUN make -j32\n\n\nFROM my_base as glove_builder\nWORKDIR /tmp\n# https://nlp.stanford.edu/projects/glove/\nRUN wget https://nlp.stanford.edu/data/glove.6B.zip && \\\n    unzip glove.6B.zip glove.6B.300d.txt && \\\n    rm glove.6B.zip\n\n\nFROM my_base as deploy\n# FROM conda/miniconda2\nRUN apt-get update\nRUN apt-get install --no-install-recommends -y libsamplerate0 curl libsndfile1 pkg-config nasm wget zip && rm -rf /var/lib/apt/lists/*;\nRUN useradd -m -s /bin/bash si\nRUN mkdir /var/log/v2d\nRUN chown si:si /var/log/v2d\nRUN chmod 700 /var/log/v2d\nUSER si\n\n# Installing miniconda\nRUN wget -N https://repo.anaconda.com/miniconda/Miniconda2-latest-Linux-x86_64.sh -O /tmp/Miniconda2-latest-Linux-x86_64.sh\nRUN bash /tmp/Miniconda2-latest-Linux-x86_64.sh -b\nRUN rm /tmp/Miniconda2-latest-Linux-x86_64.sh\nUSER root\nRUN ln -s /home/si/miniconda2/bin/conda /usr/bin/\nUSER si\n\n# glove\nRUN mkdir -p /home/si/v2d/dataset\nWORKDIR /home/si/v2d/dataset\nCOPY --from=glove_builder /tmp/glove.6B.300d.txt /home/si/v2d/dataset/glove.6B.300d.txt\n\n# ffmpeg build and install\nCOPY --from=ffmpeg_builder /tmp/FFmpeg-master/ /tmp/FFmpeg-master/\nWORKDIR /tmp/FFmpeg-master/\nUSER root\nRUN make install\nUSER si\nRUN echo 'export LD_LIBRARY_PATH=/usr/local/lib' >> /home/si/.bashrc\n\n# coco-caption\nWORKDIR /home/si\nRUN wget -N 'https://github.com/tylin/coco-caption/archive/master.zip' -O coco.zip && \\\n    unzip coco.zip && \\\n    mv coco-caption-master coco-caption && \\\n    rm coco.zip\n\n# Create conda environment\n# Note: ffmpeg with --enable-shared should be before installing opencv\nWORKDIR /home/si/v2d/\nCOPY --chown=si:si environment.yml /home/si/v2d/\nRUN conda env create -f environment.yml\nRUN conda init bash\nRUN echo \"conda activate V2D\" >> /home/si/.bashrc\n\n# Prepare basic files\nENV V2D_CONFIG_FILE=config_docker.json\nRUN mkdir -p /home/si/v2d/dataset\nRUN mkdir -p /home/si/v2d/dataset_cache\nRUN mkdir -p /home/si/v2d/models\nRUN mkdir -p /tmp/v2d/app/uploads\nCOPY --chown=si:si dataset/videodatainfo_2017.json /home/si/v2d/dataset/\nCOPY --chown=si:si dataset/test_videodatainfo_2017.json /home/si/v2d/dataset/\nCOPY --chown=si:si src/ /home/si/v2d/src/\nWORKDIR /home/si/v2d/src\n\n# Prepares cache for pretrained model\nCOPY --chown=si:si models/ /home/si/v2d/models/\nWORKDIR /home/si/v2d/models/\nRUN wget -q -N 'https://github.com/scopeInfinity/Video2Description/releases/download/models/ResNet_D512L512_G128G64_D1024D0.20BN_BDGRU1024_D0.2L1024DVS_model.dat_4983_loss_2.350_Cider0.355_Blue0.353_Rouge0.571_Meteor0.247_TOTAL_1.558_BEST'\nRUN echo \"Available Models:\"\nRUN ls -1 /home/si/v2d/models\n\nWORKDIR /home/si/v2d/src/\nRUN conda run -n V2D python -m backend.parser server --init-only -m /home/si/v2d/models/ResNet_D512L512_G128G64_D1024D0.20BN_BDGRU1024_D0.2L1024DVS_model.dat_4983_loss_2.350_Cider0.355_Blue0.353_Rouge0.571_Meteor0.247_TOTAL_1.558_BEST\n"
+}

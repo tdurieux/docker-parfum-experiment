@@ -1,0 +1,35 @@
+# test run: docker run --rm -it  -p 3020:3012 -e CRONICLE_master=1 cronicle:classic bash
+# then type manager or worker
+
+FROM alpine:3.15
+RUN apk add --no-cache git nodejs npm tini util-linux bash openssl procps coreutils curl tar acl jq
+# required: all: tini; alpine: util-linux procps coreutils
+
+
+ENV CRONICLE_foreground=1
+ENV CRONICLE_echo=1
+ENV TZ=America/New_York
+ENV EDITOR=nvim
+
+ENV PATH "/opt/cronicle/bin:${PATH}"
+
+
+# non root user for shell plugin
+ARG CRONICLE_UID=1007
+ARG CRONICLE_GID=1099
+RUN  addgroup cronicle --gid $CRONICLE_GID && adduser -D -h /opt/cronicle -u $CRONICLE_UID -G cronicle cronicle
+
+ARG version
+WORKDIR /opt/cronicle
+RUN curl -f -L https://github.com/jhuckaby/Cronicle/archive/refs/tags/v$version.tar.gz | tar xvz --strip 1 -C /opt/cronicle
+COPY bin/manager bin/worker bin/
+RUN npm install && npm cache clean --force;
+#optional  step to fix vulnerabilities reported by npm
+#RUN npm audit fix --force
+
+RUN node bin/build dist
+
+# protect sensitive folders
+RUN  mkdir -p /opt/cronicle/data /opt/cronicle/conf && chmod 0700 /opt/cronicle/data /opt/cronicle/conf
+
+ENTRYPOINT ["/sbin/tini", "--"]

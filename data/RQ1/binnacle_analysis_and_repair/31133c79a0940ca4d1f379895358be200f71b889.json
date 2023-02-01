@@ -1,0 +1,81 @@
+{
+  "startTime": 1674242950433,
+  "endTime": 1674242950622,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 45,
+        "lineEnd": 45,
+        "columnStart": 4,
+        "columnEnd": 83
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 29,
+        "lineEnd": 29,
+        "columnStart": 4,
+        "columnEnd": 34
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 33,
+        "lineEnd": 33,
+        "columnStart": 4,
+        "columnEnd": 53
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 63,
+        "lineEnd": 63,
+        "columnStart": 4,
+        "columnEnd": 44
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 33,
+        "lineEnd": 33,
+        "columnStart": 4,
+        "columnEnd": 53
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 33,
+        "lineEnd": 33,
+        "columnStart": 4,
+        "columnEnd": 53
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 63,
+        "lineEnd": 63,
+        "columnStart": 4,
+        "columnEnd": 44
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 33,
+        "lineEnd": 33,
+        "columnStart": 4,
+        "columnEnd": 77
+      }
+    }
+  ],
+  "repairedDockerfile": "#############################################################################################################\n# SMV Dockerfile\n#\n# Usage: build the SMV docker image with `make docker` - the rest of this is for the release process\n#\n# SMV utilizes a multistage Docker build to integrate the process of building and testing new release\n# artifacts with the process of building new Docker images. Stage 1 is exclusively for generating the release\n# artifact. It installs dev dependencies, compiles SMV, and runs the local_bundle target from the Makefile.\n# The second stage installs only the production dependencies and then copies and unpacks the release artifact\n# from the first stage. This approach typically reduces image size, although at this time SMV's production \n# dependencies so closely match its dev dependencies that there may not be much of a delta. The first stage\n# is also used as the canonical build environment for the release - the release copies the artifact out of\n# the image and publishes that to Github.\n#############################################################################################################\n\n#############################################################################################################\n# 1. SMV builder image\n#############################################################################################################\nFROM openjdk:8-jdk as smv-build\n\nARG DEBIAN_FRONTEND=noninteractive\nARG SBT_VERSION=0.13.15\nENV PYENV_ROOT=/.pyenv\nENV SMV_HOME=/usr/lib/SMV\nENV SBT_HOME=/usr/lib/sbt\nENV PATH=${SBT_HOME}/bin:${PYENV_ROOT}/bin:${PATH}\nRUN apt-get -y update\n\nRUN wget https://dl.bintray.com/sbt/native-packages/sbt/$SBT_VERSION/sbt-$SBT_VERSION.tgz\nRUN tar -xzvf sbt-$SBT_VERSION.tgz && rm sbt-$SBT_VERSION.tgz\nRUN mv sbt /usr/lib/sbt\nRUN rm sbt-$SBT_VERSION.tgz\n\nRUN apt-get -y --no-install-recommends install make gcc libssl-dev zlib1g-dev && rm -rf /var/lib/apt/lists/*;\n\nCOPY . ${SMV_HOME}\nWORKDIR ${SMV_HOME}\n\nRUN cd ${SMV_HOME} && ls && make clean\nRUN cd ${SMV_HOME} && make assemble-fat-jar\nRUN cd ${SMV_HOME} && make local_bundle\n\nARG PYTHON_VERSION=2.7.13\n# Debian repositories don't have all of the supported versions of Python, so it will be easiest to\n# use pyenv to manage installation\nRUN curl -f -L https://github.com/pyenv/pyenv-installer/raw/master/bin/pyenv-installer | bash\nRUN ${PYENV_ROOT}/bin/pyenv install ${PYTHON_VERSION}\nRUN ${PYENV_ROOT}/bin/pyenv global ${PYTHON_VERSION}\nRUN ${PYENV_ROOT}/versions/${PYTHON_VERSION}/bin/pip install --upgrade pip\nRUN ${PYENV_ROOT}/versions/${PYTHON_VERSION}/bin/pip install -r ${SMV_HOME}/docker/smv/requirements.txt\n\n#############################################################################################################\n# 2. SMV publishable image\n#############################################################################################################\nFROM openjdk:8-jdk as smv\n\nENV TEMPLATE_DIR=/home/template\nENV PYENV_ROOT=/.pyenv\nENV SMV_HOME=/usr/lib/SMV\nENV SPARK_HOME=/usr/lib/spark\nENV PATH=${SPARK_HOME}/bin:${SMV_HOME}/tools:${PYENV_ROOT}/bin/:${PATH}\n\nRUN apt-get -y update && \\\n    apt-get -y --no-install-recommends install sudo git vim graphviz && rm -rf /var/lib/apt/lists/*;\n\n# create the projects directory and create a flag (.docker) to indicate project is inside docker image.\nRUN mkdir /projects &&\\\n    touch /projects/.docker &&\\\n    mkdir ${TEMPLATE_DIR}\n\n# Copy the pyenv installation from the first stage. This is an optimization so we don't install Python twice.\n# we can get away with this because we don't currently differentiate between dev and prod requirements.\nCOPY --from=smv-build ${PYENV_ROOT} ${PYENV_ROOT}\n\n# Copy the SMV release artifact from the first stage and unpack it. Since the same artifact is also copied\n# out and published as the official release, we are guaranteed that the published image matches the published\n# This works around the chicken/egg issues encountered with the old approach of downloading a version of\n# artifact. `smv-install` from Github raw content to install (probably) the most recent release.\nCOPY --from=smv-build /usr/lib/SMV/smv_*.tgz .\nRUN tar xzvf smv_*.tgz && rm -rf smv_*.tgz && mv ./SMV ${SMV_HOME} &&\\\n    ${SMV_HOME}/tools/spark-install --target-dir ${SPARK_HOME} &&\\\n    mkdir -p /usr/local/share/jupyter/kernels/smv-pyshell/ &&\\\n    cp ${SMV_HOME}/docker/smv/kernel.json /usr/local/share/jupyter/kernels/smv-pyshell/kernel.json &&\\\n    cp ${SMV_HOME}/docker/smv/hive-site.xml /usr/lib/spark/conf/hive-site.xml &&\\\n    cp ${SMV_HOME}/docker/smv/entrypoint.sh /usr/bin/entrypoint.sh &&\\\n    cp ${SMV_HOME}/docker/smv/bashrc /usr/lib/SMV/docker/smv/jupyter_notebook_config.py ${TEMPLATE_DIR}/\n\n# Must use bracket syntax ([\"command\"]) so that user can supply params (additional commands to execute)\nENTRYPOINT [\"entrypoint.sh\"]\n"
+}

@@ -1,0 +1,44 @@
+{
+  "startTime": 1674248620420,
+  "endTime": 1674248621264,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 44,
+        "lineEnd": 44,
+        "columnStart": 4,
+        "columnEnd": 128
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 50,
+        "lineEnd": 50,
+        "columnStart": 7,
+        "columnEnd": 77
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 83,
+        "lineEnd": 83,
+        "columnStart": 4,
+        "columnEnd": 45
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 20,
+        "lineEnd": 40,
+        "columnStart": 7,
+        "columnEnd": 17
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Copyright 2019 DeepMind Technologies Limited\n#\n# Licensed under the Apache License, Version 2.0 (the \"License\");\n# you may not use this file except in compliance with the License.\n# You may obtain a copy of the License at\n#\n#      http://www.apache.org/licenses/LICENSE-2.0\n#\n# Unless required by applicable law or agreed to in writing, software\n# distributed under the License is distributed on an \"AS IS\" BASIS,\n# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.\n# See the License for the specific language governing permissions and\n# limitations under the License.\n\n# base stage contains just binary dependencies.\n# This is used in the CI build.\nFROM nvidia/cuda:10.0-runtime-ubuntu18.04 AS base\nARG DEBIAN_FRONTEND=noninteractive\n\nRUN apt-get update -q \\\n    && apt-get install --no-install-recommends -y \\\n    curl \\\n    git \\\n    build-essential \\\n    libgl1-mesa-dev \\\n    libgl1-mesa-glx \\\n    libglew-dev \\\n    libosmesa6-dev \\\n    ffmpeg \\\n    software-properties-common \\\n    net-tools \\\n    parallel \\\n    python3.7 \\\n    python3.7-dev \\\n    rsync \\\n    unzip \\\n    vim \\\n    virtualenv \\\n    xpra \\\n    xserver-xorg-dev \\\n    fonts-symbola \\\n    && apt-get clean \\\n    && rm -rf /var/lib/apt/lists/*\n\nRUN curl -f -o /usr/local/bin/patchelf https://s3-us-west-2.amazonaws.com/openai-sci-artifacts/manual-builds/patchelf_0.9_amd64.elf \\\n    && chmod +x /usr/local/bin/patchelf\n\nENV LANG C.UTF-8\n\nRUN mkdir -p /root/.mujoco \\\n    && curl -f -o mjpro150.zip https://www.roboti.us/download/mjpro150_linux.zip \\\n    && unzip mjpro150.zip -d /root/.mujoco \\\n    && rm mjpro150.zip\n\n# Set the PATH to the venv before we create the venv, so it's visible in base.\n# This is since we may create the venv outside of Docker, e.g. in CI\n# or by binding it in for local development.\nENV PATH=\"/venv/bin:$PATH\"\nENV LD_LIBRARY_PATH /root/.mujoco/mjpro150/bin:${LD_LIBRARY_PATH}\n\n# python-req stage contains Python venv, but not code.\n# It is useful for development purposes: you can mount\n# code from outside the Docker container.\nFROM base as python-req\n\nWORKDIR /evaluating-rewards\n# Copy only necessary dependencies to build virtual environment.\n# This minimizes how often this layer needs to be rebuilt.\nCOPY ./scripts /evaluating-rewards/scripts\nCOPY ./requirements.txt /evaluating-rewards\nCOPY ./requirements-dev.txt /evaluating-rewards\n\n# mjkey.txt needs to exist for build, but doesn't need to be a real key\nRUN touch /root/.mujoco/mjkey.txt && /evaluating-rewards/scripts/build_venv.sh /venv\n\n# full stage contains everything.\n# Can be used for deployment and local testing.\nFROM python-req as full\n\n# Delay copying (and installing) the code until the very end\nCOPY . /evaluating-rewards\n# Build a wheel then install to avoid copying whole directory (pip issue #2195)\nRUN python setup.py sdist bdist_wheel\nRUN pip install --no-cache-dir dist/evaluating_rewards-*.whl\n\n# Default entrypoints\nCMD [\"pytest\", \"-n\", \"auto\", \"-vv\", \"tests/\", \"examples/\"]\n"
+}

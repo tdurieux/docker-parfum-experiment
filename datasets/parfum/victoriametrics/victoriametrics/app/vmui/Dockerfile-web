@@ -1,0 +1,18 @@
+FROM golang:1.18.4 as build-web-stage
+COPY build /build
+
+WORKDIR /build
+COPY web/ /build/
+RUN GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o web-amd64 github.com/VictoriMetrics/vmui/ && \
+    GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -o web-windows github.com/VictoriMetrics/vmui/
+
+FROM alpine:3.16.0
+USER root
+
+COPY --from=build-web-stage /build/web-amd64 /app/web
+COPY --from=build-web-stage /build/web-windows /app/web-windows
+RUN adduser -S -D -u 1000 web && chown -R web /app
+
+USER web
+EXPOSE 8080
+ENTRYPOINT ["/app/web"]

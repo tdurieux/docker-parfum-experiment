@@ -1,0 +1,34 @@
+####################################################################################################
+## WireGuard
+####################################################################################################
+FROM golang:latest as wireguard
+ARG wg_go_tag=0.0.20210323
+ARG wg_tools_tag=v1.0.20210315
+
+RUN mkdir /repo \
+    && curl -f -L https://github.com/WireGuard/wireguard-go/archive/refs/tags/0.0.20210424.tar.gz \
+    | tar -xzC /repo --strip-components=1 \
+    && cd /repo \
+    && make
+
+####################################################################################################
+## Final image
+####################################################################################################
+FROM rust:slim
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends libsqlite3-dev iproute2 iputils-ping build-essential clang libclang-dev && \
+    rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+COPY . .
+RUN cargo build \
+    && strip /app/target/debug/innernet /app/target/debug/innernet-server \
+    && cp /app/target/debug/innernet /app/target/debug/innernet-server /usr/bin/ \
+    && cargo clean
+
+COPY ./docker-tests/start-client.sh ./
+COPY ./docker-tests/start-server.sh ./
+COPY --from=wireguard /repo/wireguard-go /usr/bin/
+
+CMD ["/app/start-server.sh"]

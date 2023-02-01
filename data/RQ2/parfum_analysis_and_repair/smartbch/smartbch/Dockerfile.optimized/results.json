@@ -1,0 +1,90 @@
+{
+  "startTime": 1674253397259,
+  "endTime": 1674253398741,
+  "originalSmells": [
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 34,
+        "lineEnd": 34,
+        "columnStart": 4,
+        "columnEnd": 33
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 39,
+        "lineEnd": 39,
+        "columnStart": 4,
+        "columnEnd": 87
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 44,
+        "lineEnd": 44,
+        "columnStart": 29,
+        "columnEnd": 79
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 51,
+        "lineEnd": 51,
+        "columnStart": 21,
+        "columnEnd": 73
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 72,
+        "lineEnd": 72,
+        "columnStart": 4,
+        "columnEnd": 66
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 20,
+        "lineEnd": 20,
+        "columnStart": 4,
+        "columnEnd": 97
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 20,
+        "lineEnd": 20,
+        "columnStart": 4,
+        "columnEnd": 97
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 20,
+        "lineEnd": 20,
+        "columnStart": 4,
+        "columnEnd": 97
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 20,
+        "lineEnd": 20,
+        "columnStart": 4,
+        "columnEnd": 121
+      }
+    }
+  ],
+  "repairedDockerfile": "FROM ubuntu:20.04 AS builder\n\nMAINTAINER Josh Ellithorpe <quest@mac.com>\n\nARG SMARTBCH_VERSION=\"v0.4.4-p2\"\nARG MOEINGEVM_VERSION=\"v0.4.2\"\nARG CONFIG_VERSION=\"v0.0.6\"\n\nARG GOLANG_VERSION=\"1.18\"\nARG PATCH_CGO_VERSION=\"0.1.2\"\nARG ROCKSDB_VERSION=\"5.18.4\"\nARG SNAPPY_VERSION=\"1.1.8\"\n\nARG SMARTBCH_BUILD_TAGS=\"cppbtree\"\nARG CHAIN_ID=\"0x2710\"\nARG TARGETARCH\nENV TARGETARCH=${TARGETARCH:-amd64}\n\n# Install apt based dependencies\nRUN apt-get -y update && apt-get -y upgrade\nRUN DEBIAN_FRONTEND=\"noninteractive\" apt-get --no-install-recommends -y install cmake gcc g++ git libgflags-dev make wget && rm -rf /var/lib/apt/lists/*;\n\n# Make wget produce less visual noise in output\nRUN printf \"quiet=on\\nshow-progress=on\\nprogress=bar:force:noscroll\" > ~/.wgetrc\n\n# Setup build directory\nRUN mkdir /build\nWORKDIR /build\n\n# Install Go\nENV GOROOT=/usr/local/go\nENV GOPATH=/go\nENV PATH=$GOPATH/bin:$GOROOT/bin:$PATH\nRUN wget -O go.tgz https://dl.google.com/go/go${GOLANG_VERSION}.linux-${TARGETARCH}.tar.gz\nRUN tar -zxf go.tgz -C /usr/local && rm go.tgz\nRUN mkdir -p $GOPATH/bin\n\n# Patch Go for larger cgo stack size\nRUN wget -O cgo.tgz https://github.com/smartbch/patch-cgo-for-golang/archive/refs/tags/v${PATCH_CGO_VERSION}.tar.gz\nRUN tar -zxf cgo.tgz -C $GOROOT/src/runtime/cgo/ --strip-components=1 --wildcards \"*.c\" && rm cgo.tgz\nRUN go version\n\n# Build libsnappy\nRUN wget -O snappy.tgz https://github.com/google/snappy/archive/refs/tags/${SNAPPY_VERSION}.tar.gz\nRUN mkdir -p snappy/build && tar -zxf snappy.tgz -C snappy --strip-components=1 && rm snappy.tgz\nRUN cd snappy/build && \\\n    cmake -DSNAPPY_BUILD_TESTS=0 -DCMAKE_BUILD_TYPE=Release ../ && \\\n    make -j4 install\n\n# Build rocksdb\nRUN wget -O rocksdb.tgz https://github.com/facebook/rocksdb/archive/refs/tags/v${ROCKSDB_VERSION}.tar.gz\nRUN mkdir rocksdb && tar -zxf rocksdb.tgz -C rocksdb --strip-components=1 && rm rocksdb.tgz\nRUN cd rocksdb && \\\n    wget -O - https://raw.githubusercontent.com/smartbch/artifacts/main/patches/rocksdb.gcc11.patch | git apply -v && \\\n    CXXFLAGS=-Wno-range-loop-construct PORTABLE=1 make -j4 static_lib && \\\n    strip --strip-unneeded librocksdb.a\n\n# Build libevmwrap\nRUN git clone -b ${MOEINGEVM_VERSION} --depth 1 https://github.com/smartbch/moeingevm\nRUN cd moeingevm/evmwrap && make -j4\n\n# Build smartbchd\nENV ROCKSDB_PATH=\"/build/rocksdb\"\nENV CGO_CFLAGS=\"-I$ROCKSDB_PATH/include\"\nENV CGO_LDFLAGS=\"-L$ROCKSDB_PATH -L/build/moeingevm/evmwrap/host_bridge/ -l:librocksdb.a -lstdc++ -lm -lsnappy\"\nRUN git clone -b ${SMARTBCH_VERSION} --depth 1 https://github.com/smartbch/smartbch\nRUN cd smartbch && go build -tags ${SMARTBCH_BUILD_TAGS} github.com/smartbch/smartbch/cmd/smartbchd\n\n# Init chain\nWORKDIR /root/\nRUN /build/smartbch/smartbchd init mynode --chain-id ${CHAIN_ID}\nRUN wget https://github.com/smartbch/artifacts/releases/download/${CONFIG_VERSION}/dot.smartbchd.tgz\nRUN tar -zxf dot.smartbchd.tgz -C .smartbchd/ --strip-components=1 && rm dot.smartbchd.tgz\n\nFROM ubuntu:20.04\n\nRUN apt-get -y update && apt-get -y upgrade && apt-get clean && \\\n    rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*\n\n# Copy smartbchd binary and config files from previous stage\nCOPY --from=builder /build/smartbch/smartbchd /usr/local/bin/\nCOPY --from=builder /root/.smartbchd /root/.smartbchd\n\nWORKDIR /root/\n\nVOLUME [\"/root/.smartbchd\"]\n\nENTRYPOINT [\"smartbchd\"]\nEXPOSE 8545 8546\n"
+}

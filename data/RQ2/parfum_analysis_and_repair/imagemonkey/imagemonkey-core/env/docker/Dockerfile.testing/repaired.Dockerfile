@@ -1,0 +1,121 @@
+ARG DEBIAN_VERSION=buster
+ARG POSTGRES_VERSION=14
+
+FROM golang:1.14.4-${DEBIAN_VERSION}
+
+ARG DEBIAN_VERSION
+ARG POSTGRES_VERSION
+
+ARG CHROMEDRIVER_VERSION=90.0.4430.24
+
+RUN mkdir -p /home/go/bin
+#ENV GOPATH=/home/go
+#ENV GOBIN=/home/go/bin
+
+COPY tests/ /tmp/tests
+COPY src/commons /tmp/src/commons
+COPY src/clients /tmp/src/clients
+COPY src/ioutils /tmp/src/ioutils
+COPY src/statworker.go /tmp/src/statworker.go
+COPY src/data_processor.go /tmp/src/data_processor.go
+COPY src/bot.go /tmp/src/bot.go
+COPY src/labels_downloader.go /tmp/src/labels_downloader.go
+COPY src/trendinglabelsworker.go /tmp/src/trendinglabelsworker.go
+COPY src/make_labels_productive.go /tmp/src/make_labels_productive.go
+COPY src/image /tmp/src/image
+COPY src/languages /tmp/src/languages
+COPY src/datastructures /tmp/src/datastructures
+COPY src/go.mod /tmp/src/go.mod
+COPY src/go.sum /tmp/src/go.sum
+COPY src/datastructures /tmp/src/datastructures
+
+RUN true #docker workaround (https://github.com/moby/moby/issues/37965)
+
+COPY src/populate_labels.go /tmp/src/populate_labels.go
+COPY src/database /tmp/src/database
+COPY src/image /tmp/src/image
+
+RUN true #docker workaround (https://github.com/moby/moby/issues/37965)
+
+COPY src/parser /tmp/src/parser
+COPY env/postgres /tmp/env/postgres
+
+COPY src/webui/html/components /tmp/html/templates
+COPY src/webui/js/components /tmp/js/
+
+RUN apt-get update \
+  && apt-get install --no-install-recommends -y ca-certificates \
+  && echo "deb http://apt.postgresql.org/pub/repos/apt/ ${DEBIAN_VERSION}-pgdg main" > /etc/apt/sources.list.d/pgdg.list \
+  && curl -f -s https://www.postgresql.org/media/keys/ACCC4CF8.asc | apt-key add - \
+  && apt-get update \
+  && apt-get install -y --no-install-recommends python3 chromium postgresql-client-${POSTGRES_VERSION} python3-pip python3-setuptools python3-dev libffi-dev libssl-dev unzip \
+  && curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y \
+  && export PATH=$PATH:$HOME/.cargo/bin \
+  && pip3 install --no-cache-dir selenium requests \
+  && wget https://chromedriver.storage.googleapis.com/${CHROMEDRIVER_VERSION}/chromedriver_linux64.zip --directory-prefix=/tmp/ \
+  && cd /tmp \
+  && unzip /tmp/chromedriver_linux64.zip \
+  && ls -la /tmp \
+  && cp /tmp/chromedriver /tmp/tests/ui \
+  && rm /tmp/chromedriver_linux64.zip && rm -rf /var/lib/apt/lists/*;
+
+# install cypress dependencies
+RUN apt-get update && \
+  apt-get install --no-install-recommends -y \
+  libgtk2.0-0 \
+  libgtk-3-0 \
+  libnotify-dev \
+  libgconf-2-4 \
+  libgbm-dev \
+  libnss3 \
+  libxss1 \
+  libasound2 \
+  libxtst6 \
+  xauth \
+  xvfb \
+  nodejs \
+  npm \
+  # clean up
+  && rm -rf /var/lib/apt/lists/*
+
+# a few environment variables to make NPM installs easier
+# good colors for most applications
+ENV TERM xterm
+# avoid million NPM install messages
+ENV npm_config_loglevel warn
+# allow installing when the main user is root
+ENV npm_config_unsafe_perm true
+
+RUN cd /tmp \
+	&& npm install cypress --save-dev \
+	&& npm install --save-dev cypress-file-upload \
+	&& npm install -D cypress-xpath && npm cache clean --force;
+
+RUN cd /tmp \
+	&& wget https://github.com/tsenart/vegeta/releases/download/v12.7.0/vegeta-12.7.0-linux-amd64.tar.gz --directory-prefix=/tmp/ \
+	&& tar xvf vegeta-12.7.0-linux-amd64.tar.gz \
+	&& cd /tmp/ \
+	&& rm -f /tmp/vegeta-12.7.0-linux-amd64.tar.gz \
+	&& rm -f /tmp/CHANGELOG \
+	&& rm -f /tmp/README.md \
+	&& rm -f /tmp/LICENSE \
+	&& mv /tmp/vegeta /usr/bin/vegeta
+
+RUN cd /tmp/tests && go get -u gopkg.in/resty.v1
+RUN cd /tmp/tests && go test -c -o test	
+
+RUN cd /tmp/src/parser && go test -c -o parser_test && cp parser_test /tmp/tests/parser_test
+RUN cd /tmp/src/parser/v2 && go test -c -o parserv2_test && cp parserv2_test /tmp/tests/parserv2_test
+
+WORKDIR /tmp/tests/
+
+RUN wget https://raw.githubusercontent.com/vishnubob/wait-for-it/master/wait-for-it.sh --directory-prefix=/tmp/ \
+	&& chmod u+rx /tmp/wait-for-it.sh
+
+COPY env/docker/run_all_tests.sh /tmp/tests/run_all_tests.sh
+COPY env/docker/run_loadtests.sh /tmp/tests/run_loadtests.sh
+COPY tests/stresstest/requests.txt /tmp/tests/loadtests.txt
+
+RUN chmod u+rx ./run_all_tests.sh
+
+ENTRYPOINT ["./run_all_tests.sh"]

@@ -1,0 +1,80 @@
+{
+  "startTime": 1674254460673,
+  "endTime": 1674254461555,
+  "originalSmells": [
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 63,
+        "lineEnd": 63,
+        "columnStart": 2,
+        "columnEnd": 38
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 19,
+        "lineEnd": 20,
+        "columnStart": 1,
+        "columnEnd": 65
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 23,
+        "lineEnd": 23,
+        "columnStart": 1,
+        "columnEnd": 31
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 66,
+        "lineEnd": 66,
+        "columnStart": 2,
+        "columnEnd": 37
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 19,
+        "lineEnd": 20,
+        "columnStart": 1,
+        "columnEnd": 65
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 23,
+        "lineEnd": 23,
+        "columnStart": 1,
+        "columnEnd": 31
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 66,
+        "lineEnd": 66,
+        "columnStart": 2,
+        "columnEnd": 37
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 68,
+        "lineEnd": 68,
+        "columnStart": 2,
+        "columnEnd": 45
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Dockerfile for Inspektor Gadget CO-RE container image gadgets.\n# This is a reduced gadget container image that supports only the CO-RE\n# implementation of the gadgets, i.e, it doesn't depend on BCC. This\n# image is much smaller than the image built with gadget.bcc.Dockerfile\n# and is designed to be used on systems that support BTF\n# (CONFIG_DEBUG_INFO_BTF).\n\nARG BUILDER_IMAGE=ubuntu:20.04\nARG BASE_IMAGE=alpine:3.14\n\n# Prepare and build gadget artifacts in a container\nFROM ${BUILDER_IMAGE} as builder\n\nARG ENABLE_BTFGEN=false\nENV ENABLE_BTFGEN=${ENABLE_BTFGEN}\n\nRUN set -ex; \\\n\texport DEBIAN_FRONTEND=noninteractive; \\\n\tapt-get update && \\\n\tapt-get install --no-install-recommends -y gcc make ca-certificates git \\\n\t\tsoftware-properties-common libelf-dev pkg-config libseccomp-dev && \\\n\tapt-add-repository -y ppa:longsleep/golang-backports && \\\n\tapt-get update && \\\n\tapt-get install --no-install-recommends -y golang-1.18 && \\\n\tln -s /usr/lib/go-1.18/bin/go /bin/go && rm -rf /var/lib/apt/lists/*;\n\n# Install libbpf-dev 0.7.0 from source to be cross-platform.\nRUN git clone --branch v0.7.0 --depth 1 https://github.com/libbpf/libbpf.git && \\\n\tmake -j$(nproc) -C libbpf/src install\n\n# Download BTFHub files\nCOPY ./tools /btf-tools\nRUN set -ex; mkdir -p /tmp/btfs && \\\n\tif [ \"$ENABLE_BTFGEN\" = true ]; then \\\n\t\tcd /btf-tools && \\\n\t\t./getbtfhub.sh; \\\n\tfi\n\n# Cache go modules so they won't be downloaded at each build\nCOPY go.mod go.sum /gadget/\nRUN cd /gadget && go mod download\n\n# This COPY is limited by .dockerignore\nCOPY ./ /gadget\nRUN cd /gadget/gadget-container && make gadget-container-deps\n\n# Execute BTFGen\nRUN set -ex; \\\n\tif [ \"$ENABLE_BTFGEN\" = true ]; then \\\n\t\tcd /gadget && \\\n\t\tmake btfgen BPFTOOL=/tmp/btfhub/tools/bin/bpftool.x86_64 \\\n\t\t\tBTFHUB_ARCHIVE=/tmp/btfhub-archive/ OUTPUT=/tmp/btfs/ -j$(nproc); \\\n\tfi\n\n# Main gadget image\nFROM ${BASE_IMAGE}\n\n# install runtime dependencies  according to the package manager\n# available on the base image\nRUN set -ex; \\\n\tif command -v tdnf;then \\\n\t\ttdnf install -y libseccomp wget curl; \\\n\telif command -v yum; then \\\n\t\tyum install -y libseccomp wget curl; rm -rf /var/cache/yum \\\n\telif command -v apt-get; then \\\n\t\tapt-get update && \\\n\t\tapt-get install --no-install-recommends -y seccompwget curl; rm -rf /var/lib/apt/lists/*; \\\n\telif command -v apk; then \\\n\t\tapk add --no-cache gcompat libseccomp bash wget curl; \\\n\tfi && \\\n\trmdir /usr/src || true && ln -sf /host/usr/src /usr/src && \\\n\trm -f /etc/localtime && ln -sf /host/etc/localtime /etc/localtime\n\nCOPY gadget-container/entrypoint.sh gadget-container/cleanup.sh /\n\nCOPY --from=builder /gadget/gadget-container/bin/gadgettracermanager /bin/\n\n## Hooks Begins\n\n# OCI\nCOPY gadget-container/hooks/oci/prestart.sh gadget-container/hooks/oci/poststop.sh /opt/hooks/oci/\nCOPY --from=builder /gadget/gadget-container/bin/ocihookgadget /opt/hooks/oci/\n\n# cri-o\nCOPY gadget-container/hooks/crio/gadget-prestart.json gadget-container/hooks/crio/gadget-poststop.json /opt/hooks/crio/\n\n# nri\nCOPY --from=builder /gadget/gadget-container/bin/nrigadget /opt/hooks/nri/\nCOPY gadget-container/hooks/nri/conf.json /opt/hooks/nri/\n\n## Hooks Ends\n\n# BTF files\nCOPY --from=builder /tmp/btfs /btfs/\n\n# Mitigate https://github.com/kubernetes/kubernetes/issues/106962.\nRUN rm -f /var/run\n"
+}

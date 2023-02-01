@@ -1,0 +1,86 @@
+FROM {{ hail_ubuntu_image.image }} AS base
+
+COPY docker/hail-ubuntu/retry /bin/retry
+COPY docker/hail-ubuntu/hail-apt-get-install /bin/hail-apt-get-install
+RUN chmod 755 /bin/retry && \
+    chmod 755 /bin/hail-apt-get-install && \
+    mkdir -p /usr/share/man/man1 /usr/share/man/man2
+RUN hail-apt-get-install \
+    iproute2 \
+    iptables \
+    openjdk-8-jre-headless \
+    liblapack3
+
+COPY docker/hail-ubuntu/pip.conf /root/.config/pip/pip.conf
+COPY docker/hail-ubuntu/hail-pip-install /bin/hail-pip-install
+COPY docker/requirements.txt .
+RUN chmod 755 /bin/hail-pip-install && \
+    hail-pip-install -r requirements.txt pyspark==3.2.1
+
+ENV SPARK_HOME /usr/local/lib/python3.7/dist-packages/pyspark
+ENV PATH "$PATH:$SPARK_HOME/sbin:$SPARK_HOME/bin"
+ENV PYSPARK_PYTHON python3
+
+COPY batch/download-gcs-connector.py /
+RUN python3 /download-gcs-connector.py
+COPY docker/core-site.xml ${SPARK_HOME}/conf/core-site.xml
+
+{% if global.cloud == "gcp" %}
+RUN echo "APT::Acquire::Retries \"5\";" > /etc/apt/apt.conf.d/80-retries && \
+    hail-apt-get-install curl gnupg && \
+    export GCSFUSE_REPO=gcsfuse-bionic && \
+    echo "deb http://packages.cloud.google.com/apt $GCSFUSE_REPO main" | tee /etc/apt/sources.list.d/gcsfuse.list && \
+    curl -f https://packages.cloud.google.com/apt/doc/apt-key.gpg | apt-key add - && \
+    hail-apt-get-install fuse gcsfuse
+
+{% elif global.cloud == "azure" %}
+# https://github.com/Azure/azure-storage-fuse/issues/603
+RUN hail-apt-get-install ca-certificates pkg-config libfuse-dev cmake libcurl4-gnutls-dev libgnutls28-dev uuid-dev libgcrypt20-dev wget && \
+    wget https://packages.microsoft.com/config/ubuntu/20.04/packages-microsoft-prod.deb && \
+    dpkg -i packages-microsoft-prod.deb && \
+    apt-get update && \
+    hail-apt-get-install blobfuse
+
+{% else %}
+RUN echo "!!! UNEXPECTED CLOUD {{global.cloud}} !!!" && exit 1
+{% endif %}
+
+# Install xfsprogs
+RUN hail-apt-get-install xfsprogs
+
+# Install crun runtime dependencies
+RUN hail-apt-get-install libyajl-dev
+
+# Build crun in separate build step
+FROM base AS crun_builder
+RUN hail-apt-get-install make git gcc build-essential pkgconf libtool \
+   libsystemd-dev libcap-dev libseccomp-dev \
+   go-md2man libtool autoconf automake
+RUN git clone --depth 1 --branch 1.4.4 https://github.com/containers/crun.git && \
+   cd crun && \
+   ./autogen.sh && \
+   ./configure --build="$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)" && \
+   make && \
+   make install
+
+FROM base
+COPY --from=crun_builder /usr/local/bin/crun /usr/local/bin/crun
+RUN python3 -m pip install --upgrade --no-cache-dir pip
+
+COPY hail/python/setup-hailtop.py /hailtop/setup.py
+COPY hail/python/hailtop /hailtop/hailtop/
+COPY /hail_version /hailtop/hailtop/hail_version
+COPY hail/python/MANIFEST.in /hailtop/MANIFEST.in
+RUN hail-pip-install --no-deps /hailtop && rm -rf /hailtop
+
+COPY gear/setup.py /gear/setup.py
+COPY gear/gear /gear/gear/
+RUN hail-pip-install --no-deps /gear && rm -rf /gear
+
+COPY batch/setup.py batch/MANIFEST.in /batch/
+COPY batch/batch /batch/batch/
+RUN hail-pip-install --no-deps /batch && rm -rf /batch
+
+COPY batch/jars/junixsocket-selftest-2.3.3-jar-with-dependencies.jar /jvm-entryway/
+COPY batch/src/main/java/is /jvm-entryway/is
+COPY letsencrypt/subdomains.txt /

@@ -1,0 +1,71 @@
+{
+  "startTime": 1674249578781,
+  "endTime": 1674249579959,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 99,
+        "lineEnd": 99,
+        "columnStart": 4,
+        "columnEnd": 59
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 117,
+        "lineEnd": 117,
+        "columnStart": 4,
+        "columnEnd": 50
+      }
+    },
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 123,
+        "lineEnd": 126,
+        "columnStart": 4,
+        "columnEnd": 30
+      }
+    },
+    {
+      "rule": "mkdirUsrSrcThenRemove",
+      "position": {
+        "lineStart": 52,
+        "lineEnd": 52,
+        "columnStart": 4,
+        "columnEnd": 39
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 7,
+        "lineEnd": 13,
+        "columnStart": 4,
+        "columnEnd": 9
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 7,
+        "lineEnd": 13,
+        "columnStart": 4,
+        "columnEnd": 9
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 39,
+        "lineEnd": 47,
+        "columnStart": 4,
+        "columnEnd": 9
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM golang:1.17 as go-builder\nARG IMPOSM_REPO=\"https://github.com/omniscale/imposm3.git\"\nARG IMPOSM_VERSION=\"v0.11.1\"\n\n# Build imposm\nRUN set -eux ; \\\n    DEBIAN_FRONTEND=noninteractive apt-get update ; \\\n    DEBIAN_FRONTEND=noninteractive apt-get --no-install-recommends install -y \\\n        `# installing imposm dependencies` \\\n        libgeos-dev \\\n        libleveldb-dev \\\n        libprotobuf-dev \\\n        protobuf-compiler \\\n        ; rm -rf /var/lib/apt/lists/*; \\\n\n    apt list --installed ; \\\n\n    go version ; \\\n    go get github.com/tools/godep ; \\\n    mkdir /build-bin ; \\\n\n    /bin/bash -c 'echo \"\"; echo \"\"; echo \"##### Build imposm3 -- https://github.com/osm2vectortiles/imposm3\"' >&2 ; \\\n    #\n    # get and build specific version of imposm\n    git clone --quiet --depth 1 $IMPOSM_REPO -b $IMPOSM_VERSION \\\n        $GOPATH/src/github.com/omniscale/imposm3 ; \\\n    cd $GOPATH/src/github.com/omniscale/imposm3 ; \\\n    make build ; \\\n    # Older imposm executable was called imposm3 - rename it to the common name \"imposm\"\n    ( [ -f imposm ] && mv imposm /build-bin/imposm || mv imposm3 /build-bin/imposm )\n\n\n# Build osmborder\nFROM python:3.9 as c-builder\nARG OSMBORDER_REV=e3ae8f7a2dcdcd6dc80abab4679cb5edb7dc6fa5\n\nRUN set -eux ; \\\n    mkdir /build-bin ; \\\n    DEBIAN_FRONTEND=noninteractive apt-get update ; \\\n    DEBIAN_FRONTEND=noninteractive apt-get install  -y --no-install-recommends \\\n        `# installing osmborder dependencies` \\\n        build-essential \\\n        ca-certificates \\\n        cmake \\\n        git \\\n        libosmium2-dev \\\n        zlib1g-dev \\\n        ; rm -rf /var/lib/apt/lists/*; \\\n    /bin/bash -c 'echo \"\"; echo \"\"; echo \"##### Building osmborder -- https://github.com/pnorman/osmborder\"' >&2 ; \\\n    git clone https://github.com/pnorman/osmborder.git /usr/src/osmborder ; \\\n    cd /usr/src/osmborder ; \\\n    git checkout ${OSMBORDER_REV:?} ; \\\n    mkdir -p /usr/src/osmborder/build ; rm -rf /usr/src/osmborder/build \\\n    cd /usr/src/osmborder/build ; \\\n    cmake .. ; \\\n    make ; \\\n    make install ; \\\n    mv /usr/src/osmborder/build/src/osmborder /build-bin ; \\\n    mv /usr/src/osmborder/build/src/osmborder_filter /build-bin\n\n\n# Primary image\nFROM python:3.9-slim\nLABEL maintainer=\"Yuri Astrakhan <YuriAstrakhan@gmail.com>\"\n\nARG PG_MAJOR=12\nARG TOOLS_DIR=/usr/src/app\n\nWORKDIR ${TOOLS_DIR}\n\n#\n# IMPOSM_CONFIG_FILE can be used to provide custom IMPOSM config file\n# SQL_TOOLS_DIR can be used to provide custom SQL files instead of the files from /sql\n#\nENV TOOLS_DIR=\"$TOOLS_DIR\" \\\n    PATH=\"${TOOLS_DIR}:${PATH}\" \\\n    IMPOSM_CONFIG_FILE=${TOOLS_DIR}/config/repl_config.json \\\n    IMPOSM_MAPPING_FILE=/mapping/mapping.yaml \\\n    IMPOSM_CACHE_DIR=/cache \\\n    IMPOSM_DIFF_DIR=/import \\\n    EXPIRETILES_DIR=/import \\\n    PBF_DATA_DIR=/import \\\n    SQL_DIR=/sql \\\n    SQL_TOOLS_DIR=\"${TOOLS_DIR}/sql\"\n\n\nRUN set -eux ; \\\n    /bin/bash -c 'echo \"\"; echo \"\"; echo \"##### Installing packages...\"' >&2 ; \\\n    DEBIAN_FRONTEND=noninteractive apt-get update ; \\\n    DEBIAN_FRONTEND=noninteractive apt-get install  -y --no-install-recommends \\\n        # a few common tools\n        ca-certificates \\\n        curl \\\n        wget \\\n        git  \\\n        less \\\n        nano \\\n        procps  `# ps command` \\\n        gnupg2  `# TODO: not sure why gnupg2 is needed`  ; \\\n    curl -f https://www.postgresql.org/media/keys/ACCC4CF8.asc | apt-key add -; \\\n    /bin/bash -c 'source /etc/os-release && echo \"deb http://apt.postgresql.org/pub/repos/apt/ ${VERSION_CODENAME:?}-pgdg main ${PG_MAJOR:?}\" > /etc/apt/sources.list.d/pgdg.list' ; \\\n    DEBIAN_FRONTEND=noninteractive apt-get update ; \\\n    DEBIAN_FRONTEND=noninteractive apt-get install  -y --no-install-recommends \\\n        aria2     `# multi-stream file downloader - used by download-osm` \\\n        graphviz  `# used by layer mapping graphs` \\\n        sqlite3   `# mbtiles file manipulations`   \\\n        gdal-bin  `# contains ogr2ogr` \\\n        osmctools `# osmconvert and other OSM tools` \\\n        osmosis   `# useful toolset - https://wiki.openstreetmap.org/wiki/Osmosis` \\\n        postgresql-client-${PG_MAJOR:?}  `# psql` \\\n        \\\n        # imposm dependencies\n        libgeos-dev \\\n        libleveldb-dev \\\n        libprotobuf-dev \\\n        ; \\\n    # generate-tiles\n    curl -f -sL https://deb.nodesource.com/setup_12.x | bash -; \\\n    DEBIAN_FRONTEND=noninteractive apt-get update  ; \\\n    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends  \\\n        nodejs build-essential ; \\\n    rm -rf /var/lib/apt/lists/  ; \\\n    npm config set unsafe-perm true  ; \\\n    npm install -g \\\n      @mapbox/mbtiles@0.12.1 \\\n      @mapbox/tilelive@6.1.0 \\\n      tilelive-pgquery@1.2.0 ; npm cache clean --force; \\\n\n    /bin/bash -c 'echo \"\"; echo \"\"; echo \"##### Cleaning up\"' >&2 ; \\\n    rm -rf /var/lib/apt/lists/*\n\nRUN groupadd --gid 1000 openmaptiles \\\n  && useradd --uid 1000 --gid openmaptiles --shell /bin/bash --create-home openmaptiles\n\n# Copy requirements.txt first to avoid pip install on every code change\nCOPY ./requirements.txt .\nRUN pip install --no-cache-dir -r requirements.txt\n\n# Copy tools, imposm, and osmborder into the app dir\nCOPY --from=go-builder /build-bin/* ./\nCOPY --from=c-builder /build-bin/* ./\nCOPY . .\n\nRUN set -eux ;\\\n    mv bin/* . ;\\\n    rm -rf bin ;\\\n    rm requirements.txt ;\\\n    ./download-osm list geofabrik ;\\\n    ./download-osm list bbbike\n\nWORKDIR /tileset\n\n# In case there are no parameters, print a list of available scripts\nCMD echo \"*******************************************************************\" ;\\\n    echo \"  Please specify a script to run. Here are the available scripts.\" ;\\\n    echo \"  Use script name with --help to get more information.\" ;\\\n    echo \"  Use 'bash' to start a shell inside the tools container.\" ;\\\n    echo \"*******************************************************************\" ;\\\n    find \"${TOOLS_DIR}\" -maxdepth 1 -executable -type f -printf \" * %f\\n\" | sort\n"
+}

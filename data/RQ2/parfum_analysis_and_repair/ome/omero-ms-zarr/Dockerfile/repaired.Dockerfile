@@ -1,0 +1,1 @@
+# 6.3.0-jre8 and 6.3.0-jre11 both result in a null pointer exception

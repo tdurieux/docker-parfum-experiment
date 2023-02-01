@@ -1,0 +1,35 @@
+{
+  "startTime": 1674252263732,
+  "endTime": 1674252264859,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 14,
+        "lineEnd": 14,
+        "columnStart": 4,
+        "columnEnd": 64
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 16,
+        "lineEnd": 17,
+        "columnStart": 4,
+        "columnEnd": 14
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 52,
+        "lineEnd": 54,
+        "columnStart": 4,
+        "columnEnd": 16
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# We use a build stage to package binderhub and pycurl into a wheel which we\n# then install by itself in the final image which is relatively slimmed.\nARG DIST=bullseye\n\n\n# The build stage\n# ---------------\nFROM python:3.9-$DIST as build-stage\n# ARG DIST is defined again to be made available in this build stage's scope.\n# ref: https://docs.docker.com/engine/reference/builder/#understand-how-arg-and-from-interact\nARG DIST\n\n# Install node as required to package binderhub to a wheel\nRUN echo \"deb https://deb.nodesource.com/node_16.x $DIST main\" > /etc/apt/sources.list.d/nodesource.list \\\n && curl -f -s https://deb.nodesource.com/gpgkey/nodesource.gpg.key | apt-key add -\nRUN apt-get update \\\n && apt-get install --no-install-recommends --yes \\\n        nodejs \\\n && rm -rf /var/lib/apt/lists/*\n\n# Copy the whole git repository to /tmp/binderhub\nCOPY . /tmp/binderhub\nWORKDIR /tmp/binderhub\n\n# Build the binderhub python library into a wheel and save it to the ./dist\n# folder. There are no pycurl or ruamel.yaml.clib wheels so we build our own in\n# the build stage.\nRUN python -mpip install build && python -mbuild --wheel .\nRUN pip wheel --wheel-dir ./dist \\\n       pycurl \\\n       ruamel.yaml.clib\n\n# We download tini from here were we have wget available.\nRUN ARCH=$(uname -m); \\\n    if [ \"$ARCH\" = x86_64 ]; then ARCH=amd64; fi; \\\n    if [ \"$ARCH\" = aarch64 ]; then ARCH=arm64; fi; \\\n    wget -qO /tini \"https://github.com/krallin/tini/releases/download/v0.19.0/tini-$ARCH\" \\\n && chmod +x /tini\n\n# The final stage\n# ---------------\nFROM python:3.9-slim-$DIST\nWORKDIR /\n\n# We use tini as an entrypoint to not loose track of SIGTERM signals as sent\n# before SIGKILL when \"docker stop\" or \"kubectl delete pod\" is run. By doing\n# that the pod can terminate very quickly.\nCOPY --from=build-stage /tini /tini\n\n# The slim version doesn't include git as required by binderhub\n# or libcurl required by pycurl\nRUN apt-get update \\\n && apt-get install --no-install-recommends --yes \\\n        git \\\n        libcurl4 \\\n && rm -rf /var/lib/apt/lists/*\n\n# Copy the built wheels from the build-stage. Also copy the image\n# requirements.txt built from the binderhub package requirements.txt and the\n# requirements.in file using pip-compile.\nCOPY --from=build-stage /tmp/binderhub/dist/*.whl pre-built-wheels/\nCOPY helm-chart/images/binderhub/requirements.txt .\n\n# Install pre-built wheels and the generated requirements.txt for the image.\n# make sure that imports work,\n# because wheels were built in the build-stage\nRUN pip install --no-cache-dir \\\n        pre-built-wheels/*.whl \\\n        -r requirements.txt \\\n && python3 -c \"import pycurl, binderhub.app\"\n\nENTRYPOINT [\"/tini\", \"--\", \"python3\", \"-m\", \"binderhub\"]\nCMD [\"--config\", \"/etc/binderhub/config/binderhub_config.py\"]\nENV PYTHONUNBUFFERED=1\nEXPOSE 8585\n"
+}

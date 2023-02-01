@@ -1,0 +1,212 @@
+FROM nvidia/cuda:11.6.2-cudnn8-devel-ubuntu20.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+ARG OSVER=ubuntu2004
+ARG TENSORFLOWVER=2.9.0
+ARG CPVER=cp38
+ARG OPENVINOVER=2022.1.0
+ARG TENSORRTVER=cuda11.6-trt8.4.0.6-ea-20220212
+ARG ONNXRUNTIMEVER=1.12.0
+ARG WKDIR=/home/user
+
+# dash -> bash
+RUN echo "dash dash/sh boolean false" | debconf-set-selections \
+    && dpkg-reconfigure -p low dash
+COPY bashrc ${WKDIR}/.bashrc
+WORKDIR ${WKDIR}
+
+COPY packages/* ${WKDIR}/
+
+# Install dependencies (1)
+RUN apt-get update \
+    && apt-get install --no-install-recommends -y \
+        automake autoconf libpng-dev nano python3-pip \
+        curl zip unzip libtool swig zlib1g-dev pkg-config \
+        python3-mock libpython3-dev libpython3-all-dev \
+        g++ gcc make pciutils cpio gosu wget libmkldnn-dev \
+        libgtk-3-dev libxtst-dev sudo apt-transport-https \
+        build-essential gnupg git xz-utils vim libyaml-cpp-dev \
+        libva-drm2 libva-x11-2 vainfo libva-wayland2 libva-glx2 \
+        libva-dev libdrm-dev xorg xorg-dev protobuf-compiler \
+        openbox libx11-dev libgl1-mesa-glx libgl1-mesa-dev \
+        libtbb2 libtbb-dev libopenblas-dev libopenmpi-dev \
+        python-is-python3 software-properties-common \
+        libxcb-xinerama0 patchelf libusb-1.0-0-dev \
+    && sed -i 's/# set linenumbers/set linenumbers/g' /etc/nanorc \
+    && apt clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install dependencies (2)
+RUN pip3 install --no-cache-dir --upgrade pip \
+    && pip install --no-cache-dir --upgrade numpy==1.22.4 \
+    && pip install --no-cache-dir --upgrade tensorflowjs \
+    && pip install --no-cache-dir --upgrade coremltools \
+    && pip install --no-cache-dir --upgrade paddlepaddle \
+    && pip install --no-cache-dir --upgrade lap \
+    && pip install --no-cache-dir --upgrade pycocotools \
+    && pip install --no-cache-dir --upgrade scipy \
+    && pip install --no-cache-dir --upgrade paddle2onnx \
+    && pip install --no-cache-dir --upgrade onnx \
+    && pip install --no-cache-dir --upgrade onnxruntime-extensions \
+    && pip install --no-cache-dir --upgrade onnxsim \
+    && pip install --no-cache-dir --upgrade onnxmltools \
+    && pip install --no-cache-dir --upgrade onnxconverter-common \
+    && pip install --no-cache-dir --upgrade tf2onnx \
+    && pip install --no-cache-dir --upgrade onnx-tf \
+    && pip install --no-cache-dir --upgrade tensorflow-datasets \
+    && pip install --no-cache-dir --upgrade openvino2tensorflow \
+    && pip install --no-cache-dir --upgrade tflite2tensorflow \
+    && pip install --no-cache-dir --upgrade gdown \
+    && pip install --no-cache-dir --upgrade PyYAML \
+    && pip install --no-cache-dir --upgrade matplotlib \
+    && pip install --no-cache-dir --upgrade tf_slim \
+    && pip install --no-cache-dir --upgrade pandas \
+    && pip install --no-cache-dir --upgrade numexpr \
+    && pip install --no-cache-dir --upgrade simple-onnx-processing-tools \
+    && pip install --no-cache-dir --upgrade gluoncv \
+    && pip install --no-cache-dir --upgrade dgl \
+    && pip install --no-cache-dir --upgrade cmake \
+    && pip install --no-cache-dir --upgrade ninja \
+    && pip install --no-cache-dir --upgrade Cython \
+    && pip install --no-cache-dir --upgrade setuptools \
+    && pip install --no-cache-dir --upgrade wheel \
+    && pip install --no-cache-dir --upgrade pafy \
+    && pip install --no-cache-dir --upgrade youtube-dl \
+    && pip install --no-cache-dir --upgrade blobconverter \
+    && pip uninstall -y onnxruntime onnxruntime-gpu \
+    && pip install --no-cache-dir ${WKDIR}/onnxruntime_gpu-${ONNXRUNTIMEVER}-${CPVER}-none-linux_x86_64.whl \
+    && rm ${WKDIR}/onnxruntime_gpu-${ONNXRUNTIMEVER}-${CPVER}-none-linux_x86_64.whl \
+    && python -m pip install onnx_graphsurgeon \
+        --index-url https://pypi.ngc.nvidia.com \
+    && pip install --no-cache-dir ${WKDIR}/torch-1.12.0a0+gite68686b-${CPVER}-${CPVER}-linux_x86_64.whl \
+    && pip install --no-cache-dir ${WKDIR}/torchvision-0.13.0a0+ecbff88-${CPVER}-${CPVER}-linux_x86_64.whl \
+    && pip install --no-cache-dir ${WKDIR}/torchaudio-0.12.0a0+a71e3a4-${CPVER}-${CPVER}-linux_x86_64.whl \
+    && rm ${WKDIR}/torch-1.12.0a0+gite68686b-${CPVER}-${CPVER}-linux_x86_64.whl \
+    && rm ${WKDIR}/torchvision-0.13.0a0+ecbff88-${CPVER}-${CPVER}-linux_x86_64.whl \
+    && rm ${WKDIR}/torchaudio-0.12.0a0+a71e3a4-${CPVER}-${CPVER}-linux_x86_64.whl \
+    && pip install --no-cache-dir pycuda==2021.1 \
+    && pip install --no-cache-dir scikit-image \
+    && pip install --no-cache-dir performance-monitor \
+    && pip install --no-cache-dir graphviz \
+    && pip install --no-cache-dir pydot \
+    && ldconfig \
+    && pip cache purge \
+    && apt clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install custom tflite_runtime (MediaPipe Custom OP, FlexDelegate, XNNPACK enabled), flatc, edgetpu-compiler
+# https://github.com/PINTO0309/TensorflowLite-bin
+RUN chmod +x ${WKDIR}/tflite_runtime-${TENSORFLOWVER}-${CPVER}-none-linux_x86_64.whl \
+    && pip3 install --no-cache-dir --force-reinstall ${WKDIR}/tflite_runtime-${TENSORFLOWVER}-${CPVER}-none-linux_x86_64.whl \
+    && rm ${WKDIR}/tflite_runtime-${TENSORFLOWVER}-${CPVER}-none-linux_x86_64.whl \
+    && tar -zxvf ${WKDIR}/flatc.tar.gz \
+    && chmod +x ${WKDIR}/flatc \
+    && rm ${WKDIR}/flatc.tar.gz \
+    && wget https://github.com/PINTO0309/tflite2tensorflow/raw/main/schema/schema.fbs \
+    && curl -f https://packages.cloud.google.com/apt/doc/apt-key.gpg | apt-key add - \
+    && echo "deb https://packages.cloud.google.com/apt coral-edgetpu-stable main" | tee /etc/apt/sources.list.d/coral-edgetpu.list \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends edgetpu-compiler \
+    && pip cache purge \
+    && apt clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install TensorRT additional package
+RUN dpkg -i ${WKDIR}/nv-tensorrt-repo-${OSVER}-${TENSORRTVER}_1-1_amd64.deb \
+    && apt-key add /var/nv-tensorrt-repo-${OSVER}-${TENSORRTVER}/7fa2af80.pub \
+    && apt-get update \
+    && apt-get install --no-install-recommends -y \
+        tensorrt uff-converter-tf graphsurgeon-tf \
+        python3-libnvinfer-dev onnx-graphsurgeon \
+    && rm ${WKDIR}/nv-tensorrt-repo-${OSVER}-${TENSORRTVER}_1-1_amd64.deb \
+    && cd /usr/src/tensorrt/samples/trtexec \
+    && make \
+    && apt clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Custom TensorFlow (MediaPipe Custom OP, FlexDelegate, XNNPACK enabled)
+# https://github.com/PINTO0309/Tensorflow-bin
+RUN pip install --no-cache-dir --force-reinstall ${WKDIR}/tensorflow-${TENSORFLOWVER}-${CPVER}-none-linux_x86_64.whl \
+    && rm ${WKDIR}/tensorflow-${TENSORFLOWVER}-${CPVER}-none-linux_x86_64.whl \
+    && pip cache purge \
+    && apt clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install onnx-tensorrt
+RUN git clone --recursive https://github.com/onnx/onnx-tensorrt \
+    && cd onnx-tensorrt \
+    && git checkout 4ebfd965edb2737d02c3202749a7bc499d53c585 \
+    && mkdir build \
+    && cd build \
+    && cmake .. -DTENSORRT_ROOT=/usr/src/tensorrt \
+    && make -j$(nproc) \
+    && make install
+
+# Install torch2trt
+RUN git clone https://github.com/NVIDIA-AI-IOT/torch2trt \
+    && cd torch2trt \
+    && git checkout 458394febf25b879cb6ea2e12f0060ef4beae7a3 \
+    && python3 setup.py install
+
+# Download the ultra-small sample data set for INT8 calibration
+RUN mkdir sample_npy \
+    && mv calibration_data_img_sample.npy sample_npy/
+
+# LLVM
+RUN wget https://apt.llvm.org/llvm.sh \
+    && chmod +x llvm.sh \
+    && ./llvm.sh 14 \
+    && apt clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# OpenVINO
+# https://github.com/PINTO0309/20220228_intel_deeplearning_day_hitnet_demo#4-4-building-openvino--openvino%E3%81%AE%E3%83%93%E3%83%AB%E3%83%89
+RUN pip install --no-cache-dir ${WKDIR}/openvino-${OPENVINOVER}-000-${CPVER}-none-manylinux_2_31_x86_64.whl \
+    && pip install --no-cache-dir ${WKDIR}/openvino_dev-${OPENVINOVER}-000-py3-none-any.whl \
+    && rm ${WKDIR}/openvino-${OPENVINOVER}-000-${CPVER}-none-manylinux_2_31_x86_64.whl \
+    && rm ${WKDIR}/openvino_dev-${OPENVINOVER}-000-py3-none-any.whl \
+    && pip cache purge
+
+# Clear caches
+RUN apt clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create a user who can sudo in the Docker container
+ENV USERNAME=user
+RUN echo "root:root" | chpasswd \
+    && adduser --disabled-password --gecos "" "${USERNAME}" \
+    && echo "${USERNAME}:${USERNAME}" | chpasswd \
+    && echo "%${USERNAME}    ALL=(ALL)   NOPASSWD:    ALL" >> /etc/sudoers.d/${USERNAME} \
+    && chmod 0440 /etc/sudoers.d/${USERNAME}
+USER ${USERNAME}
+RUN sudo chown ${USERNAME}:${USERNAME} ${WKDIR} \
+    && sudo chmod 777 ${WKDIR}/.bashrc
+
+# OpenCL settings - https://github.com/intel/compute-runtime/releases
+RUN cd ${WKDIR} \
+    && sudo dpkg -i libigdgmm12_22.1.2_amd64.deb \
+    && sudo dpkg -i intel-igc-core_1.0.11061_amd64.deb \
+    && sudo dpkg -i intel-igc-opencl_1.0.11061_amd64.deb \
+    && sudo dpkg -i intel-level-zero-gpu_1.3.23034_amd64.deb \
+    && sudo dpkg -i intel-level-zero-gpu-dbgsym_1.3.23034_amd64.deb \
+    && sudo dpkg --auto-deconfigure --force-all -i intel-opencl-icd_22.17.23034_amd64.deb \
+    && sudo dpkg -i intel-opencl-icd-dbgsym_22.17.23034_amd64.deb \
+    && rm intel-igc-core_1.0.11061_amd64.deb \
+    && rm intel-igc-opencl_1.0.11061_amd64.deb \
+    && rm intel-level-zero-gpu_1.3.23034_amd64.deb \
+    && rm intel-level-zero-gpu-dbgsym_1.3.23034_amd64.deb \
+    && rm intel-opencl-icd_22.17.23034_amd64.deb \
+    && rm intel-opencl-icd-dbgsym_22.17.23034_amd64.deb \
+    && rm libigdgmm12_22.1.2_amd64.deb \
+    && sudo apt clean \
+    && sudo rm -rf /var/lib/apt/lists/*
+
+# Final processing of onnx-tensorrt install
+RUN echo 'GPU=$(python3 -c "import torch;print(torch.cuda.is_available())")' >> ${HOME}/.bashrc \
+    && echo 'if [ $GPU = "True" ]; then' >> ${HOME}/.bashrc \
+    && echo "export PATH=${PATH}:/usr/src/tensorrt/bin:/onnx-tensorrt/build" >> ${HOME}/.bashrc \
+    && echo "cd ${HOME}/onnx-tensorrt" >> ${HOME}/.bashrc \
+    && echo "sudo python setup.py install" >> ${HOME}/.bashrc \
+    && echo "fi" >> ${HOME}/.bashrc \
+    && echo "cd ${WKDIR}" >> ${HOME}/.bashrc \
+    && echo "cd ${HOME}/workdir" >> ${HOME}/.bashrc

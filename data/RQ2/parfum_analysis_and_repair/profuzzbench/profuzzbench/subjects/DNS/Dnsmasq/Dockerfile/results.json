@@ -1,0 +1,72 @@
+{
+  "startTime": 1674219962936,
+  "endTime": 1674219964693,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 31,
+        "lineEnd": 31,
+        "columnStart": 4,
+        "columnEnd": 27
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 5,
+        "lineEnd": 23,
+        "columnStart": 4,
+        "columnEnd": 8
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 64,
+        "lineEnd": 64,
+        "columnStart": 4,
+        "columnEnd": 31
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 64,
+        "lineEnd": 64,
+        "columnStart": 4,
+        "columnEnd": 31
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 5,
+        "lineEnd": 23,
+        "columnStart": 4,
+        "columnEnd": 8
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 64,
+        "lineEnd": 64,
+        "columnStart": 4,
+        "columnEnd": 31
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 64,
+        "lineEnd": 64,
+        "columnStart": 4,
+        "columnEnd": 55
+      }
+    }
+  ],
+  "repairedDockerfile": "FROM ubuntu:20.04\n\n# Install common dependencies\nENV DEBIAN_FRONTEND=noninteractive\nRUN apt-get -y update && \\\n    apt-get -y --no-install-recommends install sudo \\\n    apt-utils \\\n    build-essential \\\n    openssl \\\n    clang \\\n    graphviz-dev \\\n    git \\\n    autoconf \\\n    libgnutls28-dev \\\n    libssl-dev \\\n    llvm \\\n    python3-pip \\\n    nano \\\n    net-tools \\\n    vim \\\n    gdb \\\n    netcat \\\n    strace \\\n    wget && rm -rf /var/lib/apt/lists/*;\n\n# Add a new user ubuntu, pass: ubuntu\nRUN groupadd ubuntu && \\\n    useradd -rm -d /home/ubuntu -s /bin/bash -g ubuntu -G sudo -u 1000 ubuntu -p \"$(openssl passwd -1 ubuntu)\"\n\nRUN chmod 777 /tmp\n\nRUN pip3 install --no-cache-dir gcovr==4.2\n\n# Use ubuntu as default username\nUSER ubuntu\nWORKDIR /home/ubuntu\n\n# Import environment variable to pass as parameter to make (e.g., to make parallel builds with -j)\nARG MAKE_OPT\n\n# Set up fuzzers\nRUN git clone https://github.com/profuzzbench/aflnet.git && \\\n    cd aflnet && \\\n    make clean all $MAKE_OPT && \\\n    cd llvm_mode && make $MAKE_OPT\n\nRUN git clone https://github.com/profuzzbench/aflnwe.git && \\\n    cd aflnwe && \\\n    make clean all $MAKE_OPT && \\\n    cd llvm_mode && make $MAKE_OPT\n\n# Set up environment variables for AFLNet\nENV WORKDIR=\"/home/ubuntu/experiments\"\nENV AFLNET=\"/home/ubuntu/aflnet\"\nENV PATH=\"${PATH}:${AFLNET}:/home/ubuntu/.local/bin:${WORKDIR}\"\nENV AFL_PATH=\"${AFLNET}\"\nENV AFL_I_DONT_CARE_ABOUT_MISSING_CRASHES=1 \\\n    AFL_SKIP_CPUFREQ=1 \\\n    AFL_NO_AFFINITY=1\n\n\nRUN mkdir $WORKDIR\n\nUSER root\nRUN apt-get -y --no-install-recommends install dnsutils && rm -rf /var/lib/apt/lists/*;\n\nCOPY --chown=ubuntu:ubuntu dnsmasq.patch ${WORKDIR}/dnsmasq.patch\n\n# Set up environment variables for ASAN\nenv ASAN_OPTIONS='abort_on_error=1:symbolize=0:detect_leaks=0:detect_stack_use_after_return=1:detect_container_overflow=0:poison_array_cookie=0:malloc_fill_byte=0:max_malloc_fill_size=16777216'\n\n# Download and compile Dnsmasq for fuzzing\nRUN cd $WORKDIR && \\\n    git clone git://thekelleys.org.uk/dnsmasq.git && \\\n    cd dnsmasq && \\\n    git checkout v2.73rc6 && \\\n    patch -p1 < ${WORKDIR}/dnsmasq.patch && \\\n    AFL_USE_ASAN=1 CC=afl-clang-fast make $MAKE_OPT\n\n# Download and compile Dnsmasq for coverage analysis\nRUN cd $WORKDIR && \\\n    git clone git://thekelleys.org.uk/dnsmasq.git dnsmasq-gcov && \\\n    cd dnsmasq-gcov && \\\n    git checkout v2.73rc6 && \\\n    patch -p1 < ${WORKDIR}/dnsmasq.patch && \\\n    make CFLAGS=\"-fprofile-arcs -ftest-coverage\" LDFLAGS=\"-fprofile-arcs -ftest-coverage\" $MAKE_OPT\n\n\nCOPY --chown=ubuntu:ubuntu in-dns ${WORKDIR}/in-dns\nCOPY --chown=ubuntu:ubuntu dns.dict ${WORKDIR}/dns.dict\nCOPY --chown=ubuntu:ubuntu cov_script.sh ${WORKDIR}/cov_script\nCOPY --chown=ubuntu:ubuntu run.sh ${WORKDIR}/run\nCOPY --chown=ubuntu:ubuntu dnsmasq.conf ${WORKDIR}/dnsmasq.conf\n\nRUN cp ${WORKDIR}/dnsmasq.conf /etc/ && \\\n    echo address=/test.com/5.5.5.5 | sudo tee -a /etc/dnsmasq.conf\n"
+}

@@ -1,0 +1,49 @@
+FROM python:3.8-slim
+
+LABEL description="Aether Entity Extraction Module" \
+      name="aether-extractor" \
+      author="eHealth Africa"
+
+################################################################################
+## set up container
+################################################################################
+
+RUN apt-get update -qq > /dev/null && \
+    apt-get -qq --no-install-recommends \
+        --yes \
+        --allow-downgrades \
+        --allow-remove-essential \
+        --allow-change-held-packages \
+        install gcc redis-server curl > /dev/null && \
+    useradd -ms /bin/false aether && rm -rf /var/lib/apt/lists/*;
+
+WORKDIR /code
+ENTRYPOINT ["/code/entrypoint.sh"]
+
+################################################################################
+## install dependencies
+## copy files one by one and split commands to use docker cache
+################################################################################
+
+COPY --chown=aether:aether ./conf/pip /code/conf/pip
+
+ENV VIRTUAL_ENV=/var/run/aether/venv
+ENV PATH="$VIRTUAL_ENV/bin:$PATH"
+
+RUN mkdir -p $VIRTUAL_ENV && \
+    python3 -m venv $VIRTUAL_ENV && \
+    pip install --no-cache-dir -q --upgrade pip && \
+    pip install --no-cache-dir -q -r /code/conf/pip/requirements.txt
+
+COPY --chown=aether:aether ./ /code
+
+################################################################################
+## create application version and revision files
+################################################################################
+
+ARG VERSION=0.0.0
+ARG GIT_REVISION
+
+RUN mkdir -p /var/tmp && \
+    echo $VERSION > /var/tmp/VERSION && \
+    echo $GIT_REVISION > /var/tmp/REVISION

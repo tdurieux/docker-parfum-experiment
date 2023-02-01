@@ -1,0 +1,43 @@
+FROM python:3.8-slim
+
+ENV PYTHONDONTWRITEBYTECODE 1
+ENV FLASK_APP "main.py"
+# Force stdin, stdout and stderr to be totally unbuffered.
+ENV PYTHONUNBUFFERED 1
+# The product's customLabel field that will be set to track optimization.
+# Set to "customLabel{0-4}".
+# Items can be filtered by this label in Google Ads to track optimization performance.
+# Leave empty to turn off tracking.
+# Ref: https://developers.google.com/shopping-content/v2/reference/v2/products#resource -> see customLabel
+ENV PRODUCT_TRACKING_FIELD "customLabel4"
+
+RUN mkdir /app
+WORKDIR /app
+
+# Install Mecab for language processing
+RUN apt-get update && apt-get -y --no-install-recommends install mecab libmecab-dev mecab-ipadic-utf8 git make curl xz-utils file sudo && rm -rf /var/lib/apt/lists/*;
+
+# Set up Mecab
+RUN git clone --depth 1 https://github.com/neologd/mecab-ipadic-neologd.git
+RUN echo yes | mecab-ipadic-neologd/bin/install-mecab-ipadic-neologd -n -a
+RUN cp /etc/mecabrc /usr/local/etc/
+
+# Copy Pipfiles to app/
+COPY Pip* /app/
+
+# Install packages using Pipfile:
+#  --dev: install dev dependencies
+#  --system: do not create pipenv virtual environment
+#  --deploy --ignore-pipfile: use the Pipfile.lock to install dependencies because that has version locked
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir pipenv && \
+    pipenv install --dev --system --deploy --ignore-pipfile
+
+# Add all files in Dockerfile directory to /app (can ignore files with .dockerignore)
+ADD . /app
+
+# Install production dependencies.
+RUN pip install --no-cache-dir gunicorn tensorflow
+
+# Run gunicorn starting main.py/app object, binding IP:port
+CMD exec gunicorn --bind :$PORT --workers 1 --threads 8 --timeout 540 main:app

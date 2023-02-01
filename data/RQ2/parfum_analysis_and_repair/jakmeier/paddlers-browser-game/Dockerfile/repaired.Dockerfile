@@ -1,0 +1,1 @@
+# An image with a (recent) Rust nightly and cargo-web installed

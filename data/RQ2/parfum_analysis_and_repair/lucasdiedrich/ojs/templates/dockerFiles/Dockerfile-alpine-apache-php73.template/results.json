@@ -1,0 +1,26 @@
+{
+  "startTime": 1674248150486,
+  "endTime": 1674248151536,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 96,
+        "lineEnd": 96,
+        "columnStart": 5,
+        "columnEnd": 47
+      }
+    },
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 105,
+        "lineEnd": 105,
+        "columnStart": 4,
+        "columnEnd": 18
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM alpine:3.11\n\nLABEL maintainer=\"Public Knowledge Project <marc.bria@gmail.com>\"\n\nWORKDIR /var/www/html\n\nENV COMPOSER_ALLOW_SUPERUSER=1  \\\n\tSERVERNAME=\"localhost\"      \\\n\tHTTPS=\"on\"                  \\\n\tOJS_VERSION=%%OJS_VERSION%% \\\n\tOJS_CLI_INSTALL=\"0\"         \\\n\tOJS_DB_HOST=\"localhost\"     \\\n\tOJS_DB_USER=\"ojs\"           \\\n\tOJS_DB_PASSWORD=\"ojs\"       \\\n\tOJS_DB_NAME=\"ojs\"           \\\n\tOJS_WEB_CONF=\"/etc/apache2/conf.d/ojs.conf\"\t\\\n\tOJS_CONF=\"/var/www/html/config.inc.php\"\n\n\n# PHP_INI_DIR to be symmetrical with official php docker image\nENV PHP_INI_DIR /etc/php/7.3\n\n# When using Composer, disable the warning about running commands as root/super user\nENV COMPOSER_ALLOW_SUPERUSER=1\n\n# Basic packages\nENV PACKAGES \t\t\\\n\tapache2 \t\t\\\n\tapache2-ssl \t\\\n\tapache2-utils \t\\\n\tca-certificates \\\n\tcurl \t\t\t\\\n\tttf-freefont\t\\\n\tdcron \t\t\t\\\n\tphp7\t\t\t\\\n\tphp7-apache2\t\\\n\trunit \t\t\t\\\n\tsupervisor\n\n# PHP extensions\nENV PHP_EXTENSIONS\t\\\n\tphp7-bcmath\t\t\\\n\tphp7-bz2\t\t\\\n\tphp7-calendar\t\\\n\tphp7-ctype\t\t\\\n\tphp7-curl\t\t\\\n\tphp7-dom\t\t\\\n\tphp7-exif\t\t\\\n\tphp7-fileinfo\t\\\n\tphp7-ftp\t\t\\\n\tphp7-gettext\t\\\n\tphp7-intl\t\t\\\n\tphp7-iconv\t\t\\\n\tphp7-json\t\t\\\n\tphp7-mbstring\t\\\n\tphp7-mysqli\t\t\\\n\tphp7-opcache\t\\\n\tphp7-openssl\t\\\n\tphp7-pdo_mysql\t\\\n\tphp7-phar\t\t\\\n\tphp7-posix\t\t\\\n\tphp7-session\t\\\n\tphp7-shmop\t\t\\\n\tphp7-simplexml\t\\\n\tphp7-sockets\t\\\n\tphp7-sysvmsg\t\\\n\tphp7-sysvsem\t\\\n\tphp7-sysvshm\t\\\n\tphp7-tokenizer\t\\\n\tphp7-xml\t\t\\\n\tphp7-xmlreader\t\\\n\tphp7-xmlwriter\t\\\n\tphp7-zip\t\t\\\n\tphp7-zlib\n\n# Required to build OJS:\nENV BUILDERS \t\t\\\n\tgit \t\t\t\\\n\tnodejs \t\t\t\\\n\tnpm\n\n# To make a smaller image, we start with the copy.\n# This let us joining runs in a single layer.\nCOPY exclude.list /tmp/exclude.list\n\nRUN set -xe \\\n\t&& apk add --no-cache --virtual .build-deps $BUILDERS \\\n\t&& apk add --no-cache $PACKAGES \\\n\t&& apk add --no-cache $PHP_EXTENSIONS \\\n# Building OJS:\n\t# Configure and download code from git\n\t&& git config --global url.https://.insteadOf git:// \\\n\t&& git config --global advice.detachedHead false \\\n\t&& git clone --depth 1 --single-branch --branch $OJS_VERSION --progress https://github.com/pkp/ojs.git . \\\n\t&& git submodule update --init --recursive >/dev/null \\\n\t# Composer vudu: \\\n  && curl -f -sS https://getcomposer.org/installer | php -- --install-dir=/usr/local/bin --filename=composer.phar \\\n\t# To avoid timeouts with gitHub we use tokens:\n\t# TODO: Replace personal token by an official one.\n  # && composer.phar config -g github-oauth.github.com 58778f1c172c09f3add6cb559cbadd55de967d47 \\\n\t# Install Composer Deps:\n  && composer.phar --working-dir=lib/pkp install --no-dev \\\n  && composer.phar --working-dir=plugins/paymethod/paypal install --no-dev \\\n\t&& composer.phar --working-dir=plugins/generic/citationStyleLanguage install --no-dev \\\n\t# Node joins to the party:\n\t&& npm install -y && npm run build \\\n# Create directories\n  && mkdir -p /var/www/files /run/apache2  /run/supervisord/ \\\n\t&& cp config.TEMPLATE.inc.php config.inc.php \\\n\t&& chown -R apache:apache /var/www/* \\\n# Prepare freefont for captcha\n\t&& ln -s /usr/share/fonts/TTF/FreeSerif.ttf /usr/share/fonts/FreeSerif.ttf \\\n# Prepare crontab\n\t&& echo \"0 * * * *   ojs-run-scheduled\" | crontab - \\\n# Prepare httpd.conf\n\t&& sed -i -e '\\#<Directory />#,\\#</Directory>#d' /etc/apache2/httpd.conf \\\n\t&& sed -i -e \"s/^ServerSignature.*/ServerSignature Off/\" /etc/apache2/httpd.conf \\\n# Clear the image (list of files to be deleted in exclude.list).\n\t&& cd /var/www/html \\\n  && rm -rf $(cat /tmp/exclude.list) \\\n\t&& apk del --no-cache .build-deps \\\n\t&& rm -rf /tmp/* \\\n\t&& rm -rf /root/.cache/* \\\n# Some folders are not required (as .git .travis.yml test .gitignore .gitmodules ...)\n\t&& find . -name \".git\" -exec rm -Rf '{}' \\; \\\n\t&& find . -name \".travis.yml\" -exec rm -Rf '{}' \\; \\\n\t&& find . -name \"test\" -exec rm -Rf '{}' \\; \\\n\t&& find . \\( -name .gitignore -o -name .gitmodules -o -name .keepme \\) -exec rm -Rf '{}' \\; && npm cache clean --force;\n\nCOPY root/ /\n\nEXPOSE 80 443\n\nVOLUME [ \"/var/www/files\", \"/var/www/html/public\" ]\n\nCMD [\"/usr/bin/supervisord\", \"-c\", \"/etc/supervisord.conf\"]\n"
+}

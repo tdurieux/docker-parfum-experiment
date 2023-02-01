@@ -1,0 +1,19 @@
+FROM golang:1.18-buster
+
+WORKDIR /app
+
+RUN export DEBIAN_FRONTEND=noninteractive; \
+    apt update && \
+    apt install --no-install-recommends -y build-essential libreoffice mupdf-tools && \
+    apt install --no-install-recommends -y fontconfig fonts-dejavu fonts-dejavu-extra \
+    fonts-noto fonts-noto-cjk fonts-liberation fonts-liberation2 fonts-linuxlibertine \
+    fonts-sil-gentium fonts-sil-gentium-basic && \
+    apt clean && \
+    rm -rf /var/lib/apt/lists/*
+    
+#COPY . .
+COPY go.mod go.mod
+COPY go.sum go.sum
+RUN go mod download
+
+CMD ["sh", "start.sh"]

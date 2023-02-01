@@ -1,0 +1,63 @@
+FROM ubuntu:focal as wforce
+ARG DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && \
+    apt-get dist-upgrade -y && \
+    apt-get -y --no-install-recommends -f install \
+               autoconf \
+               automake \
+               libboost-all-dev \
+               libcurl4-openssl-dev \
+               libgeoip-dev \
+               libgetdns-dev \
+               libhiredis-dev \
+               libmaxminddb-dev \
+               liblua5.1-0-dev \
+               libluajit-5.1-dev \
+               libprotobuf-dev \
+               libssl-dev \
+               libsodium-dev \
+               libsystemd-dev \
+               libyaml-cpp-dev \
+               libjsoncpp-dev \
+               uuid-dev \
+               libz-dev \
+               libtool \
+               pkg-config \
+               protobuf-compiler \
+               pandoc \
+               wget \
+               cmake \
+               git \
+               gcc \
+               g++ && rm -rf /var/lib/apt/lists/*;
+
+WORKDIR /wforce/
+RUN mkdir /sdist
+
+RUN git clone https://github.com/jupp0r/prometheus-cpp.git
+RUN cd prometheus-cpp && git checkout tags/v0.9.0 -b v0.9.0
+RUN echo 'include(CPack)' >> prometheus-cpp/CMakeLists.txt
+RUN cat prometheus-cpp/CMakeLists.txt
+RUN cd prometheus-cpp && git submodule init && git submodule update && \
+mkdir _build && cd _build && cmake .. -DBUILD_SHARED_LIBS=off -DENABLE_PULL=off \
+-DENABLE_PUSH=off -DENABLE_COMPRESSION=off -DENABLE_TESTING=off -DCMAKE_C_COMPILER=gcc -DCMAKE_CXX_COMPILER=g++ \
+-DCMAKE_POSITION_INDEPENDENT_CODE=ON && make && make install && make package_source
+RUN cd prometheus-cpp/_build && cp prometheus-cpp*Source.tar.gz /sdist/
+
+RUN git clone https://github.com/drogonframework/drogon.git
+RUN cd drogon && git checkout tags/v1.7.1 -b v1.7.1
+RUN cd drogon && git submodule init && git submodule update && mkdir _build && cd _build && cmake .. -DBUILD_ORM=OFF && make && make install
+
+ADD CHANGELOG.md configure.ac ext LICENSE Makefile.am README.md NOTICE /wforce/
+@EXEC sdist_dirs=(m4 ext docs regression-tests wforce common trackalert report_api docker elk)
+@EXEC for d in ${sdist_dirs[@]} ; do echo "COPY $d/ /wforce/$d/" ; done
+ADD builder/helpers/set-configure-ac-version.sh /wforce/builder/helpers/
+
+ARG BUILDER_VERSION
+RUN /wforce/builder/helpers/set-configure-ac-version.sh && \
+    autoreconf -v -i -f && \
+    ./configure --build="$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)" \
+      --disable-dependency-tracking && \
+    make dist
+RUN cp wforce-${BUILDER_VERSION}.tar.bz2 /sdist/
+

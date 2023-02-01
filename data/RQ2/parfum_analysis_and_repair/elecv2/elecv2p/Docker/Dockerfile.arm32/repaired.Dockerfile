@@ -1,0 +1,14 @@
+FROM arm32v7/node:alpine
+
+ADD ./ /usr/local/app
+COPY ./Docker/qemu-arm-static /usr/bin
+WORKDIR /usr/local/app
+RUN apk add --update --no-cache tzdata \
+    && chmod -R 777 /usr/local/app \
+    && yarn install --prod --network-timeout 300000 && yarn cache clean;
+
+ENV PATH /usr/local/app/node_modules/.bin:$PATH
+
+EXPOSE 80 8001 8002
+
+CMD ["pm2-runtime", "index.js", "-n", "elecV2P"]

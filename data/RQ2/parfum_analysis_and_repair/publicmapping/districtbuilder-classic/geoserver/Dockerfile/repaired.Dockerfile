@@ -1,0 +1,1 @@
+# A GeoServer installation

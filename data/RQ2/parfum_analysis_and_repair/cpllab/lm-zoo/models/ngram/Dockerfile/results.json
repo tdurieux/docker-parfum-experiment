@@ -1,0 +1,35 @@
+{
+  "startTime": 1674217195186,
+  "endTime": 1674217195705,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 36,
+        "lineEnd": 36,
+        "columnStart": 11,
+        "columnEnd": 38
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 3,
+        "lineEnd": 3,
+        "columnStart": 4,
+        "columnEnd": 41
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 32,
+        "lineEnd": 32,
+        "columnStart": 4,
+        "columnEnd": 44
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM continuumio/miniconda3:4.8.2-alpine AS builder\n\nUSER root\nRUN apk add --no-cache git openssh-client build-base\n\nARG CPL_SSH_PRV_KEY\nRUN mkdir ${HOME}/.ssh && echo \"StrictHostKeyChecking no\" >> ${HOME}/.ssh/config \\\n      && echo \"$CPL_SSH_PRV_KEY\" > ${HOME}/.ssh/id_rsa \\\n      && chmod 600 ${HOME}/.ssh/id_rsa\nRUN mkdir -p /opt/srilm \\\n        && scp -To \"StrictHostKeyChecking=no\" \\\n            cpl@syntaxgym.org:/home/cpl/srilm/{srilm-1.7.2.tar.gz,wiki_kn_5gram.lm} /opt/srilm \\\n        && mkdir /opt/srilm/checkpoint \\\n        && mv /opt/srilm/wiki_kn_5gram.lm /opt/srilm/checkpoint/model.lm\nRUN rm -rf ${HOME}/.ssh\n\nRUN cd /opt/srilm && tar -xvzf srilm-1.7.2.tar.gz && \\\n        cp Makefile tmpf && \\\n        cat tmpf | awk -v pwd=`pwd` '/SRILM =/{printf(\"SRILM = %s\\n\", pwd); next;} {print;}' > Makefile && \\\n        make && make cleanest && \\\n        rm srilm-1.7.2.tar.gz\n\n\nFROM continuumio/miniconda3:4.8.2-alpine\n\nARG MODEL_ROOT=models/ngram\n\nENV PATH \"/opt/conda/bin:$PATH\"\nCOPY --from=builder /opt/srilm /opt/srilm\n\n# Runtime dependencies\nUSER root\nRUN apk add --no-cache perl bash libstdc++ gawk libgomp\n\n# Copy in test dependencies.\nRUN conda install -qy --freeze-installed numpy nomkl \\\n        && pip install --no-cache-dir nose jsonschema\nCOPY test.py /opt/test.py\n\nENV LMZOO_CHECKPOINT_PATH /opt/srilm/checkpoint\nENV LMZOO_VOCABULARY_PATH vocab\n\nCOPY ${MODEL_ROOT}/vocab.txt \"$LMZOO_CHECKPOINT_PATH/$LMZOO_VOCABULARY_PATH\"\nCOPY ${MODEL_ROOT}/get_surprisals.awk /opt/get_surprisals.awk\nCOPY ${MODEL_ROOT}/tokenizer /opt/tokenizer\nCOPY ${MODEL_ROOT}/bin /opt/bin\nCOPY shared/unkify /opt/bin/unkify\nCOPY shared/spec /opt/bin/spec\nCOPY shared/unsupported /opt/bin/get_predictions.hdf5\n\nENV PATH \"/opt/bin:${PATH}\"\nENV PYTHONIOENCODING utf-8\n\n# Current git commit of build repository\nARG COMMIT\n# sha1 checksum of build directory\nARG FILES_SHA1\n\n# Prepare spec.\nCOPY ${MODEL_ROOT}/spec.template.json /tmp/spec.template.json\nRUN BUILD_DATETIME=\"$(date)\" cat /tmp/spec.template.json | \\\n            sed \"s/<image\\.sha1>/$COMMIT/g; s/<image\\.files_sha1>/${FILES_SHA1}/g; s/<image\\.datetime>/${BUILD_DATETIME}/g\" \\\n            > /opt/spec.template.json\n"
+}

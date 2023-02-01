@@ -1,0 +1,35 @@
+{
+  "startTime": 1674248516800,
+  "endTime": 1674248517680,
+  "originalSmells": [
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 36,
+        "lineEnd": 36,
+        "columnStart": 4,
+        "columnEnd": 22
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 12,
+        "lineEnd": 12,
+        "columnStart": 49,
+        "columnEnd": 97
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 12,
+        "lineEnd": 12,
+        "columnStart": 49,
+        "columnEnd": 97
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "###\n# Three-stage Dockerfile\n###\n\n# 1.) Get the Elixir dependencies within an Elixir container\nFROM hexpm/elixir:1.10.3-erlang-22.3.4.17-debian-buster-20210326 as elixir-builder\n\nENV LANG=\"C.UTF-8\" MIX_ENV=\"prod\"\n\nWORKDIR /root\n\n# Debian dependencies\nRUN apt-get update --allow-releaseinfo-change && apt-get install --no-install-recommends -y curl git make build-essential && rm -rf /var/lib/apt/lists/*;\n\n# Configure Git to use HTTPS in order to avoid issues with the internal MBTA network\nRUN git config --global url.https://github.com/.insteadOf git://github.com/\n\n# Install Hex+Rebar\nRUN mix local.hex --force && \\\nmix local.rebar --force\n\nADD . .\n\nRUN mix deps.get --only prod\n\n# 2) Build the frontend assets within a node.js container instead of installing node/npm\nFROM node:14.15.1-buster as assets-builder\n\nARG SENTRY_DSN=\"\"\n\n# copy in Elixir deps required to build node modules for Phoenix\nCOPY --from=elixir-builder /root/deps /root/deps\n\nADD apps/site/assets /root/apps/site/assets\n\nWORKDIR /root/apps/site/assets/\nRUN npm install -g npm && npm cache clean --force;\nRUN npm ci\n# Create apps/site/priv/static\nRUN npm run webpack:build -- --env SENTRY_DSN=$SENTRY_DSN\n# Create apps/site/react_renderer/dist/app.js\nRUN npm run webpack:build:react\n\n\n\n# 3) now, build the application back in the Elixir container\nFROM elixir-builder as app-builder\n\nWORKDIR /root\n\n# Add frontend assets compiled in the node container, required by phx.digest\nCOPY --from=assets-builder /root/apps/site/priv/static ./apps/site/priv/static\n\n# re-compile the application after the assets are copied, since some of them\n# are built into the application (SVG icons)\nRUN mix do compile, phx.digest\nRUN mix distillery.release --verbose\n\n\n# 4) Use the nodejs container for the runtime environment\n# Since we're server-rendering the React templates, we need a Javascript engine running inside the container.\nFROM node:14.15.1-buster-slim\n\n# Set exposed ports\nEXPOSE 4000\n\nENV PORT=4000 MIX_ENV=\"prod\" TERM=xterm LANG=\"C.UTF-8\" REPLACE_OS_VARS=true\n\n# erlang-crypto requires system library libssl1.1\nRUN apt-get update && apt-get install -y --no-install-recommends \\\n\tlibssl1.1 libsctp1 curl dumb-init \\\n\t&& rm -rf /var/lib/apt/lists/*\n\nWORKDIR /root\n\nCOPY --from=app-builder /root/_build/prod/rel /root/rel\nCOPY --from=assets-builder /root/apps/site/react_renderer/dist/app.js /root/rel/site/app.js\n\nADD rel/bin/startup /root/rel/site/bin/startup\n\nRUN mkdir /root/work\n\nWORKDIR /root/work\n\n# run the application\nENTRYPOINT [\"/usr/bin/dumb-init\"]\nCMD [\"/root/rel/site/bin/startup\", \"foreground\"]\n"
+}

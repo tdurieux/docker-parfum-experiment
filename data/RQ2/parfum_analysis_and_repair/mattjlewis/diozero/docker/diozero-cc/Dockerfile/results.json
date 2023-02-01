@@ -1,0 +1,63 @@
+{
+  "startTime": 1674215972447,
+  "endTime": 1674215974089,
+  "originalSmells": [
+    {
+      "rule": "wgetUseHttpsUrl",
+      "position": {
+        "lineStart": 150,
+        "lineEnd": 150,
+        "columnStart": 4,
+        "columnEnd": 99
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 151,
+        "lineEnd": 151,
+        "columnStart": 4,
+        "columnEnd": 48
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 79,
+        "lineEnd": 79,
+        "columnStart": 9,
+        "columnEnd": 38
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 79,
+        "lineEnd": 79,
+        "columnStart": 9,
+        "columnEnd": 38
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 79,
+        "lineEnd": 79,
+        "columnStart": 9,
+        "columnEnd": 38
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 79,
+        "lineEnd": 79,
+        "columnStart": 9,
+        "columnEnd": 62
+      }
+    }
+  ],
+  "repairedDockerfile": "FROM diozero/diozero-cc-base\n\n# Upgrade packages\nRUN apt-get update && apt-get -y upgrade && apt-get -y clean autoclean autoremove\n\n# Original instructions: https://solarianprogrammer.com/2018/05/06/building-gcc-cross-compiler-raspberry-pi/\n\n# Environment variables\nENV PI_GCC_TARGET_DIR=/opt/cross-pi-gcc\nENV RUN_AS_USER=develop\nARG HOME_DIR=/home/${RUN_AS_USER}\n\n# These must match the versions on the Raspberry Pi\nARG GCC_VERSION=gcc-8.3.0\nARG GLIBC_VERSION=glibc-2.28\nARG BINUTILS_VERSION=binutils-2.31.1\n# Working directory for building GCC\nARG BUILD_WORKING_DIR=${HOME_DIR}/build\nARG TARGET=arm-linux-gnueabihf\n# Number of jobs value to pass the make -j command\nARG MAKE_JOBS=4\n\n# Use GCC 8 as the default compiler otherwise there will be compilation errors\nRUN update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-8 999 && \\\n    update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-8 999 && \\\n    update-alternatives --install /usr/bin/cc cc /usr/bin/gcc-8 999 && \\\n    update-alternatives --install /usr/bin/c++ c++ /usr/bin/g++-8 999\n\n# Create the folder in which we’ll put the Pi cross compiler\nRUN mkdir -p ${PI_GCC_TARGET_DIR}\n\n# Add a user so that we don't have to run as root\nRUN useradd -m ${RUN_AS_USER} && echo \"${RUN_AS_USER}:${RUN_AS_USER}\" | chpasswd && adduser ${RUN_AS_USER} sudo\nRUN echo \"${RUN_AS_USER} ALL=(ALL) NOPASSWD: ALL\" > /etc/sudoers.d/01_${RUN_AS_USER}-nopasswd\n\n# Switch to the run as user\nUSER ${RUN_AS_USER}\n\n# Working directory\nRUN mkdir -p ${BUILD_WORKING_DIR}\nWORKDIR ${BUILD_WORKING_DIR}\n\n# Save the current PATH variable value, ensure that the cross compiler is first in the PATH\nARG OLD_PATH=${PATH}\nENV PATH=${PI_GCC_TARGET_DIR}/bin:$PATH\n\n# Download and extract GCC\nRUN wget -q https://ftp.gnu.org/gnu/gcc/${GCC_VERSION}/${GCC_VERSION}.tar.gz && \\\n    tar xf ${GCC_VERSION}.tar.gz && \\\n    rm ${GCC_VERSION}.tar.gz\n# Download and extract LibC\nRUN wget -q https://ftp.gnu.org/gnu/libc/${GLIBC_VERSION}.tar.bz2 && \\\n    tar xjf ${GLIBC_VERSION}.tar.bz2 && \\\n    rm ${GLIBC_VERSION}.tar.bz2\n# Download and extract BinUtils\nRUN wget -q https://ftp.gnu.org/gnu/binutils/${BINUTILS_VERSION}.tar.bz2 && \\\n    tar xjf ${BINUTILS_VERSION}.tar.bz2 && \\\n    rm ${BINUTILS_VERSION}.tar.bz2\n# Download the GCC prerequisites\nRUN cd ${GCC_VERSION} && contrib/download_prerequisites && rm *.tar.*\n\n# Download and install the Raspberry Pi Linux headers\nWORKDIR ${BUILD_WORKING_DIR}\nRUN git clone --depth=1 https://github.com/raspberrypi/linux\nWORKDIR ${BUILD_WORKING_DIR}/linux\nENV KERNEL=kernel7\nRUN sudo make ARCH=arm INSTALL_HDR_PATH=${PI_GCC_TARGET_DIR}/${TARGET} headers_install\n\n# Build BinUtils\nRUN mkdir ${BUILD_WORKING_DIR}/build-binutils\nWORKDIR ${BUILD_WORKING_DIR}/build-binutils\nRUN ../${BINUTILS_VERSION}/configure \\\n    --prefix=${PI_GCC_TARGET_DIR} \\\n    --with-arch=armv6 --with-fpu=vfp --with-float=hard \\\n    --target=${TARGET} \\\n    --disable-multilib\nRUN make -j${MAKE_JOBS}\nRUN sudo make install\n\nRUN sudo apt-get -y --no-install-recommends install zlib1g-dev && rm -rf /var/lib/apt/lists/*;\n\n# Build the first part of GCC\nRUN mkdir -p ${BUILD_WORKING_DIR}/build-gcc\nWORKDIR ${BUILD_WORKING_DIR}/build-gcc\n# Fixing limits.h: https://stackoverflow.com/questions/58199020/locally-built-gcc-cross-compiler-reports-mb-len-max-wrong-with-d-fortify-source\n#WORKDIR ${GCC_VERSION}\n#RUN cat gcc/limitx.h gcc/glimits.h gcc/limity.h > \\\n#    `dirname $(${TARGET}-gcc -print-libgcc-file-name)`/include-fixed/limits.h\n# Removed: --enable-bootstrap\nRUN ../${GCC_VERSION}/configure \\\n    --prefix=${PI_GCC_TARGET_DIR} \\\n    --build=x86_64-linux-gnu --host=x86_64-linux-gnu --target=${TARGET} \\\n    --enable-languages=c,c++ \\\n    --with-arch=armv6 --with-fpu=vfp --with-float=hard \\\n    --disable-multilib \\\n    --with-headers=${PI_GCC_TARGET_DIR}/${TARGET}/include/linux \\\n    --program-prefix=${TARGET}- \\\n    --with-gcc-major-version-only \\\n    --enable-shared --enable-linker-build-id \\\n    --without-included-gettext --enable-threads=posix \\\n    --enable-nls --enable-clocale=gnu --enable-libstdcxx-debug \\\n    --enable-libstdcxx-time=yes --with-default-libstdcxx-abi=new --enable-gnu-unique-object \\\n    --enable-plugin --enable-default-pie --with-system-zlib --with-target-system-zlib \\\n    --disable-libitm --disable-libquadmath --disable-libquadmath-support --disable-sjlj-exceptions \\\n    --disable-werror --enable-checking=release \\\n    --libdir=${PI_GCC_TARGET_DIR}/${TARGET}/lib\nRUN make -j${MAKE_JOBS} all-gcc\nRUN sudo make install-gcc\n# https://stackoverflow.com/questions/44419593/gcc-4-9-4-cross-compiler-build-limits-h-issue\nRUN sudo rm --recursive --force ${PI_GCC_TARGET_DIR}/${TARGET}/sys-include\n\n# Build GLIBC\nRUN mkdir -p ${BUILD_WORKING_DIR}/build-glibc\nWORKDIR ${BUILD_WORKING_DIR}/build-glibc\nRUN ../${GLIBC_VERSION}/configure \\\n    --prefix=${PI_GCC_TARGET_DIR}/${TARGET} \\\n    --build=x86_64-linux-gnu --host=${TARGET} --target=${TARGET} \\\n    --with-arch=armv6 --with-fpu=vfp --with-float=hard \\\n    --with-headers=${PI_GCC_TARGET_DIR}/${TARGET}/include \\\n    --disable-multilib libc_cv_forced_unwind=yes\nRUN sudo make install-bootstrap-headers=yes install-headers\n# Bit of a cludge - fix file permissions from the above command\nRUN sudo chown -R ${RUN_AS_USER}:users .\nRUN make -j${MAKE_JOBS} csu/subdir_lib\nRUN sudo install csu/crt1.o csu/crti.o csu/crtn.o ${PI_GCC_TARGET_DIR}/${TARGET}/lib\nRUN sudo ${TARGET}-gcc -nostdlib -nostartfiles -shared -x c /dev/null \\\n    -o ${PI_GCC_TARGET_DIR}/${TARGET}/lib/libc.so\nRUN sudo touch ${PI_GCC_TARGET_DIR}/${TARGET}/include/gnu/stubs.h\n\n# Continue building GCC\nWORKDIR ${BUILD_WORKING_DIR}/build-gcc\nRUN make -j${MAKE_JOBS} all-target-libgcc\nRUN sudo make install-target-libgcc\n\n# Finish building GLIBC\nWORKDIR ${BUILD_WORKING_DIR}/build-glibc\nRUN make -j${MAKE_JOBS}\nRUN sudo make install\n\n# Finish building GCC\nWORKDIR ${BUILD_WORKING_DIR}/build-gcc\nRUN make -j${MAKE_JOBS}\nRUN sudo make install\n\n# Restore the old path value\nENV PATH=${OLD_PATH}\n\n# Compile libi2c for various CPU architectures - diozero statically links against this library\nARG I2C_VERSION=4.1\nWORKDIR ${BUILD_WORKING_DIR}\nRUN wget -q https://deb.debian.org/debian/pool/main/i/i2c-tools/i2c-tools_${I2C_VERSION}.orig.tar.xz\nRUN tar Jxf i2c-tools_${I2C_VERSION}.orig.tar.xz && rm i2c-tools_${I2C_VERSION}.orig.tar.xz\nRUN rm i2c-tools_${I2C_VERSION}.orig.tar.xz\nWORKDIR ${BUILD_WORKING_DIR}/i2c-tools-${I2C_VERSION}\n# Note no need to build for x86-64 - that is provided by the i2ctools package itself\n# aarch64\nRUN make clean && make CC=aarch64-linux-gnu-gcc AR=aarch64-linux-gnu-ar STRIP=aarch64-linux-gnu-strip ARCH=armv8-a PREFIX=/usr\nRUN sudo cp lib/libi2c.a /usr/lib/aarch64-linux-gnu/.\n# armv7\nRUN make clean && make CC=arm-linux-gnueabihf-gcc AR=arm-linux-gnueabihf-ar STRIP=arm-linux-gnueabihf-strip ARCH=armv7 CFLAGS=\"-mfpu=vfp -mfloat-abi=hard\" PREFIX=/usr\nRUN sudo cp lib/libi2c.a /usr/lib/arm-linux-gnueabihf/.\n# armv6 - building this last out of paranoia to ensure PATH isn't modified\nRUN PATH=${PI_GCC_TARGET_DIR}/bin:${PATH} && make clean && make CC=arm-linux-gnueabihf-gcc AR=arm-linux-gnueabihf-ar STRIP=arm-linux-gnueabihf-strip ARCH=armv6 CFLAGS=\"-mfpu=vfp -mfloat-abi=hard\" PREFIX=${PI_GCC_TARGET_DIR}\nRUN PATH=${PI_GCC_TARGET_DIR}/bin:${PATH} && sudo make install PREFIX=${PI_GCC_TARGET_DIR}/arm-linux-gnueabihf\n\n# Cleanup\nWORKDIR ${HOME_DIR}\nRUN sudo rm -rf ${BUILD_WORKING_DIR}\n\n# FIXME Fix the limits.h header file. Why is the cross-compiler one missing some info?\n# https://stackoverflow.com/questions/44419593/gcc-4-9-4-cross-compiler-build-limits-h-issue\nRUN sudo cp /usr/lib/gcc-cross/arm-linux-gnueabihf/8/include-fixed/limits.h ${PI_GCC_TARGET_DIR}/arm-linux-gnueabihf/lib/gcc/arm-linux-gnueabihf/8/include-fixed/limits.h\n"
+}

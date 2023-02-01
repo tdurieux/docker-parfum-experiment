@@ -1,0 +1,58 @@
+FROM bionic
+
+ENV TZ=UTC
+RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
+
+RUN sed -i '/updates/d' /etc/apt/sources.list && \
+    sed -i '/security/d' /etc/apt/sources.list
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+      ca-certificates \
+      sudo \
+      build-essential \
+      libsodium23 \
+      libpq-dev \
+      git \
+      file \
+      autoconf \
+      debianutils \
+      gettext \
+      zip \
+      unzip \
+      wget && rm -rf /var/lib/apt/lists/*;
+
+# Need to fetch a python version that is >= 3.7 since that's the
+# lowest version supported by pyln. This is just temporary until we
+# drop support for ubuntu 18.04
+ENV PATH=/root/.pyenv/shims:/root/.pyenv/bin:$PATH
+RUN git clone https://github.com/pyenv/pyenv.git /root/.pyenv \
+    && apt-get install -y --no-install-recommends \
+      libbz2-dev \
+      libffi-dev \
+      libreadline-dev \
+      libsqlite3-dev \
+      libssl-dev \
+      zlib1g-dev \
+    && pyenv install 3.7.0 \
+    && pyenv global 3.7.0 && rm -rf /var/lib/apt/lists/*;
+
+RUN wget https://bootstrap.pypa.io/get-pip.py -O /tmp/get-pip.py && python3 /tmp/get-pip.py \
+	&& rm /tmp/get-pip.py \
+	&& pip install --no-cache-dir poetry
+
+RUN mkdir /build
+WORKDIR /build
+
+CMD git clone /repo /build \
+    && poetry export -o requirements.txt --without-hashes \
+    && pip install -r requirements.txt\
+    && tools/build-release.sh zipfile \
+    && mkdir -p /repro \
+    && cd /repro \
+    && unzip /build/release/*.zip \
+    && cd clightning* \
+    && tools/repro-build.sh \
+    && cp *.xz /build/release/* /repo/release/ \
+    && cd /repo/release \
+    && sha256sum *

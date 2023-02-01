@@ -1,0 +1,46 @@
+FROM registry.ci.openshift.org/openshift/release:golang-1.17 AS builder
+ENV GO111MODULE=on
+ENV GOFLAGS=""
+
+WORKDIR /go/src/github.com/openshift/assisted-installer-agent
+
+COPY go.mod .
+RUN go mod download
+
+COPY . .
+
+RUN make build
+
+FROM quay.io/centos/centos:stream8
+
+RUN dnf install -y \
+		findutils iputils \
+		podman \
+		# inventory
+		dmidecode ipmitool biosdevname file fio \
+		smartmontools \
+		sg3_utils \
+		# free_addresses
+		nmap \
+		# dhcp_lease_allocate
+		dhclient \
+		# logs_sender
+		tar openssh-clients \
+		# ntp_synchronizer
+		chrony \
+		&& dnf update -y systemd && dnf clean all
+
+COPY --from=builder /go/src/github.com/openshift/assisted-installer-agent/build/agent /usr/bin/agent
+COPY --from=builder /go/src/github.com/openshift/assisted-installer-agent/build/connectivity_check /usr/bin/connectivity_check
+COPY --from=builder /go/src/github.com/openshift/assisted-installer-agent/build/free_addresses /usr/bin/free_addresses
+COPY --from=builder /go/src/github.com/openshift/assisted-installer-agent/build/inventory /usr/bin/inventory
+COPY --from=builder /go/src/github.com/openshift/assisted-installer-agent/build/logs_sender /usr/bin/logs_sender
+COPY --from=builder /go/src/github.com/openshift/assisted-installer-agent/build/dhcp_lease_allocate /usr/bin/dhcp_lease_allocate
+COPY --from=builder /go/src/github.com/openshift/assisted-installer-agent/build/apivip_check /usr/bin/apivip_check
+COPY --from=builder /go/src/github.com/openshift/assisted-installer-agent/build/next_step_runner /usr/bin/next_step_runner
+COPY --from=builder /go/src/github.com/openshift/assisted-installer-agent/build/ntp_synchronizer /usr/bin/ntp_synchronizer
+COPY --from=builder /go/src/github.com/openshift/assisted-installer-agent/build/container_image_availability /usr/bin/container_image_availability
+COPY --from=builder /go/src/github.com/openshift/assisted-installer-agent/build/domain_resolution /usr/bin/domain_resolution
+COPY --from=builder /go/src/github.com/openshift/assisted-installer-agent/build/disk_speed_check /usr/bin/disk_speed_check
+
+COPY scripts/installer/* /usr/local/bin/

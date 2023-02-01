@@ -1,0 +1,39 @@
+# Build the sandbox
+FROM debian:bullseye
+
+RUN apt-get update && \
+    apt-get install --no-install-recommends -y build-essential wget automake && \
+    rm -rf /var/lib/apt/lists/ && rm -rf /var/lib/apt/lists/*;
+
+# Fetch the valgrind sources
+ARG VERSION=3.18.1
+RUN mkdir /src/ && \
+    wget -qO- "https://sourceware.org/pub/valgrind/valgrind-${VERSION}.tar.bz2" \
+      | tar -C /src/ --strip-components=1 -jx
+
+# Add the sandboxgrind source (without any tests)
+RUN mkdir /src/sandboxgrind/ && \
+    mkdir /src/sandboxgrind/tests/ && \
+    touch /src/sandboxgrind/tests/Makefile.am
+COPY src/sandboxgrind.c src/Makefile.am /src/sandboxgrind/
+
+# We only really want to build sandboxcgrind
+RUN sed -i -e '/^TOOLS =/,/^$/c TOOLS = sandboxgrind' -e '/^EXP_TOOLS =/,/^$/c EXP_TOOLS =' /src/Makefile.am && \
+    sed -i -e '/lackey\/Makefile/a sandboxgrind/Makefile\nsandboxgrind/tests/Makefile' /src/configure.ac
+
+# Build the entire thing
+WORKDIR /src/
+RUN ./autogen.sh && \
+    ./configure --build="$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)" --prefix=/sandboxgrind/ && \
+    make -j && \
+    make install
+
+# Minimize the install in here
+# This just keeps the two specified files in the correct folders, so we can easily grab them
+# in the next build steps
+RUN find /sandboxgrind/ -not -path '/sandboxgrind/bin/valgrind' \
+                        -not -path '/sandboxgrind/libexec/valgrind/sandboxgrind-amd64-linux' \
+                        -type f -delete && \
+    find /sandboxgrind/ -type d -empty -delete
+
+CMD tar -czf /build/sandboxgrind-build.tar.gz /sandboxgrind

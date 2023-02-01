@@ -1,0 +1,62 @@
+{
+  "startTime": 1674254633711,
+  "endTime": 1674254634460,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 110,
+        "lineEnd": 110,
+        "columnStart": 4,
+        "columnEnd": 140
+      }
+    },
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 76,
+        "lineEnd": 81,
+        "columnStart": 4,
+        "columnEnd": 12
+      }
+    },
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 100,
+        "lineEnd": 100,
+        "columnStart": 4,
+        "columnEnd": 15
+      }
+    },
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 114,
+        "lineEnd": 114,
+        "columnStart": 4,
+        "columnEnd": 38
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 50,
+        "lineEnd": 51,
+        "columnStart": 22,
+        "columnEnd": 19
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 50,
+        "lineEnd": 51,
+        "columnStart": 22,
+        "columnEnd": 19
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# encoding: utf-8\n# Licensed to the Apache Software Foundation (ASF) under one or more\n# contributor license agreements.  See the NOTICE file distributed with\n# this work for additional information regarding copyright ownership.\n# The ASF licenses this file to You under the Apache License, Version 2.0\n# (the \"License\"); you may not use this file except in compliance with\n# the License.  You may obtain a copy of the License at\n#\n#     http://www.apache.org/licenses/LICENSE-2.0\n#\n# Unless required by applicable law or agreed to in writing, software\n# distributed under the License is distributed on an \"AS IS\" BASIS,\n# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.\n# See the License for the specific language governing permissions and\n# limitations under the License.\n\nFROM ubuntu:16.04\nMAINTAINER USC Information Retrieval and Data Science (IRDS) irds-L@mymaillists.usc.edu\n\n# Internal unpriviled user will have this ID:\nENV CONTAINER_USER_ID=\"pdi\" \\\n    CONTAINER_GROUP_ID=\"pdi\"\n\nENV PDI_HOME=\"/home/pdi/src/polar-deep-insights\"\n\n# Updates OS and adds system required packages\nRUN apt-get update && apt-get -y upgrade && apt-get install -y --no-install-recommends \\\n      apache2 \\\n      openjdk-8-jre \\\n      nodejs \\\n      nodejs-legacy \\\n      npm \\\n      vim \\\n      emacs \\\n      git \\\n      sudo \\\n      ruby \\\n      ruby-dev \\\n      curl \\\n      libffi-dev \\\n      build-essential \\\n      software-properties-common \\\n      wget \\\n      unzip \\\n        && \\\n      apt-get clean && \\\n      rm -rf /var/lib/apt/lists/*\n\n# OpenJDK version 8 for ES\nRUN add-apt-repository ppa:openjdk-r/ppa\nRUN apt-get update && apt-get install --no-install-recommends -y \\\n      openjdk-8-jre && rm -rf /var/lib/apt/lists/*;\n\nRUN gem install compass\n\n# creates a user \"pdi\"\nRUN useradd -U -d /home/pdi -s /bin/sh ${CONTAINER_USER_ID}\nRUN mkdir /home/pdi\nRUN chown -R pdi:pdi /home/pdi\n\n# sudo access\nRUN adduser pdi sudo\nRUN echo \"pdi ALL=(ALL) NOPASSWD: ALL\" >> /etc/sudoers\n\n# Global npm folder writeable by \"pdi\"\nRUN mkdir -p /opt/npm-global && \\\n    chown pdi:pdi /opt/npm-global\n\n# After this point everthing is done as unpriveleged user\nUSER pdi\n\n# configuring environment variables\nENV NPM_CONFIG_PREFIX=/opt/npm-global\nENV PATH=$NPM_CONFIG_PREFIX/bin:$PATH\n\n# Installing usefull npm packages\nRUN npm install -g \\\n    npm@3.10.6 \\\n    grunt@1.0.1 \\\n    grunt-cli@1.2.0 \\\n    bower@1.8.4 \\\n    yo@1.8.4 && npm cache clean --force;\n\n# Creating a directory inside the container\nRUN mkdir /home/pdi/src\nWORKDIR /home/pdi/src\n\n# Copy entrypoint script into the container\nCOPY ./entrypoint.sh /deploy/entrypoint.sh\n\n# Checkout PDI and then enter insights-visualizer dir\nRUN git clone https://github.com/USCDataScience/polar-deep-insights.git\nWORKDIR /home/pdi/src/polar-deep-insights/insight-visualizer/\n\n# Override template htmls for context /pdi for Apache2\n\nCOPY app-conf/ng-app/scripts/components/configuration/template.html /home/pdi/src/polar-deep-insights/insight-visualizer/app/scripts/components/configuration/template.html\nCOPY app-conf/ng-app/scripts/components/navigation/template.html /home/pdi/src/polar-deep-insights/insight-visualizer/app/scripts/components/navigation/template.html\n\n# Build\nRUN npm install && bower install && npm cache clean --force;\n\n# Always root is set as the owner, so let's change it to pdi\nUSER root\nRUN chown -R pdi:pdi /deploy\nRUN chown -R pdi:pdi /home/pdi/src\nUSER pdi\n\n# Install ElasticSearch 2.4.6\nWORKDIR /deploy\nRUN curl -f -O https://download.elastic.co/elasticsearch/release/org/elasticsearch/distribution/zip/elasticsearch/2.4.6/elasticsearch-2.4.6.zip\nRUN unzip elasticsearch-2.4.6.zip\n\n# Install Elasticsearch-Tools\nRUN npm install -g elasticsearch-tools && npm cache clean --force;\n\n# configuring environment variables\nENV ELASTIC_PATH=/deploy/elasticsearch-2.4.6\nENV PATH=$ELASTIC_PATH/bin:$PATH\n\n# start Apache HTTPD\nUSER root\nENV APACHE_RUN_USER pdi\nENV APACHE_RUN_GROUP pdi\nENV APACHE_LOG_DIR /var/log/apache2\nCOPY ./app-conf/httpd/pdi.conf /etc/apache2/conf-enabled\nRUN a2enmod proxy_http proxy_ajp rewrite headers\nRUN echo \"ServerName pdi\" >> /etc/apache2/apache2.conf\nRUN chown -R pdi:pdi /etc/apache2 /var/log/apache2\nUSER pdi\n\nEXPOSE 80\nEXPOSE 9000\nEXPOSE 9200\nEXPOSE 35729\n\nENTRYPOINT [\"/deploy/entrypoint.sh\"]\n"
+}

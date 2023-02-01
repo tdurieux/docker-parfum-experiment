@@ -1,0 +1,35 @@
+{
+  "startTime": 1674253801735,
+  "endTime": 1674253802727,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 20,
+        "lineEnd": 20,
+        "columnStart": 7,
+        "columnEnd": 49
+      }
+    },
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 8,
+        "lineEnd": 8,
+        "columnStart": 4,
+        "columnEnd": 16
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 3,
+        "lineEnd": 5,
+        "columnStart": 7,
+        "columnEnd": 14
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# generate frontend assets\nFROM node:17 as frontend\nRUN apt-get update \\\n    && DEBIAN_FRONTEND=noninteractive apt-get install -y -o Dpkg::Options::=\"--force-confold\" --no-install-recommends --no-install-suggests \\\n        build-essential \\\n        nodejs && rm -rf /var/lib/apt/lists/*;\nWORKDIR var/www/html/src/Resources\nCOPY src/Resources/package.json src/Resources/yarn.lock ./\nRUN yarn install && yarn cache clean;\nCOPY src/Resources/ .\nCOPY public .\nRUN NODE_ENV=production yarn run build\n\n# build production container\nFROM php:7.4-fpm-alpine\nRUN apk --no-cache add \\\n        icu-dev \\\n        unzip \\\n    && docker-php-ext-install bcmath calendar intl opcache pdo_mysql  \\\n    && mv \"$PHP_INI_DIR/php.ini-production\" \"$PHP_INI_DIR/php.ini\" \\\n    && curl -f -sS https://getcomposer.org/installer | php -- --install-dir=/usr/local/bin --filename=composer \\\n    # cleanup\n    && rm -rf /tmp/*\n\n# add service configuration\nCOPY --chown=www-data:www-data docker/web/ /container/\n\nENV APP_DEBUG=\"0\" \\\n    APP_ENV=\"prod\" \\\n    APP_ROOT=\"/var/www/meals\" \\\n    # PHP default settings\n    PHP_MAX_EXECUTION_TIME=60 \\\n    PHP_MEMORY_LIMIT=120M\n\nWORKDIR $APP_ROOT\n\nRUN chown -R www-data:www-data $APP_ROOT\n\nUSER www-data:www-data\n\n# add composer dependencies\nCOPY --chown=www-data:www-data composer.json composer.lock ./\nRUN composer install \\\n        --no-plugins \\\n        --no-scripts \\\n        --optimize-autoloader \\\n        --prefer-dist\n\n# add application code and assets\nCOPY --chown=www-data:www-data . .\nCOPY --chown=www-data:www-data --from=frontend /var/www/html/public/static ./public/static\n\n# trigger composer post install scripts, e.g. clear cache, create auto-load script\nRUN composer run-script --no-cache post-install-cmd\n\nUSER root\nRUN \\\n    # copy php.ini overrides\n    cp /container/php.ini-overrides /usr/local/etc/php/conf.d/meals-overrides.ini \\\n    # fix file permissions\n    && find . -type d -exec chmod 755 '{}' \\+ \\\n    && find . -type f -exec chmod 640 '{}' \\+ \\\n    # make CLI scripts executable\n    && find bin scripts vendor/bin -type f -exec chmod 740 '{}' \\+ \\\n    # set non php files in public directory as readonly\n    && find public -type f -not -name \"*.php\" -exec chmod 644 '{}' \\+\n\nUSER www-data:www-data\nENTRYPOINT [\"/container/entrypoint\"]\nCMD [\"php-fpm\"]\n"
+}

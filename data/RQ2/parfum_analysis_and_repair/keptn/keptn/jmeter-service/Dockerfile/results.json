@@ -1,0 +1,35 @@
+{
+  "startTime": 1674254688155,
+  "endTime": 1674254688743,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 73,
+        "lineEnd": 73,
+        "columnStart": 4,
+        "columnEnd": 100
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 77,
+        "lineEnd": 77,
+        "columnStart": 4,
+        "columnEnd": 162
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 75,
+        "lineEnd": 75,
+        "columnStart": 4,
+        "columnEnd": 74
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Use the official Golang image to create a build artifact.\n# This is based on Debian and sets the GOPATH to /go.\n# https://hub.docker.com/_/golang\nFROM golang:1.18.4-alpine3.16 as builder-base\n\nWORKDIR /go/src/github.com/keptn/keptn/jmeter-service\n\n# Force the go compiler to use modules\nENV GO111MODULE=on\nENV BUILDFLAGS=\"\"\nENV GOPROXY=https://proxy.golang.org\n\nRUN apk add --no-cache gcc libc-dev git\n\n# Copy `go.mod` for definitions and `go.sum` to invalidate the next layer\n# in case of a change in the dependencies\nCOPY go.mod go.sum ./\n\n# Download dependencies\nRUN go mod download\n\n# Copy local code to the container image.\nCOPY . .\n\nFROM builder-base as builder-test\nENV GOTESTSUM_FORMAT=testname\n\nRUN go install gotest.tools/gotestsum@v1.7.0\nCMD gotestsum --no-color=false -- -race -coverprofile=coverage.txt -covermode=atomic -v ./... && mv ./coverage.txt /shared/coverage.txt\n\nFROM builder-base as builder\n\n# `skaffold debug` sets SKAFFOLD_GO_GCFLAGS to disable compiler optimizations\nARG SKAFFOLD_GO_GCFLAGS\n\n# Build the command inside the container.\n# (You may fetch or manage dependencies here, either manually or with a tool like \"godep\".)\nRUN GOOS=linux go build -ldflags '-linkmode=external' -gcflags=\"${SKAFFOLD_GO_GCFLAGS}\" -v -o jmeter-service\n\n# Use a Docker multi-stage build to create a lean production image.\n# https://docs.docker.com/develop/develop-images/multistage-build/#use-multi-stage-builds\nFROM alpine:3.16 as production\nARG version=develop\nLABEL org.opencontainers.image.source=\"https://github.com/keptn/keptn\" \\\n    org.opencontainers.image.url=\"https://keptn.sh\" \\\n    org.opencontainers.image.title=\"Keptn JMeter Service\" \\\n    org.opencontainers.image.vendor=\"Keptn\" \\\n    org.opencontainers.image.documentation=\"https://keptn.sh/docs/\" \\\n    org.opencontainers.image.licenses=\"Apache-2.0\" \\\n    org.opencontainers.image.version=\"${version}\"\n\nENV env=production\nARG JMETER_VERSION=\"5.4.3\"\nENV JMETER_HOME /opt/apache-jmeter-${JMETER_VERSION}\nENV\tJMETER_BIN\t${JMETER_HOME}/bin\nENV\tJMETER_DOWNLOAD_URL  https://archive.apache.org/dist/jmeter/binaries/apache-jmeter-${JMETER_VERSION}.tgz\n\n# Load additional extensions\nARG DYNATRACE_EXTENSION_VERSION=\"1.8.0\"\nENV DYNATRACE_EXTENSION_URL https://github.com/dynatrace-oss/jmeter-dynatrace-plugin/releases/download/${DYNATRACE_EXTENSION_VERSION}/jmeter-dynatrace-plugin-${DYNATRACE_EXTENSION_VERSION}.jar\n\n# Install extra packages\n# See https://github.com/gliderlabs/docker-alpine/issues/136#issuecomment-272703023\n# Change TimeZone TODO: TZ still is not set!\nARG TZ=\"Europe/Amsterdam\"\nRUN apk update \\\n\t&& apk upgrade \\\n\t&& apk add ca-certificates libc6-compat \\\n\t&& update-ca-certificates \\\n\t&& apk add --update openjdk8-jre tzdata curl unzip bash \\\n\t&& apk add --no-cache nss \\\n\t&& rm -rf /var/cache/apk/* \\\n\t&& mkdir -p /tmp/dependencies \\\n\t&& curl -f -L --silent ${JMETER_DOWNLOAD_URL} >  /tmp/dependencies/apache-jmeter-${JMETER_VERSION}.tgz \\\n\t&& mkdir -p /opt \\\n\t&& tar -xzf /tmp/dependencies/apache-jmeter-${JMETER_VERSION}.tgz -C /opt \\\n\t&& rm -rf /tmp/dependencies \\\n\t&& curl -f -L --silent ${DYNATRACE_EXTENSION_URL} > /opt/apache-jmeter-${JMETER_VERSION}/lib/ext/jmeter-dynatrace-plugin-${DYNATRACE_EXTENSION_VERSION}-SNAPSHOT.jar && rm /tmp/dependencies/apache-jmeter-${JMETER_VERSION}.tgz\n\n# Set global PATH such that \"jmeter\" command is found\nENV PATH $PATH:$JMETER_BIN\n\n# Copy the binary to the production image from the builder stage.\nCOPY --from=builder /go/src/github.com/keptn/keptn/jmeter-service/jmeter-service /jmeter-service\n\nEXPOSE 8080\n\n# required for external tools to detect this as a go binary\nENV GOTRACEBACK=all\n\n# Run the web service on container startup.\nCMD [\"/jmeter-service\"]\n"
+}

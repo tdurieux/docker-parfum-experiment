@@ -1,0 +1,1 @@
+FROM {{ARCH.images.base}}

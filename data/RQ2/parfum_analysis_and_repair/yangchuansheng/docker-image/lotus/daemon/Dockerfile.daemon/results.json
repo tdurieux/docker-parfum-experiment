@@ -1,0 +1,44 @@
+{
+  "startTime": 1674255602095,
+  "endTime": 1674255604517,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 47,
+        "lineEnd": 47,
+        "columnStart": 4,
+        "columnEnd": 77
+      }
+    },
+    {
+      "rule": "sha256sumEchoOneSpaces",
+      "position": {
+        "lineStart": 29,
+        "lineEnd": 29,
+        "columnStart": 4,
+        "columnEnd": 57
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 13,
+        "lineEnd": 13,
+        "columnStart": 4,
+        "columnEnd": 91
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 13,
+        "lineEnd": 13,
+        "columnStart": 4,
+        "columnEnd": 91
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM golang AS builder\nLABEL maintainer=\"lotus Docker Maintainers https://fuckcloudnative.io\"\n\nENV RUSTUP_HOME=/usr/local/rustup \\\n    CARGO_HOME=/usr/local/cargo \\\n    PATH=/usr/local/cargo/bin:$PATH \\\n    RUST_VERSION=1.46.0 \\\n    LOTUS_REP=https://github.com/filecoin-project/lotus.git \\\n    BRANCH=master \\\n    COMMIT=HEAD \\\n    REPO_DIR=lotus\n\nRUN apt update; \\\n    apt install --no-install-recommends -y mesa-opencl-icd ocl-icd-opencl-dev gcc git bzr jq pkg-config curl clang; rm -rf /var/lib/apt/lists/*; \\\n    apt upgrade -y\n\n\n# Install Rust\nRUN set -eux; \\\n    dpkgArch=\"$(dpkg --print-architecture)\"; \\\n    case \"${dpkgArch##*-}\" in \\\n        amd64) rustArch='x86_64-unknown-linux-gnu'; rustupSha256='49c96f3f74be82f4752b8bffcf81961dea5e6e94ce1ccba94435f12e871c3bdb' ;; \\\n        armhf) rustArch='armv7-unknown-linux-gnueabihf'; rustupSha256='5a2be2919319e8778698fa9998002d1ec720efe7cb4f6ee4affb006b5e73f1be' ;; \\\n        arm64) rustArch='aarch64-unknown-linux-gnu'; rustupSha256='d93ef6f91dab8299f46eef26a56c2d97c66271cea60bf004f2f088a86a697078' ;; \\\n        i386) rustArch='i686-unknown-linux-gnu'; rustupSha256='e3d0ae3cfce5c6941f74fed61ca83e53d4cd2deb431b906cbd0687f246efede4' ;; \\\n        *) echo >&2 \"unsupported architecture: ${dpkgArch}\"; exit 1 ;; \\\n    esac; \\\n    url=\"https://static.rust-lang.org/rustup/archive/1.22.1/${rustArch}/rustup-init\"; \\\n    wget \"$url\"; \\\n    echo \"${rustupSha256}  *rustup-init\" | sha256sum -c -; \\\n    chmod +x rustup-init; \\\n    ./rustup-init -y --no-modify-path --profile minimal --default-toolchain $RUST_VERSION --default-host ${rustArch}; \\\n    rm rustup-init; \\\n    chmod -R a+w $RUSTUP_HOME $CARGO_HOME; \\\n    rustup --version; \\\n    cargo --version; \\\n    rustc --version;\n\n# Get lotus\nRUN git clone --depth=1 -b $BRANCH $LOTUS_REP $REPO_DIR; \\\n    cd $REPO_DIR; \\\n    git checkout $COMMIT; \\\n    git submodule init; \\\n    git submodule update; \\\n    sed -i 's/\"check_cpu_for_feature\": null/\"check_cpu_for_feature\": \"sha_ni\"/g' extern/filecoin-ffi/rust/rustc-target-features-optimized.json; \\\n    env RUSTFLAGS='-C target-cpu=native -g' FIL_PROOFS_USE_GPU_COLUMN_BUILDER=1 FIL_PROOFS_USE_GPU_TREE_BUILDER=1 FFI_BUILD_FROM_SOURCE=1 make clean && make lotus;\n\nRUN curl -f -sOL https://github.com/krallin/tini/releases/download/v0.19.0/tini; \\\n    chmod +x tini;\n\nFROM debian:buster-slim\nLABEL maintainer=\"lotus Docker Maintainers https://fuckcloudnative.io\"\n\nENV FIL_PROOFS_PARAMETER_CACHE=/proofs \\\n    LOTUS_PATH=/lotus/lotus-daemon \\\n    RUST_LOG=Info\n\nRUN mkdir -p $LOTUS_PATH\n\n# Certs\nCOPY --from=builder /etc/ssl/certs /etc/ssl/certs\n\n# Required libs\nCOPY --from=builder /usr/lib/x86_64-linux-gnu/libdl.so /lib/libdl.so.2\nCOPY --from=builder /usr/lib/x86_64-linux-gnu/libutil.so /lib/libutil.so.1\nCOPY --from=builder /usr/lib/x86_64-linux-gnu/librt.so /lib/librt.so.1\nCOPY --from=builder /usr/lib/gcc/x86_64-linux-gnu/8/libgcc_s.so.1 /lib/libgcc_s.so.1\nCOPY --from=builder /usr/lib/x86_64-linux-gnu/libOpenCL.so.1 /lib/libOpenCL.so.1\nCOPY --from=builder /usr/lib/x86_64-linux-gnu/libstdc++.so.6 /lib/libstdc++.so.6\n\n# PID1 tini\nCOPY --from=builder /go/tini /usr/local/bin/tini\n\n# Lotus bin\nCOPY --from=builder /go/$REPO_DIR/lotus/lotus /usr/local/bin/lotus\nCOPY config.toml $LOTUS_PATH/config.toml\n\n# Lotus sync port\nEXPOSE 2333\n\n# Lotus home && proofs (optional)\n# VOLUME /lotus\n# VOLUME /proofs\n\nENTRYPOINT [\"tini\", \"--\"]\n\n# Run lotus daemon\nCMD [\"lotus\", \"daemon\"]\n"
+}

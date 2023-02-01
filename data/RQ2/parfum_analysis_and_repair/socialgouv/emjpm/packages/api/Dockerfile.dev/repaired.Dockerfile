@@ -1,0 +1,13 @@
+FROM node:15-alpine
+
+WORKDIR /app
+
+# p7zip is used to unzip encrypted file from OCMI
+# p7zip is required by https://github.com/quentinrossetti/node-7z#installation
+RUN apk add --update --no-cache p7zip
+
+ENV NODE_ENV=development
+
+USER 1000
+
+CMD [ "yarn", "workspace", "@emjpm/api", "dev" ]

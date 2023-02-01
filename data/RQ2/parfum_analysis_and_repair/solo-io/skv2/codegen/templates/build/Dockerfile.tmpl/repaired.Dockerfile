@@ -1,0 +1,5 @@
+FROM alpine
+
+COPY {{ .Repository }}-linux-amd64 /usr/local/bin/{{ .Repository }}
+
+ENTRYPOINT ["/usr/local/bin/{{ .Repository }}"]

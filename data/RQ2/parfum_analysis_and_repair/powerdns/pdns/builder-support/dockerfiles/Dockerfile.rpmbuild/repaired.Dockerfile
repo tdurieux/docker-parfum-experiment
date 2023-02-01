@@ -1,0 +1,58 @@
+FROM dist-base as package-builder
+RUN touch /var/lib/rpm/* && \
+    yum upgrade -y && \
+    yum install -y rpm-build rpmdevtools python3 "@Development Tools" && rm -rf /var/cache/yum
+
+RUN mkdir /dist /pdns
+WORKDIR /pdns
+RUN rpmdev-setuptree
+
+# Only ADD/COPY the files you really need for efficient docker caching.
+ADD builder/helpers/ /pdns/builder/helpers/
+
+# Used for -p option to only build specific spec files
+ARG BUILDER_PACKAGE_MATCH
+
+ARG BUILDER_VERSION
+ARG BUILDER_RELEASE
+COPY --from=sdist /sdist /sdist
+RUN for file in /sdist/* ; do ln -s $file /root/rpmbuild/SOURCES/ ; done && ls /root/rpmbuild/SOURCES/
+
+ADD builder-support/specs/ /pdns/builder-support/specs
+RUN find /pdns/builder-support/specs/ -not -name '*.spec' -exec ln -s {} /root/rpmbuild/SOURCES/ \;
+
+@IF [ -n "$M_authoritative$M_all" ]
+RUN touch /var/lib/rpm/* && if $(grep -q 'release 7' /etc/redhat-release); then \
+      scl enable devtoolset-8 -- builder/helpers/build-specs.sh builder-support/specs/pdns.spec; \
+    else \
+      builder/helpers/build-specs.sh builder-support/specs/pdns.spec; \
+    fi
+@ENDIF
+
+@IF [ -n "$M_recursor$M_all" ]
+RUN touch /var/lib/rpm/* &&  if $(grep -q 'release 7' /etc/redhat-release); then \
+      scl enable devtoolset-8 -- builder/helpers/build-specs.sh builder-support/specs/pdns-recursor.spec; \
+    else \
+      builder/helpers/build-specs.sh builder-support/specs/pdns-recursor.spec; \
+    fi
+@ENDIF
+
+@IF [ -n "$M_dnsdist$M_all" ]
+RUN touch /var/lib/rpm/* && mkdir /libh2o && cd /libh2o && \
+      yum install -y curl openssl-devel cmake && \
+      curl -f -L https://github.com/h2o/h2o/archive/v2.2.6.tar.gz | tar xz && \
+      CFLAGS='-fPIC' cmake -DWITH_PICOTLS=off -DWITH_BUNDLED_SSL=off -DWITH_MRUBY=off -DCMAKE_INSTALL_PREFIX=/opt ./h2o-2.2.6 && \
+      make install && rm -rf /var/cache/yum
+
+RUN touch /var/lib/rpm/* && if $(grep -q 'release 7' /etc/redhat-release); then \
+      scl enable devtoolset-8 -- builder/helpers/build-specs.sh builder-support/specs/dnsdist.spec; \
+    else \
+      builder/helpers/build-specs.sh builder-support/specs/dnsdist.spec; \
+    fi
+@ENDIF
+
+# mv across layers with overlay2 is buggy in some kernel versions (results in empty dirs)
+# See: https://github.com/moby/moby/issues/33733
+#RUN mv /root/rpmbuild/RPMS/* /dist/
+RUN cp -R /root/rpmbuild/RPMS/* /dist/
+RUN cp -R /root/rpmbuild/SRPMS/* /dist/

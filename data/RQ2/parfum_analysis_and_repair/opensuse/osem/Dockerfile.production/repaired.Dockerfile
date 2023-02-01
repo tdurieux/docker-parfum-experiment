@@ -1,0 +1,22 @@
+FROM registry.opensuse.org/opensuse/infrastructure/dale/containers/osem/base:latest
+
+ENV RAILS_ENV=production
+
+# Add our files
+COPY --chown=1000:1000 . /osem/
+
+# Install bundler & foreman
+RUN gem install bundler -v "$(grep -A 1 "BUNDLED WITH" /osem/Gemfile.lock | tail -n 1)"; \
+    gem install foreman
+
+USER osem
+WORKDIR /osem/
+
+# Install our bundle
+RUN bundle config set --local without 'test development'
+RUN bundle install --jobs=3 --retry=3
+
+# Generate assets
+RUN bundle exec rake assets:precompile
+
+CMD ["foreman", "start"]

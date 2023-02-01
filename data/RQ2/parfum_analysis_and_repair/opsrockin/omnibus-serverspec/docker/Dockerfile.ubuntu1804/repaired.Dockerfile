@@ -1,0 +1,2 @@
+FROM ghcr.io/opsrockin/omnibus_base_ubuntu18:master
+LABEL MAINTAINER=sawanoboriyu@higanworks.com

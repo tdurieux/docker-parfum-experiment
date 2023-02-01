@@ -1,0 +1,71 @@
+{
+  "startTime": 1674250938870,
+  "endTime": 1674250939672,
+  "originalSmells": [
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 9,
+        "lineEnd": 9,
+        "columnStart": 4,
+        "columnEnd": 15
+      }
+    },
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 9,
+        "lineEnd": 9,
+        "columnStart": 19,
+        "columnEnd": 57
+      }
+    },
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 45,
+        "lineEnd": 45,
+        "columnStart": 4,
+        "columnEnd": 23
+      }
+    },
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 46,
+        "lineEnd": 46,
+        "columnStart": 4,
+        "columnEnd": 20
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 17,
+        "lineEnd": 17,
+        "columnStart": 4,
+        "columnEnd": 100
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 21,
+        "lineEnd": 21,
+        "columnStart": 4,
+        "columnEnd": 74
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 22,
+        "lineEnd": 44,
+        "columnStart": 4,
+        "columnEnd": 7
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Use composer image for better caching\nFROM composer:2.3.9 AS composer-build\nCOPY composer.json composer.lock ./\nRUN composer install --no-scripts\n\n# Use node image for better caching\nFROM node:18 AS node-build\nWORKDIR /app\nCOPY package.json package-lock.json ./\nRUN npm install && npm install -g @symfony/webpack-encore && npm cache clean --force;\n\n# Run on:\nFROM debian:buster\nARG DEBIAN_FRONTEND=noninteractive\n\n# Install dependencies\nRUN apt-get update && \\\n    apt-get install -yq --no-install-recommends wget apt-transport-https lsb-release ca-certificates && \\\n    wget -O /etc/apt/trusted.gpg.d/php.gpg https://packages.sury.org/php/apt.gpg && \\\n    echo \"deb https://packages.sury.org/php/ buster main\" >> /etc/apt/sources.list.d/php.list && \\\n    apt-get update && \\\n    apt-get install -yq --no-install-recommends software-properties-common && \\\n    apt-get install -yq --no-install-recommends \\\n    php8.1-cli \\\n    php8.1-common \\\n    php8.1-curl \\\n    php8.1-dom \\\n    php8.1-gd \\\n    php8.1-imagick \\\n    php8.1-intl \\\n    php8.1-mbstring \\\n    php8.1-mysql \\\n    php8.1-xdebug \\\n    php8.1-xml \\\n    php8.1-zip \\\n    libapache2-mod-php8.1 \\\n    zlibc \\\n    acl \\\n    make \\\n    libtool \\\n    apache2 \\\n    git \\\n    curl \\\n    libgconf-2-4 \\\n    npm && rm -rf /var/lib/apt/lists/*;\nRUN npm install -g sass && npm cache clean --force;\nRUN npm install -g n && npm cache clean --force;\nRUN n stable\n\n# Overwrite default apache config\nRUN a2enmod rewrite\nCOPY /docker/apache/catroweb.conf /etc/apache2/sites-available/catroweb.conf\nRUN a2dissite 000-default.conf && \\\n    a2ensite catroweb.conf\n\n# Overwrite php config:\nRUN printf \"\\n%s\\n\" xdebug.mode=coverage >> /etc/php/8.1/apache2/php.ini\nRUN printf \"\\n%s\\n\" xdebug.mode=coverage >> /etc/php/8.1/cli/php.ini\n\n# Setting working directory\nWORKDIR /var/www/catroweb\n\n# Generate jwt config in container (will be overwritten with host keys if they exist)\nCOPY /docker/app/init-jwt-config.sh ./docker/app/init-jwt-config.sh\nRUN sh docker/app/init-jwt-config.sh\n\n# Copy all files to the container.\n# A change to any project file clears the cache of all layers defined after this command!\n# Make sure to define all project code indepandant commands above to improve performance.\nCOPY / ./\n\n# Overwrite behat config:\nCOPY behat.yaml.dist ./behat.yaml\nRUN sed -i -r \"s|(base_url:)(\\s+.+)|base_url: http://app.catroweb/index_test.php/|g\" behat.yaml && \\\n    sed -i -r \"s|(api_url:)(\\s+.+)|api_url: chrome.catroweb:9222|g\" behat.yaml\n\n# Overwrite project config:\nARG APP_ENVIRONMENT\nRUN echo \"\\n\" >> .env.local && \\\n    echo APP_ENV=$APP_ENVIRONMENT >> .env.local && \\\n    echo \"\\n\" >> .env.dev.local && \\\n    printf \"%s\\n\" DATABASE_URL=pdo-mysql://root:root@db.catroweb.dev:3306/catroweb_dev \\\n     ELASTICSEARCH_URL=http://elasticsearch:9200/ \\\n     ES_HOST=elasticsearch \\\n     ES_PORT=9200 >> .env.dev.local && \\\n    echo \"\\n\" >> .env.test.local && \\\n    printf \"%s\\n\" DATABASE_URL=pdo-mysql://root:root@db.catroweb.test:3306/catroweb_test \\\n     ELASTICSEARCH_URL=http://elasticsearch:9200/ \\\n     ES_HOST=elasticsearch \\\n     ES_PORT=9200 >> .env.test.local\n\n# Add composer executable to the container\nCOPY --from=composer-build /usr/bin/composer /usr/bin/composer\n\n# Add libraries and modules\nCOPY --from=composer-build /app/vendor vendor\nCOPY --from=node-build /app/node_modules node_modules\n\n# Add library scripts symlinks\nCOPY --from=composer-build /app/bin bin\n\n# Finally we set all permissions, and create required keys and test fixtures.\nRUN sh docker/app/prepare-test-env.sh\n\n# Run webpack encore to (re-)compile public css/js files\nRUN npm run dev\n\nEXPOSE 80\n"
+}

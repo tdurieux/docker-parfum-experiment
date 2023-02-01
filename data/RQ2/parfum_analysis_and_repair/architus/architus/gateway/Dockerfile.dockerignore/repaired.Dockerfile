@@ -1,0 +1,7 @@
+# Ignore everything
+**
+
+# Include gateway source
+!gateway
+
+# Include all python lib code

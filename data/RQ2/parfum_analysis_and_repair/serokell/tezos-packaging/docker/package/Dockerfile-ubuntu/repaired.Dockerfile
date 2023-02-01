@@ -1,0 +1,22 @@
+# SPDX-FileCopyrightText: 2021 Oxhead Alpha
+# SPDX-License-Identifier: LicenseRef-MIT-OA
+
+FROM ubuntu:20.04
+ENV DEBIAN_FRONTEND="noninteractive"
+RUN apt-get update && apt-get install --no-install-recommends -y libev-dev libgmp-dev libhidapi-dev libffi-dev zlib1g-dev libpq-dev m4 perl pkg-config \
+  debhelper dh-make dh-systemd dh-python devscripts autotools-dev python3-all python3-setuptools wget rsync && rm -rf /var/lib/apt/lists/*;
+RUN apt-get install --no-install-recommends -y software-properties-common && rm -rf /var/lib/apt/lists/*;
+RUN add-apt-repository ppa:ubuntu-mozilla-security/rust-next -y && apt-get update && apt-get -y --no-install-recommends install cargo && rm -rf /var/lib/apt/lists/*;
+RUN add-apt-repository ppa:avsm/ppa -y && apt-get update && apt-get -y --no-install-recommends install opam && rm -rf /var/lib/apt/lists/*;
+ENV USER dockerbuilder
+RUN useradd dockerbuilder && mkdir /tezos-packaging
+ENV HOME /tezos-packaging
+COPY meta.json /tezos-packaging/meta.json
+COPY protocols.json /tezos-packaging/protocols.json
+WORKDIR /tezos-packaging/docker
+ENV OPAMROOT "/tezos-packaging/docker/opamroot"
+COPY docker/package/*.py /tezos-packaging/docker/package/
+COPY docker/package/defaults /tezos-packaging/docker/package/defaults
+COPY docker/package/scripts /tezos-packaging/docker/package/scripts
+COPY LICENSE /tezos-packaging/LICENSE
+ENTRYPOINT ["python3", "-m", "package.package_generator"]

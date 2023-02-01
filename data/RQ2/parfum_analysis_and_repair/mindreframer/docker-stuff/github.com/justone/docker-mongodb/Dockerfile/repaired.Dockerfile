@@ -1,0 +1,1 @@
+# run "python -m SimpleHTTPServer &" before running docker build

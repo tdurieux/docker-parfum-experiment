@@ -1,0 +1,57 @@
+LABEL maintainer="Manuel Moos <z-man@users.sf.net>"
+
+# record libraries present in base system
+# dependencies that are fine to get from steam SDK
+RUN ls /usr/lib/*.so* /usr/lib/x86_64-linux-gnu/*.so* /usr/lib/i386-linux-gnu/*.so* \
+           /lib/*.so*     /lib/x86_64-linux-gnu/*.so*     /lib/i386-linux-gnu/*.so* \ 
+    2>/dev/null | sed -e s,.*/,, > /usr/base_library_list && \
+apt-get -y update && apt-get install --no-install-recommends \
+g++ \
+git \
+make \
+
+
+libfreetype6-dev \
+libftgl-dev \
+libglew-dev \
+libjpeg-dev \
+libpng-dev \
+libprotobuf-dev \
+
+
+protobuf-compiler \
+recode \
+-y && rm -rf /var/lib/apt/lists/*;
+
+# switch to updated package sources
+FROM amd64/ubuntu:16.04 as copysrc
+FROM base as full
+COPY --from=copysrc /etc/apt/sources.list /etc/apt/sources.list
+
+# dependencies where we need more recent versions
+RUN apt-get -y update && apt-get install --no-install-recommends \
+
+
+
+
+libboost-dev \
+
+
+
+
+
+
+
+
+
+
+
+
+
+-y && rm -rf /var/lib/apt/lists/*;
+
+# set up builder user
+RUN useradd builder && mkdir -p /home/builder && chown builder:builder /home/builder # && chmod 777 /home/builder
+WORKDIR /home/builder
+USER builder
+

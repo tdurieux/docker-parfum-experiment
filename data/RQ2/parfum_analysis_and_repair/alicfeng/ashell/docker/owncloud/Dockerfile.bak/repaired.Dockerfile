@@ -1,0 +1,18 @@
+FROM ubuntu:14.04
+MAINTAINER alic <1096105191@qq.com>
+
+# basic env
+RUN apt-get update && apt-get -y --no-install-recommends install curl libcurl3 && rm -rf /var/lib/apt/lists/*;
+
+# apache2
+RUN apt-get install --no-install-recommends -y apache2 && rm -rf /var/lib/apt/lists/*;
+
+# php5
+RUN apt-get install --no-install-recommends -y apache2 php5 php5-gd php-xml-parser php5-intl php5-sqlite php5-mysql php5-curl && rm -rf /var/lib/apt/lists/*;
+
+# mysql
+RUN apt-get install --no-install-recommends -y mysql-server && rm -rf /var/lib/apt/lists/*;
+
+# smbclient
+RUN apt-get install --no-install-recommends -y smbclient && rm -rf /var/lib/apt/lists/*;
+#	&& apt-get install -y apache2 php5 php5-gd php-xml-parser php5-intl php5-sqlite php5-mysql smbclient php5-curl mysql-server

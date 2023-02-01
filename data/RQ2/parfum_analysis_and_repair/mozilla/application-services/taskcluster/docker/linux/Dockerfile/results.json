@@ -1,0 +1,35 @@
+{
+  "startTime": 1674249644883,
+  "endTime": 1674249648656,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 99,
+        "lineEnd": 99,
+        "columnStart": 4,
+        "columnEnd": 30
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 100,
+        "lineEnd": 104,
+        "columnStart": 4,
+        "columnEnd": 13
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 46,
+        "lineEnd": 96,
+        "columnStart": 7,
+        "columnEnd": 13
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# This Source Code Form is subject to the terms of the Mozilla Public\n# License, v. 2.0. If a copy of the MPL was not distributed with this\n# file, You can obtain one at http://mozilla.org/MPL/2.0/.\n\nFROM ubuntu:18.04\n\nMAINTAINER Edouard Oger \"eoger@mozilla.com\"\n\n# Add worker user\n\nRUN mkdir /builds && \\\n    useradd -d /builds/worker -s /bin/bash -m worker && \\\n    chown worker:worker /builds/worker && \\\n    mkdir /builds/worker/artifacts && \\\n    chown worker:worker /builds/worker/artifacts\n\nWORKDIR /builds/worker/\n\n# Configuration\n\nENV ANDROID_BUILD_TOOLS \"30.0.3\"\nENV ANDROID_PLATFORM_VERSION \"31\"\nENV ANDROID_NDK_VERSION \"21.3.6528147\"\n\n# Set up the language variables to avoid problems (we run locale-gen later).\nENV LANG en_US.UTF-8\nENV LANGUAGE en_US:en\nENV LC_ALL en_US.UTF-8\n\n# Do not use fancy output on taskcluster\nENV TERM dumb\n\nENV GRADLE_OPTS -Xmx4096m -Dorg.gradle.daemon=false\n\n# Used to detect in scripts whether we are running on taskcluster\nENV CI 1\nENV CI_TASKCLUSTER true\n\nENV \\\n    # Some APT packages like 'tzdata' wait for user input on install by default.\n    # https://stackoverflow.com/questions/44331836/apt-get-install-tzdata-noninteractive\n    DEBIAN_FRONTEND=noninteractive\n\n# System.\n\nRUN apt-get update -qq \\\n    && apt-get install -qy --no-install-recommends \\\n        ####################\n        # Build dependencies\n        # If you add anything below, please update building.md.\n        ####################\n        # Android builds\n        openjdk-11-jdk \\\n        # Required by gyp but also CI scripts.\n        python \\\n        python-pip \\\n        python3 \\\n        python3-pip \\\n        # libs/ source patching.\n        patch \\\n        # NSS build system.\n        gyp ninja-build \\\n        # NSS dependency.\n        zlib1g-dev \\\n        # SQLCipher build system.\n        make \\\n        # SQLCipher dependency.\n        tclsh \\\n        ##########################\n        # CI-specific dependencies\n        ##########################\n        git \\\n        curl \\\n        # Required by symbolstore.py.\n        file \\\n        # Will set up the timezone to UTC (?).\n        tzdata \\\n        # To install UTF-8 locales.\n        locales \\\n        # For `cc` crates; see https://github.com/jwilm/alacritty/issues/1440.\n        # <TODO: Is this still true?>.\n        g++ \\\n        # taskcluster > mohawk > setuptools.\n        # Required to extract the Android SDK/NDK.\n        unzip \\\n        # Required by tooltool to extract tar.xz archives.\n        xz-utils \\\n        # For windows cross-compilation.\n        mingw-w64 \\\n        # <TODO: Delete p7zip once NSS windows is actually compiled instead of downloaded>.\n        p7zip-full \\\n        # Required to rsync the `libs` folder after fetch (see taskcluster/ci/android-build/kind.yml)\n        rsync \\\n        # Required for creating a venv for glean_parser\n        python3-venv \\\n        # Used by gradle and the robolectric toolchain task\n        maven \\\n    && apt-get clean && rm -rf /var/lib/apt/lists/*;\n\nRUN pip3 install --no-cache-dir --upgrade pip\nRUN pip3 install --no-cache-dir \\\n    pyyaml \\\n    taskcluster \\\n\n    zstandard\n\n# Compile the UTF-8 english locale files (required by Python).\nRUN locale-gen en_US.UTF-8\n\n# Android SDK\n\nRUN mkdir -p /builds/worker/android-sdk\nWORKDIR /builds/worker\n\nENV ANDROID_HOME /builds/worker/android-sdk\nENV ANDROID_SDK_HOME /builds/worker/android-sdk\nENV PATH ${PATH}:${ANDROID_SDK_HOME}/cmdline-tools/latest/bin:${ANDROID_SDK_HOME}/platform-tools:/opt/tools:${ANDROID_SDK_HOME}/build-tools/${ANDROID_BUILD_TOOLS}\n\n# Download the Android SDK tools, unzip them to ${ANDROID_SDK_HOME}/cmdline-tools/latest/, accept all licenses\n# The download link comes from https://developer.android.com/studio/#downloads\nRUN curl -sfSL --retry 5 --retry-delay 10 https://dl.google.com/android/repository/commandlinetools-linux-7583922_latest.zip > sdk.zip \\\n    && unzip -q sdk.zip \\\n    && mkdir $ANDROID_SDK_HOME/cmdline-tools \\\n    && mv cmdline-tools $ANDROID_HOME/cmdline-tools/latest \\\n    && rm sdk.zip \\\n    && mkdir -p /builds/worker/android-sdk/.android/ \\\n    && touch /builds/worker/android-sdk/.android/repositories.cfg \\\n    && yes | sdkmanager --licenses \\\n    && sdkmanager --verbose \"platform-tools\" \\\n        \"platforms;android-${ANDROID_PLATFORM_VERSION}\" \\\n        \"build-tools;${ANDROID_BUILD_TOOLS}\" \\\n        \"extras;android;m2repository\" \\\n        \"extras;google;m2repository\" \\\n        \"ndk;21.3.6528147\"\n\nRUN chown -R worker:worker /builds/worker/android-sdk\n\n# sccache\nRUN \\\n    curl -sfSL --retry 5 --retry-delay 10 \\\n        https://github.com/mozilla/sccache/releases/download/0.2.11/sccache-0.2.11-x86_64-unknown-linux-musl.tar.gz \\\n        | tar -xz --strip-components=1 -C /usr/local/bin/ \\\n            sccache-0.2.11-x86_64-unknown-linux-musl/sccache\n\nENV CCACHE=sccache \\\n    RUSTC_WRAPPER=sccache \\\n    SCCACHE_IDLE_TIMEOUT=1200 \\\n    SCCACHE_CACHE_SIZE=40G \\\n    SCCACHE_ERROR_LOG=/builds/worker/sccache.log \\\n    RUST_LOG=\"sccache=info\" \\\n    RUST_BACKTRACE=1 \\\n    RUSTFLAGS=\"-Dwarnings\" \\\n    CARGO_INCREMENTAL=0\n\n# tooltool\nRUN \\\n    curl -sfSL --retry 5 --retry-delay 10 \\\n         -o /usr/local/bin/tooltool.py \\\n         https://raw.githubusercontent.com/mozilla/build-tooltool/36511dae0ead6848017e2d569b1f6f1b36984d40/tooltool.py && \\\n         chmod +x /usr/local/bin/tooltool.py\n\n# %include-run-task\n\nENV SHELL=/bin/bash \\\n    HOME=/builds/worker \\\n    PATH=/builds/worker/.local/bin:/builds/worker/.cargo/bin:$PATH\n\nVOLUME /builds/worker/checkouts\nVOLUME /builds/worker/.cache\n\n# Switch to the worker user to install rustup\n# After startup, run-task will downgrade it's permissions to be this user\nUSER worker\n\n# run-task needs to run as root (after initialization, it changes to `worker`)\nUSER root\n"
+}

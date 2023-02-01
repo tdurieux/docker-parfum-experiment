@@ -1,0 +1,35 @@
+{
+  "startTime": 1674250691275,
+  "endTime": 1674250692618,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 19,
+        "lineEnd": 19,
+        "columnStart": 4,
+        "columnEnd": 100
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 147,
+        "lineEnd": 147,
+        "columnStart": 7,
+        "columnEnd": 32
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 147,
+        "lineEnd": 147,
+        "columnStart": 7,
+        "columnEnd": 32
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM python:3.8-buster AS build\n\nWORKDIR /app\nENV VIRTUAL_ENV /app/.venv\nENV POETRY_HOME /app/.poetry\nENV POETRY_VERSION 1.1.4\nENV PATH $POETRY_HOME/bin:$VIRTUAL_ENV/bin:$PATH\n# Prometheus requires this envar name for multiprocess, and it has to be an absolute path.\nENV prometheus_multiproc_dir /app/.prometheus/multiproc\n\nCOPY entrypoint.sh entrypoint.sh\n\nRUN mkdir -p $prometheus_multiproc_dir \\\n    && python3 -m venv $VIRTUAL_ENV\n\n# CI requirement to run poetry install.\nARG HTTP_PROXY\nARG HTTPS_PROXY\n\nRUN curl -f -sSL https://raw.githubusercontent.com/python-poetry/poetry/${POETRY_VERSION}/get-poetry.py | python \\\n    && poetry config virtualenvs.in-project true\n\nCOPY poetry.lock pyproject.toml ./\n\n# The common submodule.\nCOPY common common\n\n# The microservice to build.\nARG SERVICE_DIR\nCOPY $SERVICE_DIR $SERVICE_DIR\n\n# NOTE: to perform security scans, generate requirements.txt.\nRUN poetry install \\\n    --no-dev \\\n    --no-root \\\n    && poetry export -f requirements.txt > requirements.txt\n\n################################\n# Api\n################################\n\nFROM python:3.8-slim-buster AS api\n\nWORKDIR /app\nENV PYTHONPATH /app\nENV VIRTUAL_ENV /app/.venv\nENV POETRY_HOME /app/.poetry\nENV PATH $POETRY_HOME/bin:$VIRTUAL_ENV/bin:$PATH\n# Prometheus requires this envar name for multiprocess, and it has to be an absolute path.\nENV prometheus_multiproc_dir /app/.prometheus/multiproc\n\nCOPY --from=build /app /app\n\n# Openshift requires the user group to be root.\nRUN useradd \\\n        --no-log-init \\\n        --home /app \\\n        --shell /bin/bash \\\n        immuni \\\n    && chown \\\n        --recursive \\\n        immuni:root \\\n        /app \\\n    && chmod -R g+rwx /app\nUSER immuni\n\nARG API_PORT\nENV API_PORT $API_PORT\nEXPOSE $API_PORT/tcp\n\n# Build info for monitoring purposes, exposed to the running application.\nARG GIT_BRANCH\nARG GIT_SHA\nARG GIT_TAG\nARG BUILD_DATE\nENV GIT_BRANCH $GIT_BRANCH\nENV GIT_SHA $GIT_SHA\nENV GIT_TAG $GIT_TAG\nENV BUILD_DATE $BUILD_DATE\n\nENTRYPOINT [\"./entrypoint.sh\", \"api\"]\nCMD []\n\n################################\n# Worker\n################################\n\nFROM python:3.8-slim-buster AS worker\n\nWORKDIR /app\nENV PYTHONPATH /app\nENV VIRTUAL_ENV /app/.venv\nENV POETRY_HOME /app/.poetry\nENV PATH $POETRY_HOME/bin:$VIRTUAL_ENV/bin:$PATH\n# Prometheus requires this envar name for multiprocess, and it has to be an absolute path.\nENV prometheus_multiproc_dir /app/.prometheus/multiproc\n\nCOPY --from=build /app /app\n\n# Openshift requires the user group to be root.\nRUN useradd \\\n        --no-log-init \\\n        --home /app \\\n        --shell /bin/bash \\\n        immuni \\\n    && chown \\\n        --recursive \\\n        immuni:root \\\n        /app \\\n    && chmod -R g+rwx /app\nUSER immuni\n\n# Build info for monitoring purposes, exposed to the running application.\nARG GIT_BRANCH\nARG GIT_SHA\nARG GIT_TAG\nARG BUILD_DATE\nENV GIT_BRANCH $GIT_BRANCH\nENV GIT_SHA $GIT_SHA\nENV GIT_TAG $GIT_TAG\nENV BUILD_DATE $BUILD_DATE\n\nENTRYPOINT [\"./entrypoint.sh\", \"worker\"]\nCMD []\n\n################################\n# Beat\n################################\n\nFROM python:3.8-slim-buster AS beat\n\nENV PYTHONPATH /app\nENV VIRTUAL_ENV /app/.venv\nENV POETRY_HOME /app/.poetry\nENV PATH $POETRY_HOME/bin:$VIRTUAL_ENV/bin:$PATH\n# Prometheus requires this envar name for multiprocess, and it has to be an absolute path.\nENV prometheus_multiproc_dir /app/.prometheus/multiproc\n\nWORKDIR /app\n\nCOPY --from=build /app /app\n\n# Running after the copy to avoid caching of this layer in case of code changes.\n# The proxy is a CI requirement to run apt.\n# procps is needed to perform the healthcheck on the beat container.\nRUN echo \"Acquire::http::Proxy \\\"$HTTP_PROXY\\\";\" > /etc/apt/apt.conf.d/proxy.conf \\\n    && apt-get update \\\n    && apt-get install --no-install-recommends -y procps && rm -rf /var/lib/apt/lists/*;\n\n# Openshift requires the user group to be root.\nRUN useradd \\\n        --no-log-init \\\n        --home /app \\\n        --shell /bin/bash \\\n        immuni \\\n    && chown \\\n        --recursive \\\n        immuni:root \\\n        /app \\\n    && chmod -R g+rwx /app\nUSER immuni\n\n# Build info for monitoring purposes, exposed to the running application.\nARG GIT_BRANCH\nARG GIT_SHA\nARG GIT_TAG\nARG BUILD_DATE\nENV GIT_BRANCH $GIT_BRANCH\nENV GIT_SHA $GIT_SHA\nENV GIT_TAG $GIT_TAG\nENV BUILD_DATE $BUILD_DATE\n\nENTRYPOINT [\"./entrypoint.sh\", \"beat\"]\nCMD []\n"
+}

@@ -1,0 +1,44 @@
+{
+  "startTime": 1674235297144,
+  "endTime": 1674235297253,
+  "originalSmells": [
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 4,
+        "lineEnd": 4,
+        "columnStart": 4,
+        "columnEnd": 66
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 5,
+        "lineEnd": 5,
+        "columnStart": 4,
+        "columnEnd": 96
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 6,
+        "lineEnd": 6,
+        "columnStart": 4,
+        "columnEnd": 21
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 61,
+        "lineEnd": 61,
+        "columnStart": 4,
+        "columnEnd": 37
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Start from Alpine and Java 8, and name this stage \"build\"\nFROM openjdk:8u121-jre-alpine AS build\n# Install C libraries and build tools\nRUN echo \"installing dependencies\" && \\\n    apk --update --no-cache add gc-dev clang musl-dev libc-dev build-base git && \\\n    apk add --no-cache libunwind-dev --update-cache --repository http://nl.alpinelinux.org/alpine/edge/main && \\\n    apk add --no-cache libuv-dev\n# Install re2 from source for clang++ compatability\nRUN git clone https://github.com/google/re2.git && cd re2 && \\\n    CXX=clang++ make && make install\n\n# Install SBT\nENV SBT_VERSION 0.13.15\nENV SBT_HOME /usr/local/sbt\nENV PATH ${PATH}:${SBT_HOME}/bin\nRUN echo \"installing SBT $SBT_VERSION\" && \\\n    apk add --no-cache --update bash wget && mkdir -p \"$SBT_HOME\" && \\\n    wget -qO - --no-check-certificate \"https://dl.bintray.com/sbt/native-packages/sbt/$SBT_VERSION/sbt-$SBT_VERSION.tgz\" | tar xz -C $SBT_HOME --strip-components=1 && \\\n    echo -ne \"- with sbt $SBT_VERSION\\n\" >> /root/.built && \\\n    sbt sbtVersion\n\n# Set up the directory structure for our project\nRUN mkdir -p /root/project-build/project\nWORKDIR /root/project-build\n\n# Resolve all our dependencies and plugins to speed up future compilations\nADD ./project/plugins.sbt project/\nADD ./project/build.properties project/\nADD build.sbt .\nRUN sbt update\n\n# Add and compile our actual application source code\nADD ./src src/\nRUN sbt clean nativeLink\n\n# Copy the binary executable to a consistent location\nRUN cp ./target/scala-2.11/*-out ./dinosaur-build-out\n\n# Start over from a clean Alpine image\nFROM alpine:3.3\n\n# Copy in C libraries\nCOPY --from=build \\\n   /usr/lib/libunwind.so.8 \\\n   /usr/lib/libunwind-x86_64.so.8 \\\n   /usr/lib/libgc.so.1 \\\n   /usr/lib/libstdc++.so.6 \\\n   /usr/lib/libgcc_s.so.1 \\\n   /usr/lib/libuv.so.1 \\\n   /usr/lib/\nCOPY --from=build \\\n   /usr/local/lib/libre2.so.0 \\\n   /usr/local/lib/libre2.so.0\n\n# Copy in the executable\nCOPY --from=build \\\n   /root/project-build/dinosaur-build-out /var/www/localhost/cgi-bin/dinosaur-build-out\n\nCOPY httpd.conf /etc/apache2/httpd.conf\nCOPY mpm.conf /etc/apache2/mpm.conf\n\nRUN apk --update --no-cache add nginx socat bash\nCOPY nginx.conf /etc/nginx/nginx.conf\n\nADD nginx.entrypoint.sh /\n\nENTRYPOINT [\"./nginx.entrypoint.sh\"]\n"
+}

@@ -1,0 +1,36 @@
+{
+  "startTime": 1674255730985,
+  "endTime": 1674255732767,
+  "originalSmells": [
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 63,
+        "lineEnd": 73,
+        "columnStart": 4,
+        "columnEnd": 8
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 63,
+        "lineEnd": 73,
+        "columnStart": 4,
+        "columnEnd": 8
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 63,
+        "lineEnd": 73,
+        "columnStart": 4,
+        "columnEnd": 8
+      }
+    }
+  ],
+  "repairedDockerfile": "ARG RUST_VERSION=1.62.0\n\nFROM docker.io/rust:${RUST_VERSION}-bullseye as kubectl\nARG KUBECTL_VERSION=v1.24.2\nRUN curl --proto '=https' --tlsv1.3 -vsSfLo /usr/local/bin/kubectl \"https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl\" \\\n    && chmod 755 /usr/local/bin/kubectl\n\nFROM docker.io/rust:${RUST_VERSION}-bullseye as k3d\nARG K3D_VERSION=v5.4.4\nRUN cd /usr/local/bin \\\n    && curl --proto '=https' --tlsv1.3 -vsSfLO \"https://github.com/k3d-io/k3d/releases/download/${K3D_VERSION}/k3d-linux-amd64\" \\\n    && mv k3d-linux-amd64 k3d \\\n    && chmod 755 k3d\n\nFROM docker.io/rust:${RUST_VERSION}-bullseye as deny\nARG DENY_VERSION=0.12.1\nRUN curl --proto '=https' --tlsv1.3 -vsSfL \"https://github.com/EmbarkStudios/cargo-deny/releases/download/${DENY_VERSION}/cargo-deny-${DENY_VERSION}-x86_64-unknown-linux-musl.tar.gz\" \\\n    | tar zvxf - --strip-components=1 -C /usr/local/bin \"cargo-deny-${DENY_VERSION}-x86_64-unknown-linux-musl/cargo-deny\"\n\nFROM docker.io/rust:${RUST_VERSION}-bullseye as yq\nARG YQ_VERSION=v4.25.1\nRUN curl --proto '=https' --tlsv1.3 -vsSfLo /usr/local/bin/yq \"https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_amd64\" \\\n    && chmod +x /usr/local/bin/yq\n\nFROM docker.io/rust:${RUST_VERSION}-bullseye as checksec\nARG CHECKSEC_VERSION=2.5.0\nRUN cd /usr/local/bin \\\n    && curl --proto '=https' --tlsv1.3 -vsSfLO \"https://raw.githubusercontent.com/slimm609/checksec.sh/${CHECKSEC_VERSION}/checksec\" \\\n    && chmod 755 checksec\n\nFROM docker.io/rust:${RUST_VERSION}-bullseye as just\nARG JUST_VERSION=1.2.0\nRUN curl --proto '=https' --tlsv1.3 -vsSfL \"https://github.com/casey/just/releases/download/${JUST_VERSION}/just-${JUST_VERSION}-x86_64-unknown-linux-musl.tar.gz\" \\\n    | tar zvxf - -C /usr/local/bin just\n\nFROM docker.io/rust:${RUST_VERSION}-bullseye as nextest\nARG NEXTEST_VERSION=0.9.24\nRUN curl --proto '=https' --tlsv1.3 -vsSfL \"https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-${NEXTEST_VERSION}/cargo-nextest-${NEXTEST_VERSION}-x86_64-unknown-linux-gnu.tar.gz\" \\\n    | tar zvxf - -C /usr/local/bin cargo-nextest\n\nFROM docker.io/rust:${RUST_VERSION}-bullseye as nightly\nRUN rustup toolchain add nightly\n\nFROM nightly as fuzz\nRUN cargo +nightly install cargo-fuzz\n\nFROM docker.io/rust:${RUST_VERSION}-bullseye as protoc\nARG PROTOC_VERSION=v3.20.1\nWORKDIR /tmp\nRUN arch=\"$(uname -m)\" ; \\\n    version=\"$PROTOC_VERSION\" ; \\\n    curl --proto '=https' --tlsv1.3 -vsSfLo protoc.zip  \"https://github.com/google/protobuf/releases/download/$version/protoc-${version#v}-linux-$arch.zip\" && \\\n    unzip protoc.zip bin/protoc && \\\n    chmod 755 bin/protoc\n\n#\n# Main image\n#\nFROM docker.io/rust:${RUST_VERSION}-bullseye\nRUN rustup component add clippy rustfmt rust-analysis rust-std\n\nENV DEBIAN_FRONTEND=noninteractive\nRUN apt update && apt upgrade -y\nRUN apt install -y --no-install-recommends \\\n    clang \\\n    cmake \\\n    golang \\\n    jo \\\n    jq \\\n    locales \\\n    lsb-release \\\n    shellcheck \\\n    sudo \\\n    time && rm -rf /var/lib/apt/lists/*;\n\nRUN sed -i 's/^# *\\(en_US.UTF-8\\)/\\1/' /etc/locale.gen && locale-gen\n\nARG USER=code\nARG USER_UID=1000\nARG USER_GID=1000\nRUN groupadd --gid=$USER_GID $USER \\\n    && useradd --uid=$USER_UID --gid=$USER_GID -m $USER \\\n    && echo \"$USER ALL=(root) NOPASSWD:ALL\" >/etc/sudoers.d/$USER \\\n    && chmod 0440 /etc/sudoers.d/$USER\n\n# Install a Docker client that uses the host's Docker daemon\nARG USE_MOBY=false\nENV DOCKER_BUILDKIT=1\nRUN curl --proto '=https' --tlsv1.3 -vsSfL https://raw.githubusercontent.com/microsoft/vscode-dev-containers/main/script-library/docker-debian.sh \\\n    | bash -s -- true /var/run/docker-host.sock /var/run/docker.sock \"${USER}\" \"${USE_MOBY}\" latest\n\nUSER $USER\nENV HOME=/home/$USER\n\nRUN curl --proto '=https' --tlsv1.3 -vsSfL https://run.linkerd.io/install-edge | sh\nENV PATH=$HOME/.linkerd2/bin:$PATH\n\nCOPY --from=deny /usr/local/bin/cargo-deny /usr/local/bin/cargo-deny\nCOPY --from=k3d /usr/local/bin/k3d /usr/local/bin/k3d\nCOPY --from=kubectl /usr/local/bin/kubectl /usr/local/bin/kubectl\nCOPY --from=yq /usr/local/bin/yq /usr/local/bin/yq\nCOPY --from=checksec /usr/local/bin/checksec /usr/local/bin/checksec\nCOPY --from=nightly /usr/local/rustup/toolchains/nightly-x86_64-unknown-linux-gnu /usr/local/rustup/toolchains/nightly-x86_64-unknown-linux-gnu\nCOPY --from=fuzz /usr/local/cargo/bin/cargo-fuzz /usr/local/cargo/bin/cargo-fuzz\nCOPY --from=just /usr/local/bin/just /usr/local/bin/just\nCOPY --from=nextest /usr/local/bin/cargo-nextest /usr/local/bin/cargo-nextest\n\nCOPY --from=protoc /tmp/bin/protoc /usr/local/bin/protoc\nENV PROTOC_NO_VENDOR=1\nENV PROTOC=/usr/local/bin/protoc\n\nENTRYPOINT [\"/usr/local/share/docker-init.sh\"]\nCMD [\"sleep\", \"infinity\"]\n"
+}

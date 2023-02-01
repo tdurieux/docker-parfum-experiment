@@ -1,0 +1,15 @@
+FROM golang:1.18-alpine
+
+ENV PROJECT_PATH=/chirpstack-gateway-bridge
+ENV PATH=$PATH:$PROJECT_PATH/build
+ENV CGO_ENABLED=0
+ENV GO_EXTRA_BUILD_ARGS="-a -installsuffix cgo"
+
+RUN apk add --no-cache ca-certificates make git bash upx rpm
+
+RUN mkdir -p $PROJECT_PATH
+COPY . $PROJECT_PATH
+WORKDIR $PROJECT_PATH
+
+RUN git config --global --add safe.directory /chirpstack-gateway-bridge
+RUN make dev-requirements

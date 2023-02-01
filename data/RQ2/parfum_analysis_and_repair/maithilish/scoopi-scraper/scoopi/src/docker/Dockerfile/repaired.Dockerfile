@@ -1,0 +1,3 @@
+#
+# Scoopi Dockerfile
+#

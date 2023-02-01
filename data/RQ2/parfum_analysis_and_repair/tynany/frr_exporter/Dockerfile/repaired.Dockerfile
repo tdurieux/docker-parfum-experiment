@@ -1,0 +1,1 @@
+# Whenever the Go version is updated here, .circle/config.yml and .promu.yml should also be updated.

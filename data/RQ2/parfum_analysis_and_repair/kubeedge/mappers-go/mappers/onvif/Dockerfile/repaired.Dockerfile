@@ -1,0 +1,1 @@
+# It's a stub docker file for onvif. We'll leverage it later soon.

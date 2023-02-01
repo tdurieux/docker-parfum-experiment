@@ -1,0 +1,17 @@
+{
+  "startTime": 1674250360752,
+  "endTime": 1674250360937,
+  "originalSmells": [
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 43,
+        "lineEnd": 43,
+        "columnStart": 4,
+        "columnEnd": 26
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM metabrainz/node:10 as bookbrainz-base\n\nARG DEPLOY_ENV\n\nARG BUILD_DEPS=\" \\\n    build-essential \\\n    git \\\n    python-dev \\\n    libpq-dev\"\n\nARG RUN_DEPS=\" \\\n    bzip2 \\\n    rsync\"\n\n\nRUN apt-get update && \\\n    apt-get install --no-install-suggests --no-install-recommends -y \\\n        $BUILD_DEPS $RUN_DEPS && \\\n    rm -rf /var/lib/apt/lists/*\n\n# PostgreSQL client\nRUN wget --quiet -O - https://www.postgresql.org/media/keys/ACCC4CF8.asc | apt-key add -\nENV PG_MAJOR 9.5\nRUN echo 'deb http://apt.postgresql.org/pub/repos/apt/ jessie-pgdg main' $PG_MAJOR > /etc/apt/sources.list.d/pgdg.list\nRUN apt-get update \\\n    && apt-get install -y --no-install-recommends postgresql-client-$PG_MAJOR \\\n    && rm -rf /var/lib/apt/lists/*\n\nRUN useradd --create-home --shell /bin/bash bookbrainz\n\nARG BB_ROOT=/home/bookbrainz/bookbrainz-site\nWORKDIR $BB_ROOT\nRUN chown bookbrainz:bookbrainz $BB_ROOT\n\n# Files necessary to complete the JavaScript build\nCOPY scripts/ scripts/\nCOPY .babelrc ./\nCOPY .eslintrc.js ./\nCOPY .eslintignore ./\nCOPY webpack.client.js ./\nCOPY package.json ./\nCOPY package-lock.json ./\n\nRUN npm install --no-audit && npm cache clean --force;\n\n# Clean up files that aren't needed for production\nRUN apt-get remove -y $BUILD_DEPS && \\\n    apt-get autoremove -y\n\nCOPY static/ static/\nRUN npm run mkdirs\nCOPY config/ config/\nCOPY sql/ sql/\nCOPY src/ src/\n\n# Copy css/less dependencies from node_modules to src/client/stylesheets\nRUN npm run copy-client-scripts\n\n# Development target\nFROM bookbrainz-base as bookbrainz-dev\nARG DEPLOY_ENV\n\nCMD [\"npm\", \"start\"]\n\n# Production target\nFROM bookbrainz-base as bookbrainz-prod\nARG DEPLOY_ENV\n\nCOPY ./docker/$DEPLOY_ENV/rc.local /etc/rc.local\n\nCOPY ./docker/consul-template-webserver.conf /etc/consul-template-webserver.conf\nCOPY ./docker/$DEPLOY_ENV/webserver.command /etc/service/webserver/exec-command\nRUN chmod +x /etc/service/webserver/exec-command\nCOPY ./docker/$DEPLOY_ENV/webserver.service /etc/service/webserver/run\nRUN chmod 755 /etc/service/webserver/run\nRUN touch /etc/service/webserver/down\n\n# Set up cron jobs and DB dumps\nRUN mkdir -p /home/bookbrainz/data/dumps\n\nCOPY ./docker/consul-template-cron.conf /etc/consul-template-cron.conf\nCOPY ./docker/cron.service /etc/service/cron/run\nRUN touch /etc/service/cron/down\n\nADD ./docker/crontab /etc/cron.d/bookbrainz\nRUN chmod 0644 /etc/cron.d/bookbrainz && crontab -u bookbrainz /etc/cron.d/bookbrainz\n\n# Build JS project and assets\nRUN [\"npm\", \"run\", \"build\"]"
+}

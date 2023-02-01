@@ -1,0 +1,46 @@
+FROM golang:1.16.5 as builder
+ARG EXTENSION_VERSION
+ARG ENABLE_RACE_DETECTION
+ARG AGENT_VERSION
+RUN mkdir -p /tmp/dd/datadog-agent
+
+# cache dependsencies
+COPY ./scripts/.cache/go.mod /tmp/dd/datadog-agent
+COPY ./scripts/.cache/go.sum /tmp/dd/datadog-agent
+WORKDIR /tmp/dd/datadog-agent
+
+# copy source files (/tgz gets unzip automatically by Docker)
+ADD ./scripts/.src/datadog-agent.tgz /tmp/dd
+
+# build the extension
+WORKDIR /tmp/dd/datadog-agent/cmd/serverless
+# add the current version number to the tags package before compilation
+
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    if [ -z "$AGENT_VERSION" ]; then \
+        go build -race -ldflags="-w \
+        -X github.com/DataDog/datadog-agent/pkg/serverless/tags.currentExtensionVersion=$EXTENSION_VERSION" \
+        -tags serverless -o datadog-agent; \
+    else \
+        go build -race -ldflags="-w \
+        -X github.com/DataDog/datadog-agent/pkg/serverless/tags.currentExtensionVersion=$EXTENSION_VERSION \
+        -X github.com/DataDog/datadog-agent/pkg/version.agentVersionDefault=$AGENT_VERSION" \
+        -tags serverless -o datadog-agent; \
+    fi
+
+RUN go tool nm datadog-agent | grep -w 'github.com/DataDog/datadog-agent/pkg/version.agentVersionDefault' || \
+    (echo "agentVersionDefault variable doesn't exist" && exit 1)
+
+# zip the extension
+FROM ubuntu:latest as compresser
+RUN apt-get update && apt-get install --no-install-recommends -y zip && rm -rf /var/lib/apt/lists/*;
+RUN mkdir /extensions
+WORKDIR /extensions
+COPY --from=builder /tmp/dd/datadog-agent/cmd/serverless/datadog-agent /extensions/datadog-agent
+RUN  zip -r datadog_extension.zip /extensions
+
+# keep the smallest possible docker image
+FROM scratch
+COPY --from=compresser /extensions/datadog_extension.zip /
+ENTRYPOINT ["/datadog_extension.zip"]

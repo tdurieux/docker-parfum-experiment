@@ -1,0 +1,59 @@
+# refer : https://github.com/docker-library/memcached
+# license : BSD-3-Clause License
+# https://github.com/docker-library/memcached/blob/master/LICENSE
+
+ADD https://raw.githubusercontent.com/memcached/memcached/master/LICENSE /opt/bitnami/memcached/licenses/LICENSE
+
+RUN install_packages libsasl2-modules
+
+ENV MEMCACHED_VERSION {{{VERSION}}}
+ENV MEMCACHED_SHA1 b9da57ba63ba8de8a980fe0fe2fedc8d59e1dfe3
+
+RUN set -x \
+	\
+	&& savedAptMark="$(apt-mark showmanual)" \
+	&& apt-get update \
+	&& apt-get install -y --no-install-recommends \
+		ca-certificates \
+		dpkg-dev \
+		gcc \
+		libc6-dev \
+		libevent-dev \
+		libio-socket-ssl-perl \
+		libsasl2-dev \
+		libssl-dev \
+		make \
+		perl \
+		wget \
+	&& rm -rf /var/lib/apt/lists/* \
+	\
+	&& wget -O memcached-$MEMCACHED_VERSION.tar.gz "https://memcached.org/files/memcached-$MEMCACHED_VERSION.tar.gz" \
+	&& wget -O memcached.tar.gz.sha1 "https://memcached.org/files/memcached-$MEMCACHED_VERSION.tar.gz.sha1" \
+	&& cat memcached.tar.gz.sha1 | sha1sum -c - \
+	&& mv memcached-$MEMCACHED_VERSION.tar.gz memcached.tar.gz \
+	&& mkdir -p /usr/src/memcached \
+	&& tar -xzf memcached.tar.gz -C /usr/src/memcached --strip-components=1 \
+	&& rm memcached.tar.gz \
+	&& rm memcached.tar.gz.sha1 \
+	\
+	&& cd /usr/src/memcached \
+	\
+	&& gnuArch="$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)" \
+	&& enableExtstore="$( \
+# https://github.com/docker-library/memcached/pull/38
+		case "$gnuArch" in \
+# https://github.com/memcached/memcached/issues/381 "--enable-extstore on s390x (IBM System Z mainframe architecture) fails tests"
+			s390x-*) ;; \
+			*) echo '--enable-extstore' ;; \
+		esac \
+	)" \
+	&& ./configure \
+		--build="$gnuArch" \
+		--enable-sasl \
+		--enable-sasl-pwdb \
+		--enable-tls \
+		$enableExtstore \
+	&& nproc="$(nproc)" \
+	&& make -j "$nproc" \
+	\
+# see https://github.com/docker-library/memcached/pull/54#issuecomment-562797748 and https://bugs.debian.org/927461 for why we have to munge openssl.cnf

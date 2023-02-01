@@ -1,0 +1,72 @@
+{
+  "startTime": 1674255592943,
+  "endTime": 1674255593693,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 12,
+        "lineEnd": 12,
+        "columnStart": 4,
+        "columnEnd": 47
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 34,
+        "lineEnd": 34,
+        "columnStart": 4,
+        "columnEnd": 67
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 10,
+        "lineEnd": 10,
+        "columnStart": 4,
+        "columnEnd": 82
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 51,
+        "lineEnd": 51,
+        "columnStart": 2,
+        "columnEnd": 44
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 10,
+        "lineEnd": 10,
+        "columnStart": 4,
+        "columnEnd": 82
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 10,
+        "lineEnd": 10,
+        "columnStart": 4,
+        "columnEnd": 82
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 10,
+        "lineEnd": 10,
+        "columnStart": 4,
+        "columnEnd": 106
+      }
+    }
+  ],
+  "repairedDockerfile": "# ========================\n# == SERVER BUILD STAGE ==\n# ========================\n# Note: server-builder stage will be the same in both dockerfiles\nFROM python:3.8-buster as server-builder\n\nWORKDIR /opt/dive/src\n\n# https://cryptography.io/en/latest/installation/#debian-ubuntu\nRUN apt-get update\nRUN apt-get install --no-install-recommends -y build-essential libssl-dev libffi-dev python3-dev cargo npm && rm -rf /var/lib/apt/lists/*;\n# Recommended poetry install https://python-poetry.org/docs/master/#installation\nRUN curl -f -sSL https://install.python-poetry.org | POETRY_VERSION=1.1.2 POETRY_HOME=/opt/dive/local python -\nENV PATH=\"/opt/dive/local/venv/bin:$PATH\"\n# Copy only the lock and project files to optimize cache\nCOPY server/pyproject.toml server/poetry.lock /opt/dive/src/\n# Use the system installation\nRUN poetry env use system\nRUN poetry config virtualenvs.create false\n# Install dependencies only\nRUN poetry install --no-root\n# Build girder client, including plugins like worker/jobs\n# RUN girder build\n\n# Copy full source code and install\nCOPY server/ /opt/dive/src/\nRUN poetry install --no-dev\n\n# ====================\n# == FFMPEG FETCHER ==\n# ====================\nFROM python:3.8-buster as ffmpeg-builder\nRUN wget -O ffmpeg.tar.xz https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz\nRUN mkdir /tmp/ffextracted\nRUN tar -xvf ffmpeg.tar.xz -C /tmp/ffextracted --strip-components 1 && rm ffmpeg.tar.xz\n\n# =================\n# == DIST WORKER ==\n# =================\nFROM kitware/viame:gpu-algorithms-latest as worker\n# VIAME install at /opt/noaa/viame/\n# VIAME pipelines at /opt/noaa/viame/configs/pipelines/\n\n# install tini init system\nENV TINI_VERSION v0.19.0\nADD https://github.com/krallin/tini/releases/download/${TINI_VERSION}/tini /tini\nRUN chmod +x /tini\n\n# Install python\nRUN export DEBIAN_FRONTEND=noninteractive && \\\n  apt-get update && \\\n  apt-get install --no-install-recommends -qy python3.8 libpython3.8 && \\\n  apt-get clean && rm -rf /var/lib/apt/lists/*\n\n# Create user \"dive\" 1099:1099 to align with base image permissions.\n# https://github.com/VIAME/VIAME/blob/master/cmake/build_server_docker.sh#L123\nRUN useradd --create-home --uid 1099 --shell=/bin/bash dive\n# Create a directory for VIAME Addons\nRUN install -g dive -o dive -d /tmp/addons\n\n# Switch to the new user\nUSER dive\n\n# Setup the path of the incoming python installation\nENV PATH=\"/opt/dive/local/venv/bin:$PATH\"\n\n# Copy the built python installation\nCOPY --chown=dive:dive --from=server-builder /opt/dive/local/venv/ /opt/dive/local/venv/\n# Copy the source code of the editable module\nCOPY --chown=dive:dive --from=server-builder /opt/dive/src /opt/dive/src\n# Copy ffmpeg\ncopy --from=ffmpeg-builder /tmp/ffextracted/ffmpeg /tmp/ffextracted/ffprobe /opt/dive/local/venv/bin/\n# Copy provision scripts\nCOPY --chown=dive:dive docker/entrypoint_worker.sh /\n\nENTRYPOINT [\"/tini\", \"--\"]\nCMD [\"/entrypoint_worker.sh\"]\n"
+}

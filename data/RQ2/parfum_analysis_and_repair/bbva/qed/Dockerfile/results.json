@@ -1,0 +1,26 @@
+{
+  "startTime": 1674219267800,
+  "endTime": 1674219268782,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 24,
+        "lineEnd": 24,
+        "columnStart": 22,
+        "columnEnd": 55
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 24,
+        "lineEnd": 24,
+        "columnStart": 22,
+        "columnEnd": 55
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Copyright 2018-2019 Banco Bilbao Vizcaya Argentaria, S.A.\n\n# Licensed under the Apache License, Version 2.0 (the \"License\");\n# you may not use this file except in compliance with the License.\n# You may obtain a copy of the License at\n\n#     http://www.apache.org/licenses/LICENSE-2.0\n\n# Unless required by applicable law or agreed to in writing, software\n# distributed under the License is distributed on an \"AS IS\" BASIS,\n# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.\n# See the License for the specific language governing permissions and\n# limitations under the License.\n\nFROM golang:1.12.5\n# Allow cloning custom repo & branch for testing\nARG QED_REPO=https://github.com/bbva/qed.git\nARG QED_REPO_BRANCH=master\n\nENV REPO=${QED_REPO}\nENV BRANCH=${QED_REPO_BRANCH}\n\nWORKDIR /go/src/github.com/bbva/qed\n# Install deps.\nRUN apt update -qq && apt install --no-install-recommends -qq -y autoconf cmake && rm -rf /var/lib/apt/lists/*;\n\n# Download C deps.\nRUN echo Cloning repo: ${REPO} with branch: ${BRANCH}\nRUN git clone --depth 1 -b ${BRANCH} ${REPO} .  &&\\\n    git submodule update --init --recursive\n\n# Build C deps.\nRUN cd c-deps       &&\\\n    ./builddeps.sh\n\nFROM golang:1.12.5\nARG BUILD_META=rc1\n\nENV GO111MODULE=on\nENV CGO_LDFLAGS_ALLOW='.*'\n\nWORKDIR /go/src/github.com/bbva/qed\n\n# Copy C deps form builder container\nCOPY --from=0 /go/src/github.com/bbva/qed/c-deps /tmp/c-deps\n\n# Copy current source\nCOPY ./ .\n\n# Download QED dependencies\nRUN go mod download\n\n# Move compiled c-deps\nRUN rm -rf c-deps    &&\\\n    mv /tmp/c-deps .\n\n# Build QED, Storage binary\nRUN export BUILD_TAG=$(git rev-parse --abbrev-ref HEAD)           &&\\\n    export BUILD_COMMIT=$(git rev-parse HEAD)                     &&\\\n    export BUILD_DATE=$(date --utc +'%Y/%m/%dT%XUTC')             &&\\\n    go build -ldflags=\"-s -w                                        \\\n    -X github.com/bbva/qed/build.tag=${BUILD_TAG}                   \\\n    -X github.com/bbva/qed/build.rev=${BUILD_COMMIT}                \\\n    -X github.com/bbva/qed/build.utcTime=${BUILD_DATE}\"             \\\n    -o /usr/local/bin/qed                                         &&\\\n    go build -o /usr/local/bin/storage testutils/notifierstore.go\n\n# Clean\nRUN rm -rf /var/lib/apt/lists/*\n\nFROM ubuntu:19.10\n\nCOPY --from=1 /usr/local/bin/qed /usr/local/bin/qed\nCOPY --from=1 /usr/local/bin/storage /usr/local/bin/storage\n\nRUN /usr/local/bin/qed generate signerkeys\n"
+}

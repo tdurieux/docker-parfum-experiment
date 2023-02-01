@@ -1,0 +1,35 @@
+{
+  "startTime": 1674254321087,
+  "endTime": 1674254322189,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 34,
+        "lineEnd": 34,
+        "columnStart": 4,
+        "columnEnd": 36
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 55,
+        "lineEnd": 55,
+        "columnStart": 4,
+        "columnEnd": 21
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 76,
+        "lineEnd": 76,
+        "columnStart": 4,
+        "columnEnd": 40
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "ARG PYTHON_VERSION=3.8.13\nFROM python:${PYTHON_VERSION}-slim-bullseye AS application\n\n# these are required all the way through, and removing them will cause bad things\nRUN set -ex; \\\n    apt-get update; \\\n    apt-get install --no-install-recommends -y \\\n        libexpat1 \\\n        liblz4-1 \\\n        libpcre3 \\\n    ; \\\n    rm -rf /var/lib/apt/lists/*\n\nWORKDIR /usr/src/snuba\n\nENV PIP_NO_CACHE_DIR=off \\\n    PIP_DISABLE_PIP_VERSION_CHECK=on\n\n# Install dependencies first because requirements.txt is way less likely to be changed.\nCOPY requirements.txt ./\nRUN set -ex; \\\n\n    buildDeps=' \\\n        gcc \\\n        libc6-dev \\\n        liblz4-dev \\\n        libpcre3-dev \\\n        wget \\\n    '; \\\n    apt-get update; \\\n    apt-get install -y $buildDeps --no-install-recommends; \\\n    # Since there's no confluent-kafka wheel for aarch64, remove when there is\n    [ $(uname -m) = \"aarch64\" ] && apt-get install -y librdkafka-dev --no-install-recommends; \\\n\n    pip install --no-cache-dir -r requirements.txt; \\\n\n    mkdir /tmp/uwsgi-dogstatsd; \\\n    wget -O - https://github.com/DataDog/uwsgi-dogstatsd/archive/bc56a1b5e7ee9e955b7a2e60213fc61323597a78.tar.gz \\\n    | tar -xvz -C /tmp/uwsgi-dogstatsd --strip-components=1; \\\n    uwsgi --build-plugin /tmp/uwsgi-dogstatsd; \\\n    rm -rf /tmp/uwsgi-dogstatsd .uwsgi_plugins_builder; \\\n    mkdir -p /var/lib/uwsgi; \\\n    mv dogstatsd_plugin.so /var/lib/uwsgi/; \\\n    uwsgi --need-plugin=/var/lib/uwsgi/dogstatsd --help > /dev/null; \\\n\n    apt-get purge -y --auto-remove $buildDeps; \\\n    rm -rf /var/lib/apt/lists/*;\n\n# Layer cache is pretty much invalidated here all the time,\n# so try not to do anything heavy beyond here.\nCOPY . ./\nRUN set -ex; \\\n    groupadd -r snuba --gid 1000; \\\n    useradd -r -g snuba --uid 1000 snuba; \\\n    chown -R snuba:snuba ./; \\\n    pip install --no-cache-dir -e .; \\\n    snuba --help;\n\nARG SOURCE_COMMIT\nENV SNUBA_RELEASE=$SOURCE_COMMIT \\\n    FLASK_DEBUG=0 \\\n    PYTHONUNBUFFERED=1 \\\n    PYTHONDONTWRITEBYTECODE=1 \\\n    UWSGI_ENABLE_METRICS=true \\\n    UWSGI_NEED_PLUGIN=/var/lib/uwsgi/dogstatsd \\\n    UWSGI_STATS_PUSH=dogstatsd:127.0.0.1:8126 \\\n    UWSGI_DOGSTATSD_EXTRA_TAGS=service:snuba\n\nUSER snuba\nEXPOSE 1218\nENTRYPOINT [ \"./docker_entrypoint.sh\" ]\nCMD [ \"api\" ]\n\nFROM application AS testing\n\nUSER 0\nRUN pip install --no-cache-dir -r requirements-test.txt\nUSER snuba\n"
+}

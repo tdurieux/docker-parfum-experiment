@@ -1,0 +1,26 @@
+{
+  "startTime": 1674249454117,
+  "endTime": 1674249454715,
+  "originalSmells": [
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 16,
+        "lineEnd": 16,
+        "columnStart": 39,
+        "columnEnd": 51
+      }
+    },
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 34,
+        "lineEnd": 34,
+        "columnStart": 4,
+        "columnEnd": 29
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM node:16-alpine AS stage-tsc-build\n\n# Installation of `snappy` uses `node-gyp` to build binaries, and that needs\n# Python, make,  g++. Also see\n# https://github.com/nodejs/docker-node/issues/282. This is not used in the\n# 'production' layer below.\nRUN apk add --no-cache --virtual .gyp python3 make g++\n\n# Copy just what's needed to install packages with yarn (invalidate this cache\n# layer only when one of these files change). For now, do not use a yarn.lock\n# file: had the challenge to use repo-wide yarn.lock file during the rather\n# independent build, and with --frozen-lockfile the install then failed with\n# a gazillion of _removals_ from yarn.lock\nRUN mkdir /build\nCOPY tsconfig.json package.json /build/\nWORKDIR /build\nRUN echo /build: && ls -al /build/* && yarn install && yarn cache clean;\n\n# Now copy in all other source files.\nCOPY . /build\n\n# Show source tree. Alternative to `tree`, kudos to\n# https://stackoverflow.com/a/61073579/145400\nRUN find . | grep -v node_modules | sed -e \"s/[^-][^\\/]*\\// |/g\" -e \"s/|\\([^ ]\\)/|-\\1/\"\n\n# Do the TSC build.\nRUN yarn run tsc -b tsconfig.json\n\n# Another stage to do `yarn install --production` which requires some build\n# tooling for `snappy` /`node-gyp`that should not be in the final image.\nFROM node:16-alpine AS stage-yarn-install-prod\nRUN apk add --no-cache --virtual .gyp python3 make g++\nWORKDIR /build\nCOPY tsconfig.json package.json /build/\nRUN yarn install --production && yarn cache clean;\n\n# Note that because `yarn install --production` is done here and in the\n# prod stage we copy node_modules, there is no need to manually remove the\n# yarn cache with `yarn cache clean`.\n\n\n# Third stage, copying node_modules from `stage-yarn-install-prod` and\n# tsc build outcome from `stage-tsc-build\nFROM node:16-alpine AS stage-prod\nCOPY --from=stage-tsc-build /build/_tscbuild /build/_tscbuild\nCOPY --from=stage-yarn-install-prod /build/node_modules /build/node_modules\n\n# This saves another 45 MB\nRUN rm -rf /usr/local/lib/node_modules/npm\n\n# But 'executable' into PATH.\nRUN mkdir /lookerbin\nRUN mkdir /rundir\nENV PATH=\"/lookerbin:${PATH}\"\nRUN chmod ugo+x /build/_tscbuild/index.js\nRUN ln -s /build/_tscbuild/index.js /lookerbin/looker\n\nRUN echo \"directory sizes for /\"\nRUN cd / && du -a . | sort -rn  | head -n 50 || true\n\n# See if the looker path works (to fail the build if this does not).\nRUN looker -h\n\nWORKDIR /rundir\nCMD looker\n"
+}

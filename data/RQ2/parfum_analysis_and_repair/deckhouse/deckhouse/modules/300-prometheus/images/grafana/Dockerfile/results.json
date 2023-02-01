@@ -1,0 +1,54 @@
+{
+  "startTime": 1674215492526,
+  "endTime": 1674215493785,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 126,
+        "lineEnd": 126,
+        "columnStart": 4,
+        "columnEnd": 118
+      }
+    },
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 45,
+        "lineEnd": 45,
+        "columnStart": 4,
+        "columnEnd": 16
+      }
+    },
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 48,
+        "lineEnd": 48,
+        "columnStart": 4,
+        "columnEnd": 14
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 45,
+        "lineEnd": 45,
+        "columnStart": 20,
+        "columnEnd": 36
+      }
+    },
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 48,
+        "lineEnd": 48,
+        "columnStart": 18,
+        "columnEnd": 34
+      }
+    }
+  ],
+  "repairedDockerfile": "ARG BASE_ALPINE\nARG BASE_NODE_16_ALPINE\nARG BASE_GOLANG_17_BUSTER\nARG BASE_DEBIAN\nARG GRAFANA_VERSION=\"8.5.2\"\nARG STATUSMAP_VERSION=\"0.5.1\"\nARG BUNDLED_PLUGINS=\"grafana-image-renderer,petrslavotinek-carpetplot-panel,vonage-status-panel,btplc-status-dot-panel,natel-plotly-panel,savantly-heatmap-panel,grafana-piechart-panel,grafana-worldmap-panel\"\n\n# This Dockerfile is based on Dockerfile from https://github.com/grafana/grafana/blob/v8.5.2/Dockerfile\n# Changes:\n# - Source files are not available in the current directory.\n#   Archive is downloaded and patched using an intermediate image.\n# - Install bundled plugins in final stage.\n\n# ===================================================\n# Step 1. Download sources and apply patches.\n# It will fail fast on problems with future versions.\nFROM $BASE_ALPINE as src-files\nWORKDIR /usr/src/app\nRUN apk add --no-cache patch\nARG GRAFANA_VERSION\nRUN wget https://github.com/grafana/grafana/archive/v${GRAFANA_VERSION}.tar.gz -O - | tar -xz  --strip-components=1\n# Extra '__interval_*' vars for prometheus datasource.\nCOPY ./patches/feat_prometheus_extra_vars.patch .\nRUN patch -p1 < ./feat_prometheus_extra_vars.patch\n# Fix heatmap render: constant bucket widths for fast-forward datasource.\nCOPY ./patches/fix_heatmap_thin_bars_on_ff.patch .\nRUN patch -p1 < ./fix_heatmap_thin_bars_on_ff.patch\n# Set more useful version than 'dev'. There are tabs in patch, so -l is used.\nCOPY ./patches/build_go.patch .\nRUN patch -p1 -l < ./build_go.patch\n# Patch to copy bundled plugins at start from ro directory to rw.\nCOPY ./patches/run_sh.patch .\nRUN patch -p1 < ./run_sh.patch\n\n\n# ===================================================\n# Step 2. Frontend.\n# Difference from original:\n# - No COPY actions: copy whole source code at start.\n# - NODE_OPTIONS to fix \"JavaScript heap out of memory\" error\nFROM $BASE_NODE_16_ALPINE as js-builder\nCOPY --from=src-files /usr/src/app /usr/src/app\nWORKDIR /usr/src/app\nRUN apk --no-cache add git\nRUN yarn install && yarn cache clean;\nENV NODE_ENV production\nENV NODE_OPTIONS \"--max_old_space_size=8000\"\nRUN yarn build && yarn cache clean;\n\n\n# ===================================================\n# Step 3. Backend binaries.\n# Difference from original:\n# - No COPY actions: copy whole source code at start.\n# - WORKDIR $GOPATH/src/github.com/grafana/grafana is not needed to build with go modules.\n# - Add 'make gen-go' to fix 'cli.go:163:12: undefined: server.Initialize'\n# - Use debian: see step 4 for details.\nFROM $BASE_GOLANG_17_BUSTER as go-builder\nCOPY --from=src-files /usr/src/app /usr/src/app\nWORKDIR /usr/src/app/\nRUN make gen-go\nRUN go run build.go build\n\n\n# ===================================================\n# Step 4. Final image.\n# Difference from original:\n# - No LABEL\n# - No GF_UID, GF_GID\n# - No USER, no adding user and group, no chmod\n# - Install additional plugins\n# - Install statusmap plugin\n# - Use debian because of grafana-image-renderer plugin: plugin_start_linux_amd64 binary is not working in musl environment.\nFROM $BASE_DEBIAN\n\nENV PATH=\"/usr/share/grafana/bin:$PATH\" \\\n    GF_PATHS_CONFIG=\"/etc/grafana/grafana.ini\" \\\n    GF_PATHS_DATA=\"/var/lib/grafana\" \\\n    GF_PATHS_HOME=\"/usr/share/grafana\" \\\n    GF_PATHS_LOGS=\"/var/log/grafana\" \\\n    GF_PATHS_PLUGINS=\"/var/lib/grafana/plugins\" \\\n    GF_PATHS_PROVISIONING=\"/etc/grafana/provisioning\"\n\nWORKDIR $GF_PATHS_HOME\n\nRUN apt-get update && \\\n    apt-get -y --no-install-recommends install libfontconfig curl ca-certificates tzdata openssl unzip && \\\n    apt-get clean && \\\n    apt-get autoremove -y && \\\n    rm -rf /var/lib/apt/lists/*\n\nCOPY --from=src-files /usr/src/app/conf ./conf\n\nRUN mkdir -p \"$GF_PATHS_HOME/.aws\" && \\\n    mkdir -p \"$GF_PATHS_PROVISIONING/datasources\" \\\n             \"$GF_PATHS_PROVISIONING/dashboards\" \\\n             \"$GF_PATHS_PROVISIONING/notifiers\" \\\n             \"$GF_PATHS_PROVISIONING/plugins\" \\\n             \"$GF_PATHS_PROVISIONING/access-control\" \\\n             \"$GF_PATHS_LOGS\" \\\n             \"$GF_PATHS_PLUGINS\" \\\n             \"$GF_PATHS_DATA\" && \\\n    cp \"$GF_PATHS_HOME/conf/sample.ini\" \"$GF_PATHS_CONFIG\" && \\\n    cp \"$GF_PATHS_HOME/conf/ldap.toml\" /etc/grafana/ldap.toml && \\\n    chmod -R 777 \"$GF_PATHS_DATA\" \"$GF_PATHS_HOME/.aws\" \"$GF_PATHS_LOGS\" \"$GF_PATHS_PLUGINS\" \"$GF_PATHS_PROVISIONING\"\n\nCOPY --from=go-builder /usr/src/app/bin/*/grafana-server /usr/src/app/bin/*/grafana-cli ./bin/\nCOPY --from=js-builder /usr/src/app/public ./public\nCOPY --from=js-builder /usr/src/app/tools ./tools\n\n# Install bundled plugins.\nARG BUNDLED_PLUGINS\nRUN echo Add bundled plugins: ${BUNDLED_PLUGINS} && \\\n    IFS=\",\" && \\\n    for plugin in ${BUNDLED_PLUGINS}; do \\\n      grafana-cli --pluginsDir \"${GF_PATHS_PLUGINS}\" plugins install ${plugin}; \\\n    done && \\\n    chmod +r /etc/grafana/grafana.ini\n# Save path with bundled plugins.\nENV BUNDLED_PLUGINS_PATH=\"${GF_PATHS_PLUGINS}\"\n\n# Download flant-statusmap-panel plugin.\nARG STATUSMAP_VERSION\nRUN echo \"Fetch flant-statusmap-panel v${STATUSMAP_VERSION}\" && \\\n    STATUSMAP_ARCHIVE=flant-statusmap-panel-${STATUSMAP_VERSION}.zip && \\\n    curl -f -LSsO https://github.com/flant/grafana-statusmap/releases/download/v${STATUSMAP_VERSION}/${STATUSMAP_ARCHIVE} && \\\n    unzip ${STATUSMAP_ARCHIVE} -d \"${GF_PATHS_PLUGINS}\" && \\\n    rm ${STATUSMAP_ARCHIVE}\n\n# Home Dashboard\nCOPY ./grafana_home_dashboard.json /usr/share/grafana/public/dashboards/grafana_home_dashboard.json\nCOPY ./web/ /usr/share/grafana/public/img/\n\nEXPOSE 3000\n# Patched entrypoint script.\nCOPY --from=src-files /usr/src/app/packaging/docker/run.sh /run.sh\nENTRYPOINT [\"/run.sh\"]\n"
+}

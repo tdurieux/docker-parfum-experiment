@@ -1,0 +1,7 @@
+# hadolint ignore=DL3006
+FROM bh.cr/balenablocks/audio-%%BALENA_ARCH%%
+
+WORKDIR /usr/src
+COPY . .
+
+CMD [ "/bin/bash", "/usr/src/start.sh" ]

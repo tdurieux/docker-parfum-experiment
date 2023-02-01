@@ -1,0 +1,11 @@
+ARG SERVICE=quay.io/edge-infrastructure/assisted-service:latest
+FROM registry.ci.openshift.org/openshift/release:golang-1.17 AS download_dlv
+RUN go get github.com/go-delve/delve/cmd/dlv
+
+FROM $SERVICE
+ARG DEBUG_SERVICE_PORT=40000
+COPY --from=download_dlv /go/bin/dlv /
+EXPOSE 8090 $DEBUG_SERVICE_PORT
+COPY assisted-service /assisted-service
+COPY assisted-service-operator /assisted-service-operator
+CMD ["/dlv", "--listen=:40000", "--headless=true", "--continue", "--api-version=2", "--accept-multiclient", "exec", "/assisted-service"]

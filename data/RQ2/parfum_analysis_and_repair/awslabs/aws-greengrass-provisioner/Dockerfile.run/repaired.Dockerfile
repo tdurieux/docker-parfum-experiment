@@ -1,0 +1,66 @@
+FROM amazoncorretto:11-al2-full
+
+# Install wget so we can fetch Device Tester and shasum so we can validate it
+RUN yum install -y wget perl-Digest-SHA && \
+    yum clean all && rm -rf /var/cache/yum
+
+# Fetch and validate Device Tester
+RUN cd / && \
+    echo "c805f3028af5ba803689187c6ccf935acf92c87c  devicetester_greengrass_linux_1.3.2.zip" > /devicetester_greengrass_linux_1.3.2.zip.sha && \
+    wget --referer=https://aws.amazon.com/greengrass/device-tester/ https://d232ctwt5kahio.cloudfront.net/greengrass/devicetester_greengrass_linux_1.3.2.zip && \
+    shasum -c /devicetester_greengrass_linux_1.3.2.zip.sha
+
+# Install JDK 8 so Java functions can be built
+RUN amazon-linux-extras enable corretto8 && \
+    yum install -y java-1.8.0-amazon-corretto-devel && \
+    yum clean all && rm -rf /var/cache/yum
+
+# Install pip so Python 3 functions can be built
+RUN yum install -y python3-pip python3 python3-setuptools python3-devel.x86_64 && \
+    yum clean all && rm -rf /var/cache/yum
+
+# Install NodeJS and npm so Node functions can be built
+RUN yum install -y gcc-c++ make && \
+    curl -f -sL https://rpm.nodesource.com/setup_12.x | bash - && \
+    yum install -y nodejs && \
+    yum clean all && rm -rf /var/cache/yum
+
+# Install unzip so we can unzip Gradle
+RUN yum install -y unzip && rm -rf /var/cache/yum
+
+# Install latest version of Gradle with sources to speed up Java builds. Lambda function developers need sources but we don't so we clear them out.
+#   If we just install the version without sources though it will still attempt to download the distribution each time since it is named differently.
+#   Therefore we download the sources distribution but clean out the components we don't need.
+RUN wget -c https://services.gradle.org/distributions/gradle-6.8.1-all.zip && \
+    mkdir -p /opt/gradle && \
+    unzip -d /opt/gradle gradle-6.8.1-all.zip
+
+RUN mkdir temp && \
+    cd temp && \
+    /opt/gradle/gradle-6.8.1/bin/gradle init && \
+    /opt/gradle/gradle-6.8.1/bin/gradle wrapper --gradle-version 6.8.1 --distribution-type all && \
+    ./gradlew tasks && \
+    cd .. && \
+    rm -rf temp && \
+    rm -f gradle*zip && \
+    rm -rf /root/.gradle/wrapper/dists/*/*/*/src \
+           /root/.gradle/wrapper/dists/*/*/*/samples \
+           /root/.gradle/wrapper/dists/*/*/*/media \
+           /root/.gradle/wrapper/dists/*/*/*.zip \
+           /root/.gradle/wrapper/dists/*/*/*/docs
+
+# Added Docker CLI to allow Docker builds of native functions inside of the container
+RUN amazon-linux-extras install docker
+
+# Install zip since native builds require it
+RUN yum install -y zip && \
+    yum clean all && rm -rf /var/cache/yum
+
+# Install the protobuf compiler so functions can use it in their build process
+RUN wget https://github.com/protocolbuffers/protobuf/releases/download/v3.11.1/protoc-3.11.1-linux-x86_64.zip && \
+    unzip protoc-3.11.1-linux-x86_64.zip bin/protoc && \
+    rm protoc-3.11.1-linux-x86_64.zip
+
+COPY AwsGreengrassProvisioner.jar AwsGreengrassProvisioner.jar
+
+ENTRYPOINT ["java", "-jar", "AwsGreengrassProvisioner.jar"]

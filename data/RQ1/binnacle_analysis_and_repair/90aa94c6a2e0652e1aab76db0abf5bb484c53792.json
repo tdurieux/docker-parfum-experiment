@@ -1,0 +1,62 @@
+{
+  "startTime": 1674242464458,
+  "endTime": 1674242464736,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 113,
+        "lineEnd": 113,
+        "columnStart": 7,
+        "columnEnd": 53
+      }
+    },
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 115,
+        "lineEnd": 115,
+        "columnStart": 7,
+        "columnEnd": 77
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 108,
+        "lineEnd": 108,
+        "columnStart": 7,
+        "columnEnd": 32
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 121,
+        "lineEnd": 121,
+        "columnStart": 7,
+        "columnEnd": 24
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 107,
+        "lineEnd": 107,
+        "columnStart": 7,
+        "columnEnd": 31
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 114,
+        "lineEnd": 114,
+        "columnStart": 7,
+        "columnEnd": 32
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "#\n# This Dockerfile is used to build a Docker image for Airflow that contains all\n# dependencies and DAGs. This same image is used for the scheduler, webserver,\n# and workers.\n#\n# It's based on the ones in the Airflow repository:\n#\n# https://github.com/apache/airflow/blob/master/Dockerfile\n# https://github.com/apache/airflow/blob/master/scripts/ci/kubernetes/docker/Dockerfile\n#\n# It also borrows from Puckel's popular image:\n#\n# https://github.com/puckel/docker-airflow\n#\n# The major differences:\n#\n# 1. Airflow is installed directly from the master branch instead of the tagged\n#    releases.  This involves cloning the code from Github into the image and\n#    building the frontend with npm.\n#\n# 2. Dependencies were added for ethereum-etl and bitcoin-etl.\n#\n#\n\nFROM python:3.6-slim\n\n# Never prompts the user for choices on installation/configuration of packages\nENV DEBIAN_FRONTEND noninteractive\nENV TERM linux\n\n# Dependences required for the build but not at runtime\nARG buildDeps=\"\\\n    freetds-dev \\\n    libczmq-dev \\\n    libkrb5-dev \\\n    libsasl2-dev \\\n    libssl-dev \\\n    libffi-dev \\\n    libpq-dev \\\n    git \\\n    nodejs\"\n\n# Dependencies required by Airflow at runtime\nARG APT_DEPS=\"\\\n    $buildDeps \\\n    bind9utils \\\n    libsasl2-dev \\\n    freetds-bin \\\n    build-essential \\\n    default-libmysqlclient-dev \\\n    inetutils-telnet \\\n    apt-utils \\\n    curl \\\n    rsync \\\n    netcat \\\n    locales \\\n    wget \\\n    zip \\\n    unzip\"\n\n# Dependencies installed via pip\nARG PYTHON_DEPS=\"\\\n    pytz \\\n    cryptography \\\n    requests \\\n    pyOpenSSL \\\n    ndg-httpsclient \\\n    pyasn1 \\\n    psycopg2-binary \\\n    Flask-Bcrypt \\\n    Flask-WTF==0.14 \\\n    click \\\n    kubernetes \\\n    setuptools \\\n    wheel\"\n\n# http://airflow.apache.org/installation.html\nARG AIRFLOW_DEPS=\"postgres,s3,devel\"\nARG AIRFLOW_HOME=/usr/local/airflow\n\n# Required by ethereum-etl\nARG ETHEREUM_ETL_DEPS=\"\\\n    google-api-python-client \\\n    httplib2 \\\n    bitcoin-etl \\\n    ethereum-etl \\\n    mythril \\\n    pyetherchain \\\n    pandas \\\n    pandas-gbq\"\n\nENV AIRFLOW_GPL_UNIDECODE yes\n\n# Define en_US.\nENV LANGUAGE en_US.UTF-8\nENV LANG en_US.UTF-8\nENV LC_ALL en_US.UTF-8\nENV LC_CTYPE en_US.UTF-8\nENV LC_MESSAGES en_US.UTF-8\n\nWORKDIR /opt/\n\nRUN set -ex \\\n    # Update our currently installed packages\n    && apt-get update -yqq \\\n    && apt-get upgrade -yqq \\\n    # Install Airflow dependencies \\\n    && apt install --no-install-recommends -y $APT_DEPS \\\n    && pip install --no-cache-dir --upgrade pip \\\n    && pip install --no-cache-dir ${PYTHON_DEPS} \\\n    # Get the master branch of Airflow from Github\n    && git clone --depth=1 https://github.com/apache/airflow.git \\\n    # Build the Airflow frontend\n    && curl -f -sL https://deb.nodesource.com/setup_11.x | bash - \\\n    && apt-get install --no-install-recommends -y nodejs \\\n    && npm --prefix /opt/airflow/airflow/www install /opt/airflow/airflow/www \\\n    && npm --prefix /opt/airflow/airflow/www run-script build \\\n    # Install Airflow from source\n    && pip install --no-cache-dir -e /opt/airflow[$AIRFLOW_DEPS] \\\n    # Required by Airflow S3 Hook\n    && useradd -ms /bin/bash -d ${AIRFLOW_HOME} airflow \\\n    && pip install --no-cache-dir boto3 \\\n    # Change the local to UTF-8\n    && sed -i 's/^# en_US.UTF-8 UTF-8$/en_US.UTF-8 UTF-8/g' /etc/locale.gen \\\n    && locale-gen \\\n    && update-locale LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8 \\\n    # Required by ethereum-etl-airflow\n    && pip install --no-cache-dir ${ETHEREUM_ETL_DEPS} \\\n    # Remove unncessary files from this layer\n    && apt-get purge --auto-remove -yqq $buildDeps \\\n    && apt-get autoremove -yqq --purge \\\n    && apt-get clean \\\n    && rm -rf \\\n        /var/lib/apt/lists/* \\\n        /tmp/* \\\n        /var/tmp/* \\\n        /usr/share/man \\\n        /usr/share/doc \\\n        /usr/share/doc-base && npm cache clean --force;\n\nWORKDIR ${AIRFLOW_HOME}\n\nCOPY airflow/entrypoint.sh /entrypoint.sh\nCOPY airflow/config/airflow.cfg ${AIRFLOW_HOME}/airflow.cfg\n\nCOPY ./airflow/dags ${AIRFLOW_HOME}/dags\n\n# Trying to get Kubernetes workers to load our dags\nCOPY ./airflow/dags /tmp/dags\n\nRUN chown -R airflow: ${AIRFLOW_HOME}\n\nEXPOSE 8080 5555 8793\n\nUSER airflow\nENTRYPOINT [\"/entrypoint.sh\"]\n\n# sets default arg for entrypoint\nCMD [\"webserver\"]\n"
+}

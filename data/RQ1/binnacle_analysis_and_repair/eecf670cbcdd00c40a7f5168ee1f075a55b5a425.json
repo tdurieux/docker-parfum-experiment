@@ -1,0 +1,62 @@
+{
+  "startTime": 1674250663199,
+  "endTime": 1674250663613,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 30,
+        "lineEnd": 30,
+        "columnStart": 4,
+        "columnEnd": 81
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 38,
+        "lineEnd": 38,
+        "columnStart": 4,
+        "columnEnd": 108
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 66,
+        "lineEnd": 66,
+        "columnStart": 20,
+        "columnEnd": 97
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 33,
+        "lineEnd": 33,
+        "columnStart": 4,
+        "columnEnd": 93
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 36,
+        "lineEnd": 36,
+        "columnStart": 4,
+        "columnEnd": 114
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 39,
+        "lineEnd": 39,
+        "columnStart": 4,
+        "columnEnd": 41
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "#\n# Licensed to the Apache Software Foundation (ASF) under one or more\n# contributor license agreements.  See the NOTICE file distributed with\n# this work for additional information regarding copyright ownership.\n# The ASF licenses this file to You under the Apache License, Version 2.0\n# (the \"License\"); you may not use this file except in compliance with\n# the License.  You may obtain a copy of the License at\n#\n#    http://www.apache.org/licenses/LICENSE-2.0\n#\n# Unless required by applicable law or agreed to in writing, software\n# distributed under the License is distributed on an \"AS IS\" BASIS,\n# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.\n# See the License for the specific language governing permissions and\n# limitations under the License.\n#\n\nFROM centos:7.4.1708\nMAINTAINER Gang Wang (garyw@apache.org)\n\n#set up your proxy below, please refer to readme in the Docker folder\nARG proxy_host=\"\"\nARG proxy_port=\"\"\nENV http_proxy ${proxy_host:+\"http://${proxy_host}:${proxy_port}\"}\nENV https_proxy ${http_proxy}\nENV HTTP_PROXY ${http_proxy}\nENV HTTPS_PROXY ${http_proxy}\n\nRUN echo The proxy set : ${http_proxy}\n\nRUN curl -f -sSL https://s3.amazonaws.com/download.fpcomplete.com/centos/7/fpco.repo | tee /etc/yum.repos.d/fpco.repo\n\nRUN yum -y update && yum -y groupinstall 'Development Tools' && \\\n    yum -y install java-devel cmake check check-devel libuuid-devel man zlib-devel wget stack && yum clean all && rm -rf /var/cache/yum\n\n# required packages by pmdk\nRUN yum install -y which autoconf asciidoc xmlto automake libtool kmod-devel libudev-devel uuid-devel json-c-devel && rm -rf /var/cache/yum\n\nRUN curl -f -O http://mirror.cogentco.com/pub/apache/maven/maven-3/3.5.4/binaries/apache-maven-3.5.4-bin.tar.gz && \\\n    tar xvf apache-maven-3.5.4-bin.tar.gz && \\\n    mv apache-maven-3.5.4 /usr/local/apache-maven && rm apache-maven-3.5.4-bin.tar.gz\n\nENV M2_HOME /usr/local/apache-maven\nENV M2 $M2_HOME/bin\nENV PATH $M2:$PATH\nENV JAVA_HOME /usr/lib/jvm/java\nENV PATH $JAVA_HOME/bin:$PATH\n\nRUN mkdir -p /ws && cd /ws && wget https://hackage.haskell.org/package/pandoc-1.17.0.3/pandoc-1.17.0.3.tar.gz && \\\n    tar xvzf pandoc-1.17.0.3.tar.gz && \\\n    mv pandoc-1.17.0.3 pandoc && \\\n    rm pandoc-1.17.0.3.tar.gz\n\nRUN cd /ws/pandoc && stack setup && stack install\nENV PD_HOME /ws/pandoc/.stack-work/install/x86_64-linux/lts-5.8/7.10.3/bin\nENV PATH $PD_HOME:$PATH\n\nRUN cd /ws && git clone https://github.com/NonVolatileComputing/pmalloc.git && \\\n    cd pmalloc && mkdir build && cd build && cmake .. && make && make install\n\nRUN cd /ws && git clone https://github.com/pmem/nvml.git && \\\n    cd nvml && git checkout 630862e82f && make && make install\n\n# deploy ndctl required by pmdk\nRUN cd /ws && git clone https://github.com/pmem/ndctl.git && \\\n    cd ndctl && git checkout ndctl-60.y && \\\n    ./autogen.sh && ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" CFLAGS='-g -O0' --prefix=/usr --sysconfdir=/etc --libdir=/usr/lib && \\\n    make && make check && make install\n\n# deploy pmdk\nRUN cd /ws && git clone https://github.com/pmem/pmdk.git && \\\n    cd pmdk && git checkout stable-1.4 && make && \\\n#    the test run time is too long\n#    cp src/test/testconfig.sh.example src/test/testconfig.sh && make check && \\\n    make install\n\nRUN touch /etc/profile.d/mvn.sh && chmod +x /etc/profile.d/mvn.sh && \\\n    if [ \"x\" != \"x${proxy_host}\" ]; then echo export MAVEN_OPTS=\"\\\" -DproxySet=\\\\\\\"true\\\\\\\" -DproxyHost=${proxy_host} -DproxyPort=${proxy_port} \\\"\" > /etc/profile.d/mvn.sh; fi\n\nRUN cat /etc/profile.d/mvn.sh > ~/.bash_profile\nRUN cat /etc/profile.d/mvn.sh > ~/.bashrc\n\nRUN . /etc/profile.d/mvn.sh && cd /ws && git clone https://github.com/apache/mnemonic.git && \\\n    cd mnemonic && mvn clean package install\n\nENV MNEMONIC_HOME /ws/mnemonic\n\n#RUN cd /ws/mnemonic && bin/runall.sh -y\n\nWORKDIR /ws\nCMD [\"bash\"]\n\n"
+}

@@ -1,0 +1,26 @@
+{
+  "startTime": 1674217755341,
+  "endTime": 1674217756202,
+  "originalSmells": [
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 5,
+        "lineEnd": 5,
+        "columnStart": 4,
+        "columnEnd": 35
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 36,
+        "lineEnd": 36,
+        "columnStart": 4,
+        "columnEnd": 35
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM golang:1.18-alpine3.15 as validator_build\n\nRUN apk add --update --no-cache build-base linux-headers git cmake bash perl grep\n\n# Install Herumi's cryptography\nRUN apk add --no-cache gmp gmp-dev openssl-dev && \\\n    cd /tmp && \\\n    wget -O - https://github.com/herumi/mcl/archive/master.tar.gz | tar xz && \\\n    wget -O - https://github.com/herumi/bls/archive/master.tar.gz | tar xz && \\\n    mv mcl* mcl && \\\n    mv bls* bls && \\\n    make -C mcl -j $(nproc) lib/libmclbn256.so install && \\\n    cp mcl/lib/libmclbn256.so /usr/local/lib && \\\n    make MCL_DIR=../mcl -C bls -j $(nproc) install && \\\n    rm -R /tmp/mcl && \\\n    rm -R /tmp/bls\n\nENV SRC_DIR=/blobber\nENV GO111MODULE=on\n\n# Download the dependencies:\n# Will be cached if we don't change mod/sum files\nCOPY ./code/go/0chain.net/core/go.mod          ./code/go/0chain.net/core/go.sum          $SRC_DIR/go/0chain.net/core/\nCOPY ./code/go/0chain.net/validatorcore/go.mod     ./code/go/0chain.net/validatorcore/go.sum     $SRC_DIR/go/0chain.net/validatorcore/\nCOPY ./code/go/0chain.net/validator/go.mod     ./code/go/0chain.net/validator/go.sum     $SRC_DIR/go/0chain.net/validator/\n\nWORKDIR $SRC_DIR/go/0chain.net/validator\nRUN go mod download\n\n#Add the source code\nADD ./code/go/0chain.net $SRC_DIR/go/0chain.net\n\nRUN go build -v -tags \"bn256 development\" -ldflags \"-X 0chain.net/core/build.BuildTag=$GIT_COMMIT\"\n\n# Copy the build artifact into a minimal runtime image:\nFROM alpine:3.15\nRUN apk add --no-cache gmp gmp-dev openssl-dev\nCOPY --from=validator_build  /usr/local/lib/libmcl*.so \\\n                        /usr/local/lib/libbls*.so \\\n                        /usr/local/lib/\nENV APP_DIR=/blobber\nWORKDIR $APP_DIR\nCOPY --from=validator_build $APP_DIR/go/0chain.net/validator/validator $APP_DIR/bin/validator\n"
+}

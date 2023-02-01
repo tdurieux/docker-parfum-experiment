@@ -1,0 +1,25 @@
+FROM --platform=linux/amd64 php:7.4
+
+RUN pecl install xdebug-3.1.3 \
+    && docker-php-ext-enable xdebug
+
+RUN apt-get update \
+ && apt-get install --no-install-recommends -y git wget tar && rm -rf /var/lib/apt/lists/*;
+
+ADD ./script/install-composer.sh /script/install-composer.sh
+RUN chmod +x /script/install-composer.sh
+
+WORKDIR /usr/bin
+RUN /script/install-composer.sh
+
+WORKDIR /tmp
+RUN wget https://s3.amazonaws.com/mountebank/v2.4/mountebank-v2.4.0-linux-x64.tar.gz \
+    && tar -xf mountebank-v2.4.0-linux-x64.tar.gz \
+    && cp -r mountebank-v2.4.0-linux-x64/* /usr/bin/ \
+    && rm -rf mountebank-v2.4.0-linux-x64* && rm mountebank-v2.4.0-linux-x64.tar.gz
+
+RUN mkdir /src
+COPY . /src
+
+WORKDIR /src
+RUN composer.phar install

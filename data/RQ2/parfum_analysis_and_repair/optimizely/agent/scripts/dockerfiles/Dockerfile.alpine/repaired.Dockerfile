@@ -1,0 +1,15 @@
+ARG GO_VERSION
+FROM golang:$GO_VERSION-alpine3.10 as builder
+# hadolint ignore=DL3018
+RUN addgroup -S agentgroup && adduser -S agentuser -G agentgroup
+RUN apk add --no-cache make gcc libc-dev git curl
+WORKDIR /go/src/github.com/optimizely/agent
+COPY . .
+RUN make setup build
+
+FROM alpine:3.10
+RUN apk add --no-cache ca-certificates
+COPY --from=builder /go/src/github.com/optimizely/agent/bin/optimizely /optimizely
+COPY --from=builder /etc/passwd /etc/passwd
+USER agentuser
+CMD ["/optimizely"]

@@ -1,0 +1,26 @@
+{
+  "startTime": 1674245357631,
+  "endTime": 1674245357858,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 57,
+        "lineEnd": 57,
+        "columnStart": 4,
+        "columnEnd": 29
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 58,
+        "lineEnd": 58,
+        "columnStart": 7,
+        "columnEnd": 58
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "ARG PYTHON_VERSION=3.6\nFROM python:${PYTHON_VERSION}-slim as airflow-base\n\nENV AIRFLOW_BUILD_DEPS=\"freetds-dev python-dev libkrb5-dev libssl-dev libffi-dev libpq-dev git\"\nENV AIRFLOW_APT_DEPS=\"libsasl2-dev sasl2-bin libsasl2-2 libsasl2-dev libsasl2-modules freetds-bin build-essential default-libmysqlclient-dev apt-utils curl rsync netcat locales\"\n\nENV AIRFLOW_VERSION=1.10.3\nENV AIRFLOW_HOME /usr/local/airflow\nENV AIRFLOW_GPL_UNIDECODE=yes\nENV SLUGIFY_USES_TEXT_UNIDECODE=yes\nENV WHIRL_SETUP_FOLDER=/etc/airflow/whirl.setup.d\n\nRUN mkdir -p /usr/share/man/man1 \\\n  && update-ca-certificates -f \\\n  && apt-get update \\\n  && apt-get install -y --no-install-recommends --reinstall build-essential \\\n  && apt-get install -y --no-install-recommends --allow-unauthenticated \\\n     software-properties-common \\\n     wget \\\n     dnsutils \\\n     vim \\\n     git \\\n     default-libmysqlclient-dev \\\n     gcc \\\n     openjdk-8-jre-headless \\\n     ${AIRFLOW_BUILD_DEPS} \\\n     ${AIRFLOW_APT_DEPS} \\\n     nginx \\\n     gosu \\\n     sudo \\\n  && apt-get clean \\\n  && apt-get autoremove -yqq --purge \\\n  && rm -rf /var/cache/apk/* /var/lib/apt/lists/* \\\n  && (find /usr/share/doc -type f -and -not -name copyright -print0 | xargs -0 -r rm)\n\nRUN mkdir /home/airflow \\\n    && groupadd airflow \\\n    && useradd -r -g airflow airflow \\\n    && chown airflow:airflow /home/airflow \\\n    && echo \"airflow ALL=(ALL) NOPASSWD: ALL\" > /etc/sudoers.d/airflow \\\n    && chmod 0440 /etc/sudoers.d/airflow\n\nFROM airflow-base as main\n\n# Optimizing installation of Cassandra driver\n# Speeds up building the image - cassandra driver without CYTHON saves around 10 minutes\nARG CASS_DRIVER_NO_CYTHON=\"1\"\n# Build cassandra driver on multiple CPUs\nARG CASS_DRIVER_BUILD_CONCURRENCY=\"8\"\n\nENV CASS_DRIVER_BUILD_CONCURRENCY=${CASS_DRIVER_BUILD_CONCURRENCY}\nENV CASS_DRIVER_NO_CYTHON=${CASS_DRIVER_NO_CYTHON}\n\n# By default PIP install run without cache to make image smaller\nARG PIP_NO_CACHE_DIR=\"true\"\nENV PIP_NO_CACHE_DIR=${PIP_NO_CACHE_DIR}\n\nRUN pip install --no-cache-dir --upgrade pip \\\n    && pip install --no-cache-dir apache-airflow[all]==${AIRFLOW_VERSION} \\\n    && mkdir -p ${AIRFLOW_HOME}/dags \\\n    && chown -R airflow.airflow ${AIRFLOW_HOME}\n\nRUN mkdir -p ${WHIRL_SETUP_FOLDER}/env.d\n\n# Make sure a ssl certificate is generated and configured. Nginx can be configured if needed from now on.\nRUN mkdir -p /etc/nginx/ssl \\\n    && mkdir -p /etc/nginx/conf.d/locations.d \\\n    && openssl genrsa -des3 -passout pass:p4ssw0rd -out server.pass.key 2048 \\\n    && openssl rsa -passin pass:p4ssw0rd -in server.pass.key -out /etc/nginx/ssl/server.key \\\n    && rm server.pass.key \\\n    && openssl req -new -key /etc/nginx/ssl/server.key -out /etc/nginx/ssl/server.csr \\\n        -subj \"/C=NL/ST=Utrecht/L=Utrecht/O=Airflow/OU=IT Department/CN=localhost\" \\\n    && openssl x509 -req -days 3650 -in /etc/nginx/ssl/server.csr -signkey /etc/nginx/ssl/server.key -out /etc/nginx/ssl/server.crt \\\n    && openssl dhparam -out /etc/nginx/ssl/dhparam.pem 2048 \\\n    && cat /etc/nginx/ssl/server.key > /etc/nginx/ssl/server.pem \\\n    && cat /etc/nginx/ssl/server.crt >> /etc/nginx/ssl/server.pem \\\n    && ln -s /etc/nginx/ssl/server.crt /etc/ssl/certs/nginx_selfsigned.crt \\\n    && update-ca-certificates -f\n\nADD nginx-ssl.conf /etc/nginx/conf.d/\n\nUSER airflow\n\nEXPOSE 5000\n\nADD --chown=airflow:airflow entrypoint.sh delete_all_airflow_connections.py /\nADD includes /etc/airflow/functions\nADD pip.conf /home/airflow/.config/pip/pip.conf\n\nENV PATH=\"${PATH}:/home/airflow/.local/bin\"\nENTRYPOINT \"/entrypoint.sh\"\n"
+}

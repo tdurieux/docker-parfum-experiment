@@ -1,0 +1,17 @@
+{
+  "startTime": 1674250931802,
+  "endTime": 1674250932450,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 29,
+        "lineEnd": 29,
+        "columnStart": 4,
+        "columnEnd": 96
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "#\n# NOTE: To build this you will need a docker version > 18.06 with\n#       experimental enabled and DOCKER_BUILDKIT=1\n#\n#       If you do not use buildkit you are not going to have a good time\n#\n#       For reference:\n#           https://docs.docker.com/develop/develop-images/build_enhancements/\nARG BASE_IMAGE=ubuntu:18.04\nARG PYTHON_VERSION=3.8\n\nFROM ${BASE_IMAGE} as dev-base\nRUN --mount=type=cache,id=apt-dev,target=/var/cache/apt \\\n    apt-get update && apt-get install -y --no-install-recommends \\\n        build-essential \\\n        ca-certificates \\\n        ccache \\\n        cmake \\\n        curl \\\n        git \\\n        libjpeg-dev \\\n        libpng-dev && \\\n    rm -rf /var/lib/apt/lists/*\nRUN /usr/sbin/update-ccache-symlinks\nRUN mkdir /opt/ccache && ccache --set-config=cache_dir=/opt/ccache\nENV PATH /opt/conda/bin:$PATH\n\nFROM dev-base as conda\nRUN curl -f -o ~/miniconda.sh https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh && \\\n    chmod +x ~/miniconda.sh && \\\n    ~/miniconda.sh -b -p /opt/conda && \\\n    rm ~/miniconda.sh && \\\n    /opt/conda/bin/conda install -y python=${PYTHON_VERSION} conda-build pyyaml numpy ipython && \\\n    /opt/conda/bin/conda install -y -c saareliad se-msnag2 && \\\n    /opt/conda/bin/conda clean -ya\n\nFROM dev-base as submodule-update\nWORKDIR /opt/pytorch\nCOPY . .\nRUN git submodule sync && git submodule update --init --recursive\n\nFROM conda as build\nWORKDIR /opt/pytorch\nCOPY --from=conda /opt/conda /opt/conda\nCOPY --from=submodule-update /opt/pytorch /opt/pytorch\nRUN --mount=type=cache,target=/opt/ccache \\\n    TORCH_CUDA_ARCH_LIST=\"3.5 5.2 6.0 6.1 7.0+PTX 7.5+PTX\" TORCH_NVCC_FLAGS=\"-Xfatbin -compress-all\" \\\n    CMAKE_PREFIX_PATH=\"$(dirname $(which conda))/../\" \\\n    python setup.py install\n\nFROM conda as conda-installs\nARG INSTALL_CHANNEL=pytorch-nightly\nRUN /opt/conda/bin/conda install -c \"${INSTALL_CHANNEL}\" -y pytorch torchvision && \\\n    /opt/conda/bin/conda clean -ya\n\nFROM ${BASE_IMAGE} as official\nLABEL com.nvidia.volumes.needed=\"nvidia_driver\"\nRUN --mount=type=cache,id=apt-final,target=/var/cache/apt \\\n    apt-get update && apt-get install -y --no-install-recommends \\\n        ca-certificates \\\n        libjpeg-dev \\\n        libpng-dev && \\\n    rm -rf /var/lib/apt/lists/*\nCOPY --from=conda-installs /opt/conda /opt/conda\nENV PATH /opt/conda/bin:$PATH\nENV NVIDIA_VISIBLE_DEVICES all\nENV NVIDIA_DRIVER_CAPABILITIES compute,utility\nENV LD_LIBRARY_PATH /usr/local/nvidia/lib:/usr/local/nvidia/lib64\nWORKDIR /workspace\n\nFROM official as dev\n# Should override the already installed version from the official-image stage\nCOPY --from=build /opt/conda /opt/conda\n"
+}

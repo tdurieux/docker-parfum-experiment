@@ -1,0 +1,18 @@
+ARG BASE_IMAGE
+ARG BASE_IMAGE_RUN=frolvlad/alpine-glibc:alpine-3.12
+FROM ${BASE_IMAGE} AS builder
+WORKDIR /home/app
+
+COPY classes /home/app/classes
+COPY dependency/* /home/app/libs/
+ARG GRAALVM_ARGS=""
+RUN native-image ${GRAALVM_ARGS} --report-unsupported-elements-at-runtime -H:Class=com.fnproject.fn.runtime.EntryPoint -H:Name=application --no-fallback -cp "/home/app/libs/*:/home/app/classes/"
+
+FROM fnproject/fn-java-fdk:jre11-latest AS fnfdk
+
+FROM ${BASE_IMAGE_RUN}
+WORKDIR /function
+COPY --from=builder /home/app/application /function/func
+COPY --from=fnfdk /function/runtime/lib/* .
+ENTRYPOINT ["./func", "-XX:MaximumHeapSizePercent=80", "-Djava.library.path=/function"]
+CMD ["io.micronaut.oraclecloud.function.http.HttpFunction::handleRequest"]

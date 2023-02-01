@@ -1,0 +1,101 @@
+#    SYMON
+#    Copyright (C) 2021  SYMON Contributors
+#
+#    This program is free software: you can redistribute it and/or modify
+#    it under the terms of the GNU Affero General Public License as published
+#    by the Free Software Foundation, either version 3 of the License, or
+#    (at your option) any later version.
+#
+#    This program is distributed in the hope that it will be useful,
+#    but WITHOUT ANY WARRANTY; without even the implied warranty of
+#    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#    GNU Affero General Public License for more details.
+#
+#    You should have received a copy of the GNU Affero General Public License
+#    along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+FROM node:lts-alpine as build
+
+# Stage 1: Build
+# Get Build args
+ARG NODE_ENV="production"
+ARG PORT="8080"
+ARG DATABASE_URL="file:./dev.db"
+ARG JWT_SECRET="thisIsJwtSecret"
+ARG JWT_ISSUER="symon.org"
+ARG JWT_ACCESS_EXPIRED="5m"
+ARG JWT_REFRESH_EXPIRED="1y"
+ARG JWT_ALGORITHM="HS256"
+
+# Set ENV from ARG
+ENV NODE_ENV ${NODE_ENV}
+ENV PORT ${PORT}
+ENV DATABASE_URL ${DATABASE_URL}
+ENV JWT_SECRET ${JWT_SECRET}
+ENV JWT_ISSUER ${JWT_ISSUER}
+ENV JWT_ACCESS_EXPIRED ${JWT_ACCESS_EXPIRED}
+ENV JWT_REFRESH_EXPIRED ${JWT_REFRESH_EXPIRED}
+ENV JWT_ALGORITHM ${JWT_ALGORITHM}
+
+WORKDIR /usr/app/symon
+
+# Copy files needed
+COPY package-lock.json .
+COPY package.json .
+COPY tsconfig.json .
+
+# Copy the client code
+RUN mkdir src
+COPY src/config src/config
+COPY src/server src/server
+
+# Install dependencies
+RUN npm ci --also=dev
+
+# Migrate and seed
+RUN npx prisma migrate deploy
+
+# Build the server
+RUN npm run server:build
+
+FROM node:lts-alpine
+
+# Stage 2: Serve
+# Get Build args
+ARG NODE_ENV="production"
+ARG PORT="8080"
+ARG DATABASE_URL="file:./dev.db"
+ARG JWT_SECRET="thisIsJwtSecret"
+ARG JWT_ISSUER="symon.org"
+ARG JWT_ACCESS_EXPIRED="5m"
+ARG JWT_REFRESH_EXPIRED="1y"
+ARG JWT_ALGORITHM="HS256"
+
+# Set ENV from ARG
+ENV NODE_ENV ${NODE_ENV}
+ENV PORT ${PORT}
+ENV DATABASE_URL ${DATABASE_URL}
+ENV JWT_SECRET ${JWT_SECRET}
+ENV JWT_ISSUER ${JWT_ISSUER}
+ENV JWT_ACCESS_EXPIRED ${JWT_ACCESS_EXPIRED}
+ENV JWT_REFRESH_EXPIRED ${JWT_REFRESH_EXPIRED}
+ENV JWT_ALGORITHM ${JWT_ALGORITHM}
+
+WORKDIR /usr/app/symon
+
+# Copy built API
+COPY --from=build /usr/app/symon/build/ ./build/
+COPY --from=build /usr/app/symon/src/server/prisma/ ./src/server/prisma/
+COPY --from=build /usr/app/symon/package*.json ./
+
+# Install selected dev dependencies
+# Also install pm2 for running app with process manager
+RUN npm install -g prisma pm2
+
+# Install production only dependencies
+RUN npm install
+
+# Open port 8080
+EXPOSE 8080
+
+CMD ["pm2-runtime", "build/server/index.js"]

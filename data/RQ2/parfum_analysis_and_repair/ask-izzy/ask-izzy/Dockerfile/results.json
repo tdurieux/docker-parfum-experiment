@@ -1,0 +1,44 @@
+{
+  "startTime": 1674250711938,
+  "endTime": 1674250712679,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 105,
+        "lineEnd": 105,
+        "columnStart": 4,
+        "columnEnd": 118
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 109,
+        "lineEnd": 109,
+        "columnStart": 4,
+        "columnEnd": 149
+      }
+    },
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 56,
+        "lineEnd": 56,
+        "columnStart": 4,
+        "columnEnd": 23
+      }
+    },
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 57,
+        "lineEnd": 57,
+        "columnStart": 4,
+        "columnEnd": 69
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "ARG UID_GID=1000:1000\nARG HOME=\"/tmp/home\"\n\n###############################################################################\n# Set volume permissions                                                      #\n#                                                                             #\n# Since we run the image for Ask Izzy is designed not as root (for security   #\n# reasons), if we want to mount shared volumes into this container to write   #\n# to then those volumes will need to have file permissions that allow our     #\n# user write to them. However since the point of not running this container   #\n# as root is to not allow things like changing file permissions for files we  #\n# don't already have permission to modify then we can't simply set the        #\n# permissions of files in the volumes when the container is started if        #\n# needed. To get around this we create a separate image that runs as root     #\n# who's only purposes is to set the file permissions of mounted volumes.      #\n# This image should only have to be run once after which we can deploy the    #\n# Distribution image as normal.                                               #\n###############################################################################\n\nFROM contyard.office.infoxchange.net.au/bullseye-nodejs16:latest as set-volume-permissions\nARG UID_GID\n\n# hadolint ignore=DL3002\nUSER root\nENV UID_GID=$UID_GID\n# hadolint ignore=DL3025\nENTRYPOINT exec bash -c \"\\\n    chown -R $UID_GID /storage /static && \\\n    echo Set volume file permissions && \\\n    ls -hal /storage /static \\\n\"\n\n\n###############################################################################\n# Prepare environment                                                         #\n#                                                                             #\n# This stage should should do any setup that is required for in both the      #\n# development and serving states.                                             #\n###############################################################################\n\nFROM contyard.office.infoxchange.net.au/bullseye-nodejs16:latest as base\n\nARG UID_GID\nARG HOME\n\nLABEL maintainer=\"developers@infoxchange.org\"\nLABEL vendor=\"infoxchange.org\"\n\nENV DEBIAN_FRONTEND=noninteractive\nENV HOME=$HOME\nENV NODE_EXTRA_CA_CERTS=/etc/ssl/certs/ca-certificates.crt\n\nRUN mkdir /app && \\\n    ( [ -e \"$HOME\" ] || mkdir \"$HOME\" ) && \\\n    chown -R $UID_GID /app \"$HOME\" && \\\n    # Install yarn\n    npm install -g yarn && \\\n    yarn config set registry http://apt.office.infoxchange.net.au/npm && \\\n    # Install system dependences\n    apt-get -y update && \\\n    apt-get -y --no-install-recommends install \\\n        # Used by start-server-and-test\n        procps && \\\n    apt-get clean && \\\n    rm -rf /var/lib/apt/lists/* && npm cache clean --force; && yarn cache clean;\n\nUSER $UID_GID\n\nWORKDIR /app\n\nENTRYPOINT [\"yarn\", \"run\"]\nVOLUME [\"/static\", \"/storage\"]\nEXPOSE 8000\n\n\n###############################################################################\n# Setup development environment                                               #\n#                                                                             #\n# All code and dependencies necessary to run the tests, lints and serve a     #\n# development version of the app.                                             #\n###############################################################################\n\nFROM base as development\nARG UID_GID\n\nSHELL [\"/bin/bash\", \"-o\", \"pipefail\", \"-c\"]\n\nUSER root\n\n# Install any packages needed for building/testing the app.\nRUN apt-get -y update && \\\n    apt-get -y --no-install-recommends install \\\n        curl \\\n        # Used by scripts/check-flow-annotations.sh & scripts/check-storybook-components.sh\n        git \\\n        # Used by selenium\n        chromium \\\n        # Used for pa11y\n        libatk-bridge2.0-0 \\\n        libgtk-3-0 \\\n        # Used below for unpacking shellcheck program\n        xz-utils && \\\n    apt-get clean && \\\n    rm -rf /var/lib/apt/lists/* && \\\n    # Install Hadolint\n    curl -f -sSL -o /usr/bin/hadolint https://github.com/hadolint/hadolint/releases/latest/download/hadolint-Linux-x86_64 && \\\n    chmod +x /usr/bin/hadolint && \\\n    # Install ShellCheck\n    SHELLCHECK_VERSION=\"stable\" && \\\n    curl -f -sSL \"https://github.com/koalaman/shellcheck/releases/download/${SHELLCHECK_VERSION?}/shellcheck-${SHELLCHECK_VERSION?}.linux.x86_64.tar.xz\" | \\\n        tar -xJv -C /tmp && \\\n    cp \"/tmp/shellcheck-${SHELLCHECK_VERSION}/shellcheck\" /usr/bin/ && \\\n    rm -rf \"/tmp/shellcheck-${SHELLCHECK_VERSION}\"\n\nUSER $UID_GID\n\nCOPY ./package.json ./yarn.lock /app/\nRUN yarn install --frozen-lockfile && yarn cache clean\n\n# Copy in app source\nCOPY --chown=$UID_GID . /app\n\n# Note this essentially guarantees cache invalidation from this point for builds\n# of different versions.\nARG VERSION\nRUN echo $VERSION > ./public/VERSION.txt && \\\n    # Build Ask Izzy\n    yarn with --test-env --mocks build\n\nENV VERSION=$VERSION\n\nCMD [\"dev\"]\n\n\n###############################################################################\n# Distribution                                                                #\n#                                                                             #\n# This stage contains everything necessary to serve the app and nothing more. #\n###############################################################################\n\nFROM base as distribution\nARG UID_GID\n\nCOPY ./package.json ./yarn.lock /app/\nRUN yarn install --frozen-lockfile && yarn cache clean\n\n# Copy in app source\nCOPY --chown=$UID_GID . /app\n\nARG VERSION\nRUN echo $VERSION > ./public/VERSION.txt && \\\n    yarn with --test-env --mocks build-storybook\n\nENV VERSION=$VERSION\n\nCMD [\"serve\"]\n"
+}

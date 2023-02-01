@@ -1,0 +1,26 @@
+{
+  "startTime": 1674255625737,
+  "endTime": 1674255626867,
+  "originalSmells": [
+    {
+      "rule": "sha256sumEchoOneSpaces",
+      "position": {
+        "lineStart": 18,
+        "lineEnd": 18,
+        "columnStart": 4,
+        "columnEnd": 61
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 19,
+        "lineEnd": 19,
+        "columnStart": 4,
+        "columnEnd": 67
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM alpine:3.15 as build\nLABEL org.opencontainers.image.source https://github.com/publicarray/dns-resolver-infra\nLABEL maintainer=\"publicarray\"\nLABEL description=\"The Reliable, High Performance TCP/HTTP Load Balancer\"\n\n\nENV HAPROXY_BUILD_DEPS gcc ca-certificates libc-dev linux-headers make openssl-dev pcre2-dev readline-dev tar zlib-dev\nRUN apk add --no-cache $HAPROXY_BUILD_DEPS\n\nENV HAPROXY_VERSION_SHORT 2.5\nENV HAPROXY_VERSION 2.5.5\nENV HAPROXY_SHA256 063c4845cdb2d76f292ef44d9c0117a853d8d10ae5d9615b406b14a4d74fe4b9\nENV HAPROXY_DOWNLOAD_URL \"https://www.haproxy.org/download/${HAPROXY_VERSION_SHORT}/src/haproxy-${HAPROXY_VERSION}.tar.gz\"\n\nRUN set -x && \\\n    mkdir -p /tmp/src/haproxy && \\\n    cd /tmp/src/haproxy && \\\n    wget -O haproxy.tar.gz $HAPROXY_DOWNLOAD_URL && \\\n    echo \"${HAPROXY_SHA256}  *haproxy.tar.gz\" | sha256sum -c - && \\\n    tar xzf haproxy.tar.gz -C /tmp/src/haproxy --strip-components=1 && \\\n    nproc=\"$(getconf _NPROCESSORS_ONLN)\" && \\\n    makeOpts=' \\\n        TARGET=linux-musl \\\n        USE_GETADDRINFO=1 \\\n        USE_OPENSSL=1 \\\n        USE_PCRE2=1 \\\n        USE_PCRE2_JIT=1 \\\n        USE_ZLIB=1 \\\n    ' && \\\n    eval \"make $makeOpts -j '$nproc' all\" && \\\n    eval \"make $makeOpts install-bin\" && rm haproxy.tar.gz\n\n#------------------------------------------------------------------------------#\nFROM alpine:3.15\nLABEL org.opencontainers.image.source https://github.com/publicarray/dns-resolver-infra\n\nENV HAPROXY_RUN_DEPS curl shadow zlib pcre2 openssl socat runit coreutils bind-tools\n\nRUN apk add --no-cache $HAPROXY_RUN_DEPS\n\nCOPY --from=build /usr/local/sbin/haproxy /usr/local/sbin/haproxy\nCOPY --from=build /tmp/src/haproxy/examples/errorfiles /usr/local/etc/haproxy/errors\n\nRUN set -x && \\\n    groupadd _haproxy && \\\n    useradd -g _haproxy -s /dev/null -d /dev/null _haproxy && \\\n    mkdir -p \\\n        /etc/service/haproxy/ \\\n        /run/haproxy/ \\\n        /etc/service/ocsp-updater && \\\n    update-ca-certificates 2> /dev/null || true\n\nCOPY entrypoint.sh /\nCOPY haproxy.conf /etc/haproxy.conf\nCOPY haproxy.sh /etc/service/haproxy/run\nCOPY ocsp-updater.sh /etc/service/ocsp-updater/run\n# wget https://ssl-config.mozilla.org/ffdhe2048.txt -O /opt/ssl/dhparam.pem\nCOPY ffdhe2048.txt /opt/ssl/dhparam.pem\n\nVOLUME [\"/opt/ssl\"]\n\nEXPOSE 853/udp 853/tcp 443/udp 443/tcp\n\nRUN haproxy -vv\nRUN haproxy -f /etc/haproxy.conf -c || true\n\n# Gracefully exit\n# All services are then put into soft-stop state,\n# which means that they will refuse to accept new connections\nSTOPSIGNAL SIGUSR1\n\n# HEALTHCHECK --start-period=5s --interval=3m \\\n# CMD curl -f -H 'accept: application/dns-message' -k 'https://127.0.0.1/dns-query?ct&dns=AAABAAABAAAAAAAAA3d3dwdleGFtcGxlA2NvbQAAAQAB'>/dev/null || exit 1\n\nENTRYPOINT [\"/entrypoint.sh\"]\n"
+}

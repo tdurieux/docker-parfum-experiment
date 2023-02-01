@@ -1,0 +1,35 @@
+{
+  "startTime": 1674252670260,
+  "endTime": 1674252670937,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 42,
+        "lineEnd": 42,
+        "columnStart": 4,
+        "columnEnd": 35
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 9,
+        "lineEnd": 9,
+        "columnStart": 4,
+        "columnEnd": 62
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 9,
+        "lineEnd": 9,
+        "columnStart": 4,
+        "columnEnd": 62
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "######################\n# Installation image #\n######################\n\nFROM python:{{python_version_major}}.{{python_version_minor}}-slim AS builder\n\n# Install git and ssh, in order to install Python\n# packages not available from PyPI.\nRUN apt-get update && \\\n    apt-get install --no-install-recommends -y git {{ \"ssh\" if ssh_required else \"\" }} && rm -rf /var/lib/apt/lists/*;\n\n# Changing to non-root user early\nRUN useradd --create-home appuser\nWORKDIR /home/appuser\nUSER appuser\n\n# Set environment variables\nENV PATH=\"${PATH}:/home/appuser/.local/bin\"{% if ssh_required %}  \\\n    GIT_SSH_COMMAND=\"ssh $(cat ssh_identity_files) -o IdentitiesOnly=yes -o UserKnownHostsFile=./temp-known-host\" \\\n    KNOWN_GITHUB_FINGERPRINT=\"SHA256:nThbg6kXUpJWGl7E1IGOCspRomTxdCARLviKw6E5SY8\"\n\n# Read GitHub deploy key environment variable, and move to\n# temporary files which the ssh command can read from.\nARG GITHUB_DEPLOY_KEYS\nRUN python -c \"\\\nimport base64, os, stat; from pathlib import Path; \\\nkeys = base64.b64decode(os.environ['GITHUB_DEPLOY_KEYS']).decode('utf-8').split(','); \\\npaths = [f'github_deploy_key_{i}' for i, _ in enumerate(keys)]; \\\n[Path(path).write_text(key) for path, key in zip(paths, keys)]; \\\n[Path(path).chmod(stat.S_IRUSR) for path in paths]; \\\nPath('ssh_identity_files').write_text('-i ' + ' -i '.join(paths))\"\n\n# Add github.com ssh as known host, and verify that fingerprint equals known value\nRUN FINGERPRINT=$(ssh-keyscan -t rsa github.com | tee ./temp-known-host | ssh-keygen -lf -) && \\\n    if [ -n \"${FINGERPRINT##*$KNOWN_GITHUB_FINGERPRINT*}\" ] ;then \\\n      echo \"ERROR: GitHub SSH fingerprint does not match known fingerprint!\"; \\\n      exit 1; \\\n    fi\n{% endif %}\n\n# Install relevant Python packages\nCOPY --chown=appuser requirements.txt requirements.txt\nRUN pip install --no-cache-dir -r requirements.txt\n\n###############\n# Final image #\n###############\n\nFROM python:{{python_version_major}}.{{python_version_minor}}-slim\n\n# Changing to non-root user early\nRUN useradd --create-home --uid 1234 appuser\nUSER 1234\nWORKDIR /home/appuser\n\n# Set environment variables\nENV PATH=\"${PATH}:/home/appuser/.local/bin\" \\\n    PYTHONFAULTHANDLER=1\n\n# Copy over appuser installed Python packages\nCOPY --chown=appuser --from=builder /home/appuser/.local /home/appuser/.local\n\n# Copy over the created Webviz application\nCOPY --chown=appuser . dash_app\n\nEXPOSE 5000\n\n# Define startup command of container image\nCMD gunicorn \\\n        --access-logfile \"-\" \\\n        --bind 0.0.0.0:5000 \\\n        --keep-alive 120 \\\n        --max-requests 40 \\\n        --preload \\\n        --workers 2 \\\n        --worker-class gthread \\\n        --worker-tmp-dir /dev/shm \\\n        --threads 2 \\\n        --timeout 100000 \\\n        \"dash_app.webviz_app:server\"\n"
+}

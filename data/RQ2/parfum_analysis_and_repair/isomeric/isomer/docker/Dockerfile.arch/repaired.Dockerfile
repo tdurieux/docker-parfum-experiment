@@ -1,0 +1,94 @@
+# Docker Image for Isomer - Arch Linux x64 version
+#
+# This image essentially packages up Isomer
+# into a Docker Image/Container running Arch Linux OS x64.
+#
+# Usage Examples(s)::
+#
+#     $ docker run -i -t isomeric/isomer iso launch
+#     $ docker run -i -t -p 127.0.0.1:80:80 --name isomer-test-live -t isomeric/isomer
+#
+# VERSION: 1.1.0
+#
+# Last Updated: 20160818
+
+FROM nfnty/arch-mini
+
+MAINTAINER Heiko 'riot' Weinen <riot@c-base.org>
+
+# Install dependencies
+
+RUN pacman -Syyu --noconfirm
+
+#RUN pacman-db-upgrade
+
+RUN pacman -S --noconfirm --force \
+        git \
+        npm \
+        enchant \
+        mongodb \
+        python-pip \
+        python-setuptools \
+        python-pymongo \
+        python-urwid \
+        python-pyserial
+
+RUN pacman -Sc --noconfirm
+
+# Mongo config (smallfiles), database startup and provisioning
+
+RUN echo smallfiles = true >> /etc/mongodb.conf
+
+# The next one was necessary on one installation, but that could've been due to a weird mongodb release
+#RUN echo setParameter = textSearchEnabled = true >> /etc/mongodb.conf
+
+RUN mongod -f /etc/mongodb.conf --fork & && python setup.py install_provisions
+
+# Add user account and group
+
+RUN useradd -Ums /bin/sh isomer
+
+# Get Isomer
+
+RUN git clone https://github.com/isomeric/isomer
+WORKDIR isomer
+
+# Install Isomer
+
+RUN pip install --no-cache-dir -r requirements-dev.txt
+RUN pip install --no-cache-dir .
+
+# Install all modules
+
+WORKDIR modules
+RUN python install.py --all --dev
+WORKDIR ..
+
+# Make sure /var/[cache,lib]/isomer etc exists
+
+RUN python setup.py install_var
+
+# Generate & Install Documentation
+
+#RUN python setup.py build_sphinx
+#RUN python setup.py install_docs
+
+# Install Frontend
+
+RUN git submodule init && git submodule update
+
+# Upgrade npm (from ancient Debian version to current)
+
+RUN npm install npm -g && npm cache clean --force;
+
+WORKDIR frontend
+RUN npm install && npm cache clean --force;
+WORKDIR ..
+
+#  Services
+
+EXPOSE 80
+
+# If you want to run the frontend development live server, uncomment this:
+# EXPOSE 8081
+

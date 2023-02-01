@@ -1,0 +1,89 @@
+{
+  "startTime": 1674253867063,
+  "endTime": 1674253868735,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 66,
+        "lineEnd": 66,
+        "columnStart": 32,
+        "columnEnd": 123
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 143,
+        "lineEnd": 143,
+        "columnStart": 5,
+        "columnEnd": 43
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 153,
+        "lineEnd": 153,
+        "columnStart": 5,
+        "columnEnd": 106
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 159,
+        "lineEnd": 159,
+        "columnStart": 32,
+        "columnEnd": 116
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 172,
+        "lineEnd": 172,
+        "columnStart": 5,
+        "columnEnd": 140
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 177,
+        "lineEnd": 177,
+        "columnStart": 30,
+        "columnEnd": 108
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 187,
+        "lineEnd": 187,
+        "columnStart": 5,
+        "columnEnd": 73
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 197,
+        "lineEnd": 197,
+        "columnStart": 5,
+        "columnEnd": 133
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 62,
+        "lineEnd": 63,
+        "columnStart": 4,
+        "columnEnd": 18
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# This Dockerfile makes the \"build box\": the container used to build official\n# releases of Teleport and its documentation.\n\n# Use Ubuntu 18.04 as base to get an older glibc version.\n# Using a newer base image will build against a newer glibc, which creates a\n# runtime requirement for the host to have newer glibc too. For example,\n# teleport built on any newer Ubuntu version will not run on Centos 7 because\n# of this.\n\nARG RUST_VERSION\n\n## LIBFIDO2 ###################################################################\n\n# Build libfido2 separately for isolation, speed and flexibility.\nFROM buildpack-deps:18.04 AS libfido2\n\nRUN apt-get update && \\\n    apt-get install -y --no-install-recommends cmake && \\\n    rm -rf /var/lib/apt/lists/*\n\n# Install libudev-zero.\n# libudev-zero replaces systemd's libudev\nRUN git clone --depth=1 https://github.com/illiliti/libudev-zero.git -b 1.0.1 && \\\n    cd libudev-zero && \\\n    [ \"$(git rev-parse HEAD)\" = \"4154cf252c17297f98a8ca33693ead003b4509da\" ] && \\\n    make install-static && \\\n    make clean\n\n# Install libcbor.\nRUN git clone --depth=1 https://github.com/PJK/libcbor.git -b v0.9.0 && \\\n    cd libcbor && \\\n    [ \"$(git rev-parse HEAD)\" = \"58b3319b8c3ec15171cb00f01a3a1e9d400899e1\" ] && \\\n    cmake \\\n        -DCBOR_CUSTOM_ALLOC=ON \\\n        -DCMAKE_BUILD_TYPE=Release \\\n        -DCMAKE_POSITION_INDEPENDENT_CODE=ON \\\n        -DWITH_EXAMPLES=OFF . && \\\n    make && \\\n    make install && \\\n    make clean\n\n# Install libfido2.\n# Depends on libcbor, libssl-dev, zlib1g-dev and libudev.\nRUN git clone --depth=1 https://github.com/Yubico/libfido2.git -b 1.11.0 && \\\n    cd libfido2 && \\\n    [ \"$(git rev-parse HEAD)\" = \"e61379ff0a27277fbe0aca29ccc34ff93c57b359\" ] && \\    \n    CFLAGS=-pthread cmake \\\n        -DBUILD_EXAMPLES=OFF \\\n        -DBUILD_MANPAGES=OFF \\\n        -DBUILD_TOOLS=OFF \\\n        -DCMAKE_BUILD_TYPE=Release . && \\\n    make && \\\n    make install && \\\n    make clean\n\n## LIBBPF #####################################################################\n\nFROM buildpack-deps:18.04 AS libbpf\n\n# Install libbpf\nRUN apt-get update -y --fix-missing && \\\n    apt-get -q -y upgrade && \\\n    apt-get install -q -y --no-install-recommends \\\n        libelf-dev && rm -rf /var/lib/apt/lists/*;\n\nARG LIBBPF_VERSION\nRUN mkdir -p /opt && cd /opt && curl -f -L https://github.com/gravitational/libbpf/archive/refs/tags/v${LIBBPF_VERSION}.tar.gz | tar xz && \\\n    cd /opt/libbpf-${LIBBPF_VERSION}/src && \\\n    make && \\\n    make install\n\n## CBINDGEN ###################################################################\n\nFROM rust:${RUST_VERSION} AS cbindgen\nRUN cargo install cbindgen\n\n## BUILDBOX ###################################################################\n\nFROM ubuntu:18.04 AS buildbox\n\nCOPY locale.gen /etc/locale.gen\nCOPY profile /etc/profile\n\nENV LANGUAGE=\"en_US.UTF-8\" \\\n    LANG=\"en_US.UTF-8\" \\\n    LC_ALL=\"en_US.UTF-8\" \\\n    LC_CTYPE=\"en_US.UTF-8\" \\\n    DEBIAN_FRONTEND=\"noninteractive\"\n\n# BUILDARCH is automatically set by DOCKER when building the image with Build Kit (MacOS by deafult).\n# https://docs.docker.com/engine/reference/builder/#automatic-platform-args-in-the-global-scope\nARG BUILDARCH\n\n# Install packages.\n# Java JRE is required by gcloud firestore emulator.\n# NOTE: gcc-multilib is not available on ARM, so ony amd64 version includes it.\nRUN apt-get update -y --fix-missing && \\\n    apt-get -q -y upgrade && \\\n    apt-get install -q -y --no-install-recommends \\\n        apt-utils \\\n        build-essential \\\n        ca-certificates \\\n        clang-10 \\\n        clang-format-10 \\\n        curl \\\n        default-jre \\\n        `if [ \"$BUILDARCH\" = \"amd64\" ] ; then echo gcc-multilib; fi`  \\\n        git \\\n        gnupg \\\n        gzip \\\n        libc6-dev \\\n        libelf-dev \\\n        libpam-dev \\\n        libsqlite3-0 \\\n        libssl-dev \\\n        libudev-dev \\\n        llvm-10 \\\n        locales \\\n        mingw-w64 \\\n        mingw-w64-x86-64-dev \\\n        net-tools \\\n        openssh-client \\\n        osslsigncode \\\n        python3-pip \\\n        python3-setuptools \\\n        python3-wheel \\\n        pkg-config \\\n        shellcheck \\\n        softhsm2 \\\n        sudo \\\n        tree \\\n        unzip \\\n        zip \\\n        zlib1g-dev \\\n        xauth \\\n        && \\\n    pip3 --no-cache-dir install yamllint && \\\n    dpkg-reconfigure locales && \\\n    apt-get -y clean && \\\n    rm -rf /var/lib/apt/lists/*\n\n# Install gcloud SDK and Firestore emulator.\nENV PATH=\"$PATH:/opt/google-cloud-sdk/bin\"\nRUN ( curl -f -sSL https://sdk.cloud.google.com | bash -s -- --install-dir=/opt --disable-prompts) && \\\n    gcloud components install cloud-firestore-emulator beta && \\\n    rm -rf /opt/google-cloud-sdk/.install/.backup\n\nARG UID\nARG GID\nRUN (groupadd ci --gid=$GID -o && useradd ci --uid=$UID --gid=$GID --create-home --shell=/bin/sh && \\\n     mkdir -p -m0700 /var/lib/teleport && chown -R ci /var/lib/teleport)\n\n# Install etcd.\nRUN ( curl -f -L https://github.com/coreos/etcd/releases/download/v3.3.9/etcd-v3.3.9-linux-${BUILDARCH}.tar.gz | tar -xz && \\\n     cp etcd-v3.3.9-linux-${BUILDARCH}/etcd* /bin/ && \\\n     rm -rf etcd-v3.3.9-linux-${BUILDARCH})\n\n# Install Go.\nARG GOLANG_VERSION\nRUN mkdir -p /opt && cd /opt && curl -f https://storage.googleapis.com/golang/$GOLANG_VERSION.linux-${BUILDARCH}.tar.gz | tar xz && \\\n    mkdir -p /go/src/github.com/gravitational/teleport && \\\n    chmod a+w /go && \\\n    chmod a+w /var/lib && \\\n    chmod a-w /\nENV GOPATH=\"/go\" \\\n    GOROOT=\"/opt/go\" \\\n    PATH=\"$PATH:/opt/go/bin:/go/bin:/go/src/github.com/gravitational/teleport/build\"\n\n# Install addlicense\nRUN go install github.com/google/addlicense@v1.0.0\n\n# Install golangci-lint.\nRUN ( curl -f -L https://github.com/golangci/golangci-lint/releases/download/v1.46.0/golangci-lint-1.46.0-$(go env GOOS)-$(go env GOARCH).tar.gz | tar -xz && \\\n     cp golangci-lint-1.46.0-$(go env GOOS)-$(go env GOARCH)/golangci-lint /bin/ && \\\n     rm -r golangci-lint*)\n\n# Install helm.\nRUN ( mkdir -p helm-tarball && curl -f -L https://get.helm.sh/helm-v3.5.2-$(go env GOOS)-$(go env GOARCH).tar.gz | tar -C helm-tarball -xz && \\\n     cp helm-tarball/$(go env GOOS)-$(go env GOARCH)/helm /bin/ && \\\n     rm -r helm-tarball*)\nRUN helm plugin install https://github.com/vbehar/helm3-unittest && \\\n    mkdir -p /home/ci/.local/share/helm && \\\n    cp -r /root/.local/share/helm/plugins /home/ci/.local/share/helm && \\\n    chown -R ci /home/ci/.local/share/helm && \\\n    HELM_PLUGINS=/home/ci/.local/share/helm/plugins helm plugin list\n\n# Install bats.\nRUN ( curl -f -L https://github.com/bats-core/bats-core/archive/v1.2.1.tar.gz | tar -xz && \\\n     cd bats-core-1.2.1 && ./install.sh /usr/local && cd .. && \\\n     rm -r bats-core-1.2.1)\n\n# Install protobuf and grpc build tools.\nARG PROTOC_VER\nARG GOGO_PROTO_TAG\nENV GOGOPROTO_ROOT ${GOPATH}/src/github.com/gogo/protobuf\n\nRUN ( export PROTOC_TARBALL=protoc-${PROTOC_VER}-linux-$(if [ \"$BUILDARCH\" = \"amd64\" ]; then echo \"x86_64\"; else echo \"aarch_64\"; fi).zip && \\\n     curl -f -L -o /tmp/${PROTOC_TARBALL} https://github.com/protocolbuffers/protobuf/releases/download/v${PROTOC_VER}/${PROTOC_TARBALL} && \\\n     cd /tmp && unzip /tmp/${PROTOC_TARBALL} -d /usr/local && \\\n     chmod -R a+r /usr/local/include/google/protobuf && \\\n     chmod -R a+xr /usr/local/bin/protoc && \\\n     rm /tmp/${PROTOC_TARBALL})\nRUN (git clone https://github.com/gogo/protobuf.git --branch ${GOGO_PROTO_TAG} --depth 1 ${GOPATH}/src/github.com/gogo/protobuf && \\\n     cd ${GOPATH}/src/github.com/gogo/protobuf && \\\n     make install && \\\n     make clean)\n\nENV PROTO_INCLUDE \"/usr/local/include\":\"/go/src\":\"/go/src/github.com/gogo/protobuf/protobuf\":\"${GOGOPROTO_ROOT}\":\"${GOGOPROTO_ROOT}/protobuf\"\n\n# Install PAM module and policies for testing.\nCOPY pam/ /opt/pam_teleport/\nRUN make -C /opt/pam_teleport install\n\nENV SOFTHSM2_PATH \"/usr/lib/softhsm/libsofthsm2.so\"\n\n# Install Rust\nARG RUST_VERSION\nENV RUSTUP_HOME=/usr/local/rustup \\\n     CARGO_HOME=/usr/local/cargo \\\n     PATH=/usr/local/cargo/bin:$PATH \\\n     RUST_VERSION=$RUST_VERSION\n\nRUN mkdir -p $RUSTUP_HOME && chmod a+w $RUSTUP_HOME && \\\n    mkdir -p $CARGO_HOME/registry && chmod -R a+w $CARGO_HOME\n\n# Install Rust using the ci user, as that is the user that\n# will run builds using the Rust toolchains we install here.\n# Cross-compilation targets are only installed on amd64, as\n# this image doesn't contain gcc-multilib.\nUSER ci\nRUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain $RUST_VERSION && \\\n    rustup --version && \\\n    cargo --version && \\\n    rustc --version && \\\n    rustup component add rustfmt clippy && \\\n    if [ \"$BUILDARCH\" = \"amd64\" ]; then rustup target add i686-unknown-linux-gnu arm-unknown-linux-gnueabihf aarch64-unknown-linux-gnu; fi\n\n# Switch back to root for the remaining instructions and keep it as the default\n# user.\nUSER root\n\nCOPY --from=cbindgen /usr/local/cargo/bin/cbindgen /usr/local/cargo/bin/cbindgen\n\nCOPY --from=libbpf /usr/include/bpf /usr/include/bpf\nCOPY --from=libbpf /usr/lib64/ /usr/lib64/\nRUN cd /usr/local/lib && ldconfig\n\n# Copy libfido2 libraries.\n# Do this last to take better advantage of the multi-stage build.\nCOPY --from=libfido2 /usr/local/include/ /usr/local/include/\nCOPY --from=libfido2 /usr/local/lib/pkgconfig/ /usr/local/lib/pkgconfig/\nCOPY --from=libfido2 \\\n    /usr/local/lib/libcbor.a \\\n    /usr/local/lib/libfido2.a \\\n    /usr/local/lib/libfido2.so.1.11.0 \\\n    /usr/local/lib/libudev.a \\\n    /usr/local/lib/\nRUN cd /usr/local/lib && \\\n    ln -s libfido2.so.1.11.0 libfido2.so.1 && \\\n    ln -s libfido2.so.1 libfido2.so && \\\n    ldconfig\nCOPY pkgconfig/buildbox/ /\n\nVOLUME [\"/go/src/github.com/gravitational/teleport\"]\nEXPOSE 6600 2379 2380\n"
+}

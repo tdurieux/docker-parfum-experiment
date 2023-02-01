@@ -1,0 +1,35 @@
+{
+  "startTime": 1674238947063,
+  "endTime": 1674238947546,
+  "originalSmells": [
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 94,
+        "lineEnd": 94,
+        "columnStart": 4,
+        "columnEnd": 15
+      }
+    },
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 95,
+        "lineEnd": 95,
+        "columnStart": 30,
+        "columnEnd": 81
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 36,
+        "lineEnd": 36,
+        "columnStart": 42,
+        "columnEnd": 67
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Galaxy - Stable\n#\n# VERSION       Galaxy-central\n\nFROM quay.io/bgruening/galaxy-base:19.01\n\nMAINTAINER Björn A. Grüning, bjoern.gruening@gmail.com\n\nARG GALAXY_RELEASE=19.01\nARG GALAXY_REPO=galaxyproject/galaxy\n\nRUN echo \"force-unsafe-io\" > /etc/dpkg/dpkg.cfg.d/02apt-speedup && \\\n    echo \"Acquire::http {No-Cache=True;};\" > /etc/apt/apt.conf.d/no-cache && \\\n    apt-get -qq update && apt-get install --no-install-recommends -y && \\\n    apt-get autoremove -y && apt-get clean && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/* && rm -rf ~/.cache/\n\n# Create these folders and link to target directory for installation\nRUN mkdir -p /export /galaxy-export && \\\n    mkdir /galaxy-export/shed_tools && \\\n    mkdir /galaxy-export/tool_deps && \\\n    mkdir /galaxy-export/venv && \\\n    mkdir /galaxy-export/galaxy-central && \\\n    mkdir /galaxy-export/nginx_upload_store && \\\n    mkdir /galaxy-export/ftp && \\\n    mkdir /galaxy-export/rabbitmq && \\\n    mkdir /galaxy-export/influxdb && \\\n    mkdir /galaxy-export/grafana && \\\n    mkdir /galaxy-export/postgres && \\\n    ln -s -f /galaxy-export/shed_tools /export/shed_tools && \\\n    ln -s -f /galaxy-export/tool_deps /export/tool_deps && \\\n    ln -s -f /galaxy-export/venv /export/venv && \\\n    ln -s -f /galaxy-export/galaxy-central /export/galaxy-central && \\\n    chown -R $GALAXY_USER:$GALAXY_USER /galaxy-export /export && \\\n    wget -q -O - https://api.github.com/repos/$GALAXY_REPO/tarball/$GALAXY_RELEASE | tar xz --strip-components=1 -C $GALAXY_ROOT && \\\n    virtualenv $GALAXY_VIRTUAL_ENV && \\\n    cp $GALAXY_ROOT/config/galaxy.yml.sample $GALAXY_CONFIG_FILE && \\\n    . $GALAXY_VIRTUAL_ENV/bin/activate && pip install --no-cache-dir pip --upgrade && \\\n    chown -R $GALAXY_USER:$GALAXY_USER $GALAXY_VIRTUAL_ENV/* && \\\n    chown -R $GALAXY_USER:$GALAXY_USER $GALAXY_ROOT/* && \\\n    chown -R $GALAXY_USER:$GALAXY_USER $GALAXY_CONFIG_FILE\n\nADD config $GALAXY_ROOT/config\nADD welcome /galaxy-export/welcome\n\nRUN ansible-playbook /ansible/provision.yml \\\n    --extra-vars galaxy_extras_config_ie_proxy=False \\\n    --extra-vars galaxy_server_dir=$GALAXY_ROOT \\\n    --extra-vars galaxy_venv_dir=$GALAXY_VIRTUAL_ENV \\\n    --extra-vars galaxy_log_dir=$GALAXY_LOGS_DIR \\\n    --extra-vars galaxy_user_name=$GALAXY_USER \\\n    --extra-vars galaxy_config_file=$GALAXY_CONFIG_FILE \\\n    --extra-vars galaxy_extras_config_condor=True \\\n    --extra-vars galaxy_extras_config_condor_docker=True \\\n    --extra-vars galaxy_extras_config_k8s_jobs=True \\\n    --extra-vars galaxy_minimum_version=17.09 \\\n    --extra-vars galaxy_extras_config_rabbitmq=False \\\n    --extra-vars nginx_upload_store_path=/export/nginx_upload_store \\\n    --extra-vars nginx_welcome_location=$NGINX_WELCOME_LOCATION \\\n    --extra-vars nginx_welcome_path=$NGINX_WELCOME_PATH \\\n    #--extra-vars galaxy_extras_config_container_resolution=True \\\n    #--extra-vars container_resolution_explicit=True \\\n    #--extra-vars container_resolution_cached_mulled=False \\\n    #--extra-vars container_resolution_build_mulled=False \\\n    --tags=ie,pbs,slurm,uwsgi,metrics,k8s -c local && \\\n    apt-get autoremove -y && apt-get clean && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/* && \\\n    chown -R $GALAXY_USER:$GALAXY_USER $GALAXY_HOME $EXPORT_DIR $GALAXY_LOGS_DIR\n\n\n# The following commands will be executed as User galaxy\nUSER galaxy\n\n#RUN cd $GALAXY_VIRTUAL_ENV && . bin/activate && pip install watchdog\n\nWORKDIR $GALAXY_ROOT\n\n# Updating genome informations from UCSC\n#RUN export GALAXY=$GALAXY_ROOT && sh ./cron/updateucsc.sh.sample\n\n\nRUN wget --quiet https://repo.anaconda.com/miniconda/Miniconda2-4.5.12-Linux-x86_64.sh -O ~/miniconda.sh && \\\n    /bin/bash ~/miniconda.sh -b -p /tool_deps/_conda/ && \\\n    rm ~/miniconda.sh && \\\n    echo \". /tool_deps/_conda/etc/profile.d/conda.sh\" >> ~/.bashrc && \\\n    echo \"conda activate base\" >> ~/.bashrc\n\n# prefetch Python wheels\n# Install all required Node dependencies. This is required to get proxy support to work for Interactive Environments\nRUN export PATH=/tool_deps/_conda/bin/:$PATH && \\\n    conda install -c conda-forge nodejs=9.11.1 yarn=1.12.1 git && \\\n    ./scripts/common_startup.sh --skip-client-build && \\\n    . $GALAXY_VIRTUAL_ENV/bin/activate && \\\n    python ./scripts/manage_tool_dependencies.py -c \"$GALAXY_CONFIG_FILE\" init_if_needed && \\\n    # Install all required Node dependencies. This is required to get proxy support to work for Interactive Environments\n    cd $GALAXY_ROOT/lib/galaxy/web/proxy/js && \\\n    npm install && \\\n    cd $GALAXY_ROOT/client && yarn install --network-timeout 120000 --check-files && yarn run build-production-maps && \\\n    rm -rf /home/galaxy/.cache/ && \\\n    # change the default location of shed_tools to be ../shed_tools\n    sed -i 's|database|..|' $GALAXY_ROOT/config/shed_tool_conf.xml && npm cache clean --force; && yarn cache clean;\n\n# Switch back to User root\nUSER root\n\n# Create symlinks from $GALAXY_ROOT/* to /export/*\nRUN mv $GALAXY_ROOT/config /galaxy-export/config && ln -s -f /export/config $GALAXY_ROOT/config && \\\n    mv $GALAXY_ROOT/tools /galaxy-export/tools && ln -s -f /export/tools $GALAXY_ROOT/tools && \\\n    mv $GALAXY_ROOT/tool-data /galaxy-export/tool-data && ln -s -f /export/tool-data $GALAXY_ROOT/tool-data && \\\n    mv $GALAXY_ROOT/display_applications /galaxy-export/display_applications && ln -s -f /export/display_applications $GALAXY_ROOT/display_applications && \\\n    mv $GALAXY_ROOT/database /galaxy-export/database && ln -s -f /export/database $GALAXY_ROOT/database && \\\n    rm -rf $GALARY_ROOT/.venv && ln -s -f /export/venv $GALAXY_ROOT/.venv && ln -s -f /export/venv $GALAXY_ROOT/venv\n\nWORKDIR /galaxy-export\n\n# Mark folders as imported from the host.\nVOLUME [\"/export/\"]\n\nADD startup.sh /usr/bin/startup\nRUN chmod +x /usr/bin/startup\n\n# Autostart script that is invoked during container start\nCMD [\"/usr/bin/startup\"]\n"
+}

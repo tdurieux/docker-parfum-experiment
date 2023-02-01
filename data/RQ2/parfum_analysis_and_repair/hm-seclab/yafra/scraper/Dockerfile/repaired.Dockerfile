@@ -1,0 +1,15 @@
+# Dockerfile for the scraper
+
+FROM python:3.9-slim
+WORKDIR /app
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+ADD ./datasets ./datasets
+ADD ./scraper ./scraper
+ADD ./libs ./libs
+ADD ./extensions ./extensions
+WORKDIR /app/scraper
+
+EXPOSE 8086
+
+CMD [ "python", "app.py", "runserver" ]

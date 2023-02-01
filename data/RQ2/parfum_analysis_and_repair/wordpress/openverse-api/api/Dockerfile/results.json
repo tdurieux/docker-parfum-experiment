@@ -1,0 +1,35 @@
+{
+  "startTime": 1674253361698,
+  "endTime": 1674253362550,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 28,
+        "lineEnd": 28,
+        "columnStart": 7,
+        "columnEnd": 35
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 25,
+        "lineEnd": 25,
+        "columnStart": 9,
+        "columnEnd": 39
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 63,
+        "lineEnd": 63,
+        "columnStart": 9,
+        "columnEnd": 53
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "##################\n# Audio waveform #\n##################\n\nFROM realies/audiowaveform:latest AS awf\n\n# Identify dependencies of the `audiowaveform` binary and move them to `/deps`,\n# while retaining their folder structure\nRUN ldd /usr/local/bin/audiowaveform | tr -s '[:blank:]' '\\n' | grep '^/' | \\\n    xargs -I % sh -c 'mkdir -p $(dirname deps%); cp % deps%;'\n\n##################\n# Python builder #\n##################\n\nFROM python:3.10 AS builder\n\nENV PYTHONBUFFERED=1\n# Activate the virtualenv\nENV PATH=\"/venv/bin:$PATH\"\n\n# - Install system packages needed for building Python dependencies\n# - Create a virtualenv inside `/venv`\n# - Install Pipenv to install Python dependencies\nRUN apt-get update \\\n      && apt-get install --no-install-recommends -y python3-dev \\\n      && rm -rf /var/lib/apt/lists/* \\\n    && python -m venv /venv \\\n    && pip install --no-cache-dir --upgrade pipenv\n\n# Copy the Pipenv files into the container\nCOPY Pipfile Pipfile.lock ./\n\n# Install Python dependencies system-wide (uses the active virtualenv)\nRUN pipenv install --system --deploy --dev\n\n#######\n# API #\n#######\n\nFROM python:3.10-slim as api\n\nENV PYTHONBUFFERED=1\n# Activate the virtualenv\nENV PATH=\"/venv/bin:$PATH\"\n\nWORKDIR /api\n\nADD catalog/api/utils/fonts/SourceSansPro-Bold.ttf /usr/share/fonts/truetype/SourceSansPro-Bold.ttf\n\n# Copy virtualenv from the builder image\nCOPY --from=builder /venv /venv\n\n# Copy `audiowaveform` dependencies\nCOPY --from=awf /deps /\n# Copy `audiowaveform` binary\nCOPY --from=awf /usr/local/bin/audiowaveform /usr/local/bin\n\n# - Install system packages needed for running Python dependencies\n#   - libexempi8: required for watermarking\n#   - libpq-dev: required by `psycopg2`\n# - Create directory for dumping API logs\nRUN apt-get update \\\n      && apt-get install --no-install-recommends -y curl libpq-dev libexempi8 \\\n      && rm -rf /var/lib/apt/lists/* \\\n    && mkdir -p /var/log/openverse_api/openverse_api.log\n\n# Copy code into the final image\nCOPY . /api/\n\n# Exposes\n# - 8000: Dev server for API Django app\n# - 3000: Sphinx live server\nEXPOSE 8000 3000\n\n# Wait for ES to accept connections\nENTRYPOINT [\"./run.sh\"]\n\n# Run Django dev server, can be overridden from Docker Compose\nCMD [\"python\", \"manage.py\", \"runserver\", \"0.0.0.0:8000\"]\n"
+}

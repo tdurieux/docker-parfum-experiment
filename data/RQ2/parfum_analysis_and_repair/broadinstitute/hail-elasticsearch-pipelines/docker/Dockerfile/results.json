@@ -1,0 +1,26 @@
+{
+  "startTime": 1674255592485,
+  "endTime": 1674255593359,
+  "originalSmells": [
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 41,
+        "lineEnd": 41,
+        "columnStart": 4,
+        "columnEnd": 38
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 73,
+        "lineEnd": 73,
+        "columnStart": 4,
+        "columnEnd": 15
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM bitnami/minideb:stretch\n\nLABEL maintainer=\"Broad TGG\"\n\n# install commmon utilities\nRUN install_packages \\\n    ca-certificates \\\n    less \\\n    nano \\\n    wget \\\n    curl \\\n    emacs \\\n    g++ \\\n    git \\\n    htop \\\n    make \\\n    autoconf \\\n    unzip \\\n    bzip2 \\\n    zlib1g-dev \\\n    dpkg-dev \\\n    build-essential \\\n    libcurl4-openssl-dev \\\n    libbz2-dev \\\n    liblzma-dev\n\n# install java-8    (adds 340Mb)\nRUN install_packages default-jdk\n\n# install python3.7 (adds 800Mb)\nRUN apt-get update \\\n\t&& apt-get dist-upgrade -y \\\n\t&& apt-get install -y --no-install-recommends python-smbus libncursesw5-dev libgdbm-dev libc6-dev zlib1g-dev libsqlite3-dev libssl-dev openssl libffi-dev \\\n\t&& apt-get clean \\\n    && rm -rf /var/lib/apt/lists/*\n\nENV PYTHON_VERSION=\"3.7.1\"\nRUN wget https://www.python.org/ftp/python/${PYTHON_VERSION}/Python-${PYTHON_VERSION}.tar.xz \\\n\t&& tar xvf Python-${PYTHON_VERSION}.tar.xz \\\n\t&& rm Python-${PYTHON_VERSION}.tar.xz\nWORKDIR /Python-${PYTHON_VERSION}\nRUN ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" --enable-optimizations \\\n    && make install \\\n    && make clean\nWORKDIR /\n\nRUN install_packages python-pkg-resources\n\n\n# install gcloud tools\nRUN python3 -m pip install --upgrade pip\nRUN python3 -m pip install --no-cache-dir -U crcmod\n\nENV CLOUDSDK_PYTHON=python3\nRUN wget https://dl.google.com/dl/cloudsdk/channels/rapid/downloads/google-cloud-sdk-286.0.0-linux-x86_64.tar.gz\nRUN tar xzf google-cloud-sdk-286.0.0-linux-x86_64.tar.gz && rm google-cloud-sdk-286.0.0-linux-x86_64.tar.gz\nRUN /google-cloud-sdk/install.sh -q\n\n# python packages\nRUN python3 -m pip install --upgrade gsutil\n\n# install GCS connector using the same steps as in https://raw.githubusercontent.com/broadinstitute/install-gcs-connector/master/install_gcs_connector.py\n# assumes ~/.config/gcloud/application_default_credentials.json will be mounted into the docker container\nRUN python3 -m pip install hail\nCOPY spark-defaults.conf /usr/local/lib/python3.7/site-packages/pyspark/conf/spark-defaults.conf\nRUN wget https://repo1.maven.org/maven2/com/google/cloud/bigdataoss/gcs-connector/hadoop2-1.9.17/gcs-connector-hadoop2-1.9.17-shaded.jar -O /usr/local/lib/python3.7/site-packages/pyspark/jars/gcs-connector-hadoop2-1.9.17-shaded.jar\n\n# install htslib\nENV SAMTOOLS_VERSION=\"1.9\"\nRUN wget https://github.com/samtools/htslib/releases/download/${SAMTOOLS_VERSION}/htslib-${SAMTOOLS_VERSION}.tar.bz2 \\\n\t&& tar xjf htslib-${SAMTOOLS_VERSION}.tar.bz2 \\\n\t&& rm htslib-${SAMTOOLS_VERSION}.tar.bz2\nWORKDIR htslib-${SAMTOOLS_VERSION}\nRUN ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" \\\n\t&& make \\\n\t&& make install \\\n\t&& make clean\nWORKDIR /\n\n# install VEP dependencies\nRUN wget https://raw.github.com/miyagawa/cpanminus/master/cpanm -O /usr/bin/cpanm && chmod +x /usr/bin/cpanm\nENV VEP_VERSION=\"99\"\nRUN wget https://github.com/Ensembl/ensembl-vep/archive/release/${VEP_VERSION}.zip \\\n    && unzip ${VEP_VERSION}.zip \\\n    && rm ${VEP_VERSION}.zip\n\nRUN /usr/bin/cpanm --notest Module::Build\nRUN /usr/bin/cpanm --notest Set::IntervalTree\nRUN /usr/bin/cpanm --notest PerlIO::gzip\nRUN /usr/bin/cpanm --notest DBI\nRUN /usr/bin/cpanm --notest CGI\nRUN /usr/bin/cpanm --notest JSON\nRUN /usr/bin/cpanm --notest Try::Tiny\n# LoFTEE dependencies\nRUN /usr/bin/cpanm --notest DBD::SQLite\nRUN /usr/bin/cpanm --notest  List::MoreUtils\n\n# install VEP\nWORKDIR /ensembl-vep-release-${VEP_VERSION}\nRUN perl INSTALL.pl -a ap -n -l -g all\nRUN ln -s /ensembl-vep-release-${VEP_VERSION}/vep /vep\n\n# clone and hail-elasticsearch-pipelines repo\nWORKDIR /\nRUN git clone https://github.com/broadinstitute/hail-elasticsearch-pipelines.git\nWORKDIR /hail-elasticsearch-pipelines\nRUN python3 -m pip install -r /hail-elasticsearch-pipelines/luigi_pipeline/requirements.txt\nRUN python3 -m pip install git+https://github.com/bw2/hail-utils.git\n\nCOPY vep_configs/* /vep_configs/\n\nCOPY bashrc /root/.bashrc\nCOPY gitconfig /root/.gitconfig\nCOPY bin/*.sh /usr/local/bin/\n\nENV PATH=/usr/local/lib/python3.7/site-packages/pyspark/bin:/google-cloud-sdk/bin:$PATH\nENV PYTHONPATH=\".:/hail-elasticsearch-pipelines:/hail-elasticsearch-pipelines/luigi_pipeline\"\n\nCOPY entrypoint.sh /\n\nWORKDIR /\n\nCMD [ \"/entrypoint.sh\" ]\n"
+}

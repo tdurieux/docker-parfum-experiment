@@ -1,0 +1,26 @@
+{
+  "startTime": 1674254741575,
+  "endTime": 1674254742503,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 55,
+        "lineEnd": 58,
+        "columnStart": 22,
+        "columnEnd": 9
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 55,
+        "lineEnd": 58,
+        "columnStart": 22,
+        "columnEnd": 9
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Use experimental buildkit for faster builds\n# https://github.com/moby/buildkit/blob/master/frontend/dockerfile/docs/experimental.md\n# Use `--progress=plain` to use plane stdout for docker build\n#\n# Example build command:\n# export DOCKER_BUILDKIT=1\n# export FROM_IMAGE=\"ros:rolling\"\n# export OVERLAY_MIXINS=\"release ccache lld\"\n# docker build -t nav2:rolling \\\n#   --build-arg FROM_IMAGE \\\n#   --build-arg OVERLAY_MIXINS \\\n#   -f distro.Dockerfile ../\n\nARG FROM_IMAGE=ros:rolling\nARG OVERLAY_WS=/opt/overlay_ws\n\n# multi-stage for caching\nFROM $FROM_IMAGE AS cacher\n\n# copy overlay source\nARG OVERLAY_WS\nWORKDIR $OVERLAY_WS/src\nRUN echo \"\\\nrepositories: \\n\\\n  ros-planning/navigation2: \\n\\\n    type: git \\n\\\n    url: https://github.com/ros-planning/navigation2.git \\n\\\n    version: ${ROS_DISTRO}-devel \\n\\\n\" > ../overlay.repos\nRUN vcs import ./ < ../overlay.repos && \\\n    find ./ -name \".git\" | xargs rm -rf\n# COPY ./ ./ros-planning/navigation2\n\n# copy manifests for caching\nWORKDIR /opt\nRUN mkdir -p /tmp/opt && \\\n    find ./ -name \"package.xml\" | \\\n      xargs cp --parents -t /tmp/opt && \\\n    find ./ -name \"COLCON_IGNORE\" | \\\n      xargs cp --parents -t /tmp/opt || true\n\n# multi-stage for building\nFROM $FROM_IMAGE AS builder\nARG DEBIAN_FRONTEND=noninteractive\n\n# edit apt for caching\nRUN cp /etc/apt/apt.conf.d/docker-clean /etc/apt/ && \\\n    echo 'Binary::apt::APT::Keep-Downloaded-Packages \"true\";' \\\n      > /etc/apt/apt.conf.d/docker-clean\n\n# install CI dependencies\nRUN --mount=type=cache,target=/var/cache/apt \\\n    --mount=type=cache,target=/var/lib/apt \\\n    apt-get update && apt-get install --no-install-recommends -q -y \\\n      ccache \\\n      lcov \\\n      lld \\\n    && rosdep update && rm -rf /var/lib/apt/lists/*;\n\n# install overlay dependencies\nARG OVERLAY_WS\nWORKDIR $OVERLAY_WS\nCOPY --from=cacher /tmp/$OVERLAY_WS/src ./src\nRUN --mount=type=cache,target=/var/cache/apt \\\n    --mount=type=cache,target=/var/lib/apt \\\n    . /opt/ros/$ROS_DISTRO/setup.sh && \\\n    apt-get update && rosdep install -q -y \\\n      --from-paths src \\\n      --ignore-src \\\n    && rm -rf /var/lib/apt/lists/*\n\n# build overlay source\nCOPY --from=cacher $OVERLAY_WS/src ./src\nARG OVERLAY_MIXINS=\"release ccache lld\"\nRUN --mount=type=cache,target=/root/.ccache \\\n    . /opt/ros/$ROS_DISTRO/setup.sh && \\\n    colcon build \\\n      --symlink-install \\\n      --mixin $OVERLAY_MIXINS\n\n# restore apt for docker\nRUN mv /etc/apt/docker-clean /etc/apt/apt.conf.d/ && \\\n    rm -rf /var/lib/apt/lists/\n\n# source overlay from entrypoint\nENV OVERLAY_WS $OVERLAY_WS\nRUN sed --in-place \\\n      's|^source .*|source \"$OVERLAY_WS/install/setup.bash\"|' \\\n      /ros_entrypoint.sh\n\n# test overlay build\nARG RUN_TESTS\nARG FAIL_ON_TEST_FAILURE=True\nRUN if [ -n \"$RUN_TESTS\" ]; then \\\n        . install/setup.sh && \\\n        colcon test && \\\n        colcon test-result \\\n          || ([ -z \"$FAIL_ON_TEST_FAILURE\" ] || exit 1) \\\n    fi\n"
+}

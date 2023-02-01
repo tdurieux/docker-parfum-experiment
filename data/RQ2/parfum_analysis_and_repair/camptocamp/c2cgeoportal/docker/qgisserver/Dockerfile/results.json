@@ -1,0 +1,62 @@
+{
+  "startTime": 1674218397185,
+  "endTime": 1674218398195,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 29,
+        "lineEnd": 29,
+        "columnStart": 7,
+        "columnEnd": 117
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 68,
+        "lineEnd": 68,
+        "columnStart": 7,
+        "columnEnd": 99
+      }
+    },
+    {
+      "rule": "aptGetInstallUseY",
+      "position": {
+        "lineStart": 28,
+        "lineEnd": 28,
+        "columnStart": 7,
+        "columnEnd": 88
+      }
+    },
+    {
+      "rule": "aptGetInstallUseY",
+      "position": {
+        "lineStart": 67,
+        "lineEnd": 67,
+        "columnStart": 7,
+        "columnEnd": 88
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 28,
+        "lineEnd": 28,
+        "columnStart": 7,
+        "columnEnd": 88
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 67,
+        "lineEnd": 67,
+        "columnStart": 7,
+        "columnEnd": 88
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "ARG VERSION\n\nFROM camptocamp/qgis-server:${VERSION} AS base-all\nLABEL maintainer Camptocamp \"info@camptocamp.com\"\n\n# Used to convert the locked packages by poetry to pip requirements format\n# We don't directly use `poetry install` because it force to use a virtual environment.\nFROM base-all as poetry\n\n# Install Poetry\nWORKDIR /tmp\nCOPY requirements.txt ./\nRUN --mount=type=cache,target=/root/.cache \\\n    python3 -m pip install --disable-pip-version-check --requirement=requirements.txt\n\n# Do the conversion\nCOPY poetry.lock pyproject.toml ./\nRUN poetry export --output=requirements.txt \\\n    && poetry export --dev --output=requirements-dev.txt\n\n# Base, the biggest thing is to install the Python packages\nFROM base-all as base\n\nRUN --mount=type=cache,target=/var/lib/apt/lists \\\n    --mount=type=cache,target=/var/cache,sharing=locked \\\n    --mount=type=bind,from=poetry,source=/tmp,target=/poetry \\\n    apt-get update \\\n    && apt-get upgrade --assume-yes \\\n    && apt-get install -y --assume-yes --no-install-recommends libpython3-dev libpq-dev gcc \\\n    && PIP_NO_BINARY=shapely pip --no-cache-dir install --disable-pip-version-check --no-deps --requirement=/poetry/requirements.txt \\\n    && apt-get remove --assume-yes libpython3-dev libpq-dev gcc && rm -rf /var/lib/apt/lists/*;\n\n#############################################################################################################\n\nFROM base AS runner\n\nCOPY geomapfish_qgisserver/* /var/www/plugins/geomapfish_qgisserver/\nCOPY logging.ini /var/www/\n# hadolint ignore=DL3022\nCOPY --from=camptocamp/geomapfish /opt/c2cgeoportal/commons /opt/c2cgeoportal/commons\n\nRUN python3 -m pip install --disable-pip-version-check --no-deps \\\n    --editable=/opt/c2cgeoportal/commons\n\nENV LOG_LEVEL=INFO \\\n    LOG_TYPE=console \\\n    C2CGEOPORTAL_LOG_LEVEL=INFO \\\n    C2CWSGIUTILS_LOG_LEVEL=INFO \\\n    SQL_LOG_LEVEL=WARN \\\n    OTHER_LOG_LEVEL=WARN \\\n    QGIS_SERVER_LOG_LEVEL=2 \\\n    CPL_VSIL_CURL_USE_CACHE=TRUE \\\n    CPL_VSIL_CURL_CACHE_SIZE=128000000 \\\n    CPL_VSIL_CURL_USE_HEAD=FALSE \\\n    GDAL_DISABLE_READDIR_ON_OPEN=TRUE\n\n#############################################################################################################\n\nFROM runner as tests\n\nSHELL [\"/bin/bash\", \"-o\", \"pipefail\", \"-cux\"]\n\nRUN --mount=type=cache,target=/var/lib/apt/lists \\\n    --mount=type=cache,target=/var/cache,sharing=locked \\\n    --mount=type=bind,from=poetry,source=/tmp,target=/poetry \\\n    apt-get update \\\n    && apt-get upgrade --assume-yes \\\n    && apt-get install -y --assume-yes --no-install-recommends libpython3-dev libpq-dev gcc \\\n    && pip install --no-cache-dir --disable-pip-version-check --no-deps --requirement=/poetry/requirements-dev.txt && rm -rf /var/lib/apt/lists/*;\n\n# hadolint ignore=DL3022\nCOPY --from=camptocamp/geomapfish-tools /opt/c2cgeoportal/commons/c2cgeoportal_commons/testing \\\n    /opt/c2cgeoportal/commons/c2cgeoportal_commons/testing\nENV PYTHONPATH /var/www/plugins:/usr/local/share/qgis/python/:/opt\n\nWORKDIR /src\nRUN chmod 777 /src\nCOPY . ./\nRUN mv tests/geomapfish.yaml /etc/qgisserver/geomapfish.yaml \\\n    && mv tests/multiple_ogc_server.yaml /etc/qgisserver/multiple_ogc_server.yaml\n\n#############################################################################################################\n\nFROM runner as final\n"
+}

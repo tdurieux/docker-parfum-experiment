@@ -1,0 +1,63 @@
+{
+  "startTime": 1674249602240,
+  "endTime": 1674249602426,
+  "originalSmells": [
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 137,
+        "lineEnd": 146,
+        "columnStart": 7,
+        "columnEnd": 61
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 133,
+        "lineEnd": 133,
+        "columnStart": 4,
+        "columnEnd": 40
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 60,
+        "lineEnd": 79,
+        "columnStart": 4,
+        "columnEnd": 8
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 60,
+        "lineEnd": 79,
+        "columnStart": 4,
+        "columnEnd": 8
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 60,
+        "lineEnd": 79,
+        "columnStart": 4,
+        "columnEnd": 8
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 60,
+        "lineEnd": 79,
+        "columnStart": 4,
+        "columnEnd": 8
+      }
+    }
+  ],
+  "repairedDockerfile": "# ch-test-scope: full\nFROM debian9\n\n# A key goal of this Dockerfile is to demonstrate best practices for building\n# OpenMPI for use inside a container.\n#\n# This OpenMPI aspires to work close to optimally on clusters with any of the\n# following interconnects:\n#\n#    - Ethernet (TCP/IP)\n#    - InfiniBand (IB)\n#    - Omni-Path (OPA)\n#    - RDMA over Converged Ethernet (RoCE) interconnects\n#\n# with no environment variables, command line arguments, or additional\n# configuration files. Thus, we try to implement decisions at build time.\n#\n# This is a work in progress, and we're very interested in feedback.\n#\n# OpenMPI has numerous ways to communicate messages [1]. The ones relevant to\n# this build and the interconnects they support are:\n#\n#   Module        Eth   IB    OPA   RoCE    note  decision\n#   ------------  ----  ----  ----  ----    ----  --------\n#\n#   ob1 : tcp      Y*    X     X     X      a     include\n#   ob1 : openib   N     Y     Y     Y      b,c   exclude\n#   cm  : psm2     N     N     Y*    N            include\n#       : ucx      Y?    Y*    N     Y?     b,d   include\n#\n#   Y : supported\n#   Y*: best choice for that interconnect\n#   X : supported but sub-optimal\n#\n#   a : No RDMA, so performance will suffer.\n#   b : Uses libibverbs.\n#   c : Will be removed in OpenMPI 4.\n#   d : Uses Mellanox libraries if available in preference to libibverbs.\n#\n# You can check what's available with:\n#\n#   $ ch-run /var/tmp/openmpi -- ompi_info | egrep '(btl|mtl|pml)'\n#\n# The other build decisions are:\n#\n#   1. PMI/PMIx: Include these so that we can use srun or any other PMI[x]\n#      provider, with no matching OpenMPI needed on the host.\n#\n#   2. --disable-pty-support to avoid \"pipe function call failed when\n#      setting up I/O forwarding subsystem\".\n#\n#   3. --enable-mca-no-build=plm-slurm to support launching processes using\n#      the host's srun (i.e., the container OpenMPI needs to talk to the host\n#      Slurm's PMI) but prevent OpenMPI from invoking srun itself from within\n#      the container, where srun is not installed (the error messages from\n#      this are inscrutable).\n#\n# [1]: https://github.com/open-mpi/ompi/blob/master/README\n\n# OS packages needed to build this stuff.\nRUN apt-get install --no-install-recommends -y --no-install-suggests \\\n    autoconf \\\n    file \\\n    flex \\\n    g++ \\\n    gcc \\\n    gfortran \\\n    git \\\n    hwloc-nox \\\n    less \\\n    libdb5.3-dev \\\n    libhwloc-dev \\\n    libnl-3-200 \\\n    libnl-route-3-200 \\\n    libnl-route-3-dev \\\n    libnuma1 \\\n    libpmi2-0-dev \\\n    make \\\n    wget \\\n    udev && rm -rf /var/lib/apt/lists/*;\n\nWORKDIR /usr/local/src\n\n# Use the Buster versions of libpsm2 (not present in Stretch) and libibverbs\n# (too old in Stretch). Download manually because I'm too lazy to set up\n# package pinning.\n#\n# Note that libpsm2 is x86-64 only:\n#   https://packages.debian.org/buster/libpsm2-2\n#   https://lists.debian.org/debian-hpc/2017/12/msg00015.html\nENV DEB_URL http://snapshot.debian.org/archive/debian/20181126T030749Z/pool/main\nENV PSM2_VERSION 11.2.68-3\nRUN if [ \"$(dpkg --print-architecture)\" = \"amd64\" ] ; then \\\n      wget -nv ${DEB_URL}/libp/libpsm2/libpsm2-2_${PSM2_VERSION}_amd64.deb \\\n               ${DEB_URL}/libp/libpsm2/libpsm2-dev_${PSM2_VERSION}_amd64.deb ; \\\n    fi\n# As of 5/2/2019, this is not the newest libibverbs. However, it is the\n# newest that doesn't crash on our test systems.\nENV IBVERBS_VERSION 20.0-1\nRUN for i in ibacm \\\n             ibverbs-providers \\\n             ibverbs-utils \\\n             libibumad-dev \\\n             libibumad3 \\\n             libibverbs-dev \\\n             libibverbs1 \\\n             librdmacm-dev \\\n             librdmacm1 \\\n             rdma-core \\\n             rdmacm-utils ; \\\n    do \\\n        wget -nv ${DEB_URL}/r/rdma-core/${i}_${IBVERBS_VERSION}_$(dpkg --print-architecture).deb ; \\\n    done\n\n# Install the .debs we collected. UCX needs these.\nRUN dpkg --install *.deb\n\n# UCX. There is stuff to build Debian packages, but it seems not too polished.\nENV UCX_VERSION 1.3.1\nRUN git clone --branch v${UCX_VERSION} --depth 1 \\\n              https://github.com/openucx/ucx.git\nRUN    cd ucx \\\n    && ./autogen.sh \\\n    && ./contrib/configure-release --prefix=/usr/local \\\n    && make -j$(getconf _NPROCESSORS_ONLN) install\n\n# OpenMPI.\n#\n# Patch OpenMPI to disable UCX plugin on systems with Intel or Cray HSNs. UCX\n# has inferior performance than PSM2/uGNI but higher priority.\nENV MPI_URL https://www.open-mpi.org/software/ompi/v3.1/downloads\nENV MPI_VERSION 3.1.4\nRUN wget -nv ${MPI_URL}/openmpi-${MPI_VERSION}.tar.gz\nRUN tar xf openmpi-${MPI_VERSION}.tar.gz && rm openmpi-${MPI_VERSION}.tar.gz\nCOPY dont-init-ucx-on-intel-cray.patch ./openmpi-${MPI_VERSION}\nRUN cd openmpi-${MPI_VERSION} && git apply dont-init-ucx-on-intel-cray.patch\nRUN cd openmpi-${MPI_VERSION} \\\n    && CFLAGS=-O3 \\\n       CXXFLAGS=-O3 \\\n       ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" \\\n\n       --prefix=/usr/local \\\n                   --sysconfdir=/mnt/0 \\\n\t\t\t\t\t--with-slurm \\\n                   --with-pmi \\\n                   --with-pmix \\\n                   --with-ucx \\\n                   --disable-pty-support \\\n                   --enable-mca-no-build=btl-openib,plm-slurm \\\n    && make -j$(getconf _NPROCESSORS_ONLN) install\nRUN ldconfig\nRUN rm -Rf openmpi-${MPI_VERSION}*\n\n# OpenMPI expects this program to exist, even if it's not used. Default is\n# \"ssh : rsh\", but that's not installed.\nRUN echo 'plm_rsh_agent = false' >> /mnt/0/openmpi-mca-params.conf\n"
+}

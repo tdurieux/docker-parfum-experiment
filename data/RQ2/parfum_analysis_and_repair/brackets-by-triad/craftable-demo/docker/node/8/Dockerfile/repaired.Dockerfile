@@ -1,0 +1,13 @@
+FROM node:8
+
+MAINTAINER BRACKETS by TRIAD
+
+WORKDIR /var/www/html
+
+RUN curl -f -sS https://dl.yarnpkg.com/debian/pubkey.gpg | apt-key add - \
+    && echo "deb http://dl.yarnpkg.com/debian/ stable main" > /etc/apt/sources.list.d/yarn.list \
+    && apt-get update \
+    && apt-get install --no-install-recommends -y git yarn \
+    && apt-get -y autoremove \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*

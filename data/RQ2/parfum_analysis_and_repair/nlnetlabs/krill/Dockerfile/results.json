@@ -1,0 +1,17 @@
+{
+  "startTime": 1674254857014,
+  "endTime": 1674254858090,
+  "originalSmells": [
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 11,
+        "lineEnd": 11,
+        "columnStart": 4,
+        "columnEnd": 34
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "#\n# Make the base image configurable so that the E2E test can use a base image\n# with a prepopulated Cargo build cache to accelerate the build process.\n# Use Ubuntu 16.04 because this is what the Travis CI Krill build uses.\nARG BASE_IMG=alpine:3.15\n\n#\n# -- stage 1: build krill and krillc\n#\nFROM ${BASE_IMG} AS build\n\nRUN apk add --no-cache rust cargo openssl-dev\n\nWORKDIR /tmp/krill\nCOPY . .\n\n# Force Cargo to use HTTP/1.1 without pipelining instead of HTTP/2 with\n# multiplexing. This seems to help with various \"spurious network error\"\n# warnings when Cargo attempts to fetch from crates.io when building this\n# image on Docker Hub and GitHub Actions build machines.\nRUN CARGO_HTTP_MULTIPLEXING=false cargo build --target x86_64-alpine-linux-musl --release --locked\n\n#\n# -- stage 2: create an image containing just the binaries, configs &\n#             scripts needed to run Krill, and not the things needed to build\n#             it.\n#\nFROM alpine:3.15\nCOPY --from=build /tmp/krill/target/x86_64-alpine-linux-musl/release/krill /usr/local/bin/\nCOPY --from=build /tmp/krill/target/x86_64-alpine-linux-musl/release/krillc /usr/local/bin/\nCOPY --from=build /tmp/krill/target/x86_64-alpine-linux-musl/release/krillup /usr/local/bin/\n\n# Build variables for uid and guid of user to run container\nARG RUN_USER=krill\nARG RUN_USER_UID=1012\nARG RUN_USER_GID=1012\n\nRUN apk --no-cache add bash libgcc openssl tzdata util-linux\n\nRUN addgroup -g ${RUN_USER_GID} ${RUN_USER} && \\\n    adduser -D -u ${RUN_USER_UID} -G ${RUN_USER} ${RUN_USER}\n\n# Create the data directory structure and install a config file that uses it\nWORKDIR /var/krill/data\nCOPY docker/krill.conf .\nRUN chown -R ${RUN_USER}: .\n\n# Install a Docker entrypoint script that will be executed when the container\n# runs\nCOPY docker/entrypoint.sh /opt/\nRUN chown ${RUN_USER}: /opt/entrypoint.sh\n\nEXPOSE 3000/tcp\n\n# Use Tini to ensure that krillc responds to CTRL-C when run in the\n# foreground without the Docker argument \"--init\" (which is actually another\n# way of activating Tini, but cannot be enabled from inside the Docker image).\nRUN apk add --no-cache tini\n# Tini is now available at /sbin/tini\nENTRYPOINT [\"/sbin/tini\", \"--\", \"/opt/entrypoint.sh\"]\nCMD [\"krill\", \"-c\", \"/var/krill/data/krill.conf\"]\n"
+}

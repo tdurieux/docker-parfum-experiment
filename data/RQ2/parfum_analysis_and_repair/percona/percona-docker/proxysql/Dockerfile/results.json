@@ -1,0 +1,44 @@
+{
+  "startTime": 1674246742577,
+  "endTime": 1674246743777,
+  "originalSmells": [
+    {
+      "rule": "curlUseHttpsUrl",
+      "position": {
+        "lineStart": 36,
+        "lineEnd": 36,
+        "columnStart": 4,
+        "columnEnd": 115
+      }
+    },
+    {
+      "rule": "curlUseHttpsUrl",
+      "position": {
+        "lineStart": 37,
+        "lineEnd": 37,
+        "columnStart": 4,
+        "columnEnd": 130
+      }
+    },
+    {
+      "rule": "curlUseHttpsUrl",
+      "position": {
+        "lineStart": 61,
+        "lineEnd": 61,
+        "columnStart": 4,
+        "columnEnd": 131
+      }
+    },
+    {
+      "rule": "curlUseHttpsUrl",
+      "position": {
+        "lineStart": 62,
+        "lineEnd": 62,
+        "columnStart": 4,
+        "columnEnd": 165
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM golang:1.18 AS go_builder\nWORKDIR /go/src/github.com/percona/percona-xtradb-cluster-operator/src\n\nRUN export GO111MODULE=off \\\n    && go get k8s.io/apimachinery/pkg/util/sets \\\n    && curl -Lf -o /go/src/github.com/percona/percona-xtradb-cluster-operator/src/peer-list.go https://raw.githubusercontent.com/percona/percona-xtradb-cluster-operator/main/cmd/peer-list/main.go \\\n    && go build peer-list.go\n\nFROM redhat/ubi8-minimal\n\nLABEL org.opencontainers.image.authors=\"info@percona.com\"\n\nENV PXC_VERSION 8.0.27-18.1\nENV PROXYSQL_VERSION 2.3.2-1.1\nENV OS_VER el8\nENV FULL_PERCONA_VERSION \"$PXC_VERSION.$OS_VER\"\nENV FULL_PROXYSQL_VERSION \"$PROXYSQL_VERSION.$OS_VER\"\n\n# check repository package signature in secure way\nRUN set -ex; \\\n    export GNUPGHOME=\"$(mktemp -d)\"; \\\n    gpg --batch --keyserver keyserver.ubuntu.com --recv-keys 430BDF5C56E7C94E848EE60C1C4CBDCDCD2EFD2A 99DB70FAE1D7CE227FB6488205B555B38483C65D 94E279EB8D8F25B21810ADF121EA45AB2F86D6A1; \\\n    gpg --batch --export --armor 430BDF5C56E7C94E848EE60C1C4CBDCDCD2EFD2A > ${GNUPGHOME}/RPM-GPG-KEY-Percona; \\\n    gpg --batch --export --armor 99DB70FAE1D7CE227FB6488205B555B38483C65D > ${GNUPGHOME}/RPM-GPG-KEY-centosofficial; \\\n    gpg --batch --export --armor 94E279EB8D8F25B21810ADF121EA45AB2F86D6A1 > ${GNUPGHOME}/RPM-GPG-KEY-EPEL-8; \\\n    rpmkeys --import ${GNUPGHOME}/RPM-GPG-KEY-Percona ${GNUPGHOME}/RPM-GPG-KEY-centosofficial ${GNUPGHOME}/RPM-GPG-KEY-EPEL-8; \\\n    microdnf install -y findutils; \\\n    curl -Lf -o /tmp/percona-release.rpm https://repo.percona.com/yum/percona-release-latest.noarch.rpm; \\\n    rpmkeys --checksig /tmp/percona-release.rpm; \\\n    rpm -i /tmp/percona-release.rpm; \\\n    rm -rf \"$GNUPGHOME\" /tmp/percona-release.rpm; \\\n    rpm --import /etc/pki/rpm-gpg/PERCONA-PACKAGING-KEY; \\\n    percona-release setup pxc80; \\\n    percona-release enable tools testing\n\nRUN set -ex; \\\n    curl -Lf -o /tmp/jq.rpm https://vault.centos.org/centos/8/AppStream/x86_64/os/Packages/jq-1.5-12.el8.x86_64.rpm; \\\n    curl -Lf -o /tmp/oniguruma.rpm https://vault.centos.org/centos/8/AppStream/x86_64/os/Packages/oniguruma-6.8.2-2.el8.x86_64.rpm; \\\n    rpmkeys --checksig /tmp/jq.rpm /tmp/oniguruma.rpm; \\\n    rpm -i /tmp/jq.rpm /tmp/oniguruma.rpm; \\\n    rm -rf /tmp/jq.rpm /tmp/oniguruma.rpm\n\nRUN set -ex; \\\n    microdnf install -y \\\n        percona-xtradb-cluster-client-${FULL_PERCONA_VERSION} \\\n        shadow-utils \\\n        which \\\n        hostname \\\n        procps-ng \\\n        perl-DBD-MySQL \\\n        perl-DBI \\\n        tar; \\\n    microdnf clean all; \\\n    rm -rf /var/cache/dnf /var/cache/yum\n\nRUN groupadd -g 1001 proxysql; \\\n    useradd -u 1001 -r -g 1001 -s /sbin/nologin \\\n        -c \"Default Application User\" proxysql\n\n# we need licenses from docs\nRUN set -ex; \\\n    curl -Lf -o /tmp/util-linux.rpm https://vault.centos.org/centos/8/BaseOS/x86_64/os/Packages/util-linux-2.32.1-28.el8.x86_64.rpm; \\\n    curl -Lf -o /tmp/proxysql2-${FULL_PROXYSQL_VERSION}.rpm https://repo.percona.com/proxysql/yum/release/8/RPMS/x86_64/proxysql2-${FULL_PROXYSQL_VERSION}.x86_64.rpm; \\\n    rpmkeys --checksig /tmp/proxysql2-${FULL_PROXYSQL_VERSION}.rpm /tmp/util-linux.rpm; \\\n    rpm -iv /tmp/proxysql2-${FULL_PROXYSQL_VERSION}.rpm /tmp/util-linux.rpm --nodeps; \\\n    rm -rf /tmp/proxysql2-${FULL_PROXYSQL_VERSION}.rpm /tmp/util-linux.rpm; \\\n    microdnf clean all; \\\n    rm -rf /var/cache/dnf /var/cache/yum /etc/proxysql /var/lib/proxysql; \\\n    rpm -ql percona-xtradb-cluster-client | egrep -v \"mysql$|mysqldump$\" | xargs rm -rf; \\\n    install -o 1001 -g 0 -m 775 -d /etc/proxysql /var/lib/proxysql\n\nCOPY LICENSE /licenses/LICENSE.Dockerfile\nRUN cp /usr/share/doc/proxysql2/LICENSE /licenses/LICENSE.proxysql\n\nCOPY dockerdir /\nCOPY --from=go_builder /go/src/github.com/percona/percona-xtradb-cluster-operator/src/peer-list /usr/bin/\nRUN chown 1001:1001 /etc/proxysql/proxysql.cnf /etc/proxysql-admin.cnf; \\\n    chmod 664 /etc/proxysql/proxysql.cnf /etc/proxysql-admin.cnf\n\nUSER 1001\n\nVOLUME /var/lib/proxysql\n\nENTRYPOINT [\"/entrypoint.sh\"]\n\nEXPOSE 3306 6032\nCMD [\"/usr/bin/proxysql\", \"-f\", \"-c\", \"/etc/proxysql/proxysql.cnf\", \"--reload\"]\n"
+}

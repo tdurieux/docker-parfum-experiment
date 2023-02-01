@@ -1,0 +1,44 @@
+{
+  "startTime": 1674256160373,
+  "endTime": 1674256161053,
+  "originalSmells": [
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 63,
+        "lineEnd": 64,
+        "columnStart": 4,
+        "columnEnd": 44
+      }
+    },
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 82,
+        "lineEnd": 82,
+        "columnStart": 4,
+        "columnEnd": 51
+      }
+    },
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 82,
+        "lineEnd": 82,
+        "columnStart": 55,
+        "columnEnd": 86
+      }
+    },
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 87,
+        "lineEnd": 89,
+        "columnStart": 4,
+        "columnEnd": 49
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "#\n# EXAMPLE OF MULTISTAGE BUILD FOR MONOREPOS\n#\n# @link https://github.com/belgattitude/nextjs-monorepo-example\n#\n\n###################################################################\n# Stage 1: Install all workspaces (dev)dependencies               #\n#          and generates node_modules folder(s)                   #\n# ----------------------------------------------------------------#\n# Notes:                                                          #\n#   1. this stage relies on buildkit features                     #\n#   2. depend on .dockerignore, you must at least                 #\n#      ignore: all **/node_modules folders and .yarn/cache        #\n###################################################################\n\nARG NODE_VERSION=16\nARG ALPINE_VERSION=3.15\n\nFROM node:${NODE_VERSION}-alpine${ALPINE_VERSION} AS deps\nRUN apk add --no-cache rsync\n\nWORKDIR /workspace-install\n\nCOPY yarn.lock .yarnrc.yml ./\nCOPY .yarn/ ./.yarn/\n\n# Specific to monerepo's as docker COPY command is pretty limited\n# we use buidkit to prepare all files that are necessary for install\n# and that will be used to invalidate docker cache.\n#\n# Files are copied with rsync:\n#\n#   - All package.json present in the host (root, apps/*, packages/*)\n#   - All schema.prisma (cause prisma will generate a schema on postinstall)\n#\nRUN --mount=type=bind,target=/docker-context \\\n    rsync -amv --delete \\\n          --exclude='node_modules' \\\n          --exclude='*/node_modules' \\\n          --include='package.json' \\\n          --include='schema.prisma' \\\n          --include='*/' --exclude='*' \\\n          /docker-context/ /workspace-install/;\n\n# @see https://www.prisma.io/docs/reference/api-reference/environment-variables-reference#cli-binary-targets\nENV PRISMA_CLI_BINARY_TARGETS=linux-musl\n\n#\n# To speed up installations, we override the default yarn cache folder\n# and mount it as a buildkit cache mount (builkit will rotate it if needed)\n# This strategy allows to exclude the yarn cache in subsequent docker\n# layers (size benefit) and reduce packages fetches.\n#\n# PS:\n#  1. Cache mounts can be used in CI (github actions)\n#  2. To manually clear the cache\n#     > docker builder prune --filter type=exec.cachemount\n#\n# Does not play well with buildkit on CI\n# https://github.com/moby/buildkit/issues/1673\n\nRUN --mount=type=cache,target=/root/.yarn3-cache,id=yarn3-cache \\\n    YARN_CACHE_FOLDER=/root/.yarn3-cache \\\n    yarn install --immutable --inline-builds && yarn cache clean;\n\n\n###################################################################\n# Stage 2: Build the app                                          #\n###################################################################\n\nFROM node:${NODE_VERSION}-alpine${ALPINE_VERSION} AS builder\nENV NODE_ENV=production\nENV NEXTJS_IGNORE_ESLINT=1\nENV NEXTJS_IGNORE_TYPECHECK=0\n\nWORKDIR /app\n\nCOPY . .\nCOPY --from=deps /workspace-install ./\n\n# Optional: if the app depends on global /static shared assets like images, locales...\nRUN yarn workspace nextjs-app share-static-hardlink && yarn workspace nextjs-app build && yarn cache clean;\n\n# Does not play well with buildkit on CI\n# https://github.com/moby/buildkit/issues/1673\nRUN --mount=type=cache,target=/root/.yarn3-cache,id=yarn3-cache \\\n    SKIP_POSTINSTALL=1 \\\n    YARN_CACHE_FOLDER=/root/.yarn3-cache \\\n    yarn workspaces focus nextjs-app --production && yarn cache clean;\n\n###################################################################\n# Stage 3: Extract a minimal image from the build                 #\n###################################################################\n\nFROM node:${NODE_VERSION}-alpine${ALPINE_VERSION} AS runner\n\nWORKDIR /app\n\nENV NODE_ENV production\n\nRUN addgroup --system --gid 1001 nodejs && adduser --system --uid 1001 nextjs\n\nCOPY --from=builder /app/apps/nextjs-app/next.config.js \\\n                    /app/apps/nextjs-app/next-i18next.config.js \\\n                    /app/apps/nextjs-app/package.json \\\n                    ./apps/nextjs-app/\nCOPY --from=builder /app/apps/nextjs-app/public ./apps/nextjs-app/public\nCOPY --from=builder --chown=nextjs:nodejs /app/apps/nextjs-app/.next ./apps/nextjs-app/.next\nCOPY --from=builder /app/node_modules ./node_modules\nCOPY --from=builder /app/package.json ./package.json\n\nUSER nextjs\n\nEXPOSE ${NEXTJS_APP_PORT:-3000}\n\nENV NEXT_TELEMETRY_DISABLED 1\n\nCMD [\"./node_modules/.bin/next\", \"start\", \"apps/nextjs-app/\", \"-p\", \"${NEXTJS_APP_PORT:-3000}\"]\n\n\n###################################################################\n# Optional: develop locally                                       #\n###################################################################\n\nFROM node:${NODE_VERSION}-alpine${ALPINE_VERSION} AS develop\nENV NODE_ENV=development\n\nWORKDIR /app\n\nCOPY --from=deps /workspace-install ./\n\nEXPOSE ${NEXTJS_APP_PORT:-3000}\n\nWORKDIR /app/apps/nextjs-app\n\nCMD [\"yarn\", \"dev\", \"-p\", \"${NEXTJS_APP_PORT:-3000}\"]\n\n"
+}

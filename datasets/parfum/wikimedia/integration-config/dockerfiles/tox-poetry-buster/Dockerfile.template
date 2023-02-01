@@ -1,0 +1,10 @@
+FROM {{ "tox-buster" | image_tag }}
+
+ENV POETRY_HOME=/opt/poetry
+USER root
+RUN mkdir -p /opt/poetry \
+    && chown -R nobody /opt/poetry \
+    && ln -s /opt/poetry/bin/poetry /bin/poetry
+USER nobody
+COPY get-poetry.py /opt/poetry/get-poetry.py
+RUN python /opt/poetry/get-poetry.py --no-modify-path

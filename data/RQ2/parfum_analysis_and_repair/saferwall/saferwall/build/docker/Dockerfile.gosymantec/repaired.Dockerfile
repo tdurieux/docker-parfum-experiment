@@ -1,0 +1,88 @@
+################################
+# STEP 1 build executable binary
+################################
+
+FROM golang:1.17-alpine AS build-stage
+
+ENV VENDOR symantec
+
+# Install git + SSL ca certificates.
+# Git is required for fetching the dependencies.
+# Ca-certificates is required to call HTTPS endpoints.
+RUN apk update && apk add --no-cache git ca-certificates tzdata \
+	&& update-ca-certificates 2>/dev/null || true
+
+# Set the Current Working Directory inside the container.
+WORKDIR $GOPATH/src/saferwall/$VENDOR/
+
+# Copy go mod and sum files.
+COPY go.mod go.sum ./
+
+# Download all dependencies. Dependencies will be cached if the go.mod
+# and go.sum files are not changed.
+RUN go mod download
+
+# Copy our go files.
+COPY . .
+
+# Build the binary.
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+	go build -a -installsuffix cgo -ldflags '-extldflags "-static"' \
+	-o /go/bin/$VENDOR-svc cmd/services/multiav/$VENDOR/main.go
+
+############################
+# STEP 2 build a small image
+############################
+
+FROM saferwall/symantec:latest
+LABEL maintainer="https://github.com/saferwall"
+LABEL version="0.0.3"
+LABEL description="symantec endpoint protection linux version with nsq consumer"
+
+# Environment variables.
+ENV SYMANTEC_DB_UPDATE_DATE	/av_db_update_date.txt
+
+# Set the Current Working Directory inside the container.
+WORKDIR /saferwall
+
+# Install sudo.
+RUN apt-get update \
+	&& apt-get install -y --no-install-recommends -qq sudo && rm -rf /var/lib/apt/lists/*;
+
+# Download EICAR Anti-Virus Test File.
+ADD http://www.eicar.org/download/eicar.com.txt /eicar
+
+# Update virus definition file.
+RUN /etc/init.d/symcfgd start \
+	&& /etc/init.d/rtvscand start \
+	&& /etc/init.d/smcd start \
+	# && $SYMANTEC_SAV liveupdate --update \
+	# && $SYMANTEC_SAV info --defs \
+	&& echo -n "$(date +%s)" >> $SYMANTEC_DB_UPDATE_DATE \
+    && $SYMANTEC_SAV manualscan --clscan /eicar || true \
+	&& TODAY="$(date '+%m%d%Y')" \
+	&& cat /var/symantec/sep/Logs/$TODAY.log | grep -q 'EICAR Test String'
+
+# Create an app user so our program doesn't run as root.
+RUN groupadd -r saferwall \
+	&& useradd --no-log-init -r -g saferwall saferwall
+
+# Copy our static executable.
+COPY --from=build-stage /go/bin/symantec-svc .
+
+# Copy the config files.
+COPY configs/services/multiav/symantec conf/
+
+# Update permissions.
+RUN usermod -aG sudo saferwall \
+	&& echo 'saferwall    ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers \
+	&& usermod -u 101 saferwall \
+	&& groupmod -g 102 saferwall \
+	&& chown -R saferwall:saferwall . \
+	&& chown -R saferwall:saferwall $SYMANTEC_INSTALL_DIR \
+	&& chown -R saferwall:saferwall $SYMANTEC_VAR_DIR
+
+# Switch to our user.
+USER saferwall
+
+ENTRYPOINT ["/saferwall/symantec-svc", "-config", "/saferwall/conf"]

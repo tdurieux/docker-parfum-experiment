@@ -1,0 +1,29 @@
+FROM golang:1.5.2-wheezy
+
+ENV PROJ_NAME stepman
+
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get --no-install-recommends -y install git mercurial curl rsync ruby && rm -rf /var/lib/apt/lists/*;
+
+#
+# Install Bitrise CLI
+RUN curl -f -L https://github.com/bitrise-io/bitrise/releases/download/1.2.4/bitrise-$(uname -s)-$(uname -m) > /usr/local/bin/bitrise
+RUN chmod +x /usr/local/bin/bitrise
+RUN bitrise setup --minimal
+
+# From the official Golang Dockerfile
+#  https://github.com/docker-library/golang/blob/master/1.4/Dockerfile
+RUN mkdir -p /go/src /go/bin && chmod -R 777 /go
+ENV GOPATH /go
+ENV PATH /go/bin:$PATH
+
+RUN mkdir -p /go/src/github.com/bitrise-io/$PROJ_NAME
+COPY . /go/src/github.com/bitrise-io/$PROJ_NAME
+
+WORKDIR /go/src/github.com/bitrise-io/$PROJ_NAME
+# godep
+RUN go get -u github.com/tools/godep
+RUN godep restore
+# install
+RUN go install
+
+CMD $PROJ_NAME --version

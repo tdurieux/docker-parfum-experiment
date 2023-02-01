@@ -1,0 +1,26 @@
+{
+  "startTime": 1674216917699,
+  "endTime": 1674216919123,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 51,
+        "lineEnd": 51,
+        "columnStart": 104,
+        "columnEnd": 151
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 58,
+        "lineEnd": 58,
+        "columnStart": 104,
+        "columnEnd": 149
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM debian:buster-slim as base\n\nARG UID\nENV UID=${UID:-9999}\nARG GID\nENV GID=${GID:-9999}\n\n# We might be running as a user which already exists in this image. In that situation\n# Everything is OK and we should just continue on.\nRUN groupadd -g $GID baserow_docker_group || exit 0\nRUN useradd --shell /bin/bash -u $UID -g $GID -o -c \"\" -m baserow_docker_user -l || exit 0\nENV DOCKER_USER=baserow_docker_user\nENV BASEROW_IMAGE_TYPE=\"backend\"\n\nRUN apt-get update &&  \\\n    apt-get upgrade -y && \\\n    apt-get install -y --no-install-recommends \\\n    build-essential \\\n    curl \\\n    gnupg2 \\\n    libpq-dev \\\n    dos2unix \\\n    tini \\\n    postgresql-client \\\n    gettext \\\n    procps \\\n    python3 \\\n    python3-pip \\\n    python3-dev \\\n    nano \\\n    vim \\\n    git \\\n    gosu \\\n    && apt-get autoclean \\\n    && apt-get clean \\\n    && apt-get autoremove \\\n    && rm -rf /var/lib/apt/lists/*\n\nUSER $UID:$GID\n\n# In slim docker images, mime.types is removed and we need it for mimetypes guessing\nCOPY --chown=$UID:$GID ./backend/docker/mime.types /etc/\n\n# Install non-dev base dependencies into a virtual env.\nCOPY --chown=$UID:$GID ./backend/requirements/base.txt /baserow/requirements/\nRUN python3 -m pip install --no-cache-dir --no-warn-script-location --disable-pip-version-check --upgrade pip==22.0.3\nRUN python3 -m pip install --no-cache-dir --no-warn-script-location --upgrade virtualenv==20.13.1 && python3 -m virtualenv /baserow/venv\n\nENV PIP_CACHE_DIR=/tmp/baserow_pip_cache\n# hadolint ignore=SC1091,DL3042\nRUN --mount=type=cache,mode=777,target=$PIP_CACHE_DIR,uid=$UID,gid=$GID . /baserow/venv/bin/activate && pip3 install --no-cache-dir -r /baserow/requirements/base.txt\n\n# Build a dev_deps stage which also has the dev dependencies for use by the dev layer.\nFROM base as dev_deps\n\nCOPY ./backend/requirements/dev.txt /baserow/requirements/\n# hadolint ignore=SC1091,DL3042\nRUN --mount=type=cache,mode=777,target=$PIP_CACHE_DIR,uid=$UID,gid=$GID . /baserow/venv/bin/activate && pip3 install --no-cache-dir -r /baserow/requirements/dev.txt\n\n# The core stage contains all of Baserows source code and sets up the entrypoint\nFROM base as core\n\n# Copy over backend code.\nCOPY --chown=$UID:$GID ./docs /baserow/docs\n# TODO - This copy also re-copies the requirements above, meaning this will be re-run\n#        and not cached even though we already have separate layers above.\nCOPY --chown=$UID:$GID ./backend /baserow/backend\nCOPY --chown=$UID:$GID ./premium/backend /baserow/premium/backend\n\nWORKDIR /baserow/backend\n\n# Ensure that Python outputs everything that's printed inside\n# the application rather than buffering it.\nENV PYTHONUNBUFFERED 1\nENV PYTHONPATH $PYTHONPATH:/baserow/backend/src:/baserow/premium/backend/src\n\nCOPY --chown=$UID:$GID ./deploy/plugins/*.sh /baserow/plugins/\nRUN dos2unix /baserow/backend/docker/docker-entrypoint.sh && \\\n    chmod a+x /baserow/backend/docker/docker-entrypoint.sh\n\nHEALTHCHECK --interval=60s CMD [\"/bin/bash\", \"/baserow/backend/docker/docker-entrypoint.sh\", \"backend-healthcheck\"]\nENTRYPOINT [\"/usr/bin/tini\", \"--\", \"/bin/bash\", \"/baserow/backend/docker/docker-entrypoint.sh\"]\n\nFROM core as dev\n\n\nUSER root\nRUN apt-get update &&  \\\n    apt-get install -y --no-install-recommends \\\n    graphviz \\\n    && apt-get autoclean \\\n    && apt-get clean \\\n    && apt-get autoremove \\\n    && rm -rf /var/lib/apt/lists/*\nUSER $UID:$GID\n\n# Override virtualenv with one containing dev dependencies.\nCOPY --chown=$UID:$GID --from=dev_deps /baserow/venv /baserow/venv\n\n# Override env variables and initial cmd to start up in dev mode.\nENV DJANGO_SETTINGS_MODULE='baserow.config.settings.dev'\nCMD [\"django-dev\"]\n\nFROM core as local\n\nENV DJANGO_SETTINGS_MODULE='baserow.config.settings.base'\nCMD [\"gunicorn\"]\n\n"
+}

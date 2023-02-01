@@ -1,0 +1,1 @@
+# Execute this docker file via make bundle/build command with VERSION env

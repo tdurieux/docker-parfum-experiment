@@ -1,0 +1,26 @@
+{
+  "startTime": 1674252837612,
+  "endTime": 1674252838625,
+  "originalSmells": [
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 23,
+        "lineEnd": 23,
+        "columnStart": 45,
+        "columnEnd": 88
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 30,
+        "lineEnd": 31,
+        "columnStart": 4,
+        "columnEnd": 17
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Copyright 2019 The Kubernetes Authors.\n#\n# Licensed under the Apache License, Version 2.0 (the \"License\");\n# you may not use this file except in compliance with the License.\n# You may obtain a copy of the License at\n#\n#     http://www.apache.org/licenses/LICENSE-2.0\n#\n# Unless required by applicable law or agreed to in writing, software\n# distributed under the License is distributed on an \"AS IS\" BASIS,\n# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.\n# See the License for the specific language governing permissions and\n# limitations under the License.\n\n# This image is a haproxy image + minimal config so the container will not exit\n# while we rewrite the config at runtime and signal haproxy to reload.\n\nARG BASE=\"registry.k8s.io/build-image/debian-base:bullseye-v1.3.0\"\nFROM ${BASE} as build\n\n# NOTE: copyrights.tar.gz is a quirk of Kubernetes's debian-base image\n# We extract these here so we can grab the relevant files are easily\n# staged for copying into our final image.\nRUN [ ! -f /usr/share/copyrights.tar.gz ] || tar -C / -xzvf /usr/share/copyrights.tar.gz && rm /usr/share/copyrights.tar.gz\n\n# install:\n# - haproxy (see: https://haproxy.debian.net/)\n# - bash (ldd is a bash script and debian-base removes bash)\n# - procps (for `kill` which kind needs)\nRUN apt update && \\\n    apt install -y --no-install-recommends haproxy=2.2.\\* \\\n      procps bash && rm -rf /var/lib/apt/lists/*;\n\n# copy in script for staging distro provided binary to distroless\nCOPY --chmod=0755 stage-binary-and-deps.sh /usr/local/bin/\n\n# stage everything for copying into the final image\n# NOTE: kind currently also uses \"mkdir\" and \"cp\" to write files within the container\n# TODO: mkdir especially should be unnecessary, with a little refactoring\n# NOTE: kill is used to signal haproxy to reload\nARG STAGE_DIR=\"/opt/stage\"\nRUN mkdir -p \"${STAGE_DIR}\" && \\\n    stage-binary-and-deps.sh haproxy \"${STAGE_DIR}\" && \\\n    stage-binary-and-deps.sh cp \"${STAGE_DIR}\" && \\\n    stage-binary-and-deps.sh mkdir \"${STAGE_DIR}\" && \\\n    stage-binary-and-deps.sh kill \"${STAGE_DIR}\" && \\\n    find \"${STAGE_DIR}\"\n\n################################################################################\n\n# See: https://github.com/GoogleContainerTools/distroless/tree/main/base\n# This has /etc/passwd, tzdata, cacerts\nFROM \"gcr.io/distroless/static-debian11\"\n\nARG STAGE_DIR=\"/opt/stage\"\n\n# copy staged binary + deps + copyright\nCOPY --from=build \"${STAGE_DIR}/\" /\n\n# add our minimal config\nCOPY haproxy.cfg /usr/local/etc/haproxy/haproxy.cfg\n\n# below roughly matches the standard haproxy image\nSTOPSIGNAL SIGUSR1\nENTRYPOINT [\"haproxy\", \"-sf\", \"7\", \"-W\", \"-db\", \"-f\", \"/usr/local/etc/haproxy/haproxy.cfg\"]\n"
+}

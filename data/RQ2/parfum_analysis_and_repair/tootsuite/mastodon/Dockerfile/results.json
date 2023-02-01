@@ -1,0 +1,71 @@
+{
+  "startTime": 1674250095386,
+  "endTime": 1674250096384,
+  "originalSmells": [
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 48,
+        "lineEnd": 48,
+        "columnStart": 4,
+        "columnEnd": 29
+      }
+    },
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 49,
+        "lineEnd": 49,
+        "columnStart": 1,
+        "columnEnd": 20
+      }
+    },
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 62,
+        "lineEnd": 62,
+        "columnStart": 1,
+        "columnEnd": 29
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 38,
+        "lineEnd": 41,
+        "columnStart": 1,
+        "columnEnd": 24
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 21,
+        "lineEnd": 21,
+        "columnStart": 1,
+        "columnEnd": 81
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 31,
+        "lineEnd": 33,
+        "columnStart": 2,
+        "columnEnd": 50
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 52,
+        "lineEnd": 53,
+        "columnStart": 1,
+        "columnEnd": 27
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM ubuntu:20.04 as build-dep\n\n# Use bash for the shell\nSHELL [\"/bin/bash\", \"-c\"]\nRUN echo 'debconf debconf/frontend select Noninteractive' | debconf-set-selections\n\n# Install Node v16 (LTS)\nENV NODE_VER=\"16.15.1\"\nRUN ARCH= && \\\n    dpkgArch=\"$(dpkg --print-architecture)\" && \\\n  case \"${dpkgArch##*-}\" in \\\n    amd64) ARCH='x64';; \\\n    ppc64el) ARCH='ppc64le';; \\\n    s390x) ARCH='s390x';; \\\n    arm64) ARCH='arm64';; \\\n    armhf) ARCH='armv7l';; \\\n    i386) ARCH='x86';; \\\n    *) echo \"unsupported architecture\"; exit 1 ;; \\\n  esac && \\\n    echo \"Etc/UTC\" > /etc/localtime && \\\n\tapt-get update && \\\n\tapt-get install -y --no-install-recommends ca-certificates wget python apt-utils && \\\n\tcd ~ && \\\n\twget -q https://nodejs.org/download/release/v$NODE_VER/node-v$NODE_VER-linux-$ARCH.tar.gz && \\\n\ttar xf node-v$NODE_VER-linux-$ARCH.tar.gz && \\\n\trm node-v$NODE_VER-linux-$ARCH.tar.gz && \\\n\tmv node-v$NODE_VER-linux-$ARCH /opt/node && rm -rf /var/lib/apt/lists/*;\n\n# Install Ruby 3.0\nENV RUBY_VER=\"3.0.3\"\nRUN apt-get update && \\\n  apt-get install -y --no-install-recommends build-essential \\\n    bison libyaml-dev libgdbm-dev libreadline-dev libjemalloc-dev \\\n\t\tlibncurses5-dev libffi-dev zlib1g-dev libssl-dev && \\\n\tcd ~ && \\\n\twget https://cache.ruby-lang.org/pub/ruby/${RUBY_VER%.*}/ruby-$RUBY_VER.tar.gz && \\\n\ttar xf ruby-$RUBY_VER.tar.gz && \\\n\tcd ruby-$RUBY_VER && \\\n\t./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" --prefix=/opt/ruby \\\n\t\t\t--with-jemalloc \\\n\t\t\t--with-shared \\\n\t\t\t--disable-install-doc && \\\n\tmake -j\"$(nproc)\" > /dev/null && \\\n\tmake install && \\\n\trm -rf ../ruby-$RUBY_VER.tar.gz ../ruby-$RUBY_VER && rm -rf /var/lib/apt/lists/*;\n\nENV PATH=\"${PATH}:/opt/ruby/bin:/opt/node/bin\"\n\nRUN npm install -g npm@latest && \\\n\tnpm install -g yarn && \\\n\tgem install bundler && \\\n\tapt-get update && \\\n\tapt-get install -y --no-install-recommends git libicu-dev libidn11-dev \\\n\tlibpq-dev shared-mime-info && npm cache clean --force; && rm -rf /var/lib/apt/lists/*;\n\nCOPY Gemfile* package.json yarn.lock /opt/mastodon/\n\nRUN cd /opt/mastodon && \\\n  bundle config set --local deployment 'true' && \\\n  bundle config set --local without 'development test' && \\\n  bundle config set silence_root_warning true && \\\n\tbundle install -j\"$(nproc)\" && \\\n\tyarn install --pure-lockfile && yarn cache clean;\n\nFROM ubuntu:20.04\n\n# Copy over all the langs needed for runtime\nCOPY --from=build-dep /opt/node /opt/node\nCOPY --from=build-dep /opt/ruby /opt/ruby\n\n# Add more PATHs to the PATH\nENV PATH=\"${PATH}:/opt/ruby/bin:/opt/node/bin:/opt/mastodon/bin\"\n\n# Create the mastodon user\nARG UID=991\nARG GID=991\nSHELL [\"/bin/bash\", \"-o\", \"pipefail\", \"-c\"]\nRUN apt-get update && \\\n\techo \"Etc/UTC\" > /etc/localtime && \\\n\tapt-get install -y --no-install-recommends whois wget && \\\n\taddgroup --gid $GID mastodon && \\\n\tuseradd -m -u $UID -g $GID -d /opt/mastodon mastodon && \\\n\techo \"mastodon:$(head /dev/urandom | tr -dc A-Za-z0-9 | head -c 24 | mkpasswd -s -m sha-256)\" | chpasswd && \\\n\trm -rf /var/lib/apt/lists/*\n\n# Install mastodon runtime deps\nRUN echo 'debconf debconf/frontend select Noninteractive' | debconf-set-selections\nRUN apt-get update && \\\n  apt-get -y --no-install-recommends install \\\n\t  libssl1.1 libpq5 imagemagick ffmpeg libjemalloc2 \\\n\t  libicu66 libidn11 libyaml-0-2 \\\n\t  file ca-certificates tzdata libreadline8 gcc tini apt-utils && \\\n\tln -s /opt/mastodon /mastodon && \\\n\tgem install bundler && \\\n\trm -rf /var/cache && \\\n\trm -rf /var/lib/apt/lists/*\n\n# Copy over mastodon source, and dependencies from building, and set permissions\nCOPY --chown=mastodon:mastodon . /opt/mastodon\nCOPY --from=build-dep --chown=mastodon:mastodon /opt/mastodon /opt/mastodon\n\n# Run mastodon services in prod mode\nENV RAILS_ENV=\"production\"\nENV NODE_ENV=\"production\"\n\n# Tell rails to serve static files\nENV RAILS_SERVE_STATIC_FILES=\"true\"\nENV BIND=\"0.0.0.0\"\n\n# Set the run user\nUSER mastodon\n\n# Precompile assets\nRUN cd ~ && \\\n\tOTP_SECRET=precompile_placeholder SECRET_KEY_BASE=precompile_placeholder rails assets:precompile && \\\n\tyarn cache clean\n\n# Set the work dir and the container entry point\nWORKDIR /opt/mastodon\nENTRYPOINT [\"/usr/bin/tini\", \"--\"]\nEXPOSE 3000 4000\n"
+}

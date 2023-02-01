@@ -1,0 +1,34 @@
+FROM ubuntu:18.04
+
+RUN apt-get update && apt-get install --no-install-recommends -y build-essential curl unzip && rm -rf /var/lib/apt/lists/*;
+
+# Additional host packages required by resin
+RUN apt-get update && apt-get install --no-install-recommends -y apt-transport-https && rm -rf /var/lib/apt/lists/*
+RUN curl -f --silent https://deb.nodesource.com/gpgkey/nodesource.gpg.key | apt-key add -
+ENV NODE_VERSION node_8.x
+ENV DISTRO bionic
+RUN echo "deb https://deb.nodesource.com/$NODE_VERSION $DISTRO main" | tee /etc/apt/sources.list.d/nodesource.list &&\
+  echo "deb-src https://deb.nodesource.com/$NODE_VERSION $DISTRO main" | tee -a /etc/apt/sources.list.d/nodesource.list
+RUN apt-get update && apt-get install --no-install-recommends -y jq nodejs sudo && rm -rf /var/lib/apt/lists/*
+
+
+# Install docker
+# https://github.com/docker/docker/blob/master/project/PACKAGERS.md#runtime-dependencies
+RUN apt-get update && apt-get install --no-install-recommends -y iptables procps e2fsprogs xfsprogs xz-utils git kmod && rm -rf /var/lib/apt/lists/*
+ENV DOCKER_VERSION 19.03.1
+
+VOLUME /var/lib/docker
+RUN curl -f -sSL https://download.docker.com/linux/static/edge/x86_64/docker-${DOCKER_VERSION}.tgz \
+  | tar zx \
+  && chmod +x /docker/* \
+  && mv /docker/* /usr/local/bin/
+
+# Install balena-cli
+ENV BALENA_CLI_VERSION 13.4.0
+RUN curl -f -sSL https://github.com/balena-io/balena-cli/releases/download/v$BALENA_CLI_VERSION/balena-cli-v$BALENA_CLI_VERSION-linux-x64-standalone.zip > balena-cli.zip && \
+  unzip balena-cli.zip && \
+  mv balena-cli/* /usr/bin && \
+  rm -rf balena-cli.zip balena-cli
+
+COPY include/balena-docker.inc include/balena-lib.inc include/balena-api.inc entry_scripts/balena-deploy-block.sh /
+WORKDIR /work

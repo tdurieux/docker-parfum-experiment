@@ -1,0 +1,80 @@
+FROM node:16.15.1-alpine as build-frontend-deps
+
+ARG CI
+
+ENV SKIP_FRONTEND_TEST=true
+ENV CI=true
+
+ADD frontend/package.json /srv/frontend/package.json
+ADD frontend/pnpm-lock.yaml /srv/frontend/pnpm-lock.yaml
+RUN
+	cd /srv/frontend && \
+	apk add --no-cache --update git && \
+	npm i -g pnpm && \
+	pnpm i
+
+FROM node:16.15.1-alpine as build-frontend
+
+ARG CI
+ARG NODE_ENV=production
+ENV SKIP_FRONTEND_TEST=true
+ENV HUSKY_SKIP_INSTALL=true
+
+COPY --from=build-frontend-deps /srv/frontend/node_modules /srv/frontend/node_modules
+ADD frontend /srv/frontend
+RUN cd /srv/frontend && \
+    npm run build && \
+    rm -rf ./node_modules
+
+FROM umputun/baseimage:buildgo-v1.9.1 as build-backend
+
+ARG GITHUB_TOKEN
+ARG GITHUB_REF
+ARG GITHUB_SHA
+ENV SKIP_BACKEND_TEST=true
+
+WORKDIR /build/backend
+ADD backend /build/backend
+ADD README.md /build/
+ADD LICENSE /build/
+
+COPY --from=build-frontend /srv/frontend/public/ web
+
+RUN \
+    export WEB_ROOT=/build/backend/web && \
+    find . -regex '.*\.\(html\|js\|mjs\)$' -print -exec sed -i "s|{% REMARK_URL %}|http://127.0.0.1:8080|g" {} \; && \
+    statik --src=${WEB_ROOT} --dest=/build/backend/app/rest -p api -f && \
+    statik --src=/build/backend/templates --dest=/build/backend/app -p templates -ns templates -f && \
+    ls -la /build/backend/app/templates/statik.go && \
+    ls -la /build/backend/app/rest/api/statik.go && \
+    ls -la /build/backend/web/
+
+RUN \
+	version=$("/script/version.sh") && echo "version=${version}" && \
+    export GOFLAGS="-mod=vendor" && \
+    GOOS=linux GOARCH=amd64 go build -o remark42.linux-amd64 -ldflags "-X main.revision=${version} -s -w" ./app && \
+    GOOS=linux GOARCH=386 go build -o remark42.linux-386 -ldflags "-X main.revision=${version} -s -w" ./app && \
+    GOOS=linux GOARCH=arm go build -o remark42.linux-arm -ldflags "-X main.revision=${version} -s -w" ./app && \
+    GOOS=linux GOARCH=arm64 go build -o remark42.linux-arm64 -ldflags "-X main.revision=${version} -s -w" ./app && \
+    GOOS=windows GOARCH=amd64 go build -o remark42.windows-amd64.exe -ldflags "-X main.revision=${version} -s -w" ./app && \
+    GOOS=darwin GOARCH=amd64 go build -o remark42.darwin-amd64 -ldflags "-X main.revision=${version} -s -w" ./app && \
+    GOOS=darwin GOARCH=arm64 go build -o remark42.darwin-arm64 -ldflags "-X main.revision=${version} -s -w" ./app && \
+    GOOS=freebsd GOARCH=amd64 go build -o remark42.freebsd-amd64 -ldflags "-X main.revision=${version} -s -w" ./app
+
+RUN \
+    apk add --no-cache --update zip && \
+    cp ../LICENSE ./LICENSE && cp ../README.md ./README.md && \
+    tar cvzf remark42.linux-amd64.tar.gz remark42.linux-amd64 LICENSE README.md && \
+    tar cvzf remark42.linux-386.tar.gz remark42.linux-386 LICENSE README.md && \
+    tar cvzf remark42.linux-arm.tar.gz remark42.linux-arm LICENSE README.md && \
+    tar cvzf remark42.linux-arm64.tar.gz remark42.linux-arm64 LICENSE README.md && \
+    tar cvzf remark42.darwin-amd64.tar.gz remark42.darwin-amd64 LICENSE README.md && \
+    tar cvzf remark42.darwin-arm64.tar.gz remark42.darwin-arm64 LICENSE README.md && \
+    tar cvzf remark42.freebsd-amd64.tar.gz remark42.freebsd-amd64 LICENSE README.md && \
+    zip remark42.windows-amd64.zip remark42.windows-amd64.exe LICENSE README.md
+
+
+FROM alpine
+COPY --from=build-backend /build/backend/remark42.* /artifacts/
+RUN ls -la /artifacts/*
+CMD ["sleep", "100"]

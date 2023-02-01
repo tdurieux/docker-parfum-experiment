@@ -1,0 +1,62 @@
+{
+  "startTime": 1674250730761,
+  "endTime": 1674250731902,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 15,
+        "lineEnd": 15,
+        "columnStart": 4,
+        "columnEnd": 106
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 19,
+        "lineEnd": 19,
+        "columnStart": 4,
+        "columnEnd": 85
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 27,
+        "lineEnd": 27,
+        "columnStart": 4,
+        "columnEnd": 62
+      }
+    },
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 49,
+        "lineEnd": 49,
+        "columnStart": 4,
+        "columnEnd": 34
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 8,
+        "lineEnd": 12,
+        "columnStart": 22,
+        "columnEnd": 42
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 29,
+        "lineEnd": 29,
+        "columnStart": 22,
+        "columnEnd": 84
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Use current NodeJS LTS release. Derive from Debian Buster.\nFROM --platform=linux/amd64 node:16-buster\n\n# switching this may invalidate a lyer\nWORKDIR /build/test/test-remote\n\n# Set up dependencies for playwright/chromium\n# See https://github.com/opstrace/opstrace/pull/182#issuecomment-747426156\nRUN apt-get update && apt-get install -y -q --no-install-recommends \\\n    libnss3 libcups2 libnspr4 libatk1.0-0 libatk-bridge2.0-0 \\\n    libdbus-c++-1-0v5 libdrm2 libxkbcommon0 libxcomposite1 \\\n    libxdamage1 libxfixes3 libxrandr2 libgbm1 libgtk-3-0 \\\n    libasound2 libatspi2.0-0 libxshmfence1 && rm -rf /var/lib/apt/lists/*;\n\n# The test runner requires `kubectl`.\nRUN curl -f -sSL -O https://storage.googleapis.com/kubernetes-release/release/v1.18.0/bin/linux/amd64/kubectl && \\\n    chmod +x ./kubectl && \\\n    mv ./kubectl /usr/bin\n\nRUN curl -f \"https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip\" -o \"awscliv2.zip\" && \\\n    unzip -q awscliv2.zip && \\\n    ./aws/install && \\\n    rm awscliv2.zip\n\n# gcloud CLI, required to refresh kubeconfig credentials\nRUN echo \"deb [signed-by=/usr/share/keyrings/cloud.google.gpg] http://packages.cloud.google.com/apt cloud-sdk main\" | \\\n    tee -a /etc/apt/sources.list.d/google-cloud-sdk.list\nRUN curl -f https://packages.cloud.google.com/apt/doc/apt-key.gpg | \\\n    apt-key --keyring /usr/share/keyrings/cloud.google.gpg add -\nRUN apt-get update && apt-get install -y -q --no-install-recommends google-cloud-sdk && rm -rf /var/lib/apt/lists/*;\nRUN apt-get -y autoclean\n\nRUN gcloud config set core/disable_usage_reporting true && \\\n    gcloud config set component_manager/disable_update_check true && \\\n    gcloud config set metrics/environment github_docker_image\n\n# Make the /build/test/test-remote directory in the container image be the NPM package dir\n# for the `test-remote` package. Bake the NPM package dependencies into the container image\n# by running `yarn install`, based on package.json and yarn lock file.\nCOPY package.json tsconfig.json /build/\nCOPY yarn.lock test/test-remote/package.json test/test-remote/tsconfig.json /build/test/test-remote/\n\n# Copy opstrace libraries used by test-remote into the container:\n# opstrace/kubernetes: used directly by test-remote\nCOPY lib/kubernetes/ /build/lib/kubernetes/\n# opstrace/utils: used by opstrace/kubernetes\nCOPY lib/utils/ /build/lib/utils/\n\nRUN cat package.json tsconfig.json && echo /build: && ls -al /build/*\nRUN yarn install --frozen-lockfile && yarn cache clean;\n\n# Build TS dependencies such as lib/kubernetes\nRUN yarn tsc\n\n# Install playwright with yarn w/o installing browser binaries. Then call\n# `playwright/install.js` directly for installing browser binaries. This\n# installer is known to not be perfectly robust and instead of yarn shelling\n# out to `playwright/install.js` we want to be able to call it directly, can\n# retry if desired. Also see https://github.com/yarnpkg/yarn/issues/7887\n# https://github.com/microsoft/playwright/issues/581#issuecomment-585506945\n# https://github.com/microsoft/playwright/issues/598#issuecomment-590151978\nRUN PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 yarn add playwright --frozen-lockfile\n\n# Put playwright executable into PATH.\nENV PATH=${PATH}:/build/node_modules/.bin\n\n# Check if it's callable.\nRUN playwright -h\n\n# PLAYWRIGHT_BROWSERS_PATH=0 is needed for both browser installing and when\n# running playwright.\n# Note(JP): we only need to install chromium\nENV PLAYWRIGHT_BROWSERS_PATH=0\nRUN playwright install chromium\n\n# Needed by @opstrace/utils\nCOPY buildinfo.json /buildinfo.json\n\n# Disable automatic NPM update check (would always show \"npm update check\n# failed\").\nENV NO_UPDATE_NOTIFIER true\n\n# To use this image mount a volume with tests you want to run in a directory\n# under /build, example /build/test-remote, and run `yarn run mocha` in that\n# directory.\nCMD [\"/bin/bash\"]\n"
+}

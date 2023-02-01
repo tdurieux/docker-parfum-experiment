@@ -1,0 +1,26 @@
+{
+  "startTime": 1674252457395,
+  "endTime": 1674252458393,
+  "originalSmells": [
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 42,
+        "lineEnd": 42,
+        "columnStart": 4,
+        "columnEnd": 77
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 27,
+        "lineEnd": 27,
+        "columnStart": 7,
+        "columnEnd": 74
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "#\n# Licensed to the Apache Software Foundation (ASF) under one\n# or more contributor license agreements.  See the NOTICE file\n# distributed with this work for additional information\n# regarding copyright ownership.  The ASF licenses this file\n# to you under the Apache License, Version 2.0 (the\n# \"License\"); you may not use this file except in compliance\n# with the License.  You may obtain a copy of the License at\n#\n#   http://www.apache.org/licenses/LICENSE-2.0\n#\n# Unless required by applicable law or agreed to in writing,\n# software distributed under the License is distributed on an\n# \"AS IS\" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY\n# KIND, either express or implied.  See the License for the\n# specific language governing permissions and limitations\n# under the License.\n#\n\nARG JDK_VERSION=8\nFROM maven:3.8.1-jdk-11-slim as builder\n# Rebuild from source in this stage\n# This can be unset if the tarball was already built outside of Docker\nARG BUILD_FROM_SOURCE=\"true\"\n\nRUN export DEBIAN_FRONTEND=noninteractive \\\n    && apt-get -qq update \\\n    && apt-get -qq -y install --no-install-recommends python3 python3-yaml && rm -rf /var/lib/apt/lists/*;\n\nCOPY . /src\nWORKDIR /src\nRUN if [ \"$BUILD_FROM_SOURCE\" = \"true\" ]; then \\\n      mvn -B -ff -q dependency:go-offline \\\n      install \\\n      -Pdist,bundle-contrib-exts \\\n      -Pskip-static-checks,skip-tests \\\n      -Dmaven.javadoc.skip=true \\\n      ; fi\n\nRUN VERSION=$(mvn -B -q org.apache.maven.plugins:maven-help-plugin:3.2.0:evaluate \\\n      -Dexpression=project.version -DforceStdout=true \\\n    ) \\\n && tar -zxf ./distribution/target/apache-druid-${VERSION}-bin.tar.gz -C /opt \\\n && mv /opt/apache-druid-${VERSION} /opt/druid && rm ./distribution/target/apache-druid-${VERSION}-bin.tar.gz\n\nFROM amd64/busybox:1.30.0-glibc as busybox\n\nFROM gcr.io/distroless/java:$JDK_VERSION\nLABEL maintainer=\"Apache Druid Developers <dev@druid.apache.org>\"\n\nCOPY --from=busybox /bin/busybox /busybox/busybox\nRUN [\"/busybox/busybox\", \"--install\", \"/bin\"]\n\nRUN addgroup -S -g 1000 druid \\\n && adduser -S -u 1000 -D -H -h /opt/druid -s /bin/sh -g '' -G druid druid\n\nCOPY --chown=druid:druid --from=builder /opt /opt\nCOPY distribution/docker/druid.sh /druid.sh\n\n# create necessary directories which could be mounted as volume\n#   /opt/druid/var is used to keep individual files(e.g. log) of each Druid service\n#   /opt/shared is used to keep segments and task logs shared among Druid services\nRUN mkdir /opt/druid/var /opt/shared \\\n && chown druid:druid /opt/druid/var /opt/shared \\\n && chmod 775 /opt/druid/var /opt/shared\n\nUSER druid\nVOLUME /opt/druid/var\nWORKDIR /opt/druid\n\nENTRYPOINT [\"/druid.sh\"]\n"
+}

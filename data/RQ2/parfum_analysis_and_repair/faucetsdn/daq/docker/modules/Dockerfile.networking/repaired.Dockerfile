@@ -1,0 +1,43 @@
+# Image name: daqf/networking
+#
+# Image used for host networking services (DNS, DHCP, etc...)
+#
+
+FROM daqf/aardvark:latest
+
+RUN $AG update && $AG install apt-transport-https ca-certificates curl gnupg2
+
+RUN $AG update && $AG install -y nginx
+
+RUN echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] https://packages.cloud.google.com/apt cloud-sdk main" \
+    | tee -a /etc/apt/sources.list.d/google-cloud-sdk.list
+RUN curl -f https://packages.cloud.google.com/apt/doc/apt-key.gpg \
+    | apt-key --keyring /usr/share/keyrings/cloud.google.gpg add -
+
+RUN $AG update && $AG install dnsmasq ethtool iptables netcat ntp isc-dhcp-client arp-scan\
+    python3 python3-pip python3-setuptools gnupg google-cloud-sdk freeradius python3-scapy
+
+COPY docker/include/network/scripts/* ./
+RUN mkdir -p /etc
+COPY docker/include/etc/ntp.conf /etc
+RUN pip3 install --no-cache-dir pyyaml
+
+COPY resources/test_site/ test_site/
+COPY udmi/ udmi/
+
+# Weird workaround for problem running tcdump in a privlidged container.
+RUN mv /usr/sbin/tcpdump /usr/bin/tcpdump
+
+#HTTPS Bad Server depdnency
+COPY docker/include/security/nginxfail.conf /root/nginx/
+COPY docker/include/security/nginx-site /var/www/nginx-site
+COPY docker/include/security/tlsfaux tlsfaux/
+
+COPY misc/freeradius/users /etc/freeradius/3.0/users
+COPY misc/freeradius/certs /etc/freeradius/3.0/certs
+COPY misc/freeradius/default/eap /etc/freeradius/3.0/mods-enabled/eap
+COPY misc/freeradius/clients.conf /etc/freeradius/3.0/clients.conf
+
+COPY bin/catwrap bin/
+
+ENTRYPOINT ["./start_networking"]

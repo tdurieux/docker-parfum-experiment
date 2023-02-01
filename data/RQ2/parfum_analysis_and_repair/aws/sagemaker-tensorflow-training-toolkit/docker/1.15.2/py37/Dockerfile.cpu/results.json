@@ -1,0 +1,53 @@
+{
+  "startTime": 1674254321211,
+  "endTime": 1674254322354,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 135,
+        "lineEnd": 135,
+        "columnStart": 4,
+        "columnEnd": 89
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 50,
+        "lineEnd": 50,
+        "columnStart": 4,
+        "columnEnd": 50
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 97,
+        "lineEnd": 97,
+        "columnStart": 4,
+        "columnEnd": 15
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 48,
+        "lineEnd": 48,
+        "columnStart": 4,
+        "columnEnd": 32
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 95,
+        "lineEnd": 95,
+        "columnStart": 4,
+        "columnEnd": 39
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM ubuntu:18.04\n\nLABEL maintainer=\"Amazon AI\"\n\n# Prevent docker build get stopped by requesting user interaction\nENV DEBIAN_FRONTEND=noninteractive\nENV DEBCONF_NONINTERACTIVE_SEEN=true\n# Set environment variables for MKL\n# https://www.tensorflow.org/performance/performance_guide#tensorflow_with_intel%C2%AE_mkl_dnn\nENV KMP_AFFINITY=granularity=fine,compact,1,0\nENV KMP_BLOCKTIME=1\nENV KMP_SETTINGS=0\n# Python won’t try to write .pyc or .pyo files on the import of source modules\nENV PYTHONDONTWRITEBYTECODE=1\nENV PYTHONUNBUFFERED=1\n# See http://bugs.python.org/issue19846\nENV PYTHONIOENCODING=UTF-8\nENV LANG=C.UTF-8\nENV LC_ALL=C.UTF-8\n# Specify the location of module that contains the training logic for SageMaker\n# https://docs.aws.amazon.com/sagemaker/latest/dg/docker-container-environmental-variables-entrypoint.html\nENV SAGEMAKER_TRAINING_MODULE=sagemaker_tensorflow_container.training:main\n\n# Define framework-related package sources\nARG TF_URL=https://tensorflow-aws.s3-us-west-2.amazonaws.com/1.15.2/AmazonLinux/cpu/final/tensorflow_cpu-1.15.2-cp37-cp37m-manylinux2010_x86_64.whl\nARG PYTHON=python3\nARG PYTHON_PIP=python3-pip\nARG PIP=pip3\nARG PYTHON_VERSION=3.7.7\n\nRUN apt-get update \\\n && apt-get install -y --no-install-recommends \\\n    build-essential \\\n    ca-certificates \\\n    curl \\\n    git \\\n    openssh-client \\\n    openssh-server \\\n    vim \\\n    wget \\\n    zlib1g-dev \\\n && rm -rf /var/lib/apt/lists/* \\\n && apt-get clean\n\n# Install Open MPI\nRUN mkdir /tmp/openmpi \\\n && cd /tmp/openmpi \\\n && curl -fSsL -O https://download.open-mpi.org/release/open-mpi/v4.0/openmpi-4.0.1.tar.gz \\\n && tar zxf openmpi-4.0.1.tar.gz \\\n && cd openmpi-4.0.1 \\\n && ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" --enable-orterun-prefix-by-default \\\n && make -j $(nproc) all \\\n && make install \\\n && ldconfig \\\n && rm -rf /tmp/openmpi && rm openmpi-4.0.1.tar.gz\n\n# Create a wrapper for OpenMPI to allow running as root by default\nRUN mv /usr/local/bin/mpirun /usr/local/bin/mpirun.real \\\n && echo '#!/bin/bash' > /usr/local/bin/mpirun \\\n && echo 'mpirun.real --allow-run-as-root \"$@\"' >> /usr/local/bin/mpirun \\\n && chmod a+x /usr/local/bin/mpirun\n\nRUN echo \"hwloc_base_binding_policy = none\" >> /usr/local/etc/openmpi-mca-params.conf \\\n && echo \"rmaps_base_mapping_policy = slot\" >> /usr/local/etc/openmpi-mca-params.conf\n\nENV LD_LIBRARY_PATH=/usr/local/openmpi/lib:$LD_LIBRARY_PATH\nENV PATH=/usr/local/openmpi/bin/:$PATH\n\n# SSH login fix. Otherwise user is kicked off after login\nRUN sed 's@session\\s*required\\s*pam_loginuid.so@session optional pam_loginuid.so@g' -i /etc/pam.d/sshd\n\n# Create SSH key.\nRUN mkdir -p /root/.ssh/ \\\n && mkdir -p /var/run/sshd \\\n && ssh-keygen -q -t rsa -N '' -f /root/.ssh/id_rsa \\\n && cp /root/.ssh/id_rsa.pub /root/.ssh/authorized_keys \\\n && printf \"Host *\\n  StrictHostKeyChecking no\\n\" >> /root/.ssh/config\n\nWORKDIR /\n\nRUN apt-get update \\\n && apt-get install -y --no-install-recommends \\\n    libbz2-dev \\\n    libc6-dev \\\n    libffi-dev \\\n    libgdbm-dev \\\n    libncursesw5-dev \\\n    libreadline-gplv2-dev \\\n    libsqlite3-dev \\\n    libssl-dev \\\n    tk-dev \\\n    && rm -rf /var/lib/apt/lists/* \\\n    && apt-get clean\n\nRUN wget https://www.python.org/ftp/python/$PYTHON_VERSION/Python-$PYTHON_VERSION.tgz \\\n && tar -xvf Python-$PYTHON_VERSION.tgz \\\n && cd Python-$PYTHON_VERSION \\\n && ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" && make && make install \\\n && make && make install && rm -rf ../Python-$PYTHON_VERSION* && rm Python-$PYTHON_VERSION.tgz\n\nRUN ${PIP} --no-cache-dir install --upgrade \\\n    pip \\\n    setuptools\n\n# Some TF tools expect a \"python\" binary\nRUN ln -s $(which python3) /usr/local/bin/python \\\n && ln -s $(which pip3) /usr/bin/pip\n\nRUN ${PIP} install --no-cache-dir -U \\\n    numpy==1.17.4 \\\n    scipy==1.2.2 \\\n    scikit-learn==0.20.3 \\\n    pandas==0.24.2 \\\n    Pillow==7.0.0 \\\n    h5py==2.10.0 \\\n    requests==2.22.0 \\\n    smdebug==0.7.2 \\\n    sagemaker-experiments==0.1.7 \\\n    mpi4py==3.0.2 \\\n    \"cryptography>=2.3\" \\\n    \"sagemaker-tensorflow>=1.15,<1.16\" \\\n    sagemaker-tensorflow-training==10.1.0 \\\n    # Let's install TensorFlow separately in the end to avoid\n    # the library version to be overwritten\n && ${PIP} install --force-reinstall --no-cache-dir -U \\\n    ${TF_URL} \\\n && ${PIP} install --force-reinstall --no-cache-dir -U \\\n    horovod==0.18.2 \\\n && ${PIP} install --no-cache-dir -U \\\n    awscli\n\nADD https://raw.githubusercontent.com/aws/aws-deep-learning-containers-utils/master/deep_learning_container.py /usr/local/bin/deep_learning_container.py\n\nRUN chmod +x /usr/local/bin/deep_learning_container.py\n\nRUN curl -f https://aws-dlc-licenses.s3.amazonaws.com/tensorflow/license.txt -o /license.txt\n\nCMD [\"bin/bash\"]\n"
+}

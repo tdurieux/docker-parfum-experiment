@@ -1,0 +1,26 @@
+{
+  "startTime": 1674254760058,
+  "endTime": 1674254760991,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 26,
+        "lineEnd": 26,
+        "columnStart": 79,
+        "columnEnd": 262
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 27,
+        "lineEnd": 27,
+        "columnStart": 4,
+        "columnEnd": 133
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM maven:3.6.3-jdk-8-slim as builder\n\nARG METRICS_COLLECTOR_VERSION=0.1.9\n\nWORKDIR /build\n\nCOPY pom.xml ./\nCOPY management-api-agent-common/pom.xml ./management-api-agent-common/pom.xml\nCOPY management-api-agent-3.x/pom.xml ./management-api-agent-3.x/pom.xml\nCOPY management-api-agent-4.x/pom.xml ./management-api-agent-4.x/pom.xml\nCOPY management-api-common/pom.xml ./management-api-common/pom.xml\nCOPY management-api-server/pom.xml ./management-api-server/pom.xml\n# this duplicates work done in the next steps, but this should provide\n# a solid cache layer that only gets reset on pom.xml changes\nRUN mvn -q -ff -T 1C install && rm -rf target\n\nCOPY management-api-agent-common ./management-api-agent-common\nCOPY management-api-agent-3.x ./management-api-agent-3.x\nCOPY management-api-agent-4.x ./management-api-agent-4.x\nCOPY management-api-common ./management-api-common\nCOPY management-api-server ./management-api-server\nRUN mvn -q -ff package -DskipTests\n\n# Download and extract Metrics Collector\nENV MCAC_PATH /opt/metrics-collector\nRUN mkdir ${MCAC_PATH} && \\\n    if test ! -e datastax-mcac-agent-${METRICS_COLLECTOR_VERSION}.tar.gz; then \\\n    curl -f -L -O \"https://github.com/datastax/metric-collector-for-apache-cassandra/releases/download/v${METRICS_COLLECTOR_VERSION}/datastax-mcac-agent-${METRICS_COLLECTOR_VERSION}.tar.gz\"; fi && \\\n    tar --directory ${MCAC_PATH} --strip-components 1 --gzip --extract --file datastax-mcac-agent-${METRICS_COLLECTOR_VERSION}.tar.gz && rm datastax-mcac-agent-${METRICS_COLLECTOR_VERSION}.tar.gz\n\nFROM datastax/astra:4.0\n\nENV CASSANDRA_PATH /opt/cassandra\nENV MAAC_PATH /opt/management-api\nENV MCAC_PATH /opt/metrics-collector\nENV USER_HOME_PATH /home/cassandra\n\nENV CASSANDRA_HOME ${CASSANDRA_PATH}\nENV CASSANDRA_CONF ${CASSANDRA_PATH}/conf\nENV CASSANDRA_LOGS ${CASSANDRA_PATH}/logs\n\nCOPY --from=builder /build/management-api-agent-3.x/target/datastax-mgmtapi-agent-3.x-0.1.0-SNAPSHOT.jar ${MAAC_PATH}/datastax-mgmtapi-agent-0.1.0-SNAPSHOT.jar\nCOPY --from=builder /build/management-api-server/target/datastax-mgmtapi-server-0.1.0-SNAPSHOT.jar ${MAAC_PATH}/\nCOPY --from=builder ${MCAC_PATH} ${MCAC_PATH}\n\n# Setup user and fixup permissions\nRUN mkdir ${USER_HOME_PATH} && \\\n    chown -R cassandra:root ${CASSANDRA_PATH} ${MAAC_PATH} ${MCAC_PATH} ${USER_HOME_PATH} && \\\n    chmod -R g+w ${CASSANDRA_PATH} ${MAAC_PATH} ${MCAC_PATH}\n\nENV TINI_VERSION v0.18.0\nADD https://github.com/krallin/tini/releases/download/${TINI_VERSION}/tini /tini\nRUN chmod +x /tini\n\nRUN set -eux; \\\n  apt-get update; \\\n  apt-get install -y --no-install-recommends wget; \\\n  rm -rf /var/lib/apt/lists/*\n\n# backwards compat with upstream ENTRYPOINT\nCOPY scripts/docker-entrypoint.sh /usr/local/bin/\nRUN chmod +x /usr/local/bin/docker-entrypoint.sh && \\\n  ln -sf /usr/local/bin/docker-entrypoint.sh /docker-entrypoint.sh\n\nEXPOSE 9103\nEXPOSE 8080\n\nENTRYPOINT [\"/docker-entrypoint.sh\"]\nCMD [\"mgmtapi\"]\n"
+}

@@ -1,0 +1,44 @@
+{
+  "startTime": 1674251356290,
+  "endTime": 1674251357258,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 14,
+        "lineEnd": 14,
+        "columnStart": 4,
+        "columnEnd": 47
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 20,
+        "lineEnd": 20,
+        "columnStart": 4,
+        "columnEnd": 57
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 34,
+        "lineEnd": 34,
+        "columnStart": 59,
+        "columnEnd": 92
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 88,
+        "lineEnd": 88,
+        "columnStart": 4,
+        "columnEnd": 65
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "ARG FORTRAN_IMAGE\nARG FMS_IMAGE\nARG ESMF_IMAGE\nARG SERIALBOX_IMAGE\nARG ENVIRONMENT_IMAGE\n\nFROM $FORTRAN_IMAGE as fortran_image\nFROM $ESMF_IMAGE as esmf_image\nFROM $FMS_IMAGE as fms_image\nFROM $SERIALBOX_IMAGE as serialbox_image\nFROM $ENVIRONMENT_IMAGE as environment\n\nFROM environment as fv3core\n\nRUN pip3 install --no-cache-dir --upgrade pip setuptools wheel && \\\n    ln -s /bin/python3 /bin/python && \\\n    ln -s /bin/pip3 /bin/pip\n\nCOPY constraints.txt requirements.txt  /\nCOPY requirements  /requirements\nRUN pip3 install --no-cache-dir -r /requirements.txt -c /constraints.txt\n\nCOPY --from=serialbox_image /usr/local/serialbox /usr/local/serialbox\nCOPY --from=serialbox_image /usr/include/boost /usr/include/boost\n\n###\n### Build and install GT4Py\n###\nENV BOOST_HOME=/usr/include/boost\nARG CPPFLAGS=\"-I${BOOST_HOME} -I${BOOST_HOME}/boost\"\nARG GT4PY_OPTIONALS=\"\"\nARG GT4PY_DIR\nCOPY ${GT4PY_DIR} /gt4py\n\nRUN if [ ! -z `echo $GT4PY_OPTIONALS | grep cuda` ] ; then \\\n pip install --no-cache-dir cupy-cuda102==7.7.0; else echo Not installing cuda ; fi\nRUN pip install --no-cache-dir -c /constraints.txt \"/gt4py${GT4PY_OPTIONALS}\" && \\\n    python3 -m gt4py.gt_src_manager install\n\n# This environment flag sets rebuild=False in gtscript.stencil calls\nENV FV3_STENCIL_REBUILD_FLAG=False\n\n###\n### Copy over necessary source and configuration files\n###\nCOPY external/fv3gfs-util/ /external/fv3gfs-util/\nCOPY fv3core /fv3core/fv3core\nCOPY tests /fv3core/tests\nCOPY setup.py setup.cfg README.md /fv3core/\nCOPY docker/entrypoint.sh /entrypoint.sh\n\n# Docker hard limits shared memory usage. MPICH for oversubscribed situation\n# uses shared mem for most of its comunication operations,\n# which leads to a sigbus crash.\n# Both of those (for version <3.2 and >3.2) will force mpich to go\n# through the network stack instead of using the shared nemory\n# The cost is a slower runtime\nENV MPIR_CVAR_NOLOCAL=1\nENV MPIR_CVAR_CH3_NOLOCAL=1\n\nRUN chmod +x /entrypoint.sh && \\\n    /entrypoint.sh\n\nARG ENV_CUDA_PATH=\"\"\nENV CUDA_PATH=${ENV_CUDA_PATH}\nENV IN_DOCKER=True\n\nFROM fv3core AS fv3core_wrapper\n\nCOPY --from=fortran_image /NCEPlibs /NCEPlibs\n\n# install NCEP libraries\nRUN cd /NCEPlibs && \\\n    mkdir /opt/NCEPlibs && \\\n    echo \"y\" | ./make_ncep_libs.sh -s linux -c gnu -d /opt/NCEPlibs -o 1\n\nENV FMS_DIR=/FMS \\\n    ESMF_DIR=/usr/local/esmf \\\n    MPI=mpich\n\nENV ESMF_INC=\"-I${ESMF_DIR}/include\" \\\n    LD_LIBRARY_PATH=${LD_LIBRARY_PATH}:${ESMF_DIR}/lib:${FMS_DIR}/libFMS/.libs/\n\nCOPY --from=fms_image /FMS $FMS_DIR\nCOPY --from=esmf_image /usr/local/esmf $ESMF_DIR\nCOPY --from=fortran_image /FV3/ /external/fv3gfs-fortran/FV3/\nCOPY --from=fortran_image /stochastic_physics/ /external/fv3gfs-fortran/stochastic_physics/\n\nCOPY requirements/requirements_wrapper.txt /\nRUN pip3 install --no-cache-dir -r /requirements_wrapper.txt -c /constraints.txt\n\nCOPY external/fv3gfs-wrapper /external/fv3gfs-wrapper\n\nRUN /entrypoint.sh\n"
+}

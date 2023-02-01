@@ -1,0 +1,35 @@
+{
+  "startTime": 1674250169574,
+  "endTime": 1674250170938,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 83,
+        "lineEnd": 83,
+        "columnStart": 18,
+        "columnEnd": 38
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 25,
+        "lineEnd": 25,
+        "columnStart": 4,
+        "columnEnd": 121
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 83,
+        "lineEnd": 83,
+        "columnStart": 18,
+        "columnEnd": 38
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# If true, start Delve and attach to Goshimmer Go binary.\n# Must be defined above all build stages to work in build stage conditions.\nARG REMOTE_DEBUGGING=0\n\n############################\n# golang 1.18-bullseye multi-arch\nFROM golang:1.18.1-bullseye AS build\n\nARG RUN_TEST=0\nARG BUILD_TAGS=rocksdb\n\n# Define second time inside the build stage to work in bash conditions.\nARG REMOTE_DEBUGGING=0\n\n# Download and include snapshot into resulting image by default.\nARG DOWNLOAD_SNAPSHOT=1\n\n# Ensure ca-certficates are up to date\nRUN update-ca-certificates\n\nRUN if [ $RUN_TEST -gt 0 ]; then \\\n    set -eux; \\\n    apt-get update; \\\n    apt-get install -y --no-install-recommends libgflags-dev libsnappy-dev zlib1g-dev libbz2-dev liblz4-dev libzstd-dev ; rm -rf /var/lib/apt/lists/*; \\\n    fi\n\n# Set the current Working Directory inside the container\nRUN mkdir /goshimmer\nWORKDIR /goshimmer\n\n# If debugging is enabled install Delve binary.\nRUN if [ $REMOTE_DEBUGGING -gt 0 ]; then \\\n    go install github.com/go-delve/delve/cmd/dlv@master; \\\n    fi\n\n# Use Go Modules\nCOPY go.mod .\nCOPY go.sum .\n\nENV GO111MODULE=on\nENV GOWORK=off\nRUN go mod download\nRUN go mod verify\n\n# 1. Mount everything from the current directory to the PWD(Present Working Directory) inside the container\n# 2. Mount the testing cache volume\n# 3. Run unittests\nRUN --mount=target=. \\\n    --mount=type=cache,target=/root/.cache/go-build \\\n    if [ $RUN_TEST -gt 0 ]; then \\\n    go test ./... -tags rocksdb -count=1; \\\n    fi\n\n# 1. Mount everything from the current directory to the PWD(Present Working Directory) inside the container\n# 2. Mount the build cache volume\n# 3. Build the binary\n# 4. If debugging enabled, adjust build flags to suite debugging purposes.\nRUN --mount=target=. \\\n    --mount=type=cache,target=/root/.cache/go-build \\\n    if [ $REMOTE_DEBUGGING -gt 0 ]; then \\\n    go build \\\n    -tags=\"$BUILD_TAGS\" \\\n    -gcflags=\"all=-N -l\" \\\n    -o /go/bin/goshimmer; \\\n    else  \\\n    go build \\\n    -tags=\"$BUILD_TAGS\" \\\n    -ldflags='-w -s' \\\n    -o /go/bin/goshimmer; \\\n    fi\n\n# Docker cache will be invalidated for RUNs after ARG definition (https://docs.docker.com/engine/reference/builder/#impact-on-build-caching)\nARG DEFAULT_SNAPSHOT_URL=https://dbfiles-goshimmer.s3.eu-central-1.amazonaws.com/snapshots/nectar/snapshot-latest.bin\nARG CUSTOM_SNAPSHOT_URL\n\n# Enable building the image without downloading the snapshot.\n# It's possible to download custom snapshot from external storage service - necessary for feature network deployment.\n# If built with dummy snapshot then a snapshot needs to be mounted into the resulting image.\nRUN if [ \"$DOWNLOAD_SNAPSHOT\" -gt 0 ] && [ \"$CUSTOM_SNAPSHOT_URL\" = \"\" ] ;then \\\n      wget -O /tmp/snapshot.bin $DEFAULT_SNAPSHOT_URL; \\\n    elif [ \"$DOWNLOAD_SNAPSHOT\" -gt 0 ] && [ \"$CUSTOM_SNAPSHOT_URL\" != \"\" ]; then \\\n      apt update; apt install --no-install-recommends -y gawk; rm -rf /var/lib/apt/lists/*; \\\n      git clone https://github.com/ffluegel/zippyshare.git; \\\n      cd zippyshare; \\\n      ./zippyshare.sh \"$CUSTOM_SNAPSHOT_URL\"; \\\n      SNAPSHOT_FILE=$(ls -t *.bin | head -1); \\\n      mv \"$SNAPSHOT_FILE\" /tmp/snapshot.bin; \\\n    else  \\\n      touch /tmp/snapshot.bin ; \\\n    fi\n\nRUN mkdir -p /tmp/db/mainnetdb /tmp/db/peerdb\n# 65532:65532 is the UID:GUID of nonroot user of distroless image\nRUN chown 65532:65532 /tmp/db/mainnetdb /tmp/db/peerdb\n\n############################\n# Image\n############################\n# https://github.com/GoogleContainerTools/distroless/tree/master/cc\n# using distroless cc image, which includes everything in the base image (glibc, libssl and openssl)\nFROM gcr.io/distroless/cc-debian11:nonroot as prepare-runtime\n\n# Gossip\nEXPOSE 14666/tcp\n# AutoPeering\nEXPOSE 14626/udp\n# Pprof Profiling\nEXPOSE 6061/tcp\n# Prometheus exporter\nEXPOSE 9311/tcp\n# Webapi\nEXPOSE 8080/tcp\n# Dashboard\nEXPOSE 8081/tcp\n# DAGs Visualizer\nEXPOSE 8061/tcp\n\n# Default directory and drop privileges\nWORKDIR /app\nUSER nonroot\n\n# Copy the Pre-built binary file from the previous stage\nCOPY --chown=nonroot:nonroot --from=build /go/bin/goshimmer /app/goshimmer\n\n# Copy configuration and snapshot from the previous stage\nCOPY config.default.json /app/config.json\nCOPY --from=build /tmp/snapshot.bin /app/snapshot.bin\n\n# Fix permission issue when mounting volumes\nCOPY --chown=nonroot:nonroot --from=build /tmp/db/ /app/\n\n# We execute this stage only if debugging is disabled, i.e REMOTE_DEBUGGIN==0\nFROM prepare-runtime as debugger-enabled-0\n\nENTRYPOINT [\"/app/goshimmer\", \"--config=/app/config.json\"]\n\n# We execute this stage only if debugging is enabled, i.e REMOTE_DEBUGGING==1\nFROM prepare-runtime as debugger-enabled-1\nEXPOSE 40000\n\n# Copy the Delve binary\nCOPY --chown=nonroot:nonroot --from=build /go/bin/dlv /app/dlv\nENTRYPOINT [\"/app/dlv\", \"--listen=:40000\", \"--headless\", \"--api-version=2\", \"--accept-multiclient\", \"exec\", \"--continue\", \"/app/goshimmer\", \"--\", \"--config=/app/config.json\"]\n\n# Execute corresponding build stage depending on the REMOTE_DEBUGGING build arg.\nFROM debugger-enabled-${REMOTE_DEBUGGING} as runtime\n"
+}

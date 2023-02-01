@@ -1,0 +1,26 @@
+{
+  "startTime": 1674218263682,
+  "endTime": 1674218265304,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 24,
+        "lineEnd": 24,
+        "columnStart": 4,
+        "columnEnd": 88
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 27,
+        "lineEnd": 37,
+        "columnStart": 4,
+        "columnEnd": 14
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM ruby:2.6-stretch\nMAINTAINER operations@openproject.com\n\nENV NODE_VERSION \"10.15.0\"\nENV BUNDLER_VERSION \"2.0.1\"\nENV APP_USER app\nENV APP_PATH /app\nENV APP_DATA_PATH /var/openproject/assets\nENV APP_DATA_PATH_LEGACY /var/db/openproject\nENV PGDATA /var/openproject/pgdata\nENV PGDATA_LEGACY /var/lib/postgresql/9.6/main\n\nENV DATABASE_URL postgres://openproject:openproject@127.0.0.1/openproject\nENV RAILS_ENV production\nENV HEROKU true\nENV RAILS_CACHE_STORE memcache\nENV OPENPROJECT_INSTALLATION__TYPE docker\nENV NEW_RELIC_AGENT_ENABLED false\nENV ATTACHMENTS_STORAGE_PATH $APP_DATA_PATH/files\n\n# Set a default key base, ensure to provide a secure value in production environments!\nENV SECRET_KEY_BASE OVERWRITE_ME\n\n# install node + npm\nRUN curl -f https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64.tar.gz | tar xzf - -C /usr/local --strip-components=1\n\nRUN apt-get update -qq && \\\n    DEBIAN_FRONTEND=noninteractive apt-get --no-install-recommends install -y \\\n    postgresql-client \\\n    poppler-utils \\\n    unrtf \\\n    tesseract-ocr \\\n    catdoc \\\n    memcached \\\n    postfix \\\n    postgresql \\\n    apache2 \\\n    supervisor && \\\n    apt-get clean && rm -rf /var/lib/apt/lists/*\n\n# Set up pg defaults\nRUN echo \"host all  all    0.0.0.0/0  md5\" >> /etc/postgresql/9.6/main/pg_hba.conf\nRUN echo \"listen_addresses='*'\" >> /etc/postgresql/9.6/main/postgresql.conf\nRUN echo \"data_directory='$PGDATA'\" >> /etc/postgresql/9.6/main/postgresql.conf\nRUN rm -rf \"$PGDATA_LEGACY\" && rm -rf \"$PGDATA\" && mkdir -p \"$PGDATA\" && chown -R postgres:postgres \"$PGDATA\"\nRUN a2enmod proxy proxy_http && rm -f /etc/apache2/sites-enabled/000-default.conf\n\n# using /home/app since npm cache and other stuff will be put there when running npm install\n# we don't want to pollute any locally-mounted directory\nRUN useradd -d /home/$APP_USER -m $APP_USER\n\nWORKDIR $APP_PATH\nRUN gem install bundler --version \"${bundler_version}\" --no-document\n\nCOPY Gemfile ./Gemfile\nCOPY Gemfile.* ./\nCOPY modules ./modules\n# OpenProject::Version is required by module versions in gemspecs\nRUN mkdir -p lib/open_project\nCOPY lib/open_project/version.rb ./lib/open_project/\nRUN bundle install --deployment --with=\"docker opf_plugins\" --without=\"test development mysql2\" --jobs=8 --retry=3\n\n# Finally, copy over the whole thing\nCOPY . $APP_PATH\n\nRUN sed -i \"s|Rails.groups(:opf_plugins)|Rails.groups(:opf_plugins, :docker)|\" config/application.rb\n\n# Ensure we can write in /tmp/op_uploaded_files (cf. #29112)\nRUN mkdir -p /tmp/op_uploaded_files/ && chown -R $APP_USER:$APP_USER /tmp/op_uploaded_files/\n\n# Re-use packager database.yml\nCOPY packaging/conf/database.yml ./config/database.yml\n\n# Run the npm postinstall manually after it was copied\n# Then, npm install node modules\nRUN bash docker/precompile-assets.sh\n\n# ports\nEXPOSE 80 5432\n\n# volumes to export\nVOLUME [\"$PGDATA\", \"$APP_DATA_PATH\"]\nENTRYPOINT [\"./docker/entrypoint.sh\"]\nCMD [\"./docker/supervisord\"]\n"
+}

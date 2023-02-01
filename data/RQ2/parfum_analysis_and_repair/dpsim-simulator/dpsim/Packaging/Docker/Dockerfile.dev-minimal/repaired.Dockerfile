@@ -1,0 +1,29 @@
+FROM fedora:34
+
+LABEL \
+	org.label-schema.schema-version = "1.0.0" \
+	org.label-schema.name = "DPsim" \
+	org.label-schema.license = "MPL 2.0" \
+	org.label-schema.url = "http://dpsim.fein-aachen.org/" \
+	org.label-schema.vcs-url = "https://github.com/sogno-platform/dpsim"
+
+RUN dnf -y update
+
+# Toolchain
+RUN dnf -y install \
+	gcc gcc-c++ \
+	git \
+	make cmake pkgconfig \
+	python3-pip
+
+# Dependencies
+RUN dnf --refresh -y install \
+	python3-devel \
+	eigen3-devel
+
+# Python dependencies
+ADD requirements.txt .
+RUN pip3 install --no-cache-dir --upgrade wheel build
+RUN pip3 install --no-cache-dir -r requirements.txt
+
+EXPOSE 8888

@@ -1,0 +1,70 @@
+#Basic Image
+FROM ubuntu:20.04
+
+#Args for compliance of inner and outer uid and gid
+
+ARG cuid=1000
+ARG cgid=1000
+ARG cuidname=crusher
+ARG cgidname=crusher
+
+#Just a notes
+LABEL maintainer="ponomarev@fobos-nt.ru"
+LABEL version="1.0"
+LABEL description="Boilerplate for collecting coverage in stat inst mode"
+
+#Install system packages
+RUN apt update && apt install --no-install-recommends -y gcc clang llvm make sudo git aha lcov && rm -rf /var/lib/apt/lists/*;
+
+#Add group and user (like my HOST group and user)
+RUN groupadd -g $cgid $cgidname &&  useradd -m -u $cuid -g $cgidname -G sudo -s /usr/bin/bash $cuidname
+
+#Configuring and compiling the Target for fuzzing
+ENV LLVM_PROFILE_FILE=/home/$cuidname/coverage/"code-%p.profraw"
+
+################### Add your target here
+#Set Timezone or get hang during the docker build...
+ENV TZ=Europe/Moscow
+RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
+
+#Install Target for coverage measurment
+RUN apt install --no-install-recommends -y libreadline-dev zlib1g-dev bison flex libfl-dev && rm -rf /var/lib/apt/lists/*;
+USER $cuidname
+WORKDIR /home/$cuidname/
+RUN git clone --single-branch --branch REL_12_STABLE --depth 1 https://github.com/postgres/postgres
+
+WORKDIR /home/$cuidname/postgres
+RUN CC=/bin/clang CXX=/bin/clang++ \
+CFLAGS="-O0 -g -fprofile-instr-generate -fcoverage-mapping" \
+CXXFLAGS="-O0 -g -fprofile-instr-generate -fcoverage-mapping" \
+LDFLAGS="-fprofile-instr-generate -fcoverage-mapping" \
+./configure --build="$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)" \
+
+
+
+--prefix /home/$cuidname/pgbuild
+RUN make -j20 && make install
+
+WORKDIR /home/$cuidname/
+RUN /home/$cuidname/pgbuild/bin/initdb -D /home/$cuidname/data
+###################
+
+#Getting inputs from HOST
+COPY in in/
+
+#Start coverage collecting in a container (change ownership for output folder)
+USER root
+ENV cuidname=$cuidname
+ENV cgidname=$cgidname
+ENV DIR=/home/$cuidname
+CMD \ 
+for F in $DIR/in_stat/*; \
+    do sudo -u $cuidname $DIR/pgbuild/bin/postgres --single -jE -D $DIR/data postgres < $F; \ 
+done && \
+llvm-profdata merge -output=profdata $(echo $LLVM_PROFILE_FILE | sed s/\%p/\*/) && \
+if [ -f "$DIR/out_stat/coverage.txt" ]; then mv $DIR/out_stat/coverage.txt $DIR/out_stat/coverage_prev.txt; fi && \
+llvm-cov report $DIR/pgbuild/bin/postgres -instr-profile=profdata -use-color > $DIR/out_stat/coverage.txt && \
+aha -f $DIR/out_stat/coverage.txt > $DIR/out_stat/coverage.html && \
+llvm-cov export $DIR/pgbuild/bin/postgres -instr-profile=profdata -format=lcov > $DIR/lcov && \
+genhtml -o $DIR/out_stat/coverage $DIR/lcov && \
+chown -R $cuidname:$cgidname $DIR/out_stat

@@ -1,0 +1,1 @@
+# Docker image used to build and run navitia's test

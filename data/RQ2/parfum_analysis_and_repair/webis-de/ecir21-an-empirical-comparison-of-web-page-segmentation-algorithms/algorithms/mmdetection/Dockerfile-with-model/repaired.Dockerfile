@@ -1,0 +1,1 @@
+# Based on https://github.com/open-mmlab/mmdetection/blob/master/docker/Dockerfile

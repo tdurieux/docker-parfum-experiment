@@ -1,0 +1,17 @@
+{
+  "startTime": 1674249080180,
+  "endTime": 1674249081009,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 8,
+        "lineEnd": 17,
+        "columnStart": 22,
+        "columnEnd": 10
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM ubuntu:20.04 as toolchain\n\nARG channel\n\nENV DEBIAN_FRONTEND=\"noninteractive\"\n\n# `build-essential` and `file` are needed for backtrace-sys\n# `cmake`, `git`, `python` are needed for wasm tools\nRUN apt-get update && apt-get install --no-install-recommends -y \\\n    build-essential \\\n    cmake \\\n    curl \\\n    file \\\n    gcc \\\n    git \\\n    libssl-dev \\\n    pkg-config \\\n    python \\\n && rm -rf /var/lib/apt/lists/*\n\nRUN useradd -m playground -d /playground\nRUN usermod -p '!!' root # Disable all passwords for root\nUSER playground\nENV USER=playground\nENV PATH=/playground/.cargo/bin:$PATH\nWORKDIR /playground\n\n# Ensure that we are using the latest stable version of rustup and the\n# latest version of the current channel. A new manifest will trigger\n# these lines to run again, forcing a new download of rustup and\n# installation of Rust.\nADD --chown=playground https://static.rust-lang.org/rustup/release-stable.toml /playground/tools/rustup-manifest.toml\nADD --chown=playground https://static.rust-lang.org/dist/channel-rust-${channel}-date.txt /playground/tools/rust-channel-version\nRUN curl https://sh.rustup.rs -sSf | sh -s -- -y --profile minimal --default-toolchain \"${channel}\"\n\nADD --chown=playground entrypoint.sh /playground/tools/\n\n# Fetch all the crate source files\n\nFROM toolchain as bare-sources\n\nRUN cargo init /playground\n\nADD --chown=playground Cargo.toml /playground/Cargo.toml\nADD --chown=playground crate-information.json /playground/crate-information.json\nRUN cargo fetch\n\n# Build our tool for modifying Cargo.toml at runtime\n\nFROM bare-sources as munge\n\nADD --chown=playground modify-cargo-toml /playground/modify-cargo-toml\nRUN cargo build --release --manifest-path=/playground/modify-cargo-toml/Cargo.toml\n\n# Compiler and sources\n\nFROM bare-sources as sources\n\nCOPY --from=munge /playground/modify-cargo-toml/target/release/modify-cargo-toml /playground/.cargo/bin\n\n# Compiler and pre-compiled crates\n\nFROM sources\n\nARG channel\n\nRUN cargo build\nRUN cargo build --release\nRUN rm src/*.rs\n\nADD --chown=playground postinstall.sh /playground/tools/\nRUN /playground/tools/postinstall.sh ${channel}\nADD --chown=playground cargo-wasm /playground/.cargo/bin/\n\nENTRYPOINT [\"/playground/tools/entrypoint.sh\"]\n"
+}

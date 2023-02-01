@@ -1,0 +1,108 @@
+{
+  "startTime": 1674239345882,
+  "endTime": 1674239346095,
+  "originalSmells": [
+    {
+      "rule": "wgetUseHttpsUrl",
+      "position": {
+        "lineStart": 36,
+        "lineEnd": 36,
+        "columnStart": 4,
+        "columnEnd": 67
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 58,
+        "lineEnd": 58,
+        "columnStart": 2,
+        "columnEnd": 24
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 63,
+        "lineEnd": 63,
+        "columnStart": 2,
+        "columnEnd": 19
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 30,
+        "lineEnd": 30,
+        "columnStart": 4,
+        "columnEnd": 58
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 41,
+        "lineEnd": 57,
+        "columnStart": 4,
+        "columnEnd": 12
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 30,
+        "lineEnd": 30,
+        "columnStart": 4,
+        "columnEnd": 58
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 41,
+        "lineEnd": 57,
+        "columnStart": 4,
+        "columnEnd": 12
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 30,
+        "lineEnd": 30,
+        "columnStart": 4,
+        "columnEnd": 58
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 41,
+        "lineEnd": 57,
+        "columnStart": 4,
+        "columnEnd": 12
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 30,
+        "lineEnd": 30,
+        "columnStart": 4,
+        "columnEnd": 82
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 41,
+        "lineEnd": 57,
+        "columnStart": 4,
+        "columnEnd": 12
+      }
+    }
+  ],
+  "repairedDockerfile": "FROM       phusion/baseimage:0.9.12\nMAINTAINER Abe Voelker <abe@abevoelker.com>\n\nENV USERNAME postgres\nENV PASSWORD password\nENV VERSION  9.4\n\n# Temporary hack around a Docker Hub `docker build` issue. See:\n# https://github.com/docker/docker/issues/6345#issuecomment-49245365\nRUN ln -s -f /bin/true /usr/bin/chfn\n\n# Disable SSH and existing cron jobs\nRUN rm -rf /etc/service/sshd \\\n  /etc/my_init.d/00_regen_ssh_host_keys.sh \\\n  /etc/cron.daily/dpkg \\\n  /etc/cron.daily/apt \\\n  /etc/cron.daily/passwd \\\n  /etc/cron.daily/logrotate \\\n  /etc/cron.daily/upstart \\\n  /etc/cron.weekly/fstrim\n\n# Ensure UTF-8 locale\nCOPY locale /etc/default/locale\nRUN locale-gen en_US.UTF-8 &&\\\n  dpkg-reconfigure locales\n\n# Update APT\nRUN DEBIAN_FRONTEND=noninteractive apt-get update\n\n# Install build dependencies\nRUN DEBIAN_FRONTEND=noninteractive apt-get --no-install-recommends install -y wget && rm -rf /var/lib/apt/lists/*;\n\n# Add PostgreSQL Global Development Group apt source\nRUN echo \"deb http://apt.postgresql.org/pub/repos/apt/ trusty-pgdg main\" > /etc/apt/sources.list.d/pgdg.list\n\n# Add PGDG repository key\nRUN wget -qO - https://apt.postgresql.org/pub/repos/apt/ACCC4CF8.asc | apt-key add -\n\nRUN DEBIAN_FRONTEND=noninteractive apt-get update\n\n# Install Postgres, PL/Python, PL/V8\nRUN DEBIAN_FRONTEND=noninteractive apt-get --no-install-recommends install -y \\\n  postgresql-$VERSION \\\n  postgresql-contrib-$VERSION \\\n  postgresql-server-dev-$VERSION \\\n  postgresql-plpython-$VERSION \\\n  postgresql-$VERSION-plv8 \\\n# Install WAL-E dependencies\n  libxml2-dev \\\n  libxslt1-dev \\\n  python-dev \\\n  python-pip \\\n  daemontools \\\n  libevent-dev \\\n  lzop \\\n  pv \\\n  libffi-dev \\\n  libssl-dev && \\\n  pip install --no-cache-dir virtualenv && rm -rf /var/lib/apt/lists/*;\n\n# Install WAL-E into a virtualenv\nRUN virtualenv /var/lib/postgresql/wal-e &&\\\n  . /var/lib/postgresql/wal-e/bin/activate && \\\n  pip install --no-cache-dir wal-e && \\\n  ln -s /var/lib/postgresql/wal-e/bin/wal-e /usr/local/bin/wal-e\n\n# Create directory for storing secret WAL-E environment variables\nRUN umask u=rwx,g=rx,o= &&\\\n  mkdir -p /etc/wal-e.d/env &&\\\n  chown -R root:postgres /etc/wal-e.d\n\n# Remove build dependencies and clean up APT and temporary files\nRUN DEBIAN_FRONTEND=noninteractive apt-get remove --purge -y wget &&\\\n  apt-get clean &&\\\n  rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*\n\n# Copy basic Postgres configs with values suitable for development\n# (note: these should be overridden in production!)\nCOPY ./pg_hba.conf     /etc/postgresql/$VERSION/main/\nCOPY ./postgresql.conf /etc/postgresql/$VERSION/main/\n\n# COPY sets ownership on this directory to root\nRUN chown -R postgres:postgres /etc/postgresql/$VERSION/main\n\n# Use wrapper scripts to start cron and Postgres\nCOPY scripts /data/scripts\nRUN chmod -R 755 /data/scripts\n\n# Copy runit configs\nRUN mkdir -m 755 -p /etc/service/postgres\nCOPY runit/cron     /etc/service/cron/run\nCOPY runit/postgres /etc/service/postgres/run\nRUN chmod 755 /etc/service/cron/run /etc/service/postgres/run\n\nUSER postgres\n\nRUN /etc/init.d/postgresql start &&\\\n  psql --command \"ALTER USER postgres WITH PASSWORD '$PASSWORD';\" &&\\\n  /etc/init.d/postgresql stop\n\nUSER root\n\n# The image only runs Postgres by default. If you want to run periodic full\n# backups with cron + WAL-E you should start supervisord instead (see README)\nCMD [\"/data/scripts/start_postgres.sh\"]\n\n# Keep Postgres log, config and storage outside of union filesystem\nVOLUME [\"/var/log/postgresql\", \\\n        \"/var/log/supervisor\", \\\n        \"/etc/postgresql/9.4/main\", \\\n        \"/var/lib/postgresql/9.4/main\"]\n\nEXPOSE 5432\n"
+}

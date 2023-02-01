@@ -1,0 +1,26 @@
+{
+  "startTime": 1674246779830,
+  "endTime": 1674246780722,
+  "originalSmells": [
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 5,
+        "lineEnd": 5,
+        "columnStart": 4,
+        "columnEnd": 16
+      }
+    },
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 23,
+        "lineEnd": 23,
+        "columnStart": 4,
+        "columnEnd": 16
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "#----------------------------------------#\n# dev/test\nFROM node:lts-alpine AS deps\nRUN apk add --no-cache --virtual .gyp python3 make g++ libc6-compat && \\\n    npm i -g npm && npm cache clean --force;\nENV NPM_CONFIG_PREFER_OFFLINE=true\nENV PATH=\"node_modules/.bin:$PATH\"\n\nUSER node\nWORKDIR /home/node\n\n# \"Cache\" node_modules first so that changes in the source code doesn't trigger a rebuild\nCOPY --chown=node:node [ \"package*.json\", \".npmrc\", \"./\" ]\nRUN npm ci\n\nCOPY --chown=node:node . .\n\n\n#----------------------------------------#\n# We have a separate build container to persist build artifacts & production npm deps\nFROM node:lts-alpine AS build\nRUN apk add --no-cache --virtual .gyp python3 make g++ libc6-compat && \\\n    npm i -g npm && npm cache clean --force;\nENV NPM_CONFIG_PREFER_OFFLINE=true\n\nUSER node\nWORKDIR /home/node\n\n# idk if this *actually* caches node_modules from the deps image or not so that the first COPY is only run when package.json changes\nCOPY --chown=node:node --from=deps /home/node/node_modules ./node_modules\nCOPY --chown=node:node . ./\n\nRUN npm run build && \\\n    npm prune --production && \\\n    rm -rf .cache .npm\n\n\n#----------------------------------------#\nFROM node:lts-alpine AS runner\nRUN apk add --no-cache tini\n\nUSER node\nWORKDIR /home/node\n\nCOPY --from=build /home/node ./\n\nENV NODE_ENV production\n\n# While we already handle SIGINT/SIGTERM directly, there is no way for us to be 100% SURE that none of our dependencies won't spawn a zombie process.\nENTRYPOINT [\"tini\", \"--\"]\nCMD [\"node\", \"bin/www\"]\n\nHEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \\\n    CMD wget --no-verbose --tries=1 --spider http://localhost:3000/health || exit 1\n"
+}

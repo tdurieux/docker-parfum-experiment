@@ -1,0 +1,46 @@
+FROM lasery/picam:build-20.04 AS build
+
+# Download source
+RUN curl -f -L https://github.com/iizukanao/picam/archive/v{{PICAM_VERSION}}.tar.gz -o /tmp/picam.tar.gz && \
+    tar xvf /tmp/picam.tar.gz -C /tmp/ && \
+    mv /tmp/picam-{{PICAM_VERSION}} /tmp/picam && rm /tmp/picam.tar.gz
+
+WORKDIR /tmp/picam
+COPY patch/whichpi /tmp/picam/whichpi
+RUN make -j4
+
+# Archive all shared libraries for picam
+RUN mkdir -p /usr/local/lib/picam
+RUN ldd ./picam | grep "=> /" | awk '{print $3}' | xargs -I '{}' cp -v '{}' /usr/local/lib/picam/
+
+# Final stage
+FROM {{IMAGES.BASE}}
+
+ENV LANG C.UTF-8
+ENV LD_LIBRARY_PATH=/usr/local/lib
+
+# Install dependencies
+RUN apt-get update -qy && apt-get install -qy --no-install-recommends \
+      libharfbuzz0b libfontconfig1 && rm -rf /var/lib/apt/lists/*;
+
+# Install picam
+COPY --from=build /usr/local/lib/picam /usr/local/lib/
+COPY --from=build /tmp/picam /usr/local/bin/
+
+RUN ldconfig
+
+# Sanity Test
+RUN picam --help
+
+RUN useradd -ms /bin/bash picam
+RUN usermod -aG video,audio picam
+VOLUME /home/picam
+WORKDIR /home/picam
+USER picam
+
+COPY --chown=picam hooks.sh /home/picam/
+COPY --chown=picam docker-entrypoint.sh /
+COPY --chown=picam README.md /
+
+ENTRYPOINT ["/docker-entrypoint.sh"]
+CMD ["help"]

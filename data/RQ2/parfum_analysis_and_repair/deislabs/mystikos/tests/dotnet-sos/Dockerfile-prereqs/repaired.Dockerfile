@@ -1,0 +1,26 @@
+FROM oeciteam/openenclave-base-ubuntu-18.04
+
+WORKDIR /tmp
+
+RUN apt-get update && apt-get install --no-install-recommends -y \
+    wget gnupg lsb-release software-properties-common && rm -rf /var/lib/apt/lists/*;
+
+# Install lldb-10
+RUN wget https://apt.llvm.org/llvm.sh && \
+        chmod +x llvm.sh && \
+        ./llvm.sh 10
+
+RUN wget https://packages.microsoft.com/config/ubuntu/18.04/packages-microsoft-prod.deb -O packages-microsoft-prod.deb && \
+    dpkg -i packages-microsoft-prod.deb && \
+    rm packages-microsoft-prod.deb
+
+RUN apt update && \
+    apt install --no-install-recommends -y dotnet-sdk-6.0 && rm -rf /var/lib/apt/lists/*;
+
+# Install SOS debugger extension
+RUN dotnet tool install -g dotnet-sos \
+	&& /root/.dotnet/tools/dotnet-sos install
+
+ENV SGX_AESM_ADDR=1
+
+WORKDIR /app

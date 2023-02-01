@@ -1,0 +1,5 @@
+FROM ubuntu:18.04
+RUN apt update && apt-get install --no-install-recommends -y libpcre3-dev libssl-dev perl make build-essential curl wget git vim && rm -rf /var/lib/apt/lists/*;
+RUN wget https://openresty.org/download/openresty-1.15.8.3.tar.gz && tar zxf openresty-1.15.8.3.tar.gz && cd openresty-1.15.8.3 && ./configure --build="$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)" --without-http_gzip_module && make && make install && rm openresty-1.15.8.3.tar.gz
+WORKDIR /usr/local/openresty
+RUN git clone https://github.com/spacewander/lua-resty-base-encoding.git && cd lua-resty-base-encoding && make && cp librestybaseencoding.so ../site/lualib/ && cd .. && rm lua-resty-base-encoding -rf

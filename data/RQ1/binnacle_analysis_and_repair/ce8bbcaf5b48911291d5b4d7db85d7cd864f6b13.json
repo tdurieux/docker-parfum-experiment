@@ -1,0 +1,35 @@
+{
+  "startTime": 1674235705367,
+  "endTime": 1674235705515,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 56,
+        "lineEnd": 56,
+        "columnStart": 52,
+        "columnEnd": 83
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 63,
+        "lineEnd": 63,
+        "columnStart": 7,
+        "columnEnd": 39
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 75,
+        "lineEnd": 75,
+        "columnStart": 7,
+        "columnEnd": 42
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM alpine:3.7\n\n# Add the proper env variables for init the db\nARG POSTGRES_DB\nENV POSTGRES_DB $POSTGRES_DB\nARG POSTGRES_USER\nENV POSTGRES_USER $POSTGRES_USER\nARG POSTGRES_PASSWORD\nENV POSTGRES_PASSWORD $POSTGRES_PASSWORD\nARG POSTGRES_PORT\n\n# secret key for Django\nARG django_secret_key\nENV DJANGO_SECRET_KEY $django_secret_key\n\n# For usage in migrations, etc\nENV POSTGRES_HOST localhost\n\nRUN apk --update add \\\n    bash nano curl su-exec\\\n    python3 \\\n    postgresql postgresql-contrib postgresql-dev && \\\n    rm -rf /var/cache/apk/*\n\nENV LANG en_US.utf8\nENV PGDATA /var/lib/postgresql/data\n\n\n# ENTRYPOINT [\"/postgres-entrypoint.sh\"]\n\nEXPOSE $POSTGRES_PORT\nVOLUME /var/lib/postgresql/data\n\n\n# Adding our code\nRUN mkdir -p /opt/code\nRUN mkdir -p /opt/data\n# Store the data inside the container, as we don't care for\n# persistence\nENV PGDATA /opt/data\nWORKDIR /opt/code\n\nRUN mkdir -p /opt/code/db\nWORKDIR /opt/code/db\n# Add postgres setup\nADD ./docker/db/postgres-setup.sh /opt/code/db/\nRUN ./postgres-setup.sh\n\n# Install our code to run migrations and prepare DB\nWORKDIR /opt/code\nADD requirements.txt /opt/code\n\n# Try to use local wheels. Even if not present, it will proceed\nADD ./vendor /opt/vendor\nADD ./deps /opt/deps\n# Only install them if there's any\nRUN if ls /opt/vendor/*.whl 1> /dev/null 2>&1; then \\\n pip3 install --no-cache-dir /opt/vendor/*.whl; fi\n\n# Some Docker-fu. In one step install the compile packages, install the\n# dependencies and then remove them. That skims the image size quite\n# sensibly.\nRUN apk add --no-cache --virtual .build-deps \\\n  python3-dev build-base linux-headers gcc \\\n    && pip3 install --no-cache-dir -r requirements.txt \\\n    && find /usr/local \\\n        \\( -type d -a -name test -o -name tests \\) \\\n        -o \\( -type f -a -name '*.pyc' -o -name '*.pyo' \\) \\\n        -exec rm -rf '{}' + \\\n    && runDeps=\"$( \\\n        scanelf --needed --nobanner --recursive /usr/local \\\n                | awk '{ gsub(/,/, \"\\nso:\", $2); print \"so:\" $2 }' \\\n                | sort -u \\\n                | xargs -r apk info --installed \\\n                | sort -u \\\n    )\" \\\n    && apk add --no-cache --virtual .rundeps $runDeps \\\n    && apk del .build-deps\n\n# Need to import all the code, due tangled dependencies\nADD ./src/ /opt/code/\n# Add all DB commanda\nADD ./docker/db/* /opt/code/db/\n\n# get migrations, etc, ready\nRUN /opt/code/db/prepare_django_db.sh\n\nCMD [\"su-exec\",  \"postgres\", \"postgres\"]\n"
+}

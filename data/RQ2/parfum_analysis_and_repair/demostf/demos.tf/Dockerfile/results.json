@@ -1,0 +1,62 @@
+{
+  "startTime": 1674220694090,
+  "endTime": 1674220694931,
+  "originalSmells": [
+    {
+      "rule": "wgetUseHttpsUrl",
+      "position": {
+        "lineStart": 14,
+        "lineEnd": 14,
+        "columnStart": 4,
+        "columnEnd": 82
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 42,
+        "lineEnd": 42,
+        "columnStart": 2,
+        "columnEnd": 110
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 38,
+        "lineEnd": 39,
+        "columnStart": 4,
+        "columnEnd": 23
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 40,
+        "lineEnd": 40,
+        "columnStart": 2,
+        "columnEnd": 38
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 2,
+        "lineEnd": 2,
+        "columnStart": 18,
+        "columnEnd": 89
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 2,
+        "lineEnd": 2,
+        "columnStart": 18,
+        "columnEnd": 89
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM node:15-stretch AS build\nWORKDIR /root/build\nRUN apt update && apt install --no-install-recommends -y git build-essential libpng16-16 libpng-dev xcftools webp && rm -rf /var/lib/apt/lists/*;\nCOPY package*.json ./\nRUN npm ci\nCOPY postcss.config.js tsconfig.json webpack.*.config.js Makefile ./\nCOPY src src\nRUN make\n\nFROM nginx:alpine AS ngx_brotli_build\n\nENV NGX_MODULE_COMMIT 9aec15e2aa6feea2113119ba06460af70ab3ea62\nENV NGX_MODULE_PATH ngx_brotli\n\nRUN wget \"https://nginx.org/download/nginx-${NGINX_VERSION}.tar.gz\" -O nginx.tar.gz && \\\n  wget \"https://github.com/google/ngx_brotli/archive/${NGX_MODULE_COMMIT}.tar.gz\" -O ${NGX_MODULE_PATH}.tar.gz\n\n# For latest build deps, see https://github.com/nginxinc/docker-nginx/blob/master/mainline/alpine/Dockerfile\nRUN apk add --no-cache --virtual .build-deps \\\n  gcc \\\n  libc-dev \\\n  make \\\n  openssl-dev \\\n  pcre-dev \\\n  zlib-dev \\\n  linux-headers \\\n  libxslt-dev \\\n  gd-dev \\\n  geoip-dev \\\n  perl-dev \\\n  libedit-dev \\\n  mercurial \\\n  bash \\\n  alpine-sdk \\\n  findutils \\\n  brotli-dev\n\n# Reuse same cli arguments as the nginx:alpine image used to build\nRUN CONFARGS=$(nginx -V 2>&1 | sed -n -e 's/^.*arguments: //p') \\\n  tar -zxf nginx.tar.gz && \\\n  tar -xzf \"${NGX_MODULE_PATH}.tar.gz\" && \\\n  cd nginx-$NGINX_VERSION && \\\n  ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" --with-compat $CONFARGS --add-dynamic-module=\"$(pwd)/../${NGX_MODULE_PATH}-${NGX_MODULE_COMMIT}\" && \\\n  make && make install && rm nginx.tar.gz\n\n# save /usr/lib/*so deps\nRUN mkdir /so-deps && cp -L $(ldd /usr/local/nginx/modules/ngx_http_brotli_filter_module.so 2>/dev/null | grep '/usr/lib/' | awk '{ print $3 }' | tr '\\n' ' ') /so-deps\n\n# prepend load_module commands to main nginx.conf\nRUN echo \"load_module /usr/local/nginx/modules/ngx_http_brotli_filter_module.so;\" | cat - /etc/nginx/nginx.conf > /tmp/out && mv /tmp/out /etc/nginx/nginx.conf\nRUN echo \"load_module /usr/local/nginx/modules/ngx_http_brotli_static_module.so;\" | cat - /etc/nginx/nginx.conf > /tmp/out && mv /tmp/out /etc/nginx/nginx.conf\n\nFROM nginx:alpine\n\nCOPY --from=ngx_brotli_build /so-deps /usr/lib\nCOPY --from=ngx_brotli_build /etc/nginx/nginx.conf /etc/nginx/nginx.conf\nCOPY --from=ngx_brotli_build /usr/local/nginx/modules/ngx_http_brotli_filter_module.so /usr/local/nginx/modules/ngx_http_brotli_filter_module.so\nCOPY --from=ngx_brotli_build /usr/local/nginx/modules/ngx_http_brotli_static_module.so /usr/local/nginx/modules/ngx_http_brotli_static_module.so\n\nRUN apk add --no-cache libintl gettext\n\nADD ./nginx.conf /etc/nginx/nginx.conf\nCOPY --from=build /root/build/build /usr/share/nginx/html/\nADD ./entrypoint.sh /\nADD ./demostf.tmpl /etc/nginx/conf.d/\nADD ./upload.tmpl /etc/nginx/\n\nCMD [\"sh\", \"/entrypoint.sh\"]\n"
+}

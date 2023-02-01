@@ -1,0 +1,1 @@
+# hipSYCL version (git revision) to install

@@ -1,0 +1,26 @@
+{
+  "startTime": 1674253145849,
+  "endTime": 1674253145954,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 54,
+        "lineEnd": 54,
+        "columnStart": 29,
+        "columnEnd": 165
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 12,
+        "lineEnd": 13,
+        "columnStart": 4,
+        "columnEnd": 13
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "ARG WIREGUARD_IMAGE\nARG BASE_IMAGE\nARG RIGGING_IMAGE\n\n#\n# Use a temporary ubuntu container to get/build the wg cli\n#\nFROM ${WIREGUARD_IMAGE} as wireguard\nADD assets/docker/wireguard/wireguard_ubuntu_wireguard.gpg /etc/apt/trusted.gpg.d/wireguard_ubuntu_wireguard.gpg\nADD assets/docker/wireguard/wireguard-ubuntu-wireguard-bionic.list /etc/apt/sources.list.d/wireguard-ubuntu-wireguard-bionic.list\n\nRUN apt-get update && \\\n    apt-get install --no-install-recommends -y \\\n    wireguard && rm -rf /var/lib/apt/lists/*;\n\n#\n# Pull in rig container to copy rig binary to support gravity upgrade/rollback\n#\nFROM ${RIGGING_IMAGE} as rig\n\n#\n# Build wormhole container\n#\nFROM ${BASE_IMAGE}\n\nARG CNI_VERSION\nARG ARCH\n\nRUN apt-get update && \\\n    apt-get install --no-install-recommends -y \\\n    iproute2 \\\n    net-tools \\\n    iptables \\\n    curl \\\n    ca-certificates \\\n    && update-ca-certificates \\\n    && rm -rf /var/lib/apt/lists/*\n\n#\n# Install/Upgrade/Rollback interactions for a gravity cluster\n#\nARG VERSION\nENV RIG_CHANGESET $VERSION\nCOPY --from=rig /usr/local/bin/rig /usr/bin/rig\nADD docs/gravity-wormhole.yaml /gravity/wormhole.yaml\nADD scripts/gravity* /gravity/\nRUN sed -i \"s/__REPLACE_VERSION__/$VERSION/g\" /gravity/wormhole.yaml\n\n#\n# Copy WG cli\n#\nCOPY --from=wireguard /usr/bin/wg /usr/bin/wg\n\n# Get a copy of CNI plugins, so we can install them on the host if needed\nRUN mkdir -p /opt/cni/bin && curl -f -L --retry 5 https://github.com/containernetworking/plugins/releases/download/${CNI_VERSION}/cni-plugins-${ARCH}-${CNI_VERSION}.tgz \\\n    | tar -xz -C /opt/cni/bin ./bridge ./loopback ./host-local ./portmap ./tuning\n\n\nADD build/wormhole /wormhole\nRUN setcap cap_net_admin=+ep /wormhole && setcap cap_net_raw=+ep /wormhole\nCMD [\"/wormhole\"]"
+}

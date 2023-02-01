@@ -1,0 +1,1 @@
+7743af2cd089e92858eca1715db25949  Dockerfile_arch

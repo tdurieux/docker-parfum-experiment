@@ -1,0 +1,2 @@
+# Can be ovewriten by setting parameter "BASE_IMAGE"
+# e.g.: oc process -f openshift.sakuli.s2i.image.build.yaml -p "IMAGE=sakuli-ubuntu-xfce-s2i" -p "BASE_IMAGE=consol/sakuli-ubuntu-xfce:dev" | oc apply -f -

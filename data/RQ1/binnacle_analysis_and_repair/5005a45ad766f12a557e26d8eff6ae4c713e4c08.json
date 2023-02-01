@@ -1,0 +1,53 @@
+{
+  "startTime": 1674240279783,
+  "endTime": 1674240279883,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 30,
+        "lineEnd": 30,
+        "columnStart": 4,
+        "columnEnd": 54
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 33,
+        "lineEnd": 33,
+        "columnStart": 4,
+        "columnEnd": 38
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 35,
+        "lineEnd": 35,
+        "columnStart": 4,
+        "columnEnd": 31
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 36,
+        "lineEnd": 36,
+        "columnStart": 4,
+        "columnEnd": 99
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 83,
+        "lineEnd": 83,
+        "columnStart": 4,
+        "columnEnd": 78
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "ARG BASE_IMAGE\n\n# ================\n# Build virtualenv\n# ================\nFROM ${BASE_IMAGE} AS python-environment\n\nENV TMPDIR=/var/tmp\nENV PIP_EXTRA_INDEX_URL=https://packages.hiveeyes.org/hiveeyes/python/eggs/\n\nARG venv=/venv\nARG pip=${venv}/bin/pip\nARG python=${venv}/bin/python\n\n\n# Create Python virtualenv\nRUN virtualenv --system-site-packages --always-copy --python=python ${venv}\n\n# Remove superfluous \"local\" folder inside virtualenv\n# See also:\n# - http://stackoverflow.com/questions/8227120/strange-local-folder-inside-virtualenv-folder\n# - https://github.com/pypa/virtualenv/pull/166\n# - https://github.com/pypa/virtualenv/commit/5cb7cd652953441a6696c15bdac3c4f9746dfaa1\nRUN rm -rf ${venv}/local\n\n#RUN $pip install setuptools --upgrade --force-reinstall\n#RUN $pip install setuptools==18.8.1 --upgrade --force-reinstall\n#RUN $pip install setuptools==22.0.5 --upgrade --force-reinstall\n\n# Downgrade pip due to \"BackendUnavailable\" error with pip >= 19.0.0\nRUN $pip install --no-cache-dir pip==18.1 --upgrade --force-reinstall\n\n# Install \"virtualenv-tools\" for relocating the virtualenv\nRUN $pip install --no-cache-dir virtualenv-tools==1.0# --upgrade --force-reinstall\n\nRUN $pip install --no-cache-dir pandas==0.18.1\nRUN $pip install --no-cache-dir 'https://github.com/jjmalina/pyinfluxql/tarball/d92db4ab8c#egg=pyinfluxql-0.0.1'\n\n\n\n# ===============\n# Acquire sources\n# ===============\nFROM python-environment AS acquire-sources\n\nARG SOURCES=/sources\n\nRUN \\\n    mkdir -p $SOURCES && \\\n    git clone --depth=1 https://github.com/daq-tools/kotori.git $SOURCES\n\n\n\n# ======================\n# Install Python package\n# ======================\n\nFROM acquire-sources AS install-kotori\n\nENV TMPDIR=/var/tmp\nENV PIP_EXTRA_INDEX_URL=https://packages.hiveeyes.org/hiveeyes/python/eggs/\n\nARG VERSION\nARG FEATURES\n\nARG SOURCES=/sources\n\nARG venv=/venv\nARG pip=${venv}/bin/pip\nARG python=${venv}/bin/python\n\n\n# TODO: Make this optionally.\n#COPY Makefile $SOURCES/Makefile\n#COPY setup.py $SOURCES/setup.py\n#COPY pyproject.toml $SOURCES/pyproject.toml\n#COPY MANIFEST.in $SOURCES/MANIFEST.in\n\nWORKDIR $SOURCES\n\nRUN $python setup.py sdist\n\n# Install Kotori and its dependencies\nRUN $pip install --no-cache-dir kotori[${FEATURES}]==${VERSION} --find-links=./dist --upgrade\n\n\n# ----\n\n# 3.a Install from local sdist egg, enabling extra features\n# TODO: Maybe use \"--editable\" for installing in development mode\n# TODO: Build Wheels: https://pip.pypa.io/en/stable/reference/pip_wheel/\n#@#TMPDIR=/var/tmp $(buildpath)/bin/pip install kotori[$(features)]==$(version) --download-cache=./build/pip-cache --find-links=./dist --process-dependency-links\n\n# 3.b Install from egg on package server\n# https://pip.pypa.io/en/stable/reference/pip_wheel/#cmdoption--extra-index-url\n#TMPDIR=/var/tmp $(buildpath)/bin/pip install kotori[$(features)]==$(version) --process-dependency-links --extra-index-url=https://packages.elmyra.de/elmyra/foss/python/\n\n\n# ----\n\n\n# ===========================\n# Create distribution package\n# ===========================\n# Todo: Decouple this task from the repository.\n#       Q: Where to place the resources from the \"packaging\" folder then?\n#       A: TBD.\n\nFROM install-kotori AS package-kotori\n\nENV TMPDIR=/var/tmp\n\nARG NAME\nARG VERSION\nARG FEATURES\n\nARG SOURCES=/sources\n\nARG venv=/venv\nARG pip=${venv}/bin/pip\nARG python=${venv}/bin/python\n\n\nCOPY packaging/builder/fpm-package $SOURCES/fpm-package\n\nWORKDIR $SOURCES\n\n# Counter \"ValueError: bad marshal data (unknown type code)\"\n# coming from manipulation through \"virtualenv-tools\"\".\nRUN find ${venv} -name '*.pyc' -delete\n\n# Relocate the virtualenv by updating the python interpreter in the shebang of installed scripts.\nRUN ${venv}/bin/virtualenv-tools --update-path=/opt/kotori ${venv}\n\n# Build package.\nRUN ./fpm-package \"${NAME}\" \"${VERSION}\"\n"
+}

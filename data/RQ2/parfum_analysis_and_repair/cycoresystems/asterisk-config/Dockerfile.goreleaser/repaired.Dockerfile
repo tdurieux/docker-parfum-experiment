@@ -1,0 +1,4 @@
+FROM gcr.io/distroless/static
+COPY asterisk-config /go/bin/asterisk-config
+COPY defaults /defaults
+ENTRYPOINT ["/go/bin/asterisk-config"]

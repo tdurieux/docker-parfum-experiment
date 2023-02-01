@@ -1,0 +1,21 @@
+# SPDX-License-Identifier: BSD-3-Clause
+# Copyright © 2020 Fragcolor Pte. Ltd.
+
+FROM ubuntu:21.10
+
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get -y update
+RUN apt-get -y --no-install-recommends install tzdata && rm -rf /var/lib/apt/lists/*;
+RUN apt-get -y --no-install-recommends install libgl1 ca-certificates && rm -rf /var/lib/apt/lists/*;
+
+ARG USER_ID=1000
+
+RUN useradd -ms /bin/bash -u ${USER_ID} shards
+
+USER shards
+
+WORKDIR /home/shards
+
+COPY --chown=shards ./build/shards /usr/bin/shards
+
+ENV HOME=/home/shards

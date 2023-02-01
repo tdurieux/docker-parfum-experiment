@@ -1,0 +1,1 @@
+# Default Para docker image bundled with H2 and Lucene plugins

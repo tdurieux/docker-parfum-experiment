@@ -1,0 +1,23 @@
+# Use: docker build . -t darkfi:fedora -f ./contrib/docker/Dockerfile.fedora
+#   optionally with: --build-arg OS_VER=fedora:35
+
+ARG OS_VER=fedora:36  # fedora:35
+
+FROM ${OS_VER} as builder
+
+RUN dnf -y install cargo rustc gcc gcc-c++ kernel-headers cmake jq wget \
+  pkg-config clang clang-libs llvm-libs \
+  rust-libudev-devel rust-freetype-rs-devel \
+  rust-expat-sys-devel openssl-devel findutils
+
+COPY . /opt/darkfi
+
+WORKDIR /opt/darkfi
+
+RUN make clean
+
+RUN rm -rf ./target/*
+
+RUN bash -c 'make -j test &&  make -j all'
+
+# 2. stage

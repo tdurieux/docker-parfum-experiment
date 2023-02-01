@@ -1,0 +1,1 @@
+# code was lifted from https://hub.docker.com/r/consensysllc/go-ipfs/

@@ -1,0 +1,31 @@
+########################################################################################################################
+# Web Image
+# NOTE: this image requires the `make binary-frontend` target to have been run before `docker build` The `dist` directory must exist.
+########################################################################################################################
+
+
+########
+FROM golang:1.18-bullseye as backendbuild
+
+WORKDIR /go/src/github.com/analogj/scrutiny
+
+COPY . /go/src/github.com/analogj/scrutiny
+
+RUN make binary-clean binary-all WEB_BINARY_NAME=scrutiny
+
+
+########
+FROM debian:bullseye-slim as runtime
+EXPOSE 8080
+WORKDIR /opt/scrutiny
+ENV PATH="/opt/scrutiny/bin:${PATH}"
+
+RUN apt-get update && apt-get install --no-install-recommends -y ca-certificates curl tzdata && update-ca-certificates && rm -rf /var/lib/apt/lists/*;
+
+COPY --from=backendbuild /go/src/github.com/analogj/scrutiny/scrutiny /opt/scrutiny/bin/
+COPY dist /opt/scrutiny/web
+RUN chmod +x /opt/scrutiny/bin/scrutiny && \
+    mkdir -p /opt/scrutiny/web && \
+    mkdir -p /opt/scrutiny/config && \
+    chmod -R ugo+rwx /opt/scrutiny/config
+CMD ["/opt/scrutiny/bin/scrutiny", "start"]

@@ -1,0 +1,33 @@
+FROM rockylinux/rockylinux:8
+LABEL maintainer="tdockendorf@osc.edu; johrstrom@osc.edu"
+
+ARG USER=ood
+ARG UID=1000
+ARG GID=1000
+
+RUN dnf install -y https://yum.osc.edu/ondemand/latest/ondemand-release-web-latest-1-6.noarch.rpm && \
+    dnf clean all && rm -rf /var/cache/dnf/*
+
+RUN cp /etc/yum.repos.d/ondemand-web.repo /etc/yum.repos.d/ondemand-nightly-web.repo && \
+        sed /etc/yum.repos.d/ondemand-web.repo -e 's/latest/nightly/g' \
+          -e 's/ondemand-web/ondemand-web-nightly/g' > /etc/yum.repos.d/ondemand-nightly-web.repo
+
+RUN dnf -y update && \
+    dnf install -y dnf-utils && \
+    dnf config-manager --set-enabled powertools && \
+    dnf -y module enable nodejs:14 ruby:3.0 && \
+    dnf install -y ondemand ondemand-dex && \
+    dnf clean all && rm -rf /var/cache/dnf/*
+
+RUN sed -i 's#^CREATE_MAIL_SPOOL=yes#CREATE_MAIL_SPOOL=no#' /etc/default/useradd; \
+    grep $GID /etc/group >/dev/null || groupadd -g $GID $USER; \
+    useradd -l -u $UID --create-home --gid $GID $USER && \
+    echo "$USER ALL=(ALL) NOPASSWD:ALL" >/etc/sudoers.d/$USER
+
+RUN sed -i 's|--rpm|--rpm -f --insecure|g' /etc/systemd/system/httpd.service.d/ood-portal.conf
+RUN systemctl enable httpd ondemand-dex
+
+CMD [ "/sbin/init" ]
+
+EXPOSE 8080
+EXPOSE 5556

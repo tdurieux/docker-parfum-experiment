@@ -1,0 +1,81 @@
+{
+  "startTime": 1674239663800,
+  "endTime": 1674239664058,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 47,
+        "lineEnd": 47,
+        "columnStart": 4,
+        "columnEnd": 50
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 29,
+        "lineEnd": 29,
+        "columnStart": 4,
+        "columnEnd": 30
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 38,
+        "lineEnd": 38,
+        "columnStart": 4,
+        "columnEnd": 36
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 44,
+        "lineEnd": 44,
+        "columnStart": 4,
+        "columnEnd": 36
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 6,
+        "lineEnd": 6,
+        "columnStart": 7,
+        "columnEnd": 82
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 48,
+        "lineEnd": 48,
+        "columnStart": 4,
+        "columnEnd": 29
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 48,
+        "lineEnd": 48,
+        "columnStart": 4,
+        "columnEnd": 29
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 48,
+        "lineEnd": 48,
+        "columnStart": 4,
+        "columnEnd": 53
+      }
+    }
+  ],
+  "repairedDockerfile": "FROM metabrainz/python:3.7\n\nARG deploy_env\n\nENV DOCKERIZE_VERSION v0.6.1\nRUN wget https://github.com/jwilder/dockerize/releases/download/$DOCKERIZE_VERSION/dockerize-linux-amd64-$DOCKERIZE_VERSION.tar.gz \\\n    && tar -C /usr/local/bin -xzvf dockerize-linux-amd64-$DOCKERIZE_VERSION.tar.gz && rm dockerize-linux-amd64-$DOCKERIZE_VERSION.tar.gz\n\nRUN apt-get update \\\n    && apt-get install -y --no-install-recommends \\\n                       build-essential \\\n                       git \\\n                       libpq-dev \\\n                       libffi-dev \\\n                       libssl-dev \\\n                       redis-tools \\\n                       pxz \\\n                       rsync \\\n    && rm -rf /var/lib/apt/lists/*\n\n\n# PostgreSQL client\nRUN apt-key adv --keyserver ha.pool.sks-keyservers.net --recv-keys B97B0AFCAA1A47F044F244A07FCC7D46ACCC4CF8\nENV PG_MAJOR 9.5\nRUN echo 'deb http://apt.postgresql.org/pub/repos/apt/ jessie-pgdg main' $PG_MAJOR > /etc/apt/sources.list.d/pgdg.list\nRUN apt-get update \\\n    && apt-get install -y --no-install-recommends postgresql-client-$PG_MAJOR \\\n    && rm -rf /var/lib/apt/lists/*\n\nRUN pip3 install --no-cache-dir uWSGI==2.0.18\n\nRUN mkdir /code\nWORKDIR /code\n\n# MessyBrainz\nRUN git clone https://github.com/metabrainz/messybrainz-server.git messybrainz\nWORKDIR /code/messybrainz\nRUN git checkout production\nRUN pip3 install --no-cache-dir -r requirements.txt\nRUN python3 setup.py install\n\n# ListenBrainz\nWORKDIR /code/listenbrainz\nCOPY ./requirements.txt .\nRUN pip3 install --no-cache-dir -r requirements.txt\n\n# Node\nRUN curl -f -sL https://deb.nodesource.com/setup_10.x | bash - && \\\n    apt-get install --no-install-recommends -y nodejs && rm -rf /var/lib/apt/lists/*\nRUN mkdir /static\nWORKDIR /static\nCOPY package.json package-lock.json webpack.config.js ./listenbrainz/webserver/static /static/\nRUN npm install && npm run build:prod && ./node_modules/less/bin/lessc --clean-css /static/css/main.less > /static/css/main.css && \\\n    rm -rf node_modules js/*.jsx *.json webpack.config.js && npm cache clean --force\n\nCOPY . /code/listenbrainz\nWORKDIR /code/listenbrainz\nRUN rm -rf ./listenbrainz/webserver/static/\n\n\n# Sometimes the local copy of config.py[c] gets in the way. Better nuke it to not conflict.\nRUN rm -f /code/listenbrainz/listenbrainz/config.py /code/listenbrainz/listenbrainz/config.pyc\n\n# create a user named listenbrainz for cron jobs and storing dump file backups\nRUN useradd --create-home --shell /bin/bash listenbrainz\nRUN mkdir /home/listenbrainz/backup /home/listenbrainz/ftp\nRUN chown -R listenbrainz:listenbrainz /home/listenbrainz/backup /home/listenbrainz/ftp\n\n# Add cron jobs\nADD docker/crontab /etc/cron.d/lb-crontab\nRUN chmod 0644 /etc/cron.d/lb-crontab && crontab -u listenbrainz /etc/cron.d/lb-crontab\nRUN touch /var/log/stats.log /var/log/dump_create.log && chown listenbrainz:listenbrainz /var/log/stats.log /var/log/dump_create.log\n\n# Make sure the cron service doesn't start automagically\n# http://smarden.org/runit/runsv.8.html\nRUN touch /etc/service/cron/down\n\n# Consul Template service is already set up with the base image.\n# Just need to copy the configuration.\nCOPY ./docker/consul-template.conf /etc/consul-template.conf\n\nCOPY ./docker/$deploy_env/uwsgi/uwsgi.service /etc/service/uwsgi/run\nRUN chmod 755 /etc/service/uwsgi/run\nCOPY ./docker/$deploy_env/uwsgi/uwsgi.ini /etc/uwsgi/uwsgi.ini\nCOPY ./docker/prod/uwsgi/uwsgi-api-compat.ini /etc/uwsgi/uwsgi-api-compat.ini\n\n# setup a log dir\nRUN mkdir /logs\nRUN chown -R daemon:daemon /logs\n"
+}

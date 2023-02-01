@@ -1,0 +1,26 @@
+{
+  "startTime": 1674218361551,
+  "endTime": 1674218362526,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 51,
+        "lineEnd": 51,
+        "columnStart": 4,
+        "columnEnd": 57
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 122,
+        "lineEnd": 122,
+        "columnStart": 4,
+        "columnEnd": 34
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "ARG LLVM_VERSION=14\nARG ARCH=amd64\nARG UBUNTU_VERSION=18.04\nARG DISTRO_BASE=ubuntu${UBUNTU_VERSION}\nARG BUILD_BASE=ubuntu:${UBUNTU_VERSION}\nARG LIBRARIES=/opt/trailofbits\nARG BINJA_DECODE_KEY\n\n# Used for downloading remill and then copied to required stages\nFROM ${BUILD_BASE} as store\nARG UBUNTU_VERSION\nARG LLVM_VERSION\n\nWORKDIR /dependencies/tmp\nADD https://github.com/lifting-bits/remill/releases/latest/download/remill_ubuntu-${UBUNTU_VERSION}_packages.zip remill_packages.zip\n# Saves a bit of space in the base image.\n# Also better for not repeating ourselves when installing remill\nRUN apt-get update && \\\n    apt-get install -qqy --no-install-recommends unzip && \\\n    rm -rf /var/lib/apt/lists/* && \\\n    unzip remill_packages.zip && \\\n    rm remill_packages.zip && \\\n    mv ubuntu-${UBUNTU_VERSION}_llvm${LLVM_VERSION}_deb_package/remill-*.deb ../remill.deb && \\\n    cd .. && rm -rf tmp\n\n\n# Run-time dependencies go here\nFROM ${BUILD_BASE} AS base\nARG UBUNTU_VERSION\nARG LIBRARIES\nARG LLVM_VERSION\nRUN apt-get update && \\\n    apt-get install -qqy --no-install-recommends curl unzip python3 python3-pip python3.8 python3.8-venv python3-setuptools xz-utils && \\\n    rm -rf /var/lib/apt/lists/*\n\nWORKDIR /dependencies\n\n#### NOTE ####\n# Remill needs to be installed in the base _and_ deps stages, because they have\n# different base images\nCOPY --from=store /dependencies/remill.deb .\nRUN dpkg -i remill.deb\n\n# Build-time dependencies go here\nFROM trailofbits/cxx-common-vcpkg-builder-ubuntu:${UBUNTU_VERSION} as deps\nARG UBUNTU_VERSION\nARG ARCH\nARG LLVM_VERSION\nARG LIBRARIES\n\nRUN apt-get update && \\\n    apt-get install --no-install-recommends -qqy xz-utils python3.8-venv make rpm && \\\n    rm -rf /var/lib/apt/lists/*\n\n# Build dependencies\nWORKDIR /dependencies\n\n# cxx-common\nADD https://github.com/lifting-bits/cxx-common/releases/download/v0.2.7/vcpkg_ubuntu-${UBUNTU_VERSION}_llvm-${LLVM_VERSION}_amd64.tar.xz vcpkg_ubuntu-${UBUNTU_VERSION}_llvm-${LLVM_VERSION}_amd64.tar.xz\nRUN tar -xJf vcpkg_ubuntu-${UBUNTU_VERSION}_llvm-${LLVM_VERSION}_amd64.tar.xz && \\\n    rm vcpkg_ubuntu-${UBUNTU_VERSION}_llvm-${LLVM_VERSION}_amd64.tar.xz\n\n# Remill again (see above in the base image where this is repeated)\nCOPY --from=store /dependencies/remill.deb .\nRUN dpkg -i remill.deb\n\n# Source code build\nFROM deps AS build\nWORKDIR /anvill\nARG UBUNTU_VERSION\nARG ARCH\nARG LLVM_VERSION\nARG LIBRARIES\n\nENV VIRTUAL_ENV=/opt/trailofbits/venv\nENV PATH=\"${VIRTUAL_ENV}/bin:${PATH}\"\n\n# create a virtualenv in /opt/trailofbits/venv\nRUN python3.8 -m venv ${VIRTUAL_ENV}\n\n# Needed for sourcing venv\nSHELL [\"/bin/bash\", \"-c\"]\n\nCOPY . ./\n\n# Source venv, build Anvill, Install binaries & system packages\nRUN source ${VIRTUAL_ENV}/bin/activate && \\\n    cmake -G Ninja -B build -S . \\\n    -DANVILL_ENABLE_INSTALL=true \\\n    -Dremill_DIR:PATH=/usr/local/lib/cmake/remill \\\n    -DCMAKE_INSTALL_PREFIX:PATH=\"${LIBRARIES}\" \\\n    -DCMAKE_VERBOSE_MAKEFILE=True \\\n    -DVCPKG_ROOT=/dependencies/vcpkg_ubuntu-${UBUNTU_VERSION}_llvm-${LLVM_VERSION}_amd64 \\\n    && \\\n    cmake --build build --target install\n\nFROM base AS dist\nARG LLVM_VERSION\nARG LIBRARIES\nENV PATH=\"/opt/trailofbits/bin:${PATH}\" \\\n    LLVM_VERSION_NUM=${LLVM_VERSION} \\\n    LLVM_VERSION=llvm${LLVM_VERSION}\n\n# Allow for mounting of local folder\nWORKDIR /anvill/local\n\nCOPY --from=build ${LIBRARIES} ${LIBRARIES}\n\n# Target no longer installs at a version\n\nENTRYPOINT [\"anvill-decompile-json\"]\n\n\nFROM dist as binja\nARG BINJA_DECODE_KEY\nARG BINJA_VERSION\nARG BINJA_CHANNEL\n\nENV VIRTUAL_ENV=/opt/trailofbits/venv\n\nSHELL [\"/bin/bash\", \"-c\"]\nRUN apt-get update && \\\n    apt-get install --no-install-recommends -qqy gpg unzip && \\\n    rm -rf /var/lib/apt/lists/*\n\nCOPY ci /dependencies/binja_install\n\nRUN export BINJA_DECODE_KEY=\"${BINJA_DECODE_KEY}\" && \\\n    source ${VIRTUAL_ENV}/bin/activate && \\\n    cd /dependencies/binja_install && \\\n    if [[ \"${BINJA_DECODE_KEY}\" != \"\" ]]; then ./install_binja.sh && python3 switcher.py --version_string ${BINJA_VERSION} ${BINJA_CHANNEL}; fi\nCOPY scripts/docker-spec-entrypoint.sh /opt/trailofbits/docker-spec-entrypoint.sh\nENTRYPOINT [\"/opt/trailofbits/docker-spec-entrypoint.sh\"]\n\n\n# This appears last so that it's default\nFROM dist\n"
+}

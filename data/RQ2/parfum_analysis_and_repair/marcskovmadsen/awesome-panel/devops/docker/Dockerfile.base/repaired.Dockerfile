@@ -1,0 +1,30 @@
+FROM python:3.9.11-slim-buster
+
+WORKDIR /
+
+# The enviroment variable ensures that the python output is set straight
+# to the terminal without buffering it first
+ENV PYTHONUNBUFFERED 1
+ARG bokeh_allow_ws_origin=192.168.99.100,localhost,awesome-panel.azurewebsites.net,awesome-panel.org,www.awesome-panel.org,52.233.133.121,52.232.38.244,52.233.185.35,52.166.75.172,13.81.1.156,52.136.254.253,51.144.165.65
+ENV BOKEH_ALLOW_WS_ORIGIN=$bokeh_allow_ws_origin
+
+RUN apt-get update && apt-get install --no-install-recommends -y \
+    dpkg-dev \
+    gcc \
+    git \
+    curl \
+    gnupg && rm -rf /var/lib/apt/lists/*;
+
+WORKDIR /app
+
+ADD requirements_docs.txt ./requirements_docs.txt
+ADD requirements_base.txt ./requirements_base.txt
+RUN pip install --no-cache-dir --upgrade pip && pip install --no-cache-dir -r requirements_base.txt -f https://download.pytorch.org/whl/torch_stable.html \
+    && rm -rf requirements_base.txt
+RUN pip install --no-cache-dir geopandas
+
+# Downloads models
+ADD awesome_panel/apps/detr_utils/model.py awesome_panel/apps/detr_utils/model.py
+RUN python awesome_panel/apps/detr_utils/model.py
+
+ENTRYPOINT [ "/bin/bash" ]

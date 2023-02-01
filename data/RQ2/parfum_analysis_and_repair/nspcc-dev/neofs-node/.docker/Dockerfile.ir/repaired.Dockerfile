@@ -1,0 +1,18 @@
+FROM golang:1.17 as builder
+ARG BUILD=now
+ARG VERSION=dev
+ARG REPO=repository
+WORKDIR /src
+COPY . /src
+
+RUN make bin/neofs-ir
+
+# Executable image
+FROM alpine AS neofs-ir
+RUN apk add --no-cache bash
+
+WORKDIR /
+
+COPY --from=builder /src/bin/neofs-ir /bin/neofs-ir
+
+CMD ["neofs-ir"]

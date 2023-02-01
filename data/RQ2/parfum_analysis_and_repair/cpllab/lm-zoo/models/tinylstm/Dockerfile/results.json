@@ -1,0 +1,26 @@
+{
+  "startTime": 1674253928281,
+  "endTime": 1674253929428,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 32,
+        "lineEnd": 32,
+        "columnStart": 4,
+        "columnEnd": 23
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 35,
+        "lineEnd": 35,
+        "columnStart": 4,
+        "columnEnd": 31
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM alpine/git:latest as builder\n\nRUN mkdir -p /opt\n\n# Build arguments provide SSH keys for accessing private CPL data.\nARG CPL_SSH_PRV_KEY\nRUN mkdir /root/.ssh && echo \"StrictHostKeyChecking no\" >> /root/.ssh/config \\\n      && echo \"$CPL_SSH_PRV_KEY\" > /root/.ssh/id_rsa \\\n      && chmod 600 /root/.ssh/id_rsa\n\n# Copy in source code.\nRUN git clone git://github.com/cpllab/tinylstm /opt/tinylstm\n\n# Copy in model parameters.\nARG CHECKPOINT_NAME=bllip-lg_0111\nARG CHECKPOINT_SOURCE=cpl@45.79.223.150:/home/cpl/tinylstm/checkpoints/$CHECKPOINT_NAME\nRUN mkdir -p /opt/tinylstm/checkpoint && \\\n          scp -o \"StrictHostKeyChecking=no\" \\\n            \"${CHECKPOINT_SOURCE}/{model.pt,corpus.pt}\" \\\n            /opt/tinylstm/checkpoint\n# Remove SSH information.\nRUN rm -rf /root/.ssh\n\n\n\nFROM pytorch/pytorch:0.4.1-cuda9-cudnn7-runtime\n\n# Root of model directory relative to build context.\nARG MODEL_ROOT=models/tinylstm\n\nCOPY --from=builder /opt/tinylstm /opt/tinylstm\n\nRUN pip install --no-cache-dir -q nltk\n\n# Add test dependencies.\nRUN pip install --no-cache-dir nose jsonschema\n\n# Copy in shared tests.\nCOPY test.py /opt/test.py\n\n# Copy external-facing scripts\nCOPY ${MODEL_ROOT}/bin /opt/bin\nCOPY shared/unkify /opt/bin/unkify\nCOPY shared/spec /opt/bin/spec\nCOPY shared/unsupported /opt/bin/get_predictions.hdf5\n\nENV PATH \"/opt/bin:${PATH}\"\n\nENV LMZOO_CHECKPOINT_PATH /opt/tinylstm/checkpoint\nENV LMZOO_VOCABULARY_PATH vocab\n\n# Cache vocab list for easy access from `spec`, etc.\nRUN PYTHONPATH=\"/opt/tinylstm:$PYTHONPATH\" python \\\n                -c 'import os; import torch; corpus = torch.load(os.environ[\"LMZOO_CHECKPOINT_PATH\"] + \"/corpus.pt\"); \\\n                    f = open(os.path.join(os.environ[\"LMZOO_CHECKPOINT_PATH\"], os.environ[\"LMZOO_VOCABULARY_PATH\"]), \"w\"); f.write(\"\\n\".join(corpus.dictionary.idx2word))'\n\n# Current git commit of build repository\nARG COMMIT\n# sha1 checksum of build directory\nARG FILES_SHA1\n\n# Prepare spec.\nCOPY ${MODEL_ROOT}/spec.template.json /tmp/spec.template.json\nRUN export BUILD_DATETIME=\"$(date)\"\nRUN cat /tmp/spec.template.json | \\\n            sed \"s/<image\\.sha1>/$COMMIT/g; s/<image\\.files_sha1>/${FILES_SHA1}/g; s/<image\\.datetime>/${BUILD_DATETIME}/g\" \\\n            > /opt/spec.template.json\n\nWORKDIR /opt/bin\n"
+}

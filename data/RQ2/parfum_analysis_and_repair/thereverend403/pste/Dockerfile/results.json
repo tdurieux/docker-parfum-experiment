@@ -1,0 +1,80 @@
+{
+  "startTime": 1674256089819,
+  "endTime": 1674256091068,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 62,
+        "lineEnd": 62,
+        "columnStart": 4,
+        "columnEnd": 47
+      }
+    },
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 79,
+        "lineEnd": 79,
+        "columnStart": 4,
+        "columnEnd": 16
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 47,
+        "lineEnd": 47,
+        "columnStart": 4,
+        "columnEnd": 89
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 48,
+        "lineEnd": 48,
+        "columnStart": 4,
+        "columnEnd": 89
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 39,
+        "lineEnd": 40,
+        "columnStart": 4,
+        "columnEnd": 16
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 55,
+        "lineEnd": 59,
+        "columnStart": 4,
+        "columnEnd": 17
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 86,
+        "lineEnd": 88,
+        "columnStart": 4,
+        "columnEnd": 17
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 120,
+        "lineEnd": 123,
+        "columnStart": 4,
+        "columnEnd": 17
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "ARG ARG_PYTHON_VERSION=3.9\nARG ARG_NODE_VERSION=17\nARG ARG_POETRY_VERSION=1.1.12\n\n## Base\nFROM python:${ARG_PYTHON_VERSION}-slim as python-base\n\nARG ARG_APP_USER=app\n\nENV PYTHONUNBUFFERED=1 \\\n    PYTHONDONTWRITEBYTECODE=1 \\\n    PIP_NO_CACHE_DIR=off \\\n    PIP_DISABLE_PIP_VERSION_CHECK=on \\\n    PIP_DEFAULT_TIMEOUT=100 \\\n    POETRY_VERSION=$ARG_POETRY_VERSION \\\n    POETRY_HOME=\"/opt/poetry\" \\\n    POETRY_VIRTUALENVS_IN_PROJECT=true \\\n    POETRY_NO_INTERACTION=1 \\\n    PYSETUP_PATH=\"/opt/pysetup\" \\\n    VENV_PATH=\"/opt/pysetup/.venv\" \\\n    NODE_MODULES=\"/opt/node\" \\\n    S6_DOWNLOAD_PATH=\"/opt/s6\" \\\n    SETTINGS_FILE_FOR_DYNACONF=\"/config/settings.yml\" \\\n    GUNICORN_HOST=\"0.0.0.0\" \\\n    GUNICORN_PORT=5000 \\\n    FLASK_APP=\"pste\" \\\n    PATHS_STATIC=\"/static\" \\\n    PATHS_DATA=\"/data\" \\\n    S6_CMD_WAIT_FOR_SERVICES_MAXTIME=0 \\\n    S6_BEHAVIOUR_IF_STAGE2_FAILS=2 \\\n    APP_USER=$ARG_APP_USER\n\nENV PATHS_NODE_MODULES=$NODE_MODULES \\\n    PATH=\"$POETRY_HOME/bin:$VENV_PATH/bin:$PATH\"\n\n\nFROM python-base as s6-base\n\nRUN apt-get update && \\\n    apt-get install --no-install-recommends -y \\\n        xz-utils && rm -rf /var/lib/apt/lists/*;\n\nARG S6_OVERLAY_VERSION=\"3.0.0.2\"\n\nADD https://github.com/just-containers/s6-overlay/releases/download/v${S6_OVERLAY_VERSION}/s6-overlay-noarch-${S6_OVERLAY_VERSION}.tar.xz /tmp\nADD https://github.com/just-containers/s6-overlay/releases/download/v${S6_OVERLAY_VERSION}/s6-overlay-x86_64-${S6_OVERLAY_VERSION}.tar.xz /tmp\nRUN mkdir -p \"$S6_DOWNLOAD_PATH\" && \\\n    tar -C \"$S6_DOWNLOAD_PATH/\" -Jxpf /tmp/s6-overlay-x86_64-${S6_OVERLAY_VERSION}.tar.xz && \\\n    tar -C \"$S6_DOWNLOAD_PATH/\" -Jxpf /tmp/s6-overlay-noarch-${S6_OVERLAY_VERSION}.tar.xz && rm /tmp/s6-overlay-x86_64-${S6_OVERLAY_VERSION}.tar.xz\n\n\n## Python builder\nFROM python-base as python-builder-base\n\nRUN apt-get update && \\\n    apt-get install --no-install-recommends -y \\\n        curl \\\n        build-essential \\\n        libffi-dev \\\n        libpq-dev && rm -rf /var/lib/apt/lists/*;\n\n# Install poetry - respects $POETRY_VERSION & $POETRY_HOME\nRUN curl -f -sSL https://install.python-poetry.org | python -\n\n# Copy project requirement files here to ensure they will be cached.\nWORKDIR $PYSETUP_PATH\nCOPY poetry.lock pyproject.toml ./\n\n# Install runtime deps - uses $POETRY_VIRTUALENVS_IN_PROJECT internally\nRUN poetry install --no-dev\n\n\n## JS builder\nFROM node:${ARG_NODE_VERSION}-bullseye-slim as node-builder-base\n\nENV NODE_MODULES=\"/opt/node\"\nWORKDIR $NODE_MODULES\n\nCOPY yarn.lock package.json ./\nRUN yarn install && yarn cache clean;\n\n\n## Dev image\nFROM python-base as development\n\nRUN apt-get update && \\\n    apt-get install --no-install-recommends -y \\\n        libpq5 \\\n        libmagic1 && rm -rf /var/lib/apt/lists/*;\n\nRUN apt-get clean && rm -rf /var/lib/apt/lists/*\n\nWORKDIR $PYSETUP_PATH\n\nCOPY --from=python-builder-base $PYSETUP_PATH $PYSETUP_PATH\nCOPY --from=python-builder-base $POETRY_HOME $POETRY_HOME\nCOPY --from=node-builder-base $NODE_MODULES/node_modules $NODE_MODULES/\n\nRUN poetry install\n\nCOPY --from=s6-base $S6_DOWNLOAD_PATH /\nCOPY docker/rootfs /\n\nRUN addgroup --gid 1000 --system $APP_USER && \\\n    adduser --uid 1000 --system --gid 1000 --no-create-home $APP_USER\n\nWORKDIR /app\n\nENV FLASK_ENV=\"development\"\n\nVOLUME [\"/static\", \"/config\", \"/data\"]\nEXPOSE 5000\n\nENTRYPOINT [\"/init\"]\n\n\n## Production image\nFROM python-base as production\n\nRUN apt-get update && \\\n    apt-get install --no-install-recommends -y \\\n        curl \\\n        libpq5 \\\n        libmagic1 && rm -rf /var/lib/apt/lists/*;\n\nRUN apt-get clean && rm -rf /var/lib/apt/lists/*\n\nCOPY --from=python-builder-base $PYSETUP_PATH $PYSETUP_PATH\nCOPY --from=node-builder-base $NODE_MODULES/node_modules $NODE_MODULES/\n\nCOPY --from=s6-base $S6_DOWNLOAD_PATH /\nCOPY docker/rootfs /\n\nRUN addgroup --gid 1000 --system $APP_USER && \\\n    adduser --uid 1000 --system --gid 1000 --no-create-home $APP_USER\n\nWORKDIR /app\n\nCOPY --chown=$APP_USER:$APP_USER ./pste ./pste\n\nENV FLASK_ENV=\"production\"\n\nVOLUME [\"/static\", \"/config\", \"/data\"]\nEXPOSE 5000\n\nHEALTHCHECK --interval=10s --timeout=5s CMD [\"/bin/healthcheck\"]\nENTRYPOINT [\"/init\"]\n"
+}

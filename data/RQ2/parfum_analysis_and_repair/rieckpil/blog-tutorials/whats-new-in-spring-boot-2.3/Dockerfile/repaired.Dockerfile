@@ -1,0 +1,1 @@
+# traditional way of building Docker images for Spring Boot apllications

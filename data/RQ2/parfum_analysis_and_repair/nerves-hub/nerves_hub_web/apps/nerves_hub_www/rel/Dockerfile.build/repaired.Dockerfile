@@ -1,0 +1,64 @@
+ARG ELIXIR_VERSION=1.13.3
+ARG ERLANG_VERSION=24.3.3
+ARG ALPINE_VERSION=3.15.3
+ARG NODE_VERSION=16.14.2
+
+# Fetch deps for building web assets
+FROM hexpm/elixir:${ELIXIR_VERSION}-erlang-${ERLANG_VERSION}-alpine-${ALPINE_VERSION} as deps
+RUN apk --no-cache add git
+RUN mix local.hex --force && mix local.rebar --force
+ADD . /build
+WORKDIR /build
+RUN mix deps.clean --all && mix deps.get
+
+# Build web assets
+FROM node:${NODE_VERSION} as assets
+RUN mkdir -p /priv/static
+WORKDIR /build
+COPY apps/nerves_hub_www/assets apps/nerves_hub_www/assets
+COPY --from=deps /build/deps deps
+RUN cd apps/nerves_hub_www/assets \
+  && npm install \
+  && npm run deploy && npm cache clean --force;
+
+# Elixir build container
+FROM hexpm/elixir:${ELIXIR_VERSION}-erlang-${ERLANG_VERSION}-alpine-${ALPINE_VERSION} as builder
+
+ENV MIX_ENV=prod
+
+RUN apk --no-cache add make gcc musl-dev git
+RUN mix local.hex --force && mix local.rebar --force
+RUN mkdir /build
+ADD . /build
+WORKDIR /build
+COPY --from=deps /build/deps deps
+COPY --from=assets /build/apps/nerves_hub_www/priv/static apps/nerves_hub_www/priv/static
+
+RUN mix do phx.digest, release nerves_hub_www --overwrite
+
+# Release Container
+FROM nerveshub/runtime:alpine-${ALPINE_VERSION} as release
+
+RUN apk add 'fwup~=1.9' \
+  --repository http://nl.alpinelinux.org/alpine/edge/community/ \
+  --no-cache
+
+RUN apk --no-cache add xdelta3 zip unzip
+
+EXPOSE 80
+EXPOSE 443
+
+ENV LOCAL_IPV4=127.0.0.1
+
+COPY --from=builder /build/_build/$MIX_ENV/rel/nerves_hub_www/ ./
+COPY --from=builder /build/rel/scripts/docker-entrypoint.sh .
+COPY --from=builder /build/rel/scripts/s3-sync.sh .
+COPY --from=builder /build/rel/scripts/ecs-cluster.sh .
+
+RUN ["chmod", "+x", "/app/docker-entrypoint.sh"]
+RUN ["chmod", "+x", "/app/s3-sync.sh"]
+RUN ["chmod", "+x", "/app/ecs-cluster.sh"]
+
+ENTRYPOINT ["/app/docker-entrypoint.sh"]
+
+CMD ["/app/ecs-cluster.sh"]

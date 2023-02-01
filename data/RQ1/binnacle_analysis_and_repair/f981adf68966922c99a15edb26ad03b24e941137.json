@@ -1,0 +1,35 @@
+{
+  "startTime": 1674242341601,
+  "endTime": 1674242342036,
+  "originalSmells": [
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 22,
+        "lineEnd": 22,
+        "columnStart": 4,
+        "columnEnd": 22
+      }
+    },
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 23,
+        "lineEnd": 23,
+        "columnStart": 4,
+        "columnEnd": 51
+      }
+    },
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 51,
+        "lineEnd": 51,
+        "columnStart": 36,
+        "columnEnd": 48
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM python:3.5-alpine\n\n# Set environment variables\nENV APP_ROOT /usr/src/app\nENV APP_USER_NAME app\nENV APP_USER_UID 1000\nENV IS_ALPINE true\nENV NODE_VERSION 8.x\n\n# Install alpine dependencies\n\n## Upgrade apk-tools\nRUN apk add --upgrade --no-cache --repository http://dl-cdn.alpinelinux.org/alpine/edge/main apk-tools\n\n## Install system dependencies\nRUN apk --update add --no-cache --repository http://dl-cdn.alpinelinux.org/alpine/edge/main \\\n    bash wget dpkg-dev libffi nodejs nodejs-npm git gcc musl-dev gettext \\\n    postgresql-dev libffi-dev py3-setuptools jpeg-dev make \\\n    zlib-dev freetype-dev lcms2-dev openjpeg-dev libxslt-dev alpine-sdk \\\n  && rm -rf /var/cache/apk/* /var/lib/apt/lists/* /tmp/* /var/tmp/*\n\n## Install react dependencies\nRUN npm install -g npm && npm cache clean --force;\nRUN npm install -g yarn webpack@^1.12.13 bower less && npm cache clean --force;\n\n## Install python dependencies\nRUN pip3 install --no-cache-dir cffi cairocffi psycopg2\nRUN apk --update add --no-cache cairo-dev \\\n  && rm -rf /var/cache/apk/* /var/lib/apt/lists/* /tmp/* /var/tmp/*\n\n# Create user\nRUN adduser -D -h ${APP_ROOT} \\\n    -s /bin/bash \\\n    -u ${APP_USER_UID} \\\n    ${APP_USER_NAME}\n\n# Create folders for deploy\nRUN mkdir -p ${APP_ROOT}\nRUN mkdir -p /var/log/eventol\nRUN chown ${APP_USER_NAME}:root /var/log/eventol\nWORKDIR ${APP_ROOT}\n\n# Install python requirements\nCOPY ./requirements.txt ${APP_ROOT}\nCOPY ./requirements-dev.txt ${APP_ROOT}\nRUN pip3 install --no-cache-dir -r requirements.txt\nRUN pip3 install --no-cache-dir -r requirements-dev.txt\n\n# Install node modules\nCOPY ./eventol/front/package.json ${APP_ROOT}/eventol/front/\nCOPY ./eventol/front/yarn.lock ${APP_ROOT}/eventol/front/\nRUN cd ${APP_ROOT}/eventol/front && yarn install && yarn cache clean;\nRUN cd ${APP_ROOT}/eventol/front && npm rebuild node-sass --force\n\n# Install bower dependencies\nCOPY ./eventol/front/bower.json ${APP_ROOT}/eventol/front/\nCOPY ./eventol/front/.bowerrc ${APP_ROOT}/eventol/front/\nRUN cd ${APP_ROOT}/eventol/front && bower install --allow-root\n\n# Copy test script file\nCOPY ./test.sh ${APP_ROOT}/test.sh\n\n# Copy python code\nCOPY ./eventol ${APP_ROOT}/eventol\nRUN mkdir -p ${APP_ROOT}/eventol/manager/static\nRUN mkdir -p ${APP_ROOT}/eventol/front/eventol/static\n\n# Compile scss\nRUN mkdir -p ${APP_ROOT}/eventol/manager/static/manager/css/\nRUN lessc ${APP_ROOT}/eventol/front/eventol/static/manager/less/eventol.less > ${APP_ROOT}/eventol/manager/static/manager/css/eventol.css\nRUN lessc ${APP_ROOT}/eventol/front/eventol/static/manager/less/eventol-bootstrap.less > ${APP_ROOT}/eventol/manager/static/manager/css/eventol-bootstrap.css\n\n# Copy script for docker-compose wait and start-eventol\nCOPY ./deploy/docker/scripts/wait-for-it.sh ${APP_ROOT}/wait-for-it.sh\nCOPY ./deploy/docker/scripts/start_eventol.sh ${APP_ROOT}/start_eventol.sh\n\n# Compile reactjs code\nRUN cd ${APP_ROOT}/eventol/front && webpack --config webpack.prod.config.js\n\n# Collect statics\nRUN mkdir -p ${APP_ROOT}/eventol/static\nRUN cd ${APP_ROOT}/eventol && python manage.py collectstatic --noinput\n\n# Create media folder\nRUN mkdir -p ${APP_ROOT}/eventol/media\n\n# Clean and chown files\nRUN rm -rf ${APP_ROOT}/eventol/front \\\n  && mkdir -p ${APP_ROOT}/eventol/front\nRUN chmod 0755 ${APP_ROOT}\nRUN chown --changes --recursive ${APP_USER_NAME}:${APP_USER_NAME} ${APP_ROOT}/\n\n# Drop privs\nUSER ${APP_USER_NAME}\n\n# Create log file\nRUN touch /var/log/eventol/eventol.log\n\n# Compile .po files\nRUN sed -i 's@#~ @@g' ${APP_ROOT}/eventol/conf/locale/*/LC_MESSAGES/djangojs.po\nRUN cd ${APP_ROOT}/eventol && python manage.py compilemessages\n\nEXPOSE 8000\n\nVOLUME ${APP_ROOT}/eventol/media\nVOLUME ${APP_ROOT}/eventol/static\n\nCMD [\"tail\", \"-f\", \"/dev/null\"]\n"
+}

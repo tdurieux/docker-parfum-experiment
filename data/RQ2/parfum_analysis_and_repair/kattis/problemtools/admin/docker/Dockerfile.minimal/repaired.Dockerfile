@@ -1,0 +1,38 @@
+# Minimalistic problemtools docker image, containing only problemtools
+# and its dependencies, no languages (except whichever are
+# dependencies of problemtools, e.g. Python 3)
+#
+# Build requirements:
+# - The problemtools .deb package must be available from the host file
+#   system under a file name matching
+#   artifacts/deb/kattis-problemtools*.deb
+#   (Version of that .deb file should match the build argument
+#    PROBLEMTOOLS_VERSION but this is not checked.)
+
+ARG PROBLEMTOOLS_VERSION=develop
+FROM ubuntu:20.04
+
+LABEL maintainer="austrin@kattis.com"
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt update && \
+    apt install --no-install-recommends -y \
+        ghostscript \
+        libgmpxx4ldbl \
+        python-pkg-resources \
+        python3-minimal \
+        python3-yaml \
+        python3-plastex \
+        texlive-fonts-recommended \
+        texlive-lang-cyrillic \
+        texlive-latex-extra \
+        texlive-plain-generic \
+        tidy && rm -rf /var/lib/apt/lists/*;
+
+RUN mkdir -p /usr/local/artifacts
+WORKDIR /usr/local/artifacts
+COPY artifacts/deb .
+RUN dpkg -i kattis-problemtools*.deb
+
+WORKDIR /

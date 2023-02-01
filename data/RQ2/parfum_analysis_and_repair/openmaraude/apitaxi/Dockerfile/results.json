@@ -1,0 +1,108 @@
+{
+  "startTime": 1674250541651,
+  "endTime": 1674250542830,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 20,
+        "lineEnd": 20,
+        "columnStart": 4,
+        "columnEnd": 27
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 88,
+        "lineEnd": 88,
+        "columnStart": 4,
+        "columnEnd": 29
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 103,
+        "lineEnd": 103,
+        "columnStart": 4,
+        "columnEnd": 18
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 7,
+        "lineEnd": 7,
+        "columnStart": 4,
+        "columnEnd": 27
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 8,
+        "lineEnd": 18,
+        "columnStart": 22,
+        "columnEnd": 5
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 75,
+        "lineEnd": 80,
+        "columnStart": 22,
+        "columnEnd": 6
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 7,
+        "lineEnd": 7,
+        "columnStart": 4,
+        "columnEnd": 27
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 7,
+        "lineEnd": 7,
+        "columnStart": 4,
+        "columnEnd": 27
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 8,
+        "lineEnd": 18,
+        "columnStart": 22,
+        "columnEnd": 5
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 75,
+        "lineEnd": 80,
+        "columnStart": 22,
+        "columnEnd": 6
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 7,
+        "lineEnd": 7,
+        "columnStart": 4,
+        "columnEnd": 51
+      }
+    }
+  ],
+  "repairedDockerfile": "##### DEV API IMAGE #####\n\nFROM ubuntu:20.04 AS devenv\n\nENV DEBIAN_FRONTEND=noninteractive\nENV DEBCONF_NONINTERACTIVE_SEEN=true\n\nRUN apt-get install --no-install-recommends -y gpgv && rm -rf /var/lib/apt/lists/*;\nRUN apt-get update && apt-get install --no-install-recommends -y \\\n  git \\\n  less \\\n  libffi-dev \\\n  libgeos-dev \\\n  libpq-dev \\\n  python3-pip \\\n  postgis \\\n  redis-server \\\n  sudo \\\n  vim && rm -rf /var/lib/apt/lists/*;\n\nRUN pip3 install --no-cache-dir virtualenv\n\nWORKDIR /git/APITaxi\n\nADD devenv/entrypoint.sh /\nENTRYPOINT [\"/entrypoint.sh\"]\n\n# Create user and add in sudo\nRUN useradd api\nRUN echo \"api ALL=(ALL) NOPASSWD:ALL\" >> /etc/sudoers\n\nUSER api\nENV VIRTUAL_ENV=/venv\nENV PATH=/venv/bin/:$PATH\nENV HOME=/tmp\n\nENV APITAXI_CONFIG_FILE=/settings.py\nENV FLASK_DEBUG=1\nENV FLASK_APP=APITaxi\nCMD [\"flask\", \"run\", \"--host\", \"0.0.0.0\", \"--port\", \"5000\"]\n\n\n##### DEV WORKER IMAGE #####\n\nFROM devenv AS  worker-devenv\n\nUSER root\nRUN useradd worker\nRUN echo \"worker ALL=(ALL) NOPASSWD:ALL\" >> /etc/sudoers\n\nUSER worker\nENV VIRTUAL_ENV=/venv\nENV PATH=/venv/bin/:$PATH\nENV APITAXI_CONFIG_FILE=/settings.py\n\n# If we use the square bracket CMD style, process doesn't auto-reload on code change.\n# The simple CMD format is used on purpose, until we understand why CMD [...] doesn't work.\n#\n# --debug-force-polling is required for mac M1, see https://github.com/gorakhargosh/watchdog/issues/838\nCMD watchmedo auto-restart --debug-force-polling --interval=2 --directory=/git/ --pattern='*.py' --recursive -- celery --app=APITaxi2.celery_worker.celery worker -E -c 1\n\n\n##### DEV WORKER BEAT IMAGE #####\n\nFROM worker-devenv AS worker-beat-devenv\n\nCMD watchmedo auto-restart --debug-force-polling --interval=2 --directory=/git/ --pattern='*.py' --recursive -- celery --app=APITaxi2.celery_worker.celery beat -s /tmp/celerybeat-schedule --pidfile /tmp/celerybeat.pid\n\n\n##### PROD IMAGE #####\nFROM ubuntu:20.04\n\nENV DEBIAN_FRONTEND=noninteractive\nENV DEBCONF_NONINTERACTIVE_SEEN=true\n\nRUN apt-get update && apt-get install --no-install-recommends -y \\\n  libpq-dev \\\n  python3-pip \\\n  libgeos-dev \\\n  supervisor \\\n  less && rm -rf /var/lib/apt/lists/*;\n\nRUN useradd api\n\n# Required by click with Python3, cf https://click.palletsprojects.com/python3/\nENV LC_ALL=C.UTF-8\n\n# Install admin interface\nRUN pip3 install --no-cache-dir uwsgi flower\n\n# `flask shell` and flask commands like `flask create_user` need FLASK_APP to be set.\nENV FLASK_APP=APITaxi\n\nRUN mkdir -p /var/run/api-taxi\nRUN chown api:api /var/run/api-taxi\n\n# COPY setup.py first before running `pip3 install .` to use Docker cache if\n# dependencies did not change. APITaxi/__init__.py is read by setup.py, so it\n# is also required.\nCOPY setup.py /app/\nCOPY APITaxi/__init__.py /app/APITaxi/\nWORKDIR /app\n\nRUN pip3 install --no-cache-dir .\n\n# Supervisor and services configuration\nCOPY deploy/supervisor/* /etc/supervisor/conf.d/\nCOPY deploy/conf/* /etc/api-taxi/\n\n# Application source code\nCOPY . /app\n\nCMD [\"/usr/bin/supervisord\", \"--nodaemon\"]\n"
+}

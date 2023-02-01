@@ -1,0 +1,43 @@
+FROM {{ .From }} as exporter-builder
+
+{{- $mysqld_exporter := index .Packages "mysqld_exporter" }}
+{{- $template := index .TemplateArgs }}
+
+ENV GOPATH /usr/local
+
+ENV EXPORTER_VERSION {{ $mysqld_exporter.Version }}
+ENV EXPORTER_SHA256 {{ $mysqld_exporter.Sha256 }}
+
+# Installs packages
+RUN set -eux \
+    && apt-get update \
+    && apt-get install --no-install-recommends -y \
+        curl \
+        golang \
+        govendor \
+        tar && rm -rf /var/lib/apt/lists/*;
+
+RUN set -eux \
+    # Downloads binary \
+    && curl -f -L -O "https://github.com/prometheus/mysqld_exporter/releases/download/v${EXPORTER_VERSION}/mysqld_exporter-${EXPORTER_VERSION}.linux-amd64.tar.gz" \
+    # Verifies checksum
+    && echo "${EXPORTER_SHA256}  mysqld_exporter-${EXPORTER_VERSION}.linux-amd64.tar.gz" | sha256sum -c \
+    # Untar binary
+    && tar -xzf "mysqld_exporter-${EXPORTER_VERSION}.linux-amd64.tar.gz" --strip-components=1 \
+    && rm "mysqld_exporter-${EXPORTER_VERSION}.linux-amd64.tar.gz" \
+    && rm NOTICE
+
+RUN set -eux \
+    # Downloads source code \
+    && curl -f -L -o /tmp/mysqld_exporter.tar.gz "https://github.com/prometheus/mysqld_exporter/archive/v${EXPORTER_VERSION}.tar.gz" \
+    && mkdir -p "${GOPATH}/src/github.com/prometheus/mysqld_exporter" \
+    && tar -xzf /tmp/mysqld_exporter.tar.gz --strip-components=1 -C "${GOPATH}/src/github.com/prometheus/mysqld_exporter" && rm /tmp/mysqld_exporter.tar.gz
+
+FROM {{ .From }}
+
+COPY --from=exporter-builder /mysqld_exporter /bin/mysqld_exporter
+COPY --from=exporter-builder /LICENSE /usr/share/mysqld_exporter/LICENSE
+COPY --from=exporter-builder /usr/local/src/github.com/prometheus/mysqld_exporter /usr/local/src/mysqld_exporter
+
+EXPOSE 9104
+ENTRYPOINT ["/bin/mysqld_exporter"]

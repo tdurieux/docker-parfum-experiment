@@ -1,0 +1,17 @@
+FROM registry.ci.openshift.org/ocp/builder:rhel-8-golang-1.18-openshift-4.11 AS builder
+
+WORKDIR /go/src/github.com/openshift/assisted-installer
+ENV GOFLAGS="-mod=vendor"
+
+COPY . .
+
+RUN make installer
+
+FROM registry.ci.openshift.org/ocp/4.11:base
+
+LABEL io.openshift.release.operator=true
+
+COPY --from=builder /go/src/github.com/openshift/assisted-installer/build/installer /usr/bin/installer
+COPY --from=builder /go/src/github.com/openshift/assisted-installer/deploy/assisted-installer-controller /assisted-installer-controller/deploy
+
+ENTRYPOINT ["/usr/bin/installer"]

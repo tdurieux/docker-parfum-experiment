@@ -1,0 +1,7 @@
+# Ignore everything
+**
+
+# Include manager source
+!manager
+
+# Include all python lib code

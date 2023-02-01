@@ -1,0 +1,35 @@
+{
+  "startTime": 1674242520917,
+  "endTime": 1674242521341,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 71,
+        "lineEnd": 71,
+        "columnStart": 4,
+        "columnEnd": 88
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 29,
+        "lineEnd": 29,
+        "columnStart": 7,
+        "columnEnd": 33
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 30,
+        "lineEnd": 31,
+        "columnStart": 7,
+        "columnEnd": 11
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM alpine\n\nRUN apk update \\\n    # only for build miio\n    && apk add --no-cache --virtual .build-deps \\\n    build-base \\\n    python3-dev \\\n    && apk add --no-cache \\\n    apache2 \\\n    curl \\\n    git \\\n    libcap \\\n    libffi-dev \\\n    linux-headers \\\n    openssl-dev \\\n    php7 \\\n    php7-apache2 \\\n    php7-curl \\\n    php7-mysqli \\\n    php7-mbstring \\\n    php7-phar \\\n    php7-json \\\n    php7-zip \\\n    py-bottle \\\n    py-mysqldb \\\n    py-pillow \\\n    py-pip \\\n    python3 \\\n    tzdata \\\n    && pip3 install --no-cache-dir --upgrade pip \\\n    && pip3 install --no-cache-dir python-miio \\\n    pymysql \\\n    && apk del .build-deps \\\n    && rm -f /var/cache/apk/*\n\n\n###########################################################################\n# Copy dustcloud Data\nENV DUSTCLOUD /opt/dustcloud\nENV WWWDATA $DUSTCLOUD/www\nENV GITDIR /gitdata\nRUN git clone --depth 1 https://github.com/dgiese/dustcloud.git $GITDIR && \\\n    cd /gitdata && \\\n    mkdir -p $DUSTCLOUD && \\\n    cp -r $GITDIR/dustcloud/www $DUSTCLOUD && \\\n    cp $GITDIR/devices/xiaomi.vacuum.gen1/mapextractor/extractor.py $DUSTCLOUD/map_extractor.py && \\\n    cp $GITDIR/dustcloud/server.py $DUSTCLOUD/server.py.master && \\\n    cp $GITDIR/dustcloud/build_map.py $DUSTCLOUD/build_map.py && \\\n    cp $GITDIR/dustcloud/config.sample.ini $DUSTCLOUD/config.master.ini && \\\n    echo 'su -c \"python3 $DUSTCLOUD/server.py --enable-live-map\" -s /bin/sh - apache' > $DUSTCLOUD/server.sh && \\\n    chmod +x $DUSTCLOUD/server.sh && \\\n    echo \"<?php phpinfo(); ?>\" > $WWWDATA/public/info.php && \\\n    rm -rf $GITDIR\n\n# Change vars in server.py.master\nRUN sed -i -e \"s/cmd_server.run(host=\\\"localhost\\\", port=cmd_server_port)/cmd_server.run(host=\\\"0.0.0.0\\\", port={{CMDSERVER_PORT}})/g\" $DUSTCLOUD/server.py.master && \\\n    sed -i -e \"s/cloud_server_address = ('ott.io.mi.com', 80)/cloud_server_address = ('{{CLOUD_SERVER_ADDRESS}}', 80)/g\" $DUSTCLOUD/server.py.master\n\n###########################################################################\n# Customization config.master.ini\nRUN sed -i -e \"s/ip = 10.0.0.1/ip = {{CLOUDSERVERIP}}/g\" $DUSTCLOUD/config.master.ini && \\\n    sed -i -e \"s/host = 127.0.0.1/host = {{MYSQLSERVER}}/g\" $DUSTCLOUD/config.master.ini && \\\n    sed -i -e \"s/database = dustcloud/database = {{MYSQLDB}}/g\" $DUSTCLOUD/config.master.ini && \\\n    sed -i -e \"s/username = dustcloud/username = {{MYSQLUSER}}/g\" $DUSTCLOUD/config.master.ini && \\\n    sed -i -e \"s/password = dustcloud/password = {{MYSQLPW}}/g\" $DUSTCLOUD/config.master.ini && \\\n    sed -i -e \"s@cmd.server = http://localhost:1121/@cmd.server = http://{{CMDSERVER}}:{{CMDSERVER_PORT}}/@g\" $DUSTCLOUD/config.master.ini && \\\n    sed -i -e \"s/debug = true/debug = {{DEBUG}}/g\" $DUSTCLOUD/config.master.ini\n\n###########################################################################\n# Install composer\nRUN cd $WWWDATA && \\\n    curl -f https://raw.githubusercontent.com/composer/getcomposer.org/master/web/installer | php -- && \\\n    php composer.phar install\n\n###########################################################################\n# Customization for PHP and Apache\nENV APACHE_PORT 81\n\nRUN mkdir /run/apache2 && \\\n    sed -i -e \"s/Listen 80/Listen ${APACHE_PORT}/g\" /etc/apache2/httpd.conf && \\\n    sed -i -e \"s@/var/www/localhost/htdocs@$WWWDATA/public@g\" /etc/apache2/httpd.conf && \\\n    sed -i -e \"s/error_reporting = E_ALL & ~E_DEPRECATED & ~E_STRICT/error_reporting = E_ALL/g\" /etc/php7/php.ini && \\\n    sed -i -e \"s/display_errors = Off/display_errors = On/g\" /etc/php7/php.ini && \\\n    sed -i -e \"s@;date.timezone =@date.timezone = \\\"{{TZ}}\\\"@g\" /etc/php7/php.ini && \\\n    sed -i -e \"s/;extension=curl/extension=curl/g\" /etc/php7/php.ini\n\n# allow python to bind ports < 1024\nRUN setcap CAP_NET_BIND_SERVICE=+eip /usr/bin/python3.6\n\n\n\n###########################################################################\n# Start script\nRUN mkdir /bootstrap\nADD start.sh /bootstrap/\nRUN chmod +x /bootstrap/start.sh\n\n###########################################################################\n# change permission\nRUN chgrp -R apache $DUSTCLOUD && \\\n    chown -R apache $DUSTCLOUD\n\n\nWORKDIR $DUSTCLOUD\n\nEXPOSE 80/tcp\nEXPOSE 81/tcp\nEXPOSE 8053/udp\nEXPOSE 1121/tcp\n\nCMD [\"/bootstrap/start.sh\"]\n\n# Build-time metadata as defined at http://label-schema.org\nENV VERSION v1.4.0\nARG BUILD_DATE\nARG VCS_REF\nARG BRANCH\nLABEL org.label-schema.build-date=$BUILD_DATE \\\n      org.label-schema.name=\"dustcloud\" \\\n      org.label-schema.description=\"Image for Xiaomi Mi Robot Vacuum dustcloud project (https://github.com/dgiese/dustcloud)\" \\\n      org.label-schema.url=\"https://github.com/JackGruber/docker_dustcloud\" \\\n      org.label-schema.vcs-ref=$VCS_REF \\\n      org.label-schema.vcs-url=\"https://github.com/JackGruber/docker_dustcloud.git\" \\\n      org.label-schema.version=\"$BRANCH $VERSION\" \\\n      org.label-schema.schema-version=\"1.0\"\n"
+}

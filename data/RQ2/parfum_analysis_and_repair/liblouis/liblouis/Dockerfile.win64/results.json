@@ -1,0 +1,53 @@
+{
+  "startTime": 1674250111256,
+  "endTime": 1674250111927,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 24,
+        "lineEnd": 24,
+        "columnStart": 4,
+        "columnEnd": 77
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 32,
+        "lineEnd": 32,
+        "columnStart": 4,
+        "columnEnd": 57
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 40,
+        "lineEnd": 42,
+        "columnStart": 4,
+        "columnEnd": 82
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 5,
+        "lineEnd": 16,
+        "columnStart": 22,
+        "columnEnd": 9
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 55,
+        "lineEnd": 58,
+        "columnStart": 22,
+        "columnEnd": 9
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM debian:latest AS builder\n\nLABEL maintainer=\"Liblouis Maintainers <liblouis-liblouisxml@freelists.org>\"\n\n# Fetch build dependencies\nRUN apt-get update && apt-get install --no-install-recommends -y \\\n    autoconf \\\n    automake \\\n    curl \\\n    libtool \\\n    make \\\n    mingw-w64 \\\n    pkg-config \\\n    texinfo \\\n    wine64 \\\n    zip \\\n    patch \\\n   && rm -rf /var/lib/apt/lists/*\n\nARG LIBYAML_VERSION=0.1.4\nENV HOST=x86_64-w64-mingw32 PREFIX=/usr/build/win64 SRCDIR=/usr/src/\n\n# Build and install libyaml\nWORKDIR ${SRCDIR}\nRUN curl -f -L https://github.com/yaml/libyaml/archive/${LIBYAML_VERSION}.tar.gz | tar zx\nWORKDIR ${SRCDIR}/libyaml-${LIBYAML_VERSION}\n# Unfortunately we need to apply a patch to version 0.1.4 of libyaml. But regretfully we\n# depend on 0.1.4 to have a statically linked version of libyaml. With newer versions of\n# liblouis we haven't managed to produce a self-contained lou_checkyaml.exe so far.\nADD libyaml_mingw.patch .\nRUN patch -p1 <libyaml_mingw.patch\nRUN ./bootstrap && \\\n    ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" --host ${HOST} --prefix=${PREFIX}/libyaml && \\\n    make && \\\n    make install\n\n# Build release artifact, i.e. liblouis zip\nADD . ${SRCDIR}/liblouis\nWORKDIR ${SRCDIR}/liblouis\nRUN ./autogen.sh && \\\n    ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" --host ${HOST} --enable-ucs4 \\\n        --prefix=${PREFIX}/liblouis \\\n        CPPFLAGS=\"-I${PREFIX}/libyaml/include/\" LDFLAGS=\"-L${PREFIX}/libyaml/lib/\" && \\\n    make LDFLAGS=\"-L${PREFIX}/libyaml/lib/ -avoid-version -Xcompiler -static-libgcc\" && \\\n    make check WINE=wine64 || cat tests/test-suite.log && \\\n    make install && \\\n    cd ${PREFIX}/liblouis && \\\n    zip -r ${SRCDIR}/liblouis/liblouis.zip *\n\n# Now we have all we really need namely the cross-compiled liblouis\n# packaged neatly in a zip. But just to be extra sure we test the\n# cross-compiled liblouis in a separate docker image with wine\nFROM debian:latest\n\n# install wine\nRUN apt-get update && apt-get install --no-install-recommends -y \\\n    mingw-w64 \\\n    wine64 \\\n    unzip \\\n   && rm -rf /var/lib/apt/lists/*\n\nENV SRCDIR=/usr/src/liblouis\nWORKDIR ${SRCDIR}\nCOPY --from=builder ${SRCDIR}/liblouis.zip .\nRUN unzip liblouis.zip\n\n# just run any old self-contained yaml test that doesn't need any env setup\nADD tests/yaml/letterDefTest_harness.yaml .\nRUN wine64 bin/lou_checkyaml.exe letterDefTest_harness.yaml\n"
+}

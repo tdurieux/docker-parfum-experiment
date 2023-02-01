@@ -1,0 +1,56 @@
+#
+# Do not use directly, use `make docker-proto` instead
+#
+FROM golang
+MAINTAINER luis@portworx.com
+
+ENV GOPATH=/go
+RUN apt update
+RUN rm -rf /usr/local/go
+RUN apt-get install --no-install-recommends -y unzip && rm -rf /var/lib/apt/lists/*;
+RUN wget -nv https://dl.google.com/go/go1.16.4.linux-amd64.tar.gz && tar -xf go1.16.4.linux-amd64.tar.gz && mv go /usr/local && rm go1.16.4.linux-amd64.tar.gz
+RUN curl -f -sL https://deb.nodesource.com/setup_14.x | bash
+RUN curl -f -LO https://github.com/protocolbuffers/protobuf/releases/download/v3.14.0/protoc-3.14.0-linux-x86_64.zip
+RUN unzip protoc-3.14.0-linux-x86_64.zip -d /usr/local
+RUN apt-get -y --no-install-recommends -qq install \
+	python \
+	python3-pip \
+	rubygems \
+	nodejs \
+	make \
+	git && rm -rf /var/lib/apt/lists/*;
+RUN pip3 install --no-cache-dir virtualenv
+RUN gem install grpc && gem install grpc-tools
+RUN GO111MODULE=off go get -u github.com/golang/protobuf/protoc-gen-go && \
+	go get -u github.com/grpc-ecosystem/grpc-gateway/protoc-gen-swagger && \
+	GO111MODULE=off go get -u github.com/grpc-ecosystem/grpc-gateway/protoc-gen-grpc-gateway
+
+# Lock protoc-gen-go version to v1.1.0.
+#
+# NOTE:
+# The latest uses new Invoke api which needs updates on:
+# $ go get -u google.golang.org/grpc/...
+# $ go get -u golang.org/x/sys/unix/...
+# $ govendor remove google.golang.org/grpc/...
+# $ govendor add +external google.golang.org/grpc/...
+# $ govendor update +external golang.org/x/sys/unix/...
+# Which may apply to project depending on OpenStorage.
+#
+WORKDIR /go/src/github.com/golang/protobuf
+RUN git checkout v1.5.2 && go install github.com/golang/protobuf/protoc-gen-go@v1.5.2
+
+
+# Lock protoc-gen-swagger to v1.4.1
+# The swagger output in the latest version seems to be incorrect
+# See: https://github.com/grpc-ecosystem/grpc-gateway/issues/688
+#
+WORKDIR /go/src/github.com/grpc-ecosystem/grpc-gateway
+RUN git checkout v1.4.1 && \
+    go install github.com/grpc-ecosystem/grpc-gateway/protoc-gen-swagger@v1.16.0 && \
+	go install github.com/grpc-ecosystem/grpc-gateway/protoc-gen-grpc-gateway@v1.16.0
+
+# Install swagger 2.0 to OpenApi 3.0 converter
+RUN npm install -g swagger2openapi && npm cache clean --force;
+# Finally, set working directory to the openstorage project
+RUN mkdir -p /go/src/github.com/libopenstorage/openstorage
+WORKDIR /go/src/github.com/libopenstorage/openstorage

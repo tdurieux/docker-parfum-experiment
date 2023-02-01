@@ -1,0 +1,46 @@
+FROM alpine:3.12.3
+ARG ROOT=/usr/local
+#COPY ovs-musl.patch /
+COPY ovsdb-idlc.in-fix-dict-change-during-iteration.patch /
+RUN apk upgrade --no-cache && apk add --no-cache build-base \
+    libtool pkgconfig autoconf automake cmake file py3-six \
+    linux-headers libuv-dev boost-dev openssl-dev git \
+    libnetfilter_conntrack-dev rapidjson-dev python3-dev bzip2-dev \
+    curl libcurl curl-dev zlib-dev
+ARG make_args=-j4
+RUN git clone https://github.com/noironetworks/3rdparty-debian.git \
+  && git clone https://github.com/jupp0r/prometheus-cpp.git -b v0.12.1 --depth 1 \
+  && cd prometheus-cpp \
+  && git submodule init \
+  && git submodule update \
+  && git apply ../3rdparty-debian/prometheus/prometheus-cpp.patch \
+  && mkdir _build && cd _build \
+  && cmake .. -DBUILD_SHARED_LIBS=ON -DENABLE_PUSH=OFF \
+  && make $make_args && make install && make clean \
+  && mv /usr/local/lib64/libprometheus-cpp-* /usr/local/lib/ \
+  && git clone -b v1.31.0 https://github.com/grpc/grpc --config submodule.third_party/re2.url=https://github.com/google/re2.git --config submodule.third_party/re2.active=true \
+  && cd grpc \
+  && git submodule update --init \
+  && mkdir -p cmake/build \
+  && cd cmake/build \
+  && cmake -DgRPC_INSTALL=ON -DgRPC_BUILD_TESTS=OFF -DBUILD_SHARED_LIBS=ON -DCMAKE_INSTALL_PREFIX=/usr/local \
+           -DgRPC_BUILD_GRPC_PYTHON_PLUGIN=OFF -DgRPC_BUILD_CSHARP_EXT=OFF -DgRPC_BUILD_GRPC_CSHARP_PLUGIN=OFF \
+           -DgRPC_BUILD_GRPC_NODE_PLUGIN=OFF -DgRPC_BUILD_GRPC_OBJECTIVE_C_PLUGIN=OFF -DgRPC_BUILD_GRPC_PHP_PLUGIN=OFF \
+           -DgRPC_BUILD_GRPC_PYTHON_PLUGIN=OFF -DgRPC_BUILD_GRPC_RUBY_PLUGIN=OFF ../.. \
+  && make $make_args && make install \
+  && mv /usr/local/lib64/pkgconfig/proto* /usr/local/lib/pkgconfig/ \
+  && mv /usr/local/lib64/libproto* /usr/local/lib/ \
+  && mv /usr/local/lib64/libre2* /usr/local/lib/
+ENV CFLAGS='-fPIE -D_FORTIFY_SOURCE=2  -g -O2 -fstack-protector --param=ssp-buffer-size=4 -Wformat -Werror=format-security'
+ENV CXXFLAGS='-fPIE -D_FORTIFY_SOURCE=2  -g -O2 -fstack-protector --param=ssp-buffer-size=4 -Wformat -Werror=format-security'
+ENV LDFLAGS='-pie -Wl,-z,now -Wl,-z,relro'
+RUN git clone https://github.com/openvswitch/ovs.git --branch v2.12.0 --depth 1 \
+  && cd ovs && patch -p1 < /ovsdb-idlc.in-fix-dict-change-during-iteration.patch \
+  && ./boot.sh && ./configure --build="$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)" --disable-ssl --disable-libcapng --enable-shared \
+  && make $make_args && make install \
+  && mkdir -p $ROOT/include/openvswitch/openvswitch \
+  && mv $ROOT/include/openvswitch/*.h $ROOT/include/openvswitch/openvswitch \
+  && mv $ROOT/include/openflow $ROOT/include/openvswitch \
+  && cp include/*.h "$ROOT/include/openvswitch/" \
+  && find lib -name "*.h" -exec cp --parents {} "$ROOT/include/openvswitch/" \; \
+  && make clean

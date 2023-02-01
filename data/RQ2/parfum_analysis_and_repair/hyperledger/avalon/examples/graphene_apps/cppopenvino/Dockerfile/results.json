@@ -1,0 +1,99 @@
+{
+  "startTime": 1674252885009,
+  "endTime": 1674252887062,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 42,
+        "lineEnd": 50,
+        "columnStart": 4,
+        "columnEnd": 20
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 145,
+        "lineEnd": 145,
+        "columnStart": 4,
+        "columnEnd": 59
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 180,
+        "lineEnd": 180,
+        "columnStart": 4,
+        "columnEnd": 55
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 145,
+        "lineEnd": 145,
+        "columnStart": 4,
+        "columnEnd": 59
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 180,
+        "lineEnd": 180,
+        "columnStart": 4,
+        "columnEnd": 55
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 42,
+        "lineEnd": 50,
+        "columnStart": 4,
+        "columnEnd": 20
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 145,
+        "lineEnd": 145,
+        "columnStart": 4,
+        "columnEnd": 59
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 180,
+        "lineEnd": 180,
+        "columnStart": 4,
+        "columnEnd": 55
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 145,
+        "lineEnd": 145,
+        "columnStart": 4,
+        "columnEnd": 83
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 180,
+        "lineEnd": 180,
+        "columnStart": 4,
+        "columnEnd": 79
+      }
+    }
+  ],
+  "repairedDockerfile": "# Copyright 2020 Intel Corporation\n#\n# Licensed under the Apache License, Version 2.0 (the \"License\");\n# you may not use this file except in compliance with the License.\n# You may obtain a copy of the License at\n#\n#     http://www.apache.org/licenses/LICENSE-2.0\n#\n# Unless required by applicable law or agreed to in writing, software\n# distributed under the License is distributed on an \"AS IS\" BASIS,\n# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.\n# See the License for the specific language governing permissions and\n# limitations under the License.\n\n\n# Build arguments used for various Docker build stages\nARG MODEL_DIR=model\n# corresponds to tag \"2019_R3\"\nARG MODEL_COMMIT=acf297c73db8cb3f68791ae1fad4a7cc4a6039e5\nARG MODEL_NAME=VGG_VOC0712Plus_SSD_300x300_ft_iter_160000\n\nARG OPENVINO_DIR=openvino\n# corresponds to tag \"2019_R2\"\nARG OPENVINO_COMMIT=ba6e22b1b5ee4cbefcc30e8d9493cddb0bb3dfdf\nARG OPENVINO_BUILD=Release\n\n\n# Stage 1 - Build base image with necessary packages\nFROM ubuntu:bionic as base_image\n\n# Ignore timezone prompt in apt\nENV DEBIAN_FRONTEND=noninteractive\n\nARG MODEL_DIR\nARG MODEL_COMMIT\nARG MODEL_NAME\nARG OPENVINO_DIR\nARG OPENVINO_COMMIT\nARG OPENVINO_BUILD\n\n# Add necessary packages\nRUN apt-get update \\\n && apt-get install --no-install-recommends -y -q \\\n    ca-certificates \\\n    pkg-config \\\n    python3-dev \\\n    python3-pip \\\n    git \\\n    cmake \\\n    make \\\n    libusb-1.0-0-dev \\\n && apt-get clean \\\n && python3 -m pip install pyyaml numpy networkx==2.3 test-generator defusedxml protobuf requests && rm -rf /var/lib/apt/lists/*;\n\n# Make Python3 default\nRUN ln -sf /usr/bin/python3 /usr/bin/python\n\n\n# Stage 2 - git clone openvino\nFROM base_image as openvino_clone\n\nARG MODEL_DIR\nARG MODEL_COMMIT\nARG MODEL_NAME\nARG OPENVINO_DIR\nARG OPENVINO_COMMIT\nARG OPENVINO_BUILD\n\nWORKDIR /home/openvino\n\nRUN git clone https://github.com/opencv/dldt.git $OPENVINO_DIR \\\n    && cd $OPENVINO_DIR && git checkout $OPENVINO_COMMIT\n\nRUN cd $OPENVINO_DIR/inference-engine && git submodule init \\\n    && git submodule update --recursive\n\n\n# Stage 3 - Build openvino\nFROM openvino_clone as openvino_build\n\nARG MODEL_DIR\nARG MODEL_COMMIT\nARG MODEL_NAME\nARG OPENVINO_DIR\nARG OPENVINO_COMMIT\nARG OPENVINO_BUILD\n\nWORKDIR /home/openvino\n\nRUN cd $OPENVINO_DIR/inference-engine && mkdir -p build \\\n    && cd build && cmake -DCMAKE_BUILD_TYPE=$OPENVINO_BUILD .. \\ \n    && make -j4\n\n\n# Stage 4 - git clone open model zoo\nFROM openvino_build as openmodel_clone\n\nARG MODEL_DIR\nARG MODEL_COMMIT\nARG MODEL_NAME\nARG OPENVINO_DIR\nARG OPENVINO_COMMIT\nARG OPENVINO_BUILD\n\nWORKDIR /home/openvino\n\nRUN git clone https://github.com/openvinotoolkit/open_model_zoo.git $MODEL_DIR \\\n    && cd $MODEL_DIR && git checkout $MODEL_COMMIT\n\nRUN  cd $MODEL_DIR/tools/downloader && python3 ./downloader.py \\\n     --name ssd300 -o /home/openvino/$MODEL_DIR\n\n\n# Stage 5 - Build model file\nFROM openmodel_clone as build_model\n\nARG MODEL_DIR\nARG MODEL_COMMIT\nARG MODEL_NAME\nARG OPENVINO_DIR\nARG OPENVINO_COMMIT\nARG OPENVINO_BUILD\n\nWORKDIR /home/openvino\n\n# Convert the model to the OpenVino Intermediate Representation (IR)\nRUN  cd $OPENVINO_DIR/model-optimizer && python3 ./mo.py \\\n    --input_model  /home/openvino/$MODEL_DIR/public/ssd300/models/VGGNet/VOC0712Plus/SSD_300x300_ft/$MODEL_NAME.caffemodel \\\n    --input_proto /home/openvino/$MODEL_DIR/public/ssd300/models/VGGNet/VOC0712Plus/SSD_300x300_ft/deploy.prototxt \\\n    --output_dir /home/openvino/$MODEL_DIR\n\n\n# Stage 6 - Build final image\nFROM build_model as final_image\n\nARG MODEL_DIR\nARG MODEL_COMMIT\nARG MODEL_NAME\nARG OPENVINO_DIR\nARG OPENVINO_COMMIT\nARG OPENVINO_BUILD\n\nWORKDIR /home/openvino\n\n# Install application dependencies - zmq, json libraries.\nRUN apt-get install --no-install-recommends -y -q libzmq3-dev nlohmann-json-dev git && rm -rf /var/lib/apt/lists/*;\n\n# Clone C++ toml git repo.\nRUN mkdir -p toml \\\n  && cd toml \\\n  && git clone https://github.com/ToruNiina/toml11 -b v3.5.0\n\n# Below environment variables will be used by application cmake file\n# to find openvino and opencv package and libraries.\nENV InferenceEngine_DIR=\"/home/openvino/openvino/inference-engine/build/\"\nENV OpenCV_DIR=\"/home/openvino/openvino/inference-engine/temp/opencv_4.1.1_ubuntu18/cmake/\"\nENV OPENVINO_LIB=\"/home/openvino/openvino/inference-engine/bin/intel64/Release/lib/\"\n\nCOPY ./*.cpp ./\nCOPY ./*.h ./\nCOPY ./CMakeLists.txt ./\n\nRUN mkdir -p build \\\n  && cd build \\\n  && cmake .. \\\n  && make\n\n# Docker image optimization.\n# Install only required files/binaries/libraries in final stage.\nFROM base_image as openvino_bin_image\n\nWORKDIR /home/openvino\n\nCOPY --from=final_image /home/openvino/model /home/openvino/model\nCOPY --from=final_image /home/openvino/openvino/inference-engine/bin/intel64/Release/lib /home/openvino/lib\nCOPY --from=final_image /home/openvino/openvino/inference-engine/temp/tbb/lib /home/openvino/lib\nCOPY --from=final_image /home/openvino/openvino/inference-engine/temp/opencv_4.1.1_ubuntu18/lib /home/openvino/lib\n\nFROM openvino_bin_image as final_bin_image\n\nRUN apt-get install --no-install-recommends -y -q libzmq3-dev nlohmann-json-dev \\\n    && python3 -m pip install pyzmq toml && rm -rf /var/lib/apt/lists/*;\n\nCOPY ./images /home/openvino/images\nCOPY ./config.toml /home/openvino/config.toml\nCOPY ./test/*.py /home/openvino/test/\nCOPY ./test/test_config.toml /home/openvino/test_config.toml\n\n# Copy openvinowl binary\nCOPY --from=final_image /home/openvino/build/openvinowl /home/openvino/bin/openvinowl\n\nWORKDIR /home/openvino\n\nENV PATH=$PATH:./bin:.\nENV LD_LIBRARY_PATH=$LD_LIBRARY_PATH:./lib:.\n\nCMD [\"openvinowl\"]\n"
+}

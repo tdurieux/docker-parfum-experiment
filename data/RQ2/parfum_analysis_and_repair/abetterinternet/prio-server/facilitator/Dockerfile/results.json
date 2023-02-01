@@ -1,0 +1,26 @@
+{
+  "startTime": 1674250617758,
+  "endTime": 1674250618507,
+  "originalSmells": [
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 2,
+        "lineEnd": 2,
+        "columnStart": 4,
+        "columnEnd": 20
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 40,
+        "lineEnd": 40,
+        "columnStart": 4,
+        "columnEnd": 18
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM rust:1.62.0-alpine as builder\n\nRUN apk add --no-cache libc-dev && apk update\n\n# Attempt to install a nonexistent package. This triggers\n# updating the crates.io index separately from building the\n# dependencies, so if dependencies change we don't have to\n# re-download the whole index.\nRUN cargo install _update_crates_io_failure_is_expected_ ; true\n\nWORKDIR /usr/src/prio-server\n\n# First, copy just the Cargo.toml and a dummy main, then build them.\n# This primes a layer that contains the built dependencies.\nCOPY facilitator/Cargo.lock facilitator/Cargo.lock\nCOPY facilitator/Cargo.toml facilitator/Cargo.toml\nRUN sed -i /build.rs/d facilitator/Cargo.toml\nRUN mkdir -p facilitator/src\nRUN echo \"fn main() {println!(\\\"if you see this, the build broke\\\")}\" > facilitator/src/main.rs\n# This cargo build command must match the one below, or the build cache will not be reused.\nRUN cargo build --manifest-path ./facilitator/Cargo.toml --release\n\n# Clean up and copy the real source.\n# After this we have a layer that should be cacheable so long as the dependencies don't change.\nRUN rm -f facilitator/target/*/release/deps/facilitator* facilitator/src/main.rs\n\n# We enumerate these paths so that `docker build` fails in an obvious way if run\n# from the wrong place.\nCOPY ./avro-schema ./avro-schema\nCOPY ./facilitator ./facilitator\n\nARG BUILD_INFO=unspecified\n\n# This cargo build command must match the one above, or the build cache will not be reused.\nRUN cargo build --manifest-path ./facilitator/Cargo.toml --release\n\n# Build a minimal container from Alpine containing only the stripped binary and\n# no intermediate build artifacts\nFROM alpine:3.16.0\n\nRUN apk add --no-cache libgcc && apk update\n\n# Build a minimal container containing only the binary, the one .so it needs, and root certs.\nCOPY --from=builder /usr/src/prio-server/facilitator/target/release/facilitator /facilitator\nENTRYPOINT [\"/facilitator\"]\n"
+}

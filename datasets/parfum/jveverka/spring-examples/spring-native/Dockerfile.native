@@ -1,0 +1,6 @@
+ARG ARCH="amd64"
+FROM ${ARCH}/ubuntu:20.04
+
+COPY build/native/nativeCompile/spring-native /spring-native
+RUN chmod 755 /spring-native
+ENTRYPOINT [ "/spring-native" ]

@@ -1,0 +1,32 @@
+ARG UBUNTU_IMAGE
+ARG LIBC_DATABASE_IMAGE
+
+FROM $LIBC_DATABASE_IMAGE as libc-database-builder
+
+FROM $UBUNTU_IMAGE
+ENV DEBIAN_FRONTEND=noninteractive
+RUN dpkg --add-architecture i386
+RUN apt-get update && apt-get install --no-install-recommends -y \
+    build-essential \
+    git \
+    procps \
+    python3 \
+    python3-dev \
+    python3-pip \
+    python3-venv \
+    libssl-dev \
+    libffi-dev \
+    libc6:i386 \
+    && rm -rf /var/lib/apt/lists/*
+RUN mkdir -p /home/tests
+WORKDIR /home/tests
+COPY --from=libc-database-builder /libc-database /root/.libc-database
+COPY ./ci/requirements.txt ./ci/tests/versions.sh ./ci/tests/lint.sh ./ci/tests/typecheck.sh ./ci/tests/test.sh ./
+RUN python3 -m venv /home/venv
+# make docker cache dependencies
+RUN . /home/venv/bin/activate && \
+    pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir --upgrade black mypy pytest pytest-rerunfailures coverage pwntools && \
+    pip install --no-cache-dir -r requirements.txt
+COPY . ./
+RUN . /home/venv/bin/activate && pip install --no-cache-dir .

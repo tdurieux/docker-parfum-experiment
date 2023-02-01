@@ -1,0 +1,1 @@
+# Build an appveyor Linux container image with Sming tools installed

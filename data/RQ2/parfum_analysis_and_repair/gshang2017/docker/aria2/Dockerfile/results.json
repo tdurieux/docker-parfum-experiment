@@ -1,0 +1,35 @@
+{
+  "startTime": 1674220087105,
+  "endTime": 1674220088195,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 63,
+        "lineEnd": 63,
+        "columnStart": 3,
+        "columnEnd": 58
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 14,
+        "lineEnd": 14,
+        "columnStart": 3,
+        "columnEnd": 93
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 8,
+        "lineEnd": 8,
+        "columnStart": 3,
+        "columnEnd": 65
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "#compiling aria2c\nFROM alpine:3.15 as compilingaria2c\n\nARG ARIA2_VER=1.36.0\n\nRUN apk add --no-cache build-base ca-certificates gnutls-dev expat-dev sqlite-dev c-ares-dev cppunit-dev zlib-dev libssh2-dev \\\n&& mkdir /aria2build \\\n&& wget -P /aria2build https://github.com/aria2/aria2/releases/download/release-${ARIA2_VER}/aria2-${ARIA2_VER}.tar.gz \\\n&& tar -zxvf /aria2build/aria2-${ARIA2_VER}.tar.gz -C /aria2build \\\n&& cd /aria2build/aria2-${ARIA2_VER} \\\n&& sed -i 's/\"1\", 1, 16/\"32\", 1, 128/g' src/OptionHandlerFactory.cc \\\n&& sed -i 's/\"20M\", 1_m, 1_g/\"2M\", 1_k, 1_g/g' src/OptionHandlerFactory.cc \\\n&& sed -i 's/\"1M\", 1_m, 1_g/\"1M\", 1_k, 1_g/g' src/OptionHandlerFactory.cc \\\n&& if [ \"$(uname -m)\" = \"x86_64\" ];then host=x86_64-alpine-linux-musl;elif [ \"$(uname -m)\" = \"aarch64\" ];then host=aarch64-alpine-linux-musl;elif [ \"$(uname -m)\" = \"armv7l\" ];then host=armv7-alpine-linux-musleabihf; fi \\\n&& ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" --disable-nls --with-ca-bundle=/etc/ssl/certs/ca-certificates.crt --host=$host \\\n&& make -j2 install-strip \\\n&& mkdir /aria2 \\\n&& cp --parents /usr/local/bin/aria2c /aria2 && rm /aria2build/aria2-${ARIA2_VER}.tar.gz\n\n# docker aria2\nFROM alpine:3.15\n\nARG AriaNg_VER=1.2.4\nARG S6_VER=2.2.0.3\n\nENV UID=1000\nENV GID=1000\nENV UMASK=022\nENV TZ=Asia/Shanghai\nENV ARIA2_RPC_SECRET=\nENV ARIA2_RPC_LISTEN_PORT=6800\nENV ARIA2_LISTEN_PORT=6881\nENV ARIA2_TRACKERS_UPDATE_AUTO=true\nENV ARIA2_TRACKERS_LIST_URL=https://raw.githubusercontent.com/ngosang/trackerslist/master/trackers_all.txt\nENV ARIA2_CONF_LANGUAGE=zh_Hans\nENV ARIANG_RPC_SECRET_AUTO=true\nENV ARIANG_RPC_LISTEN_PORT_AUTO=true\n\nCOPY root /\nCOPY --from=compilingaria2c /aria2 /\n\n# install bash darkhttpd tzdata s6 overlay AriaNg aria2 shadow\nRUN apk add --no-cache bash curl ca-certificates darkhttpd tzdata shadow c-ares expat gmp gnutls sqlite-libs libstdc++ libssh2 \\\n&& if [ \"$(uname -m)\" = \"x86_64\" ];then s6_arch=amd64;elif [ \"$(uname -m)\" = \"aarch64\" ];then s6_arch=aarch64;elif [ \"$(uname -m)\" = \"armv7l\" ];then s6_arch=arm; fi \\\n&& wget --no-check-certificate https://github.com/just-containers/s6-overlay/releases/download/v${S6_VER}/s6-overlay-${s6_arch}.tar.gz \\\n&& tar -xvzf s6-overlay-${s6_arch}.tar.gz \\\n#create aria2 user\n&& useradd -u 1000 -U -d /config -s /bin/false aria2 \\\n&& usermod -G users aria2 \\\n# install AriaNg\n&& wget https://github.com/mayswind/AriaNg/releases/download/${AriaNg_VER}/AriaNg-${AriaNg_VER}.zip \\\n&& mkdir -p /usr/local/aria2/AriaNg/js/defaultsjs \\\n&& unzip -d /usr/local/aria2/AriaNg AriaNg-${AriaNg_VER}.zip \\\n#modify js\n#max-connection-per-server\n&& sed -i 's/max:16/max:128/g' /usr/local/aria2/AriaNg/js/aria-ng* \\\n#min-split-size\n&& sed -i 's/defaultValue:\"20M\"/defaultValue:\"2M\"/g' /usr/local/aria2/AriaNg/js/aria-ng* \\\n#piece-length\n&& sed -i 's/'\\(M\\|m\\)'/'\\(K\\|k\\|M\\|m\\)'/g' /usr/local/aria2/AriaNg/js/aria-ng* \\\n#cp aria-ng* to defaultsjs\n&& cp /usr/local/aria2/AriaNg/js/aria-ng* /usr/local/aria2/AriaNg/js/defaultsjs \\\n#conf trackers \\\n&& curl -f -so /tmp/trackers_all.txt $ARIA2_TRACKERS_LIST_URL \\\n&& Newtrackers=\"bt-tracker=`awk NF /tmp/trackers_all.txt|sed \":a;N;s/\\n/,/g;ta\"`\" \\\n&& sed -i 's@bt-tracker=@'\"$Newtrackers\"'@g' /usr/local/aria2/defaults/aria2.conf \\\n#\n&& rm s6-overlay-${s6_arch}.tar.gz AriaNg-${AriaNg_VER}.zip \\\n&& rm -rf /var/cache/apk/* \\\n#\n&& chmod a+x /usr/local/bin/aria2c \\\n&& chmod a+x /usr/local/aria2/updatetrackers.sh\n\nVOLUME /Downloads /config\nEXPOSE 6800 8080 6881 6881/udp\nENTRYPOINT [ \"/init\" ]\n"
+}

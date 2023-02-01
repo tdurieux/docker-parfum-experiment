@@ -1,0 +1,1 @@
+# A base Docker image for Meteor applications. https://hub.docker.com/r/jshimko/meteor-launchpad/

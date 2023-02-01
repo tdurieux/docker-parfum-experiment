@@ -1,0 +1,46 @@
+FROM ubuntu:18.04
+
+RUN apt-get update -qq
+RUN apt-get install --no-install-recommends -y software-properties-common && rm -rf /var/lib/apt/lists/*;
+RUN add-apt-repository ppa:apt-fast/stable
+RUN apt-get update -qq
+RUN apt-get -y --no-install-recommends install apt-fast && rm -rf /var/lib/apt/lists/*;
+
+RUN apt-fast update -qq && \
+    apt-fast install -y \
+    python3 \
+    python3-pip
+
+RUN groupadd user && useradd --create-home --home-dir /home/user -g user user
+WORKDIR /home/user
+
+# Source: https://github.com/thisbejim/Pyrebase/issues/87#issuecomment-354452082
+# For whatever reason this worked and 'en_US.UTF-8' did not.
+ENV LANG C.UTF-8
+
+RUN pip3 install --no-cache-dir --upgrade pip
+
+COPY config config
+COPY .boto .boto
+
+COPY foreman/requirements.txt .
+
+# The base image does not have Python 2.X on it at all, so all calls
+# to pip or python are by default calls to pip3 or python3
+RUN pip3 install --no-cache-dir -r requirements.txt
+
+COPY common/dist/data-refinery-common-* common/
+
+# Get the latest version from the dist directory.
+RUN pip3 install --no-cache-dir \
+    common/$(ls common -1 | sort --version-sort | tail -1)
+
+COPY foreman/ .
+
+ARG SYSTEM_VERSION
+
+ENV SYSTEM_VERSION $SYSTEM_VERSION
+
+USER user
+
+ENTRYPOINT []

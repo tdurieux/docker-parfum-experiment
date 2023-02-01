@@ -1,0 +1,35 @@
+{
+  "startTime": 1674240035468,
+  "endTime": 1674240035989,
+  "originalSmells": [
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 85,
+        "lineEnd": 85,
+        "columnStart": 7,
+        "columnEnd": 39
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 88,
+        "lineEnd": 88,
+        "columnStart": 7,
+        "columnEnd": 26
+      }
+    },
+    {
+      "rule": "gpgUseBatchFlag",
+      "position": {
+        "lineStart": 76,
+        "lineEnd": 76,
+        "columnStart": 8,
+        "columnEnd": 88
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM alpine:3.8 as libzauth-builder\n\n# Compile libzauth\nCOPY libs/libzauth /src/libzauth\nRUN cd /src/libzauth/libzauth-c \\\n    && apk add --no-cache make bash cargo libsodium-dev \\\n    && make install\n\n# Nginz container\nFROM alpine:3.8\n\nENV NGINX_VERSION 1.14.2\n\n# Install libzauth\nCOPY --from=libzauth-builder /usr/local/include/zauth.h /usr/local/include/zauth.h\nCOPY --from=libzauth-builder /usr/local/lib/libzauth.so /usr/local/lib/libzauth.so\nCOPY --from=libzauth-builder /usr/local/lib/pkgconfig/libzauth.pc /usr/local/lib/pkgconfig/libzauth.pc\n\nCOPY services/nginz/third_party /src/third_party\n\nRUN apk add --no-cache inotify-tools dumb-init bash curl && \\\n    # Install nginz (nginx including the zauth module)\n    # (taken mostly from https://github.com/nginxinc/docker-nginx/blob/master/stable/alpine/Dockerfile)\n    export GPG_KEYS=B0F4253373F8F6F510D42178520A9993A1C052F8 \\\n    && CONFIG=\"\\\n        --prefix=/etc/nginx \\\n        --sbin-path=/usr/sbin/nginx \\\n        --modules-path=/usr/lib/nginx/modules \\\n        --conf-path=/etc/nginx/nginx.conf \\\n        --error-log-path=/var/log/nginx/error.log \\\n        --http-log-path=/var/log/nginx/access.log \\\n        --pid-path=/var/run/nginx.pid \\\n        --lock-path=/var/run/nginx.lock \\\n        --http-client-body-temp-path=/var/cache/nginx/client_temp \\\n        --http-proxy-temp-path=/var/cache/nginx/proxy_temp \\\n        --http-fastcgi-temp-path=/var/cache/nginx/fastcgi_temp \\\n        --http-uwsgi-temp-path=/var/cache/nginx/uwsgi_temp \\\n        --http-scgi-temp-path=/var/cache/nginx/scgi_temp \\\n        --user=nginx \\\n        --group=nginx \\\n        --with-http_ssl_module \\\n        --with-http_stub_status_module \\\n        --with-http_realip_module \\\n        --with-http_gunzip_module \\\n        --add-module=/src/third_party/nginx-zauth-module \\\n        --add-module=/src/third_party/headers-more-nginx-module \\\n        --add-module=/src/third_party/nginx-module-vts \\\n    \" \\\n    && addgroup -g 666 -S nginx \\\n    && adduser -u 666 -D -S -h /var/cache/nginx -s /sbin/nologin -G nginx nginx \\\n    && apk add --no-cache --virtual .build-deps \\\n        libsodium-dev \\\n        llvm-libunwind-dev \\\n        gcc \\\n        libc-dev \\\n        make \\\n        openssl-dev \\\n        pcre-dev \\\n        zlib-dev \\\n        linux-headers \\\n        curl \\\n        gnupg1 \\\n        libxslt-dev \\\n        gd-dev \\\n        geoip-dev \\\n    && curl -fSL https://nginx.org/download/nginx-$NGINX_VERSION.tar.gz -o nginx.tar.gz \\\n    && curl -fSL https://nginx.org/download/nginx-$NGINX_VERSION.tar.gz.asc  -o nginx.tar.gz.asc \\\n    && found=''; \\\n    for server in \\\n        ha.pool.sks-keyservers.net \\\n        hkp://keyserver.ubuntu.com:80 \\\n        hkp://p80.pool.sks-keyservers.net:80 \\\n        pgp.mit.edu; \\\n    do \\\n        echo \"Fetching GPG key $GPG_KEYS from $server\"; \\\n        gpg --batch --keyserver \"$server\" --keyserver-options timeout=10 --recv-keys \"$GPG_KEYS\" && found=yes && break; \\\n    done; \\\n    test -z \"$found\" && echo >&2 \"error: failed to fetch GPG key $GPG_KEYS\" && exit 1; \\\n    gpg --batch --verify nginx.tar.gz.asc nginx.tar.gz \\\n    && rm -rf \"$GNUPGHOME\" nginx.tar.gz.asc \\\n    && mkdir -p /usr/src \\\n    && tar -zxC /usr/src -f nginx.tar.gz \\\n    && rm nginx.tar.gz \\\n    && cd /usr/src/nginx-$NGINX_VERSION \\\n    && ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" $CONFIG --with-debug \\\n    && make -j$(getconf _NPROCESSORS_ONLN) \\\n    && mv objs/nginx objs/nginx-debug \\\n    && ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" $CONFIG \\\n    && make -j$(getconf _NPROCESSORS_ONLN) \\\n    && make install \\\n    && rm -rf /etc/nginx/html/ \\\n    && mkdir /etc/nginx/conf.d/ \\\n    && mkdir -p /usr/share/nginx/html/ \\\n    && install -m644 html/index.html /usr/share/nginx/html/ \\\n    && install -m644 html/50x.html /usr/share/nginx/html/ \\\n    && install -m755 objs/nginx-debug /usr/sbin/nginx-debug \\\n    && ln -s ../../usr/lib/nginx/modules /etc/nginx/modules \\\n    && strip /usr/sbin/nginx* \\\n    && rm -rf /usr/src/nginx-$NGINX_VERSION \\\n\n    # Bring in gettext so we can get `envsubst`, then throw\n    # the rest away. To do this, we need to install `gettext`\n    # then move `envsubst` out of the way so `gettext` can\n    # be deleted completely, then move `envsubst` back.\n    && apk add --no-cache --virtual .gettext gettext \\\n    && mv /usr/bin/envsubst /tmp/ \\\n\n    && runDepsTmp=\"$( \\\n        scanelf --needed --nobanner --format '%n#p' /usr/sbin/nginx /usr/lib/nginx/modules/*.so /tmp/envsubst \\\n            | tr ',' '\\n' \\\n            | sort -u \\\n            | awk 'system(\"[ -e /usr/local/lib/\" $1 \" ]\") == 0 { next } { print \"so:\" $1 }' \\\n    )\" \\\n\n    # exclude libzauth from runDeps\n    && runDeps=${runDepsTmp/so:libzauth.so/''} \\\n    && apk add --no-cache --virtual .nginx-rundeps $runDeps \\\n    && apk del .build-deps \\\n    && apk del .gettext \\\n    && mv /tmp/envsubst /usr/local/bin/ \\\n\n    # Bring in tzdata so users could set the timezones through the environment\n    # variables\n    && apk add --no-cache tzdata \\\n\n    # add libzauth runtime dependencies back in\n    && apk add --no-cache libsodium llvm-libunwind \\\n\n    # forward request and error logs to docker log collector\n    && ln -sf /dev/stdout /var/log/nginx/access.log \\\n    && ln -sf /dev/stderr /var/log/nginx/error.log \\\n    && apk add --no-cache libgcc\n\nCOPY services/nginz/nginz_reload.sh /usr/bin/nginz_reload.sh\n\nENTRYPOINT [\"/usr/bin/dumb-init\", \"--\"]\nCMD [\"/usr/bin/nginz_reload.sh\", \"-g\", \"daemon off;\", \"-c\", \"/etc/wire/nginz/conf/nginx.conf\"]\n"
+}

@@ -1,0 +1,2 @@
+# display trapped signal
+#

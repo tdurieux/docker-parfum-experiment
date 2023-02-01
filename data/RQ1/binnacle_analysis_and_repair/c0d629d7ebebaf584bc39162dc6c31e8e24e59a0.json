@@ -1,0 +1,54 @@
+{
+  "startTime": 1674234756262,
+  "endTime": 1674234756671,
+  "originalSmells": [
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 28,
+        "lineEnd": 28,
+        "columnStart": 1,
+        "columnEnd": 29
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 29,
+        "lineEnd": 29,
+        "columnStart": 1,
+        "columnEnd": 110
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 37,
+        "lineEnd": 38,
+        "columnStart": 4,
+        "columnEnd": 62
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 39,
+        "lineEnd": 39,
+        "columnStart": 1,
+        "columnEnd": 168
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 29,
+        "lineEnd": 29,
+        "columnStart": 1,
+        "columnEnd": 110
+      }
+    }
+  ],
+  "repairedDockerfile": "#/******************************************************************************\n# * docker-icinga2-demo                                                            *\n# * Dockerfile for Icinga 2 and Icinga Web 2                                   *\n# * Copyright (C) 2015-2017 Icinga Development Team (https://www.icinga.com)   *\n# *                                                                            *\n# * This program is free software; you can redistribute it and/or              *\n# * modify it under the terms of the GNU General Public License                *\n# * as published by the Free Software Foundation; either version 2             *\n# * of the License, or (at your option) any later version.                     *\n# *                                                                            *\n# * This program is distributed in the hope that it will be useful,            *\n# * but WITHOUT ANY WARRANTY; without even the implied warranty of             *\n# * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the              *\n# * GNU General Public License for more details.                               *\n# *                                                                            *\n# * You should have received a copy of the GNU General Public License          *\n# * along with this program; if not, write to the Free Software Foundation     *\n# * Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA.             *\n# ******************************************************************************/\n\nFROM centos:centos7\n\nMAINTAINER Icinga Development Team\n\n# for systemd\nENV container docker\n\nRUN yum -y update; yum clean all; \\\n yum -y install epel-release; rm -rf /var/cache/yum yum clean all; \\\n yum -y install http://packages.icinga.com/epel/7/release/noarch/icinga-rpm-release-7-1.el7.centos.noarch.rpm; yum clean all\n\n# docs are not installed by default https://github.com/docker/docker/issues/10650 https://registry.hub.docker.com/_/centos/\n# official docs are wrong, go for http://superuser.com/questions/784451/centos-on-docker-how-to-install-doc-files\n# we'll need that for mysql schema import for icingaweb2\nRUN [ -f /etc/rpm/macros.imgcreate ] && sed -i '/excludedocs/d' /etc/rpm/macros.imgcreate || exit 0\nRUN [ -f /etc/yum.conf ] && sed -i '/nodocs/d' /etc/yum.conf || exit 0\n\nRUN yum -y install vim hostname bind-utils cronie logrotate supervisor openssh openssh-server openssh-client rsyslog sudo passwd sed which vim-enhanced pwgen psmisc mailx \\\n httpd nagios-plugins-all mariadb-server mariadb-libs mariadb; rm -rf /var/cache/yum \\\n yum -y install --enablerepo=icinga-snapshot-builds icinga2 icinga2-doc icinga2-ido-mysql icingaweb2 icingacli php-ZendFramework php-ZendFramework-Db-Adapter-Pdo-Mysql; \\\n yum clean all;\n\n# create api certificates and users (will be overridden later)\nRUN icinga2 api setup\n\n# set icinga2 NodeName and create proper certificates required for the API\nRUN sed -i -e 's/^.* NodeName = .*/const NodeName = \"docker-icinga2-demo\"/gi' /etc/icinga2/constants.conf; \\\n icinga2 pki new-cert --cn docker-icinga2-demo --key /etc/icinga2/pki/docker-icinga2-demo.key --csr /etc/icinga2/pki/docker-icinga2-demo.csr; \\\n icinga2 pki sign-csr --csr /etc/icinga2/pki/docker-icinga2-demo.csr --cert /etc/icinga2/pki/docker-icinga2-demo.crt;\n\n# includes supervisor config\nADD content/ /\nRUN chmod u+x /opt/icinga2/initdocker\n\n\n# no PAM\n# http://stackoverflow.com/questions/18173889/cannot-access-centos-sshd-on-docker\nRUN sed -i \"s/#UsePrivilegeSeparation.*/UsePrivilegeSeparation no/g\" /etc/ssh/sshd_config && sed -i \"s/UsePAM.*/UsePAM no/g\" /etc/ssh/sshd_config; \\\n echo \"sshd: ALL\" >> /etc/hosts.allow; \\\n rm -f /etc/ssh/ssh_host_ecdsa_key /etc/ssh/ssh_host_rsa_key && \\\n ssh-keygen -q -N \"\" -t dsa -f /etc/ssh/ssh_host_ecdsa_key && \\\n ssh-keygen -q -N \"\" -t rsa -f /etc/ssh/ssh_host_rsa_key && \\\n echo 'root:icingar0xx' | chpasswd; \\\n useradd -g wheel appuser; \\\n echo 'appuser:appuser' | chpasswd; \\\n sed -i -e 's/^\\(%wheel\\s\\+.\\+\\)/#\\1/gi' /etc/sudoers; \\\n echo -e '\\n%wheel ALL=(ALL) ALL' >> /etc/sudoers; \\\n echo -e '\\nDefaults:root   !requiretty' >> /etc/sudoers; \\\n echo -e '\\nDefaults:%wheel !requiretty' >> /etc/sudoers; \\\n echo 'syntax on' >> /root/.vimrc; \\\n echo 'alias vi=\"vim\"' >> /root/.bash_profile; \\\n echo 'syntax on' >> /home/appuser/.vimrc; \\\n echo 'alias vi=\"vim\"' >> /home/appuser/.bash_profile;\n\n# fixes at build time (we can't do that at user's runtime)\n# setuid problem https://github.com/docker/docker/issues/6828\n# 4755 ping is required for icinga user calling check_ping\n# can be circumvented for icinga2.cmd w/ mkfifo and chown\n# (icinga2 does not re-create the file)\nRUN mkdir -p /var/log/supervisor; \\\n chmod 4755 /bin/ping /bin/ping6; \\\n chown -R icinga:root /etc/icinga2; \\\n mkdir -p /etc/icinga2/pki; \\\n chown -R icinga:icinga /etc/icinga2/pki; \\\n mkdir -p /var/run/icinga2; \\\n mkdir -p /var/log/icinga2; \\\n chown icinga:icingacmd /var/run/icinga2; \\\n chown icinga:icingacmd /var/log/icinga2; \\\n mkdir -p /var/run/icinga2/cmd; \\\n mkfifo /var/run/icinga2/cmd/icinga2.cmd; \\\n chown -R icinga:icingacmd /var/run/icinga2/cmd; \\\n chmod 2750 /var/run/icinga2/cmd; \\\n chown -R icinga:icinga /var/lib/icinga2; \\\n usermod -a -G icingacmd apache >> /dev/null; \\\n chown root:icingaweb2 /etc/icingaweb2; \\\n chmod 2770 /etc/icingaweb2; \\\n mkdir -p /etc/icingaweb2/enabledModules; \\\n chown -R apache:icingaweb2 /etc/icingaweb2/*; \\\n find /etc/icingaweb2 -type f -name \"*.ini\" -exec chmod 660 {} \\; ; \\\n find /etc/icingaweb2 -type d -exec chmod 2770 {} \\;\n\n# configure PHP timezone\nRUN sed -i 's/;date.timezone =/date.timezone = UTC/g' /etc/php.ini\n\n# ports (icinga2 api & cluster (5665), mysql (3306))\nEXPOSE 22 80 443 5665 3306\n\n# volumes\nVOLUME [\"/etc/icinga2\", \"/etc/icingaweb2\", \"/var/lib/icinga2\", \"/usr/share/icingaweb2\", \"/var/lib/mysql\"]\n\n# change this to entrypoint preventing bash login\nCMD [\"/opt/icinga2/initdocker\"]\n#ENTRYPOINT [\"/opt/icinga2/initdocker\"]\n\n"
+}

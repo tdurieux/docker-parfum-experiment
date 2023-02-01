@@ -1,0 +1,37 @@
+FROM nvidia/cuda:9.0-cudnn7-runtime-ubuntu16.04
+
+RUN apt-get -y update && \
+    apt-get -y --no-install-recommends install git wget python-dev python3-dev libopenmpi-dev \
+                       python-pip libglib2.0-0 \
+                       libsm6 libxext6 libfontconfig1 libxrender1 \
+                       swig cmake libopenmpi-dev zlib1g-dev ffmpeg \
+                       freeglut3-dev xvfb && rm -rf /var/lib/apt/lists/*;
+
+ENV CODE_DIR /root/code
+ENV VENV /root/venv
+
+RUN \
+    pip install --no-cache-dir virtualenv && \
+    virtualenv $VENV --python=python3 && \
+    . $VENV/bin/activate && \
+    mkdir $CODE_DIR && \
+    cd $CODE_DIR && \
+    pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir pytest && \
+    pip install --no-cache-dir pytest-cov && \
+    pip install --no-cache-dir pyyaml && \
+    pip install --no-cache-dir box2d-py==2.3.5 && \
+    pip install --no-cache-dir tensorflow-gpu==1.8.0 && \
+    pip install --no-cache-dir stable-baselines[mpi]==2.8.0 && \
+    pip install --no-cache-dir pybullet && \
+    pip install --no-cache-dir gym-minigrid && \
+    pip install --no-cache-dir scikit-optimize && \
+    pip install --no-cache-dir optuna && \
+    pip install --no-cache-dir pytablewriter==0.36.0
+
+ENV PATH=$VENV/bin:$PATH
+
+COPY docker/entrypoint.sh /tmp/
+ENTRYPOINT ["/tmp/entrypoint.sh"]
+
+CMD /bin/bash

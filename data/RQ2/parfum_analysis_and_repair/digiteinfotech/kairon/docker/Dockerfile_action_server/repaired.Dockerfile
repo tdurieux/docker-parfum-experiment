@@ -1,0 +1,56 @@
+FROM amazonlinux:latest
+
+WORKDIR /app
+USER root
+RUN yum update -y
+RUN yum -y install wget make gcc openssl-devel bzip2-devel && rm -rf /var/cache/yum
+RUN amazon-linux-extras install python3.8
+RUN rm /usr/bin/python
+RUN ln -s /usr/bin/python3.8 /usr/bin/python
+RUN python -m pip install --upgrade pip && \
+python -m pip install tornado==6.1 && \
+python -m pip install mongoengine==0.23.1 && \
+python -m pip install smart-config==0.1.3 && \
+python -m pip install validators && \
+python -m pip install rasa==2.8.15 && \
+python -m pip install dnspython && \
+python -m pip install pyjwt && \
+python -m pip install elastic-apm
+RUN python -m pip install pymongo==3.12.0
+RUN python -m pip install pydantic~=1.8.2
+RUN python -m pip install password-strength
+RUN python -m pip install passlib[bcrypt]
+RUN python -m pip install cryptography~=3.4.8
+RUN python -m pip install websockets==9.1
+RUN python -m pip install aiohttp==3.8.0
+RUN python -m pip install json2html
+RUN python -m pip install numpy==1.22.0
+RUN python -m pip install ujson==5.1.0
+RUN python -m pip install Pillow==9.0.0
+RUN python -m pip install blinker
+RUN python -m pip install google-api-python-client
+RUN python -m pip install cryptography
+RUN python -m pip install jira
+RUN python -m pip install zenpy
+RUN python -m pip install pipedrive-python-lib
+
+COPY kairon/actions /app/kairon/actions/
+COPY metadata /app/metadata
+COPY kairon/shared/actions /app/kairon/shared/actions
+COPY kairon/shared/account /app/kairon/shared/account
+COPY kairon/shared/tornado /app/kairon/shared/tornado
+COPY kairon/shared/authorization /app/kairon/shared/authorization
+COPY kairon/shared/utils.py /app/kairon/shared/
+COPY kairon/shared/models.py /app/kairon/shared/
+COPY kairon/shared/constants.py /app/kairon/shared/
+COPY kairon/shared/data/constant.py /app/kairon/shared/data/constant.py
+COPY kairon/shared/data/data_objects.py /app/kairon/shared/data/data_objects.py
+COPY kairon/shared/data/signals.py /app/kairon/shared/data/signals.py
+COPY kairon/exceptions.py /app/kairon/exceptions.py
+COPY system.yaml /app/
+COPY email.yaml /app/
+
+USER 1001
+EXPOSE 5055
+CMD ["python","-m", "kairon.actions.server", "--logging=debug"]
+

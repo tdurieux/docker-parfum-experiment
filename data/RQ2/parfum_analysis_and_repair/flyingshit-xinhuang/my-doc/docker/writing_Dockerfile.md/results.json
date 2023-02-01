@@ -1,0 +1,62 @@
+{
+  "startTime": 1674252741808,
+  "endTime": 1674252742758,
+  "originalSmells": [
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 30,
+        "lineEnd": 30,
+        "columnStart": 4,
+        "columnEnd": 66
+      }
+    },
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 58,
+        "lineEnd": 58,
+        "columnStart": 5,
+        "columnEnd": 67
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 26,
+        "lineEnd": 26,
+        "columnStart": 4,
+        "columnEnd": 27
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 27,
+        "lineEnd": 27,
+        "columnStart": 4,
+        "columnEnd": 15
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 54,
+        "lineEnd": 54,
+        "columnStart": 4,
+        "columnEnd": 27
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 56,
+        "lineEnd": 56,
+        "columnStart": 5,
+        "columnEnd": 16
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Dockerfile编写技巧\n\n这个sprint研究了如何将私有云dashboard和admin集成进CI和CD。最主要的工作就是为两个项目创建Dockerfile，使其能在我们的CI环境中构建出运行服务的镜像。经过几天的实践，发现了几个编写Dockerfile的小技巧，在此与大家分享。\n\n## 参考资料\n\n不久之前，本司的赵帅龙攻城狮做了一次分享，为大家讲述了一些构建镜像的优化方法，可参考这里：http://blog.tenxcloud.com/?p=1313\n本司blog中也有一篇介绍构建微型镜像的文章，也颇为有借鉴意义，可参考这里：http://blog.tenxcloud.com/?p=1302\n我要给大家分享的内容跟Docker cache相关，可参考官方的介绍：https://docs.docker.com/engine/userguide/eng-image/dockerfile_best-practices/#build-cache\n\n## 分享内容\n\n开始分享之前大家先看两个Dockerfile：\n\nDockerfile1\n```\nFROM index.tenxcloud.com/docker_library/alpine:edge\n\n## install nodejs\nRUN echo '@edge http://nl.alpinelinux.org/alpine/edge/main' >> /etc/apk/repositories\nRUN apk update && apk upgrade\n\nWORKDIR /home/tenxcloud\nADD package.json .\nENV NODE_PATH /home/tenxcloud/node_modules/\n\nRUN apk add --no-cache nodejs-lts@edge\nRUN apk add --no-cache git\n\n### WARN: installing cnpm make size bigger\nRUN npm install cnpm -g --registry=https://registry.npm.taobao.org && npm cache clean --force;\nRUN cnpm install --registry=https://registry.npm.taobao.org && rm -f package.json\n\n## clear unused packages and files\nRUN apk del git\nRUN npm uninstall -g cnpm \\\r\n  && npm uninstall -g npm \\\r\n  && rm -rf /tmp/* \\\r\n  && rm -rf /root/.npm/\n```\n\nDockerfile2\n```\nFROM index.tenxcloud.com/docker_library/alpine:edge\nMAINTAINER XinHuang<huangxin@tenxcloud.com>\n\nRUN echo '@edge http://nl.alpinelinux.org/alpine/edge/main' >> /etc/apk/repositories\nRUN apk update && apk upgrade\n\nWORKDIR /home/tenxcloud\nADD package.json .\nENV NODE_PATH /home/tenxcloud/node_modules/\n\n## install nodejs\nRUN apk add --no-cache nodejs-lts@edge \\\n  ## install git\r\n  && apk add --no-cache git \\\n  ## install cnpm\r\n  && npm install cnpm -g --registry=https://registry.npm.taobao.org \\\n  ## install packages\r\n  && cnpm install --registry=https://registry.npm.taobao.org \\\n  ## clear unused packages and files\r\n  && rm -f package.json \\\n  && apk del git \\\n  && npm uninstall -g cnpm \\\n  && npm uninstall -g npm \\\n  && rm -rf /tmp/* \\\n  && rm -rf /root/.npm/ && npm cache clean --force;\n```\n\n这两个Dockerfile的功能是一样的，都是先按照node.js和git，然后使用package.json安装依赖包，最后做一些清理工作。\n\n从开发角度来讲Dockerfile1更优。首先是因为它可读性更好，配合注释能够很方便的了解有哪些操作。其次因为cache机制的作用，我们在调试Dockerfile时更为方便：因为Dockerfile中每条指令都会创建一个layer作用在父镜像上生成新的镜像，并形成cache。当我们修改Dockerfile中的错误后，由于之前的指令已经形成了cache，Docker在后续构建时会直接使用cache，加速执行构建步骤。这样可以避免每次构建时重复的下载操作，提高调试效率。\n\n但从实际使用的角度来说，我更倾向使用Dockerfile2，因为它比前者生成的镜像要小。使用两者分别构建镜像可以发现Dockerfile2构建的镜像仅有70+M，而Dockerfile1有140+M。原因就是Dockerfile的每条指令都是在父镜像上创建一个layer，而不会修改父镜像本身。也就是说在Dockerfile1执行“RUN cnpm install ...”之后的镜像大小已经达到140+M，后续的清理操作虽然会减小容器运行环境的大小，但并不会减小镜像本身的大小。\n\n## 结论\n\n结合自身的实践，个人觉得在创建和调试Dockerfile的时候最好使用Dockerfile1这种形式，尽量将耗时的操作（如下载、安装等）拆分到多个RUN指令中，这样在后续docker build时可以利用cache机制加速构建过程。在确定Dockerfile最终的操作序列之后，使用Dockerfile2这种形式，将创建和清除操作合到一个RUN指令中，这样构建的镜像会小很多，使得镜像的push/pull过程更快。\n"
+}

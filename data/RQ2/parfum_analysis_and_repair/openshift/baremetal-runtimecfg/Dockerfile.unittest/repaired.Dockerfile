@@ -1,0 +1,3 @@
+FROM registry.ci.openshift.org/openshift/release:golang-1.18
+
+RUN yum install -y dhclient && yum clean all && rm -rf /var/cache/yum

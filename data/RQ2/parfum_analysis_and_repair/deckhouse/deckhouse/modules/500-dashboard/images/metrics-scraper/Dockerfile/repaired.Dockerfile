@@ -1,0 +1,1 @@
+# Based on https://github.com/kubernetes-sigs/dashboard-metrics-scraper/blob/v1.0.6/Dockerfile

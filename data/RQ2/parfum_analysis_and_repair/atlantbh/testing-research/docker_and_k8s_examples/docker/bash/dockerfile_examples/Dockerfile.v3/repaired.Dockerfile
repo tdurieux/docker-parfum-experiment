@@ -1,0 +1,20 @@
+# Example overview:
+# - in case you want to debug what happens in your container when created from image, you can override your ENTRYPOINT with sleep command
+# - you can login to to container and execute your script to see how it will behave
+
+FROM alpine:3.12.0
+
+# Install system deps
+RUN apk update \
+    && apk add --no-cache jq curl busybox-extras
+
+# Do setup for running script
+WORKDIR /myscripts
+COPY ./example_1.sh .
+RUN chmod +x example_1.sh
+
+# Sleep mode
+ENTRYPOINT ["sleep", "1000000"]
+
+# Run script
+# ENTRYPOINT ["./example_1.sh", "-n", "Test"]

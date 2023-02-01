@@ -1,0 +1,53 @@
+{
+  "startTime": 1674252557133,
+  "endTime": 1674252558543,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 19,
+        "lineEnd": 19,
+        "columnStart": 7,
+        "columnEnd": 73
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 20,
+        "lineEnd": 20,
+        "columnStart": 7,
+        "columnEnd": 81
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 21,
+        "lineEnd": 21,
+        "columnStart": 7,
+        "columnEnd": 83
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 40,
+        "lineEnd": 40,
+        "columnStart": 4,
+        "columnEnd": 42
+      }
+    },
+    {
+      "rule": "wgetUseHttpsUrl",
+      "position": {
+        "lineStart": 97,
+        "lineEnd": 97,
+        "columnStart": 7,
+        "columnEnd": 52
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "############################################\n## Scientific course @CINECA\n\nFROM alpine:edge\nMAINTAINER \"Paolo D'Onorio De Meo <p.donoriodemeo@cineca.it>\"\n\n############################################\n# Base packages\nENV SHELL /bin/bash\nENV GLIBC_VERSION 2.23-r3\nENV GLIBC_REPO https://github.com/andyshinn/alpine-pkg-glibc/releases/download/$GLIBC_VERSION\n\nRUN apk --update add \\\n    --repository http://dl-4.alpinelinux.org/alpine/edge/testing \\\n    rethinkdb \\\n    && apk --update add \\\n        bash wget curl ca-certificates bzip2 unzip \\\n        sudo musl-dev git vim \\\n        gcc libstdc++ glib libxext libxrender tini \\\n    && curl -f -L \"$GLIBC_REPO/glibc-${GLIBC_VERSION}.apk\" -o /tmp/glibc.apk \\\n    && curl -f -L \"$GLIBC_REPO/glibc-bin-${GLIBC_VERSION}.apk\" -o /tmp/glibc-bin.apk \\\n    && curl -f -L \"$GLIBC_REPO/glibc-i18n-${GLIBC_VERSION}.apk\" -o /tmp/glibc-i18n.apk \\\n    && apk add --allow-untrusted /tmp/glibc*.apk \\\n    && /usr/glibc-compat/sbin/ldconfig /lib /usr/glibc-compat/lib \\\n    && /usr/glibc-compat/bin/localedef -i en_US -f UTF-8 en_US.UTF-8 \\\n    && rm -rf /tmp/glibc*apk && rm -rf /var/cache/apk/*\n\n############################################\n## CONDA\n\nENV CONDA_DIR /opt/conda\nRUN mkdir -p $CONDA_DIR\nENV PATH $CONDA_DIR/bin:$PATH\nENV CONDA_VER 4.1.11\nENV CONTINUUM_REPO https://repo.continuum.io/\n\nENV CONDA_LINK $CONTINUUM_REPO/miniconda/Miniconda3-${CONDA_VER}-Linux-x86_64.sh\nENV INSTALL_SCRIPT /tmp/conda.sh\n\nRUN echo $CONDA_LINK\nRUN curl -f -k -o $INSTALL_SCRIPT $CONDA_LINK \\\n    && /bin/bash $INSTALL_SCRIPT -f -b -p $CONDA_DIR \\\n    && rm $INSTALL_SCRIPT \\\n    && echo \"installing\" \\\n    && conda install --quiet --yes \\\n        jupyter pip \\\n        pandas scipy matplotlib cython numba seaborn \\\n    && conda remove -y nbpresent \\\n    && conda install -y -c damianavila82 rise \\\n    && conda install -y -c pydy version_information \\\n    && conda clean -y --all\nENV PATH $CONDA_DIR/bin:$PATH\n\n############################################\n## Python normal libs\nRUN pip install --upgrade --no-cache-dir pip \\\n    # xls files\n    xlrd openpyxl \\\n    # cool shell than works on top of ipython\n    ptpython \\\n    # cool sql tool for notebook\n    ipython-sql \\\n    # # launch R inside the notebook\n    # rpy2 \\\n    # cool nosql database with joins, changefeeds and chaining\n    rethinkdb \\\n    # https://glyph.twistedmatrix.com/2016/08/attrs.html\n    attrs \\\n    # http://j.mp/lesser_known_libraries\n    flit colorama begins \\\n    pywebview \\\n    watchdog ptpython \\\n    arrow parsedatetime timestring \\\n    # psutil \\ # does not work\n    boltons\n\n############################################\n## add user\nENV NB_USER jovyan\nENV NB_UID 1000\n\n# Create jovyan user with UID=1000 and in the 'users' group\nRUN adduser -s $SHELL -u $NB_UID $NB_USER -D && \\\n    mkdir -p $CONDA_DIR && \\\n    chown $NB_USER $CONDA_DIR\n\nUSER jovyan\n\n# Setup jovyan home directory\nRUN mkdir /home/$NB_USER/work && \\\n    mkdir /home/$NB_USER/.jupyter && \\\n    mkdir /home/$NB_USER/.local && \\\n    echo \"cacert=/etc/ssl/certs/ca-certificates.crt\" > /home/$NB_USER/.curlrc\nCOPY notebook_config.py /home/$NB_USER/.jupyter/jupyter_notebook_config.py\n\n# Personal keybindings\nRUN cd /opt/conda/share/jupyter/nbextensions/rise \\\n    && wget -q https://j.mp/risecustomkeys -O main.js\n\n# Fix matplotlib?\nRUN rm -rf ~/.cache/matplotlib ~/.matplotlib/fontList.cache ~/.cache/fontconfig\n\n# Set executables for this user\nRUN echo \"export PATH=$CONDA_DIR/bin:/home/$NB_USER/.local/bin:\\$PATH\" > /home/$NB_USER/.bashrc\n\n\n######################################\n### tini as principal process ###\nUSER root\n\n# jupyter kernel dies if you don't launch jupyter from inside a script\n# https://github.com/ipython/ipython/issues/7062#issuecomment-223809024\n\nENV BOOTER /docker-entrypoint.sh\n# https://docs.docker.com/engine/userguide/eng-image/dockerfile_best-practices/#/entrypoint\nENV DATADIR /data\nVOLUME $DATADIR\nWORKDIR $DATADIR\nADD bootstrap.sh /docker-entrypoint.sh\nRUN chmod +x $BOOTER\nRUN chown $NB_USER -R $DATADIR\n\n# WORKAROUND: tini\nENTRYPOINT [\"/sbin/tini\"]\nCMD [\"/docker-entrypoint.sh\"]\n"
+}

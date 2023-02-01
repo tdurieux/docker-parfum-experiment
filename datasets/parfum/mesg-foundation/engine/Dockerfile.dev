@@ -1,0 +1,8 @@
+ARG from
+FROM $from
+
+COPY ./dev-chain/cli /root/.mesg-cli
+COPY ./dev-chain/validator /root/.mesg-node
+COPY ./scripts/dev-starter.sh .
+
+CMD ["bash", "dev-starter.sh"]

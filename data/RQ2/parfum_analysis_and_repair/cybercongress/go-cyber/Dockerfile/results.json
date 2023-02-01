@@ -1,0 +1,63 @@
+{
+  "startTime": 1674252896625,
+  "endTime": 1674252898119,
+  "originalSmells": [
+    {
+      "rule": "sha256sumEchoOneSpaces",
+      "position": {
+        "lineStart": 25,
+        "lineEnd": 25,
+        "columnStart": 3,
+        "columnEnd": 48
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 36,
+        "lineEnd": 41,
+        "columnStart": 4,
+        "columnEnd": 30
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 23,
+        "lineEnd": 23,
+        "columnStart": 22,
+        "columnEnd": 85
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 36,
+        "lineEnd": 41,
+        "columnStart": 4,
+        "columnEnd": 30
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 49,
+        "lineEnd": 49,
+        "columnStart": 3,
+        "columnEnd": 62
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 36,
+        "lineEnd": 41,
+        "columnStart": 4,
+        "columnEnd": 30
+      }
+    }
+  ],
+  "repairedDockerfile": "###########################################################################################\n# Build cyber\n###########################################################################################\nFROM ubuntu:20.04\n\nENV GO_VERSION '1.17.8'\nENV GO_ARCH 'linux-amd64'\nENV GO_BIN_SHA '980e65a863377e69fd9b67df9d8395fd8e93858e7a24c9f55803421e453f4f99'\nENV DEBIAN_FRONTEND=noninteractive\nENV DAEMON_HOME /root/.cyber\nENV DAEMON_RESTART_AFTER_UPGRADE=true\nENV DAEMON_ALLOW_DOWNLOAD_BINARIES=false\nENV DAEMON_LOG_BUFFER_SIZE=1048\nENV UNSAFE_SKIP_BACKUP=true\nENV DAEMON_NAME cyber\nENV BUILD_DIR /build\nENV PATH /usr/local/go/bin:/root/.cargo/bin:/root/cargo/env:/root/.cyber/scripts:$PATH\nENV CUDA_VER '11.4.4-1'\nENV PATH=\"/usr/local/go/bin:/usr/local/cuda/bin:$PATH\"\n\n\n# Install go and required deps\n###########################################################################################\nRUN apt-get update && apt-get install -y --no-install-recommends wget ca-certificates \\\n&& wget -O go.tgz https://golang.org/dl/go${GO_VERSION}.linux-amd64.tar.gz \\\n&& echo \"${GO_BIN_SHA}  *go.tgz\" | sha256sum -c - \\\n&& tar -C /usr/local -xzf go.tgz \\\n&& rm go.tgz \\\n&& go version && rm -rf /var/lib/apt/lists/*;\n\n\nCOPY . /sources\nWORKDIR /sources\n\n# Install CUDA, build tools and compile cyber\n###########################################################################################\nRUN apt-get -y install --no-install-recommends \\\n    make gcc g++ \\\n    curl \\\n    gnupg \\\n    git \\\n    software-properties-common \\\n#    nvidia-cuda-toolkit \\\n# Install cuda selected version instead nvidia-cuda-toolkit\n&& wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2004/x86_64/cuda-ubuntu2004.pin \\\n&& mv cuda-ubuntu2004.pin /etc/apt/preferences.d/cuda-repository-pin-600 \\\n&& apt-key adv --fetch-keys https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2004/x86_64/3bf863cc.pub \\\n&& add-apt-repository \"deb https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2004/x86_64/ /\" \\\n&& apt-get update \\\n&& apt-get install cuda=${CUDA_VER} -y --no-install-recommends \\\n&& mkdir -p /cyber/cosmovisor/genesis/bin \\\n&& mkdir -p /cyber/cosmovisor/upgrades/cyberfrey/bin \\\n# Compile cyber for genesis version\n###########################################################################################\n&& git checkout v0.2.0 \\\n&& cd /sources/x/rank/cuda \\\n&& make build \\\n&& cd /sources \\\n&& make build CUDA_ENABLED=true \\\n&& cp ./build/cyber /cyber/cosmovisor/genesis/bin/ \\\n&& cp ./build/cyber /usr/local/bin \\ \n&& rm -rf ./build \\\n # Compile cyber for genesis version\n###########################################################################################\n&& git checkout v0.3.0 \\\n&& cd /sources/x/rank/cuda \\\n&& make build \\\n&& cd  /sources \\\n&& make build CUDA_ENABLED=true \\\n&& cp ./build/cyber /cyber/cosmovisor/upgrades/cyberfrey/bin/ \\\n&& rm -rf ./build \\\n# Cleanup \n###########################################################################################\n&& apt-get purge -y git \\\n    make \\\n    cuda \\\n    gcc g++ \\\n    curl \\\n    gnupg \\\n    python3.8 \\\n&& go clean --cache -i \\\n&& apt-get remove --purge '^nvidia-.*' -y \\\n&& apt-get autoremove -y \\\n&& apt-get clean && rm -rf /var/lib/apt/lists/*;\n\n# Install cosmovisor\n###########################################################################################\n RUN wget -O cosmovisor.tgz https://github.com/cosmos/cosmos-sdk/releases/download/cosmovisor%2Fv1.1.0/cosmovisor-v1.1.0-linux-amd64.tar.gz \\\n && tar -xzf cosmovisor.tgz \\\n && cp cosmovisor /usr/bin/cosmovisor \\\n && chmod +x /usr/bin/cosmovisor \\\n && rm cosmovisor.tgz && rm -fR $BUILD_DIR/* && rm -fR $BUILD_DIR/.*[a-z]\n\n# Copy startup scripts and genesis\n###########################################################################################\nWORKDIR /\nCOPY start_script.sh start_script.sh\nCOPY entrypoint.sh /entrypoint.sh\nRUN wget -O /genesis.json https://gateway.ipfs.cybernode.ai/ipfs/QmYubyVNfghD4xCrTFj26zBwrF9s5GJhi1TmxvrwmJCipr \\\n&& chmod +x start_script.sh \\\n&& chmod +x /entrypoint.sh \\\n&& cyber version\n\n\n#  Start\n###############################################################################\nEXPOSE 26656 26657 1317 9090 26660\nENTRYPOINT [\"/entrypoint.sh\"]\nCMD [\"./start_script.sh\"]\n"
+}

@@ -1,0 +1,63 @@
+{
+  "startTime": 1674250809966,
+  "endTime": 1674250810986,
+  "originalSmells": [
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 150,
+        "lineEnd": 150,
+        "columnStart": 7,
+        "columnEnd": 87
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 151,
+        "lineEnd": 151,
+        "columnStart": 7,
+        "columnEnd": 82
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 150,
+        "lineEnd": 150,
+        "columnStart": 7,
+        "columnEnd": 87
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 151,
+        "lineEnd": 151,
+        "columnStart": 7,
+        "columnEnd": 82
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 148,
+        "lineEnd": 148,
+        "columnStart": 7,
+        "columnEnd": 87
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 149,
+        "lineEnd": 149,
+        "columnStart": 7,
+        "columnEnd": 82
+      }
+    }
+  ],
+  "repairedDockerfile": "# Pull the installer images from the library\n# These are all built previously\n# They provide either a .deb or .whl\n\nARG JBIG2ENC_VERSION\nARG QPDF_VERSION\nARG PIKEPDF_VERSION\nARG PSYCOPG2_VERSION\n\nFROM ghcr.io/paperless-ngx/paperless-ngx/builder/jbig2enc:${JBIG2ENC_VERSION} as jbig2enc-builder\nFROM ghcr.io/paperless-ngx/paperless-ngx/builder/qpdf:${QPDF_VERSION} as qpdf-builder\nFROM ghcr.io/paperless-ngx/paperless-ngx/builder/pikepdf:${PIKEPDF_VERSION} as pikepdf-builder\nFROM ghcr.io/paperless-ngx/paperless-ngx/builder/psycopg2:${PSYCOPG2_VERSION} as psycopg2-builder\n\nFROM --platform=$BUILDPLATFORM node:16-bullseye-slim AS compile-frontend\n\n# This stage compiles the frontend\n# This stage runs once for the native platform, as the outputs are not\n# dependent on target arch\n# Inputs: None\n\nCOPY ./src-ui /src/src-ui\n\nWORKDIR /src/src-ui\nRUN set -eux \\\n  && npm update npm -g \\\n  && npm ci --no-optional\nRUN set -eux \\\n  && ./node_modules/.bin/ng build --configuration production\n\nFROM python:3.9-slim-bullseye as main-app\n\nLABEL org.opencontainers.image.authors=\"paperless-ngx team <hello@paperless-ngx.com>\"\nLABEL org.opencontainers.image.documentation=\"https://paperless-ngx.readthedocs.io/en/latest/\"\nLABEL org.opencontainers.image.source=\"https://github.com/paperless-ngx/paperless-ngx\"\nLABEL org.opencontainers.image.url=\"https://github.com/paperless-ngx/paperless-ngx\"\nLABEL org.opencontainers.image.licenses=\"GPL-3.0-only\"\n\nARG DEBIAN_FRONTEND=noninteractive\n\n#\n# Begin installation and configuration\n# Order the steps below from least often changed to most\n#\n\n# copy jbig2enc\n# Basically will never change again\nCOPY --from=jbig2enc-builder /usr/src/jbig2enc/src/.libs/libjbig2enc* /usr/local/lib/\nCOPY --from=jbig2enc-builder /usr/src/jbig2enc/src/jbig2 /usr/local/bin/\nCOPY --from=jbig2enc-builder /usr/src/jbig2enc/src/*.h /usr/local/include/\n\n# Packages need for running\nARG RUNTIME_PACKAGES=\"\\\n  curl \\\n  file \\\n  # fonts for text file thumbnail generation\n  fonts-liberation \\\n  gettext \\\n  ghostscript \\\n  gnupg \\\n  gosu \\\n  icc-profiles-free \\\n  imagemagick \\\n  media-types \\\n  liblept5 \\\n  libpq5 \\\n  libxml2 \\\n  liblcms2-2 \\\n  libtiff5 \\\n  libxslt1.1 \\\n  libfreetype6 \\\n  libwebp6 \\\n  libopenjp2-7 \\\n  libimagequant0 \\\n  libraqm0 \\\n  libgnutls30 \\\n  libjpeg62-turbo \\\n  optipng \\\n  python3 \\\n  python3-pip \\\n  python3-setuptools \\\n  postgresql-client \\\n  # For Numpy\n  libatlas3-base \\\n  # thumbnail size reduction\n  pngquant \\\n  # OCRmyPDF dependencies\n  tesseract-ocr \\\n  tesseract-ocr-eng \\\n  tesseract-ocr-deu \\\n  tesseract-ocr-fra \\\n  tesseract-ocr-ita \\\n  tesseract-ocr-spa \\\n  tzdata \\\n  unpaper \\\n  # Mime type detection\n  zlib1g \\\n  # Barcode splitter\n  libzbar0 \\\n  poppler-utils\"\n\n# Install basic runtime packages.\n# These change very infrequently\nRUN set -eux \\\n  echo \"Installing system packages\" \\\n    && apt-get update \\\n    && apt-get install --yes --quiet --no-install-recommends ${RUNTIME_PACKAGES} \\\n    && rm -rf /var/lib/apt/lists/* \\\n  && echo \"Installing supervisor\" \\\n    && python3 -m pip install --default-timeout=1000 --upgrade --no-cache-dir supervisor==4.2.4\n\n# Copy gunicorn config\n# Changes very infrequently\nWORKDIR /usr/src/paperless/\n\nCOPY gunicorn.conf.py .\n\n# setup docker-specific things\n# Use mounts to avoid copying installer files into the image\n# These change sometimes, but rarely\nWORKDIR /usr/src/paperless/src/docker/\n\nRUN --mount=type=bind,readwrite,source=docker,target=./ \\\n  set -eux \\\n  && echo \"Configuring ImageMagick\" \\\n    && cp imagemagick-policy.xml /etc/ImageMagick-6/policy.xml \\\n  && echo \"Configuring supervisord\" \\\n    && mkdir /var/log/supervisord /var/run/supervisord \\\n    && cp supervisord.conf /etc/supervisord.conf \\\n  && echo \"Setting up Docker scripts\" \\\n    && cp docker-entrypoint.sh /sbin/docker-entrypoint.sh \\\n    && chmod 755 /sbin/docker-entrypoint.sh \\\n    && cp docker-prepare.sh /sbin/docker-prepare.sh \\\n    && chmod 755 /sbin/docker-prepare.sh \\\n    && cp wait-for-redis.py /sbin/wait-for-redis.py \\\n    && chmod 755 /sbin/wait-for-redis.py \\\n  && echo \"Installing managment commands\" \\\n    && chmod +x install_management_commands.sh \\\n    && ./install_management_commands.sh\n\n# Install the built packages from the installer library images\n# Use mounts to avoid copying installer files into the image\n# These change sometimes\nRUN --mount=type=bind,from=qpdf-builder,target=/qpdf \\\n    --mount=type=bind,from=psycopg2-builder,target=/psycopg2 \\\n    --mount=type=bind,from=pikepdf-builder,target=/pikepdf \\\n  set -eux \\\n  && echo \"Installing qpdf\" \\\n    && apt-get install --yes --no-install-recommends /qpdf/usr/src/qpdf/libqpdf28_*.deb \\\n    && apt-get install --yes --no-install-recommends /qpdf/usr/src/qpdf/qpdf_*.deb \\\n  && echo \"Installing pikepdf and dependencies\" \\\n    && python3 -m pip install --no-cache-dir /pikepdf/usr/src/pikepdf/wheels/packaging*.whl \\\n    && python3 -m pip install --no-cache-dir /pikepdf/usr/src/pikepdf/wheels/lxml*.whl \\\n    && python3 -m pip install --no-cache-dir /pikepdf/usr/src/pikepdf/wheels/Pillow*.whl \\\n    && python3 -m pip install --no-cache-dir /pikepdf/usr/src/pikepdf/wheels/pyparsing*.whl \\\n    && python3 -m pip install --no-cache-dir /pikepdf/usr/src/pikepdf/wheels/pikepdf*.whl \\\n    && python -m pip list \\\n  && echo \"Installing psycopg2\" \\\n    && python3 -m pip install --no-cache-dir /psycopg2/usr/src/psycopg2/wheels/psycopg2*.whl \\\n    && python -m pip list && rm -rf /var/lib/apt/lists/*;\n\n# Python dependencies\n# Change pretty frequently\nCOPY requirements.txt ../\n\n# Packages needed only for building a few quick Python\n# dependencies\nARG BUILD_PACKAGES=\"\\\n  build-essential \\\n  python3-dev\"\n\nRUN set -eux \\\n  && echo \"Installing build system packages\" \\\n    && apt-get update \\\n    && apt-get install --yes --quiet --no-install-recommends ${BUILD_PACKAGES} \\\n    && python3 -m pip install --no-cache-dir --upgrade wheel \\\n  && echo \"Installing Python requirements\" \\\n    && python3 -m pip install --default-timeout=1000 --no-cache-dir -r ../requirements.txt \\\n  && echo \"Cleaning up image\" \\\n    && apt-get -y purge ${BUILD_PACKAGES} \\\n    && apt-get -y autoremove --purge \\\n    && apt-get clean --yes \\\n    && rm -rf /var/lib/apt/lists/* \\\n    && rm -rf /tmp/* \\\n    && rm -rf /var/tmp/* \\\n    && rm -rf /var/cache/apt/archives/* \\\n    && truncate -s 0 /var/log/*log\n\nWORKDIR /usr/src/paperless/src/\n\n# copy backend\nCOPY ./src ./\n\n# copy frontend\nCOPY --from=compile-frontend /src/src/documents/static/frontend/ ./documents/static/frontend/\n\n# add users, setup scripts\nRUN set -eux \\\n  && addgroup --gid 1000 paperless \\\n  && useradd --uid 1000 --gid paperless --home-dir /usr/src/paperless paperless \\\n  && chown -R paperless:paperless ../ \\\n  && gosu paperless python3 manage.py collectstatic --clear --no-input \\\n  && gosu paperless python3 manage.py compilemessages\n\nVOLUME [\"/usr/src/paperless/data\", \\\n        \"/usr/src/paperless/media\", \\\n        \"/usr/src/paperless/consume\", \\\n        \"/usr/src/paperless/export\"]\n\nENTRYPOINT [\"/sbin/docker-entrypoint.sh\"]\n\nEXPOSE 8000\n\nCMD [\"/usr/local/bin/supervisord\", \"-c\", \"/etc/supervisord.conf\"]\n"
+}

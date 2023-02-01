@@ -1,0 +1,26 @@
+{
+  "startTime": 1674245299952,
+  "endTime": 1674245300130,
+  "originalSmells": [
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 12,
+        "lineEnd": 20,
+        "columnStart": 4,
+        "columnEnd": 8
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 25,
+        "lineEnd": 30,
+        "columnStart": 4,
+        "columnEnd": 17
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Common builder\nARG GO_IMAGE\nARG BASE_IMAGE=centos:7\nFROM ${GO_IMAGE} as golang\n\nFROM ${BASE_IMAGE} as builder\nENV GOPATH=/go\nENV PATH $PATH:/usr/local/go/bin:$GOPATH/bin\nENV AUTO_GOPATH 1\nCOPY --from=golang /usr/local/go /usr/local/go\nCOPY hack/dockerfile/install/tini.installer /\nCOPY hack/dockerfile/install/proxy.installer /\nRUN yum install -y \\\n    bash \\\n    ca-certificates \\\n    cmake \\\n    gcc \\\n    git \\\n    glibc-static \\\n    libtool \\\n    make && rm -rf /var/cache/yum\nRUN grep \"_COMMIT=\" /*.installer  |cut -f2- -d: > /binaries-commits\n\n# dockerd\nFROM builder as dockerd-builder\nRUN yum install -y \\\n    btrfs-progs-devel \\\n    device-mapper-devel \\\n    libseccomp-devel \\\n    selinux-policy-devel \\\n    systemd-devel && rm -rf /var/cache/yum\nWORKDIR /go/src/github.com/docker/docker\nCOPY . /go/src/github.com/docker/docker\nARG VERSION\nARG GITCOMMIT\nARG BUILDTIME\nARG PLATFORM\nARG PRODUCT\nARG DEFAULT_PRODUCT_LICENSE\nENV VERSION ${VERSION}\nENV GITCOMMIT ${GITCOMMIT}\nENV BUILDTIME ${BUILDTIME}\nENV PLATFORM ${PLATFORM}\nENV PRODUCT ${PRODUCT}\nENV DEFAULT_PRODUCT_LICENSE ${DEFAULT_PRODUCT_LICENSE}\n# TODO The way we set the version could easily be simplified not to depend on hack/...\nRUN bash ./hack/make/.go-autogen\nRUN go build -o /dockerd \\\n    -tags 'autogen apparmor seccomp selinux journald' \\\n    -i \\\n    -buildmode=pie \\\n    -a -ldflags '-w'\\\n    github.com/docker/docker/cmd/dockerd\n\n# docker-proxy\n# TODO if libnetwork folds into the docker tree this can be combined above\nFROM builder as proxy-builder\nRUN git clone https://github.com/docker/libnetwork.git /go/src/github.com/docker/libnetwork\nWORKDIR /go/src/github.com/docker/libnetwork\nRUN . /binaries-commits && \\\n    git checkout -q \"$LIBNETWORK_COMMIT\" && \\\n    go build -buildmode=pie -ldflags=\"-w\" \\\n        -o /docker-proxy \\\n        github.com/docker/libnetwork/cmd/proxy\n\n# docker-init - TODO move this out, last time we bumped was 2016!\nFROM builder as init-builder\nRUN git clone https://github.com/krallin/tini.git /tini\nWORKDIR /tini\nRUN . /binaries-commits && \\\n    git checkout -q \"$TINI_COMMIT\" && \\\n    cmake . && make tini-static && \\\n    cp tini-static /docker-init\n\n# Final docker image\nFROM scratch\nARG VERSION\nARG GITCOMMIT\nARG BUILDTIME\nARG PLATFORM\nARG ENGINE_IMAGE\nCOPY --from=dockerd-builder /dockerd /bin/\nCOPY --from=proxy-builder /docker-proxy /bin/\nCOPY --from=init-builder /docker-init /bin/\n\nLABEL \\\n    org.opencontainers.image.authors=\"Docker Inc.\" \\\n    org.opencontainers.image.created=\"${BUILDTIME}\" \\\n    org.opencontainers.image.documentation=\"https://docs.docker.com/\" \\\n    org.opencontainers.image.licenses=\"Apache-2.0\" \\\n    org.opencontainers.image.revision=\"${GITCOMMIT}\" \\\n    org.opencontainers.image.url=\"https://www.docker.com/products/docker-engine\" \\\n    org.opencontainers.image.vendor=\"Docker Inc.\" \\\n    org.opencontainers.image.version=\"${VERSION}\" \\\n    com.docker.distribution_based_engine=\"{\\\"platform\\\":\\\"${PLATFORM}\\\",\\\"engine_image\\\":\\\"${ENGINE_IMAGE}\\\",\\\"containerd_min_version\\\":\\\"1.2.0-beta.1\\\",\\\"runtime\\\":\\\"host_install\\\"}\"\n\nENTRYPOINT [\"/bin/dockerd\"]\n"
+}

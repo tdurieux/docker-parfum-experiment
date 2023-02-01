@@ -1,0 +1,19 @@
+# Build image with package managers pre-installed.
+FROM ^USERNAME^/^REPOSITORY^:^TARGET^
+
+# Copy over the file, and fix the ownership of the parent directory.
+# This is because when we copy everything over, we lost the permissions
+# of only the parent directory.
+COPY --from=^USERNAME^/pkg^REPOSITORY^:vcpkg ^SYSROOT^/vcpkg ^SYSROOT^/vcpkg
+RUN chown ^IMAGE_USER^:^IMAGE_USER^ ^SYSROOT^/vcpkg
+
+# These are ordered from longest to shortest.
+COPY ["docker/vcpkg-triplet.sh", "/"]
+RUN LINKAGE=^LINKAGE^ PROCESSOR=^PROCESSOR^ SYSTEM=^VCPKG_SYSTEM^ TRIPLE=^TRIPLE^ /vcpkg-triplet.sh
+COPY ["docker/meson.sh", "/"]
+RUN CPU_FAMILY=^CPU_FAMILY^ PROCESSOR=^PROCESSOR^ SYSTEM=^MESON_SYSTEM^ /meson.sh
+COPY ["docker/conan.sh", "/"]
+RUN COMPILER=^COMPILER^ COMPILER_VERSION=^COMPILER_VERSION^ SYSTEM=^CONAN_SYSTEM^ TRIPLE=^TRIPLE^ /conan.sh
+RUN rm /conan.sh /meson.sh /vcpkg-triplet.sh
+
+# Copy some extra configuration data.

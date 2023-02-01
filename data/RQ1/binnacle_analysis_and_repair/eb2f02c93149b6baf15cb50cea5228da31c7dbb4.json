@@ -1,0 +1,44 @@
+{
+  "startTime": 1674250731365,
+  "endTime": 1674250731543,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 35,
+        "lineEnd": 35,
+        "columnStart": 22,
+        "columnEnd": 52
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 38,
+        "lineEnd": 38,
+        "columnStart": 22,
+        "columnEnd": 93
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 35,
+        "lineEnd": 35,
+        "columnStart": 22,
+        "columnEnd": 52
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 38,
+        "lineEnd": 38,
+        "columnStart": 22,
+        "columnEnd": 93
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM continuumio/miniconda3\n\n###############\n# ENVIRONMENT #\n###############\nENV  TETHYS_HOME=\"/usr/lib/tethys\" \\\n     TETHYS_PORT=8000 \\\n     TETHYS_PUBLIC_HOST=\"127.0.0.1\" \\\n     TETHYS_DB_USERNAME=\"tethys_default\" \\\n     TETHYS_DB_PASSWORD=\"pass\" \\\n     TETHYS_DB_HOST=\"db\" \\\n     TETHYS_DB_PORT=5432 \\\n     TETHYS_SUPER_USER=\"\" \\\n     TETHYS_SUPER_USER_EMAIL=\"\" \\\n     TETHYS_SUPER_USER_PASS=\"\"\n\n# Misc\nENV  ALLOWED_HOSTS=\"\\\"['localhost', '127.0.0.1']\\\"\" \\\n     BASH_PROFILE=\".bashrc\" \\\n     CONDA_HOME=\"/opt/conda\" \\\n     CONDA_ENV_NAME=tethys \\\n     ASGI_PROCESSES=4 \\\n     CLIENT_MAX_BODY_SIZE=\"75M\"\n\n#########\n# SETUP #\n#########\nRUN mkdir -p \"${TETHYS_HOME}/src\"\nWORKDIR ${TETHYS_HOME}\n\n# Speed up APT installs\nRUN echo \"force-unsafe-io\" > /etc/dpkg/dpkg.cfg.d/02apt-speedup \\\n  ; echo \"Acquire::http {No-Cache=True;};\" > /etc/apt/apt.conf.d/no-cache\n\n# Install APT packages\nRUN apt-get update && apt-get -y --no-install-recommends install wget gnupg2 \\\n && wget -O - https://repo.saltstack.com/apt/debian/9/amd64/latest/SALTSTACK-GPG-KEY.pub | apt-key add - \\\n && echo \"deb http://repo.saltstack.com/apt/debian/9/amd64/latest stretch main\" > /etc/apt/sources.list.d/saltstack.list && rm -rf /var/lib/apt/lists/*;\nRUN apt-get update && apt-get -y --no-install-recommends install bzip2 git nginx supervisor gcc salt-minion procps pv && rm -rf /var/lib/apt/lists/*;\nRUN rm -f /etc/nginx/sites-enabled/default\n\n# Setup Conda Environment\nADD environment.yml ${TETHYS_HOME}/src/\nWORKDIR ${TETHYS_HOME}/src\nRUN ${CONDA_HOME}/bin/conda env create -n \"${CONDA_ENV_NAME}\" -f \"environment.yml\"\n\n###########\n# INSTALL #\n###########\n#Setup Nginx User:\nRUN groupadd www;useradd -r -u 1011 -g www www;sed -i 's/^user.*/user www www;/' /etc/nginx/nginx.conf;\n# ADD files from repo\nADD --chown=www:www resources ${TETHYS_HOME}/src/resources/\nADD --chown=www:www templates ${TETHYS_HOME}/src/templates/\nADD --chown=www:www tethys_apps ${TETHYS_HOME}/src/tethys_apps/\nADD --chown=www:www tethys_compute ${TETHYS_HOME}/src/tethys_compute/\nADD --chown=www:www tethys_config ${TETHYS_HOME}/src/tethys_config/\nADD --chown=www:www tethys_gizmos ${TETHYS_HOME}/src/tethys_gizmos/\nADD --chown=www:www tethys_portal ${TETHYS_HOME}/src/tethys_portal/\nADD --chown=www:www tethys_quotas ${TETHYS_HOME}/src/tethys_quotas/\nADD --chown=www:www tethys_sdk ${TETHYS_HOME}/src/tethys_sdk/\nADD --chown=www:www tethys_services ${TETHYS_HOME}/src/tethys_services/\nADD --chown=www:www README.rst ${TETHYS_HOME}/src/\nADD --chown=www:www *.py ${TETHYS_HOME}/src/\n\n# Remove any apps that may have been installed in tethysapp\nRUN rm -rf ${TETHYS_HOME}/src/tethys_apps/tethysapp \\\n  ; mkdir -p ${TETHYS_HOME}/src/tethys_apps/tethysapp\nADD --chown=www:www tethys_apps/tethysapp/__init__.py ${TETHYS_HOME}/src/tethys_apps/tethysapp/\n\n# Run Installer\nRUN /bin/bash -c '. ${CONDA_HOME}/bin/activate ${CONDA_ENV_NAME} \\\n  ; python setup.py develop'\nRUN mkdir ${TETHYS_HOME}/workspaces ${TETHYS_HOME}/apps ${TETHYS_HOME}/static\n\n# Add static files\nADD --chown=www:www static ${TETHYS_HOME}/src/static/\n\n# Generate Inital Settings Files\nRUN /bin/bash -c '. ${CONDA_HOME}/bin/activate ${CONDA_ENV_NAME} \\\n  ; tethys gen settings --production --allowed-host \"${ALLOWED_HOSTS}\" --db-username ${TETHYS_DB_USERNAME} --db-password ${TETHYS_DB_PASSWORD} --db-port ${TETHYS_DB_PORT} --overwrite \\\n  ; sed -i -e \"s:#TETHYS_WORKSPACES_ROOT = .*$:TETHYS_WORKSPACES_ROOT = \\\"/usr/lib/tethys/workspaces\\\":\" ${TETHYS_HOME}/src/tethys_portal/settings.py \\\n  ; tethys gen nginx --overwrite \\\n  ; tethys gen nginx_service --overwrite \\\n  ; tethys gen asgi_service --overwrite \\\n  ; tethys manage collectstatic'\n\n############\n# CLEAN UP #\n############\nRUN apt-get -y remove wget gcc gnupg2 \\\n  ; apt-get -y autoremove \\\n  ; apt-get -y clean\n\n#########################\n# CONFIGURE  ENVIRONMENT#\n#########################\nENV PATH ${CONDA_HOME}/miniconda/envs/tethys/bin:$PATH\nVOLUME [\"${TETHYS_HOME}/workspaces\", \"${TETHYS_HOME}/keys\"]\nEXPOSE 80\n\n###############*\n# COPY IN SALT #\n###############*\nADD docker/salt/ /srv/salt/\nADD docker/run.sh ${TETHYS_HOME}/\n\n########\n# RUN! #\n########\nWORKDIR ${TETHYS_HOME}\n# Create Salt configuration based on ENVs\nCMD bash run.sh\nHEALTHCHECK --start-period=240s \\\n  CMD  ps $(cat $(grep 'pidfile=.*' /etc/supervisor/supervisord.conf | awk -F'=' '{print $2}' | awk '{print $1}')) > /dev/null; && ps $(cat $(grep 'pid .*;' /etc/nginx/nginx.conf | awk '{print $2}' | awk -F';' '{print $1}')) > /dev/null;\n\n"
+}

@@ -1,0 +1,107 @@
+{
+  "startTime": 1674216410663,
+  "endTime": 1674216412054,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 51,
+        "lineEnd": 52,
+        "columnStart": 4,
+        "columnEnd": 31
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 55,
+        "lineEnd": 55,
+        "columnStart": 4,
+        "columnEnd": 24
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 99,
+        "lineEnd": 99,
+        "columnStart": 4,
+        "columnEnd": 62
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 103,
+        "lineEnd": 103,
+        "columnStart": 4,
+        "columnEnd": 41
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 150,
+        "lineEnd": 150,
+        "columnStart": 4,
+        "columnEnd": 48
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 153,
+        "lineEnd": 153,
+        "columnStart": 4,
+        "columnEnd": 127
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 67,
+        "lineEnd": 71,
+        "columnStart": 4,
+        "columnEnd": 19
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 85,
+        "lineEnd": 92,
+        "columnStart": 4,
+        "columnEnd": 37
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 23,
+        "lineEnd": 28,
+        "columnStart": 4,
+        "columnEnd": 27
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 62,
+        "lineEnd": 64,
+        "columnStart": 25,
+        "columnEnd": 19
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 177,
+        "lineEnd": 181,
+        "columnStart": 25,
+        "columnEnd": 19
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Copyright (c) Microsoft Corporation. All rights reserved.\n# Licensed under the MIT License.\n\n# multi-stage arguments (repeat ARG NAME below)\nARG UCX_VERSION=1.8.0\nARG OPENMPI_VERSION=4.0.4\nARG CONDA_VERSION=4.7.10\nARG NUMPY_VERSION=1.18.5\nARG ONNX_VERSION=1.7.0\nARG PYTORCH_VERSION=1.6.0\n\nARG BUILD_CONFIG=Release\nARG OPENMPI_PATH=/opt/openmpi-${OPENMPI_VERSION}\nARG COMMIT=master\n\n# cuda development image for building sources\nFROM nvidia/cuda:10.2-cudnn8-devel-ubuntu18.04 as builder\n\n# set location for builds\nWORKDIR /stage\n\n# install curl, git, ssh (required by MPI when running ORT tests)\nRUN apt-get -y update && \\\n    apt-get -y --no-install-recommends install \\\n        curl \\\n        git \\\n        language-pack-en \\\n        openssh-client \\\n        unattended-upgrades && rm -rf /var/lib/apt/lists/*;\n\n# update existing packages to minimize security vulnerabilities\nRUN unattended-upgrade\n\nRUN locale-gen en_US.UTF-8 && \\\n    update-locale LANG=en_US.UTF-8\n\n# install miniconda (comes with python 3.7 default)\nARG CONDA_VERSION\nARG CONDA_URL=https://repo.anaconda.com/miniconda/Miniconda3-${CONDA_VERSION}-Linux-x86_64.sh\nRUN cd /stage && curl -fSsL --insecure ${CONDA_URL} -o install-conda.sh &&\\\n    /bin/bash ./install-conda.sh -b -p /opt/conda &&\\\n    /opt/conda/bin/conda clean -ya\nENV PATH=/opt/conda/bin:${PATH}\n\n# install cmake, setuptools, numpy, and onnx\nARG NUMPY_VERSION\nARG ONNX_VERSION\nRUN conda install -y \\\n        setuptools \\\n        cmake \\\n        numpy=${NUMPY_VERSION} && \\\n    pip install --no-cache-dir \\\n        onnx==\"${ONNX_VERSION}\"\n\n# install cerberus for the new pytorch front-end\nRUN pip install --no-cache-dir cerberus\n\n# build ucx suite\n# note: openmpi will not select ucx without multithreading enabled\nARG UCX_VERSION\nARG UCX_TARNAME=ucx-$UCX_VERSION\nARG UCX_URL=https://github.com/openucx/ucx/releases/download/v${UCX_VERSION}/${UCX_TARNAME}.tar.gz\nRUN apt-get -y update && apt-get -y --no-install-recommends install \\\n        libibverbs-dev \\\n        libnuma-dev &&\\\n    cd /stage && curl -fSsL ${UCX_URL} | tar xzf - &&\\\n    cd ${UCX_TARNAME} && \\\n    ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" \\\n\t--prefix=/opt/ucx \\\n        --with-cuda=/usr/local/cuda \\\n        --with-verbs=/usr/lib/x86_64-linux-gnu \\\n        --enable-mt && \\\n    make -j\"$(nproc)\" && \\\n    make install && rm -rf /var/lib/apt/lists/*;\n\n# build openmpi (use --prefix /opt/openmpi-xxx to move to runtime image)\n# note: require --enable-orterun-prefix-by-default for Azure machine learning compute\n# note: disable verbs as we use ucx middleware and don't want btl openib warnings\nARG OPENMPI_VERSION\nARG OPENMPI_PATH\nARG OPENMPI_TARNAME=openmpi-${OPENMPI_VERSION}\nARG OPENMPI_URL=https://download.open-mpi.org/release/open-mpi/v%OMPI_BASE%/${OPENMPI_TARNAME}.tar.gz\nRUN export OMPI_BASE=${OPENMPI_VERSION%.*} &&\\\n    cd /stage && curl -fSsL `echo ${OPENMPI_URL} | sed s/%OMPI_BASE%/$OMPI_BASE/` | tar xzf - &&\\\n    cd ${OPENMPI_TARNAME} && \\\n    ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" \\\n        --prefix=${OPENMPI_PATH} \\\n        --with-ucx=/opt/ucx \\\n        --without-verbs \\\n        --with-cuda=/usr/local/cuda \\\n        --enable-mpirun-prefix-by-default \\\n        --enable-orterun-prefix-by-default \\\n        --enable-mca-no-build=btl-uct && \\\n    make -j\"$(nproc)\" install && \\\n    ldconfig\nENV PATH=${OPENMPI_PATH}/bin:$PATH\nENV LD_LIBRARY_PATH=${OPENMPI_PATH}/lib:$LD_LIBRARY_PATH\n\n# install mpi4py (be sure to link existing /opt/openmpi-xxx)\nRUN CC=mpicc MPICC=mpicc pip --no-cache-dir install mpi4py --no-binary mpi4py\n\n# install pytorch\nARG PYTORCH_VERSION\nRUN pip install --no-cache-dir torch==${PYTORCH_VERSION}\n\n# in case you need to build pytorch:\n# note: if you want specific branch or to link system cuda libraries or MPI\n# note: recommend using many high-frequency cores (e.g. 32+ skylake cores)\n# ENV CUDA_HOME=\"/usr/local/cuda\" \\\n#     CUDNN_LIBRARY=\"/usr/lib/x86_64-linux-gnu\" \\\n#     NCCL_INCLUDE_DIR=\"/usr/include\" \\\n#     NCCL_LIB_DIR=\"/usr/lib/x86_64-linux-gnu\" \\\n#     USE_SYSTEM_NCCL=1\n# RUN conda install -y \\\n#         mkl \\\n#         mkl-include \\\n#         ninja \\\n#         pyyaml \\\n#         cffi &&\\\n#     cd /stage && git clone https://github.com/pytorch/pytorch.git &&\\\n#     cd pytorch &&\\\n#     git checkout v1.6.0 &&\\\n#     git submodule update --init --recursive &&\\\n#     python setup.py bdist_wheel -d build/wheel &&\\\n#     pip install build/wheel/*.whl\n\n# build onnxruntime wheel with cuda and mpi support\nARG BUILD_CONFIG\nARG COMMIT\nRUN cd /stage && git clone https://github.com/microsoft/onnxruntime.git &&\\\n    cd onnxruntime &&\\\n    git checkout ${COMMIT} &&\\\n    cp ThirdPartyNotices.txt /stage/ThirdPartyNotices.txt &&\\\n    cp dockerfiles/LICENSE-IMAGE.txt /stage/LICENSE-IMAGE.txt &&\\\n    python tools/ci_build/build.py \\\n        --cmake_extra_defines \\\n            ONNXRUNTIME_VERSION=`cat ./VERSION_NUMBER` \\\n        --config ${BUILD_CONFIG} \\\n        --enable_training \\\n        --mpi_home ${OPENMPI_PATH} \\\n        --use_cuda \\\n        --cuda_home /usr/local/cuda \\\n        --cudnn_home /usr/lib/x86_64-linux-gnu/ \\\n        --nccl_home /usr/lib/x86_64-linux-gnu/ \\\n        --update \\\n        --parallel \\\n        --build_dir build \\\n        --build \\\n        --build_wheel \\\n        --skip_tests && \\\n    pip install --no-cache-dir build/${BUILD_CONFIG}/dist/*.whl\n\n# Install AzureML support and commonly used packages.\nRUN pip install --no-cache-dir azureml-defaults sentencepiece==0.1.92 transformers==2.11.0 msgpack==1.0.0 tensorboardX==1.8 tensorboard==2.3.0\n\n# switch to cuda runtime environment\n# note: launch with --gpus all or nvidia-docker\nFROM nvidia/cuda:10.2-cudnn8-runtime-ubuntu18.04\nWORKDIR /stage\n\n# install ucx\n# note: launch with --cap-add=sys_nice to avoid 'mbind' warnings\nCOPY --from=builder /opt/ucx /opt/ucx\nENV PATH=/opt/ucx/bin:$PATH\nENV LD_LIBRARY_PATH=/opt/ucx/lib:$LD_LIBRARY_PATH\n\n# install openmpi\n# note: permit mpirun as root for Azure cluster submissions\n# note: enforce openmpi select ucx or fail\nARG OPENMPI_VERSION\nARG OPENMPI_PATH\nCOPY --from=builder ${OPENMPI_PATH} ${OPENMPI_PATH}\nENV PATH=${OPENMPI_PATH}/bin:$PATH\nENV LD_LIBRARY_PATH=${OPENMPI_PATH}/lib:$LD_LIBRARY_PATH\nENV OMPI_ALLOW_RUN_AS_ROOT=1\nENV OMPI_ALLOW_RUN_AS_ROOT_CONFIRM=1\nENV OMPI_MCA_pml=ucx\nRUN apt-get -y update && apt-get -y --no-install-recommends install \\\n        openssh-server \\\n        openssh-client \\\n        libibverbs-dev \\\n        libnuma-dev && \\\n    ldconfig && rm -rf /var/lib/apt/lists/*;\n\n# copy conda environment (includes numpy, mpi4py, pytorch, onnxruntime)\nCOPY --from=builder /opt/conda /opt/conda\nENV PATH=/opt/conda/bin:${PATH}\n\n# make ssh/sshd less strict for wiring containers on Azure VM scale set\n# note: use 'service ssh start' to launch sshd (will fail if 22 in use)\n# note: can also set port != 22 and set port=X in MPI hosts file\n# note: need to setup password free ssh login between MPI hosts\nRUN sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/g' \\\n        /etc/ssh/sshd_config &&\\\n    sed -i 's/#StrictModes yes/StrictModes no/g' \\\n        /etc/ssh/sshd_config &&\\\n    sed -i 's/#   StrictHostKeyChecking ask/    StrictHostKeyChecking no/g' \\\n        /etc/ssh/ssh_config &&\\\n    mkdir /run/sshd &&\\\n    chmod u=rwx,go=rx /run/sshd\n\n# export versions\nARG UCX_VERSION\nARG OPENMPI_VERSION\nARG CONDA_VERSION\nARG NUMPY_VERSION\nARG ONNX_VERSION\nARG PYTORCH_VERSION\nLABEL UCX_VERSION=${UCX_VERSION}\nLABEL OPENMPI_VERSION=${OPENMPI_VERSION}\nLABEL CONDA_VERSION=${CONDA_VERSION}\nLABEL NUMPY_VERSION=${NUMPY_VERSION}\nLABEL ONNX_VERSION=${ONNX_VERSION}\nLABEL PYTORCH_VERSION=${PYTORCH_VERSION}\n\n# clean\\finalize environment\n# note: adds onnxruntime license and third party notices\nRUN conda remove -y cmake &&\\\n    apt-get purge -y build-essential &&\\\n    apt-get autoremove -y &&\\\n    rm -fr /stage\nWORKDIR /workspace\nCOPY --from=builder /stage/*.txt /workspace/\n"
+}

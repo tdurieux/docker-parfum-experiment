@@ -1,0 +1,2 @@
+FROM heroku/cedar:14
+COPY ./build/linux/plugn-amd64 /bin/plugn

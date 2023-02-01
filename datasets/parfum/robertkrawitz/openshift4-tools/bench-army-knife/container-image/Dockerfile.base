@@ -1,0 +1,14 @@
+FROM quay.io/pbench/pbench-agent-all-fedora-34:latest
+
+RUN dnf --setopt=install_weak_deps=False install -y \
+    bind-utils \
+    git \
+    gcc \
+    jq \
+    socat \
+    sudo \
+    sysbench \
+    telnet \
+    traceroute && \
+    dnf -y clean all && \
+    rm -rf /var/cache/yum

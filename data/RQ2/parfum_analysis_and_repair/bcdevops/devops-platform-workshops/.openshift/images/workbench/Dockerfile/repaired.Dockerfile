@@ -1,0 +1,1 @@
+# Reference: https://fedoramagazine.org/building-smaller-container-images/

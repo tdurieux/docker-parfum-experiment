@@ -1,0 +1,126 @@
+{
+  "startTime": 1674215730453,
+  "endTime": 1674215731746,
+  "originalSmells": [
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 17,
+        "lineEnd": 17,
+        "columnStart": 4,
+        "columnEnd": 16
+      }
+    },
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 19,
+        "lineEnd": 19,
+        "columnStart": 4,
+        "columnEnd": 14
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 59,
+        "lineEnd": 59,
+        "columnStart": 4,
+        "columnEnd": 74
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 60,
+        "lineEnd": 60,
+        "columnStart": 7,
+        "columnEnd": 38
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 27,
+        "lineEnd": 27,
+        "columnStart": 101,
+        "columnEnd": 130
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 28,
+        "lineEnd": 28,
+        "columnStart": 7,
+        "columnEnd": 56
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 49,
+        "lineEnd": 49,
+        "columnStart": 7,
+        "columnEnd": 38
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 51,
+        "lineEnd": 51,
+        "columnStart": 7,
+        "columnEnd": 99
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 53,
+        "lineEnd": 53,
+        "columnStart": 101,
+        "columnEnd": 144
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 27,
+        "lineEnd": 27,
+        "columnStart": 101,
+        "columnEnd": 130
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 28,
+        "lineEnd": 28,
+        "columnStart": 7,
+        "columnEnd": 56
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 17,
+        "lineEnd": 17,
+        "columnStart": 20,
+        "columnEnd": 36
+      }
+    },
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 19,
+        "lineEnd": 19,
+        "columnStart": 18,
+        "columnEnd": 34
+      }
+    }
+  ],
+  "repairedDockerfile": "# -----------------------------------------------------------------------------\n# docker-pinry\n#\n# Builds a basic docker image that can run Pinry (http://getpinry.com) and serve\n# all of it's assets, there are more optimal ways to do this but this is the\n# most friendly and has everything contained in a single instance.\n#\n# Authors: Isaac Bythewood, Jason Kaltsikis\n# Updated: May 2nd, 2020\n# Require: Docker (http://www.docker.io/)\n# -----------------------------------------------------------------------------\n\n# Build static yarn file\nFROM node:14-buster as yarn-build\n\nWORKDIR pinry-spa\nCOPY pinry-spa/package.json pinry-spa/yarn.lock ./\nRUN yarn install && yarn cache clean;\nCOPY pinry-spa .\nRUN yarn build && yarn cache clean;\n\n\n# Required for other database options\nFROM python:3.9.12-slim-buster as base\nARG DEBIAN_FRONTEND=noninteractive\n\nRUN apt-get update \\\n    && if [ $(dpkg --print-architecture) = \"arm64\" -o $(dpkg --print-architecture) = \"armhf\" ]; then \\\n    apt-get -y --no-install-recommends install apt-utils; rm -rf /var/lib/apt/lists/*; fi \\\n    && apt-get -y --no-install-recommends install gcc default-libmysqlclient-dev && rm -rf /var/lib/apt/lists/*;\nRUN pip --no-cache-dir install --user mysqlclient cx-Oracle\n\n\n# Final image\nFROM python:3.9.12-slim-buster\nARG DEBIAN_FRONTEND=noninteractive\n\nWORKDIR pinry\nRUN mkdir /data && chown -R www-data:www-data /data\n\nRUN groupadd -g 2300 tmpgroup \\\n && usermod -g tmpgroup www-data \\\n && groupdel www-data \\\n && groupadd -g 1000 www-data \\\n && usermod -g www-data www-data \\\n && usermod -u 1000 www-data \\\n && groupdel tmpgroup\n\nRUN apt-get update \\\n    # Install nginx \\\n    && apt-get -y --no-install-recommends install nginx pwgen \\\n    # Install Pillow dependencies\n    && apt-get -y --no-install-recommends install libopenjp2-7 libjpeg-turbo-progs libjpeg62-turbo-dev libtiff5-dev libxcb1 \\\n    # Needed to compile psycopg2 on arm (fallback for psycopg2-binary)\n    && if [ $(dpkg --print-architecture) = \"arm64\" -o $(dpkg --print-architecture) = \"armhf\" ]; then \\\n    apt-get -y --no-install-recommends install apt-utils libpq-dev gcc; fi \\\n    && rm -rf /var/lib/apt/lists/* \\\n    && apt-get autoclean\n\n# Install Pipfile requirements\nCOPY requirements.txt ./\nRUN pip install --no-cache-dir \"rcssmin==1.0.6\" --install-option=\"--without-c-extensions\" \\\n    && pip install --no-cache-dir -r requirements.txt\n\n# Copy from previous stages\nCOPY --from=yarn-build pinry-spa/dist /pinry/pinry-spa/dist\nCOPY --from=base /root/.local /root/.local\nENV PATH=/root/.local/bin:$PATH\n\nCOPY . .\n\n# Load in all of our config files.\nADD docker/nginx/nginx.conf /etc/nginx/nginx.conf\nADD docker/nginx/sites-enabled/default /etc/nginx/sites-enabled/default\n\n# 80 is for nginx web, /data contains static files and database /start runs it.\nEXPOSE 80\nENV DJANGO_SETTINGS_MODULE pinry.settings.docker\nVOLUME [\"/data\"]\nCMD    [\"/pinry/docker/scripts/start.sh\"]\n"
+}

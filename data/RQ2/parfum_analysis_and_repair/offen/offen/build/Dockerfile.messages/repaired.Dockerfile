@@ -1,0 +1,95 @@
+# Copyright 2020-2021 - Offen Authors <hioffen@posteo.de>
+# SPDX-License-Identifier: Apache-2.0
+
+FROM node:16-alpine as auditorium
+RUN apk add --no-cache git
+RUN apk add --no-cache --virtual .gyp python3 make g++
+RUN npm i -g npm@6 && npm cache clean --force;
+
+COPY ./auditorium/package.json ./auditorium/package-lock.json /code/deps/
+COPY ./packages /code/packages
+WORKDIR /code/deps
+ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD true
+ENV ADBLOCK true
+ENV DISABLE_OPENCOLLECTIVE true
+RUN npm ci
+COPY ./auditorium /code/auditorium
+WORKDIR /code/auditorium
+RUN cp -a /code/deps/node_modules /code/auditorium/
+RUN npm run --silent extract-strings > auditorium.po
+
+FROM node:16-alpine as script
+RUN apk add --no-cache git
+RUN apk add --no-cache --virtual .gyp python3 make g++
+RUN npm i -g npm@6 && npm cache clean --force;
+
+COPY ./script/package.json ./script/package-lock.json /code/deps/
+COPY ./packages /code/packages
+WORKDIR /code/deps
+ENV ADBLOCK true
+ENV DISABLE_OPENCOLLECTIVE true
+ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD true
+RUN npm ci
+COPY ./script /code/script
+COPY ./banner.txt /code/banner.txt
+COPY ./locales /code/script/locales
+WORKDIR /code/script
+RUN cp -a /code/deps/node_modules /code/script/
+RUN npm run --silent extract-strings > script.po
+
+FROM node:16-alpine as vault
+RUN apk add --no-cache git
+RUN apk add --no-cache --virtual .gyp python3 make g++
+RUN npm i -g npm@6 && npm cache clean --force;
+
+COPY ./vault/package.json ./vault/package-lock.json /code/deps/
+COPY ./packages /code/packages
+WORKDIR /code/deps
+ENV ADBLOCK true
+ENV DISABLE_OPENCOLLECTIVE true
+ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD true
+RUN npm ci
+COPY ./vault /code/vault
+COPY ./banner.txt /code/banner.txt
+COPY ./locales /code/vault/locales
+WORKDIR /code/vault
+RUN cp -a /code/deps/node_modules /code/vault/
+RUN npm run --silent extract-strings > vault.po
+
+FROM node:16-alpine as packages
+RUN apk add --no-cache git
+RUN apk add --no-cache --virtual .gyp python3 make g++
+RUN npm i -g npm@6 && npm cache clean --force;
+
+COPY ./packages/package.json ./packages/package-lock.json /code/deps/
+WORKDIR /code/deps
+ENV ADBLOCK true
+ENV DISABLE_OPENCOLLECTIVE true
+ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD true
+RUN npm ci
+COPY ./packages /code/packages
+COPY ./banner.txt /code/banner.txt
+COPY ./locales /code/packages/locales
+WORKDIR /code/packages
+RUN cp -a /code/deps/node_modules /code/packages/
+RUN npm run --silent extract-strings > packages.po
+
+FROM golang:1.18
+
+RUN apt-get update \
+  && apt-get install --no-install-recommends -y gettext \
+  && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /code/server
+COPY ./server /code/server
+RUN ./extract-strings.sh > /root/server.po
+
+WORKDIR /root
+COPY ./merge_messages.sh /root/merge_messages.sh
+COPY ./locales /root/locales
+COPY --from=script /code/script/script.po /root/script.po
+COPY --from=vault /code/vault/vault.po /root/vault.po
+COPY --from=auditorium /code/auditorium/auditorium.po /root/auditorium.po
+COPY --from=packages /code/packages/packages.po /root/packages.po
+
+RUN ./merge_messages.sh

@@ -1,0 +1,71 @@
+{
+  "startTime": 1674219613954,
+  "endTime": 1674219615016,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 14,
+        "lineEnd": 14,
+        "columnStart": 4,
+        "columnEnd": 68
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 5,
+        "lineEnd": 5,
+        "columnStart": 7,
+        "columnEnd": 42
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 9,
+        "lineEnd": 9,
+        "columnStart": 7,
+        "columnEnd": 73
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 13,
+        "lineEnd": 13,
+        "columnStart": 7,
+        "columnEnd": 28
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 5,
+        "lineEnd": 5,
+        "columnStart": 7,
+        "columnEnd": 42
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 9,
+        "lineEnd": 9,
+        "columnStart": 7,
+        "columnEnd": 73
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 13,
+        "lineEnd": 13,
+        "columnStart": 7,
+        "columnEnd": 28
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM alpine:3.13 AS alpine\n\nFROM ubuntu:18.04 AS bbb-playback\nENV DEBIAN_FRONTEND=noninteractive\nRUN apt-get update \\\n    && apt-get install --no-install-recommends -y language-pack-en \\\n    && update-locale LANG=en_US.UTF-8 && rm -rf /var/lib/apt/lists/*;\nENV LANG=en_US.UTF-8\nRUN apt-get update \\\n    && apt-get install --no-install-recommends -y software-properties-common curl net-tools nginx && rm -rf /var/lib/apt/lists/*;\nRUN apt-key adv --keyserver keyserver.ubuntu.com --recv-keys CC86BB64 \\\n    && add-apt-repository ppa:rmescandon/yq\nRUN apt-get update \\\n    && apt-get install --no-install-recommends -y yq && rm -rf /var/lib/apt/lists/*;\nRUN curl -f -sL https://ubuntu.bigbluebutton.org/repo/bigbluebutton.asc | apt-key add - \\\n    && echo \"deb https://ubuntu.bigbluebutton.org/bionic-240 bigbluebutton-bionic main\" >/etc/apt/sources.list.d/bigbluebutton.list\nRUN useradd --system --user-group --home-dir /var/bigbluebutton bigbluebutton\nRUN touch /.dockerenv\nRUN apt-get update \\\n    && apt-get download bbb-playback bbb-playback-presentation bbb-playback-podcast bbb-playback-screenshare \\\n    && dpkg -i --force-depends *.deb\n\nFROM alpine AS nginx\nRUN apk add --no-cache nginx tini gettext \\\n    && ln -sf /dev/stdout /var/log/nginx/access.log \\\n    && ln -sf /dev/stderr /var/log/nginx/error.log\nRUN rm /etc/nginx/conf.d/default.conf\nCOPY --from=bbb-playback /etc/bigbluebutton/nginx /etc/bigbluebutton/nginx/\nCOPY --from=bbb-playback /var/bigbluebutton/playback /var/bigbluebutton/playback/\nCOPY nginx/start /etc/nginx/start\nCOPY nginx/dhparam.pem /etc/nginx/dhparam.pem\nCOPY nginx/conf.d /etc/nginx/http.d/\n# This will be needed with alpine 3.14 since conf.d is being phased out.\n# RUN ln -s /etc/nginx/http.d/ /etc/nginx/conf.d\nEXPOSE 80\nEXPOSE 443\nENV NGINX_HOSTNAME=localhost\nCMD [ \"/etc/nginx/start\", \"-g\", \"daemon off;\" ]\n\nFROM alpine AS base\nRUN apk add --no-cache \\\n    libpq\nRUN apk add --no-cache \\\n    libpq \\\n    libxml2 \\\n    libxslt \\\n    ruby \\\n    ruby-irb \\\n    ruby-bigdecimal \\\n    ruby-bundler \\\n    ruby-json \\\n    tini \\\n    tzdata \\\n    shared-mime-info\nRUN addgroup scalelite --gid 1000 && \\\n    adduser -u 1000 -h /srv/scalelite -G scalelite -D scalelite\nRUN addgroup scalelite-spool --gid 2000 && \\\n    addgroup scalelite scalelite-spool\nWORKDIR /srv/scalelite\n\nFROM base as builder\nRUN apk add --no-cache \\\n    build-base \\\n    libxml2-dev \\\n    libxslt-dev \\\n    pkgconf \\\n    postgresql-dev \\\n    ruby-dev \\\n    && ( echo 'install: --no-document' ; echo 'update: --no-document' ) >>/etc/gemrc\nUSER scalelite:scalelite\nCOPY --chown=scalelite:scalelite Gemfile* ./\nRUN bundle config build.nokogiri --use-system-libraries \\\n    && bundle install --deployment --without development:test -j4 \\\n    && rm -rf vendor/bundle/ruby/*/cache \\\n    && find vendor/bundle/ruby/*/gems/ \\( -name '*.c' -o -name '*.o' \\) -delete\nCOPY --chown=scalelite:scalelite . ./\nRUN rm -rf nginx\n\nFROM base AS application\nUSER scalelite:scalelite\nENV RAILS_ENV=production RAILS_LOG_TO_STDOUT=true\nCOPY --from=builder --chown=scalelite:scalelite /srv/scalelite ./\n\nARG BUILD_NUMBER\nENV BUILD_NUMBER=${BUILD_NUMBER}\n\nFROM application AS recording-importer\nENV RECORDING_IMPORT_POLL=true\nCMD [ \"bin/start-recording-importer\" ]\n\nFROM application AS poller\nCMD [ \"bin/start-poller\" ]\n\nFROM application AS api\nEXPOSE 3000\nCMD [ \"bin/start\" ]\n"
+}

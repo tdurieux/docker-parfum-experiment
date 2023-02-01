@@ -1,0 +1,89 @@
+{
+  "startTime": 1674241147722,
+  "endTime": 1674241148385,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 9,
+        "lineEnd": 9,
+        "columnStart": 4,
+        "columnEnd": 56
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 36,
+        "lineEnd": 36,
+        "columnStart": 4,
+        "columnEnd": 70
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 75,
+        "lineEnd": 75,
+        "columnStart": 4,
+        "columnEnd": 70
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 17,
+        "lineEnd": 17,
+        "columnStart": 4,
+        "columnEnd": 69
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 157,
+        "lineEnd": 157,
+        "columnStart": 4,
+        "columnEnd": 121
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 5,
+        "lineEnd": 5,
+        "columnStart": 4,
+        "columnEnd": 236
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 11,
+        "lineEnd": 11,
+        "columnStart": 4,
+        "columnEnd": 35
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 5,
+        "lineEnd": 5,
+        "columnStart": 4,
+        "columnEnd": 236
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 11,
+        "lineEnd": 11,
+        "columnStart": 4,
+        "columnEnd": 35
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "ARG alpine_image\nARG debian_image\nFROM ${debian_image} AS debian\n\nRUN apt-get update \\\n && apt-get install --no-install-recommends -y build-essential libevent-core-2.0-5 libevent-dev libevent-extra-2.0-5 libevent-openssl-2.0-5 libevent-pthreads-2.0-5 libpcre3-dev automake libtool pkg-config git software-properties-common apt-transport-https curl \\\n && (pkg-config || true) && rm -rf /var/lib/apt/lists/*;\n\nRUN add-apt-repository \"deb http://apt.llvm.org/jessie/ llvm-toolchain-jessie-4.0 main\" \\\n && curl -f -sSL https://apt.llvm.org/llvm-snapshot.gpg.key | apt-key add - \\\n && apt-get update \\\n && apt-get install --no-install-recommends -y llvm-4.0-dev && rm -rf /var/lib/apt/lists/*;\n\nARG previous_crystal_release\nADD ${previous_crystal_release} /tmp/crystal.tar.gz\nENV PATH=${PATH}:/tmp/crystal/bin\nRUN mkdir -p /tmp/crystal \\\n && tar xz -f /tmp/crystal.tar.gz -C /tmp/crystal --strip-component=1 \\\n && crystal --version && rm /tmp/crystal.tar.gz\n\nARG release\nENV CFLAGS=\"-fPIC -pipe ${release:+-O2}\"\n\n# Build libgc\nARG gc_version\nARG libatomic_ops_version\nCOPY files/feature-thread-stackbottom.patch /tmp/\nRUN git clone https://github.com/ivmai/bdwgc \\\n && cd bdwgc \\\n && git checkout ${gc_version} \\\n && git clone https://github.com/ivmai/libatomic_ops \\\n && (cd libatomic_ops && git checkout ${libatomic_ops_version}) \\\n \\\n && patch -p1 < /tmp/feature-thread-stackbottom.patch \\\n \\\n && ./autogen.sh \\\n && ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" --disable-debug --disable-shared --enable-large-config \\\n && make -j$(nproc)\n\n# Cross-compile crystal and build libcrystal.a\nARG crystal_sha1\nARG musl_target\nRUN git clone https://github.com/crystal-lang/crystal \\\n && cd crystal \\\n && git checkout ${crystal_sha1} \\\n \\\n && make deps \\\n \\\n && bin/crystal build src/compiler/crystal.cr -D without_openssl -D without_zlib \\\n                      --cross-compile --target ${musl_target} -o /crystal-musl\n\nFROM ${alpine_image}\n\n# Install dependencies\nRUN apk add --no-cache \\\n      # Statically-compiled llvm\n      llvm4-dev llvm4-static \\\n      # Static zlib, libyaml, pcre, and libevent\n      zlib-dev yaml-dev pcre-dev libevent-dev \\\n      # Build tools\n      git gcc g++ make automake libtool autoconf bash coreutils\n\nARG release\nENV CFLAGS=\"-fPIC -pipe ${release:+-O2}\"\n\n# Build libgc (again, this time for musl)\nARG gc_version\nARG libatomic_ops_version\nRUN git clone https://github.com/ivmai/bdwgc \\\n && cd bdwgc \\\n && git checkout ${gc_version} \\\n && git clone https://github.com/ivmai/libatomic_ops \\\n && (cd libatomic_ops && git checkout ${libatomic_ops_version}) \\\n \\\n && ./autogen.sh \\\n && ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" --disable-debug --disable-shared --enable-large-config \\\n && make -j$(nproc) CFLAGS=-DNO_GETCONTEXT\n\nENV LIBRARY_PATH=/bdwgc/.libs/\nENV PATH=/usr/lib/llvm4/bin:$PATH\nRUN llvm-config --version\n\n# Build crystal\nCOPY --from=debian /crystal-musl.o /\nARG crystal_version\nARG crystal_sha1\nARG gnu_target\nRUN git clone https://github.com/crystal-lang/crystal \\\n && cd crystal \\\n && git checkout ${crystal_sha1} \\\n \\\n && make deps \\\n && mkdir -p .build/crystal-musl \\\n && cc '/crystal-musl.o' -o '.build/crystal-musl/crystal' -rdynamic src/llvm/ext/llvm_ext.o `llvm-config --libs --system-libs --ldflags` -lstdc++ -lpcre -lm -lgc -lpthread src/ext/libcrystal.a -levent -lrt \\\n && export PATH=.build/crystal-musl/:$PATH \\\n \\\n && make crystal stats=true static=true ${release:+release=true} \\\n                 CRYSTAL_CONFIG_TARGET=${gnu_target} \\\n && ([ \"$(ldd .build/crystal | wc -l)\" -eq \"1\" ] || { echo './build/crystal is not statically linked'; ldd .build/crystal; exit 1; })\n\n# Build shards\nARG shards_version\nARG musl_target\nRUN git clone https://github.com/crystal-lang/shards \\\n && cd shards \\\n && git checkout ${shards_version} \\\n \\\n # Hack to make shards not segfault\n && echo 'require \"llvm/lib_llvm\"; require \"llvm/enums\"; require \"./src/shards\"' > hack.cr \\\n && /crystal/bin/crystal build --stats --target ${musl_target} \\\n    hack.cr -o shards --static ${release:+--release}\n\nCOPY files/crystal-wrapper /output/bin/crystal\nCOPY --from=debian /bdwgc/.libs/libgc.a /libgc-debian.a\nCOPY --from=debian /crystal/src/ext/libcrystal.a /libcrystal-debian.a\n\nARG package_iteration\n\nRUN \\\n\n    rm -Rf /crystal/src/{llvm/ext/llvm_ext.o,ext/sigfault.o,ext/libcrystal.a} \\\n && mv /libcrystal-debian.a /crystal/src/ext/libcrystal.a \\\n \\\n # Copy libgc.a to /lib/crystal/lib/\n && mkdir -p /output/lib/crystal/lib/ \\\n && cp /libgc-debian.a /output/lib/crystal/lib/libgc.a \\\n \\\n # Copy crystal to /lib/crystal/bin/\n && mkdir -p /output/lib/crystal/bin/ \\\n && cp /crystal/.build/crystal /output/lib/crystal/bin/crystal \\\n \\\n # Copy shards to /lib/crystal/bin/\n && cp /shards/shards /output/lib/crystal/bin/shards \\\n && ln -s ../lib/crystal/bin/shards /output/bin/shards \\\n \\\n # Copy stdlib to /share/crystal/src/\n && mkdir -p /output/share/crystal/ \\\n && cp -r /crystal/src /output/share/crystal/src \\\n \\\n # Copy samples\n && mkdir -p /output/share/doc/crystal/ \\\n && cp -r /crystal/samples /output/share/doc/crystal/examples \\\n \\\n # Copy and compress manpages\n && mkdir -p /output/share/man/man1/ /output/share/man/man5/ \\\n && cp /crystal/man/crystal.1 /output/share/man/man1/crystal.1 \\\n && cp /shards/man/shards.1 /output/share/man/man1/shards.1 \\\n && cp /shards/man/shard.yml.5 /output/share/man/man5/shard.yml.5 \\\n && gzip -9 /output/share/man/man1/crystal.1 /output/share/man/man1/shards.1 /output/share/man/man5/shard.yml.5 \\\n \\\n # Copy license\n && mkdir -p /output/share/licenses/crystal/ \\\n && cp /crystal/LICENSE /output/share/licenses/crystal/LICENSE \\\n \\\n # Create tarball\n && mv /output /crystal-${crystal_version}-${package_iteration} \\\n && mkdir /output \\\n && tar -cvf /output/crystal-${crystal_version}-${package_iteration}.tar /crystal-${crystal_version}-${package_iteration} && rm /output/crystal-${crystal_version}-${package_iteration}.tar\n"
+}

@@ -1,0 +1,44 @@
+{
+  "startTime": 1674250109115,
+  "endTime": 1674250110283,
+  "originalSmells": [
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 14,
+        "lineEnd": 14,
+        "columnStart": 4,
+        "columnEnd": 29
+      }
+    },
+    {
+      "rule": "aptGetInstallUseY",
+      "position": {
+        "lineStart": 48,
+        "lineEnd": 51,
+        "columnStart": 4,
+        "columnEnd": 66
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 48,
+        "lineEnd": 51,
+        "columnStart": 4,
+        "columnEnd": 66
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 48,
+        "lineEnd": 51,
+        "columnStart": 4,
+        "columnEnd": 66
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "ARG base_image=\"debian:bookworm-slim\"\n\nFROM scratch as frontend-source\n\n# artisan is not strictly required for JS builds but it triggers some behavior inside Laravel Mix\n# https://github.com/laravel-mix/laravel-mix/issues/1326#issuecomment-363975710\nCOPY --link package.json package-lock.json webpack.mix.js artisan /app/\nCOPY --link resources/ /app/resources/\nCOPY --link public/ /app/public/\n\nFROM node:18 as frontend\n\nRUN npm install -g npm@latest && npm cache clean --force;\n\nCOPY --link --from=frontend-source /app/ /app/\n\nWORKDIR /app/\n\nRUN set -eux && \\\n    npm ci --no-progress && \\\n    npm run production --no-progress\n\nFROM scratch as backend-source\n\nCOPY --link app/ /app/app/\nCOPY --link bootstrap/ /app/bootstrap/\nCOPY --link config/ /app/config/\nCOPY --link database/ /app/database/\nCOPY --link resources/ /app/resources/\nCOPY --link routes/ /app/routes/\nCOPY --link storage/ /app/storage/\nCOPY --link lang/ /app/lang/\nCOPY --link artisan composer.json composer.lock /app/\nCOPY --link --from=frontend /app/public/ /app/public/\n\nFROM ${base_image} as backend-uncompressed\n\nLABEL maintainer=\"developers@robojackets.org\"\n\nENV DEBIAN_FRONTEND=noninteractive \\\n    COMPOSER_NO_INTERACTION=1 \\\n    HOME=/tmp\n\nRUN set -eux && \\\n    apt-get update && \\\n    apt-get upgrade -qq --assume-yes && \\\n    apt-get install -y --no-install-recommends -qq --assume-yes \\\n        php8.1-fpm php8.1-mysql php8.1-gd php8.1-xml php8.1-mbstring php8.1-zip php8.1-curl php8.1-intl \\\n        php8.1-opcache php8.1-bcmath php8.1-ldap php8.1-uuid php8.1-sqlite sqlite3 exiftool ghostscript \\\n        unzip libfcgi-bin default-mysql-client zopfli php8.1-redis && \\\n    apt-get autoremove -qq --assume-yes && \\\n    mkdir /app && \\\n    chown www-data:www-data /app && \\\n    sed -i '/error_log/c\\error_log = /local/error.log' /etc/php/8.1/fpm/php-fpm.conf && \\\n    sed -i '/expose_php/c\\expose_php = Off' /etc/php/8.1/fpm/php.ini && \\\n    sed -i '/expose_php/c\\expose_php = Off' /etc/php/8.1/cli/php.ini && \\\n    sed -i '/allow_url_fopen/c\\allow_url_fopen = Off' /etc/php/8.1/fpm/php.ini && \\\n    sed -i '/allow_url_fopen/c\\allow_url_fopen = Off' /etc/php/8.1/cli/php.ini && \\\n    sed -i '/allow_url_include/c\\allow_url_include = Off' /etc/php/8.1/fpm/php.ini && \\\n    sed -i '/allow_url_include/c\\allow_url_include = Off' /etc/php/8.1/cli/php.ini && rm -rf /var/lib/apt/lists/*;\n\nCOPY --link --from=composer /usr/bin/composer /usr/bin/composer\n\nCOPY --link --from=backend-source --chown=www-data:www-data /app/ /app/\n\nWORKDIR /app/\n\nUSER www-data\n\nRUN --mount=type=secret,id=composer_auth,dst=/app/auth.json,uid=33,gid=33,required=true \\\n    set -eux && \\\n    composer install --no-interaction --no-progress --no-dev --optimize-autoloader --classmap-authoritative --no-cache && \\\n    php artisan nova:publish && \\\n    php artisan horizon:publish && \\\n    sed -i '/HTTPS_ONLY_COOKIES/c\\true,' /app/vendor/subfission/cas/src/Subfission/Cas/CasManager.php && \\\n    sed -i '/\"\\$1\\\\n\\$2\"/c\\\\' /app/vendor/mrclay/minify/lib/Minify/HTML.php;\n\n# This target is the default, but skipped during pull request builds and in our recommended local build invocation\n# precompressed_assets var on the Nomad job must match whether this stage ran or not\nFROM backend-uncompressed as backend-compressed\n\nRUN set -eux && \\\n    cd /app/public/ && \\\n    find . -type f -size +0 | while read file; do \\\n        filename=$(basename -- \"$file\"); \\\n        extension=\"${filename##*.}\"; \\\n        if [ \"$extension\" = \"css\" ] || [ \"$extension\" = \"js\" ] || [ \"$extension\" = \"svg\" ]; then \\\n          zopfli --gzip -v --i10 \"$file\"; \\\n          touch \"$file\".gz \"$file\"; \\\n        elif [ \"$extension\" = \"png\" ]; then \\\n          zopflipng -m -y --lossy_transparent --lossy_8bit --filters=01234mepb --iterations=5 \"$file\" \"$file\"; \\\n        fi; \\\n    done;\n"
+}

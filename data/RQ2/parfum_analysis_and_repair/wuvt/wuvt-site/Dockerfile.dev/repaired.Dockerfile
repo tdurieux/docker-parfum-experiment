@@ -1,0 +1,57 @@
+FROM python:3.9.6
+
+# WARNING: Do not use this Dockerfile for production installs. It creates a
+# temporary database that is stored in the container, which you definitely
+# don't want for production.
+
+# precreate a redis user with a known uid/gid for uwsgi
+RUN useradd -d /var/lib/redis -r -s /bin/false -u 500 -U redis
+
+RUN apt-get update \
+        && apt-get install --no-install-recommends -y \
+            git \
+            libcap-dev \
+            libjansson-dev \
+            libpcre3-dev \
+            librsvg2-bin \
+            libsasl2-dev \
+            libyaml-dev \
+            optipng \
+            redis-server \
+            uuid-dev \
+        && pip install --no-cache-dir pip-tools && rm -rf /var/lib/apt/lists/*;
+
+WORKDIR /usr/src/uwsgi
+
+# prepare uwsgi
+RUN wget -O uwsgi-2.0.20.tar.gz https://github.com/unbit/uwsgi/archive/refs/tags/2.0.20.tar.gz && \
+        tar --strip-components=1 -axvf uwsgi-2.0.20.tar.gz && rm uwsgi-2.0.20.tar.gz
+COPY uwsgi_profile.ini buildconf/wuvt.ini
+
+# build and install uwsgi
+RUN python uwsgiconfig.py --build wuvt && cp uwsgi /usr/local/bin/ && \
+        mkdir -p /usr/local/lib/uwsgi/plugins
+
+WORKDIR /usr/src/app
+
+# install python dependencies
+COPY requirements.txt /usr/src/app/
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY . /usr/src/app
+
+ENV PYTHONPATH /usr/src/app
+ENV FLASK_APP wuvt
+ENV USE_EMBEDDED_DB 1
+
+RUN python setup.py render_svgs
+
+# set permissions and create media directory
+RUN chown www-data:www-data wuvt . && \
+        install -d -o www-data -g www-data /data/media && \
+        install -d -o redis -g redis -m 0700 /var/lib/redis && \
+        install -d -o redis -g redis -m 0700 /var/run/redis
+
+EXPOSE 8080
+ENTRYPOINT ["/usr/src/app/entrypoint-dev.sh"]
+CMD ["uwsgi" , "--ini", "uwsgi_docker.ini:dev"]

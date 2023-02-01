@@ -1,0 +1,4 @@
+ARG GO_IMAGES
+FROM ${GO_IMAGES}
+
+WORKDIR /var/www/html

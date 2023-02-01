@@ -1,0 +1,21 @@
+FROM daqf/aardvark:latest
+
+RUN $AG update && $AG install openjdk-11-jre
+
+RUN $AG update && $AG install openjdk-11-jdk git
+
+RUN $AG update && $AG install python python-setuptools python-pip netcat
+
+RUN $AG update && $AG install curl
+
+RUN pip install --no-cache-dir scapy
+
+COPY subset/network/ .
+
+RUN mkdir -p mac_oui/src/main/resources
+
+RUN curl -f https://svn.nmap.org/nmap/nmap-mac-prefixes > mac_oui/src/main/resources/macList.txt
+
+RUN cd mac_oui && ./gradlew shadowJar
+
+CMD ["./test_network"]

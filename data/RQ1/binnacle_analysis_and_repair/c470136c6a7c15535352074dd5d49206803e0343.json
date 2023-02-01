@@ -1,0 +1,134 @@
+{
+  "startTime": 1674243056697,
+  "endTime": 1674243057209,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 70,
+        "lineEnd": 70,
+        "columnStart": 4,
+        "columnEnd": 21
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 71,
+        "lineEnd": 71,
+        "columnStart": 4,
+        "columnEnd": 24
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 100,
+        "lineEnd": 102,
+        "columnStart": 4,
+        "columnEnd": 14
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 104,
+        "lineEnd": 104,
+        "columnStart": 4,
+        "columnEnd": 34
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 116,
+        "lineEnd": 116,
+        "columnStart": 4,
+        "columnEnd": 36
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 121,
+        "lineEnd": 121,
+        "columnStart": 4,
+        "columnEnd": 32
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 21,
+        "lineEnd": 21,
+        "columnStart": 4,
+        "columnEnd": 50
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 19,
+        "lineEnd": 19,
+        "columnStart": 4,
+        "columnEnd": 32
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 79,
+        "lineEnd": 83,
+        "columnStart": 22,
+        "columnEnd": 21
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 88,
+        "lineEnd": 88,
+        "columnStart": 4,
+        "columnEnd": 42
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 111,
+        "lineEnd": 111,
+        "columnStart": 22,
+        "columnEnd": 89
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 50,
+        "lineEnd": 50,
+        "columnStart": 22,
+        "columnEnd": 79
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 88,
+        "lineEnd": 88,
+        "columnStart": 4,
+        "columnEnd": 42
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 111,
+        "lineEnd": 111,
+        "columnStart": 22,
+        "columnEnd": 89
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "ARG AWS_REGION\nFROM 520713654638.dkr.ecr.${AWS_REGION}.amazonaws.com/sagemaker-rl-tensorflow:coach0.11.0-cpu-py3\n\nRUN buildDeps=\" \\\n        wget \\\n        build-essential \\\n    \" \\\n    && apt-get update && apt-get install -y --no-install-recommends $buildDeps \\\n    && apt-get clean \\\n    && rm -rf /var/lib/apt/lists/*\n\n##############################################################\n# MPI & its dependencies\n##############################################################\n\n# Install Open MPI\nRUN mkdir /tmp/openmpi && \\\n    cd /tmp/openmpi && \\\n    wget https://www.open-mpi.org/software/ompi/v3.0/downloads/openmpi-3.0.0.tar.gz && \\\n    tar zxf openmpi-3.0.0.tar.gz && \\\n    cd openmpi-3.0.0 && \\\n    ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" --enable-orterun-prefix-by-default && \\\n    make -j $(nproc) all && \\\n    make install && \\\n    ldconfig && \\\n    rm -rf /tmp/openmpi && rm openmpi-3.0.0.tar.gz\n\n# Install Horovod, temporarily using CUDA stubs\nRUN ldconfig /usr/local/cuda-9.0/targets/x86_64-linux/lib/stubs && \\\n    HOROVOD_CPU_ALLREDUCE=MPI HOROVOD_WITH_TENSORFLOW=1 pip install --no-cache-dir horovod && \\\n    ldconfig\n\n# Create a wrapper for OpenMPI to allow running as root by default\nRUN mv /usr/local/bin/mpirun /usr/local/bin/mpirun.real && \\\n    echo '#!/bin/bash' > /usr/local/bin/mpirun && \\\n    echo 'mpirun.real --allow-run-as-root \"$@\"' >> /usr/local/bin/mpirun && \\\n    chmod a+x /usr/local/bin/mpirun\n\n# Configure OpenMPI to run good defaults:\n#   --bind-to none --map-by slot --mca btl_tcp_if_exclude lo,docker0\nRUN echo \"hwloc_base_binding_policy = none\" >> /usr/local/etc/openmpi-mca-params.conf && \\\n    echo \"rmaps_base_mapping_policy = slot\" >> /usr/local/etc/openmpi-mca-params.conf\n\nENV LD_LIBRARY_PATH=/usr/local/openmpi/lib:$LD_LIBRARY_PATH\nENV PATH /usr/local/openmpi/bin/:$PATH\nENV PATH=/usr/local/nvidia/bin:$PATH\n\nENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1\n\n# SSH. Partially taken from https://docs.docker.com/engine/examples/running_ssh_service/\nRUN apt-get update && apt-get install -y --no-install-recommends openssh-server && \\\n    mkdir -p /var/run/sshd && rm -rf /var/lib/apt/lists/*;\n\n# SSH login fix. Otherwise user is kicked off after login\nRUN sed 's@session\\s*required\\s*pam_loginuid.so@session optional pam_loginuid.so@g' -i /etc/pam.d/sshd\n\n# Create SSH key.\nRUN mkdir -p /root/.ssh/ && \\\n  ssh-keygen -q -t rsa -N '' -f /root/.ssh/id_rsa && \\\n  cp /root/.ssh/id_rsa.pub /root/.ssh/authorized_keys && \\\n  printf \"Host *\\n  StrictHostKeyChecking no\\n\" >> /root/.ssh/config\n\n# Hostname Fix\nCOPY resources/changehostname.c /\nCOPY resources/change-hostname.sh /\nCOPY resources/change-hostname.sh /usr/local/bin/change-hostname.sh\n\nRUN chmod +x /usr/local/bin/change-hostname.sh\nRUN chmod +x /change-hostname.sh\n\nRUN pip install --no-cache-dir keras\nRUN pip install --no-cache-dir retrying\n##############################################################\nWORKDIR /opt\n\n############################################\n# Roboschool\n############################################\n\nRUN apt-get update && apt-get install --no-install-recommends -y \\\n      git cmake ffmpeg pkg-config \\\n      qtbase5-dev libqt5opengl5-dev libassimp-dev \\\n      libtinyxml-dev \\\n      libgl1-mesa-dev \\\n    && cd /opt \\\n    && apt-get clean && rm -rf /var/cache/apt/archives/* /var/lib/apt/lists/*\n\nRUN apt-get update && \\\n    apt-get install --no-install-recommends -y libboost-python-dev && rm -rf /var/lib/apt/lists/*;\n\nRUN apt-get update \\\n    && apt-get install -y --no-install-recommends python3.6-dev \\\n    && ln -s -f /usr/bin/python3.6 /usr/bin/python \\\n    && apt-get clean \\\n    && rm -rf /var/cache/apt/archives/* /var/lib/apt/lists/*\n\nRUN curl -fSsL -O https://bootstrap.pypa.io/get-pip.py && \\\n    python get-pip.py && \\\n    rm get-pip.py\n\nRUN pip install --no-cache-dir --upgrade \\\n    pip \\\n    setuptools\n\nRUN pip install --no-cache-dir roboschool==1.0.48\n\nENV PYTHONUNBUFFERED 1\n\n############################################\n# Baselines\n############################################\nRUN apt-get update && apt-get install --no-install-recommends -y cmake libopenmpi-dev python3-dev zlib1g-dev wget && rm -rf /var/lib/apt/lists/*;\n\nENV BASELINES_PATH /opt/baselines/\nRUN git clone https://github.com/openai/baselines.git\n\nRUN pip install --no-cache-dir -e ${BASELINES_PATH}\n\n############################################\n# Stable Baselines\n############################################\nRUN pip install --no-cache-dir stable-baselines\n\n############################################\n# Test Installation\n############################################\n# Test to verify if all required dependencies installed successfully or not.\nRUN python -c \"import gym; import roboschool;\"\n"
+}

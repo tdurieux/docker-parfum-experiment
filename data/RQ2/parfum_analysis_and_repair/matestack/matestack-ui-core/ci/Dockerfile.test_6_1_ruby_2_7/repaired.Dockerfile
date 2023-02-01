@@ -1,0 +1,50 @@
+FROM ruby:2.7-alpine3.12
+
+RUN gem install bundler:2.1.4
+
+RUN apk update --no-cache && \
+    apk add --no-cache build-base postgresql-dev git nodejs yarn tzdata bash sqlite-dev shared-mime-info npm && \
+    mkdir -p /app
+
+WORKDIR /app
+
+COPY ./lib/ /app/lib/
+COPY matestack-ui-core.gemspec /app/
+COPY ./ci/Gemfile.6.1 /app/Gemfile
+RUN bundle install
+
+RUN apk update && apk upgrade \
+    && echo @edge http://nl.alpinelinux.org/alpine/edge/community >> /etc/apk/repositories \
+    && echo @edge http://nl.alpinelinux.org/alpine/edge/main >> /etc/apk/repositories \
+    && apk add --no-cache \
+    chromium=86.0.4240.111-r0 \
+    nss@edge \
+    && rm -rf /var/lib/apt/lists/* \
+    /var/cache/apk/* \
+    /usr/share/man \
+    /tmp/*
+
+RUN apk add --no-cache chromium-chromedriver=86.0.4240.111-r0
+
+ENV CHROME_BIN=/usr/bin/chromium-browser \
+    CHROME_PATH=/usr/lib/chromium/
+
+RUN mv Gemfile _Gemfile
+RUN mv Gemfile.lock _Gemfile.lock
+COPY . /app
+RUN rm Gemfile
+RUN rm Gemfile.lock
+RUN mv _Gemfile Gemfile
+RUN mv _Gemfile.lock Gemfile.lock
+
+WORKDIR /app/spec/dummy
+
+RUN npm install && npm cache clean --force;
+RUN ./bin/webpack
+
+RUN rm ./db/schema.rb
+
+RUN rm ./config/application.rb
+RUN mv ./config/application.6.1_rb /app/spec/dummy/config/application.rb
+
+WORKDIR /app

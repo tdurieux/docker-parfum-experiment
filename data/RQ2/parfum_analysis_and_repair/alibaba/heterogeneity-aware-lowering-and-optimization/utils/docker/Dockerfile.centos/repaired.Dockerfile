@@ -1,0 +1,112 @@
+# Build this image:  docker build -t halo:[version] .
+#
+
+ARG BASE_IMAGE
+
+FROM  ${BASE_IMAGE}
+
+RUN yum install -y zlib-devel curl-devel wget make bzip2 python3 \
+    which unzip git && \
+    yum clean all && rm -rf /var/cache/yum
+RUN yum install -y centos-release-scl && \
+    yum install -y devtoolset-7-gcc-c++-7.3.1 && \
+    yum clean all && rm -rf /var/cache/yum
+
+ARG BASE_IMAGE=${BASE_IMAGE}
+
+SHELL ["/bin/bash", "-c"]
+ENV NV_NVINFER_DEV_VERSION=8.2.5-1.cuda11.4
+RUN if [[ ${BASE_IMAGE} =~ nvidia ]]; then \
+        yum update -y && \
+        yum install -y libnvinfer-plugin-devel-${NV_NVINFER_DEV_VERSION} \
+            libnvinfer-plugin8-${NV_NVINFER_DEV_VERSION} \
+            libnvinfer-devel-${NV_NVINFER_DEV_VERSION}  \
+            libnvinfer8-${NV_NVINFER_DEV_VERSION} && \
+        yum clean all ; rm -rf /var/cache/yum \
+    fi
+
+SHELL ["/usr/bin/scl", "enable", "devtoolset-7"]
+
+# Install cmake
+ENV CMAKE_VERSION=3.16.7
+WORKDIR /tmp/cmake
+RUN wget https://github.com/Kitware/CMake/releases/download/v${CMAKE_VERSION}/cmake-${CMAKE_VERSION}.tar.gz && \
+    tar zxf cmake-${CMAKE_VERSION}.tar.gz && \
+    cd cmake-${CMAKE_VERSION} && \
+    ./bootstrap --system-curl --parallel=48 && \
+    make -j all && \
+    make install && \
+    rm -rf /tmp/cmake && rm cmake-${CMAKE_VERSION}.tar.gz
+
+# Install Ninja
+RUN cd /tmp && git clone https://github.com/ninja-build/ninja.git && \
+    cd ninja && \
+    git checkout v1.10.2 &&  cmake -G "Unix Makefiles" . && make -j && make install && \
+    rm -fr /tmp/ninja
+
+# INSTALL Protobuf (static)
+RUN cd /tmp && \
+    git clone --depth=1 https://github.com/protocolbuffers/protobuf.git -b v3.9.1 && \
+    cd protobuf/cmake && \
+    cmake -G Ninja . -Dprotobuf_BUILD_TESTS=OFF \
+      -Dprotobuf_BUILD_SHARED_LIBS=OFF \
+      -DCMAKE_POSITION_INDEPENDENT_CODE=ON && \
+    ninja install && \
+    rm -fr /tmp/protobuf
+
+# INSTALL glog
+RUN cd /tmp && \
+    git clone --depth=1 https://github.com/google/glog.git -b v0.4.0 && \
+    cd glog && \
+    cmake -H. -Bbuild -G "Unix Makefiles" && cmake --build build && \
+    cmake --build build --target install && ldconfig && \
+    rm -fr /tmp/glog
+
+# Build & Install DNNL (MKLDNN)
+RUN cd /tmp && git clone --depth=1 https://github.com/intel/mkl-dnn.git --branch v1.7-rc && \
+    cd /tmp/mkl-dnn && \
+    cmake -G Ninja -DDNNL_BUILD_EXAMPLES=OFF -DDNNL_BUILD_TESTS=OFF -DDNNL_ENABLE_PRIMITIVE_CACHE=ON -DCMAKE_INSTALL_PREFIX=/opt/dnnl && \
+    ninja install
+
+# Install Eigen
+RUN cd /tmp && wget https://gitlab.com/libeigen/eigen/-/archive/3.4.0/eigen-3.4.0.tar.bz2 && \
+    tar jxvf eigen-3.4.0.tar.bz2 && mv eigen-3.4.0 /opt && rm eigen-3.4.0.tar.bz2
+
+# Install XNNPack
+RUN cd /tmp && git clone https://github.com/google/XNNPACK.git && \
+    cd /tmp/XNNPACK && git checkout -b tmp 90db69f681ea9abd1ced813c17c00007f14ce58b && \
+    mkdir /tmp/xnn_build_static && cd /tmp/xnn_build_static && \
+    cmake -G Ninja ../XNNPACK -DXNNPACK_LIBRARY_TYPE=static -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+      -DXNNPACK_BUILD_TESTS=OFF -DXNNPACK_BUILD_BENCHMARKS=OFF -DCMAKE_BUILD_TYPE=Release \
+      -DCMAKE_INSTALL_PREFIX=/opt/XNNPACK && \
+    ninja install
+
+# Install Flatbuffer
+RUN cd /tmp && \
+    git clone --depth=1 https://github.com/google/flatbuffers.git -b v1.12.0 && \
+    cd flatbuffers && \
+    cmake -G "Unix Makefiles" -DCMAKE_BUILD_TYPE=Release  -DFLATBUFFERS_BUILD_SHAREDLIB=ON && make -j && make install && \
+    rm -fr /tmp/flatbuffers
+
+# Install ccache
+RUN cd /tmp && \
+    wget https://download-ib01.fedoraproject.org/pub/epel/7/x86_64/Packages/c/ccache-3.7.7-1.el7.x86_64.rpm && \
+    rpm -i ccache-3.7.7-1.el7.x86_64.rpm && rm /tmp/*.rpm
+ENV CCACHE_DIR=/cache
+
+RUN rpm --rebuilddb && yum install -y rpm-build && yum clean all && rm -rf /var/cache/yum
+
+# Install Ascend Toolkit
+RUN cd /tmp && wget https://www.python.org/ftp/python/3.8.12/Python-3.8.12.tgz && tar xvf Python-3.8.12.tgz \
+ && cd Python-3.8*/ && ./configure --build="$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)" --prefix=/opt/python3.8 && make altinstall && rm Python-3.8.12.tgz
+RUN /opt/python3.8/bin/python3.8 -m venv /tmp/venv && source /tmp/venv/bin/activate && curl -f --output /tmp/ascend.run https://ascend-repo.obs.cn-east-2.myhuaweicloud.com/CANN/5.1.RC2.alpha006/Ascend-cann-toolkit_5.1.RC2.alpha006_linux-x86_64.run \
+ && bash /tmp/ascend.run --full && rm -fr /tmp/*
+
+# Install models & test cases
+COPY --from=registry-intl.us-west-1.aliyuncs.com/computation/halo:v0.1-model-zoo /models /models
+COPY --from=registry-intl.us-west-1.aliyuncs.com/computation/halo:v0.1-model-zoo /unittests /unittests
+
+WORKDIR /host
+RUN echo "source scl_source enable devtoolset-7" >> /etc/bashrc
+
+#ENTRYPOINT ["/usr/bin/scl", "enable", "devtoolset-7"]

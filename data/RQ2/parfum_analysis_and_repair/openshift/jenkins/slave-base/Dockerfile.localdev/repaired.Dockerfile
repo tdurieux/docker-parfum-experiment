@@ -1,0 +1,66 @@
+##############################################
+# Stage 1 : Build go-init
+##############################################
+FROM openshift/origin-release:golang-1.12 AS go-init-builder
+WORKDIR  /go/src/github.com/openshift/jenkins
+COPY . .
+WORKDIR  /go/src/github.com/openshift/jenkins/go-init
+RUN go build . && cp go-init /usr/bin
+
+##############################################
+# Stage 2 : Build slave-base with go-init
+##############################################
+FROM quay.io/openshift/origin-cli:4.2
+MAINTAINER Akram Ben Aissi <abenaiss@redhat.com>
+COPY --from=go-init-builder /usr/bin/go-init /usr/bin/go-init
+
+ENV HOME=/home/jenkins \
+    LANG=en_US.UTF-8 \
+    LC_ALL=en_US.UTF-8
+
+USER root
+# Install headless Java
+COPY contrib/openshift/CentOS-Base.repo /etc/yum.repos.d/CentOS-Base.repo
+RUN curl -f https://mirror.centos.org/centos-7/7/os/x86_64/RPM-GPG-KEY-CentOS-7 -o /etc/pki/rpm-gpg/RPM-GPG-KEY-CentOS-7 && \
+    INSTALL_PKGS="bc gettext git java-11-openjdk-headless java-1.8.0-openjdk-headless lsof rsync tar unzip which zip bzip2 jq" && \
+    DISABLES="--disablerepo=rhel-server-extras --disablerepo=rhel-server --disablerepo=rhel-fast-datapath --disablerepo=rhel-server-optional --disablerepo=rhel-server-ose --disablerepo=rhel-server-rhscl" && \
+    yum $DISABLES install -y --setopt=tsflags=nodocs --disableplugin=subscription-manager epel-release && \
+    yum $DISABLES install -y --setopt=tsflags=nodocs --disableplugin=subscription-manager $INSTALL_PKGS && \
+    rpm -V  $INSTALL_PKGS && \
+    yum clean all && \
+    mkdir -p /home/jenkins && \
+    chown -R 1001:0 /home/jenkins && \
+    chmod -R g+w /home/jenkins && \
+    chmod -R 775 /etc/alternatives && \
+    chmod -R 775 /var/lib/alternatives && \
+    chmod -R 775 /usr/lib/jvm && \
+    chmod 775 /usr/bin && \
+    chmod 775 /usr/lib/jvm-exports && \
+    chmod 775 /usr/share/man/man1 && \
+    mkdir -p /var/lib/origin && \
+    chmod 775 /var/lib/origin && \
+    unlink /usr/bin/java && \
+    unlink /usr/bin/jjs && \
+    unlink /usr/bin/keytool && \
+    unlink /usr/bin/pack200 && \
+    unlink /usr/bin/rmid && \
+    unlink /usr/bin/rmiregistry && \
+    unlink /usr/bin/unpack200 && \
+    unlink /usr/lib/jvm-exports/jre && \
+    unlink /usr/share/man/man1/java.1.gz && \
+    unlink /usr/share/man/man1/jjs.1.gz && \
+    unlink /usr/share/man/man1/keytool.1.gz && \
+    unlink /usr/share/man/man1/pack200.1.gz && \
+    unlink /usr/share/man/man1/rmid.1.gz && \
+    unlink /usr/share/man/man1/rmiregistry.1.gz && \
+    unlink /usr/share/man/man1/unpack200.1.gz
+
+# Copy the entrypoint
+ADD contrib/bin/* /usr/local/bin/
+
+# Run the Jenkins JNLP client
+ENTRYPOINT ["/usr/bin/go-init", "-main", "/usr/local/bin/run-jnlp-client"]
+
+##############################################
+# End
+##############################################

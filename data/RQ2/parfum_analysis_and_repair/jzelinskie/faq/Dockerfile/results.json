@@ -1,0 +1,108 @@
+{
+  "startTime": 1674254634597,
+  "endTime": 1674254635748,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 38,
+        "lineEnd": 38,
+        "columnStart": 4,
+        "columnEnd": 53
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 21,
+        "lineEnd": 21,
+        "columnStart": 4,
+        "columnEnd": 82
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 28,
+        "lineEnd": 28,
+        "columnStart": 4,
+        "columnEnd": 82
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 38,
+        "lineEnd": 38,
+        "columnStart": 4,
+        "columnEnd": 53
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 12,
+        "lineEnd": 12,
+        "columnStart": 22,
+        "columnEnd": 68
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 21,
+        "lineEnd": 21,
+        "columnStart": 4,
+        "columnEnd": 82
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 28,
+        "lineEnd": 28,
+        "columnStart": 4,
+        "columnEnd": 82
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 38,
+        "lineEnd": 38,
+        "columnStart": 4,
+        "columnEnd": 53
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 19,
+        "lineEnd": 19,
+        "columnStart": 4,
+        "columnEnd": 82
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 26,
+        "lineEnd": 26,
+        "columnStart": 4,
+        "columnEnd": 82
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 36,
+        "lineEnd": 36,
+        "columnStart": 4,
+        "columnEnd": 77
+      }
+    }
+  ],
+  "repairedDockerfile": "ARG GO_VERSION=1.17\nARG OSXCROSS_VERSION=11.3\nARG GORELEASER_XX_VERSION=1.2.5\nARG JQ_VERSION=\"jq-1.6\"\n\nFROM --platform=$BUILDPLATFORM crazymax/osxcross:${OSXCROSS_VERSION} AS osxcross\nFROM --platform=$BUILDPLATFORM crazymax/goreleaser-xx:${GORELEASER_XX_VERSION} AS goreleaser-xx\nFROM --platform=$BUILDPLATFORM crazymax/goxx:${GO_VERSION} AS base\nCOPY --from=osxcross /osxcross /osxcross\nCOPY --from=goreleaser-xx / /\nRUN apt-get update && apt-get install --no-install-recommends -y git && rm -rf /var/lib/apt/lists/*;\nWORKDIR /src\n\nFROM base AS vendored\nRUN --mount=type=bind,target=.,rw \\\n  --mount=type=cache,target=/go/pkg/mod \\\n  go mod tidy && go mod download\n\nFROM base AS lint\nRUN apt-get install --no-install-recommends -y gcc libc6-dev libjq-dev libonig-dev && rm -rf /var/lib/apt/lists/*;\nRUN go install golang.org/x/lint/golint@latest\nRUN --mount=type=bind,target=. \\\n  --mount=type=cache,target=/root/.cache \\\n  golint ./...\n\nFROM vendored AS test\nRUN apt-get install --no-install-recommends -y gcc libc6-dev libjq-dev libonig-dev && rm -rf /var/lib/apt/lists/*;\nRUN --mount=type=bind,target=. \\\n  --mount=type=cache,target=/go/pkg/mod \\\n  --mount=type=cache,target=/root/.cache \\\n  go test -v -coverprofile=/tmp/coverage.txt -covermode=atomic -race ./...\n\nFROM scratch AS test-coverage\nCOPY --from=test /tmp/coverage.txt /coverage.txt\n\nFROM vendored AS libjq-linux\nRUN apt-get install --no-install-recommends -y autoconf automake flex libtool && rm -rf /var/lib/apt/lists/*;\nARG TARGETPLATFORM\nRUN goxx-apt-get install -y binutils gcc pkg-config\nWORKDIR /usr/local/src/jq\nARG JQ_VERSION\nRUN <<EOT\nset -e\ngit clone --depth 1 --recurse-submodules --shallow-submodules -b $JQ_VERSION https://github.com/stedolan/jq.git .\nHOST_TRIPLE=$(. goxx-env && echo $GOXX_TRIPLE)\nBUILD_TRIPLE=$(TARGETPLATFORM= . goxx-env && echo $GOXX_TRIPLE)\nautoreconf -fi\nCC=\"$HOST_TRIPLE-gcc\" ./configure \\\n  --prefix=/usr/$HOST_TRIPLE \\\n  --host=$HOST_TRIPLE \\\n  --build=$BUILD_TRIPLE \\\n  --target=$BUILD_TRIPLE \\\n  --disable-maintainer-mode \\\n  --disable-docs \\\n  --enable-all-static \\\n  --with-oniguruma\nmake\nmake -j$(nproc) install DESTDIR=\"/out\"\nEOT\n\nFROM scratch AS libjq-dummy\nWORKDIR /out\n\nFROM libjq-dummy AS libjq-windows\nFROM libjq-dummy AS libjq-darwin\nFROM libjq-${TARGETOS} AS libjq\n\nFROM vendored AS build\nCOPY --from=libjq /out /\nARG TARGETPLATFORM\nENV CGO_ENABLED=1\nENV OSXCROSS_MP_INC=1\nRUN goxx-apt-get install -y binutils gcc pkg-config\nRUN goxx-macports --static install jq\nRUN --mount=type=bind,target=/src,rw \\\n  --mount=type=cache,target=/root/.cache \\\n  --mount=target=/go/pkg/mod,type=cache \\\n  --mount=type=secret,id=GITHUB_TOKEN <<EOT\nset -e\nEXTLDFLAGS=\"-v\"\nif [ \"$(. goxx-env && echo $GOOS)\" = \"linux\" ]; then\n  EXTLDFLAGS=\"$EXTLDFLAGS -static\"\n  export CGO_CFLAGS=\"-lm -g -O2\"\n  export CGO_LDFLAGS=\"-lm -g -O2\"\nfi\nGITHUB_TOKEN=$(cat /run/secrets/GITHUB_TOKEN) goreleaser-xx --debug \\\n  --config=\".goreleaser.yml\" \\\n  --name=\"faq\" \\\n  --dist=\"/out\" \\\n  --main=\"./cmd/faq\" \\\n  --ldflags=\"-s -w -X 'github.com/jzelinskie/faq/internal/version.Version={{.Version}}' -extldflags '$EXTLDFLAGS'\" \\\n  --tags=\"netgo\" \\\n  --files=\"LICENSE\" \\\n  --files=\"README.md\"\nEOT\n\nFROM scratch AS artifacts\nCOPY --from=build /out/*.tar.gz /\nCOPY --from=build /out/*.zip /\n\nFROM scratch\nCOPY --from=build /usr/local/bin/faq /faq\nENTRYPOINT [\"/faq\"]\n"
+}

@@ -1,0 +1,80 @@
+{
+  "startTime": 1674255517080,
+  "endTime": 1674255518350,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 144,
+        "lineEnd": 144,
+        "columnStart": 4,
+        "columnEnd": 93
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 70,
+        "lineEnd": 70,
+        "columnStart": 4,
+        "columnEnd": 50
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 53,
+        "lineEnd": 53,
+        "columnStart": 4,
+        "columnEnd": 47
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 68,
+        "lineEnd": 68,
+        "columnStart": 4,
+        "columnEnd": 32
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 51,
+        "lineEnd": 52,
+        "columnStart": 4,
+        "columnEnd": 19
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 100,
+        "lineEnd": 102,
+        "columnStart": 22,
+        "columnEnd": 17
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 51,
+        "lineEnd": 52,
+        "columnStart": 4,
+        "columnEnd": 19
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 100,
+        "lineEnd": 102,
+        "columnStart": 22,
+        "columnEnd": 17
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM ubuntu:18.04\n\nLABEL maintainer=\"Amazon AI\"\nLABEL dlc_major_version=\"6\"\n\n# prevent stopping by user interaction\nENV DEBIAN_FRONTEND noninteractive\nENV DEBCONF_NONINTERACTIVE_SEEN true\nENV SAGEMAKER_TRAINING_MODULE sagemaker_tensorflow_container.training:main\n\n# Set environment variables for MKL\n# For more about MKL with TensorFlow see:\n# https://www.tensorflow.org/performance/performance_guide#tensorflow_with_intel%C2%AE_mkl_dnn\nENV KMP_AFFINITY=granularity=fine,compact,1,0\nENV KMP_BLOCKTIME=1\nENV KMP_SETTINGS=0\n\nENV PYTHONDONTWRITEBYTECODE=1\nENV PYTHONUNBUFFERED=1\nENV PYTHONIOENCODING=UTF-8\nENV LANG=C.UTF-8\nENV LC_ALL=C.UTF-8\n\nARG TF_URL=https://tensorflow-aws.s3-us-west-2.amazonaws.com/2.1.1/AmazonLinux/cpu/final/tensorflow-2.1.1-cp27-cp27mu-manylinux2010_x86_64.whl\n\nARG PYTHON=python\nARG PYTHON_PIP=python-pip\nARG PIP=pip\n\nARG OPENSSL_VERSION=1.1.1k\n\nRUN apt-get update && apt-get install -y --no-install-recommends \\\n    software-properties-common \\\n    build-essential \\\n    openssh-client \\\n    openssh-server \\\n    ca-certificates \\\n    curl \\\n    emacs \\\n    git \\\n    wget \\\n    vim \\\n    zlib1g-dev \\\n    # Install dependent library for OpenCV\n    libgtk2.0-dev \\\n && rm -rf /var/lib/apt/lists/*\n\nRUN wget -c https://www.openssl.org/source/openssl-${OPENSSL_VERSION}.tar.gz \\\n && apt-get update \\\n && apt remove -y --purge openssl \\\n && rm -rf /usr/include/openssl \\\n && apt-get install --no-install-recommends -y \\\n    ca-certificates \\\n && tar -xzvf openssl-${OPENSSL_VERSION}.tar.gz \\\n && cd openssl-${OPENSSL_VERSION} \\\n && ./config && make && make test \\\n && make install \\\n && ldconfig \\\n && cd .. && rm -rf openssl-* && rm openssl-${OPENSSL_VERSION}.tar.gz && rm -rf /var/lib/apt/lists/*;\n\n # when we remove previous openssl, the ca-certificates pkgs and its symlinks gets deleted\n# causing sslcertverificationerror the below steps are to fix that\nRUN ln -s /etc/ssl/certs/*.* /usr/local/ssl/certs/\n\n# Install Open MPI\nRUN mkdir /tmp/openmpi \\\n && cd /tmp/openmpi \\\n && curl -fSsL -O https://download.open-mpi.org/release/open-mpi/v4.0/openmpi-4.0.1.tar.gz \\\n && tar zxf openmpi-4.0.1.tar.gz \\\n && cd openmpi-4.0.1 \\\n && ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" --enable-orterun-prefix-by-default \\\n && make -j $(nproc) all \\\n && make install \\\n && ldconfig \\\n && rm -rf /tmp/openmpi && rm openmpi-4.0.1.tar.gz\n\n# Create a wrapper for OpenMPI to allow running as root by default\nRUN mv /usr/local/bin/mpirun /usr/local/bin/mpirun.real \\\n && echo '#!/bin/bash' > /usr/local/bin/mpirun \\\n && echo 'mpirun.real --allow-run-as-root \"$@\"' >> /usr/local/bin/mpirun \\\n && chmod a+x /usr/local/bin/mpirun\n\nRUN echo \"hwloc_base_binding_policy = none\" >> /usr/local/etc/openmpi-mca-params.conf \\\n && echo \"rmaps_base_mapping_policy = slot\" >> /usr/local/etc/openmpi-mca-params.conf\n\nENV LD_LIBRARY_PATH=/usr/local/openmpi/lib:$LD_LIBRARY_PATH\nENV PATH /usr/local/openmpi/bin/:$PATH\n\n# SSH login fix. Otherwise user is kicked off after login\nRUN sed 's@session\\s*required\\s*pam_loginuid.so@session optional pam_loginuid.so@g' -i /etc/pam.d/sshd\n\n# Create SSH key.\nRUN mkdir -p /root/.ssh/ \\\n && mkdir -p /var/run/sshd \\\n && ssh-keygen -q -t rsa -N '' -f /root/.ssh/id_rsa \\\n && cp /root/.ssh/id_rsa.pub /root/.ssh/authorized_keys \\\n && printf \"Host *\\n  StrictHostKeyChecking no\\n\" >> /root/.ssh/config\n\nWORKDIR /\n\nRUN apt-get update && apt-get install --no-install-recommends -y \\\n    ${PYTHON} \\\n    ${PYTHON_PIP} && rm -rf /var/lib/apt/lists/*;\n\nRUN ${PIP} --no-cache-dir install --upgrade \\\n    pip \\\n    setuptools\n\n# Some TF tools expect a \"python\" binary\nRUN ln -s $(which ${PYTHON}) /usr/local/bin/python\n\n# install PyYAML==5.1.2 to avoid conflict with latest awscli\n# # python-dateutil==2.8.0 to satisfy botocore associated with latest awscli\nRUN ${PIP} install --no-cache-dir -U \\\n    numpy==1.16.6 \\\n    scipy==1.2.2 \\\n    scikit-learn==0.20.4 \\\n    pandas==0.24.2 \\\n    Pillow==6.2.2 \\\n    keras_applications==1.0.8 \\\n    keras_preprocessing==1.1.0 \\\n    keras==2.3.1 \\\n    python-dateutil==2.8.1 \\\n    pyYAML==5.3.1 \\\n    requests==2.22.0 \\\n    \"awscli<2\" \\\n    mpi4py==3.0.3 \\\n    opencv-python==4.2.0.32 \\\n    \"cryptography>=2.3\" \\\n    \"sagemaker-tensorflow>=2.1,<2.2\" \\\n    \"sagemaker-tensorflow-training>=20\" \\\n    # Let's install TensorFlow separately in the end to avoid\n    # the library version to be overwritten\n && ${PIP} install --no-cache-dir -U \\\n    ${TF_URL} \\\n    h5py==2.10.0 \\\n    \"absl-py>=0.9,<0.11\" \\\n && ${PIP} install --no-cache-dir -U \\\n    horovod==0.19.4\n\nADD https://raw.githubusercontent.com/aws/deep-learning-containers/master/src/deep_learning_container.py /usr/local/bin/deep_learning_container.py\n\nRUN chmod +x /usr/local/bin/deep_learning_container.py\n\nRUN curl -f https://aws-dlc-licenses.s3.amazonaws.com/tensorflow-2.1/license.txt -o /license.txt\n\nCMD [\"/bin/bash\"]\n"
+}

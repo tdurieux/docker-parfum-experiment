@@ -1,0 +1,17 @@
+{
+  "startTime": 1674219819793,
+  "endTime": 1674219821265,
+  "originalSmells": [
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 41,
+        "lineEnd": 41,
+        "columnStart": 4,
+        "columnEnd": 15
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "ARG ARCHTAG\n\nFROM docker.io/library/archlinux:$ARCHTAG AS base\n\n# Monkey patch glibc to avoid issues with old kernels on hosts\nRUN --mount=type=bind,target=/mp,source=build-aux/docker-glibc-workaround.sh /mp\n\n# Setup Caleb’s hosted Arch repository with prebuilt dependencies\nRUN pacman-key --init && pacman-key --populate\nRUN sed -i  /etc/pacman.conf -e \\\n\t'/^.community/{n;n;s!^!\\n\\[alerque\\]\\nServer = https://arch.alerque.com/$arch\\n!}'\nRUN pacman-key --recv-keys 63CC496475267693 && pacman-key --lsign-key 63CC496475267693\n\nARG RUNTIME_DEPS\nARG BUILD_DEPS\n\n# Freshen all base system packages\nRUN pacman --needed --noconfirm -Syuq && yes | pacman -Sccq\n\n# Install run-time dependecies\nRUN pacman --needed --noconfirm -Sq $RUNTIME_DEPS && yes | pacman -Sccq\n\n# Setup separate image for build so we don’t bloat the final image\nFROM base AS builder\n\n# Install build time dependecies\nRUN pacman --needed --noconfirm -Sq $BUILD_DEPS && yes | pacman -Sccq\n\n# Set at build time, forces Docker’s layer caching to reset at this point\nARG VCS_REF=0\n\nCOPY ./ /src\nWORKDIR /src\n\n# GitHub Actions builder stopped providing git history :(\n# See feature request at https://github.com/actions/runner/issues/767\nRUN build-aux/bootstrap-docker.sh\n\nRUN ./bootstrap.sh\nRUN ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\"\nRUN make\nRUN make check\nRUN make install DESTDIR=/pkgdir\n\n# Work around BuiltKit / buildx bug, they can’t copy to symlinks only dirs\nRUN mv /pkgdir/usr/local/{share/,}/man\n\nFROM base AS final\n\nLABEL maintainer=\"Caleb Maclennan <caleb@alerque.com>\"\nLABEL version=\"$VCS_REF\"\n\nCOPY --from=builder /pkgdir /\nRUN fontship --version\n\nWORKDIR /data\nENTRYPOINT [\"fontship\"]\n"
+}

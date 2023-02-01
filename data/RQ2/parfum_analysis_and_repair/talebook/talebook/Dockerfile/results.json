@@ -1,0 +1,90 @@
+{
+  "startTime": 1674216295777,
+  "endTime": 1674216296777,
+  "originalSmells": [
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 16,
+        "lineEnd": 16,
+        "columnStart": 4,
+        "columnEnd": 15
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 44,
+        "lineEnd": 44,
+        "columnStart": 4,
+        "columnEnd": 40
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 49,
+        "lineEnd": 49,
+        "columnStart": 4,
+        "columnEnd": 29
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 36,
+        "lineEnd": 36,
+        "columnStart": 22,
+        "columnEnd": 48
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 40,
+        "lineEnd": 40,
+        "columnStart": 4,
+        "columnEnd": 29
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 40,
+        "lineEnd": 40,
+        "columnStart": 4,
+        "columnEnd": 29
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 36,
+        "lineEnd": 36,
+        "columnStart": 22,
+        "columnEnd": 48
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 40,
+        "lineEnd": 40,
+        "columnStart": 4,
+        "columnEnd": 29
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 39,
+        "lineEnd": 39,
+        "columnStart": 4,
+        "columnEnd": 53
+      }
+    }
+  ],
+  "repairedDockerfile": "# ----------------------------------------\n# 第一阶段，拉取 node 基础镜像并安装依赖，执行构建\nFROM node:16-alpine as builder\nARG BUILD_COUNTRY=\"\"\n\nLABEL Author=\"Rex <talebook@foxmail.com>\"\nLABEL Thanks=\"oldiy <oldiy2018@gmail.com>\"\n\nWORKDIR /app\nRUN if [ \"x${BUILD_COUNTRY}\" = \"xCN\" ]; then \\\n    echo \"using repo mirrors for ${BUILD_COUNTRY}\"; \\\n    npm config set registry http://mirrors.tencent.com/npm/; \\\n    fi\n\nCOPY [\"app/package.json\", \"app/package-lock.json*\", \"/app/\"]\nRUN npm install && npm cache clean --force;\n\n# spa build mode will clear ssr build data, run it first\nCOPY app/ /app/\nRUN npm run build\n\n\n# ----------------------------------------\n# 第二阶段，构建环境\nFROM talebook/calibre-docker as server\nARG BUILD_COUNTRY=\"\"\n\n# Set mirrors in china\nRUN if [ \"x${BUILD_COUNTRY}\" = \"xCN\" ]; then \\\n    echo \"using repo mirrors for ${BUILD_COUNTRY}\"; \\\n    sed 's@deb.debian.org/debian@mirrors.aliyun.com/debian@' -i /etc/apt/sources.list; \\\n    pip config set global.index-url https://mirrors.aliyun.com/pypi/simple/; \\\n    fi\n\n# install envsubst\nRUN apt-get update && apt-get install --no-install-recommends -y gettext && rm -rf /var/lib/apt/lists/*;\n\n# intall nodejs for nuxtjs server side render\nRUN curl -fsSL https://deb.nodesource.com/setup_16.x | bash -\nRUN apt-get install --no-install-recommends -y nodejs && rm -rf /var/lib/apt/lists/*;\n\n# install python packages\nCOPY [\"requirements.txt\", \"/tmp/\"]\nRUN pip install --no-cache-dir -r /tmp/requirements.txt\n\n# ----------------------------------------\n# 测试阶段\nFROM server as test\nRUN pip install --no-cache-dir flake8 pytest\nCOPY webserver/ /var/www/talebook/webserver/\nCOPY tests/ /var/www/talebook/tests/\nCMD [\"pytest\", \"/var/www/talebook/tests\"]\n\n\n# ----------------------------------------\n# 生产环境\nFROM server as production\nARG GIT_VERSION=\"\"\n\n# prepare dirs\nRUN mkdir -p /data/log/nginx/ && \\\n    mkdir -p /data/books/library  && \\\n    mkdir -p /data/books/extract  && \\\n    mkdir -p /data/books/upload  && \\\n    mkdir -p /data/books/imports  && \\\n    mkdir -p /data/books/convert  && \\\n    mkdir -p /data/books/progress  && \\\n    mkdir -p /data/books/settings && \\\n    mkdir -p /data/books/logo && \\\n    mkdir -p /data/books/ssl && \\\n    mkdir -p /var/www/talebook/ && \\\n    chmod a+w -R /data/log /data/books /var/www\n\nCOPY . /var/www/talebook/\nCOPY conf/nginx/ssl.* /data/books/ssl/\nCOPY conf/nginx/talebook.conf /etc/nginx/conf.d/talebook.conf\nCOPY conf/supervisor/talebook.conf /etc/supervisor/conf.d/\nCOPY --from=builder /app/.nuxt/ /var/www/talebook/app/.nuxt/\nCOPY --from=builder /app/node_modules/ /var/www/talebook/app/node_modules/\nCOPY --from=builder /app/src/static/ /var/www/talebook/app/dist/\nCOPY --from=builder /app/src/static/logo/ /data/books/logo/\n\nRUN rm -f /etc/nginx/sites-enabled/default /var/www/html -rf && \\\n    cd /var/www/talebook/ && \\\n    echo \"VERSION = \\\"$GIT_VERSION\\\"\" > webserver/version.py && \\\n    echo 'settings = {}' > /data/books/settings/auto.py && \\\n    chmod a+w /data/books/settings/auto.py && \\\n    calibredb add --library-path=/data/books/library/ -r docker/book/ && \\\n    python3 server.py --syncdb  && \\\n    python3 server.py --update-config  && \\\n    rm -f webserver/*.pyc && \\\n    rm -rf app/src && \\\n    rm -rf app/dist/logo && \\\n    ln -s /data/books/logo app/dist/logo && \\\n    mkdir -p /prebuilt/ && \\\n    mv /data/* /prebuilt/ && \\\n    chmod +x /var/www/talebook/docker/start.sh\n\n\nEXPOSE 80 443\n\nVOLUME [\"/data\"]\n\nCMD [\"/var/www/talebook/docker/start.sh\"]\n"
+}

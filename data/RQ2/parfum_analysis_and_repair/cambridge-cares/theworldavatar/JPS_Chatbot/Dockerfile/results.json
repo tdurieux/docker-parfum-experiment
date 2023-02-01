@@ -1,0 +1,71 @@
+{
+  "startTime": 1674220466396,
+  "endTime": 1674220467410,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 48,
+        "lineEnd": 48,
+        "columnStart": 4,
+        "columnEnd": 35
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 18,
+        "lineEnd": 18,
+        "columnStart": 22,
+        "columnEnd": 45
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 31,
+        "lineEnd": 31,
+        "columnStart": 4,
+        "columnEnd": 49
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 32,
+        "lineEnd": 32,
+        "columnStart": 4,
+        "columnEnd": 43
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 18,
+        "lineEnd": 18,
+        "columnStart": 22,
+        "columnEnd": 45
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 31,
+        "lineEnd": 31,
+        "columnStart": 4,
+        "columnEnd": 49
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 32,
+        "lineEnd": 32,
+        "columnStart": 4,
+        "columnEnd": 43
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# First stage: download dependenies with Maven\n#==================================================================================================\nFROM maven:3.6-openjdk-11-slim as dependency_fetcher\n\n# Copy all files into root's home, including the dependencies pom file and ./m2 directory\nADD docker /root\n\n# Populate Maven settings templates with credentials\nWORKDIR /root/.m2\n# (Note that | rather than / is used as the sed delimiter, since encrypted passwords can contain the former, but not the latter\nRUN sed -i \"s|MASTER_PASSWORD|$(mvn --encrypt-master-password master_password)|\" settings-security.xml\nRUN sed -i \"s|REPO_URL|${repo_url}|g;s|REPO_USERNAME|$(cat ../credentials/repo_username.txt)|;s|REPO_PASSWORD|$(cat ../credentials/repo_password.txt|xargs mvn --encrypt-password)|\" settings.xml\n\n# Download Maven dependencies\nWORKDIR /root/\nRUN --mount=type=cache,target=/root/.m2/repository mvn -f pom.xml org.apache.maven.plugins:maven-dependency-plugin:unpack-dependencies\n\n# Download geckodriver\nRUN apt-get update && apt-get install --no-install-recommends wget -y && rm -rf /var/lib/apt/lists/*;\nRUN wget -q https://github.com/mozilla/geckodriver/releases/download/v0.24.0/geckodriver-v0.24.0-linux64.tar.gz\nRUN tar -xvzf geckodriver*.gz\n#==================================================================================================\n\n# Second stage: Build app, copying in dependency from first stage\n#==================================================================================================\nFROM python:3.7-slim-buster as app\n\nWORKDIR /app\n\n# Install packages required for mysql\nRUN apt-get update \\\n && apt-get install --no-install-recommends -y default-libmysqlclient-dev \\\n && apt-get install --no-install-recommends -y default-mysql-server && rm -rf /var/lib/apt/lists/*;\n\n# Copy in dependencies from first stage\nCOPY --from=dependency_fetcher /root/dependencies/models_wiki ./UI/source/Wikidata_Query\nCOPY --from=dependency_fetcher /root/dependencies/model_jps ./UI/source/JPS_Query\nCOPY --from=dependency_fetcher /root/dependencies/models_agent ./UI/source/Agent_Query\nCOPY --from=dependency_fetcher /root/geckodriver /usr/local/bin\n\n# Setup venv\n# (Prepending the venv location to 'PATH' is simpler and more robust than activating the venv)\nENV VENV_PATH=/app/venv\nRUN python -m venv $VENV_PATH\nENV PATH=\"$VENV_PATH/bin:$PATH\"\n\n# Install requirements\nCOPY jps-chatbot/requirements.txt .\nRUN pip install --no-cache-dir -r requirements.txt\n\n# Download NLTK data\nRUN python -c \"import nltk; nltk.download('stopwords'); nltk.download('punkt')\"\n\n# Add all source code; might be able to copy less here\nADD jps-chatbot .\n\n# Add top-level dir to the pythonpath so that gunicorn can find the modules.\n# Should be replaced by writing a proper setup.py and installing the chatbot as a package.\nENV PYTHONPATH=\"/app\"\n\nENTRYPOINT  [\"gunicorn\", \"--bind\", \"0.0.0.0:5000\", \"UI:app\"]\n\n# #==================================================F================================================\n# # Set the locale to UK\n# RUN apt-get -y install locales\n# RUN sed -i '/en_GB.UTF-8/s/^# //g' /etc/locale.gen && \\\n#     locale-gen\n# ENV LANG en_GB.UTF-8 \n# ENV LANGUAGE en_GB:en \n# ENV LC_ALL en_GB.UTF-8"
+}

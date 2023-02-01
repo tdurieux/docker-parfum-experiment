@@ -1,0 +1,47 @@
+FROM golang:latest AS builder
+
+WORKDIR /usr/src/app
+
+RUN go mod init "{{ .Package.Name }}" && \
+{{- range $handler := .Package.TaskHandlers }}
+  {{- if $handler.Package }}
+    go get "{{ $handler.Package }}@{{ $handler.Version }}" && \
+  {{- end }}
+{{- end }}
+    go get github.com/choria-io/asyncjobs@{{ .Package.AJVersion }}
+
+COPY main.go /usr/src/app/main.go
+
+RUN go mod tidy -compat=1.17
+RUN go build -v -o /app -ldflags="-s -w -extldflags=-static"
+
+FROM alpine:latest
+
+RUN addgroup -g 2048 asyncjobs && \
+    adduser -u 2048 -h /home/asyncjobs -g "Choria Asynchronous Jobs" -S -D -H -G asyncjobs asyncjobs && \
+    mkdir /lib64 && \
+    ln -s /lib/libc.musl-x86_64.so.1 /lib64/ld-linux-x86-64.so.2 && \
+    apk --no-cache add ca-certificates && \
+    mkdir -p /handler/config
+
+COPY --from=builder /app /handler/app
+{{- range $handler := .Package.TaskHandlers }}
+  {{- if $handler.Command }}
+COPY ./commands/{{ $handler.Command }} /handler/commands/{{ $handler.Command }}
+  {{- end }}
+{{- end }}
+
+EXPOSE 8080/tcp
+
+USER asyncjobs
+
+ENV XDG_CONFIG_HOME "/handler/config"
+ENV AJ_WORK_QUEUE "{{ .Package.WorkQueue }}"
+{{- if .Package.ContextName }}
+ENV AJ_NATS_CONTEXT "{{ .Package.ContextName }}"
+{{- else }}
+ENV AJ_NATS_CONTEXT "AJ"
+{{- end }}
+
+WORKDIR "/handler"
+ENTRYPOINT ["/handler/app"]

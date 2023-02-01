@@ -1,0 +1,26 @@
+{
+  "startTime": 1674249954931,
+  "endTime": 1674249955201,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 49,
+        "lineEnd": 49,
+        "columnStart": 22,
+        "columnEnd": 45
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 49,
+        "lineEnd": 49,
+        "columnStart": 22,
+        "columnEnd": 45
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "################################\n# STEP 1 build executable binary\n################################\n\nFROM golang:1.12-alpine AS builder\n\n# Install git + SSL ca certificates.\n# Git is required for fetching the dependencies.\n# Ca-certificates is required to call HTTPS endpoints.\nRUN apk update && apk add --no-cache git ca-certificates tzdata && update-ca-certificates\n\nWORKDIR $GOPATH/src/saferwall/symantec/\nCOPY . .\n\n# Fetch dependencies.\nRUN go get -d -v\n\n# Build the binary.\nRUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -a -installsuffix cgo -ldflags '-extldflags \"-static\"' -o /go/bin/symantecscanner .\n\n\n############################\n# STEP 2 build a small image\n############################\n\nFROM saferwall/symantec:0.0.1\nLABEL maintainer=\"https://github.com/saferwall\"\nLABEL version=\"0.0.1\"\nLABEL description=\"Symantec Endpoint Protection Linux Client in a docker container\"\n\n# Vars\nENV SYMANTEC_SAV\t        /opt/Symantec/symantec_antivirus/sav\nENV SYMANTEC_INSTALL_DIR    /opt/Symantec\nENV SYMANTEC_VAR_DIR        /var/symantec\n\n# Update the VDF\nRUN /etc/init.d/symcfgd start \\\n    && /etc/init.d/rtvscand start \\ \n    && /etc/init.d/smcd start \\\n\t&& $SYMANTEC_SAV liveupdate --update \\\n\t&& $SYMANTEC_SAV info --defs\n\n# Copy our static executable.\nCOPY --from=builder /go/bin/symantecscanner /bin/symantecscanner\n\n# Create an app user so our program doesn't run as root.\nRUN groupadd -r saferwall && useradd --no-log-init -r -g saferwall saferwall\n\n# Install sudo\nRUN apt-get update && apt-get install --no-install-recommends -y sudo && rm -rf /var/lib/apt/lists/*;\n\n# Update permissions\nRUN usermod -aG sudo saferwall\nRUN echo 'saferwall    ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers\nRUN usermod -u 101 saferwall\nRUN groupmod -g 102 saferwall\nRUN chown -R saferwall:saferwall $SYMANTEC_INSTALL_DIR\nRUN chown -R saferwall:saferwall $SYMANTEC_VAR_DIR\n\n# Switch to our user\nUSER saferwall\n\nENTRYPOINT [\"/bin/symantecscanner\"]"
+}

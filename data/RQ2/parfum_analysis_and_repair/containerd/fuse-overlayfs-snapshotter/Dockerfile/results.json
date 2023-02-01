@@ -1,0 +1,26 @@
+{
+  "startTime": 1674250275905,
+  "endTime": 1674250277186,
+  "originalSmells": [
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 38,
+        "lineEnd": 38,
+        "columnStart": 5,
+        "columnEnd": 46
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 31,
+        "lineEnd": 32,
+        "columnStart": 4,
+        "columnEnd": 95
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "#   Copyright The containerd Authors.\n\n#   Licensed under the Apache License, Version 2.0 (the \"License\");\n#   you may not use this file except in compliance with the License.\n#   You may obtain a copy of the License at\n\n#       http://www.apache.org/licenses/LICENSE-2.0\n\n#   Unless required by applicable law or agreed to in writing, software\n#   distributed under the License is distributed on an \"AS IS\" BASIS,\n#   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.\n#   See the License for the specific language governing permissions and\n#   limitations under the License.\n\nARG FUSEOVERLAYFS_COMMIT=master\nARG ROOTLESSKIT_COMMIT=v0.14.6\n\nARG GO_VERSION=1.17\nARG DEBIAN_VERSION=11\nARG ALPINE_VERSION=3.15\n\nFROM golang:${GO_VERSION}-alpine AS containerd-fuse-overlayfs-test\nCOPY . /go/src/github.com/containerd/fuse-overlayfs-snapshotter\nWORKDIR  /go/src/github.com/containerd/fuse-overlayfs-snapshotter\nENV CGO_ENABLED=0\nENV GO111MODULE=on\nRUN mkdir /out && go test -c -o /out/containerd-fuse-overlayfs.test\n\n# from https://github.com/containers/fuse-overlayfs/blob/53c17dab78b43de1cd121bf9260b20b76371bbaf/Dockerfile.static.ubuntu\nFROM debian:${DEBIAN_VERSION} AS fuse-overlayfs\nRUN apt-get update && \\\n    apt-get install --no-install-recommends -y \\\n        git ca-certificates libc6-dev gcc g++ make automake autoconf clang pkgconf libfuse3-dev && rm -rf /var/lib/apt/lists/*;\nRUN git clone https://github.com/containers/fuse-overlayfs\nWORKDIR fuse-overlayfs\nARG FUSEOVERLAYFS_COMMIT\nRUN git pull && git checkout ${FUSEOVERLAYFS_COMMIT}\nRUN ./autogen.sh && \\\n     LIBS=\"-ldl\" LDFLAGS=\"-static\" ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" && \\\n     make && mkdir /out && cp fuse-overlayfs /out\n\nFROM golang:${GO_VERSION}-alpine AS rootlesskit\nRUN apk add --no-cache git\nRUN git clone https://github.com/rootless-containers/rootlesskit.git /go/src/github.com/rootless-containers/rootlesskit\nWORKDIR /go/src/github.com/rootless-containers/rootlesskit\nARG ROOTLESSKIT_COMMIT\nRUN git pull && git checkout ${ROOTLESSKIT_COMMIT}\nENV CGO_ENABLED=0\nRUN mkdir /out && go build -o /out/rootlesskit github.com/rootless-containers/rootlesskit/cmd/rootlesskit\n\nFROM alpine:${ALPINE_VERSION}\nCOPY --from=containerd-fuse-overlayfs-test /out/containerd-fuse-overlayfs.test /usr/local/bin\nCOPY --from=rootlesskit /out/rootlesskit /usr/local/bin\nCOPY --from=fuse-overlayfs /out/fuse-overlayfs /usr/local/bin\nRUN apk add --no-cache fuse3 libcap shadow-uidmap && \\\n    setcap CAP_SETUID=ep /usr/bin/newuidmap && \\\n    setcap CAP_SETGID=ep /usr/bin/newgidmap && \\\n    adduser -D -u 1000 testuser && \\\n    echo testuser:100000:65536 | tee /etc/subuid | tee /etc/subgid\nUSER testuser\n# If /tmp is real overlayfs, some tests fail. Mount a volume to ensure /tmp to be a sane filesystem.\nVOLUME /tmp\n# requires --security-opt seccomp=unconfined --security-opt apparmor=unconfined --device /dev/fuse\nCMD [\"rootlesskit\", \"containerd-fuse-overlayfs.test\", \"-test.root\", \"-test.v\"]\n"
+}

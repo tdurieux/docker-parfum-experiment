@@ -1,0 +1,27 @@
+# This dockerfile is considered "development ready" so we're running in development mode instead of a full build.
+# This allows for a few beneficial things like faster rebuilds, live code updating, etc.
+
+FROM node:16
+
+# Create app directory
+WORKDIR /usr/src/app
+
+# Install app dependencies
+# A wildcard is used to ensure both package.json AND package-lock.json are copied
+# where available (npm@5+)
+COPY package*.json ./
+
+# Files
+# copy both the example file and any existing custom .env 
+COPY .env* ./
+COPY hotreload-fix.js ./
+# attempt to move the example .env to the name ".env"
+# if .env is already there, this fails and the custom instance is used
+# if not, the example instance is used
+RUN ["mv","-n", ".env.example", ".env"]
+
+# Install all dependencies
+# Note: --legacy-peer-deps has been added due to a conflict with React versions
+RUN npm ci --legacy-peer-deps
+
+# Start command

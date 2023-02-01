@@ -1,0 +1,6 @@
+ARG region
+FROM 763104351884.dkr.ecr.$region.amazonaws.com/pytorch-training:1.11.0-gpu-py38-cu113-ubuntu20.04-sagemaker
+
+COPY dist/sagemaker_pytorch_training-*.tar.gz /sagemaker_pytorch_training.tar.gz
+RUN pip install --upgrade --no-cache-dir /sagemaker_pytorch_training.tar.gz && \
+    rm /sagemaker_pytorch_training.tar.gz

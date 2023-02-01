@@ -1,0 +1,17 @@
+{
+  "startTime": 1674248510699,
+  "endTime": 1674248511813,
+  "originalSmells": [
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 3,
+        "lineEnd": 10,
+        "columnStart": 4,
+        "columnEnd": 5
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# If you change this major version, change the --multi-release jdeps flag below\nFROM openjdk:18-alpine AS build\n\nRUN apk add --no-cache \\\n\n      nodejs \\\n\n      binutils \\\n\n      git \\\n    ;\nWORKDIR /app\n\n# Cache the Gradle binary separately from the build.\nCOPY gradlew ./\nCOPY gradle/wrapper ./gradle/wrapper\nRUN ./gradlew --version\n\nCOPY gradle ./gradle\nCOPY build.gradle gradle.properties settings.gradle ./\nCOPY src ./src\nRUN ./gradlew assemble -PskipNodeDownload\n\n# Find modules which are required.\nRUN jdeps \\\n      --ignore-missing-deps \\\n      # Keep in sync with major version of container above.\n      --multi-release 18 \\\n      --print-module-deps \\\n      --class-path build/install/posterbox/lib/* \\\n    # Split comma-separated items into lines.\n    | tr ',' '\\n' \\\n    # Used only by Ktor's HOCON parser which we do not use.\n    | grep -v java.desktop \\\n    # Used only by kotlinx.coroutines debug agent which we do not use.\n    | grep -v java.instrument \\\n    # Used only by kotlinx.coroutines debug agent which we do not use.\n    | grep -v jdk.unsupported \\\n    # Used only by Ktor for detecting IntelliJ IDEA debugger which we do not use.\n    # BUT our HTTP server cannot respond to requests without this module for some reason...\n    #| grep -v java.management \\\n    # Join lines with comma.\n    | tr '\\n' ',' \\\n    # Replace trailing comma with a newline.\n    | sed 's/,$/\\n/' \\\n    # Print to stdout AND write to this file.\n    | tee jdeps.txt \\\n  ;\n\n# Build custom minimal JRE with only the modules we need.\nRUN jlink \\\n      --verbose \\\n      --compress 2 \\\n      --strip-debug \\\n      --no-header-files \\\n      --no-man-pages \\\n      --output jre \\\n      --add-modules $(cat jdeps.txt) \\\n   ;\n\nFROM alpine:3.16.0\nEXPOSE 9931\nHEALTHCHECK --interval=1m --timeout=3s \\\n  CMD wget --no-verbose --tries=1 --spider http://localhost:9931/ || exit 1\n\nCOPY --from=build /app/jre /jre\nENV JAVA_HOME=\"/jre\"\n\nCOPY --from=build /app/build/install/posterbox/ /app\n\nENTRYPOINT [\"/app/bin/posterbox\", \"/config/config.toml\"]\n"
+}

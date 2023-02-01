@@ -1,0 +1,54 @@
+{
+  "startTime": 1674220173904,
+  "endTime": 1674220175273,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 25,
+        "lineEnd": 25,
+        "columnStart": 2,
+        "columnEnd": 88
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 37,
+        "lineEnd": 59,
+        "columnStart": 25,
+        "columnEnd": 19
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 25,
+        "lineEnd": 25,
+        "columnStart": 2,
+        "columnEnd": 88
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 37,
+        "lineEnd": 59,
+        "columnStart": 25,
+        "columnEnd": 19
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 37,
+        "lineEnd": 58,
+        "columnStart": 25,
+        "columnEnd": 19
+      }
+    }
+  ],
+  "repairedDockerfile": "################################################################################\n# Copyright 2020 The Magma Authors.\n\n# This source code is licensed under the BSD-style license found in the\n# LICENSE file in the root directory of this source tree.\n\n# Unless required by applicable law or agreed to in writing, software\n# distributed under the License is distributed on an \"AS IS\" BASIS,\n# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.\n# See the License for the specific language governing permissions and\n# limitations under the License.\n################################################################################\n\n# -----------------------------------------------------------------------------\n# Builder image for C binaries and Magma proto files\n# -----------------------------------------------------------------------------\n\nARG OS_DIST=ubuntu OS_RELEASE=focal EXTRA_REPO=https://artifactory.magmacore.org/artifactory/debian-test\n\n# Stretch is required for c build\nFROM $OS_DIST:$OS_RELEASE AS builder\nARG OS_DIST OS_RELEASE EXTRA_REPO\n\nRUN apt-get update && \\\n  # Setup necessary tools for adding the Magma repository\n  apt-get install --no-install-recommends -y apt-utils software-properties-common apt-transport-https gnupg wget && \\\n  # Download Bazel\n  wget -P /usr/sbin --progress=dot:giga https://github.com/bazelbuild/bazelisk/releases/download/v1.10.0/bazelisk-linux-amd64 && \\\n  chmod +x /usr/sbin/bazelisk-linux-amd64 && \\\n  ln -s /usr/sbin/bazelisk-linux-amd64 /usr/sbin/bazel && rm -rf /var/lib/apt/lists/*;\n\n# Add the magma apt repo\nCOPY orc8r/tools/ansible/roles/pkgrepo/files/jfrog.pub /tmp/jfrog.pub\nRUN apt-key add /tmp/jfrog.pub && \\\n  apt-add-repository \"deb ${EXTRA_REPO} focal-ci main\"\n\n# Install dependencies required for building\nRUN apt-get -y update && apt-get -y --no-install-recommends install \\\n  sudo \\\n  curl \\\n  unzip \\\n  cmake \\\n  git \\\n  gcc \\\n  g++ \\\n  build-essential \\\n\n  libfolly-dev \\\n  libgoogle-glog-dev \\\n  libgflags-dev \\\n  libevent-dev \\\n  libdouble-conversion-dev \\\n  libiberty-dev \\\n  libdouble-conversion-dev \\\n  libboost-chrono-dev \\\n  libboost-context-dev \\\n  libboost-program-options-dev \\\n  libboost-filesystem-dev \\\n  libboost-regex-dev \\\n  python3-distutils && rm -rf /var/lib/apt/lists/*;\n\nENV MAGMA_ROOT /magma\nWORKDIR /magma\n\n# Copy Bazel files at root and third_party\nCOPY WORKSPACE.bazel BUILD.bazel .bazelignore .bazelrc .bazelversion ${MAGMA_ROOT}/\nCOPY bazel/ ${MAGMA_ROOT}/bazel\n\n# Build external dependencies first. This will help not rebuilt all dependencies triggered by Magma changes.\nRUN bazel build \\\n  @com_github_grpc_grpc//:grpc++ \\\n  @com_google_protobuf//:protobuf \\\n  @prometheus_cpp//:prometheus-cpp \\\n  @yaml-cpp//:yaml-cpp \\\n  @github_nlohmann_json//:json\n\n# Copy proto files\nCOPY feg/protos ${MAGMA_ROOT}/feg/protos\nCOPY feg/gateway/services/aaa/protos ${MAGMA_ROOT}/feg/gateway/services/aaa/protos\nCOPY lte/protos ${MAGMA_ROOT}/lte/protos\nCOPY orc8r/protos ${MAGMA_ROOT}/orc8r/protos\nCOPY protos ${MAGMA_ROOT}/protos\n\n# Build session_manager c code\nCOPY orc8r/gateway/c/common ${MAGMA_ROOT}/orc8r/gateway/c/common\nCOPY lte/gateway/c/session_manager ${MAGMA_ROOT}/lte/gateway/c/session_manager\n\nRUN bazel --bazelrc=${MAGMA_ROOT}/bazel/bazelrcs/cwag.bazelrc build //lte/gateway/c/session_manager:sessiond\n\n# -----------------------------------------------------------------------------\n# Dev/Production image\n# -----------------------------------------------------------------------------\nFROM $OS_DIST:$OS_RELEASE AS gateway_c\n\n# Copy runtime dependencies\nCOPY --from=builder /usr/lib/x86_64-linux-gnu/libboost* /usr/lib/x86_64-linux-gnu/\nCOPY --from=builder /usr/lib/x86_64-linux-gnu/libevent-* /usr/lib/x86_64-linux-gnu/\nCOPY --from=builder /usr/lib/x86_64-linux-gnu/libgflags* /usr/lib/x86_64-linux-gnu/\nCOPY --from=builder /usr/lib/x86_64-linux-gnu/libglog* /usr/lib/x86_64-linux-gnu/\nCOPY --from=builder /usr/lib/x86_64-linux-gnu/libsnappy.* /usr/lib/x86_64-linux-gnu/\nCOPY --from=builder /usr/lib/x86_64-linux-gnu/libdouble-conversion.* /usr/lib/x86_64-linux-gnu/\nCOPY --from=builder /usr/lib/x86_64-linux-gnu/libicui18n.* /usr/lib/x86_64-linux-gnu/\nCOPY --from=builder /usr/lib/x86_64-linux-gnu/libicuuc.* /usr/lib/x86_64-linux-gnu/\nCOPY --from=builder /usr/lib/x86_64-linux-gnu/libicudata.* /usr/lib/x86_64-linux-gnu/\nCOPY --from=builder /usr/lib/x86_64-linux-gnu/libssl* /usr/lib/x86_64-linux-gnu/\nCOPY --from=builder /usr/lib/x86_64-linux-gnu/libcrypto* /usr/lib/x86_64-linux-gnu/\nCOPY --from=builder /usr/lib/x86_64-linux-gnu/libunwind* /usr/lib/x86_64-linux-gnu/\nCOPY --from=builder /usr/local/lib/libfolly.so /usr/local/lib/\n\nRUN ldconfig 2> /dev/null\n\n# Copy the build artifacts.\nCOPY --from=builder /magma/bazel-bin/lte/gateway/c/session_manager/sessiond /usr/local/bin/sessiond\n\n# Copy the configs.\nCOPY lte/gateway/configs /etc/magma\nCOPY orc8r/gateway/configs/templates /etc/magma/templates\nRUN mkdir -p /var/opt/magma/configs\n"
+}

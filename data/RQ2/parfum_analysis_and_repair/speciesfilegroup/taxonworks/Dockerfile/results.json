@@ -1,0 +1,17 @@
+{
+  "startTime": 1674246384928,
+  "endTime": 1674246386351,
+  "originalSmells": [
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 15,
+        "lineEnd": 15,
+        "columnStart": 4,
+        "columnEnd": 15
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM sfgrp/taxonworks-base:latest AS base\nARG BUNDLER_WORKERS=1\nENV RAILS_ENV production\n\nADD package.json /app/\nADD package-lock.json /app/\nADD .ruby-version /app/\nADD Gemfile /app/\nADD Gemfile.lock /app/\n\nWORKDIR /app\n\nRUN bundle config --local build.sassc --disable-march-tune-native # https://github.com/sass/sassc-ruby/issues/146\nRUN bundle config set --local without 'development test'\nRUN bundle install -j$BUNDLER_WORKERS\nRUN npm install && npm cache clean --force;\n\nCOPY . /app\n\n# See https://github.com/phusion/passenger-docker\nRUN mkdir -p /etc/my_init.d\nADD config/docker/nginx/init.sh /etc/my_init.d/init.sh\nRUN chmod +x /etc/my_init.d/init.sh && \\\n    mkdir /app/tmp && \\\n    mkdir /app/log && \\\n    mkdir /app/public/packs && \\\n    mkdir /app/public/images/tmp && \\\n    mkdir /app/downloads && \\\n    chmod +x /app/public/images/tmp && \\\n    rm -f /etc/service/nginx/down\n\n## Setup Redis.\nRUN mkdir /etc/service/redis\nRUN cp /app/exe/redis /etc/service/redis/run\nRUN cp /app/config/docker/redis.conf /etc/redis/redis.conf\n\n## Setup delayed_job workers\nRUN mkdir /etc/service/delayed_job\nRUN cp /app/exe/delayed_job /etc/service/delayed_job/run\n\nRUN chown 9999:9999 /app/public\nRUN chown 9999:9999 /app/public/images/tmp\nRUN chown 9999:9999 /app/public/packs\nRUN chown 9999:9999 /app/log/\nRUN chown 9999:9999 /app/downloads\nRUN chown 9999:9999 /app/tmp/\n\nRUN touch /app/log/production.log\nRUN chown 9999:9999 /app/log/production.log\nRUN chmod 0664 /app/log/production.log\n\n# Set up REVISION if provided as build-arg\nARG REVISION\nRUN [ \"x$REVISION\" != \"x\" ] && echo $REVISION > /app/REVISION && \\\n    echo \"Set up REVISION to $REVISION\" || true\n\nFROM base AS assets-precompiler\n\n# http://blog.zeit.io/use-a-fake-db-adapter-to-play-nice-with-rails-assets-precompilation/\nRUN bundle add activerecord-nulldb-adapter\nRUN printf \"production:\\n  adapter: nulldb\" > config/database.yml \\\n&&  printf \"production:\\n  secret_key_base: $(bundle exec rake secret)\" > config/secrets.yml\n\n# Precompiling and also removing config files just in case someone uses `docker build --target=assets-precompiler`\n\nRUN NODE_OPTIONS=\"--max-old-space-size=4096\" bundle exec rake assets:precompile \\\n&& rm config/database.yml config/secrets.yml\n\nFROM base\nCOPY --from=assets-precompiler --chown=9999:9999 /app/public /app/public\n\nCMD [\"/sbin/my_init\"]\n"
+}

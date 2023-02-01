@@ -1,0 +1,43 @@
+FROM gcr.io/google-appengine/python
+
+# Create a virtualenv for dependencies. This isolates these packages from
+# system-level packages.
+# Use -p python3 or -p python3.7 to select python version. Default is version 2.
+RUN virtualenv /env  -p python3.7
+
+# Setting these environment variables are the same as running
+# source /env/bin/activate.
+ENV VIRTUAL_ENV /env
+ENV PATH /env/bin:$PATH
+
+# Install libreoffice
+RUN apt-get update -qq
+RUN apt-get install --no-install-recommends -y software-properties-common locales locales-all && rm -rf /var/lib/apt/lists/*;
+RUN add-apt-repository -y ppa:libreoffice/ppa
+RUN apt-get install --no-install-recommends -y libreoffice && rm -rf /var/lib/apt/lists/*;
+
+# Locales
+RUN locale-gen en_US.UTF-8
+RUN update-locale LANG=en_US.UTF-8
+RUN update-locale LANGUAGE=en_US.UTF-8
+RUN update-locale LC_ALL=en_US.UTF-8
+
+ENV LANG en_US.UTF-8 
+ENV LANGUAGE en_US:en 
+ENV LC_ALL en_US.UTF-8    
+
+# Upgrade pip
+RUN python -m pip install --upgrade pip
+
+# Copy the application's requirements.txt and run pip to install all
+# dependencies into the virtualenv.
+ADD requirements.txt /app/requirements.txt
+RUN pip install --no-cache-dir -r /app/requirements.txt
+
+# Add the application source code.
+ADD . /app
+RUN pip show flask-migrate
+
+# Run a WSGI server to serve the application. gunicorn must be declared as
+# a dependency in requirements.txt.
+CMD gunicorn -b :$PORT main:app

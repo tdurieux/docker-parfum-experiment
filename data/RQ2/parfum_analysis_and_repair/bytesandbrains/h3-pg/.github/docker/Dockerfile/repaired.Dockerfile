@@ -1,0 +1,34 @@
+ARG ARCH=amd64
+ARG UBUNTU=latest
+FROM $ARCH/ubuntu:$UBUNTU
+
+ARG ARCH
+ARG UBUNTU
+ENV DEBIAN_FRONTEND=noninteractive
+ENV ARCH=$ARCH
+
+RUN apt-get update && apt-get install --no-install-recommends -y \
+    build-essential \
+    cmake \
+    git \
+    pgxnclient && rm -rf /var/lib/apt/lists/*;
+
+# Setup PostgreSQL apt repository
+RUN apt-key adv --fetch-keys https://www.postgresql.org/media/keys/ACCC4CF8.asc
+RUN echo "deb http://apt.postgresql.org/pub/repos/apt/ ${UBUNTU}-pgdg main" >> /etc/apt/sources.list.d/pgdg.list
+
+ARG POSTGRESQL=14
+ARG POSTGIS=3
+
+RUN apt-get update && apt-get install --no-install-recommends -y \
+    postgresql-${POSTGRESQL}-postgis-${POSTGIS}-scripts \
+    postgresql-${POSTGRESQL}-postgis-${POSTGIS} \
+    postgresql-server-dev-${POSTGRESQL} \
+    postgresql-${POSTGRESQL} && rm -rf /var/lib/apt/lists/*;
+
+# Set workdir
+WORKDIR /github/workspace
+
+COPY entrypoint.sh /entrypoint.sh
+
+ENTRYPOINT ["/entrypoint.sh"]

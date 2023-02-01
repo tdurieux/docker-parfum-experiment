@@ -1,0 +1,17 @@
+{
+  "startTime": 1674249780849,
+  "endTime": 1674249781593,
+  "originalSmells": [
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 45,
+        "lineEnd": 45,
+        "columnStart": 4,
+        "columnEnd": 42
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM golang:1.17-buster as secretless-builder\nMAINTAINER CyberArk Software Ltd.\nLABEL builder=\"secretless-builder\"\n\n# This Dockerfile is used to create a Secretless Broker binary image\n# that has been compiled with Go coverage instrumentation via the command:\n#    go test -c -coverpkg=\"./...\" ./cmd/secretless-broker\n\n# On CyberArk dev laptops, golang module dependencies are downloaded with a\n# corporate proxy in the middle. For these connections to succeed we need to\n# configure the proxy CA certificate in build containers.\n#\n# To allow this script to also work on non-CyberArk laptops where the CA\n# certificate is not available, we copy the (potentially empty) directory\n# and update container certificates based on that, rather than rely on the\n# CA file itself.\nADD build_ca_certificate /usr/local/share/ca-certificates/\nRUN update-ca-certificates\n\nWORKDIR /secretless\n\nENV GOOS=linux \\\n    GOARCH=amd64 \\\n    CGO_ENABLED=1\n\nCOPY go.mod go.sum /secretless/\nCOPY third_party/ /secretless/third_party\n\nRUN go mod download\n\n# secretless source files\nCOPY ./cmd /secretless/cmd\nCOPY ./internal /secretless/internal\nCOPY ./pkg /secretless/pkg\nCOPY ./resource-definitions /secretless/resource-definitions\n\nRUN go test -c -coverpkg=\"./...\" ./cmd/secretless-broker && \\\n    mv secretless-broker.test secretless-broker && \\\n    go build -o dist/$GOOS/$GOARCH/summon2 ./cmd/summon2\n\n\n# =================== MAIN CONTAINER ===================\nFROM alpine:3.14 as secretless-broker\nMAINTAINER CyberArk Software Ltd.\n\nRUN apk add --no-cache -u shadow libc6-compat openssl && \\\n    # Add Limited user\n    groupadd -r secretless \\\n             -g 777 && \\\n    useradd -c \"secretless runner account\" \\\n            -g secretless \\\n            -u 777 \\\n            -m \\\n            -r \\\n            secretless && \\\n    # Ensure plugin dir is owned by secretless user\n    mkdir -p /usr/local/lib/secretless && \\\n    # Make and setup a directory for sockets at /sock\n    mkdir /sock && \\\n    # Make and setup a directory for the Conjur client certificate/access token\n    mkdir -p /etc/conjur/ssl && \\\n    mkdir -p /run/conjur && \\\n    # Use GID of 0 since that is what OpenShift will want to be able to read things\n    chown secretless:0 /usr/local/lib/secretless \\\n                       /sock \\\n                       /etc/conjur/ssl \\\n                       /run/conjur && \\\n    # We need open group permissions in these directories since OpenShift won't\n    # match our UID when we try to write files to them\n    chmod 770 /sock \\\n              /etc/conjur/ssl \\\n              /run/conjur\n\nUSER secretless\n\nENTRYPOINT [ \"/usr/local/bin/secretless-broker\" , \"-test.v\", \"-test.run\", \"^TestCoverage$$\", \"-test.coverprofile=/test-coverage/cover.out\" ]\n\nCOPY --from=secretless-builder /secretless/secretless-broker \\\n                               /secretless/dist/linux/amd64/summon2 /usr/local/bin/\n"
+}

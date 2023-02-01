@@ -1,0 +1,53 @@
+{
+  "startTime": 1674219349607,
+  "endTime": 1674219351692,
+  "originalSmells": [
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 12,
+        "lineEnd": 12,
+        "columnStart": 4,
+        "columnEnd": 15
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 41,
+        "lineEnd": 41,
+        "columnStart": 4,
+        "columnEnd": 29
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 64,
+        "lineEnd": 64,
+        "columnStart": 4,
+        "columnEnd": 29
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 65,
+        "lineEnd": 65,
+        "columnStart": 4,
+        "columnEnd": 36
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 31,
+        "lineEnd": 38,
+        "columnStart": 18,
+        "columnEnd": 16
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "ARG BUILDFRONTENDFROM=node:12.2.0-alpine\nARG SERVERFROM=python:3.7-alpine\n\n####################\n# BUILDER FRONTEND #\n####################\n\nFROM ${BUILDFRONTENDFROM} as builder-frontend\nARG DOCKER_TAG\nADD frontend/package.json /frontend/\nADD frontend/package-lock.json /frontend/\nWORKDIR /frontend\nRUN npm install && npm cache clean --force;\nADD frontend /frontend\nENV REACT_APP_VERSION=$DOCKER_TAG\nRUN npm run build\n\n##################\n# BUILDER WHEELS #\n##################\n\nFROM ${SERVERFROM} as builder-wheels\n\n# set work directory\nWORKDIR /usr/src/app\n\n# set environment variables\nENV PYTHONDONTWRITEBYTECODE 1\nENV PYTHONUNBUFFERED 1\n\n# install psycopg2 dependencies\nRUN apk update && apk add --no-cache \\\n    build-base \\\n    ca-certificates \\\n    musl-dev \\\n    postgresql-dev \\\n    python3-dev \\\n    libffi-dev \\\n    openldap-dev\n\nCOPY guacozy_server/requirements*.txt ./\nRUN pip install --no-cache-dir --upgrade pip && \\\n    pip wheel --no-cache-dir --wheel-dir /usr/src/app/wheels -r requirements-ldap.txt\n\n#########\n# FINAL #\n#########\n\nFROM ${SERVERFROM}\n\nCOPY --from=builder-wheels /usr/src/app/wheels /wheels\n\n# install dependencies\nRUN apk update && apk add --no-cache \\\n      bash \\\n      libpq \\\n      ca-certificates \\\n      openssl \\\n      memcached \\\n      nginx \\\n\t  supervisor\n\n# Inject built wheels and install them\nCOPY --from=builder-wheels /usr/src/app/wheels /wheels\nRUN pip install --no-cache-dir --upgrade pip && \\\n    pip install --no-cache-dir --no-cache /wheels/*\n\n# Inject django app\nCOPY guacozy_server  /app\n\n# Inject built frontend\nCOPY --from=builder-frontend /frontend/build /frontend\n\n# Inject docker specific configuration\nCOPY docker /tmp/docker\n\n# Distribute configuration files and prepare dirs for pidfiles\nRUN mkdir -p /run/nginx && \\\n    mkdir -p /run/daphne && \\\n    cd /tmp/docker && \\\n    mv entrypoint.sh /entrypoint.sh && \\\n    chmod +x /entrypoint.sh && \\\n    mv nginx-default.conf /etc/nginx/conf.d/default.conf && \\\n    mkdir -p /etc/supervisor.d/ && \\\n    mv /tmp/docker/supervisor-app.ini /etc/supervisor.d/ && \\\n    mv /tmp/docker/supervisord.conf /etc/supervisord.conf && \\\n    # create /app/.env if doesn't exists for less noise from django-environ\n    touch /app/.env\n\nENTRYPOINT [\"/entrypoint.sh\"]\n\n# Change to app dir so entrypoint.sh can run ./manage.py and other things localy to django\nWORKDIR /app\n\nCMD [\"supervisord\", \"-n\"]\nEXPOSE 80\nEXPOSE 443"
+}

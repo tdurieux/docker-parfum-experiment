@@ -1,0 +1,26 @@
+{
+  "startTime": 1674221209129,
+  "endTime": 1674221210343,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 43,
+        "lineEnd": 43,
+        "columnStart": 5,
+        "columnEnd": 37
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 46,
+        "lineEnd": 46,
+        "columnStart": 5,
+        "columnEnd": 42
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM python:3.10 as development_build\n\n# This is only available at build, and is a required variable\nARG ENV\n\n# These provide default environment variable definitions; can be overridden at runtime through\n#  `-e` commandline argument or env_file\nENV ENV=${ENV} \\\n  # python:\n  PYTHONFAULTHANDLER=1 \\\n  PYTHONUNBUFFERED=1 \\\n  PYTHONHASHSEED=random \\\n  PYTHONPATH=\"${PYTHONPATH}:/code\" \\\n  # pip:\n  PIP_NO_CACHE_DIR=off \\\n  PIP_DISABLE_PIP_VERSION_CHECK=on \\\n  PIP_DEFAULT_TIMEOUT=100 \\\n  # dockerize:\n  DOCKERIZE_VERSION=v0.6.1 \\\n  # poetry:\n  POETRY_VERSION=1.1.13 \\\n  POETRY_VIRTUALENVS_CREATE=false \\\n  POETRY_CACHE_DIR='/var/cache/pypoetry'\n\n# System deps:\nRUN apt-get update \\\n  && apt-get install --no-install-recommends -y \\\n    bash \\\n    build-essential \\\n    curl \\\n    gettext \\\n    git \\\n    libpq-dev \\\n    wget \\\n    make \\\n  # Cleaning cache:\n  && apt-get autoremove && apt-get clean && rm -rf /var/lib/apt/lists/* \\\n  # Installing `dockerize` utility:\n  # https://github.com/jwilder/dockerize\n  && wget \"https://github.com/jwilder/dockerize/releases/download/${DOCKERIZE_VERSION}/dockerize-linux-amd64-${DOCKERIZE_VERSION}.tar.gz\" \\\n  && tar -C /usr/local/bin -xzvf \"dockerize-linux-amd64-${DOCKERIZE_VERSION}.tar.gz\" \\\n  && rm \"dockerize-linux-amd64-${DOCKERIZE_VERSION}.tar.gz\" && dockerize --version \\\n  # Update setuptools so that pytest-cov works \\\n  && pip install --no-cache-dir --upgrade setuptools \\\n  # Installing `poetry` package manager:\n  # https://github.com/python-poetry/poetry\n  && pip install --no-cache-dir \"poetry==$POETRY_VERSION\" && poetry --version\n\n# Copy only requirements, to cache them in docker layer (volume is not available on build)\nWORKDIR /code\nCOPY ./poetry.lock ./pyproject.toml /code/\n\n# Project initialization:\nRUN echo \"$ENV\" \\\n  && poetry install \\\n    $(if [ \"$ENV\" = 'production' ]; then echo '--no-dev'; fi) \\\n    --no-interaction --no-ansi \\\n  # Cleaning poetry installation's cache for production:\n  && if [ \"$ENV\" = 'production' ]; then rm -rf \"$POETRY_CACHE_DIR\"; fi\n\n# These are special cases used as code entrypoints:\nCOPY ./docker/entrypoint.sh ./docker/gunicorn.sh /\n\n# Setting up proper permissions:\nRUN chmod +x '/entrypoint.sh' \\\n  && chmod +x '/gunicorn.sh' \\\n  && groupadd -r web && mkdir -p /home/web \\\n  && useradd -d /home/web -r -g web web \\\n  && chown web:web -R /code && chown web:web -R /home/web\n\n# Running as non-root user:\nUSER web\n\n# Custom entrypoint ensures that full stack is up and running in local development environment:\nENTRYPOINT [\"/entrypoint.sh\"]\n\n\n# The following stage is only for production deployments.\n# (The development_build sets things up for a full local stack; this step\n# copies in the code so we don't need volumes)\nFROM development_build as production_build\nCOPY --chown=web:web ./alembic.ini /code/\nCOPY --chown=web:web ./api /code/api\nCOPY --chown=web:web ./migrations /code/migrations\n"
+}

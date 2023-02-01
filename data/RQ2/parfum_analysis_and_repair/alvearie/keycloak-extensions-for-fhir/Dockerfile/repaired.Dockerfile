@@ -1,0 +1,20 @@
+# ----------------------------------------------------------------------------
+# (C) Copyright IBM Corp. 2021
+#
+# SPDX-License-Identifier: Apache-2.0
+# ----------------------------------------------------------------------------
+
+# Build stage
+FROM maven:3-jdk-11-slim AS build
+COPY pom.xml ./
+COPY keycloak-config ./keycloak-config
+COPY jboss-fhir-provider ./jboss-fhir-provider
+COPY keycloak-extensions ./keycloak-extensions
+
+RUN mvn -B clean package -DskipTests
+
+
+# Package stage
+FROM quay.io/keycloak/keycloak:18.0.0-legacy
+
+# This can be overridden, but without this I've found the db vendor-detection in Keycloak to be brittle

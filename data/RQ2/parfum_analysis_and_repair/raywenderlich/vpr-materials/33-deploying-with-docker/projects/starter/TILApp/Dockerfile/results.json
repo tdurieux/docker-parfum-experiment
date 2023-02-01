@@ -1,0 +1,17 @@
+{
+  "startTime": 1674218316089,
+  "endTime": 1674218317186,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 45,
+        "lineEnd": 45,
+        "columnStart": 55,
+        "columnEnd": 78
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# ================================\n# Build image\n# ================================\nFROM swift:5.3-focal as build\n\n# Install OS updates and, if needed, sqlite3\nRUN export DEBIAN_FRONTEND=noninteractive DEBCONF_NONINTERACTIVE_SEEN=true \\\n    && apt-get -q update \\\n    && apt-get -q dist-upgrade -y \\\n    && rm -rf /var/lib/apt/lists/*\n\n# Set up a build area\nWORKDIR /build\n\n# First just resolve dependencies.\n# This creates a cached layer that can be reused\n# as long as your Package.swift/Package.resolved\n# files do not change.\nCOPY ./Package.* ./\nRUN swift package resolve\n\n# Copy entire repo into container\nCOPY . .\n\n# Build everything, with optimizations and test discovery\nRUN swift build --enable-test-discovery -c release\n\n# Switch to the staging area\nWORKDIR /staging\n\n# Copy main executable to staging area\nRUN cp \"$(swift build --package-path /build -c release --show-bin-path)/Run\" ./\n\n# Copy any resouces from the public directory and views directory if the directories exist\n# Ensure that by default, neither the directory nor any of its contents are writable.\nRUN [ -d /build/Public ] && { mv /build/Public ./Public && chmod -R a-w ./Public; } || true\nRUN [ -d /build/Resources ] && { mv /build/Resources ./Resources && chmod -R a-w ./Resources; } || true\n\n# ================================\n# Run image\n# ================================\nFROM swift:5.3-focal-slim\n\n# Make sure all system packages are up to date.\nRUN export DEBIAN_FRONTEND=noninteractive DEBCONF_NONINTERACTIVE_SEEN=true && \\\n    apt-get -q update && apt-get -q dist-upgrade -y && apt-get install --no-install-recommends curl -y && rm -r /var/lib/apt/lists/*\n\n# Create a vapor user and group with /app as its home directory\nRUN useradd --user-group --create-home --system --skel /dev/null --home-dir /app vapor\n\n# Switch to the new home directory\nWORKDIR /app\n\n# Copy built executable and any staged resources from builder\nCOPY --from=build --chown=vapor:vapor /staging /app\n\n# Ensure all further commands run as the vapor user\nUSER vapor:vapor\n\n# Let Docker bind to port 8080\nEXPOSE 8080\n\n# Start the Vapor service when the image is run, default to listening on 8080 in production environment\nENTRYPOINT [\"./Run\"]\nCMD [\"serve\", \"--env\", \"production\", \"--hostname\", \"0.0.0.0\", \"--port\", \"8080\"]"
+}

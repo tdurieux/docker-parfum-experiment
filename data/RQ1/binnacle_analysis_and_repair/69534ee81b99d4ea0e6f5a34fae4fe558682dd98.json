@@ -1,0 +1,17 @@
+{
+  "startTime": 1674251518659,
+  "endTime": 1674251518744,
+  "originalSmells": [
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 79,
+        "lineEnd": 79,
+        "columnStart": 4,
+        "columnEnd": 36
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "#\n# ----- Go Builder Image ------\n#\nFROM golang:1.12 AS builder\n\n# curl git bash\nRUN apt-get update && apt-get install -y --no-install-recommends \\\n\t\tcurl \\\n\t\tgit \\\n\t\tbash \\\n\t&& rm -rf /var/lib/apt/lists/*\n\n# github-release - Github Release and upload artifacts\n# go-junit-report - convert Go test into junit.xml format\nRUN go get -v github.com/aktau/github-release && \\\n    go get -v github.com/jstemmer/go-junit-report\n\n#\n# ----- Build and Test Image -----\n#\nFROM builder as build-and-test\n\n# set working directory\nRUN mkdir -p /go/src/github.com/alexei-led/pumba\nWORKDIR /go/src/github.com/alexei-led/pumba\n\n# copy sources\nCOPY . .\n\n# run test and calculate coverage\nRUN VERSION=$(cat VERSION) hack/test.sh\n\n# `VCS_COMMIT_ID=$(git rev-parse --short HEAD 2>/dev/null)`\nARG VCS_COMMIT_ID\nENV VCS_COMMIT_ID ${VCS_COMMIT_ID}\n# `VCS_BRANCH_NAME=$(git rev-parse --abbrev-ref HEAD 2>/dev/null)`\nARG VCS_BRANCH_NAME\nENV VCS_BRANCH_NAME ${VCS_BRANCH_NAME}\n# VCS_SLUG: owner/repo slug\nARG VCS_SLUG\nENV VCS_SLUG ${VCS_SLUG}\n# bild pumba binary for amd64 linux\nRUN VERSION=$(cat VERSION) hack/build.sh\n\n# upload coverage reports to Codecov.io, if CODECOV_TOKEN set through build-arg\nARG CODECOV_TOKEN\nENV CODECOV_TOKEN ${CODECOV_TOKEN}\nADD https://codecov.io/bash codecov.sh\nRUN chmod +x codecov.sh\n\n# command to upload coverage report to Codecov: need to pass CI_BUILD_ID/URL as environment variables\nCMD [\"./codecov.sh\", \"-e\", \"VCS_COMMIT_ID,VCS_BRANCH_NAME,VCS_SLUG,CI_BUILD_ID,CI_BUILD_URL\"]\n\n#\n# ------ Pumba GitHub Release ------\n#\nFROM build-and-test as github-release\n\n# build argument to secify if to create a GitHub release\nARG DEBUG=false\nARG RELEASE=false\n\n# Release Tag: `RELEASE_TAG=$(git describe --abbrev=0)`\nARG RELEASE_TAG\n\n# Release Tag Message: `TAG_MESSAGE=$(git tag -l $RELEASE_TAG -n 20 | awk '{$1=\"\"; print}')`\nARG TAG_MESSAGE\n\n# release to GitHub; pass GITHUB_TOKEN as build-arg\nARG GITHUB_TOKEN\n\n# build pumba for all platforms\nRUN if [ $RELEASE = true ]; then VERSION=$(cat VERSION) hack/xbuild.sh; fi\n\n# release to GitHub\nRUN if [ $RELEASE = true ]; then hack/github_release.sh alexei-led pumba; fi\n\n# get latest CA certificates\nFROM alpine:3.9 as certs\nRUN apk --update --no-cache add ca-certificates\n\n#\n# ------ Pumba runtime image ------\n#\nFROM scratch\n\n# copy CA certificates\nCOPY --from=certs /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt\n\n# this is the last commabd since it's never cached\nCOPY --from=build-and-test /go/src/github.com/alexei-led/pumba/.bin/pumba /pumba\n\nENTRYPOINT [\"/pumba\"]"
+}

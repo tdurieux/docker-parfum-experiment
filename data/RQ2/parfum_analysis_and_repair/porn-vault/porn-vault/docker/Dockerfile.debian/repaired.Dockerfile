@@ -1,0 +1,21 @@
+# This Dockerfile requires the build context to be the repository root
+# and not it's own folder
+
+FROM node:14-buster as build-env
+WORKDIR /app
+ADD . /app
+RUN cd /app && \
+    npm ci && \
+    npm run install:app && \
+    npm run build:generic
+
+FROM ghcr.io/linuxserver/baseimage-ubuntu:focal
+COPY --from=build-env /app/releases/node14 /
+
+RUN apt-get update && apt-get -y --no-install-recommends install ca-certificates ffmpeg && rm -rf /var/lib/apt/lists/*
+
+COPY ["config.example.json", "./docker/root/", "/"]
+
+VOLUME [ "/config"]
+EXPOSE 3000
+ENV PV_CONFIG_FOLDER=/config

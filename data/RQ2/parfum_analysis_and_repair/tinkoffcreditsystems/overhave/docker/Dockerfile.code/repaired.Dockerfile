@@ -1,0 +1,16 @@
+ARG IMAGE_BASE
+ARG POETRY_CONTENT_HASH
+
+FROM ${IMAGE_BASE}overhave-base:${POETRY_CONTENT_HASH}
+
+COPY ./overhave /code/overhave
+COPY ./docs /code/docs
+COPY ./tests /code/tests
+COPY ./demo /code/demo
+
+COPY ./makefile /code/makefile
+COPY ./setup.cfg /code/setup.cfg
+COPY ./README.rst /code/README.rst
+COPY ./pyproject.toml /code/pyproject.toml
+
+CMD ["tox", "-v"]

@@ -1,0 +1,9 @@
+FROM node:lts-alpine AS ui-build-stage
+COPY ui/ /ui
+WORKDIR /ui
+RUN npm install --legacy-peer-deps && npm run build && npm cache clean --force;
+
+FROM nginxinc/nginx-unprivileged:stable-alpine as ui-production-stage
+COPY --chown=101:101 --from=ui-build-stage /ui/dist /usr/share/nginx/html/
+COPY --chown=101:101 ui/nginx-default.conf /etc/nginx/conf.d/default.conf
+COPY --chown=101:101 ui/hooks /docker-entrypoint.d/

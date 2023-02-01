@@ -1,0 +1,35 @@
+FROM registry.scc.suse.de/suse/sles15:ga
+ENV PRODUCT SLE_15
+ENV BUILT_AT "Wed Feb 21 15:32 CET 2018"
+
+RUN useradd --no-log-init --create-home scc
+
+ARG OBS_USER
+ARG OBS_PASSWORD
+
+# Remember to drop docker caches if any of these change
+RUN zypper ar http://download.suse.de/ibs/SUSE/Products/SLE-Module-Basesystem/15/x86_64/product base &&\
+    zypper ar http://download.suse.de/ibs/SUSE/Updates/SLE-Module-Basesystem/15/x86_64/update base-updates &&\
+    zypper ar http://download.suse.de/ibs/SUSE/Products/SLE-Module-Legacy/15/x86_64/product legacy &&\
+    zypper ar http://download.suse.de/ibs/SUSE/Updates/SLE-Module-Development-Tools/15/x86_64/update devtools &&\
+    zypper --non-interactive ref &&\
+    zypper --non-interactive up &&\
+    zypper --non-interactive install git-core ruby-devel make gcc gcc-c++ build wget dmidecode \
+      vim osc hwinfo libx86emu1 zypper-migration-plugin sudo awk curl
+
+COPY integration/create-oscrc.sh /tmp/connect/integration/create-oscrc.sh
+RUN sh /tmp/connect/integration/create-oscrc.sh
+
+RUN echo 'gem: --no-ri --no-rdoc' > /etc/gemrc && \
+    gem install bundler --no-document
+
+RUN mkdir -p /tmp/connect/lib/suse/connect
+WORKDIR /tmp/connect
+
+COPY Gemfile .
+COPY suse-connect.gemspec .
+COPY lib/suse/connect/version.rb ./lib/suse/connect/
+RUN bundle config jobs $(nproc) && \
+    bundle install
+COPY . /tmp/connect
+RUN chown -R scc /tmp/connect

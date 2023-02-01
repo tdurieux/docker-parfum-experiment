@@ -1,0 +1,37 @@
+FROM nisar/isce-src:__TAG__
+LABEL rpmlabel="__TAG__"
+
+# Set an encoding to make things work smoothly.
+ENV LANG en_US.UTF-8
+
+# run tests and memory check, install and create RPM
+RUN set -ex \
+ && source /opt/docker/bin/entrypoint_source \
+ && mkdir -p rpm-build/opt \
+ && sudo mv /opt/isce rpm-build/opt \
+ && export PATH=/home/conda/.rvm/gems/ruby-2.3.0/bin:/home/conda/.rvm/gems/ruby-2.3.0@global/wrappers/:$PATH \
+ && fpm -s dir -t rpm -C rpm-build --name isce \
+      --prefix=/ --version=3.0 --provides=isce \
+      --maintainer=piyush.agram@jpl.nasa.gov \
+      --description="InSAR Scientific Computing Environment"
+
+
+FROM nisar/base:latest
+
+# Set an encoding to make things work smoothly.
+ENV LANG en_US.UTF-8
+
+# install ISCE from RPM
+COPY --from=0 /home/conda/isce-3.0-1.x86_64.rpm /tmp/isce-3.0-1.x86_64.rpm
+RUN set -ex \
+ && sudo yum update -y \
+ && sudo yum install -y /tmp/isce-3.0-1.x86_64.rpm \
+ && sudo yum clean all \
+ && sudo rm -rf /var/cache/yum \
+ && sudo rm /tmp/isce-3.0-1.x86_64.rpm
+
+# Add a file for users to source to activate the `conda`
+# environment `root` and the devtoolset compiler. Also
+# add a file that wraps that for use with the `ENTRYPOINT`.
+COPY .ci/images/centos/entrypoint_source.isce /opt/docker/bin/entrypoint_source.isce
+COPY .ci/images/centos/entrypoint_source.isce-ops /opt/docker/bin/entrypoint_source

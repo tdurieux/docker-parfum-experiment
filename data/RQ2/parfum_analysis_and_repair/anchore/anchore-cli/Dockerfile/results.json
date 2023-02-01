@@ -1,0 +1,62 @@
+{
+  "startTime": 1674246558195,
+  "endTime": 1674246559474,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 30,
+        "lineEnd": 30,
+        "columnStart": 4,
+        "columnEnd": 38
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 82,
+        "lineEnd": 82,
+        "columnStart": 4,
+        "columnEnd": 76
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 95,
+        "lineEnd": 95,
+        "columnStart": 4,
+        "columnEnd": 70
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 25,
+        "lineEnd": 29,
+        "columnStart": 4,
+        "columnEnd": 22
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 78,
+        "lineEnd": 80,
+        "columnStart": 4,
+        "columnEnd": 22
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 42,
+        "lineEnd": 42,
+        "columnStart": 4,
+        "columnEnd": 61
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "ARG BASE_REGISTRY=registry.access.redhat.com\nARG BASE_IMAGE=ubi8/ubi\nARG BASE_TAG=8.5\n\n#### Start first stage\n#### Anchore wheels, binary dependencies, etc. are staged to /build_output for second stage\nFROM ${BASE_REGISTRY}/${BASE_IMAGE}:${BASE_TAG} as anchore-cli-builder\n\nENV LANG=en_US.UTF-8\nENV LC_ALL=C.UTF-8\nENV PIP_VERSION=21.0.1\n\nCOPY . /buildsource\nWORKDIR /buildsource\n\nRUN set -ex && \\\n    mkdir -p \\\n        /build_output/configs \\\n        /build_output/deps \\\n        /build_output/wheels\n\n# install build dependencies\nRUN set -ex && \\\n    echo \"installing build dependencies\" && \\\n    yum update -y && \\\n    yum install -y \\\n        gcc \\\n        make \\\n        python38 \\\n        python38-wheel && \\\n    pip3 install --no-cache-dir pip==\"${PIP_VERSION}\" && rm -rf /var/cache/yum\n\n# stage anchore wheels and default configs into /build_output\nRUN set -ex && \\\n    pip3 download -d /build_output/wheels pip==\"${PIP_VERSION}\" && \\\n    echo \"installing anchore\" && \\\n    pip3 wheel --wheel-dir=/build_output/wheels . && \\\n    cp ./LICENSE /build_output/ && \\\n    cp ./docker-entrypoint.sh /build_output/configs/docker-entrypoint.sh\n\n# create p1 buildblob & checksum\nRUN set -ex && \\\n    tar -z -c -v -C /build_output -f /anchore-buildblob.tgz . && \\\n    sha256sum /anchore-buildblob.tgz > /buildblob.tgz.sha256sum && rm /anchore-buildblob.tgz\n\n#### Start second stage\n#### Setup and install using first stage artifacts in /build_output\nFROM ${BASE_REGISTRY}/${BASE_IMAGE}:${BASE_TAG} as anchore-cli-final\n\nARG CLI_COMMIT\nARG ANCHORE_CLI_VERSION=\"0.9.4\"\nARG ANCHORE_CLI_RELEASE=\"r0\"\n\n# Container metadata section\nLABEL anchore_cli_commit=${CLI_COMMIT} \\\n      source=\"https://github.com/anchore/anchore-cli\" \\\n      name=\"anchore-cli\" \\\n      maintainer=\"dev@anchore.com\" \\\n      vendor=\"Anchore Inc.\" \\\n      version=${ANCHORE_CLI_VERSION} \\\n      release=${ANCHORE_CLI_RELEASE} \\\n      summary=\"Anchore Engine CLI - python client for use against the anchore-engine container image scanning service, for policy-based security, best-practice and compliance enforcement.\" \\\n      description=\"Anchore is an open platform for container security and compliance that allows developers, operations, and security teams to discover, analyze, and certify container images on-premises or in the cloud. The Anchore CLI is a python client that can be used to access and manager Anchore Engine - the on-prem, OSS, API accessible service that allows ops and developers to perform detailed analysis, run queries, produce reports and define policies on container images that can be used in CI/CD pipelines to ensure that only containers that meet your organization’s requirements are deployed into production.\"\n\n# Environment variables to be present in running environment\nENV LANG=en_US.UTF-8\nENV LC_ALL=C.UTF-8\n\n# Default values that should be overridden in most cases on each container exec\nENV ANCHORE_CLI_USER=\"\"\nENV ANCHORE_CLI_PASS=\"\"\nENV ANCHORE_CLI_URL=http://localhost:8228/v1/\n\n# Copy artifacts from build step\nCOPY --from=anchore-cli-builder /build_output /build_output\n\n# install OS dependencies\nRUN yum update -y && \\\n    yum install -y \\\n        python38 \\\n        python38-wheel && \\\n    yum clean all && \\\n    pip3 install --no-cache-dir --upgrade --no-index --find-links=/build_output/wheels/ pip && rm -rf /var/cache/yum\n\n# Setup container default configs and directories\nRUN set -ex && \\\n    groupadd --gid 1000 anchore && \\\n    useradd --uid 1000 --gid anchore --shell /bin/bash --create-home anchore && \\\n    mkdir -p /licenses/ && \\\n    cp /build_output/LICENSE /licenses/ && \\\n    cp /build_output/configs/docker-entrypoint.sh /docker-entrypoint.sh && \\\n    chmod +x /docker-entrypoint.sh\n\n# Perform the anchore-cli build and install\nRUN set -ex && \\\n    pip3 install --no-cache-dir --no-index --find-links=./ /build_output/wheels/*.whl && \\\n    rm -rf \\\n        /build_output \\\n        /root/.cache\n\nUSER 1000\n\nWORKDIR /anchore-cli\n\nENTRYPOINT [\"/docker-entrypoint.sh\"]\nCMD [\"/bin/bash\"]\n"
+}

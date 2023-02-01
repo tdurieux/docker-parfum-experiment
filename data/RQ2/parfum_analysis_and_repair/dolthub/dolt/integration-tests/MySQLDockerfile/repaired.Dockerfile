@@ -1,0 +1,135 @@
+FROM --platform=linux/amd64 ubuntu:18.04
+
+# install python, libmysqlclient-dev, java, bats, git ruby, perl, cpan
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt update -y && \
+    apt install --no-install-recommends -y \
+        curl \
+        gnupg \
+        libwxbase3.0-0v5 \
+        libwxgtk3.0-gtk3-0v5 \
+        libsctp1 \
+        software-properties-common && \
+    curl -f -sL https://deb.nodesource.com/setup_14.x | bash - && \
+    add-apt-repository ppa:deadsnakes/ppa -y && \
+    curl -f -OL https://packages.erlang-solutions.com/ubuntu/pool/esl-erlang_22.3.4.9-1~ubuntu~bionic_amd64.deb && \
+    dpkg -i esl-erlang_22.3.4.9-1~ubuntu~bionic_amd64.deb && \
+    curl -f -LO http://packages.erlang-solutions.com/ubuntu/pool/elixir_1.10.1-1~ubuntu~bionic_all.deb && \
+    dpkg -i elixir_1.10.1-1~ubuntu~bionic_all.deb && \
+    apt update -y && \
+    apt install --no-install-recommends -y \
+        python3.8 \
+        python3-pip \
+        curl \
+        wget \
+        pkg-config \
+        mysql-client \
+        libmysqlclient-dev \
+        openjdk-8-jdk \
+        ant \
+        ca-certificates-java \
+        bats \
+        perl \
+        cpanminus \
+        cmake \
+        g++ \
+        libmysqlcppconn-dev \
+        git \
+        ruby \
+        gem \
+        libc6 \
+        libgcc1 \
+        libgssapi-krb5-2 \
+        libicu60 \
+        libssl1.1 \
+        libstdc++6 \
+        zlib1g \
+        r-base \
+        postgresql \
+        postgresql-contrib \
+        libpq-dev \
+        nodejs \
+        postgresql-server-dev-all && \
+        update-ca-certificates -f && rm -rf /var/lib/apt/lists/*;
+
+# install go
+WORKDIR /root
+ENV GO_VERSION=1.18
+ENV GOPATH=$HOME/go
+ENV PATH=$PATH:$GOPATH/bin
+ENV PATH=$PATH:$GOPATH/bin:/usr/local/go/bin
+RUN curl -f -O "https://dl.google.com/go/go${GO_VERSION}.linux-amd64.tar.gz" && \
+    sha256sum "go${GO_VERSION}.linux-amd64.tar.gz" && \
+    tar -xvf "go${GO_VERSION}.linux-amd64.tar.gz" -C /usr/local && \
+    chown -R root:root /usr/local/go && \
+    mkdir -p $HOME/go/{bin,src} && \
+    go version && rm "go${GO_VERSION}.linux-amd64.tar.gz"
+
+# install MySQL dependency from source
+RUN git clone https://github.com/go-sql-driver/mysql.git
+WORKDIR mysql
+RUN git checkout tags/v1.6.0 -b v1.6.0
+RUN go install .
+WORKDIR /
+
+# install dotnet
+RUN curl -f -LO https://download.visualstudio.microsoft.com/download/pr/13b9d84c-a35b-4ffe-8f62-447a01403d64/1f9ae31daa0f7d98513e7551246899f2/dotnet-sdk-5.0.400-linux-x64.tar.gz && \
+    tar -C /usr/local/bin -xzf dotnet-sdk-5.0.400-linux-x64.tar.gz && \
+    dotnet --version && rm dotnet-sdk-5.0.400-linux-x64.tar.gz
+
+# install pip for python3.8
+RUN curl -f -LO https://bootstrap.pypa.io/get-pip.py && \
+  python3.8 get-pip.py && \
+  pip --version
+
+# install mysql connector and pymsql
+RUN pip install --no-cache-dir mysql-connector-python PyMySQL sqlalchemy
+
+# Setup JAVA_HOME -- useful for docker commandline
+ENV JAVA_HOME /usr/lib/jvm/java-8-openjdk-amd64/
+
+# install mysql connector java
+RUN mkdir -p /mysql-client-tests/java
+RUN curl -f -L -o /mysql-client-tests/java/mysql-connector-java-8.0.21.jar \
+  https://repo1.maven.org/maven2/mysql/mysql-connector-java/8.0.21/mysql-connector-java-8.0.21.jar
+
+# install node deps
+COPY mysql-client-tests/node/package.json /mysql-client-tests/node/
+COPY mysql-client-tests/node/package-lock.json /mysql-client-tests/node/
+WORKDIR /mysql-client-tests/node
+RUN npm install && npm cache clean --force;
+
+# install cpan dependencies
+RUN cpanm DBD::mysql
+
+# install ruby dependencies
+COPY mysql-client-tests/ruby/Gemfile /mysql-client-tests/ruby/
+COPY mysql-client-tests/ruby/Gemfile.lock /mysql-client-tests/ruby/
+WORKDIR /mysql-client-tests/ruby
+RUN gem install bundler -v 2.1.4 && bundle install
+
+# install R packages
+RUN Rscript -e 'install.packages(c("DBI", "RMySQL", "RMariaDB"), \
+                  repos = c(RSPM="https://packagemanager.rstudio.com/cran/__linux__/bionic/latest"))'
+
+# install postgres and psql
+RUN service postgresql start
+
+# install mysql_fdw
+WORKDIR /mysql-client-tests/mysql_fdw
+RUN git clone https://github.com/EnterpriseDB/mysql_fdw --branch REL-2_7_0
+WORKDIR /mysql-client-tests/mysql_fdw/mysql_fdw
+RUN make USE_PGXS=1 && \
+    make USE_PGXS=1 install
+
+# install dolt from source
+WORKDIR /root/building
+COPY ./go .
+ENV GOFLAGS="-mod=readonly"
+RUN go build -o /usr/local/bin/dolt ./cmd/dolt
+
+COPY mysql-client-tests /mysql-client-tests
+COPY mysql-client-tests/mysql-client-tests-entrypoint.sh /mysql-client-tests/entrypoint.sh
+
+WORKDIR /mysql-client-tests
+ENTRYPOINT ["/mysql-client-tests/entrypoint.sh"]

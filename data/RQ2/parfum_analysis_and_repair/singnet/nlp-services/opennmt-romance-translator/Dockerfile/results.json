@@ -1,0 +1,62 @@
+{
+  "startTime": 1674253436095,
+  "endTime": 1674253437394,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 118,
+        "lineEnd": 118,
+        "columnStart": 23,
+        "columnEnd": 95
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 130,
+        "lineEnd": 130,
+        "columnStart": 4,
+        "columnEnd": 31
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 131,
+        "lineEnd": 131,
+        "columnStart": 4,
+        "columnEnd": 36
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 122,
+        "lineEnd": 122,
+        "columnStart": 4,
+        "columnEnd": 60
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 3,
+        "lineEnd": 21,
+        "columnStart": 4,
+        "columnEnd": 12
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 3,
+        "lineEnd": 21,
+        "columnStart": 4,
+        "columnEnd": 12
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM nvidia/cuda:8.0-devel-ubuntu16.04 as torch_builder\n\nRUN apt update && \\\n    apt install --no-install-recommends -y \\\n        autoconf \\\n        automake \\\n        build-essential \\\n        cmake \\\n        curl \\\n        g++ \\\n        gcc \\\n        git \\\n        libprotobuf-dev \\\n        libprotobuf9v5 \\\n        libreadline-dev \\\n        libtool \\\n        libzmq-dev \\\n        pkg-config \\\n        protobuf-compiler \\\n        unzip \\\n        nano \\\n        wget && rm -rf /var/lib/apt/lists/*;\n\n# Fetch Intel MKL.\nRUN mkdir /root/mkl && \\\n    wget https://anaconda.org/intel/mkl/2020.0/download/linux-64/mkl-2020.0-intel_166.tar.bz2 && \\\n    tar -xf mkl-2020.0-intel_166.tar.bz2 -C /root/mkl && \\\n    rm mkl-2020.0-intel_166.tar.bz2\nENV MKL_ROOT=/root/mkl\nRUN rm -f $MKL_ROOT/lib/*vml* \\\n          $MKL_ROOT/lib/*ilp64* \\\n          $MKL_ROOT/lib/*blacs* \\\n          $MKL_ROOT/lib/*scalapack* \\\n          $MKL_ROOT/lib/*cdft* \\\n          $MKL_ROOT/lib/libmkl_tbb_thread.so \\\n          $MKL_ROOT/lib/libmkl_ao_worker.so\n\n# Compile Torch and OpenNMT dependencies.\nARG CUDA_ARCH\nENV CUDA_ARCH=${CUDA_ARCH:-Common}\nRUN git clone https://github.com/torch/distro.git /root/torch-distro --recursive && \\\n    cd /root/torch-distro && \\\n    mkdir /root/torch && \\\n    CMAKE_LIBRARY_PATH=$CMAKE_LIBRARY_PATH:$MKL_ROOT/lib \\\n    TORCH_CUDA_ARCH_LIST=${CUDA_ARCH} TORCH_NVCC_FLAGS=\"-Xfatbin -compress-all\" \\\n    PREFIX=/root/torch ./install.sh\nRUN cp -r $MKL_ROOT/lib/* /root/torch/lib\nRUN /root/torch/bin/luarocks install tds && \\\n    /root/torch/bin/luarocks install dkjson && \\\n    /root/torch/bin/luarocks install restserver-xavante && \\\n    /root/torch/bin/luarocks install yaml && \\\n    /root/torch/bin/luarocks install bit32 && \\\n    /root/torch/bin/luarocks install luacheck && \\\n    /root/torch/bin/luarocks install luacov && \\\n    /root/torch/bin/luarocks install lua-zmq \\\n        ZEROMQ_LIBDIR=/usr/lib/x86_64-linux-gnu/ ZEROMQ_INCDIR=/usr/include\n\n# Install lua-sentencepiece\nRUN git clone https://github.com/google/sentencepiece.git /root/sentencepiece-git && \\\n    cd /root/sentencepiece-git && \\\n    mkdir build && \\\n    cd build && \\\n    cmake -DCMAKE_INSTALL_PREFIX=/root/sentencepiece .. && \\\n    make -j $(nproc) && \\\n    make install && \\\n    rm -r /root/sentencepiece-git\n\nRUN git clone https://github.com/OpenNMT/lua-sentencepiece.git /root/lua-sentencepiece && \\\n    cd /root/lua-sentencepiece && \\\n    CMAKE_LIBRARY_PATH=/root/sentencepiece/lib CMAKE_INCLUDE_PATH=/root/sentencepiece/include \\\n    /root/torch/bin/luarocks make lua-sentencepiece-scm-1.rockspec \\\n        LIBSENTENCEPIECE_DIR=/root/sentencepiece && \\\n    cd /root && \\\n    rm -r /root/lua-sentencepiece\n\nFROM nvidia/cuda:8.0-runtime-ubuntu16.04\nMAINTAINER OpenNMT <http://opennmt.net/>\n\nARG git_owner=\"singnet\"\nARG git_repo=\"nlp-services\"\nARG git_branch=\"master\"\nARG snetd_version\n\nENV SINGNET_DIR=/opt/singnet\nENV SERVICE_NAME=opennmt-romance-translator\n\nRUN mkdir -p ${SINGNET_DIR}\n\nRUN apt-get update && \\\n    apt-get install -y --no-install-recommends \\\n        libgomp1 \\\n        libprotobuf9v5 \\\n        libzmq1 \\\n        nano \\\n        wget \\\n        curl \\\n        git \\\n        python3-pip \\\n        python3 && \\\n    apt-get clean && \\\n    rm -rf /var/lib/apt/lists/*\n\nENV TORCH_DIR=/root/torch\nENV SENTENCEPIECE_DIR=/root/sentencepiece\n\nCOPY --from=torch_builder /root/torch ${TORCH_DIR}\nCOPY --from=torch_builder /root/sentencepiece ${SENTENCEPIECE_DIR}\n\nENV LUA_PATH=\"${TORCH_DIR}/share/lua/5.1/?.lua;${TORCH_DIR}/share/lua/5.1/?/init.lua;./?.lua\"\nENV LUA_CPATH=\"${TORCH_DIR}/lib/lua/5.1/?.so;./?.so;${TORCH_DIR}/lib/?.so\"\nENV PATH=${TORCH_DIR}/bin:${PATH}\nENV LD_LIBRARY_PATH=${TORCH_DIR}/lib:${LD_LIBRARY_PATH}\nENV THC_CACHING_ALLOCATOR=0\n\nENV ONMT_DIR=/root/opennmt\nCOPY . $ONMT_DIR\n\n# Install snet daemon\nRUN SNETD_GIT_VERSION=$( curl -f -s https://api.github.com/repos/singnet/snet-daemon/releases/latest | grep -oP '\"tag_name\": \"\\K(.*)(?=\")' || echo \"v5.0.1\") && \\\n    SNETD_VERSION=${snetd_version:-${SNETD_GIT_VERSION}} && \\\n    cd /tmp && \\\n    wget https://github.com/singnet/snet-daemon/releases/download/${SNETD_VERSION}/snet-daemon-${SNETD_VERSION}-linux-amd64.tar.gz && \\\n    tar -xvf snet-daemon-${SNETD_VERSION}-linux-amd64.tar.gz && \\\n    mv snet-daemon-${SNETD_VERSION}-linux-amd64/snetd /usr/bin/snetd && \\\n    rm -rf snet-daemon* && rm snet-daemon-${SNETD_VERSION}-linux-amd64.tar.gz\n\nRUN cd ${SINGNET_DIR} && \\\n    git clone -b ${git_branch} https://github.com/${git_owner}/${git_repo}.git\n\nRUN cd ${SINGNET_DIR}/${git_repo}/${SERVICE_NAME} && \\\n    pip3 install --no-cache-dir -U pip==20.3.4 && \\\n    pip3 install --no-cache-dir -r requirements.txt && \\\n    sh buildproto.sh\n\nRUN cd ${SINGNET_DIR}/${git_repo}/${SERVICE_NAME}/utils && \\\n    bash prepare_data.sh ./data\n\nRUN cd ${SINGNET_DIR}/${git_repo}/${SERVICE_NAME} && \\\n    bash buildproto.sh\n\nWORKDIR ${SINGNET_DIR}/${git_repo}/${SERVICE_NAME}"
+}

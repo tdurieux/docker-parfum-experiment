@@ -1,0 +1,53 @@
+{
+  "startTime": 1674242014609,
+  "endTime": 1674242015054,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 16,
+        "lineEnd": 16,
+        "columnStart": 4,
+        "columnEnd": 33
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 54,
+        "lineEnd": 54,
+        "columnStart": 4,
+        "columnEnd": 38
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 12,
+        "lineEnd": 12,
+        "columnStart": 4,
+        "columnEnd": 312
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 105,
+        "lineEnd": 105,
+        "columnStart": 4,
+        "columnEnd": 22
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 109,
+        "lineEnd": 109,
+        "columnStart": 4,
+        "columnEnd": 31
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM centos:centos7\n\nADD conf/setup.conf /root/setup.conf\nRUN chmod +x /root/setup.conf\n## install yum repos and then packages\nRUN source /root/setup.conf && \\\n    rpm -Uvh $EPEL7 >& /dev/null && \\\n    sed -i 's/^mirrorlist=https/mirrorlist=http/g' /etc/yum.repos.d/epel.repo && \\\n    rpm -Uvh $ATOMIC >& /dev/null && \\\n    sed -i 's/^mirrorlist=https/mirrorlist=http/g' /etc/yum.repos.d/atomic.repo\nRUN yum clean all >& /dev/null && \\\n    yum update -y --skip-broken >&/dev/null && \\\n    yum install -y rsyslog logrotate ntp iproute openssh-clients python python-devel git wget rabbitmq-server mod_wsgi httpd squid yum-utils gcc net-snmp-utils net-snmp net-snmp-python openssl openssl098e ca-certificates redis mariadb mariadb-server mariadb-devel python-virtualenv python-setuptools MySQL-python && rm -rf /var/cache/yum\n\n# set up pip and install python virtual environment\nRUN easy_install --upgrade pip\nRUN pip install --no-cache-dir virtualenvwrapper\n\n# get compass-core code\nWORKDIR /root\nRUN source /root/setup.conf && \\\n    git clone $COMPASS_CORE\nWORKDIR /root/compass-core\nRUN mkdir /root/backup\n\n# update rsyslog conf\nRUN cp -rn /etc/rsyslog.conf /root/backup\nRUN rm -rf /etc/rsyslog.conf\nRUN cp -rf misc/rsyslog/rsyslog.conf /etc/rsyslog.conf\nRUN chmod 644 /etc/rsyslog.conf\n\n# update logrotate.d\nRUN cp -rn /etc/logrotate.d /root/backup\nRUN rm -rf /etc/logrotate.d/*\nRUN cp -rf misc/logrotate.d/* /etc/logrotate.d/\nRUN chmod 644 /etc/logrotate.d/*\n\n# grant permission to httpd and mysqld log dirs\nRUN mkdir /var/log/mysql\nRUN chmod 777 /var/log/httpd\nRUN chmod 777 /var/log/mysql\n\n# clone compass web\nWORKDIR /root\nRUN source /root/setup.conf && \\\n    git clone $COMPASS_WEB\n\n# setup python requirements\n# remove 'mysql-python' from requirements as centos 7 supports the yum package\nWORKDIR /root/compass-core\nRUN sed -i 's/MySQL-python/#MySQL-python/g' requirements.txt\nRUN source `which virtualenvwrapper.sh` && \\\n    mkvirtualenv --system-site-packages compass-core && \\\n    workon compass-core && \\\n    pip install --no-cache-dir -U -r requirements.txt\n\n# download local repo\nWORKDIR /tmp\nRUN source /root/setup.conf && \\\n    wget $LOCAL_REPO\n\n# snmp\n# instead of moving mibs to /usr/local/share/snmp/mibs, centos7 puts mibs file at /usr/share/snmp/mibs/\n\nWORKDIR /root/compass-core\nRUN yes|cp -rf mibs/* /usr/share/snmp/mibs/\nRUN cp -rf misc/snmp/snmp.conf /etc/snmp/snmp.conf\nRUN chmod 644 /etc/snmp/snmp.conf\nRUN mkdir -p /var/lib/net-snmp/mib_indexes\nRUN chmod 755 /var/lib/net-snmp/mib_indexes\n\n# install compass-core\nWORKDIR /root/compass-core\nRUN mkdir -p /etc/compass\nRUN mkdir -p /opt/compass/bin\nRUN mkdir -p /var/log/compass\nRUN mkdir -p /var/log/chef\nRUN mkdir -p /var/www/compass\n\nRUN cp -rf misc/apache/ods-server.conf /etc/httpd/conf.d/ods-server.conf\nRUN cp -rf conf/* /etc/compass/\nRUN cp -rf bin/*.py /opt/compass/bin/\nRUN cp -rf bin/*.sh /opt/compass/bin/\nRUN cp -rf bin/compassd /usr/bin/\nRUN cp -rf bin/switch_virtualenv.py.template /opt/compass/bin/switch_virtualenv.py\nRUN ln -s -f /opt/compass/bin/compass_check.py /usr/bin/compass\nRUN ln -s -f /opt/compass/bin/compass_wsgi.py /var/www/compass/compass.wsgi\nRUN cp -rf bin/chef/* /opt/compass/bin/\nRUN cp -rf bin/cobbler/* /opt/compass/bin/\nRUN cp -rf /usr/lib64/libcrypto.so.10 /usr/lib64/libcrypto.so\n\n# setup compass-core and related confs\nRUN mkdir -p /opt/compass/db && \\\n    chmod -R 777 /opt/compass/db\nRUN chmod -R 777 /var/log/compass\nRUN chmod -R 777 /var/log/chef\nRUN echo \"export C_FORCE_ROOT=1\" > /etc/profile.d/celery_env.sh\nRUN chmod +x /etc/profile.d/celery_env.sh\nWORKDIR /root/compass-core\nRUN source `which virtualenvwrapper.sh` && \\\n    workon compass-core && \\\n    python setup.py install\n\n# compass web\nWORKDIR /root/compass-web\nRUN yum -y install tar && rm -rf /var/cache/yum\nRUN mkdir -p /var/www/compass_web\nRUN cp -rf v2 /var/www/compass_web/\nWORKDIR /tmp\nRUN tar -xzvf local_repo.tar.gz && rm local_repo.tar.gz\nRUN mv -f local_repo/* /var/www/compass_web/v2/\n\n# enable start-up script\nADD scripts/sample_start /root/sample_start\nRUN chmod +x /root/sample_start\n\n# start: perform some post-installation tasks\n# modify compass refresh to make it work in containers\nADD scripts/refresh.sh /opt/compass/bin/refresh.sh\nRUN chmod +x /opt/compass/bin/refresh.sh\n\n# set python home for virtualenv\nRUN sed -i \"s|\\$PythonHome|\\/root\\/\\.virtualenvs\\/compass-core|g\" /opt/compass/bin/switch_virtualenv.py\n\n# add apache to root group\nRUN usermod -a -G `groups root|awk '{print$3}'` apache\n\n# configure mysql\nRUN /usr/bin/mysql_install_db && \\\n    chown -R mysql:mysql /var/lib/mysql\n\n# CMD [\"/root/sample_start\"]\n\nEXPOSE 80\nEXPOSE 22\nEXPOSE 123\nEXPOSE 3306\n"
+}

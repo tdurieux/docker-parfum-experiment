@@ -1,0 +1,21 @@
+FROM python:3.8-alpine
+WORKDIR /src
+ENTRYPOINT ["beergarden"]
+
+ENV BG_LOG_CONFIG_FILE=/src/conf/app-logging.yaml \
+    BG_PLUGIN_LOCAL_LOGGING_CONFIG_FILE=/src/conf/local-plugin-logging.yaml \
+    BG_PLUGIN_REMOTE_LOGGING_CONFIG_FILE=/src/conf/remote-plugin-logging.yaml \
+    BG_PLUGIN_LOCAL_DIRECTORY=/plugins
+
+ADD ./example_configs/app-logging.yaml conf/
+ADD ./example_configs/local-plugin-logging.yaml conf/
+ADD ./example_configs/remote-plugin-logging.yaml conf/
+ADD ./requirements.txt .
+ADD ./dist/*.whl ./
+
+RUN set -ex \
+    && apk add --no-cache --virtual .build-deps \
+       gcc make musl-dev libffi-dev openssl-dev git \
+    && pip install --no-cache-dir -r requirements.txt \
+    && pip install --no-cache-dir ./*.whl \
+    && apk del .build-deps

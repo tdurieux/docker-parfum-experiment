@@ -1,0 +1,71 @@
+{
+  "startTime": 1674255774514,
+  "endTime": 1674255775635,
+  "originalSmells": [
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 24,
+        "lineEnd": 24,
+        "columnStart": 173,
+        "columnEnd": 193
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 3,
+        "lineEnd": 4,
+        "columnStart": 58,
+        "columnEnd": 9
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 17,
+        "lineEnd": 19,
+        "columnStart": 58,
+        "columnEnd": 14
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 33,
+        "lineEnd": 35,
+        "columnStart": 58,
+        "columnEnd": 27
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 50,
+        "lineEnd": 59,
+        "columnStart": 58,
+        "columnEnd": 12
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 79,
+        "lineEnd": 85,
+        "columnStart": 58,
+        "columnEnd": 11
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 131,
+        "lineEnd": 132,
+        "columnStart": 58,
+        "columnEnd": 14
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM docker.io/library/node:16-alpine3.16 AS assets\nRUN --mount=type=cache,id=apk,target=/var/cache/apk,sharing=locked \\\n    ln -s /var/cache/apk /etc/apk/cache && apk upgrade && apk add --no-cache \\\n    sassc\nWORKDIR /weasyl-build\nRUN chown node:node /weasyl-build\nUSER node\nCOPY package.json package-lock.json ./\nRUN --mount=type=cache,id=npm,target=/home/node/.npm/_cacache,uid=1000 npm ci --no-audit --ignore-scripts\nCOPY build.js build.js\nCOPY assets assets\nRUN node build.js\n\n\nFROM docker.io/library/alpine:3.16 AS mozjpeg\nRUN --mount=type=cache,id=apk,target=/var/cache/apk,sharing=locked \\\n    ln -s /var/cache/apk /etc/apk/cache && apk upgrade && apk add --no-cache \\\n    musl-dev gcc make \\\n    cmake nasm\nRUN adduser -S build -h /mozjpeg-build\nWORKDIR /mozjpeg-build\nUSER build\nRUN wget https://github.com/mozilla/mozjpeg/archive/refs/tags/v4.0.3.tar.gz\nRUN echo '59c2d65af28d4ef68b9e5c85215cf3b26f4ac5c98e3ae76ba5febceec97fa5ab28cc13496e3f039f11cae767c5466bbf798038f83b310134c13d2e9a6bf5467e  v4.0.3.tar.gz' | sha512sum -c && tar xf v4.0.3.tar.gz && rm v4.0.3.tar.gz\nWORKDIR /mozjpeg-build/mozjpeg-4.0.3\nRUN cmake -DENABLE_STATIC=0 -DPNG_SUPPORTED=0 -DCMAKE_INSTALL_PREFIX=/mozjpeg-build/package-root .\nRUN cmake --build . --parallel --target install\n\n\nFROM docker.io/library/python:3.10-alpine3.16 AS bdist-lxml\n# libxml2-dev, libxslt-dev: lxml\nRUN --mount=type=cache,id=apk,target=/var/cache/apk,sharing=locked \\\n    ln -s /var/cache/apk /etc/apk/cache && apk upgrade && apk add --no-cache \\\n    musl-dev gcc make \\\n    libxml2-dev libxslt-dev\nRUN adduser -S build -h /weasyl-build -u 1000\nWORKDIR /weasyl-build\nUSER build\nCOPY requirements/lxml.txt lxml.txt\nRUN --mount=type=cache,id=pip,target=/weasyl-build/.cache/pip,sharing=private,uid=1000 pip wheel -w dist -r lxml.txt\n\n\nFROM docker.io/library/python:3.10-alpine3.16 AS bdist\n# imagemagick6-dev: sanpera\n# libjpeg-turbo-dev, libwebp-dev, zlib-dev: Pillow\n# libffi-dev, openssl-dev: cryptography\n# libmemcached-dev: pylibmc\n# postgresql-dev: psycopg2cffi\nRUN --mount=type=cache,id=apk,target=/var/cache/apk,sharing=locked \\\n    ln -s /var/cache/apk /etc/apk/cache && apk upgrade && apk add --no-cache \\\n    musl-dev gcc g++ make \\\n    imagemagick6-dev \\\n    libffi-dev \\\n    libjpeg-turbo-dev \\\n    libmemcached-dev \\\n    libwebp-dev \\\n    openssl-dev \\\n    postgresql-dev \\\n    zlib-dev\nRUN adduser -S build -h /weasyl-build -u 1000\nWORKDIR /weasyl-build\nUSER build\nCOPY --from=mozjpeg --chown=root:root /mozjpeg-build/package-root/include/ /usr/include/\nCOPY --from=mozjpeg --chown=root:root /mozjpeg-build/package-root/lib64/ /usr/lib/\nCOPY etc/requirements.txt requirements.txt\nRUN --mount=type=cache,id=pip,target=/weasyl-build/.cache/pip,sharing=private,uid=1000 pip wheel -w dist --no-binary Pillow -r requirements.txt\n\n\nFROM docker.io/library/python:3.10-alpine3.16 AS bdist-pytest\nRUN adduser -S build -h /weasyl-build -u 1000\nWORKDIR /weasyl-build\nUSER build\nCOPY requirements/test.txt test.txt\nRUN --mount=type=cache,id=pip,target=/weasyl-build/.cache/pip,sharing=private,uid=1000 pip wheel -w dist -c test.txt pytest pytest-cov\n\n\nFROM docker.io/library/python:3.10-alpine3.16 AS package\nRUN --mount=type=cache,id=apk,target=/var/cache/apk,sharing=locked \\\n    ln -s /var/cache/apk /etc/apk/cache && apk upgrade && apk add --no-cache \\\n    imagemagick6-libs \\\n    libffi \\\n    libmemcached-libs \\\n    libpq \\\n    libwebp \\\n    libxslt\nRUN adduser -S weasyl -h /weasyl\nWORKDIR /weasyl\nUSER weasyl\nCOPY --from=mozjpeg --chown=root:root /mozjpeg-build/package-root/lib64/ /usr/lib/\nRUN python3 -m venv .venv\nCOPY etc/requirements.txt etc/requirements.txt\n\nRUN --mount=type=bind,target=install-wheels,source=/weasyl-build/dist,from=bdist-lxml .venv/bin/pip install --no-deps install-wheels/*\nRUN --mount=type=bind,target=install-wheels,source=/weasyl-build/dist,from=bdist .venv/bin/pip install --no-deps install-wheels/*\n\nRUN mkdir -p \\\n    libweasyl/libweasyl/models/test \\\n    libweasyl/libweasyl/test \\\n    weasyl/controllers \\\n    weasyl/test/login \\\n    weasyl/test/resetpassword \\\n    weasyl/test/useralias \\\n    weasyl/test/web\nCOPY libweasyl/setup.py libweasyl/setup.py\nRUN .venv/bin/pip install --no-deps -e libweasyl\n\nCOPY setup.py setup.py\nRUN .venv/bin/pip install --no-deps -e .\n\nCOPY --from=assets /weasyl-build/build build\nCOPY --chown=weasyl:root libweasyl libweasyl\nCOPY --chown=weasyl:root weasyl weasyl\n\nARG version\nRUN test -n \"$version\" && printf '%s\\n' \"$version\" > version.txt\n\nFROM package AS test\nRUN --mount=type=bind,target=install-wheels,source=/weasyl-build/dist,from=bdist-pytest .venv/bin/pip install --no-deps install-wheels/*\nRUN mkdir .pytest_cache coverage \\\n    && ln -s /run/config config\nENV WEASYL_APP_ROOT=.\nENV WEASYL_STORAGE_ROOT=testing/storage\nENV PATH=\"/weasyl/.venv/bin:${PATH}\"\nCOPY pytest.ini .coveragerc ./\nCOPY assets assets\nCMD pytest -x libweasyl.test libweasyl.models.test && pytest -x weasyl.test\nSTOPSIGNAL SIGINT\n\nFROM docker.io/library/alpine:3.16 AS flake8\nRUN --mount=type=cache,id=apk,target=/var/cache/apk,sharing=locked \\\n    ln -s /var/cache/apk /etc/apk/cache && apk upgrade && apk add --no-cache \\\n    py3-flake8\nRUN adduser -S weasyl -h /weasyl\nWORKDIR /weasyl\nUSER weasyl\nSTOPSIGNAL SIGINT\nENTRYPOINT [\"/usr/bin/flake8\"]\nCOPY . .\n\nFROM package\nRUN mkdir storage storage/log storage/static storage/profile-stats \\\n    && ln -s /run/config config\nENV WEASYL_APP_ROOT=/weasyl\nENV PORT=8080\nCMD [\".venv/bin/gunicorn\"]\nEXPOSE 8080\nCOPY gunicorn.conf.py ./\n"
+}

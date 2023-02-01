@@ -1,0 +1,62 @@
+{
+  "startTime": 1674253709429,
+  "endTime": 1674253710154,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 13,
+        "lineEnd": 23,
+        "columnStart": 4,
+        "columnEnd": 19
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 31,
+        "lineEnd": 33,
+        "columnStart": 18,
+        "columnEnd": 31
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 121,
+        "lineEnd": 126,
+        "columnStart": 4,
+        "columnEnd": 14
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 134,
+        "lineEnd": 136,
+        "columnStart": 18,
+        "columnEnd": 31
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 13,
+        "lineEnd": 23,
+        "columnStart": 4,
+        "columnEnd": 19
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 121,
+        "lineEnd": 126,
+        "columnStart": 4,
+        "columnEnd": 14
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM nvidia/cuda:11.2.0-cudnn8-devel-ubuntu20.04 as builder\n\nARG TRANSFORMERS_VERSION=4.5.0\nARG PYTORCH_VERSION=1.8.1\nARG TENSORFLOW_VERSION=2.4.1\nARG MKL_THREADING_LIBRARY=OMP\nARG CUDA_ARCH_LIST=7.0;7.5;8.0;8.6+PTX\n\n# Ensure tzdata is set\nENV TZ=America/New_York\nRUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone\n\nRUN apt update && \\\n    apt install --no-install-recommends -y \\\n        curl \\\n        cmake \\\n        make \\\n        ninja-build \\\n        git \\\n        gpg-agent \\\n        wget \\\n        python3 \\\n        python3-dev \\\n        python3-pip && rm -rf /var/lib/apt/lists/*;\n\n# Install oneAPI repo\nRUN wget https://apt.repos.intel.com/intel-gpg-keys/GPG-PUB-KEY-INTEL-SW-PRODUCTS.PUB && \\\n    apt-key add GPG-PUB-KEY-INTEL-SW-PRODUCTS.PUB && \\\n    rm GPG-PUB-KEY-INTEL-SW-PRODUCTS.PUB && \\\n    echo \"deb https://apt.repos.intel.com/oneapi all main\" | tee /etc/apt/sources.list.d/oneAPI.list\n\nRUN apt update && apt install --no-install-recommends -y \\\n    intel-oneapi-mkl-devel \\\n    intel-oneapi-runtime-openmp && \\\n    rm -rf /var/lib/apt/lists/*\n\nENV LD_LIBRARY_PATH='/opt/intel/oneapi/tbb/latest/env/lib/intel64/gcc4.8:/opt/intel/oneapi/mkl/latest/lib/intel64'\nENV LIBRARY_PATH='/opt/intel/oneapi/tbb/latest/lib/intel64/gcc4.8:/opt/intel/oneapi/mkl/latest/lib/intel64'\nENV MKLROOT='/opt/intel/oneapi/mkl/latest'\n\n# Create a folder to store all the compiled binaries\nENV FRAMEWORK_BINARIES_FOLDER /opt/bin\nRUN mkdir ${FRAMEWORK_BINARIES_FOLDER}\n\n# Bazel for TensorFlow\nENV BAZEL_VERSION 4.0.0\nRUN cd \"/usr/bin\" && curl -fLO https://releases.bazel.build/${BAZEL_VERSION}/release/bazel-${BAZEL_VERSION}-linux-x86_64 && \\\n    chmod +x bazel-${BAZEL_VERSION}-linux-x86_64 && \\\n    mv bazel-${BAZEL_VERSION}-linux-x86_64 bazel && \\\n    ln -s /usr/bin/python3 /usr/bin/python\n\n# Enable MKL to be found by the compilation process\nENV PATH=/opt/intel/oneapi/mkl/latest/include:$PATH\nENV CMAKE_PREFIX_PATH=/opt/intel/oneapi/mkl/latest/lib/intel64:$CMAKE_PREFIX_PATH\nENV CMAKE_INCLUDE_PATH=/opt/intel/oneapi/mkl/latest/include:$PATH:$CMAKE_INCLUDE_PATH\n\n# TODO: Merge with above when ready\nENV BUILD_CAFFE2_OPS=OFF \\\n    BUILD_CAFFE2=OFF \\\n    BUILD_TEST=OFF \\\n    USE_CUDA=ON \\\n    USE_OPENCV=OFF \\\n    USE_FFMPEG=OFF \\\n    USE_LEVELDB=OFF \\\n    USE_KINETO=OFF \\\n    USE_REDIS=OFF \\\n    USE_DISTRIBUTED=OFF \\\n    USE_QNNPACK=ON \\\n    USE_FBGEMM=ON \\\n    USE_NNPACK=ON \\\n    USE_MKLDNN=ON \\\n    BLAS=MKL \\\n    MKLDNN_CPU_RUNTIME=$MKL_THREADING_LIBRARY \\\n    TORCH_CUDA_ARCH_LIST=$CUDA_ARCH_LIST\n\n# PyTorch\nRUN git clone https://github.com/pytorch/pytorch /opt/pytorch && \\\n    cd /opt/pytorch && \\\n    git checkout v${PYTORCH_VERSION} && \\\n    git submodule update --init --recursive && \\\n    python3 -m pip install -r requirements.txt && \\\n    python3 setup.py bdist_wheel && \\\n    ls dist/ | grep -i \".whl\" | xargs -I % sh -c 'cp /opt/pytorch/dist/% ${FRAMEWORK_BINARIES_FOLDER}/'\n\n\n\n# TensorFlow\nRUN git clone https://github.com/tensorflow/tensorflow /opt/tensorflow && \\\n    cd /opt/tensorflow && \\\n    git checkout v${TENSORFLOW_VERSION}\n\nCOPY docker/.tf_configure.bazelrc /opt/tensorflow/.tf_configure.bazelrc\nRUN cd /opt/tensorflow && \\\n    python3 -m pip install -U --user pip numpy wheel && \\\n    python3 -m pip install -U --user keras_preprocessing --no-deps && \\\n    bazel build \\\n    --config=cuda \\\n    --config=v2 \\\n    --config=opt \\\n    --config=mkl \\\n    --config=numa \\\n    --config=noaws \\\n    --config=nogcp \\\n    --config=nohdfs \\\n    --config=nonccl \\\n    //tensorflow/tools/pip_package:build_pip_package\n\nRUN cd /opt/tensorflow && \\\n    ./bazel-bin/tensorflow/tools/pip_package/build_pip_package /tmp/tensorflow_pkg && \\\n    ls /tmp/tensorflow_pkg | grep -i \".whl\" | xargs -I % sh -c 'cp /tmp/tensorflow_pkg/% ${FRAMEWORK_BINARIES_FOLDER}/'\n\n\n# ONNX Runtime\nRUN git clone https://github.com/microsoft/onnxruntime opt/onnxruntime && \\\n    cd /opt/onnxruntime && \\\n    ./build.sh --config=Release --parallel --cmake_generator=Ninja --enable_pybind --build_wheel --enable_lto --use_openmp --skip_tests --skip_onnx_tests && \\\n    ls /opt/onnxruntime/build/Linux/Release/dist/ | grep -i \".whl\" | xargs -I % sh -c 'cp /opt/onnxruntime/build/Linux/Release/dist/% ${FRAMEWORK_BINARIES_FOLDER}/'\n\nFROM nvidia/cuda:11.2.0-cudnn8-runtime-ubuntu20.04\n\nRUN apt update && \\\n    apt install --no-install-recommends -y \\\n          python3 \\\n          python3-pip \\\n          numactl \\\n          libtcmalloc-minimal4 \\\n          wget && rm -rf /var/lib/apt/lists/*;\n\n# Install oneAPI repo\nRUN wget https://apt.repos.intel.com/intel-gpg-keys/GPG-PUB-KEY-INTEL-SW-PRODUCTS.PUB && \\\n    apt-key add GPG-PUB-KEY-INTEL-SW-PRODUCTS.PUB && \\\n    rm GPG-PUB-KEY-INTEL-SW-PRODUCTS.PUB && \\\n    echo \"deb https://apt.repos.intel.com/oneapi all main\" | tee /etc/apt/sources.list.d/oneAPI.list\n\nRUN apt update && apt install --no-install-recommends -y \\\n    intel-oneapi-mkl \\\n    intel-oneapi-runtime-openmp && \\\n    rm -rf /var/lib/apt/lists/*\n\nENV LD_LIBRARY_PATH='/usr/local/cuda/compat:/opt/intel/oneapi/tbb/latest/env/lib/intel64/gcc4.8:/opt/intel/oneapi/mkl/latest/lib/intel64'\nENV LIBRARY_PATH='/opt/intel/oneapi/tbb/latest/lib/intel64/gcc4.8:/opt/intel/oneapi/mkl/latest/lib/intel64'\nENV MKLROOT='/opt/intel/oneapi/mkl/latest'\n\n# Copy\nCOPY --from=builder /opt/bin /opt\n\n# Install frameworks\nRUN  ls /opt/*whl | xargs python3 -m pip install\n\n# Copy tune\nCOPY . /opt/tune\n\nWORKDIR /opt/tune\nRUN python3 -m pip install -r requirements.txt\n\nWORKDIR /opt/tune\nRUN python3 -m pip install -r requirements.txt"
+}

@@ -1,0 +1,3 @@
+WORKDIR $K8S_HOME
+
+ENTRYPOINT ["./kubelet"]

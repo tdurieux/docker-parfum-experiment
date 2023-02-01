@@ -1,0 +1,81 @@
+{
+  "startTime": 1674239417199,
+  "endTime": 1674239417763,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 62,
+        "lineEnd": 62,
+        "columnStart": 0,
+        "columnEnd": 85
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 68,
+        "lineEnd": 68,
+        "columnStart": 0,
+        "columnEnd": 126
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 46,
+        "lineEnd": 46,
+        "columnStart": 0,
+        "columnEnd": 11
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 69,
+        "lineEnd": 69,
+        "columnStart": 0,
+        "columnEnd": 30
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 38,
+        "lineEnd": 40,
+        "columnStart": 0,
+        "columnEnd": 47
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 9,
+        "lineEnd": 11,
+        "columnStart": 0,
+        "columnEnd": 77
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 38,
+        "lineEnd": 40,
+        "columnStart": 0,
+        "columnEnd": 47
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 38,
+        "lineEnd": 40,
+        "columnStart": 1,
+        "columnEnd": 47
+      }
+    }
+  ],
+  "repairedDockerfile": "#\n# Cilium runtime base image\n#\nFROM docker.io/library/ubuntu:18.04 as runtime-base\nRUN apt-get update && \\\napt-get upgrade -y && \\\n#\n# Prepackaged Cilium runtime dependencies\n#\napt-get install -y --no-install-recommends \\\n    gpg gpg-agent libelf-dev libmnl-dev libc6-dev-i386 iptables libgcc-5-dev \\\n    bash-completion binutils binutils-dev ca-certificates clang-7 llvm-7 kmod && \\\napt-get purge --auto-remove && \\\napt-get clean && \\\n#\n# clang-7\n#\nrm -fr /usr/lib/llvm-7/include/llvm-c && \\\nrm -fr /usr/lib/llvm-7/include/clang-c && \\\nrm -fr /usr/lib/llvm-7/include/c++ && \\\nrm -fr /usr/lib/llvm-7/include/polly && \\\nrm -fr /usr/lib/llvm-7/share && \\\nls -d /usr/lib/llvm-7/lib/* | grep -vE clang$ | xargs rm -r && \\\nls -d /usr/lib/llvm-7/bin/* | grep -vE \"clang$|clang-7$|llc$\" | xargs basename -a | awk '{ print \"/usr/bin/\"$1\"-7\" }' | xargs rm -r && \\\nls -d /usr/lib/llvm-7/bin/* | grep -vE \"clang$|clang-7$|llc$\" | xargs rm -r && \\\nstrip /usr/lib/llvm-7/bin/* && \\\nupdate-alternatives --install /usr/bin/clang clang /usr/lib/llvm-7/bin/clang 1000 && \\\nupdate-alternatives --install /usr/bin/llc llc /usr/lib/llvm-7/bin/llc 1000 && rm -rf /var/lib/apt/lists/*;\n\n#\n# Build Cilium runtime dependencies.\n#\nFROM runtime-base as runtime-build\nWORKDIR /tmp\nRUN \\\n\n\n\n apt-get install -y --no-install-recommends make git curl ca-certificates xz-utils \\\n# Additional iproute2 build dependencies\n  gcc git pkg-config bison flex build-essential && \\\n#\n# iproute2\n#\ngit clone --depth 1 -b static-data https://github.com/cilium/iproute2.git iproute2 && \\\ncd iproute2 && \\\n ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" && \\\nmake -j `getconf _NPROCESSORS_ONLN` && \\\nstrip tc/tc && \\\nstrip ip/ip && \\\ncd .. && \\\n#\n# bpftool\n#\ngit clone --depth 1 -b master git://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git && \\\ncd linux/tools/bpf/bpftool/ && \\\nmake -j `getconf _NPROCESSORS_ONLN` && \\\nstrip bpftool && \\\ncd ../../../../ && \\\n#\n# bpf-map\n#\ncurl -f -SsL https://github.com/cilium/bpf-map/releases/download/v1.0/bpf-map -o bpf-map && \\\nchmod +x bpf-map && \\\nstrip bpf-map && \\\n#\n# cni/loopback\n#\ncurl -f -sS -L https://github.com/containernetworking/plugins/releases/download/v0.7.5/cni-plugins-amd64-v0.7.5.tgz -o cni.tar.gz && \\\ntar -xvf cni.tar.gz ./loopback && \\\nstrip -s ./loopback && \\\n#\n# Cleanup\n#\napt-get purge --auto-remove -y gpg gpg-agent gcc make bison flex git curl xz-utils ca-certificates && \\\napt-get clean && rm cni.tar.gz && rm -rf /var/lib/apt/lists/*;\n\n#\n# Go-based tools we need at runtime\n#\nFROM docker.io/library/golang:1.12.5 as runtime-gobuild\nWORKDIR /tmp\nRUN go get -d github.com/google/gops && \\\ncd /go/src/github.com/google/gops && \\\ngit checkout -b v0.3.6 v0.3.6 && \\\ngo install && \\\nstrip /go/bin/gops\n\n#\n# Stripped cilium runtime base image\n#\nFROM runtime-base\nLABEL maintainer=\"maintainer@cilium.io\"\nWORKDIR /bin\nCOPY --from=runtime-build /tmp/iproute2/tc/tc /tmp/iproute2/ip/ip ./\nCOPY --from=runtime-build /tmp/linux/tools/bpf/bpftool/bpftool ./\nCOPY --from=runtime-build /tmp/bpf-map ./\nCOPY --from=runtime-gobuild /go/bin/gops ./\nWORKDIR /cni\nCOPY --from=runtime-build /tmp/loopback ./\n"
+}

@@ -1,0 +1,44 @@
+{
+  "startTime": 1674248960592,
+  "endTime": 1674248961855,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 19,
+        "lineEnd": 19,
+        "columnStart": 4,
+        "columnEnd": 92
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 20,
+        "lineEnd": 20,
+        "columnStart": 4,
+        "columnEnd": 40
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 70,
+        "lineEnd": 70,
+        "columnStart": 4,
+        "columnEnd": 52
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 75,
+        "lineEnd": 75,
+        "columnStart": 4,
+        "columnEnd": 78
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "ARG RELEASE_VERSION=${RELEASE_VERSION}\nARG EE_BASE_IMAGE=${EE_BASE_IMAGE}\nARG EE_BUILDER_IMAGE=${EE_BUILDER_IMAGE}\n\n# Create Go CLI\nFROM registry.redhat.io/ubi8:latest AS cli\n\n# Need to duplicate these, otherwise they won't be available to the stage\nARG RELEASE_VERSION=${RELEASE_VERSION}\nARG QUAY_IMAGE=${QUAY_IMAGE}\nARG EE_IMAGE=${EE_IMAGE}\nARG POSTGRES_IMAGE=${POSTGRES_IMAGE}\nARG REDIS_IMAGE=${REDIS_IMAGE}\nARG PAUSE_IMAGE=${PAUSE_IMAGE}\n\nENV GOROOT=/usr/local/go\nENV PATH=$GOPATH/bin:$GOROOT/bin:$PATH\n\n# Get Go binary\nRUN curl -f -o go1.16.4.linux-amd64.tar.gz https://dl.google.com/go/go1.16.4.linux-amd64.tar.gz\nRUN tar -xzf go1.16.4.linux-amd64.tar.gz && \\\n    mv go /usr/local && rm go1.16.4.linux-amd64.tar.gz\n\nCOPY . /cli\nWORKDIR /cli\n\n# Create CLI\nENV RELEASE_VERSION=${RELEASE_VERSION}\nENV EE_IMAGE=${EE_IMAGE}\nENV QUAY_IMAGE=${QUAY_IMAGE}\nENV REDIS_IMAGE=${REDIS_IMAGE}\nENV POSTGRES_IMAGE=${POSTGRES_IMAGE}\nENV PAUSE_IMAGE=${PAUSE_IMAGE}\n\nRUN go build -v \\\n    -ldflags \"-X github.com/quay/mirror-registry/cmd.releaseVersion=${RELEASE_VERSION} -X github.com/quay/mirror-registry/cmd.eeImage=${EE_IMAGE} -X github.com/quay/mirror-registry/cmd.pauseImage=${PAUSE_IMAGE} -X github.com/quay/mirror-registry/cmd.quayImage=${QUAY_IMAGE} -X github.com/quay/mirror-registry/cmd.redisImage=${REDIS_IMAGE} -X github.com/quay/mirror-registry/cmd.postgresImage=${POSTGRES_IMAGE}\" \\\n    -o mirror-registry\n\n# Create Ansible Execution Environment\nFROM $EE_BASE_IMAGE as galaxy\nARG ANSIBLE_GALAXY_CLI_COLLECTION_OPTS=\nUSER root\n\nADD ansible-runner/context/_build /build\nWORKDIR /build\n\nRUN ansible-galaxy role install -r requirements.yml --roles-path /usr/share/ansible/roles\nRUN ansible-galaxy collection install $ANSIBLE_GALAXY_CLI_COLLECTION_OPTS -r requirements.yml --collections-path /usr/share/ansible/collections\n\nFROM $EE_BUILDER_IMAGE as builder\n\nCOPY --from=galaxy /usr/share/ansible /usr/share/ansible\n\nRUN ansible-builder introspect --sanitize --write-bindep=/tmp/src/bindep.txt --write-pip=/tmp/src/requirements.txt\nRUN assemble\n\nFROM $EE_BASE_IMAGE as ansible\nUSER root\n\nCOPY --from=galaxy /usr/share/ansible /usr/share/ansible\n\nCOPY --from=builder /output/ /output/\nRUN /output/install-from-bindep && rm -rf /output/wheels\nCOPY ansible-runner/context/app /runner\n\n# Create mirror registry archive\nFROM registry.redhat.io/ubi8:latest AS build\n\n# Import and archive image dependencies\nCOPY --from=ansible / /ansible\nRUN tar -cvf execution-environment.tar -C /ansible . && rm execution-environment.tar\n\nCOPY --from=cli /cli/mirror-registry .\n\n# Bundle mirror registry archive\nRUN tar -czvf mirror-registry.tar.gz execution-environment.tar mirror-registry && rm mirror-registry.tar.gz\n\n# Extract bundle to final release image\nFROM registry.redhat.io/ubi8:latest AS release\nCOPY --from=build mirror-registry.tar.gz mirror-registry.tar.gz"
+}

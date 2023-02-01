@@ -1,0 +1,53 @@
+{
+  "startTime": 1674255989070,
+  "endTime": 1674255990090,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 61,
+        "lineEnd": 61,
+        "columnStart": 4,
+        "columnEnd": 93
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 10,
+        "lineEnd": 22,
+        "columnStart": 7,
+        "columnEnd": 21
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 120,
+        "lineEnd": 120,
+        "columnStart": 7,
+        "columnEnd": 31
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 10,
+        "lineEnd": 22,
+        "columnStart": 7,
+        "columnEnd": 21
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 120,
+        "lineEnd": 120,
+        "columnStart": 7,
+        "columnEnd": 31
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM ubuntu:trusty\n\n# let Upstart know it's in a container\nENV container docker\n\nCOPY config/init-fake.conf /etc/init/fake-container-events.conf\n\n# uuid-runtime is required, otherwise the last test in 'test_quickstart_key.yaml' fails\nRUN DEBIAN_FRONTEND=noninteractive \\\n    apt-get update \\\n    && apt-get install --no-install-recommends -y \\\n      openssh-server \\\n      sudo \\\n      curl \\\n      gdebi-core \\\n      sshpass \\\n      cron \\\n      netcat \\\n      net-tools \\\n      crudini \\\n      uuid-runtime \\\n      apache2-utils \\\n      bash-completion && rm -rf /var/lib/apt/lists/*;\n\n# enable bash-completion\nRUN dpkg-divert /etc/bash.bashrc && \\\n    sed -i '/^# enable bash completion/,/^# sudo hint/{//p;//d;s/^#//}' /etc/bash.bashrc\n\nRUN echo -e \"#!/bin/sh\\nexit 101\\n\" > /usr/sbin/policy-rc.d \\\n    && rm /sbin/initctl; dpkg-divert --rename --remove /sbin/initctl \\\n    && locale-gen en_US.UTF-8\n\nENV LANG=en_US.UTF-8\nENV LANGUAGE en_US:en\nENV LC_ALL en_US.UTF-8\n\n# remove some pointless services\nRUN /usr/sbin/update-rc.d -f ondemand remove; \\\n  for f in \\\n    /etc/init/u*.conf \\\n    /etc/init/mounted-dev.conf \\\n    /etc/init/mounted-proc.conf \\\n    /etc/init/mounted-run.conf \\\n    /etc/init/mounted-tmp.conf \\\n    /etc/init/mounted-var.conf \\\n    /etc/init/hostname.conf \\\n    /etc/init/networking.conf \\\n    /etc/init/tty*.conf \\\n    /etc/init/plymouth*.conf \\\n    /etc/init/hwclock*.conf \\\n    /etc/init/module*.conf\\\n  ; do \\\n    dpkg-divert --local --rename --add \"$f\"; \\\n  done; \\\n  echo '# /lib/init/fstab: cleared out for bare-bones Docker' > /lib/init/fstab\n\n# Default value of ST2_REPO is \"stable\"\nARG ST2_REPO=stable\n\n# Configure system so that the \"stable\" ST2 packages\n# are fetched from packagecloud.io\nRUN curl -f -s https://packagecloud.io/install/repositories/StackStorm/${ST2_REPO}/script.deb.sh | sudo bash\n\n# The following variable is the most recent commit in\n# the st2-docker repo used to fetch this Dockerfile.\nARG CIRCLE_SHA1\nARG CIRCLE_BUILD_URL\nARG CIRCLE_PROJECT_USERNAME\nARG CIRCLE_PROJECT_REPONAME\n\n# Override these values if you want to specify different package versions\nARG ST2_TAG\nARG ST2_VERSION\nARG ST2WEB_VERSION\nARG ST2MISTRAL_VERSION\n\nCOPY bin/install.sh /install.sh\n\n# It is not possible to dynamically set ARG's, so we do the needful in bin/install.sh\n# Install st2, st2web, st2mistral and st2chatops\nRUN /install.sh\n\n# Unless these lines are changed, the services are not started when runlevel -> 2\n# Call mistral-db-manage before mistral starts\nRUN sed -i 's/start on filesystem and net-device-up IFACE!=lo/start on runlevel \\[2345\\]/' /etc/init/st2*.conf \\\n    && sed -i 's/stop on starting rc RUNLEVEL=\\[016\\]/stop on runlevel \\[!2345\\]/' /etc/init/st2*.conf \\\n    && sed -i 's/start on filesystem and net-device-up IFACE!=lo/start on runlevel \\[2345\\]/' /etc/init/mistral.conf \\\n    && sed -i 's/stop on starting rc RUNLEVEL=\\[016\\]/stop on runlevel \\[!2345\\]/' /etc/init/mistral.conf \\\n    && sed -i '/start mistral-api/i\\  /opt/stackstorm/mistral/bin/mistral-db-manage --config-file /etc/mistral/mistral.conf upgrade head\\n\\\n  /opt/stackstorm/mistral/bin/mistral-db-manage --config-file /etc/mistral/mistral.conf populate\\n' /etc/init/mistral.conf\n\n# Setup symmetric crypto key for datastore\nRUN mkdir -p /etc/st2/keys \\\n    && st2-generate-symmetric-crypto-key --key-path /etc/st2/keys/datastore_key.json \\\n    && usermod -a -G st2 st2 && chgrp st2 /etc/st2/keys && chmod o-r /etc/st2/keys \\\n    && chgrp st2 /etc/st2/keys/datastore_key.json && chmod o-r /etc/st2/keys/datastore_key.json \\\n    && crudini --set /etc/st2/st2.conf keyvalue encryption_key_path /etc/st2/keys/datastore_key.json \\\n    && crudini --set /etc/st2/st2.conf auth enable True\n\n# Install redis client library for coordination backend\n# see: https://docs.stackstorm.com/latest/reference/policies.html\nRUN bash -c 'source /opt/stackstorm/st2/bin/activate && pip install redis'\n\n# Setup SSH and SUDO access for stanley user\nRUN mkdir -p /home/stanley/.ssh && chmod 0700 /home/stanley/.ssh \\\n    && ssh-keygen -f /home/stanley/.ssh/stanley_rsa -P \"\" \\\n    && cat /home/stanley/.ssh/stanley_rsa.pub >> /home/stanley/.ssh/authorized_keys \\\n    && chown -R stanley:stanley /home/stanley/.ssh \\\n    && echo \"stanley    ALL=(ALL)       NOPASSWD: SETENV: ALL\" >> /etc/sudoers.d/st2 \\\n    && chmod 0440 /etc/sudoers.d/st2 \\\n    && sed -i -r \"s/^Defaults\\s+\\+?requiretty/# Defaults +requiretty/g\" /etc/sudoers\n\n# Install and configure nginx\n# Use hkp://...:80 explicitly to grab the GPG key for nginx because port 11371\n# is sometimes blocked by firewalls. See:\n# https://github.com/StackStorm/st2-docker/issues/135#issuecomment-392186954\nRUN apt-key adv --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys ABF5BD827BD9BF62 \\\n    && echo \"deb http://nginx.org/packages/mainline/ubuntu/ trusty nginx\" >> /etc/apt/sources.list \\\n    && echo \"deb-src http://nginx.org/packages/mainline/ubuntu/ trusty nginx\" >> /etc/apt/sources.list \\\n    && apt-get update \\\n    && apt-get install --no-install-recommends -y nginx \\\n    && cp /usr/share/doc/st2/conf/nginx/st2.conf /etc/nginx/conf.d/st2-base.cnf \\\n    && ( cd /etc/nginx/conf.d && ln -s st2-base.cnf st2.conf ) \\\n    && mkdir -p /etc/ssl/st2 \\\n    && mkdir /var/run/sshd \\\n    && openssl req -x509 -newkey rsa:2048 -keyout /etc/ssl/st2/st2.key -out /etc/ssl/st2/st2.crt -days 3650 -nodes -subj '/O=st2 self signed/CN=localhost' && rm -rf /var/lib/apt/lists/*;\n\nEXPOSE 22 443\n\nCOPY bin/entrypoint.sh /st2-docker/bin/entrypoint.sh\nCOPY bin/st2.sh /st2-docker/bin/st2.sh\nCOPY config/local.conf /etc/init/local.conf\n\n# 1ppc\nRUN wget -O /dumb-init https://github.com/Yelp/dumb-init/releases/download/v1.2.0/dumb-init_1.2.0_amd64 \\\n    && chmod +x /dumb-init\nCOPY bin/entrypoint-1ppc.sh /st2-docker/bin/entrypoint-1ppc.sh\nCOPY bin/inject_env.py /st2-docker/bin/inject_env.py\nCOPY config/nginx.st2-1ppc.conf.tpl /etc/nginx/conf.d/st2-1ppc.conf.tpl\n\n# Default username/password is used unless overridden by supplying ST2_USER and/or ST2_PASSWORD\n# environment variables to `docker run` after the name of the image:\n#   docker run -e ST2_USER... image\nENTRYPOINT [\"/st2-docker/bin/entrypoint.sh\"]\n"
+}

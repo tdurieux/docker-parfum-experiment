@@ -1,0 +1,45 @@
+{
+  "startTime": 1674217016777,
+  "endTime": 1674217017906,
+  "originalSmells": [
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 47,
+        "lineEnd": 47,
+        "columnStart": 4,
+        "columnEnd": 16
+      }
+    },
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 48,
+        "lineEnd": 48,
+        "columnStart": 4,
+        "columnEnd": 19
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 177,
+        "lineEnd": 187,
+        "columnStart": 4,
+        "columnEnd": 14
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 56,
+        "lineEnd": 56,
+        "columnStart": 51,
+        "columnEnd": 67
+      }
+    }
+  ],
+  "repairedDockerfile": "########################################################################\n#\n# pgAdmin 4 - PostgreSQL Tools\n#\n# Copyright (C) 2013 - 2018, The pgAdmin Development Team\n# This software is released under the PostgreSQL Licence\n#\n#########################################################################\n\n#########################################################################\n# Create a Node container which will be used to build the JS components\n# and clean up the web/ source code\n#########################################################################\n\nFROM alpine:3.15 AS app-builder\n\nRUN apk add --no-cache \\\n    autoconf \\\n    automake \\\n    bash \\\n    g++ \\\n    git \\\n    libc6-compat \\\n    libjpeg-turbo-dev \\\n    libpng-dev \\\n    libtool \\\n    make \\\n    nasm \\\n    nodejs \\\n    yarn \\\n    zlib-dev\n\n# Create the /pgadmin4 directory and copy the source into it. Explicitly\n# remove the node_modules directory as we'll recreate a clean version, as well\n# as various other files we don't want\nCOPY web /pgadmin4/web\nRUN rm -rf /pgadmin4/web/*.log \\\n           /pgadmin4/web/config_*.py \\\n           /pgadmin4/web/node_modules \\\n           /pgadmin4/web/regression \\\n           `find /pgadmin4/web -type d -name tests` \\\n           `find /pgadmin4/web -type f -name .DS_Store`\n\nWORKDIR /pgadmin4/web\n\n# Build the JS vendor code in the app-builder, and then remove the vendor source.\nRUN export CPPFLAGS=\"-DPNG_ARM_NEON_OPT=0\" && \\\n    yarn install && \\\n    yarn run bundle && \\\n    rm -rf node_modules \\\n           yarn.lock \\\n           package.json \\\n           .[^.]* \\\n           babel.cfg \\\n           webpack.* \\\n           karma.conf.js \\\n           ./pgadmin/static/js/generated/.cache && yarn cache clean;\n\n#########################################################################\n# Next, create the base environment for Python\n#########################################################################\n\nFROM alpine:3.15 as env-builder\n\n# Install dependencies\nCOPY requirements.txt /\nRUN     apk add --no-cache \\\n        make \\\n        python3 \\\n        py3-pip && \\\n    apk add --no-cache --virtual build-deps \\\n        build-base \\\n        openssl-dev \\\n        libffi-dev \\\n        postgresql-dev \\\n        krb5-dev \\\n        rust \\\n        cargo \\\n        zlib-dev \\\n        libjpeg-turbo-dev \\\n        libpng-dev \\\n        python3-dev && \\\n    python3 -m venv --system-site-packages --without-pip /venv && \\\n    /venv/bin/python3 -m pip install --no-cache-dir -r requirements.txt && \\\n    apk del --no-cache build-deps\n\n#########################################################################\n# Now, create a documentation build container for the Sphinx docs\n#########################################################################\n\nFROM env-builder as docs-builder\n\n# Install Sphinx\nRUN /venv/bin/python3 -m pip install --no-cache-dir sphinx\n\n# Copy the docs from the local tree. Explicitly remove any existing builds that\n# may be present\nCOPY docs /pgadmin4/docs\nCOPY web /pgadmin4/web\nRUN rm -rf /pgadmin4/docs/en_US/_build\n\n# Build the docs\nRUN LC_ALL=en_US.UTF-8 LANG=en_US.UTF-8 /venv/bin/sphinx-build /pgadmin4/docs/en_US /pgadmin4/docs/en_US/_build/html\n\n# Cleanup unwanted files\nRUN rm -rf /pgadmin4/docs/en_US/_build/html/.doctrees\nRUN rm -rf /pgadmin4/docs/en_US/_build/html/_sources\nRUN rm -rf /pgadmin4/docs/en_US/_build/html/_static/*.png\n\n#########################################################################\n# Create additional builders to get all of the PostgreSQL utilities\n#########################################################################\n\nFROM postgres:10-alpine as pg10-builder\nFROM postgres:11-alpine as pg11-builder\nFROM postgres:12-alpine as pg12-builder\nFROM postgres:13-alpine as pg13-builder\nFROM postgres:14-alpine as pg14-builder\n\nFROM alpine:3.15 as tool-builder\n\n# Copy the PG binaries\nCOPY --from=pg10-builder /usr/local/bin/pg_dump /usr/local/pgsql/pgsql-10/\nCOPY --from=pg10-builder /usr/local/bin/pg_dumpall /usr/local/pgsql/pgsql-10/\nCOPY --from=pg10-builder /usr/local/bin/pg_restore /usr/local/pgsql/pgsql-10/\nCOPY --from=pg10-builder /usr/local/bin/psql /usr/local/pgsql/pgsql-10/\n\nCOPY --from=pg11-builder /usr/local/bin/pg_dump /usr/local/pgsql/pgsql-11/\nCOPY --from=pg11-builder /usr/local/bin/pg_dumpall /usr/local/pgsql/pgsql-11/\nCOPY --from=pg11-builder /usr/local/bin/pg_restore /usr/local/pgsql/pgsql-11/\nCOPY --from=pg11-builder /usr/local/bin/psql /usr/local/pgsql/pgsql-11/\n\nCOPY --from=pg12-builder /usr/local/bin/pg_dump /usr/local/pgsql/pgsql-12/\nCOPY --from=pg12-builder /usr/local/bin/pg_dumpall /usr/local/pgsql/pgsql-12/\nCOPY --from=pg12-builder /usr/local/bin/pg_restore /usr/local/pgsql/pgsql-12/\nCOPY --from=pg12-builder /usr/local/bin/psql /usr/local/pgsql/pgsql-12/\n\nCOPY --from=pg13-builder /usr/local/bin/pg_dump /usr/local/pgsql/pgsql-13/\nCOPY --from=pg13-builder /usr/local/bin/pg_dumpall /usr/local/pgsql/pgsql-13/\nCOPY --from=pg13-builder /usr/local/bin/pg_restore /usr/local/pgsql/pgsql-13/\nCOPY --from=pg13-builder /usr/local/bin/psql /usr/local/pgsql/pgsql-13/\n\nCOPY --from=pg14-builder /usr/local/bin/pg_dump /usr/local/pgsql/pgsql-14/\nCOPY --from=pg14-builder /usr/local/bin/pg_dumpall /usr/local/pgsql/pgsql-14/\nCOPY --from=pg14-builder /usr/local/bin/pg_restore /usr/local/pgsql/pgsql-14/\nCOPY --from=pg14-builder /usr/local/bin/psql /usr/local/pgsql/pgsql-14/\n\n#########################################################################\n# Assemble everything into the final container.\n#########################################################################\n\nFROM alpine:3.15\n\n# Copy in the Python packages\nCOPY --from=env-builder /venv /venv\n\n# Copy in the tools\nCOPY --from=tool-builder /usr/local/pgsql /usr/local/\nCOPY --from=pg14-builder /usr/local/lib/libpq.so.5.14 /usr/lib/\nRUN ln -s libpq.so.5.14 /usr/lib/libpq.so.5 && \\\n    ln -s libpq.so.5.14 /usr/lib/libpq.so\n\nWORKDIR /pgadmin4\nENV PYTHONPATH=/pgadmin4\n\n# Copy in the code and docs\nCOPY --from=app-builder /pgadmin4/web /pgadmin4\nCOPY --from=docs-builder /pgadmin4/docs/en_US/_build/html/ /pgadmin4/docs\nCOPY pkg/docker/run_pgadmin.py /pgadmin4\nCOPY pkg/docker/gunicorn_config.py /pgadmin4\nCOPY pkg/docker/entrypoint.sh /entrypoint.sh\n\n# License files\nCOPY LICENSE /pgadmin4/LICENSE\nCOPY DEPENDENCIES /pgadmin4/DEPENDENCIES\n\n# Install runtime dependencies and configure everything in one RUN step\nRUN apk add --no-cache \\\n        python3 \\\n        py3-pip \\\n        postfix \\\n        krb5-libs \\\n        libjpeg-turbo \\\n        shadow \\\n        sudo \\\n        libedit \\\n        libldap \\\n        libcap && \\\n    /venv/bin/python3 -m pip install --no-cache-dir gunicorn && \\\n    find / -type d -name '__pycache__' -exec rm -rf {} + && \\\n    useradd -r -u 5050 -g root -s /sbin/nologin pgadmin && \\\n    mkdir -p /var/lib/pgadmin && \\\n    chown pgadmin:root /var/lib/pgadmin && \\\n    chmod g=u /var/lib/pgadmin && \\\n    touch /pgadmin4/config_distro.py && \\\n    chown pgadmin:root /pgadmin4/config_distro.py && \\\n    chmod g=u /pgadmin4/config_distro.py && \\\n    chmod g=u /etc/passwd && \\\n    setcap CAP_NET_BIND_SERVICE=+eip /usr/bin/python3.9 && \\\n    echo \"pgadmin ALL = NOPASSWD: /usr/sbin/postfix start\" > /etc/sudoers.d/postfix && \\\n    echo \"pgadminr ALL = NOPASSWD: /usr/sbin/postfix start\" >> /etc/sudoers.d/postfix\n\nUSER pgadmin\n\n# Finish up\nVOLUME /var/lib/pgadmin\nEXPOSE 80 443\n\nENTRYPOINT [\"/entrypoint.sh\"]\n"
+}

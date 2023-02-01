@@ -1,0 +1,17 @@
+{
+  "startTime": 1674245254535,
+  "endTime": 1674245254622,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 4,
+        "lineEnd": 13,
+        "columnStart": 22,
+        "columnEnd": 10
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM ubuntu:18.04 as toolchain\n\n# `build-essential` and `file` are needed for backtrace-sys\n# `cmake`, `git`, `python` are needed for wasm tools\nRUN apt-get update && apt-get install --no-install-recommends -y \\\n    build-essential \\\n    cmake \\\n    curl \\\n    file \\\n    gcc \\\n    git \\\n    libssl-dev \\\n    pkg-config \\\n    python \\\n && rm -rf /var/lib/apt/lists/*\n\nENV USER=root\nENV PATH=/root/.cargo/bin:$PATH\n\nADD entrypoint.sh /root/\n\nARG channel\n\n# Ensure that we are using the latest stable version of rustup and the\n# latest version of the current channel. A new manifest will trigger\n# these lines to run again, forcing a new download of rustup and\n# installation of Rust.\nADD https://static.rust-lang.org/rustup/release-stable.toml /root/rustup-manifest.toml\nADD https://static.rust-lang.org/dist/channel-rust-${channel}-date.txt /root/rust-channel-version\n\n# https://github.com/rust-lang-nursery/rustup.rs/issues/998\nRUN curl https://sh.rustup.rs -sSf | sh -s -- -y --default-toolchain \"${channel}\" && \\\n    rm -rf ~/.rustup/toolchains/*/share/doc\n\n# Fetch all the crate source files\n\nFROM toolchain as bare-sources\n\nRUN cd / && \\\n    cargo new playground\nWORKDIR /playground\n\nADD Cargo.toml /playground/Cargo.toml\nADD crate-information.json /playground/crate-information.json\nRUN cargo fetch\n\n# Build our tool for modifying Cargo.toml at runtime\n\nFROM bare-sources as munge\n\nADD modify-cargo-toml /modify-cargo-toml\nRUN cd /modify-cargo-toml && \\\n    cargo build --release\n\n# Compiler and sources\n\nFROM bare-sources as sources\n\nCOPY --from=munge /modify-cargo-toml/target/release/modify-cargo-toml /root/.cargo/bin\n\n# Compiler and pre-compiled crates\n\nFROM sources\n\nARG channel\n\nRUN cargo build\nRUN cargo build --release\nRUN rm src/*.rs\n\nADD postinstall.sh /root/\nRUN /root/postinstall.sh ${channel}\nADD cargo-wasm /root/.cargo/bin/\n\nENTRYPOINT [\"/root/entrypoint.sh\"]\n"
+}

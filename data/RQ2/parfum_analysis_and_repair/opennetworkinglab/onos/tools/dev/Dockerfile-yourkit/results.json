@@ -1,0 +1,62 @@
+{
+  "startTime": 1674250876925,
+  "endTime": 1674250877797,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 43,
+        "lineEnd": 43,
+        "columnStart": 4,
+        "columnEnd": 108
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 75,
+        "lineEnd": 75,
+        "columnStart": 4,
+        "columnEnd": 98
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 73,
+        "lineEnd": 73,
+        "columnStart": 4,
+        "columnEnd": 65
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 39,
+        "lineEnd": 39,
+        "columnStart": 22,
+        "columnEnd": 54
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 91,
+        "lineEnd": 91,
+        "columnStart": 22,
+        "columnEnd": 45
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 39,
+        "lineEnd": 39,
+        "columnStart": 22,
+        "columnEnd": 54
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Copyright 2021-present Open Networking Foundation\n#\n# Licensed under the Apache License, Version 2.0 (the \"License\");\n# you may not use this file except in compliance with the License.\n# You may obtain a copy of the License at\n#\n#     http://www.apache.org/licenses/LICENSE-2.0\n#\n# Unless required by applicable law or agreed to in writing, software\n# distributed under the License is distributed on an \"AS IS\" BASIS,\n# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.\n# See the License for the specific language governing permissions and\n# limitations under the License.\n\n# With this dockerfile you can build a ONOS Docker container\n# with YourKit profiler agent enabled\n\nARG JOBS=2\nARG PROFILE=default\nARG TAG=11.0.8-11.41.23\nARG JAVA_PATH=/usr/lib/jvm/zulu11-ca-amd64\n\n# First stage is the build environment.\n# zulu-openjdk images are based on Ubuntu.\nFROM azul/zulu-openjdk:${TAG} as builder\n\n# Define the profiler version to be used\nARG ONOS_YOURKIT\n\nENV BUILD_DEPS \\\n    ca-certificates \\\n    zip \\\n    python \\\n    python3 \\\n    git \\\n    bzip2 \\\n    build-essential \\\n    curl \\\n    unzip\nRUN apt-get update && apt-get install --no-install-recommends -y ${BUILD_DEPS} && rm -rf /var/lib/apt/lists/*;\n\n# Install Bazelisk, which will download the version of bazel specified in\n# .bazelversion\nRUN curl -f -L -o bazelisk https://github.com/bazelbuild/bazelisk/releases/download/v1.5.0/bazelisk-linux-amd64\nRUN chmod +x bazelisk && mv bazelisk /usr/bin\n\n# Build-stage environment variables\nENV ONOS_ROOT /src/onos\nENV BUILD_NUMBER docker\nENV JAVA_TOOL_OPTIONS=-Dfile.encoding=UTF8\n\n# Copy in the sources\nCOPY . ${ONOS_ROOT}\nWORKDIR ${ONOS_ROOT}\n\n# Build ONOS using the JDK pre-installed in the base image, instead of the\n# Bazel-provided remote one. By doing wo we make sure to build with the most\n# updated JDK, including bug and security fixes, independently of the Bazel\n# version.\nARG JOBS\nARG JAVA_PATH\nARG PROFILE\nRUN bazelisk build onos \\\n    --jobs ${JOBS} \\\n    --verbose_failures \\\n    --javabase=@bazel_tools//tools/jdk:absolute_javabase \\\n    --host_javabase=@bazel_tools//tools/jdk:absolute_javabase \\\n    --define=ABSOLUTE_JAVABASE=${JAVA_PATH} \\\n    --define profile=${PROFILE}\n\n# We extract the tar in the build environment to avoid having to put the tar in\n# the runtime stage. This saves a lot of space.\nRUN mkdir /output\nRUN tar -xf bazel-bin/onos.tar.gz -C /output --strip-components=1 && rm bazel-bin/onos.tar.gz\n# Get yourkit profiler and extract in the ONOS temp folder\nRUN curl -f -L -o yourkit.zip https://www.yourkit.com/download/YourKit-JavaProfiler-$ONOS_YOURKIT.zip && \\\n    unzip -o yourkit.zip && \\\n    rm yourkit.zip && \\\n    mv YourKit-JavaProfiler-$(echo $ONOS_YOURKIT | sed 's/\\(.*\\)-.*/\\1/')/bin/linux-x86-64/libyjpagent.so /output/libyjpagent.so\n\n# Second and final stage is the runtime environment.\nFROM azul/zulu-openjdk:${TAG}\n\nLABEL org.label-schema.name=\"ONOS\" \\\n      org.label-schema.description=\"SDN Controller\" \\\n      org.label-schema.usage=\"http://wiki.onosproject.org\" \\\n      org.label-schema.url=\"http://onosproject.org\" \\\n      org.label-scheme.vendor=\"Open Networking Foundation\" \\\n      org.label-schema.schema-version=\"1.0\" \\\n      maintainer=\"onos-dev@onosproject.org\"\n\nRUN apt-get update && apt-get install --no-install-recommends -y curl && \\\n\trm -rf /var/lib/apt/lists/*\n\n# Install ONOS in /root/onos\nCOPY --from=builder /output/ /root/onos/\nWORKDIR /root/onos\n\n# Set JAVA_HOME (by default not exported by zulu images)\nARG JAVA_PATH\nENV JAVA_HOME ${JAVA_PATH}\n# Set ONOS_YOURKIT to enable the profiler agent\nENV ONOS_YOURKIT true\n\n# Ports\n# 6653 - OpenFlow\n# 6640 - OVSDB\n# 8181 - GUI\n# 8101 - ONOS CLI\n# 9876 - ONOS intra-cluster communication\n# 10001-10010 - YourKit profiler\nEXPOSE 6653 6640 8181 8101 9876 10001-10010\n\n# Run ONOS\nENTRYPOINT [\"./bin/onos-service\"]\nCMD [\"server\"]\n"
+}

@@ -1,0 +1,1 @@
+#docker build -t opsmanage-app -f Dockerfile-app ..

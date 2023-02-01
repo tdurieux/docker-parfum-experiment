@@ -1,0 +1,1 @@
+# Derivando da imagem oficial do MySQL

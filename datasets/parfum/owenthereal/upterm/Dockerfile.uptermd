@@ -1,0 +1,29 @@
+FROM golang:alpine as builder
+
+WORKDIR $GOPATH/src/github.com/owenthereal/upterm
+COPY . .
+ENV CGO_ENABLED=0 GOOS=linux GOARCH=amd64
+RUN go install -mod=vendor ./cmd/uptermd/...
+
+# Prepare for image
+FROM alpine:latest
+
+MAINTAINER Owen Ou
+LABEL org.opencontainers.image.source https://github.com/owenthereal/upterm
+
+RUN adduser -D uptermd
+USER uptermd
+
+WORKDIR /app
+ENV PATH="/app:${PATH}"
+
+COPY --from=builder /go/bin/* /app
+
+# sshd
+EXPOSE 2222
+# ws
+EXPOSE 8080
+# Prometheus
+EXPOSE 9090
+
+ENTRYPOINT ["uptermd"]

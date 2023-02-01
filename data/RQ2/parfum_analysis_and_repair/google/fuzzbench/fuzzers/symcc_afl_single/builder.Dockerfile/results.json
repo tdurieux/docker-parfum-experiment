@@ -1,0 +1,63 @@
+{
+  "startTime": 1674250417062,
+  "endTime": 1674250418773,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 26,
+        "lineEnd": 26,
+        "columnStart": 4,
+        "columnEnd": 27
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 34,
+        "lineEnd": 34,
+        "columnStart": 4,
+        "columnEnd": 69
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 34,
+        "lineEnd": 34,
+        "columnStart": 4,
+        "columnEnd": 69
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 26,
+        "lineEnd": 26,
+        "columnStart": 4,
+        "columnEnd": 27
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 34,
+        "lineEnd": 34,
+        "columnStart": 4,
+        "columnEnd": 69
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 34,
+        "lineEnd": 34,
+        "columnStart": 4,
+        "columnEnd": 93
+      }
+    }
+  ],
+  "repairedDockerfile": "# Copyright 2021 Google LLC\n#\n# Licensed under the Apache License, Version 2.0 (the \"License\");\n# you may not use this file except in compliance with the License.\n# You may obtain a copy of the License at\n#\n# http://www.apache.org/licenses/LICENSE-2.0\n#\n# Unless required by applicable law or agreed to in writing, software\n# distributed under the License is distributed on an \"AS IS\" BASIS,\n# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.\n# See the License for the specific language governing permissions and\n# limitations under the License.\n\nARG parent_image\nFROM $parent_image\n\n# Download and compile AFL v2.56b.\n# Set AFL_NO_X86 to skip flaky tests.\nRUN git clone https://github.com/google/AFL.git /afl && \\\n    cd /afl && \\\n    git checkout 82b5e359463238d790cadbe2dd494d6a4928bff3 && \\\n    AFL_NO_X86=1 make\n\n## Use afl_driver.cpp from LLVM as our fuzzing library.\nRUN apt-get update && \\\n    apt-get install --no-install-recommends wget -y && \\\n    wget https://raw.githubusercontent.com/llvm/llvm-project/5feb80e748924606531ba28c97fe65145c65372e/compiler-rt/lib/fuzzer/afl/afl_driver.cpp -O /afl/afl_driver.cpp && \\\n    clang -Wno-pointer-sign -c /afl/llvm_mode/afl-llvm-rt.o.c -I/afl && \\\n    clang++ -stdlib=libc++ -std=c++11 -O2 -c /afl/afl_driver.cpp && \\\n    ar r /libAFL.a *.o && rm -rf /var/lib/apt/lists/*;\n\n\n# Install the packages we need.\nRUN apt-get install --no-install-recommends -y ninja-build flex bison python zlib1g-dev cargo && rm -rf /var/lib/apt/lists/*;\n\n# Install Z3 from binary\nRUN wget -qO /tmp/z3x64.zip https://github.com/Z3Prover/z3/releases/download/z3-4.8.7/z3-4.8.7-x64-ubuntu-16.04.zip && \\\n     unzip -jd /usr/include /tmp/z3x64.zip \"*/include/*.h\" && \\\n     unzip -jd /usr/lib /tmp/z3x64.zip \"*/bin/libz3.so\" && \\\n     rm -f /tmp/*.zip && \\\n     ldconfig\n\nENV CFLAGS=\"\"\nENV CXXFLAGS=\"\"\n\n# Get and install symcc.\nRUN cd / && \\\n    git clone https://github.com/AdaLogics/adacc symcc && \\\n    cd symcc && \\\n    git checkout edda79dcb830c95ba6d303e47c698839313ef506 && \\\n    cd ./runtime/qsym_backend && \\\n    git clone https://github.com/adalogics/qsym && \\\n    cd qsym && \\\n    git checkout adalogics && \\\n    cd /symcc && \\\n    mkdir build && \\\n    cd build && \\\n    cmake -G Ninja -DCMAKE_BUILD_TYPE=Release -DQSYM_BACKEND=ON \\\n          -DZ3_TRUST_SYSTEM_VERSION=ON ../ && \\\n    ninja -j 3 && \\\n    cd ../examples && \\\n    export SYMCC_PC=1 && \\\n    ../build/symcc -c ./libfuzz-harness-proxy.c -o /libfuzzer-harness.o && \\\n    cd ../ && echo \"[+] Installing cargo now 4\" && \\\n    cargo install --path util/symcc_fuzzing_helper\n\n# Build libcxx with the SymCC compiler so we can instrument\n# C++ code.\nRUN git clone -b llvmorg-12.0.0 --depth 1 https://github.com/llvm/llvm-project.git /llvm_source  && \\\n    mkdir /libcxx_native_install && mkdir /libcxx_native_build && \\\n    cd /libcxx_native_install \\\n    && export SYMCC_REGULAR_LIBCXX=\"\" && \\\n    cmake /llvm_source/llvm                                     \\\n      -G Ninja  -DLLVM_ENABLE_PROJECTS=\"libcxx;libcxxabi\"       \\\n      -DLLVM_DISTRIBUTION_COMPONENTS=\"cxx;cxxabi;cxx-headers\"   \\\n      -DLLVM_TARGETS_TO_BUILD=\"X86\" -DCMAKE_BUILD_TYPE=Release  \\\n      -DCMAKE_C_COMPILER=/symcc/build/symcc                     \\\n      -DCMAKE_CXX_COMPILER=/symcc/build/sym++                   \\\n      -DHAVE_POSIX_REGEX=1     \\\n      -DCMAKE_INSTALL_PREFIX=\"/libcxx_native_build\" \\\n      -DHAVE_STEADY_CLOCK=1 && \\\n    ninja distribution && \\\n    ninja install-distribution\n"
+}

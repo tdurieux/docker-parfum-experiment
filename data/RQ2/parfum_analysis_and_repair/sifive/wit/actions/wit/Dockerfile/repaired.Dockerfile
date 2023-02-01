@@ -1,0 +1,1 @@
+# Note: This version should be changed when releasing new versions of Wit.

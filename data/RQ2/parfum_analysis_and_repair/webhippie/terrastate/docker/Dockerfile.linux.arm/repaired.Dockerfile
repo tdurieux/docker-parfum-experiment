@@ -1,0 +1,16 @@
+FROM arm32v6/alpine:3.16@sha256:3c66139adbd2513f9fc56eff206513ffc8356b282bed31a4e74c7eb926b850aa AS build
+RUN apk add --no-cache ca-certificates mailcap
+
+FROM scratch
+
+EXPOSE 8080 8081
+VOLUME ["/var/lib/terrastate"]
+ENTRYPOINT ["/usr/bin/terrastate"]
+CMD ["server"]
+
+ENV TERRASTATE_STORAGE /var/lib/terrastate
+
+COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
+COPY --from=build /etc/mime.types /etc/
+
+COPY bin/terrastate /usr/bin/terrastate

@@ -1,0 +1,17 @@
+FROM alpine:3.8
+MAINTAINER Oz Tiram <oz.tiram@gmail.com>
+
+RUN apk update \
+    && apk add --no-cache bash jq alpine-sdk python3-dev libressl-dev linux-headers py3-cryptography libffi-dev make jq
+
+RUN pip3 install --no-cache-dir -U pip && \
+    pip3 install --no-cache-dir flake8 pylint pylint-exit python-gitlab python-cinderclient==3.6.1
+
+COPY requirements.txt requirements_ci.txt ./
+
+RUN pip3 install --no-cache-dir -r requirements.txt \
+    && pip3 install --no-cache-dir -r requirements_ci.txt \
+    && rm requirements.txt requirements_ci.txt \
+    && curl -f -LO https://storage.googleapis.com/kubernetes-release/release/$( curl -f -s https://storage.googleapis.com/kubernetes-release/release/stable.txt)/bin/linux/amd64/kubectl \
+    && mv kubectl /usr/local/bin/kubectl \
+    && chmod  777  /usr/local/bin/kubectl

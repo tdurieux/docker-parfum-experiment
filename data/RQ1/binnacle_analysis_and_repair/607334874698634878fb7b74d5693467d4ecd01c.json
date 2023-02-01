@@ -1,0 +1,80 @@
+{
+  "startTime": 1674242302954,
+  "endTime": 1674242303345,
+  "originalSmells": [
+    {
+      "rule": "rmRecursiveAfterMktempD",
+      "position": {
+        "lineStart": 75,
+        "lineEnd": 75,
+        "columnStart": 24,
+        "columnEnd": 33
+      }
+    },
+    {
+      "rule": "gpgVerifyAscRmAsc",
+      "position": {
+        "lineStart": 77,
+        "lineEnd": 77,
+        "columnStart": 4,
+        "columnEnd": 69
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 26,
+        "lineEnd": 26,
+        "columnStart": 4,
+        "columnEnd": 31
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 32,
+        "lineEnd": 32,
+        "columnStart": 4,
+        "columnEnd": 31
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 45,
+        "lineEnd": 45,
+        "columnStart": 4,
+        "columnEnd": 31
+      }
+    },
+    {
+      "rule": "gpgUseBatchFlag",
+      "position": {
+        "lineStart": 76,
+        "lineEnd": 76,
+        "columnStart": 4,
+        "columnEnd": 100
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 14,
+        "lineEnd": 22,
+        "columnStart": 4,
+        "columnEnd": 17
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 14,
+        "lineEnd": 22,
+        "columnStart": 4,
+        "columnEnd": 17
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# use builder image to compile ledisdb (without GCO)\nFROM golang:1.9-stretch as builder\n\nENV LEDISDB_VERSION 0.6\n\nENV LEVELDB_VERSION 47cb9e2a211e1d7157078ba7bab536beb29e56dc\nENV ROCKSDB_VERSION 5.8.6\nENV GOSU_VERSION 1.10\n\n\n\nWORKDIR /build\n\nRUN apt-get update && \\\n    apt-get install --no-install-recommends -y \\\n    ca-certificates \\\n    wget \\\n    gcc-6 \\\n    g++-6 \\\n    build-essential \\\n    libsnappy1v5 \\\n    libsnappy-dev \\\n    libgflags-dev && rm -rf /var/lib/apt/lists/*;\n\n# get LedisDB\nRUN wget -O ledisdb-src.tar.gz \"https://github.com/siddontang/ledisdb/archive/v$LEDISDB_VERSION.tar.gz\" && \\\n    tar -zxf ledisdb-src.tar.gz && \\\n    mkdir -p /go/src/github.com/siddontang/ && \\\n    mv ledisdb-$LEDISDB_VERSION /go/src/github.com/siddontang/ledisdb && rm ledisdb-src.tar.gz\n\n# build LevelDB\nRUN wget -O leveldb-src.tar.gz \"https://github.com/google/leveldb/archive/$LEVELDB_VERSION.tar.gz\" && \\\n    tar -zxf leveldb-src.tar.gz && \\\n    cd leveldb-$LEVELDB_VERSION && \\\n    patch -p0 < /go/src/github.com/siddontang/ledisdb/tools/leveldb.patch && \\\n    mkdir -p out-shared/db && \\\n    make -j \"$(nproc)\" && \\\n    mkdir /build/lib && \\\n    mkdir -p /build/include/leveldb && \\\n    cp out-static/lib* /build/lib/ && \\\n    install include/leveldb/*.h /build/include/leveldb && rm leveldb-src.tar.gz\n\n\n# build RocksDB\nRUN wget -O rocksdb-src.tar.gz \"https://github.com/facebook/rocksdb/archive/v$ROCKSDB_VERSION.tar.gz\" && \\\n    tar -zxf rocksdb-src.tar.gz && \\\n    cd rocksdb-$ROCKSDB_VERSION && \\\n    make static_lib -j \"$(nproc)\" && \\\n    mkdir -p /build/include/rocksdb && \\\n    cp librocksdb.a /build/lib/ && \\\n    install include/rocksdb/*.h /build/include/rocksdb && rm rocksdb-src.tar.gz\n\nENV CGO_CFLAGS \"-I/build/include\"\nENV CGO_CXXFLAGS \"-I/build/include\"\nENV CGO_LDFLAGS \"-L/build/lib -lsnappy\"\n\n#build LedisDB\nRUN export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/build/lib:/usr/lib && \\\n    export DYLD_LIBRARY_PATH=$DYLD_LIBRARY_PATH:/build/lib:/usr/lib && \\\n    mkdir -p /build/bin && \\\n    rm -rf /build/bin/* && \\\n    cd /go/src/github.com/siddontang/ledisdb && \\\n    GOGC=off go build -i -o /build/bin/ledis-server -tags \"snappy leveldb rocksdb\" cmd/ledis-server/* && \\\n    GOGC=off go build -i -o /build/bin/ledis-cli -tags \"snappy leveldb rocksdb\" cmd/ledis-cli/* && \\\n    GOGC=off go build -i -o /build/bin/ledis-benchmark -tags \"snappy leveldb rocksdb\" cmd/ledis-benchmark/* && \\\n    GOGC=off go build -i -o /build/bin/ledis-dump -tags \"snappy leveldb rocksdb\" cmd/ledis-dump/* && \\\n    GOGC=off go build -i -o /build/bin/ledis-load -tags \"snappy leveldb rocksdb\" cmd/ledis-load/* && \\\n    GOGC=off go build -i -o /build/bin/ledis-repair -tags \"snappy leveldb rocksdb\" cmd/ledis-repair/*\n\n# grab gosu for easy step-down from root\n# https://github.com/tianon/gosu/releases\nRUN set -ex; \\\n    dpkgArch=\"$(dpkg --print-architecture | awk -F- '{ print $NF }')\"; \\\n    wget -O /usr/local/bin/gosu \"https://github.com/tianon/gosu/releases/download/$GOSU_VERSION/gosu-$dpkgArch\"; \\\n    wget -O /usr/local/bin/gosu.asc \"https://github.com/tianon/gosu/releases/download/$GOSU_VERSION/gosu-$dpkgArch.asc\"; \\\n    export GNUPGHOME=\"$(mktemp -d)\"; rm -rf -d \\\n    gpg --batch --keyserver ha.pool.sks-keyservers.net --recv-keys B42F6819007F00F88E364FD4036A9C25BF357DD4; \\\n    gpg --batch --verify /usr/local/bin/gosu.asc /usr/local/bin/gosu; rm /usr/local/bin/gosu.asc \\\n    chmod +x /usr/local/bin/gosu\n\n\n# done building - now create a tiny image with a statically linked Ledis\nFROM debian:stretch-slim\n\nCOPY --from=builder /build/lib/* /usr/lib/\nCOPY --from=builder /build/bin/ledis-* /bin/\nCOPY --from=builder /go/src/github.com/siddontang/ledisdb/config/config-docker.toml /config.toml\nCOPY --from=builder /usr/local/bin/gosu /bin/\n\nRUN groupadd -r ledis && \\\n    useradd -r -g ledis ledis && \\\n    mkdir /datastore && \\\n    chown ledis:ledis /datastore && \\\n    chmod 444 /config.toml && \\\n    gosu nobody true\n\nRUN apt-get update && \\\n    apt-get install -y --no-install-recommends libsnappy1v5 && \\\n    rm -rf /var/lib/apt/lists/*\n\nVOLUME /datastore\n\nADD entrypoint.sh /bin/entrypoint.sh\n\nENTRYPOINT [\"entrypoint.sh\"]\n\nEXPOSE 6380 11181\n\nCMD [\"ledis-server\", \"--config=/config.toml\"]\n"
+}

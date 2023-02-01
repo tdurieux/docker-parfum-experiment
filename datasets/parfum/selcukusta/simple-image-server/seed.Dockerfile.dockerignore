@@ -1,0 +1,6 @@
+**
+!assets/**
+!cmd/**
+!internal/**
+!go.mod
+!go.sum

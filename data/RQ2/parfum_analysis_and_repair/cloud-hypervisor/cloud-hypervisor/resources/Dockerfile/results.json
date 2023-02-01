@@ -1,0 +1,44 @@
+{
+  "startTime": 1674253436456,
+  "endTime": 1674253438032,
+  "originalSmells": [
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 119,
+        "lineEnd": 119,
+        "columnStart": 10,
+        "columnEnd": 38
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 19,
+        "lineEnd": 51,
+        "columnStart": 4,
+        "columnEnd": 8
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 60,
+        "lineEnd": 60,
+        "columnStart": 4,
+        "columnEnd": 67
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 71,
+        "lineEnd": 79,
+        "columnStart": 11,
+        "columnEnd": 15
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# When changing this file don't forget to update the tag name in the\n# .github/workflows/docker-image.yaml file if doing multiple per day\n\nFROM ubuntu:20.04 as dev\n\nARG TARGETARCH\nARG RUST_TOOLCHAIN=\"1.62.0\"\nARG CLH_SRC_DIR=\"/cloud-hypervisor\"\nARG CLH_BUILD_DIR=\"$CLH_SRC_DIR/build\"\nARG CARGO_REGISTRY_DIR=\"$CLH_BUILD_DIR/cargo_registry\"\nARG CARGO_GIT_REGISTRY_DIR=\"$CLH_BUILD_DIR/cargo_git_registry\"\n\nENV CARGO_HOME=/usr/local/rust\nENV RUSTUP_HOME=$CARGO_HOME\nENV PATH=\"$PATH:$CARGO_HOME/bin\"\n\n# Install all CI dependencies\nRUN apt-get update \\\n\t&& apt-get -yq upgrade \\\n\t&& DEBIAN_FRONTEND=noninteractive apt-get --no-install-recommends install -yq \\\n\tbuild-essential \\\n\tbc \\\n\tcurl \\\n\twget \\\n\tsudo \\\n\tmtools \\\n\tmusl-tools \\\n\tlibssl-dev \\\n\tpkg-config \\\n\tflex \\\n\tbison \\\n\tlibelf-dev \\\n\tqemu-utils \\\n\tlibglib2.0-dev \\\n\tlibpixman-1-dev \\\n\tlibseccomp-dev \\\n\tlibcap-ng-dev \\\n\tsocat \\\n\tdosfstools \\\n\tcpio \\\n\tpython \\\n\tpython3 \\\n\tpython3-setuptools \\\n\tntfs-3g \\\n\topenvswitch-switch-dpdk \\\n\tpython3-distutils \\\n\tuuid-dev \\\n\tiperf3 \\\n\tzip \\\n\tgit-core \\\n\tdnsmasq \\\n\tdmsetup \\\n    && apt-get clean \\\n    && rm -rf /var/lib/apt/lists/*\n\nRUN update-alternatives --set ovs-vswitchd /usr/lib/openvswitch-switch-dpdk/ovs-vswitchd-dpdk\n\nRUN if [ \"$TARGETARCH\" = \"amd64\" ]; then \\\n\tapt-get update \\\n\t&& apt-get -yq upgrade \\\n\t&& DEBIAN_FRONTEND=noninteractive apt-get --no-install-recommends install -yq gcc-multilib \\\n\t&& apt-get clean \\\n    && rm -rf /var/lib/apt/lists/*; fi\n\nRUN if [ \"$TARGETARCH\" = \"arm64\" ]; then \\\n        apt-get update \\\n        && apt-get -yq upgrade \\\n        && DEBIAN_FRONTEND=noninteractive apt-get --no-install-recommends install -yq \\\n        libcap2-bin \\\n        libguestfs-tools \\\n        linux-image-generic \\\n        autotools-dev \\\n        autoconf \\\n        automake \\\n        perl \\\n        texinfo \\\n        && apt-get clean \\\n        && rm -rf /var/lib/apt/lists/*; fi\n\n# Fix the libssl-dev install\nRUN export ARCH=\"$(uname -m)\" \\\n    && cp /usr/include/$ARCH-linux-gnu/openssl/opensslconf.h /usr/include/openssl/\nENV X86_64_UNKNOWN_LINUX_GNU_OPENSSL_LIB_DIR=/usr/lib/x86_64-linux-gnu/\nENV X86_64_UNKNOWN_LINUX_MUSL_OPENSSL_LIB_DIR=/usr/lib/x86_64-linux-gnu/\nENV AARCH64_UNKNOWN_LINUX_GNU_OPENSSL_LIB_DIR=/usr/lib/aarch64-linux-gnu/\nENV AARCH64_UNKNOWN_LINUX_MUSL_OPENSSL_LIB_DIR=/usr/lib/aarch64-linux-gnu/\nENV OPENSSL_INCLUDE_DIR=/usr/include/\n\n# Install the rust toolchain\nRUN export ARCH=\"$(uname -m)\" \\\n    && nohup curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain \"$RUST_TOOLCHAIN\" \\\n    && rustup target add $ARCH-unknown-linux-musl --toolchain \"$RUST_TOOLCHAIN\" \\\n    && if [ \"$TARGETARCH\" = \"amd64\" ]; then rustup toolchain add --profile minimal $RUST_TOOLCHAIN-x86_64-unknown-linux-musl; fi \\\n    && if [ \"$TARGETARCH\" = \"amd64\" ]; then rustup component add rustfmt; fi \\\n    && if [ \"$TARGETARCH\" = \"amd64\" ]; then rustup component add clippy; fi \\\n    && rm -rf \"$CARGO_HOME/registry\" \\\n    && ln -s \"$CARGO_REGISTRY_DIR\" \"$CARGO_HOME/registry\" \\\n    && rm -rf \"$CARGO_HOME/git\" \\\n    && ln -s \"$CARGO_GIT_REGISTRY_DIR\" \"$CARGO_HOME/git\"\n\n# Set the rust environment\nRUN echo 'source $CARGO_HOME/env' >> $HOME/.bashrc \\\n    && mkdir $HOME/.cargo \\\n    && ln -s $CARGO_HOME/env $HOME/.cargo/env\n\n# install SPDK NVMe\n# only for 'x86_64' platform images as 'docker buildx' can't build 'spdk'\nRUN if [ \"$TARGETARCH\" = \"amd64\" ]; then \\\n       git clone https://github.com/spdk/spdk \\\n       && cd spdk \\\n       && git checkout 6301f8915de32baed10dba1eebed556a6749211a \\\n       && git submodule update --init \\\n       && apt-get update \\\n       && ./scripts/pkgdep.sh \\\n       && apt-get clean \\\n       && ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" --with-vfio-user \\\n       && make -j `nproc` \\\n       && mkdir /usr/local/bin/spdk-nvme \\\n       && cp ./build/bin/nvmf_tgt /usr/local/bin/spdk-nvme \\\n       && cp ./scripts/rpc.py /usr/local/bin/spdk-nvme \\\n       && cp -r ./scripts/rpc /usr/local/bin/spdk-nvme \\\n       && cd .. && rm -rf spdk; fi\n\n# install ethr tool for performance tests\nRUN if [ \"$TARGETARCH\" = \"amd64\" ]; then \\\n    wget https://github.com/microsoft/ethr/releases/latest/download/ethr_linux.zip \\\n    && unzip ethr_linux.zip \\\n    && cp ethr /usr/local/bin \\\n    && rm ethr_linux.zip; fi\n"
+}

@@ -1,0 +1,71 @@
+{
+  "startTime": 1674219295082,
+  "endTime": 1674219296585,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 58,
+        "lineEnd": 58,
+        "columnStart": 4,
+        "columnEnd": 76
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 78,
+        "lineEnd": 78,
+        "columnStart": 4,
+        "columnEnd": 78
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 98,
+        "lineEnd": 98,
+        "columnStart": 4,
+        "columnEnd": 74
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 112,
+        "lineEnd": 112,
+        "columnStart": 4,
+        "columnEnd": 65
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 138,
+        "lineEnd": 138,
+        "columnStart": 4,
+        "columnEnd": 67
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 161,
+        "lineEnd": 161,
+        "columnStart": 4,
+        "columnEnd": 69
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 100,
+        "lineEnd": 100,
+        "columnStart": 19,
+        "columnEnd": 30
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Copyright 2021 Google LLC\n#\n# Licensed under the Apache License, Version 2.0 (the \"License\");\n# you may not use this file except in compliance with the License.\n# You may obtain a copy of the License at\n#\n#     https://www.apache.org/licenses/LICENSE-2.0\n#\n# Unless required by applicable law or agreed to in writing, software\n# distributed under the License is distributed on an \"AS IS\" BASIS,\n# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.\n# See the License for the specific language governing permissions and\n# limitations under the License.\n\nFROM opensuse/leap:latest\nARG NCPU=4\n\n## [BEGIN packaging.md]\n\n# Install the minimal development tools, libcurl and OpenSSL. The gRPC Makefile\n# uses `which` to determine whether the compiler is available. Install this\n# command for the extremely rare case where it may be missing from your\n# workstation or build server.\n\n# ```bash\nRUN zypper refresh && \\\n    zypper install --allow-downgrade -y automake ccache cmake curl \\\n        gcc gcc-c++ git gzip libcurl-devel libopenssl-devel \\\n        libtool make patch re2-devel tar wget which zlib zlib-devel-static\n# ```\n\n# The following steps will install libraries and tools in `/usr/local`. openSUSE\n# does not search for shared libraries in these directories by default, there\n# are multiple ways to solve this problem, the following steps are one solution:\n\n# ```bash\nRUN (echo \"/usr/local/lib\" ; echo \"/usr/local/lib64\") | \\\n    tee /etc/ld.so.conf.d/usrlocal.conf\nENV PKG_CONFIG_PATH=/usr/local/lib/pkgconfig:/usr/local/lib64/pkgconfig\nENV PATH=/usr/local/bin:${PATH}\n# ```\n\n# #### Abseil\n\n# We need a recent version of Abseil.\n\n# :warning: By default, Abseil's ABI changes depending on whether it is used\n# with C++ >= 17 enabled or not. Installing Abseil with the default\n# configuration is error-prone, unless you can guarantee that all the code using\n# Abseil (gRPC, google-cloud-cpp, your own code, etc.) is compiled with the same\n# C++ version. We recommend that you switch the default configuration to pin\n# Abseil's ABI to the version used at compile time. In this case, the compiler\n# defaults to C++14. Therefore, we change `absl/base/options.h` to **always**\n# use `absl::any`, `absl::string_view`, and `absl::variant`. See\n# [abseil/abseil-cpp#696] for more information.\n\n# ```bash\nWORKDIR /var/tmp/build/abseil-cpp\nRUN curl -f -sSL https://github.com/abseil/abseil-cpp/archive/20211102.0.tar.gz | \\\n    tar -xzf - --strip-components=1 && \\\n    sed -i 's/^#define ABSL_OPTION_USE_\\(.*\\) 2/#define ABSL_OPTION_USE_\\1 0/' \"absl/base/options.h\" && \\\n    cmake \\\n      -DCMAKE_BUILD_TYPE=Release \\\n      -DBUILD_TESTING=OFF \\\n      -DBUILD_SHARED_LIBS=yes \\\n      -S . -B cmake-out && \\\n    cmake --build cmake-out -- -j ${NCPU:-4} && \\\n    cmake --build cmake-out --target install -- -j ${NCPU:-4} && \\\n    ldconfig\n# ```\n\n# #### Protobuf\n\n# We need to install a version of Protobuf that is recent enough to support the\n# Google Cloud Platform proto files:\n\n# ```bash\nWORKDIR /var/tmp/build/protobuf\nRUN curl -f -sSL https://github.com/protocolbuffers/protobuf/archive/v21.2.tar.gz | \\\n    tar -xzf - --strip-components=1 && \\\n    cmake \\\n        -DCMAKE_BUILD_TYPE=Release \\\n        -DBUILD_SHARED_LIBS=yes \\\n        -Dprotobuf_BUILD_TESTS=OFF \\\n        -Dprotobuf_ABSL_PROVIDER=package \\\n        -S . -B cmake-out && \\\n    cmake --build cmake-out -- -j ${NCPU:-4} && \\\n    cmake --build cmake-out --target install -- -j ${NCPU:-4} && \\\n    ldconfig\n# ```\n\n# #### c-ares\n\n# Recent versions of gRPC require c-ares >= 1.11, while openSUSE/Leap\n# distributes c-ares-1.9. Manually install a newer version:\n\n# ```bash\nWORKDIR /var/tmp/build/c-ares\nRUN curl -f -sSL https://github.com/c-ares/c-ares/archive/cares-1_14_0.tar.gz | \\\n    tar -xzf - --strip-components=1 && \\\n    ./buildconf && ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" && make -j ${NCPU:-4} && \\\n    make install && \\\n    ldconfig\n# ```\n\n# #### gRPC\n\n# We also need a version of gRPC that is recent enough to support the Google\n# Cloud Platform proto files. We manually install it using:\n\n# ```bash\nWORKDIR /var/tmp/build/grpc\nRUN curl -f -sSL https://github.com/grpc/grpc/archive/v1.47.0.tar.gz | \\\n    tar -xzf - --strip-components=1 && \\\n    cmake \\\n        -DCMAKE_BUILD_TYPE=Release \\\n        -DBUILD_SHARED_LIBS=yes \\\n        -DgRPC_INSTALL=ON \\\n        -DgRPC_BUILD_TESTS=OFF \\\n        -DgRPC_ABSL_PROVIDER=package \\\n        -DgRPC_CARES_PROVIDER=package \\\n        -DgRPC_PROTOBUF_PROVIDER=package \\\n        -DgRPC_RE2_PROVIDER=package \\\n        -DgRPC_SSL_PROVIDER=package \\\n        -DgRPC_ZLIB_PROVIDER=package \\\n        -S . -B cmake-out && \\\n    cmake --build cmake-out -- -j ${NCPU:-4} && \\\n    cmake --build cmake-out --target install -- -j ${NCPU:-4} && \\\n    ldconfig\n# ```\n\n# #### crc32c\n\n# The project depends on the Crc32c library, we need to compile this from\n# source:\n\n# ```bash\nWORKDIR /var/tmp/build/crc32c\nRUN curl -f -sSL https://github.com/google/crc32c/archive/1.1.2.tar.gz | \\\n    tar -xzf - --strip-components=1 && \\\n    cmake \\\n        -DCMAKE_BUILD_TYPE=Release \\\n        -DBUILD_SHARED_LIBS=yes \\\n        -DCRC32C_BUILD_TESTS=OFF \\\n        -DCRC32C_BUILD_BENCHMARKS=OFF \\\n        -DCRC32C_USE_GLOG=OFF \\\n        -S . -B cmake-out && \\\n    cmake --build cmake-out -- -j ${NCPU:-4} && \\\n    cmake --build cmake-out --target install -- -j ${NCPU:-4} && \\\n    ldconfig\n# ```\n\n# #### nlohmann_json library\n\n# The project depends on the nlohmann_json library. We use CMake to\n# install it as this installs the necessary CMake configuration files.\n# Note that this is a header-only library, and often installed manually.\n# This leaves your environment without support for CMake pkg-config.\n\n# ```bash\nWORKDIR /var/tmp/build/json\nRUN curl -f -sSL https://github.com/nlohmann/json/archive/v3.10.5.tar.gz | \\\n    tar -xzf - --strip-components=1 && \\\n    cmake \\\n      -DCMAKE_BUILD_TYPE=Release \\\n      -DBUILD_SHARED_LIBS=yes \\\n      -DBUILD_TESTING=OFF \\\n      -DJSON_BuildTests=OFF \\\n      -S . -B cmake-out && \\\n    cmake --build cmake-out --target install -- -j ${NCPU:-4} && \\\n    ldconfig\n# ```\n\n## [DONE packaging.md]\n\n# Some of the above libraries may have installed in /usr/local, so make sure\n# those library directories will be found.\nRUN ldconfig /usr/local/lib*\n"
+}

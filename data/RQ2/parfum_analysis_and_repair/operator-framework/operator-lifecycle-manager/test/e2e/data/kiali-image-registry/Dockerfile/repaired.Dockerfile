@@ -1,0 +1,1 @@
+# docker build -t quay.io/olmtest/installplan_e2e-registry-image:latest .

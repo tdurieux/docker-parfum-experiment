@@ -1,0 +1,44 @@
+{
+  "startTime": 1674247981594,
+  "endTime": 1674247982849,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 28,
+        "lineEnd": 28,
+        "columnStart": 4,
+        "columnEnd": 47
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 54,
+        "lineEnd": 54,
+        "columnStart": 7,
+        "columnEnd": 50
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 56,
+        "lineEnd": 57,
+        "columnStart": 7,
+        "columnEnd": 112
+      }
+    },
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 11,
+        "lineEnd": 11,
+        "columnStart": 4,
+        "columnEnd": 34
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# This is only intended to build the application for deployment on AWS Lambda with Zappa\n# it has limited usage locally\n\nFROM node:16-alpine AS js-static\n\nENV APP_DIR=/srv/app\n\nWORKDIR $APP_DIR\n\nCOPY package.json yarn.lock $APP_DIR\n\nRUN yarn install --frozen-lockfile && yarn cache clean;\n\nCOPY assets ./assets\nCOPY *.config.js \\\n    webpack.*.js ./\n\nRUN npm run build:prod\n\nFROM python:3.9 AS static-files\n\nENV APP_DIR=/srv/app \\\n    POETRY_VIRTUALENVS_CREATE=false \\\n    # for poetry, see https://python-poetry.org/docs/master/#installing-with-the-official-installer\n    PATH=\"/root/.local/bin:${PATH}\"\n\nWORKDIR $APP_DIR\n\nRUN curl -f -sSL https://install.python-poetry.org | POETRY_VERSION=1.1.13 python3 -\n\nCOPY pyproject.toml poetry.lock $APP_DIR\n\nENV DJANGO_SETTINGS_MODULE onlineweb4.settings\n\nRUN poetry install --no-interaction --no-ansi --no-dev\n\nCOPY . .\n\nCOPY --from=js-static $APP_DIR/webpack-stats.json ./webpack-stats.json\nCOPY --from=js-static $APP_DIR/bundles ./bundles\n\nRUN ./manage.py collectstatic\n\nFROM amazon/aws-lambda-python:3.9\n\nLABEL maintainer=\"Dotkom <dotkom@online.ntnu.no>\"\nENV POETRY_VIRTUALENVS_CREATE=false \\\n    PATH=\"/root/.local/bin:${PATH}\"\nARG FUNCTION_DIR=\"/var/task/\"\n\nCOPY pyproject.toml poetry.lock $FUNCTION_DIR\n\n# Setup Python environment\nRUN yum install -y git unzip \\\n    && curl -f -sSL https://install.python-poetry.org | POETRY_VERSION=1.1.13 python3 - \\\n    # silent, show errors and location (aka follow redirect)\n    && curl -f -sSL --output vault-lambda-extension.zip \\\n        https://releases.hashicorp.com/vault-lambda-extension/0.6.0/vault-lambda-extension_0.6.0_linux_amd64.zip \\\n    && unzip vault-lambda-extension.zip -d /opt \\\n    && poetry install --no-root --no-dev -E prod \\\n    && poetry cache clear . --all -n \\\n    && yum remove -y git unzip \\\n    && yum clean all \\\n    && rm vault-lambda-extension.zip \\\n    && rm -rf /var/cache/yum\n\nCOPY ./ $FUNCTION_DIR\n\nRUN ZAPPA_HANDLER_PATH=$(python -c \"from zappa import handler; print (handler.__file__)\") \\\n    && echo $ZAPPA_HANDLER_PATH \\\n    && cp $ZAPPA_HANDLER_PATH $FUNCTION_DIR\n\nCOPY --from=static-files /srv/app/webpack-stats.json ./\nARG VERSION\n# https://docs.sentry.io/platforms/python/guides/logging/configuration/releases/#setting-a-release\nENV SENTRY_VERSION=${VERSION}\nCMD [ \"handler.lambda_handler\" ]\n"
+}

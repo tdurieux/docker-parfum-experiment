@@ -1,0 +1,15 @@
+FROM DOCKER_BASE/dev-db/mysql/latest
+
+MAINTAINER tsaikd "tsaikd@gmail.com"
+
+ENV DOCKER_SRC
+
+EXPOSE 80
+EXPOSE 3306
+
+ADD . $DOCKER_SRC
+
+RUN
+
+ENTRYPOINT
+

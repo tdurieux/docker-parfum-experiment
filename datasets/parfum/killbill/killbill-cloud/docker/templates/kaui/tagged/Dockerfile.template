@@ -1,0 +1,14 @@
+FROM killbill/kaui
+LABEL maintainer="killbilling-users@googlegroups.com"
+
+# VERSION will be expanded in Makefile
+ENV KAUI_VERSION=__VERSION__
+
+# Default kpm.yml, override as needed
+COPY ./kpm.yml $KAUI_INSTALL_DIR
+
+# Run both the main playbook and the one enabling structured logging
+RUN $KPM_INSTALL_CMD $KILLBILL_CLOUD_ANSIBLE_ROLES/kaui_json_logging.yml
+
+# Override start script (no need for Ansible scripts to be run)
+COPY ./kaui.sh $KAUI_INSTALL_DIR

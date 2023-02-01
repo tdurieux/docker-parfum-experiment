@@ -1,0 +1,35 @@
+{
+  "startTime": 1674255660589,
+  "endTime": 1674255661506,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 68,
+        "lineEnd": 69,
+        "columnStart": 8,
+        "columnEnd": 113
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 71,
+        "lineEnd": 72,
+        "columnStart": 8,
+        "columnEnd": 121
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 80,
+        "lineEnd": 80,
+        "columnStart": 4,
+        "columnEnd": 100
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "ARG ARCH=armv7hf\nARG VERSION=3.5\nARG UBUNTU_VERSION=20.04\nARG REPO=axisecp\nARG SDK=acap-sdk\n\nFROM ${REPO}/${SDK}:${VERSION}-${ARCH}-ubuntu${UBUNTU_VERSION}\n\n# Build libyuv\nWORKDIR /opt/build\n# TODO: Investigate why server certs can't be verified\nRUN GIT_SSL_NO_VERIFY=1 git clone -n https://chromium.googlesource.com/libyuv/libyuv\n\nWORKDIR /opt/build/libyuv\nARG libyuv_version=5b6042fa0d211ebbd8b477c7f3855977c7973048\nRUN git checkout ${libyuv_version}\nCOPY yuv/*.patch /opt/build/libyuv\nARG ARCH=armv7hf\nRUN if [ \"$ARCH\" = armv7hf ]; then \\\n        git apply ./*.patch && \\\n        CXXFLAGS=' -O2 -mthumb -mfpu=neon -mfloat-abi=hard -mcpu=cortex-a9 -fomit-frame-pointer' \\\n        make -j -f linux.mk CXX=arm-linux-gnueabihf-g++ CC=arm-linux-gnueabihf-gcc && \\\n        arm-linux-gnueabihf-strip --strip-unneeded libyuv.so* ; \\\n    elif [ \"$ARCH\" = aarch64 ]; then \\\n        git apply ./*.patch && \\\n        make -j -f linux.mk CXX=/usr/bin/aarch64-linux-gnu-g++ CC=/usr/bin/aarch64-linux-gnu-gcc && \\\n        aarch64-linux-gnu-strip --strip-unneeded libyuv.so* ; \\\n    else \\\n        printf \"Error: '%s' is not a valid value for the ARCH variable\\n\", \"$ARCH\"; \\\n        exit 1; \\\n    fi\n\n# Build libjpeg-turbo\nWORKDIR /opt/build\nRUN apt-get update && apt-get install --no-install-recommends -y cmake && \\\n    apt-get clean && \\\n    rm -rf /var/lib/apt/lists/*\nRUN git clone --branch 2.0.6 https://github.com/libjpeg-turbo/libjpeg-turbo.git\n\nWORKDIR /opt/build/libjpeg-turbo/build\nRUN if [ \"$ARCH\" = armv7hf ]; then \\\n        gCFLAGS=' -O2 -mthumb -mfpu=neon -mfloat-abi=hard -mcpu=cortex-a9 -fomit-frame-pointer' \\\n        CC=arm-linux-gnueabihf-gcc cmake -G\"Unix Makefiles\" .. && \\\n        make -j; \\\n    elif [ \"$ARCH\" = aarch64 ]; then \\\n        CC=/usr/bin/aarch64-linux-gnu-gcc cmake -G\"Unix Makefiles\" .. && \\\n        make ; \\\n    else \\\n        printf \"Error: '%s' is not a valid value for the ARCH variable\\n\", \"$ARCH\"; \\\n        exit 1; \\\n    fi\n\n# Copy the built libraries to application folder\nWORKDIR /opt/app\nCOPY ./app /opt/app/\nARG BUILDDIR=/opt/build/libyuv\nRUN mkdir -p lib include && \\\n    cp /opt/build/libjpeg-turbo/build/*.so* lib/ && \\\n    cp /opt/build/libjpeg-turbo/build/*.h include/ && \\\n    cp /opt/build/libjpeg-turbo/*.h include/ && \\\n    cp ${BUILDDIR}/libyuv.so* lib/ && \\\n    cp -a ${BUILDDIR}/include/. include && \\\n    ln -s libyuv.so.1 lib/libyuv.so && \\\n    ln -s libyuv.so.1 lib/libyuv.so.1.0\n\n# Get pretrained models\nARG CHIP=\nRUN if [ \"$CHIP\" = cpu ] || [ \"$CHIP\" = artpec8 ]; then \\\n        curl -f -L -o converted_model.tflite \\\n            https://github.com/google-coral/test_data/raw/master/ssd_mobilenet_v2_coco_quant_postprocess.tflite; \\\n    elif [ \"$CHIP\" = edgetpu ]; then \\\n        curl -f -L -o converted_model.tflite \\\n            https://github.com/google-coral/test_data/raw/master/ssd_mobilenet_v2_coco_quant_postprocess_edgetpu.tflite; \\\n    else \\\n        printf \"Error: '%s' is not a valid value for the CHIP variable\\n\", \"$CHIP\"; \\\n        exit 1; \\\n    fi\n\n# Download the labels\nRUN mkdir -p label && \\\n    curl -f -L -o label/labels.txt https://github.com/google-coral/test_data/raw/master/coco_labels.txt\n\n# Setup the model directory\nRUN mkdir -p model && \\\n    cp converted_model.tflite model/converted_model.tflite\n\n# Building the ACAP application\nRUN cp /opt/app/manifest.json.${CHIP} /opt/app/manifest.json && \\\n    . /opt/axis/acapsdk/environment-setup* && acap-build . \\\n    -a 'label/labels.txt' -a 'model/converted_model.tflite'\n"
+}

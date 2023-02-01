@@ -1,0 +1,35 @@
+{
+  "startTime": 1674255799378,
+  "endTime": 1674255800520,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 11,
+        "lineEnd": 11,
+        "columnStart": 4,
+        "columnEnd": 120
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 14,
+        "lineEnd": 14,
+        "columnStart": 9,
+        "columnEnd": 111
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 12,
+        "lineEnd": 12,
+        "columnStart": 9,
+        "columnEnd": 35
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "#\n# STEP 1: Prepare environment\n#\nFROM golang:1.15 AS preparer\n\nRUN apt-get update                                                        && \\\n  DEBIAN_FRONTEND=noninteractive apt-get install -yq --no-install-recommends \\\n    curl git zip unzip wget g++ python gcc-aarch64-linux-gnu bzip2 make      \\\n  && rm -rf /var/lib/apt/lists/*\n# install jemalloc\nWORKDIR /tmp/jemalloc-temp\nRUN curl -f -s -L \"https://github.com/jemalloc/jemalloc/releases/download/5.2.1/jemalloc-5.2.1.tar.bz2\" -o jemalloc.tar.bz2 \\\n      && tar xjf ./jemalloc.tar.bz2 && rm ./jemalloc.tar.bz2\nRUN cd jemalloc-5.2.1 \\\n      && ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" --with-jemalloc-prefix='je_' --with-malloc-conf='background_thread:true,metadata_thp:auto' \\\n      && make && make install\n\nRUN go version\nRUN python --version\n\nWORKDIR /go/src/github.com/bloxapp/ssv/\nCOPY go.mod .\nCOPY go.sum .\nRUN go mod download\n\nARG APP_VERSION\n#\n# STEP 2: Build executable binary\n#\nFROM preparer AS builder\n\n# Copy files and install app\nCOPY . .\nRUN go get -d -v ./...\n\nARG APP_VERSION\n\nRUN CGO_ENABLED=1 GOOS=linux go install -tags=\"blst_enabled,jemalloc,allocator\" -ldflags \"-X main.Version=`if [ ! -z \"${APP_VERSION}\" ]; then echo $APP_VERSION; else git describe --tags $(git rev-list --tags --max-count=1); fi` -linkmode external -extldflags \\\"-static -lm\\\"\" ./cmd/ssvnode\n\n#\n# STEP 3: Prepare image to run the binary\n#\nFROM alpine:3.12 AS runner\n\n# Install ca-certificates, bash\nRUN apk -v --update add ca-certificates bash make  bind-tools && \\\n    rm /var/cache/apk/*\n\nCOPY --from=builder /go/bin/ssvnode /go/bin/ssvnode\nCOPY ./Makefile .env* ./\nCOPY config/* ./config/\n\n\n# Expose port for load balancing\nEXPOSE 5678 5000 4000/udp\n\n# Force using Go's DNS resolver because Alpine's DNS resolver (when netdns=cgo) may cause issues.\nENV GODEBUG=\"netdns=go\"\n\n#ENTRYPOINT [\"/go/bin/ssvnode\"]\n"
+}

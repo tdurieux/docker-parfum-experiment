@@ -1,0 +1,45 @@
+FROM fedora:35
+
+RUN dnf -y install \
+        curl \
+        findutils \
+        gcc \
+        git \
+        make \
+        moby-engine \
+        zip
+
+# Required for packaging with fpm
+RUN dnf -y install \
+        gcc \
+        gcc-c++ \
+        gem \
+        libffi-devel \
+        rpm-build \
+        ruby-devel \
+        rubygem-ffi \
+        ruby-devel
+RUN gem install --no-document --bindir=/usr/local/bin fpm -v 1.14.0
+
+ARG REAL_UID=1000
+ARG REAL_GID=1000
+RUN test "$REAL_GID" != 0 && groupadd --gid ${REAL_GID} builder || true
+RUN useradd --non-unique --uid ${REAL_UID} --gid ${REAL_GID} --password "" --groups wheel builder
+RUN echo "builder ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/builder
+
+ENV N_V 16.13.0
+RUN cd /usr/local && \
+  curl -f -o - -L https://nodejs.org/dist/v${N_V}/node-v${N_V}-linux-x64.tar.gz | \
+       tar zxf - --strip-components=1
+
+ENV PATH=/root/.cargo/bin:$PATH
+ENV CROSS_DOCKER_IN_DOCKER=true
+ENV FIX_PERMS=true
+
+RUN curl https://sh.rustup.rs -sSf | sh -s -- --default-toolchain stable -y
+RUN cargo install cross
+ENV CARGO=cross
+
+COPY / /src
+COPY /docker/builder/docker-entrypoint.sh /
+ENTRYPOINT ["/docker-entrypoint.sh"]

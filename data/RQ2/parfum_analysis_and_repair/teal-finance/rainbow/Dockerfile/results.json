@@ -1,0 +1,63 @@
+{
+  "startTime": 1674219396066,
+  "endTime": 1674219397446,
+  "originalSmells": [
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 43,
+        "lineEnd": 43,
+        "columnStart": 4,
+        "columnEnd": 20
+      }
+    },
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 67,
+        "lineEnd": 67,
+        "columnStart": 4,
+        "columnEnd": 56
+      }
+    },
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 68,
+        "lineEnd": 68,
+        "columnStart": 4,
+        "columnEnd": 17
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 43,
+        "lineEnd": 43,
+        "columnStart": 24,
+        "columnEnd": 40
+      }
+    },
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 67,
+        "lineEnd": 67,
+        "columnStart": 57,
+        "columnEnd": 74
+      }
+    },
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 68,
+        "lineEnd": 68,
+        "columnStart": 4,
+        "columnEnd": 17
+      }
+    }
+  ],
+  "repairedDockerfile": "# Build:\n#\n#    export DOCKER_BUILDKIT=1\n#    docker  build --build-arg addr=http://my.dns.co:1111 --build-arg port=2222 --build-arg base=/rainbow/ -t rainbow .\n#    podman  build --build-arg addr=http://my.dns.co:1111 --build-arg port=2222 --build-arg base=/rainbow/ -t rainbow .\n#    buildah build --build-arg addr=http://my.dns.co:1111 --build-arg port=2222 --build-arg base=/rainbow/ -t rainbow .\n#\n# Run:\n#\n#    docker run -d --rm -p 0.0.0.0:1111:2222 -e EXP_PORT=9868 --name rainbow rainbow\n#    podman run -d --rm -p 0.0.0.0:1111:2222 -e EXP_PORT=9868 --name rainbow rainbow\n\n# --------------------------------------------------------------------\n# Arguments:\n# - addr is used:\n#   - by frontend as the API scheme and host.\n#   - by backend to set CORS origin ard Cookie domain.\n# - base is passed to frontend with --base (the path prefix stripped by the reverse-proxy).\n#   The frontend also uses it to compose the API URL.\n# - port is used by backend as the listening port to serve API and static website files.\n\n# Default values are for dev mode:\nARG addr=http://localhost:8888\nARG base=/\nARG port=8888\nARG uid=5505\n\n# Example of some Prod values:\n# addr = https://my.dns.co\n# base = /rainbow/\n\n# --------------------------------------------------------------------\nFROM docker.io/node:18-alpine AS web_builder\n\nWORKDIR /code\n\nCOPY frontend/package.json \\\n     frontend/yarn.lock   ./\n\nRUN set -ex                         ; \\\n    node --version                  ; \\\n    yarn versions                   ; \\\n    yarn install --frozen-lockfile  ; \\\n    yarn cache clean && yarn cache clean;\n\nCOPY frontend/index.html         \\\n     frontend/postcss.config.js  \\\n     frontend/tailwind.config.js \\\n     frontend/tsconfig.json      \\\n     frontend/vite.config.ts     \\\n     frontend/.env              ./\n\nCOPY frontend/public public\nCOPY frontend/src    src\n\nARG addr\nARG base\n\n# No cache folder \"/.gzipper\" enabled by \"gzipper compress --incremental\"\nENV GZIPPER_INCREMENTAL     0\nENV GZIPPER_VERBOSE         0\nENV GZIPPER_SKIP_COMPRESSED 1\n\nRUN set -ex                                            ; \\\n    ls -lA                                             ; \\\n    sed -e \"s|^VITE_ADDR=.*|VITE_ADDR=$addr|\" -i .env  ; \\\n    head .env                                          ; \\\n    yarn build --base \"$base\"                          ; yarn cache clean; \\\n    yarn compress\n\n# --------------------------------------------------------------------\nFROM docker.io/golang:1.18-alpine AS go_builder\n\nWORKDIR /code\n\nCOPY go.mod go.sum ./\n\nRUN set -ex          ;\\\n    go version       ;\\\n    go mod download  ;\\\n    go mod verify\n\nCOPY cmd cmd\nCOPY pkg pkg\n\n# Go build flags: https://shibumi.dev/posts/hardening-executables/\n# \"-s -w\" removes all debug symbols: https://pkg.go.dev/cmd/link\nRUN set -ex                                               ;\\\n    ls -lA                                                ;\\\n    export GOOS=linux                                     ;\\\n    export CGO_ENABLED=0                                  ;\\\n    export GOFLAGS=\"-buildmode=pie -trimpath -modcacherw\" ;\\\n    export GOLDFLAGS=\"-linkmode=external -s -w\"           ;\\\n    go build ./cmd/server                                 ;\\\n    ls -sh server                                         ;\\\n    ldd server                                            ;\\\n    ./server -help  # smoke test\n\n# To go further in Go hardening and FIPS 140-2 certification:\n# https://www.linkedin.com/pulse/go-crypto-kubernetes-fips-140-2-fedramp-compliance-gokul-chandra\n# https://github.com/golang/go/blob/dev.boringcrypto/README.boringcrypto.md\n# https://hub.docker.com/r/goboring/golang/tags\n# https://github.com/rancher/image-build-base/blob/master/Dockerfile.amd64\n\n\n# --------------------------------------------------------------------\nFROM docker.io/golang:1.18-alpine AS integrator\n\nWORKDIR /target\n\n# HTTPS root certificates (adds about 200 KB)\n# Create user & group files\nRUN set -ex                                                 ;\\\n    mkdir -p                                 etc/ssl/certs  ;\\\n    cp -a /etc/ssl/certs/ca-certificates.crt etc/ssl/certs  ;\\\n    echo \"teal:x:$uid:$uid::/:\" > etc/passwd                ;\\\n    echo \"teal:x:$uid:\"         > etc/group\n\n# Static website and back-end\nCOPY --from=web_builder /code/dist   var/www\nCOPY --from=go_builder  /code/server .\n\n# Copy possible dynamic libs because we use CGO_ENABLED=1\n# https://stackoverflow.com/q/62817082\nRUN mkdir lib        &&\\\n    ldd server        |\\\n    while read f rest ;\\\n    do cp -v \"$f\" lib ;\\\n    done             &&\\\n    ls -lA\n\n# --------------------------------------------------------------------\nFROM scratch AS final\n\nARG addr\nARG base\nARG port\nARG uid\n\nCOPY --chown=$uid:$uid --from=integrator /target /\n\n# Run as unprivileged\nUSER $uid:$uid\n\n# Use UTC time zone by default\nENV TZ        UTC0\nENV WWW_DIR   /var/www\nENV MAIN_ADDR \"$addr$base\"\nENV MAIN_PORT \"$port\"\nENV EXP_PORT  9868\nENV HMAC_SHA256 C1C2C3C4C5C6C7C8C9C0CACBCCCDCECFC1C2C3C4C5C6C7C8C9C0CACBCCCDCECF\n\nEXPOSE \"$port\"\nEXPOSE 9868\n\nENTRYPOINT [\"/server\"]\n"
+}

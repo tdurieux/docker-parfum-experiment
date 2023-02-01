@@ -1,0 +1,44 @@
+{
+  "startTime": 1674252187891,
+  "endTime": 1674252189057,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 49,
+        "lineEnd": 49,
+        "columnStart": 4,
+        "columnEnd": 80
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 100,
+        "lineEnd": 100,
+        "columnStart": 19,
+        "columnEnd": 65
+      }
+    },
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 58,
+        "lineEnd": 58,
+        "columnStart": 7,
+        "columnEnd": 26
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 43,
+        "lineEnd": 45,
+        "columnStart": 32,
+        "columnEnd": 74
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM circleci/python:3.7.11\n\nSHELL [\"/bin/bash\", \"-c\"]\nENV PYTHONUNBUFFERED 1\n\n# For the container running cypress to be able to write snapshots to a\n# directory mounted from the host, the UID/GID of the user in the container\n# must be UIDs/GIDs with write permissions on the host. We default to the\n# user/group IDs for the first non-root user on most linux systems, but in\n# practice these should always be explicitly set by the make targets\n# conventionally used to work with this image.\nARG UID=1000\nARG GID=1000\n\n# MacOS handles GroupIDs differently than Linux, so we don't have to run\n# `groupadd` on non-Linux system (more precisely, on MacOS since we haven't\n# even tried building this image on Windows).\nARG OSTYPE=Linux\n\nARG USER=circleci\nARG HOME=/home/$USER\nARG APP=$HOME/repo\n\nUSER root\n\nRUN usermod -u $UID $USER\nRUN bash -c 'if [ ${OSTYPE} == Linux ]; then groupmod -g ${GID} ${USER}; fi'\n\nUSER $USER\n\n# create `yarn start` cache directory\nRUN mkdir -p $APP/frontend/node_modules/.cache/hard-source \\\n    && chown $USER:$USER $APP/frontend/node_modules/.cache/hard-source\n\nWORKDIR $APP\nRUN sudo chown $USER $APP\n\n# update apt repository\nRUN echo \"deb http://ppa.launchpad.net/maarten-fonville/protobuf/ubuntu trusty main\" \\\n    | sudo tee /etc/apt/sources.list.d/protobuf.list \\\n    && sudo apt-key adv --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys 4DEA8909DC6A13A3\n\n# install dependencies\nRUN sudo apt-get update && sudo apt-get install --no-install-recommends -y \\\n    make graphviz gnupg protobuf-compiler unixodbc-dev \\\n    xvfb libgtk2.0-0 libnotify-dev libgconf-2-4 libnss3 libxss1 libasound2 \\\n    && sudo rm -rf /var/lib/apt/lists/*\n\n# install nvm\nRUN curl -f -o- https://raw.githubusercontent.com/creationix/nvm/v0.35.2/install.sh | bash\n\n# node vars\nARG NVM_DIR=$HOME/.nvm\nARG NODE_VERSION=v14.15.3\n\n# install node and yarn\nRUN source $NVM_DIR/nvm.sh \\\n    && nvm install $NODE_VERSION --lts=fermium \\\n    && npm install -g yarn && npm cache clean --force;\n\n# node path\nENV NODE_PATH $NVM_DIR/$NODE_VERSION/lib/node_modules\nENV PATH $NVM_DIR/versions/node/$NODE_VERSION/bin:$PATH\n\n# copy makefile\nCOPY --chown=$USER Makefile .\n\n# install virtual env\nRUN python -m venv venv \\\n    && source venv/bin/activate \\\n    && make setup\n\n# python path\nENV PATH $APP/venv/bin:$PATH\n\n# copy package.json\nCOPY --chown=$USER frontend/package.json frontend/yarn.lock ./frontend/\n\n# install node modules\nRUN make react-init\n\n# copy Pipfile and test-requirements.txt\nCOPY --chown=$USER lib/Pipfile ./lib/\nCOPY --chown=$USER lib/test-requirements.txt ./lib/\n\n# install python modules\nRUN source venv/bin/activate && make pipenv-install CIRCLECI=true\n\n# copy streamlit code\nCOPY --chown=$USER . .\n\n# install streamlit\nRUN make develop\n\n# register streamlit user\nRUN mkdir $HOME/.streamlit \\\n    && echo '[general]' >  $HOME/.streamlit/credentials.toml \\\n    && echo 'email = \"test@streamlit.io\"' >> $HOME/.streamlit/credentials.toml\n\n# register mapbox token\nRUN MAPBOX_TOKEN=$( curl -f -sS https://data.streamlit.io/tokens.json | jq -r '.[\"mapbox-localhost\"]') \\\n    && echo '[mapbox]' >  ~/.streamlit/config.toml \\\n    && echo 'token = \"'$MAPBOX_TOKEN'\"' >> ~/.streamlit/config.toml\n\nCMD /bin/bash\n"
+}

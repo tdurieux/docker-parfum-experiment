@@ -1,0 +1,1 @@
+#Use this dockerfile to unzip the bwce-runtime zip while creating the base image.

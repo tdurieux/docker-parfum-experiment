@@ -1,0 +1,48 @@
+# Create a separate image with the latest source
+FROM ubuntu:focal AS poppler-sources
+WORKDIR /polytracker/the_klondike
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install --no-install-recommends -y git && rm -rf /var/lib/apt/lists/*;
+RUN git clone https://anongit.freedesktop.org/git/poppler/poppler.git
+
+# Now, build the qpdf image using previously downloaded source
+FROM trailofbits/polytracker:latest
+LABEL org.opencontainers.image.authors="marek.surovic@trailofbits.com"
+WORKDIR /polytracker/the_klondike
+COPY --from=poppler-sources /polytracker/the_klondike/poppler /polytracker/the_klondike/poppler
+
+# Install poppler dependencies
+RUN apt-get update && apt-get install --no-install-recommends -y libfreetype6-dev libfontconfig1-dev && rm -rf /var/lib/apt/lists/*;
+
+# Configure
+WORKDIR /polytracker/the_klondike/poppler
+RUN polytracker build cmake -S . -B build \
+	-DCMAKE_BUILD_TYPE=Release \
+	-DBUILD_SHARED_LIBS=OFF \
+	-DBUILD_GTK_TESTS=OFF \
+	-DBUILD_QT5_TESTS=OFF \
+	-DBUILD_CPP_TESTS=OFF \
+	-DENABLE_BOOST=OFF \
+	-DENABLE_CPP=OFF \
+	-DENABLE_GLIB=OFF \
+	-DENABLE_GTK_DOC=OFF \
+	-DENABLE_QT5=OFF \
+	-DENABLE_LIBOPENJPEG=unmaintained \
+	-DENABLE_CMS=none \
+	-DENABLE_LIBCURL=OFF \
+	-DENABLE_ZLIB=OFF \
+	-DENABLE_DCTDECODER=unmaintained \
+	-DENABLE_ZLIB_UNCOMPRESS=OFF \
+	-DWITH_JPEG=OFF \
+	-DWITH_PNG=OFF \
+	-DWITH_TIFF=OFF \
+	-DWITH_NSS3=OFF \
+	-DWITH_Cairo=OFF \
+	-DWITH_FONTCONFIGURATION_FONTCONFIG=OFF \
+	-DCMAKE_EXE_LINKER_FLAGS="-pthread"
+
+# Build and instrument
+RUN polytracker build cmake --build build -j$(nproc)
+RUN polytracker instrument-targets pdftotext pdftops --ignore-lists freetype fontconfig
+RUN mv pdftotext.instrumented pdftotext_track
+RUN mv pdftops.instrumented pdftops_track

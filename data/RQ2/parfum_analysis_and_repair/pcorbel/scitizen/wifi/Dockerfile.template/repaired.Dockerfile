@@ -1,0 +1,28 @@
+FROM balenalib/%%BALENA_ARCH%%-debian-python:3.9.5-buster-run
+
+# setup application working directory
+WORKDIR /app
+
+# setup environment variables
+ENV WFC_VERSION 4.4.6
+ENV DBUS_SYSTEM_BUS_ADDRESS unix:path=/host/run/dbus/system_bus_socket
+ENV PORTAL_SSID Scitizen
+ENV PORTAL_LISTENING_PORT 8000
+
+# prepare dependencies files
+COPY packages.txt /tmp/packages.txt
+
+# install system dependencies
+RUN apt-get update \
+ && xargs apt-get install --no-install-recommends --assume-yes --quiet < /tmp/packages.txt \
+ # install wifi-connect
+ && wget --quiet https://github.com/balena-io/wifi-connect/releases/download/v${WFC_VERSION}/wifi-connect-v${WFC_VERSION}-linux-%%BALENA_ARCH%%.tar.gz \
+ && tar -xvzf wifi-connect-v${WFC_VERSION}-linux-%%BALENA_ARCH%%.tar.gz \
+ # clean up
+ && apt-get clean \
+ && rm -rf /tmp/* /var/lib/apt/lists/* /var/tmp/* && rm wifi-connect-v${WFC_VERSION}-linux-%%BALENA_ARCH%%.tar.gz
+
+# setup entrypoint
+COPY entrypoint.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh
+ENTRYPOINT ["/app/entrypoint.sh"]

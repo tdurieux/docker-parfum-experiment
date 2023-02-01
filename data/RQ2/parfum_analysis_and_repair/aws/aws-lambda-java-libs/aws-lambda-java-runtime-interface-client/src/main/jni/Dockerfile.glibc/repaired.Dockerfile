@@ -1,0 +1,72 @@
+# we use centos 7 to build against glibc 2.17
+FROM public.ecr.aws/docker/library/centos:7
+
+ARG CURL_VERSION
+
+# Add Corretto repository
+RUN rpm --import https://yum.corretto.aws/corretto.key && \
+    curl -f -L -o /etc/yum.repos.d/corretto.repo https://yum.corretto.aws/corretto.repo
+
+# aws-lambda-cpp requires cmake3, it's available in EPEL
+RUN yum install -y epel-release && rm -rf /var/cache/yum
+RUN yum install -y \
+        cmake3 \
+        make \
+        gcc \
+        gcc-c++ \
+        libstdc++-static \
+        glibc-devel \
+        gmp-devel \
+        libmpc-devel \
+        libtool \
+        mpfr-devel \
+        wget \
+        java-1.8.0-amazon-corretto-devel && rm -rf /var/cache/yum
+
+# Install curl dependency
+COPY ./deps/curl-$CURL_VERSION.tar.gz /src/deps/
+RUN tar xzf /src/deps/curl-$CURL_VERSION.tar.gz -C /src/deps && mv /src/deps/curl-$CURL_VERSION /src/deps/curl && rm /src/deps/curl-$CURL_VERSION.tar.gz
+WORKDIR /src/deps/curl
+RUN ./configure --build="$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)" \
+        --prefix $(pwd)/../artifacts \
+        --disable-shared \
+        --without-ssl \
+        --with-pic \
+        --without-zlib && \
+    make && \
+    make install
+
+# Install aws-lambda-cpp dependency
+ADD ./deps/aws-lambda-cpp-* /src/deps/aws-lambda-cpp
+RUN sed -i.bak 's/VERSION 3.9/VERSION 3.6/' /src/deps/aws-lambda-cpp/CMakeLists.txt
+RUN mkdir -p /src/deps/aws-lambda-cpp/build
+WORKDIR /src/deps/aws-lambda-cpp/build
+RUN cmake3 .. \
+        -DENABLE_LTO=OFF \
+        -DCMAKE_CXX_FLAGS="-fPIC -DBACKWARD_SYSTEM_UNKNOWN" \
+        -DCMAKE_CXX_STANDARD=11 \
+        -DCMAKE_INSTALL_PREFIX=$(pwd)/../../artifacts \
+        -DCMAKE_MODULE_PATH=$(pwd)/../../artifacts/lib/pkgconfig && \
+    make && \
+    make install
+
+# Build native client
+ADD *.cpp *.h /src/
+WORKDIR /src
+ENV JAVA_HOME=/usr/lib/jvm/java-1.8.0-amazon-corretto
+RUN /usr/bin/c++ -c \
+        -std=gnu++11 \
+        -fPIC \
+        -I${JAVA_HOME}/include \
+        -I${JAVA_HOME}/include/linux \
+        -I ./deps/artifacts/include \
+        com_amazonaws_services_lambda_runtime_api_client_runtimeapi_NativeClient.cpp -o com_amazonaws_services_lambda_runtime_api_client_runtimeapi_NativeClient.o && \
+    /usr/bin/c++ -shared \
+        -std=gnu++11 \
+        -o aws-lambda-runtime-interface-client.so com_amazonaws_services_lambda_runtime_api_client_runtimeapi_NativeClient.o \
+        -L ./deps/artifacts/lib64/ \
+        -L ./deps/artifacts/lib/ \
+        -laws-lambda-runtime \
+        -lcurl \
+        -static-libstdc++ \
+        -lrt

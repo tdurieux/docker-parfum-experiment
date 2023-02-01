@@ -1,0 +1,12 @@
+FROM ubuntu:bionic
+
+RUN apt-get update -y && apt-get install --no-install-recommends -y \
+  ccache \
+  distcc \
+  gcc-aarch64-linux-gnu g++-aarch64-linux-gnu \
+  gcc-arm-linux-gnueabihf g++-arm-linux-gnueabihf && rm -rf /var/lib/apt/lists/*;
+
+ENTRYPOINT ["distccd"]
+CMD ["--daemon", "--log-stderr", "--stats", "--no-detach", "--jobs", "6", "--allow", "0.0.0.0/0"]
+EXPOSE 3632
+EXPOSE 3633

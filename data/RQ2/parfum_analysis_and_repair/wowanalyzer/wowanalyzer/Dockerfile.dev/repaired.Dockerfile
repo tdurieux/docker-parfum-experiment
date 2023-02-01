@@ -1,0 +1,9 @@
+FROM node:14-alpine
+
+WORKDIR /usr/src/wowanalyzer/
+
+COPY . /usr/src/wowanalyzer/
+
+EXPOSE 3000
+
+CMD ["yarn", "safestart"]

@@ -1,0 +1,35 @@
+{
+  "startTime": 1674252905764,
+  "endTime": 1674252905964,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 56,
+        "lineEnd": 56,
+        "columnStart": 7,
+        "columnEnd": 156
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 65,
+        "lineEnd": 65,
+        "columnStart": 7,
+        "columnEnd": 41
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 35,
+        "lineEnd": 55,
+        "columnStart": 22,
+        "columnEnd": 18
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM ubuntu:16.04 AS base\n\nMAINTAINER Nicholas Long nicholas.long@nrel.gov\n\n# If installing a CI build version of OpenStudio, then pass in the CI path into the build command. For example:\n#   docker build --build-arg DOWNLOAD_PREFIX=\"_CI/OpenStudio\"\nARG DOWNLOAD_PREFIX=\"\"\n\n# Set the version of OpenStudio when building the container. For example `docker build --build-arg\n# OPENSTUDIO_VERSION=2.6.0 --build-arg OPENSTUDIO_SHA=e3cb91f98a .` in the .travis.yml. Set with the ENV keyword to\n# inherit the variables into child containers\nARG OPENSTUDIO_VERSION\nARG OPENSTUDIO_VERSION_EXT\nARG OPENSTUDIO_SHA\nARG OS_BUNDLER_VERSION=1.17.1\nENV OPENSTUDIO_VERSION=$OPENSTUDIO_VERSION\nENV OPENSTUDIO_VERSION_EXT=$OPENSTUDIO_VERSION_EXT\nENV OPENSTUDIO_SHA=$OPENSTUDIO_SHA\nENV OS_BUNDLER_VERSION=$OS_BUNDLER_VERSION\n\n\n# Modify the OPENSTUDIO_VERSION and OPENSTUDIO_SHA for new versions\nENV RUBY_VERSION=2.2.4 \\\n    RUBY_SHA=b6eff568b48e0fda76e5a36333175df049b204e91217aa32a65153cc0cdcb761\n\n# Don't combine with above since ENV vars are not initialized until after the above call\nENV OPENSTUDIO_DOWNLOAD_FILENAME=OpenStudio-$OPENSTUDIO_VERSION$OPENSTUDIO_VERSION_EXT.$OPENSTUDIO_SHA-Linux.deb\n\n# Install gdebi, then download and install OpenStudio, then clean up.\n# gdebi handles the installation of OpenStudio's dependencies including Qt5,\n# Boost, and Ruby 2.2.4.\n# OpenStudio 2.4.3 requires libwxgtk3.0-0 -- install manually for now\n\n# install locales and set to en_US.UTF-8. This is needed for running the CLI on some machines\n# such as singularity.\nRUN apt-get update && apt-get install --no-install-recommends -y autoconf \\\n        build-essential \\\n        ca-certificates \\\n        curl \\\n        gdebi-core \\\n        git \\\n        libfreetype6 \\\n        libjpeg8 \\\n        libdbus-glib-1-2 \\\n        libfontconfig1 \\\n        libglu1 \\\n        libreadline-dev \\\n        libsm6 \\\n        libssl-dev \\\n        libtool \\\n        libwxgtk3.0-0v5 \\\n        libxi6 \\\n        libxml2-dev \\\n\t\t\t\tlocales \\\n        sudo \\\n        zlib1g-dev \\\n    && curl -f -sL https://raw.githubusercontent.com/NREL/OpenStudio-server/develop/docker/deployment/scripts/install_ruby.sh -o /usr/local/bin/install_ruby.sh \\\n    && chmod +x /usr/local/bin/install_ruby.sh \\\n    && /usr/local/bin/install_ruby.sh $RUBY_VERSION $RUBY_SHA \\\n    && if [ -z \"${DOWNLOAD_PREFIX}\" ]; then \\\n            export OPENSTUDIO_DOWNLOAD_URL=https://openstudio-builds.s3.amazonaws.com/$OPENSTUDIO_VERSION/OpenStudio-$OPENSTUDIO_VERSION$OPENSTUDIO_VERSION_EXT.$OPENSTUDIO_SHA-Linux.deb; \\\n       else \\\n            export OPENSTUDIO_DOWNLOAD_URL=https://openstudio-builds.s3.amazonaws.com/$DOWNLOAD_PREFIX/OpenStudio-$OPENSTUDIO_VERSION$OPENSTUDIO_VERSION_EXT.$OPENSTUDIO_SHA-Linux.deb; \\\n       fi \\\n    && echo \"OpenStudio Package Download URL is ${OPENSTUDIO_DOWNLOAD_URL}\" \\\n    && curl -f -SLO $OPENSTUDIO_DOWNLOAD_URL \\\n    # Verify that the download was successful (not access denied XML from s3)\n    && grep -v -q \"<Code>AccessDenied</Code>\" ${OPENSTUDIO_DOWNLOAD_FILENAME} \\\n    && gdebi -n $OPENSTUDIO_DOWNLOAD_FILENAME \\\n    # Cleanup\n    && rm -f /usr/local/bin/install_ruby.sh \\\n    && rm -f $OPENSTUDIO_DOWNLOAD_FILENAME \\\n    && rm -rf /var/lib/apt/lists/* \\\n    && if dpkg --compare-versions \"${OPENSTUDIO_VERSION}\" \"gt\" \"2.5.1\"; then \\\n            rm -rf /usr/local/openstudio-${OPENSTUDIO_VERSION}/SketchUpPlugin; \\\n       else \\\n            rm -rf /usr/SketchUpPlugin; \\\n       fi \\\n    && locale-gen en_US en_US.UTF-8 \\\n    && dpkg-reconfigure locales\n\n\n## Add RUBYLIB link for openstudio.rb. Support new location and old location.\nENV RUBYLIB=/usr/local/openstudio-${OPENSTUDIO_VERSION}/Ruby:/usr/Ruby\nENV ENERGYPLUS_EXE_PATH=/usr/local/openstudio-${OPENSTUDIO_VERSION}/EnergyPlus/energyplus\n\n# The OpenStudio Gemfile contains a fixed bundler version, so you have to install and run specific to that version\nRUN gem install bundler -v $OS_BUNDLER_VERSION && \\\n    mkdir /var/oscli && \\\n    cp /usr/local/openstudio-${OPENSTUDIO_VERSION}/Ruby/Gemfile /var/oscli/ && \\\n    cp /usr/local/openstudio-${OPENSTUDIO_VERSION}/Ruby/Gemfile.lock /var/oscli/ && \\\n    cp /usr/local/openstudio-${OPENSTUDIO_VERSION}/Ruby/openstudio-gems.gemspec /var/oscli/\nWORKDIR /var/oscli\nRUN bundle _${OS_BUNDLER_VERSION}_ install --path=gems --jobs=4 --retry=3\n\n# Configure the bootdir & confirm that openstudio is able to load the bundled gem set in /var/gemdata\nVOLUME /var/simdata/openstudio\nWORKDIR /var/simdata/openstudio\nRUN openstudio --verbose --bundle /var/oscli/Gemfile --bundle_path /var/oscli/gems openstudio_version\n\nCMD [ \"/bin/bash\" ]\n\n# FROM ubuntu:16.04 AS cli\n\n# ARG OPENSTUDIO_VERSION\n\n# # copy executable and energyplus from install\n# COPY --from=base /usr/local/openstudio-${OPENSTUDIO_VERSION}/bin/openstudio /usr/local/openstudio-${OPENSTUDIO_VERSION}/bin/\n# COPY --from=base /usr/local/openstudio-${OPENSTUDIO_VERSION}/EnergyPlus /usr/local/openstudio-${OPENSTUDIO_VERSION}/EnergyPlus\n\n# RUN apt-get update && apt-get install -y --no-install-recommends \\\n#             libdbus-glib-1-2 \\\n#             libglu1 \\\n# \t\t  libssl-dev \\\n# \t\t  libpng-dev \\\n#             libgdbm-dev \\\n#      && rm -rf /var/lib/apt/lists/*\n\n# # link executable from /usr/local/bin\n# RUN ln -s /usr/local/openstudio-${OPENSTUDIO_VERSION}/bin/openstudio /usr/local/bin/openstudio\n\n# VOLUME /var/simdata/openstudio\n# WORKDIR /var/simdata/openstudio\n"
+}

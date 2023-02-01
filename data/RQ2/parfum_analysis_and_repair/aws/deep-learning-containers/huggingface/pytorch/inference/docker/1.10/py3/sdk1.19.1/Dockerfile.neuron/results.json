@@ -1,0 +1,71 @@
+{
+  "startTime": 1674246980298,
+  "endTime": 1674246984525,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 46,
+        "lineEnd": 46,
+        "columnStart": 4,
+        "columnEnd": 150
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 124,
+        "lineEnd": 124,
+        "columnStart": 4,
+        "columnEnd": 91
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 133,
+        "lineEnd": 133,
+        "columnStart": 4,
+        "columnEnd": 108
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 84,
+        "lineEnd": 88,
+        "columnStart": 4,
+        "columnEnd": 60
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 91,
+        "lineEnd": 91,
+        "columnStart": 4,
+        "columnEnd": 91
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 93,
+        "lineEnd": 96,
+        "columnStart": 4,
+        "columnEnd": 25
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 73,
+        "lineEnd": 74,
+        "columnStart": 4,
+        "columnEnd": 22
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM ubuntu:18.04\n\nLABEL maintainer=\"Amazon AI\"\nLABEL dlc_major_version=\"1\"\n\n# Specify accept-bind-to-port LABEL for inference pipelines to use SAGEMAKER_BIND_TO_PORT\n# https://docs.aws.amazon.com/sagemaker/latest/dg/inference-pipeline-real-time.html\nLABEL com.amazonaws.sagemaker.capabilities.accept-bind-to-port=true\n\nARG MMS_VERSION=1.1.8\nARG PYTHON=python3.7\nARG PYTHON_VERSION=3.7.10\nARG MAMBA_VERSION=4.12.0-2\n# Pin torch neuron version to sdk1.19.1\nARG TORCH_NEURON_VERSION=\">=1.10.2,<1.10.3\"\n# HF ARGS\nARG TRANSFORMERS_VERSION\n\nENV PYTHONDONTWRITEBYTECODE=1 \\\n    PYTHONUNBUFFERED=1 \\\n    LD_LIBRARY_PATH=\"/opt/conda/lib/:${LD_LIBRARY_PATH}:/usr/local/lib\" \\\n    PYTHONIOENCODING=UTF-8 \\\n    LANG=C.UTF-8 \\\n    LC_ALL=C.UTF-8 \\\n    TEMP=/home/model-server/tmp \\\n    DEBIAN_FRONTEND=noninteractive\n\nENV PATH /opt/conda/bin:$PATH\n\nRUN apt-get update \\\n && apt-get install -y --no-install-recommends \\\n    ca-certificates \\\n    build-essential \\\n    openssl \\\n    openjdk-8-jdk-headless \\\n    vim \\\n    wget \\\n    curl \\\n    emacs \\\n    unzip \\\n    git \\\n    gnupg2 \\\n    wget \\\n && apt-get clean \\\n && rm -rf /var/lib/apt/lists/*\n\nRUN curl -f -L -o ~/mambaforge.sh https://github.com/conda-forge/miniforge/releases/download/${MAMBA_VERSION}/Mambaforge-${MAMBA_VERSION}-Linux-x86_64.sh \\\n && chmod +x ~/mambaforge.sh \\\n && ~/mambaforge.sh -b -p /opt/conda \\\n && rm ~/mambaforge.sh \\\n && /opt/conda/bin/conda install -c conda-forge \\\n    python=$PYTHON_VERSION \\\n    cython \\\n    mkl \\\n    mkl-include \\\n    botocore \\\n    # Below 2 are included in miniconda base, but not mamba so need to install\n    conda-content-trust \\\n    charset-normalizer\n# Upstream conda looks to have moved to 4.13 which is incompatible with mamba 0.22.1 and will fail the conda-forge installs.\n# having \"conda update conda\" before the \"conda -c conda-forge\" commands will automatically update conda to 4.13.\n# Moving conda update conda\" after the \"conda -c conda-forge\" commands keep conda at 4.12 but will update other packages using\n# the current conda 4.12\nRUN /opt/conda/bin/conda update -y conda \\\n   && /opt/conda/bin/conda clean -ya\n\n\n\nRUN echo \"deb https://apt.repos.neuron.amazonaws.com bionic main\" > /etc/apt/sources.list.d/neuron.list\nRUN wget -qO - https://apt.repos.neuron.amazonaws.com/GPG-PUB-KEY-AMAZON-AWS-NEURON.PUB | apt-key add -\n\n# Installing Neuron Tools\nRUN apt-get update \\\n && apt-get install --no-install-recommends -y \\\n      aws-neuron-tools \\\n && rm -rf /var/lib/apt/lists/* \\\n && rm -rf /tmp/tmp* \\\n && apt-get clean\n\n# Sets up Path for Neuron tools\nENV PATH=\"/opt/bin/:/opt/aws/neuron/bin:${PATH}\"\n\n# Install Neuron PyTorch\n# including neuron-cc to be able to compile\nRUN pip install --no-cache-dir \\\n    torch-neuron$TORCH_NEURON_VERSION \\\n\n\n    --extra-index-url=https://pip.repos.neuron.amazonaws.com\n\n\nRUN pip install --no-cache-dir --upgrade pip --trusted-host pypi.org --trusted-host \\\n && ln -s /opt/conda/bin/pip /usr/local/bin/pip3 \\\n && pip install --no-cache-dir packaging==20.4 \\\n    enum-compat==0.0.3 \\\n\n    \"cryptography>=3.3.2\"\n\n\nWORKDIR /\n\nRUN pip install --no-cache-dir \\\n    multi-model-server==$MMS_VERSION \\\n    sagemaker-inference\n\nRUN useradd -m model-server \\\n && mkdir -p /home/model-server/tmp \\\n && chown -R model-server /home/model-server\n\nCOPY neuron-entrypoint.py /usr/local/bin/dockerd-entrypoint.py\nCOPY neuron-monitor.sh /usr/local/bin/neuron-monitor.sh\nCOPY config.properties /etc/sagemaker-mms.properties\n\nRUN chmod +x /usr/local/bin/dockerd-entrypoint.py \\\n && chmod +x /usr/local/bin/neuron-monitor.sh\n\nADD https://raw.githubusercontent.com/aws/deep-learning-containers/master/src/deep_learning_container.py /usr/local/bin/deep_learning_container.py\n\nRUN chmod +x /usr/local/bin/deep_learning_container.py\n\n#################################\n# Hugging Face specific section #\n#################################\n\nRUN curl -f https://aws-dlc-licenses.s3.amazonaws.com/pytorch-1.10/license.txt -o /license.txt\n\n# install Hugging Face libraries and its dependencies\nRUN pip install --no-cache-dir \\\n\ttransformers[sentencepiece]==${TRANSFORMERS_VERSION} \\\n\tprotobuf==3.12.0 \\\n\t\"sagemaker-huggingface-inference-toolkit<3\"\n\nRUN HOME_DIR=/root \\\n && curl -f -o ${HOME_DIR}/oss_compliance.zip https://aws-dlinfra-utilities.s3.amazonaws.com/oss_compliance.zip \\\n && unzip ${HOME_DIR}/oss_compliance.zip -d ${HOME_DIR}/ \\\n && cp ${HOME_DIR}/oss_compliance/test/testOSSCompliance /usr/local/bin/testOSSCompliance \\\n && chmod +x /usr/local/bin/testOSSCompliance \\\n && chmod +x ${HOME_DIR}/oss_compliance/generate_oss_compliance.sh \\\n && ${HOME_DIR}/oss_compliance/generate_oss_compliance.sh ${HOME_DIR} ${PYTHON} \\\n && rm -rf ${HOME_DIR}/oss_compliance*\n\nEXPOSE 8080 8081\nENTRYPOINT [\"python\", \"/usr/local/bin/dockerd-entrypoint.py\"]\nCMD [\"serve\"]\n"
+}

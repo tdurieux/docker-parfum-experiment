@@ -1,0 +1,26 @@
+{
+  "startTime": 1674235416394,
+  "endTime": 1674235416588,
+  "originalSmells": [
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 29,
+        "lineEnd": 29,
+        "columnStart": 4,
+        "columnEnd": 36
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 26,
+        "lineEnd": 26,
+        "columnStart": 4,
+        "columnEnd": 37
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# CLEARLINUX_BASE and SWUPD_UPDATE_ARG can be used to make the build reproducible\n# by choosing an image by its hash and updating to a certain version with -m:\n# CLEAR_LINUX_BASE=clearlinux@sha256:b8e5d3b2576eb6d868f8d52e401f678c873264d349e469637f98ee2adf7b33d4\n# SWUPD_UPDATE_ARG=-m 29970\n#\n# This is used on release branches before tagging a stable version. The master and devel\n# branches default to using the latest Clear Linux.\nARG CLEAR_LINUX_BASE=clearlinux:latest\nARG SWUPD_UPDATE_ARG=\n\nFROM ${CLEAR_LINUX_BASE} AS build\n\nARG VERSION=\"unknown\"\nARG NDCTL_VERSION=\"65\"\nARG NDCTL_CONFIGFLAGS=\"--libdir=/usr/lib --disable-docs --without-systemd --without-bash\"\nARG NDCTL_BUILD_DEPS=\"os-core-dev devpkg-util-linux devpkg-kmod devpkg-json-c\"\n\n#pull dependencies required for downloading and building libndctl\nARG CACHEBUST\nRUN swupd update ${SWUPD_UPDATE_ARG} && swupd bundle-add ${NDCTL_BUILD_DEPS} go-basic-dev && rm -rf /var/lib/swupd\n# Workaround for \"pkg-config: error while loading shared libraries\" when using older Docker\n# (see https://github.com/clearlinux/distribution/issues/831)\nRUN ldconfig\n\nWORKDIR /\nRUN curl --fail --location --remote-name https://github.com/pmem/ndctl/archive/v${NDCTL_VERSION}.tar.gz\nRUN tar zxvf v${NDCTL_VERSION}.tar.gz && mv ndctl-${NDCTL_VERSION} ndctl && rm v${NDCTL_VERSION}.tar.gz\nWORKDIR /ndctl\nRUN ./autogen.sh\nRUN ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" ${NDCTL_CONFIGFLAGS}\nRUN make install\n\n# build pmem-csi-driver\nADD . /go/src/github.com/intel/pmem-csi\nENV GOPATH=/go\nENV PKG_CONFIG_PATH=/usr/lib/pkgconfig/\nWORKDIR /go/src/github.com/intel/pmem-csi\nARG BIN_SUFFIX\n# Here we choose explicitly which binaries we want in the image and in\n# which flavor (production or testing). The actual binary name in the\n# image is going to be the same, to avoid unnecessary deployment\n# differences.\nRUN make VERSION=${VERSION} pmem-csi-driver${BIN_SUFFIX} pmem-vgm${BIN_SUFFIX} pmem-ns-init${BIN_SUFFIX} && \\\n    mkdir -p /go/bin/ && \\\n    mv _output/pmem-csi-driver${BIN_SUFFIX} /go/bin/pmem-csi-driver && \\\n    mv _output/pmem-vgm${BIN_SUFFIX} /go/bin/pmem-vgm && \\\n    mv _output/pmem-ns-init${BIN_SUFFIX} /go/bin/pmem-ns-init\n\n# Workaround for \"error while loading shared libraries: libndctl.so.6\" when using older Docker (?)\n# and running \"make test\" inside this container.\n# - same as https://github.com/clearlinux/distribution/issues/831?\nRUN ldconfig\n\n# build clean container\nFROM ${CLEAR_LINUX_BASE}\nLABEL maintainers=\"Intel\"\nLABEL description=\"PMEM CSI Driver\"\n\n# update and install needed bundles:\n# file - driver uses file utility to determine filesystem type\n# xfsprogs - XFS filesystem utilities\n# storge-utils - for lvm2 and ext4(e2fsprogs) utilities\nARG CACHEBUST\nRUN swupd update ${SWUPD_UPDATE_ARG} && swupd bundle-add file xfsprogs storage-utils && rm -rf /var/lib/swupd\n# Workaround for \"pkg-config: error while loading shared libraries\" when using older Docker\n# (see https://github.com/clearlinux/distribution/issues/831)\nRUN ldconfig\n\n# move required binaries and libraries to clean container\nCOPY --from=build /usr/lib/libndctl* /usr/lib/\nCOPY --from=build /usr/lib/libdaxctl* /usr/lib/\nRUN mkdir -p /go/bin\nCOPY --from=build /go/bin/ /go/bin/\n# default lvm config uses lvmetad and throwing below warning for all lvm tools\n# WARNING: Failed to connect to lvmetad. Falling back to device scanning.\n# So, ask lvm not to use lvmetad\nRUN mkdir -p /etc/lvm\nRUN echo \"global { use_lvmetad = 0 }\" >> /etc/lvm/lvm.conf\n\nENV LD_LIBRARY_PATH=/usr/lib\nENTRYPOINT [\"/go/bin/pmem-csi-driver\"]\n"
+}

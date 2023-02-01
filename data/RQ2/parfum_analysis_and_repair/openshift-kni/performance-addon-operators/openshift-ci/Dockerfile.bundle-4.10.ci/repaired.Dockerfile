@@ -1,0 +1,1 @@
+# see: https://github.com/operator-framework/operator-registry/blob/master/docs/design/operator-bundle.md

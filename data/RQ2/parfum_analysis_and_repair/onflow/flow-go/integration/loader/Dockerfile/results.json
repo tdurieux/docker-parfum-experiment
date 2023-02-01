@@ -1,0 +1,35 @@
+{
+  "startTime": 1674220257689,
+  "endTime": 1674220259607,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 6,
+        "lineEnd": 6,
+        "columnStart": 4,
+        "columnEnd": 32
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 6,
+        "lineEnd": 6,
+        "columnStart": 4,
+        "columnEnd": 32
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 6,
+        "lineEnd": 6,
+        "columnStart": 4,
+        "columnEnd": 32
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# NOTE: Must be run in the context of the repo's root directory\n\nFROM golang:1.18-buster AS build-setup\n\nRUN apt-get update && apt-get -y --no-install-recommends install cmake zip && rm -rf /var/lib/apt/lists/*;\n\n## (1) Build Relic first to maximize caching\nFROM build-setup AS build-relic\n\nRUN mkdir /build\nWORKDIR /build\n\n# Copy over the crypto package\nCOPY crypto ./crypto\n\n# Build Relic (this places build artifacts in /build/relic/build)\nRUN cd ./crypto/ && go generate\n\n## (2) Build the app binary\nFROM build-setup AS build-env\n\n# add the pubkey of github.com to knownhosts, so ssh-agent doesn't bark\nRUN mkdir -p /root/.ssh && ssh-keyscan -t rsa github.com >> /root/.ssh/known_hosts\nRUN git config --global 'url.ssh://git@github.com/.insteadOf' https://github.com/\n\nENV GOPRIVATE=github.com/dapperlabs/*\n\n# Build the app binary in /app\nRUN mkdir /app\nWORKDIR /app\n\nARG TARGET\n\nCOPY . .\n\n# Copy over Relic build artifacts\nCOPY --from=build-relic /build/crypto/relic/build ./crypto/relic/build\n\nFROM build-env as build-production\nWORKDIR /app\n\n# Keep Go's build cache between builds.\n# https://github.com/golang/go/issues/27719#issuecomment-514747274\n# Also, allow ssh access\nRUN --mount=type=cache,sharing=locked,target=/go/pkg/mod \\\n    --mount=type=cache,target=/root/.cache/go-build \\\n    --mount=type=ssh \\\n    cd integration && \\\n    GO111MODULE=on CGO_ENABLED=1 go build --tags relic -ldflags \"-extldflags -static\" -o ./app ./${TARGET}\n\nRUN mv /app/integration/app /app/app\n\nRUN chmod a+x /app/app\n\n## (3) Add the statically linked binary to a distroless image\nFROM gcr.io/distroless/base as production\n\nCOPY --from=build-production /app/app /bin/app\n\nENTRYPOINT [\"/bin/app\"]\n"
+}

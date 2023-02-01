@@ -1,0 +1,53 @@
+{
+  "startTime": 1674246861656,
+  "endTime": 1674246862419,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 33,
+        "lineEnd": 35,
+        "columnStart": 5,
+        "columnEnd": 137
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 81,
+        "lineEnd": 81,
+        "columnStart": 2,
+        "columnEnd": 113
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 84,
+        "lineEnd": 84,
+        "columnStart": 2,
+        "columnEnd": 82
+      }
+    },
+    {
+      "rule": "curlUseHttpsUrl",
+      "position": {
+        "lineStart": 33,
+        "lineEnd": 35,
+        "columnStart": 5,
+        "columnEnd": 137
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 2,
+        "lineEnd": 9,
+        "columnStart": 22,
+        "columnEnd": 8
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM phusion/baseimage:0.9.22\n\nRUN apt-get update && apt-get -y --no-install-recommends install \\\n  ca-certificates \\\n  curl \\\n  phantomjs=2.1.1+dfsg-1 \\\n  libc6-dev \\\n  libfontconfig1 \\\n  mysql-client \\\n  tzdata \\\n  && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*\n\n# Give children processes 1 minute to timeout\nENV KILL_PROCESS_TIMEOUT=60\n# Give all other processes (such as those which have been forked) 2 minutes to timeout\nENV KILL_ALL_PROCESSES_TIMEOUT=120\n\n\n#FROM sgrio/java-oracle:jdk_8\n## start from https://github.com/sgr-io/docker-java-oracle/blob/master/jdk/Dockerfile\nENV DEBIAN_FRONTEND noninteractive\n\nENV VERSION 8\nENV UPDATE 171\nENV BUILD 11\nENV SIG 512cd62ec5174c3487ac17c61aaa89e8\n\nENV JAVA_HOME /usr/lib/jvm/java-${VERSION}-oracle\nENV JRE_HOME ${JAVA_HOME}/jre\n\n# install of ca-certificates and curl moved to single RUN apt... command above\n#RUN apt-get update && apt-get install ca-certificates curl \\\n#  -y --no-install-recommends && \\\nRUN curl -f --silent --location --retry 3 --cacert /etc/ssl/certs/GeoTrust_Global_CA.pem \\\n  --header \"Cookie: oraclelicense=accept-securebackup-cookie;\" \\\n  https://download.oracle.com/otn-pub/java/jdk/\"${VERSION}\"u\"${UPDATE}\"-b\"${BUILD}\"/\"${SIG}\"/jdk-\"${VERSION}\"u\"${UPDATE}\"-linux-x64.tar.gz \\\n  | tar xz -C /tmp && \\\n  mkdir -p /usr/lib/jvm && mv /tmp/jdk1.${VERSION}.0_${UPDATE} \"${JAVA_HOME}\" && \\\n  apt-get autoclean && apt-get --purge -y autoremove && \\\n  rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*\n\nRUN update-alternatives --install \"/usr/bin/java\" \"java\" \"${JRE_HOME}/bin/java\" 1 && \\\n  update-alternatives --install \"/usr/bin/javaws\" \"javaws\" \"${JRE_HOME}/bin/javaws\" 1 && \\\n  update-alternatives --install \"/usr/bin/javac\" \"javac\" \"${JAVA_HOME}/bin/javac\" 1 && \\\n  update-alternatives --set java \"${JRE_HOME}/bin/java\" && \\\n  update-alternatives --set javaws \"${JRE_HOME}/bin/javaws\" && \\\n  update-alternatives --set javac \"${JAVA_HOME}/bin/javac\"\n## end from https://github.com/sgr-io/docker-java-oracle/blob/master/jdk/Dockerfile\n\nENV ROOT_HOME /root\nENV USER_HOME /home/looker\nENV APP_HOME $USER_HOME/looker\n\n# Unneeded - already Etc/UTC\n# RUN echo Etc/UTC > /etc/timezone\n\nRUN groupadd looker && useradd -m -g looker -s /bin/bash looker\n\n# Replace content of policy-rc.d in order to allow services to start.\n# See here: https://askubuntu.com/questions/365911/why-the-services-do-not-start-at-installation\nCOPY templates/policy-rc.d /usr/sbin/policy-rc.d\nCOPY templates/90-looker.conf /etc/sysctl.d/90-looker.conf\nRUN chmod 644 /etc/sysctl.d/90-looker.conf\n\nRUN echo \"looker     soft     nofile     4096\\nlooker     hard     nofile     4096\" >> /etc/security/limits.conf\n\nRUN mkdir -p $APP_HOME\nWORKDIR $APP_HOME\nCOPY \\\n  templates/provision.yml \\\n  templates/lookerstart.cfg \\\n  templates/looker_jar_loc.txt \\\n  $APP_HOME/\n\nENV LOOKER_VERSION looker-latest\n\nRUN mkdir /etc/service/looker\nCOPY templates/looker_run.sh /etc/service/looker/run\nRUN chmod +x /etc/service/looker/run\n\nRUN set -a && \\\n  curl -f https://raw.githubusercontent.com/looker/customer-scripts/master/startup_scripts/looker > $APP_HOME/looker\n\nRUN \\\n  curl -f `cat $APP_HOME/looker_jar_loc.txt`/looker-latest.jar > $APP_HOME/looker.jar\n\nRUN \\\n  chown -R looker:looker $USER_HOME && \\\n  chmod 0755 $APP_HOME/looker\n\nVOLUME \"$APP_HOME\"\n\n# Confifure cron to manage log files\nRUN /bin/bash -c \"set -o pipefail && echo $'9 1 * * * find $APP_HOME/log -name \\'looker.log.????????\\' -mtime +7 -exec gzip \\'{}\\' \\; > /dev/null\\n\\\n29 1 * * * find $APP_HOME/log -name \\'looker.log.????????.gz\\' -mtime +28 -exec rm -f \\'{}\\' \\; > /dev/null'\\\n  | crontab -u looker -\"\n\n# ENV INTERNODE_PORT 1551\n# EXPOSE 1551\n\n# ENV QUEUE_PORT 61616\n# EXPOSE 61616\n\nENV PORT 9999\nEXPOSE 9999\n\nENV API_PORT 19999\nEXPOSE 19999\n\nCMD [\"/sbin/my_init\"]\n"
+}

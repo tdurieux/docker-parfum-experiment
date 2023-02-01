@@ -1,0 +1,44 @@
+{
+  "startTime": 1674219767766,
+  "endTime": 1674219769122,
+  "originalSmells": [
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 35,
+        "lineEnd": 35,
+        "columnStart": 1,
+        "columnEnd": 85
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 36,
+        "lineEnd": 42,
+        "columnStart": 1,
+        "columnEnd": 2
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 71,
+        "lineEnd": 71,
+        "columnStart": 1,
+        "columnEnd": 109
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 119,
+        "lineEnd": 119,
+        "columnStart": 1,
+        "columnEnd": 96
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "#\n# NOTE: THIS DOCKERFILE IS GENERATED VIA \"apply-templates.sh\"\n#\n# PLEASE DO NOT EDIT IT DIRECTLY.\n#\n\nFROM oraclelinux:7-slim\n\nRUN set -eux; \\\n\tgroupadd --system --gid 999 mysql; \\\n\tuseradd --system --uid 999 --gid 999 --home-dir /var/lib/mysql --no-create-home mysql\n\n# add gosu for easy step-down from root\n# https://github.com/tianon/gosu/releases\nENV GOSU_VERSION 1.14\nRUN set -eux; \\\n# TODO find a better userspace architecture detection method than querying the kernel\n\tarch=\"$(uname -m)\"; \\\n\tcase \"$arch\" in \\\n\t\taarch64) gosuArch='arm64' ;; \\\n\t\tx86_64) gosuArch='amd64' ;; \\\n\t\t*) echo >&2 \"error: unsupported architecture: '$arch'\"; exit 1 ;; \\\n\tesac; \\\n\tcurl -fL -o /usr/local/bin/gosu.asc \"https://github.com/tianon/gosu/releases/download/$GOSU_VERSION/gosu-$gosuArch.asc\"; \\\n\tcurl -fL -o /usr/local/bin/gosu \"https://github.com/tianon/gosu/releases/download/$GOSU_VERSION/gosu-$gosuArch\"; \\\n\texport GNUPGHOME=\"$(mktemp -d)\"; \\\n\tgpg --batch --keyserver hkps://keys.openpgp.org --recv-keys B42F6819007F00F88E364FD4036A9C25BF357DD4; \\\n\tgpg --batch --verify /usr/local/bin/gosu.asc /usr/local/bin/gosu; \\\n\trm -rf \"$GNUPGHOME\" /usr/local/bin/gosu.asc; \\\n\tchmod +x /usr/local/bin/gosu; \\\n\tgosu --version; \\\n\tgosu nobody true\n\nRUN set -eux; \\\n# https://github.com/docker-library/mysql/pull/871#issuecomment-1167954236\n\tyum install -y --setopt=skip_missing_names_on_install=False oracle-epel-release-el7; rm -rf /var/cache/yum \\\n\tyum install -y --setopt=skip_missing_names_on_install=False \\\n\t\tbzip2 \\\n\t\tgzip \\\n\t\topenssl \\\n\t\txz \\\n\t\tzstd \\\n\t; \\\n\tyum clean all\n\nRUN set -eux; \\\n# https://dev.mysql.com/doc/refman/8.0/en/checking-gpg-signature.html\n# gpg: key 3A79BD29: public key \"MySQL Release Engineering <mysql-build@oss.oracle.com>\" imported\n\tkey='859BE8D7C586F538430B19C2467B942D3A79BD29'; \\\n\texport GNUPGHOME=\"$(mktemp -d)\"; \\\n\tgpg --batch --keyserver keyserver.ubuntu.com --recv-keys \"$key\"; \\\n\tgpg --batch --export --armor \"$key\" > /etc/pki/rpm-gpg/RPM-GPG-KEY-mysql; \\\n\trm -rf \"$GNUPGHOME\"\n\nENV MYSQL_MAJOR 5.7\nENV MYSQL_VERSION 5.7.38-1.el7\n\nRUN set -eu; \\\n\t. /etc/os-release; \\\n\t{ \\\n\t\techo '[mysql5.7-server-minimal]'; \\\n\t\techo 'name=MySQL 5.7 Server Minimal'; \\\n\t\techo 'enabled=1'; \\\n\t\techo \"baseurl=https://repo.mysql.com/yum/mysql-5.7-community/docker/el/${VERSION_ID%%[.-]*}/\\$basearch/\"; \\\n\t\techo 'gpgcheck=1'; \\\n\t\techo 'gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-mysql'; \\\n# https://github.com/docker-library/mysql/pull/680#issuecomment-825930524\n\t\techo 'module_hotfixes=true'; \\\n\t} | tee /etc/yum.repos.d/mysql-community-minimal.repo\n\nRUN set -eux; \\\n\tyum install -y --setopt=skip_missing_names_on_install=False \"mysql-community-server-minimal-$MYSQL_VERSION\"; rm -rf /var/cache/yum \\\n\tyum clean all; \\\n# the \"socket\" value in the Oracle packages is set to \"/var/lib/mysql\" which isn't a great place for the socket (we want it in \"/var/run/mysqld\" instead)\n# https://github.com/docker-library/mysql/pull/680#issuecomment-636121520\n\tgrep -F 'socket=/var/lib/mysql/mysql.sock' /etc/my.cnf; \\\n\tsed -i 's!^socket=.*!socket=/var/run/mysqld/mysqld.sock!' /etc/my.cnf; \\\n\tgrep -F 'socket=/var/run/mysqld/mysqld.sock' /etc/my.cnf; \\\n\t{ echo '[client]'; echo 'socket=/var/run/mysqld/mysqld.sock'; } >> /etc/my.cnf; \\\n\n# make sure users dumping files in \"/etc/mysql/conf.d\" still works\n\t! grep -F '!includedir' /etc/my.cnf; \\\n\t{ echo; echo '!includedir /etc/mysql/conf.d/'; } >> /etc/my.cnf; \\\n\tmkdir -p /etc/mysql/conf.d; \\\n# 5.7 Debian-based images also included \"/etc/mysql/mysql.conf.d\" so let's include it too\n\t{ echo '!includedir /etc/mysql/mysql.conf.d/'; } >> /etc/my.cnf; \\\n\tmkdir -p /etc/mysql/mysql.conf.d; \\\n\n# comment out a few problematic configuration values\n\tfind /etc/my.cnf /etc/mysql/ -name '*.cnf' -print0 \\\n\t\t| xargs -0 grep -lZE '^(bind-address|log)' \\\n\t\t| xargs -rt -0 sed -Ei 's/^(bind-address|log)/#&/'; \\\n\n# ensure these directories exist and have useful permissions\n# the rpm package has different opinions on the mode of `/var/run/mysqld`, so this needs to be after install\n\tmkdir -p /var/lib/mysql /var/run/mysqld; \\\n\tchown mysql:mysql /var/lib/mysql /var/run/mysqld; \\\n# ensure that /var/run/mysqld (used for socket and lock files) is writable regardless of the UID our mysqld instance ends up having at runtime\n\tchmod 1777 /var/lib/mysql /var/run/mysqld; \\\n\n\tmkdir /docker-entrypoint-initdb.d; \\\n\n\tmysqld --version; \\\n\tmysql --version\n\nRUN set -eu; \\\n\t. /etc/os-release; \\\n\t{ \\\n\t\techo '[mysql-tools-community]'; \\\n\t\techo 'name=MySQL Tools Community'; \\\n\t\techo \"baseurl=https://repo.mysql.com/yum/mysql-tools-community/el/${VERSION_ID%%[.-]*}/\\$basearch/\"; \\\n\t\techo 'enabled=1'; \\\n\t\techo 'gpgcheck=1'; \\\n\t\techo 'gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-mysql'; \\\n# https://github.com/docker-library/mysql/pull/680#issuecomment-825930524\n\t\techo 'module_hotfixes=true'; \\\n\t} | tee /etc/yum.repos.d/mysql-community-tools.repo\nENV MYSQL_SHELL_VERSION 8.0.29-1.el7\nRUN set -eux; \\\n\tyum install -y --setopt=skip_missing_names_on_install=False \"mysql-shell-$MYSQL_SHELL_VERSION\"; rm -rf /var/cache/yum \\\n\tyum clean all; \\\n\n\tmysqlsh --version\n\nVOLUME /var/lib/mysql\n\nCOPY docker-entrypoint.sh /usr/local/bin/\nRUN ln -s usr/local/bin/docker-entrypoint.sh /entrypoint.sh # backwards compat\nENTRYPOINT [\"docker-entrypoint.sh\"]\n\nEXPOSE 3306 33060\nCMD [\"mysqld\"]\n"
+}

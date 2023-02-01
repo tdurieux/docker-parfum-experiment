@@ -1,0 +1,44 @@
+{
+  "startTime": 1674250508142,
+  "endTime": 1674250509161,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 12,
+        "lineEnd": 12,
+        "columnStart": 4,
+        "columnEnd": 122
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 9,
+        "lineEnd": 9,
+        "columnStart": 4,
+        "columnEnd": 54
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 9,
+        "lineEnd": 9,
+        "columnStart": 4,
+        "columnEnd": 54
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 9,
+        "lineEnd": 9,
+        "columnStart": 4,
+        "columnEnd": 54
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM rust:1.60.0 as base\n\n# Install the wasm32 rust build target\nRUN rustup target add wasm32-unknown-unknown\n\nWORKDIR /build-deps\n\n# Install curl\nRUN apt-get update && apt-get -y --no-install-recommends install curl clang llvm build-essential && rm -rf /var/lib/apt/lists/*;\n\n# Install wasm-opt\nRUN curl -f -L https://github.com/WebAssembly/binaryen/releases/download/version_101/binaryen-version_101-x86_64-linux.tar.gz | tar -xz \\\n    && chmod +x binaryen-version_101/bin/wasm-opt \\\n    && cp binaryen-version_101/bin/wasm-opt /usr/local/bin/ \\\n    && rm -rf binary-version_101\n\n# Install the toml-cli\nRUN cargo install -f toml-cli\n\n# Install wasm-snip\nRUN cargo install -f wasm-snip\n\n# Install wasm-bindgen\nRUN cargo install -f wasm-bindgen-cli\n\n{{#polywrap_linked_packages.length}}\nWORKDIR /linked-packages\n{{/polywrap_linked_packages.length}}\n\n{{#polywrap_linked_packages}}\nCOPY {{dir}} ./{{name}}\n{{/polywrap_linked_packages}}\n\nWORKDIR /project\n\n# Copy all manifest files\n{{#polywrap_manifests}}\nCOPY {{.}} .\n{{/polywrap_manifests}}\n\n# Copy all source files\n{{#include}}\nCOPY {{.}} {{.}}\n{{/include}}\n{{#polywrap_module}}\nCOPY {{dir}} {{dir}}\n{{/polywrap_module}}\n\n{{#polywrap_linked_packages.length}}\n# Link any local packages\n{{#polywrap_linked_packages}}\nRUN PACKAGE_NAME={{name}}; \\\n    {{#polywrap_module}}\n    toml set ./{{dir}}/Cargo.toml dependencies.$PACKAGE_NAME.path /linked-packages/$PACKAGE_NAME > ./{{dir}}/Cargo-local.toml && \\\n    rm -rf ./{{dir}}/Cargo.toml && \\\n    mv ./{{dir}}/Cargo-local.toml ./{{dir}}/Cargo.toml && \\\n    {{/polywrap_module}}\n    true\n{{/polywrap_linked_packages}}\n\n{{/polywrap_linked_packages.length}}\n\n{{#polywrap_module}}\n# Remove any Cargo.lock files\nRUN rm -rf {{dir}}/Cargo.lock\n\n# Ensure the Wasm module is configured to use imported memory\nENV RUSTFLAGS=\"-C link-arg=-z -C link-arg=stack-size=65536 -C link-arg=--import-memory\"\n\n# Ensure the module at {{dir}} has the crate-type = [\"cdylib\"]\nRUN toml set ./{{dir}}/Cargo.toml lib.crate-type [\"cdylib\"] > ./{{dir}}/Cargo-local.toml && \\\n    rm -rf ./{{dir}}/Cargo.toml && \\\n    mv ./{{dir}}/Cargo-local.toml ./{{dir}}/Cargo.toml && \\\n    true\n\n# Clean up artifacts left by the toml CLI program (\"[\"cdylib\"]\" -> [\"cdylib\"])\nRUN sed -i 's/\"\\[cdylib\\]\"/\\[\"cdylib\"\\]/g' ./{{dir}}/Cargo.toml\n\n# Ensure the package name = \"module\"\nRUN toml set ./{{dir}}/Cargo.toml package.name \"module\" > ./{{dir}}/Cargo-local.toml && \\\n    rm -rf ./{{dir}}/Cargo.toml && \\\n    mv ./{{dir}}/Cargo-local.toml ./{{dir}}/Cargo.toml && \\\n    true\n\n# Make the build directory\nRUN rm -rf ./build\nRUN mkdir ./build\n\n# Build the module at {{dir}}\nRUN cargo build --manifest-path ./{{dir}}/Cargo.toml \\\n    --target wasm32-unknown-unknown --release\n\n# Enable the \"WASM_INTERFACE_TYPES\" feature, which will remove the __wbindgen_throw import.\n# See: https://github.com/rustwasm/wasm-bindgen/blob/7f4663b70bd492278bf0e7bba4eeddb3d840c868/crates/cli-support/src/lib.rs#L397-L403\nENV WASM_INTERFACE_TYPES=1\n\n# Run wasm-bindgen over the module, replacing all placeholder __wbindgen_... imports\nRUN wasm-bindgen ./{{dir}}/target/wasm32-unknown-unknown/release/module.wasm --out-dir ./build --out-name bg_module.wasm\n\nRUN wasm-snip ./build/bg_module.wasm -o ./build/snipped_module.wasm && \\\n    rm -rf ./build/bg_module.wasm\n\n# Use wasm-opt to perform the \"asyncify\" post-processing step over all modules\nRUN wasm-opt --asyncify -Os ./build/snipped_module.wasm -o ./build/wrap.wasm && \\\n    rm -rf ./build/snipped_module.wasm\n{{/polywrap_module}}\n"
+}

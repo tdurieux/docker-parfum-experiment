@@ -1,0 +1,67 @@
+# https://lists.gnu.org/archive/html/qemu-devel/2017-10/msg03681.html
+RUN echo "$LOCALE.UTF-8 UTF-8" > /etc/locale.gen \
+	&& ([ "$LOCALE" == "en_US" ] || echo "en_US.UTF-8 UTF-8" >> /etc/locale.gen) \
+	&& locale-gen
+ENV LC_ALL en_US.UTF-8
+
+RUN rm -f /etc/localtime \
+	&& ln -s "/usr/share/zoneinfo/$TIMEZONE" /etc/localtime
+
+RUN echo "HOOKS=(base udev block filesystems)" >> /etc/mkinitcpio.conf
+
+RUN sed -i -e "s|\<root=/dev/mmcblk0p2\>|root=LABEL=PIROOT|g" /boot/cmdline.txt
+RUN sed -i -e "s|^/dev/mmcblk0p1\>|LABEL=PIBOOT|g" /etc/fstab
+
+RUN echo "Server = $REPO_URL/\$arch/\$repo" > /etc/pacman.d/mirrorlist \
+	&& pacman-key --init \
+	&& pacman-key --populate archlinuxarm
+
+RUN sed -i -e "s/^CheckSpace/#!!!CheckSpace/g" /etc/pacman.conf
+
+RUN pacman --noconfirm --ask=4 -Syy \
+	&& pacman --needed --noconfirm --ask=4 -S \
+		glibc \
+		pacman \
+	&& pacman-db-upgrade \
+	&& pacman --noconfirm --ask=4 -Syu \
+	&& pacman --needed --noconfirm --ask=4 -S \
+		p11-kit \
+		archlinux-keyring \
+		ca-certificates \
+		ca-certificates-mozilla \
+		ca-certificates-utils \
+	&& pacman --needed --noconfirm --ask=4 -S \
+		base \
+		base-devel \
+		vim \
+		colordiff \
+		tree \
+		wget \
+		unzip \
+		unrar \
+		htop \
+		nmap \
+		ethtool \
+		iftop \
+		iotop \
+		strace \
+		lsof \
+		git \
+		jshon \
+		rng-tools \
+		bc \
+		ccache \
+		screen \
+		rpi-eeprom \
+	&& case "$ARCH" in \
+		arm) \
+			case "$BOARD" in \
+				rpi2|rpi3|rpi4|zero2w) pacman --needed --noconfirm --ask=4 -S linux-rpi linux-rpi-headers;; \
+				*) pacman --needed --noconfirm --ask=4 -S linux-armv7-headers;; \
+			esac;; \
+		aarch64) pacman --needed --noconfirm --ask=4 -S linux-aarch64-headers;; \
+		*) echo "Unknown architecture: $ARCH"; exit 1;; \
+	esac \
+	&& rm -rf /var/cache/pacman/pkg/*
+
+# https://github.com/pikvm/pikvm/issues/190

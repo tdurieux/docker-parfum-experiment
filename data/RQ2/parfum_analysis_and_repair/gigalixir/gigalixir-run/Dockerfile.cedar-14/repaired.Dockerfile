@@ -1,0 +1,10 @@
+FROM us.gcr.io/gigalixir-152404/run@sha256:63ff90d82009ac7e9ed830c468d5a74043c87a3acf85907952072a0c2524fe55
+
+RUN cp /etc/ca-certificates.conf /etc/ca-certificates.conf.orig 
+RUN cat /etc/ca-certificates.conf.orig | sed 's|mozilla/DST_Root_CA_X3.crt|!mozilla//DST_Root_CA_X3.crt|g' > /etc/ca-certificates.conf 
+RUN dpkg-reconfigure -fnoninteractive ca-certificates
+
+COPY gigalixir_run/__init__.py /opt/gigalixir/gigalixir_run/__init__.py
+WORKDIR /opt/gigalixir
+RUN python setup.py install
+WORKDIR /app

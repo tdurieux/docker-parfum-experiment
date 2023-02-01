@@ -1,0 +1,17 @@
+FROM ubuntu:latest
+
+ARG TAILSCALE_VERSION=*
+ARG TAILSCALE_CHANNEL=stable
+
+RUN apt-get update \
+    && apt-get install --no-install-recommends -y gnupg curl \
+    && curl -fsSL https://pkgs.tailscale.com/${TAILSCALE_CHANNEL}/ubuntu/focal.gpg | apt-key add - \
+    && curl -fsSL https://pkgs.tailscale.com/${TAILSCALE_CHANNEL}/ubuntu/focal.list | tee /etc/apt/sources.list.d/tailscale.list \
+    && apt-get update \
+    && apt-get install --no-install-recommends -y ca-certificates tailscale=${TAILSCALE_VERSION} dnsutils \
+    && rm -rf /var/lib/apt/lists/*
+
+ADD integration_test/etc_embedded_derp/tls/server.crt /usr/local/share/ca-certificates/
+RUN chmod 644 /usr/local/share/ca-certificates/server.crt
+
+RUN update-ca-certificates

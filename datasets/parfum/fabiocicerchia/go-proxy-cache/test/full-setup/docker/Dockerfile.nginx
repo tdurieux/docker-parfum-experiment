@@ -1,0 +1,6 @@
+FROM opentracing/nginx-opentracing:edge
+
+COPY --chown=nginx:nginx nginx/nginx.conf /etc/nginx/nginx.conf
+COPY --chown=nginx:nginx nginx/conf.d/vhost.conf /etc/nginx/conf.d/vhost.conf
+COPY --chown=nginx:nginx certs /certs
+COPY --chown=nginx:nginx nginx/jaeger-nginx-config.json /etc/nginx/jaeger-nginx-config.json

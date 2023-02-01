@@ -1,0 +1,62 @@
+{
+  "startTime": 1674253577628,
+  "endTime": 1674253578453,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 55,
+        "lineEnd": 55,
+        "columnStart": 4,
+        "columnEnd": 98
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 57,
+        "lineEnd": 57,
+        "columnStart": 4,
+        "columnEnd": 98
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 66,
+        "lineEnd": 66,
+        "columnStart": 4,
+        "columnEnd": 73
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 41,
+        "lineEnd": 44,
+        "columnStart": 5,
+        "columnEnd": 15
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 56,
+        "lineEnd": 56,
+        "columnStart": 5,
+        "columnEnd": 55
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 58,
+        "lineEnd": 58,
+        "columnStart": 5,
+        "columnEnd": 55
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM python:3.9.0-slim-buster as common-base\n\nENV DJANGO_SETTINGS_MODULE config.settings.local\nENV PYTHONUNBUFFERED 1\nENV PYTHONDONTWRITEBYTECODE 1\n\nRUN apt-get update \\\n  # dependencies for building Python packages\n  && apt-get install -y --no-install-recommends build-essential \\\n  # psycopg2 dependencies\n  libpq-dev \\\n  # archive \n  libmagic1 p7zip-full \\\n  # Translations dependencies\n  gettext \\\n  # git from yara cloning\n  git \\\n  && apt-get clean \\\n  && rm -rf /var/lib/apt/lists/*\n\n# App running in /app\nRUN mkdir -p /app\n\nFROM common-base as base-builder\nRUN apt-get update \\\n  # ldap support\n  && apt-get install --no-install-recommends -y libsasl2-dev libldap2-dev libssl-dev \\\n  # utils\n  curl unzip \\\n  # requirement to compile yara \n  automake libtool make gcc pkg-config flex bison libssl-dev libjansson-dev libmagic-dev \\\n  # cleaning up unused files\n  && apt-get purge -y --auto-remove -o APT::AutoRemove::RecommendsImportant=false \\\n  && rm -rf /var/lib/apt/lists/*\n\n# Build yara and yara-python from sources\nFROM base-builder as yara-builder\nWORKDIR /tmp\nRUN git clone --recursive https://github.com/VirusTotal/yara.git\nWORKDIR /tmp/yara\nRUN ./bootstrap.sh \\\n  && ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" --enable-cuckoo \\\n  --enable-magic \\\n  --enable-dotnet \\\n  --with-crypto \\\n  && make \\\n  && make install \\\n  && echo \"Install yara-python...\"\nWORKDIR /tmp\nRUN git clone --recursive https://github.com/VirusTotal/yara-python\nWORKDIR /tmp/yara-python\nRUN python setup.py build\n\nFROM base-builder as go-builder\nWORKDIR /\nRUN curl -f https://dl.google.com/go/go1.15.2.linux-amd64.tar.gz --output go1.15.2.linux-amd64.tar.gz \\\n  && tar -C /usr/local -xzf go1.15.2.linux-amd64.tar.gz && rm go1.15.2.linux-amd64.tar.gz\nRUN curl -f https://dl.google.com/go/go1.15.2.linux-amd64.tar.gz --output go1.15.2.linux-amd64.tar.gz \\\n  && tar -C /usr/local -xzf go1.15.2.linux-amd64.tar.gz && rm go1.15.2.linux-amd64.tar.gz\nRUN git clone https://github.com/volatilityfoundation/dwarf2json.git\nWORKDIR /dwarf2json\nRUN /usr/local/go/bin/go build\n\nFROM common-base\nWORKDIR /\nCOPY ./requirements /requirements\nRUN pip install --no-cache-dir -r /requirements/local.txt --ignore-installed ruamel.yaml\n\nWORKDIR /app\nCOPY . .\nCOPY ./compose/local/django/entrypoint /entrypoint\nRUN sed -i 's/\\r$//g' /entrypoint\nRUN chmod +x /entrypoint\n\nCOPY ./compose/local/django/start /start\nRUN sed -i 's/\\r$//g' /start\nRUN chmod +x /start\n\nCOPY --from=go-builder /dwarf2json/dwarf2json /dwarf2json/dwarf2json\n# Install yara-python\nCOPY --from=yara-builder  /tmp/yara-python/ /tmp/\nWORKDIR /tmp\nRUN python setup.py install\n\nWORKDIR /app\nENTRYPOINT [\"/entrypoint\"]\n"
+}

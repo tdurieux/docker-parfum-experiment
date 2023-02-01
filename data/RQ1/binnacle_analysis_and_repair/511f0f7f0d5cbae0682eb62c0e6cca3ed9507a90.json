@@ -1,0 +1,35 @@
+{
+  "startTime": 1674250205001,
+  "endTime": 1674250205186,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 57,
+        "lineEnd": 57,
+        "columnStart": 19,
+        "columnEnd": 114
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 56,
+        "lineEnd": 56,
+        "columnStart": 4,
+        "columnEnd": 29
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 58,
+        "lineEnd": 58,
+        "columnStart": 4,
+        "columnEnd": 66
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM opensuse:latest\n\n# Make sure we do not spend time preparing the OS\n# while the installation sources are not mounted.\nRUN test -f /var/tmp/ABAP_Trial/install.sh\n\n# General information\nLABEL de.itsfullofstars.sapnwdocker.version=\"1.0.0-filak-sap-2\"\nLABEL de.itsfullofstars.sapnwdocker.vendor=\"Tobias Hofmann\"\nLABEL de.itsfullofstars.sapnwdocker.name=\"Docker for SAP NetWeaver 7.5x Developer Edition\"\nLABEL modified_by=\"Jakub Filak <jakub.filak@sap.com>\"\n\nLABEL flags_run=\"docker run -d -v /sys/fs/cgroup:/sys/fs/cgroup:ro --privileged -p 3200:3200 -p 3300:3300 -p 8000:8000 -p 44300:44300 -h vhcalnplci --name abaptrial\"\nLABEL installation_size=\"50\"\nLABEL thinpool_size=\"80\"\nLABEL base_size=\"65\"\nLABEL memory=\"4GB\"\n\nLABEL sid=\"npl\"\nLABEL dbpassword=\"S3cr3tP@ssw0rd\"\nLABEL sapusers=\"DDIC,SAP*,DEVELOPER\"\nLABEL sappassword=\"Down1oad\"\n\nENV container docker\n\n# Install dependencies and configure systemd to start only the services we\n# need!\nRUN zypper refresh -y; zypper dup -y; \\\nzypper --non-interactive install --replacefiles  systemd uuidd expect tcsh which iputils vim hostname tar net-tools iproute2 curl python-openssl python-pip; \\\nzypper clean; \\\n(cd /usr/lib/systemd/system/sysinit.target.wants/; for i in *; do [ $i == systemd-tmpfiles-setup.service ] || rm -f $i; done); \\\nrm -f /usr/lib/systemd/system/multi-user.target.wants/*;\\\nrm -f /etc/systemd/system/*.wants/*;\\\nrm -f /usr/lib/systemd/system/local-fs.target.wants/*; \\\nrm -f /usr/lib/systemd/system/sockets.target.wants/*udev*; \\\nrm -f /usr/lib/systemd/system/sockets.target.wants/*initctl*; \\\nrm -f /usr/lib/systemd/system/basic.target.wants/*;\\\nrm -f /usr/lib/systemd/system/anaconda.target.wants/*;\n\n# We need to start the container with cgroups:\n# $ docker run -v /sys/fs/cgroup:/sys/fs/cgroup:ro ...\nVOLUME [ \"/sys/fs/cgroup\" ]\n\n# Wrap the command startsap in a systemd service, so we do not need to log in\n# to the container and start it manually.\nCOPY nwabap.service /etc/systemd/system\n\n# Avoid the need to start uuidd manually.\n# BTW, uuidd is not needed for the installation.\nRUN systemctl enable nwabap uuidd\n\n# Copy trusted server certificates\nRUN mkdir -p /etc/pki/ca-trust/source/SAP\nCOPY files/certs/*.cer /etc/pki/ca-trust/source/SAP/\n\n# Install PyRFC\nRUN pip install --no-cache-dir --upgrade pip\nRUN cd /var/tmp && curl -f -LO https://github.com/SAP/PyRFC/raw/master/dist/pyrfc-1.9.93-cp27-cp27mu-linux_x86_64.whl && \\\n    pip install --no-cache-dir /var/tmp/pyrfc-1.9.93-cp27-cp27mu-linux_x86_64.whl && rm -f /var/tmp/pyrfc-1.9.93-cp27-cp27mu-linux_x86_64.whl\n\n# Install the utility for adding trusted certs over RFC\nCOPY utils/src/sap_add_trusted_server_cert /usr/local/bin\n\n# Add the installer expect\nCOPY utils/src/install.expect /usr/local/bin\n\nRUN mkdir /usr/local/bin/mock\nCOPY utils/src/mock/sysctl /usr/local/bin/mock\n\n# HOSTNAME is imbued into SAP stuff - so we must convince the installer\n# to use the well known HOSTNAME.\n# And we have to try really hard, so don't forget to start docker build with:\n#\n# -v $PWD/mock_hostname/ld.so.preload\n# -v $PWD/mock_hostname/libmockhostname.so:/usr/local/lib64/libmockhostname.so\n#\n# In case you want to know what the library does:\n#   https://github.com/jfilak/snippets/tree/master/mock_hostname\n#\n# Note: Password being used is S3cr3tP@ssw0rd\nRUN  echo $(grep $(uname -n) /etc/hosts | cut -f1 -d$'\\t')  \"vhcalnplci\" >> /etc/hosts; \\\n     export HOSTNAME=\"vhcalnplci\"; \\\n     echo $HOSTNAME > /etc/hostname; \\\n     echo \"export HOSTNAME=$HOSTNAME\" >> /etc/profile; \\\n     test $(hostname) == $HOSTNAME || exit 1; \\\n     export SAP_LOG_FILE=\"/var/tmp/abap_trial_install.log\"; \\\n     export PATH=/usr/local/bin/mock:$PATH; \\\n     (/usr/local/bin/install.expect --password \"S3cr3tP@ssw0rd\" --accept-SAP-developer-license || exit 1; \\\n       (export LD_LIBRARY_PATH=/sapmnt/NPL/exe/uc/linuxx86_64; \\\n        python /usr/local/bin/sap_add_trusted_server_cert -v /etc/pki/ca-trust/source/SAP/*.cer); \\\n      su - npladm -c \"stopsap ALL\")\n\n# Persist database\n# VOLUME [ \"/sybase/NPL/sapdata_1\" ]\n\n# Here it comes, start your containers without the need to attach/exec and\n# start SAP processes manually.\n#\n# Do not forget to bind mount cgroups:\n# -v /sys/fs/cgroup:/sys/fs/cgroup:ro\n#\nENTRYPOINT [\"/usr/lib/systemd/systemd\", \"--system\"]\n\n# Command sequence to use this Dockerfile\n\n# Before you start, please, configured docker to use devicemapper and set dm.basesize to 60G.\n#\n# $ docker daemon --storage-opt dm.basesize=60\n\n# To avoid the need to copy the installation files (10s of GBs), mount the directory with\n# installation files to /var/tmp/SAPTestDrive.\n\n# Finally, run the build command.\n#\n# $ docker build \\\n#    -v $PWD/NW751:/var/tmp/ABAP_Trial \\\n#    -v $PWD/mock_hostname/ld.so.preload:/etc/ld.so.preload \\\n#    -v $PWD/mock_hostname/libmockhostname.so:/usr/local/lib64/libmockhostname.so \\\n#    -t abaptrial:752 .\n#\n# When built, you can start it this way:\n#\n# $ docker run -d -v /sys/fs/cgroup:/sys/fs/cgroup:ro --privileged \\\n#   -p 3200:3200 -p 3300:3300 -p 8000:8000 -p 44300:44300 \\\n#   --hostname vhcalnplci --name abaptrial abaptrial:752\n#\n# Tips: you can leave out all the -p arguments and connect to SAP processes\n# using the internal IP of the container. Run the following command to get the IP:\n#\n# $ docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' abaptrial\n"
+}

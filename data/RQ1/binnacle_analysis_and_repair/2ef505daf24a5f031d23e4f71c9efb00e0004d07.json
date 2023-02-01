@@ -1,0 +1,53 @@
+{
+  "startTime": 1674242750802,
+  "endTime": 1674242750974,
+  "originalSmells": [
+    {
+      "rule": "wgetUseHttpsUrl",
+      "position": {
+        "lineStart": 36,
+        "lineEnd": 36,
+        "columnStart": 8,
+        "columnEnd": 96
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 27,
+        "lineEnd": 27,
+        "columnStart": 4,
+        "columnEnd": 114
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 52,
+        "lineEnd": 56,
+        "columnStart": 4,
+        "columnEnd": 11
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 27,
+        "lineEnd": 27,
+        "columnStart": 4,
+        "columnEnd": 114
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 52,
+        "lineEnd": 56,
+        "columnStart": 4,
+        "columnEnd": 11
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# pull base image\nFROM harbor.h2o.ai/opsh2oai/h2o-3/dev-r-3.4.1-jdk-8:10\n\n# maintainer details\nMAINTAINER h2oai \"h2o.ai\"\n\nARG VERSION\nRUN \\\n    if [ -z $VERSION ]; then \\\n        echo \"build-arg VERSION must be set\"; \\\n        exit 1; \\\n    fi\nARG PATH_PREFIX='.'\nARG PYTHON_VERSIONS='2.7,3.6'\nARG AWS_ACCESS_KEY\nARG AWS_SECRET_ACCESS_KEY\nARG HIVE_PACKAGE='hive'\n\nENV DISTRIBUTION='cdh' \\\n    HADOOP_HOME=/usr/lib/hadoop \\\n    HADOOP_CONF_DIR='/etc/hadoop/conf.pseudo' \\\n    MASTER='yarn-client' \\\n    HIVE_PACKAGE=${HIVE_PACKAGE:-hive} \\\n    HIVE_HOME=/usr/lib/${HIVE_PACKAGE}\n\nRUN \\\n    apt-get update && \\\n    DEBIAN_FRONTEND=noninteractive apt-get --no-install-recommends install -y apt-transport-https curl wget software-properties-common git && rm -rf /var/lib/apt/lists/*;\n\n# Prepare Cloudera repository\nRUN \\\n    case ${VERSION} in \\\n    5* \\\n        echo \"# Packages for Cloudera's Distribution of Hadoop, Version 5\\n\\\ndeb [arch=amd64] http://archive.cloudera.com/cdh5/ubuntu/trusty/amd64/cdh trusty-cdh${VERSION} contrib\\n\\\ndeb-src http://archive.cloudera.com/cdh5/ubuntu/trusty/amd64/cdh trusty-cdh${VERSION} contrib\\n\" > /etc/apt/sources.list.d/cloudera.list && \\\n        wget https://archive.cloudera.com/cdh5/ubuntu/trusty/amd64/cdh/archive.key -O archive.key \\\n        ;; \\\n    6.*) \\\n        echo \"# Packages for Cloudera's Distribution of Hadoop, Version ${VERSION}.0\\n\\\ndeb [arch=amd64] http://archive.cloudera.com/cdh6/${VERSION}.0/ubuntu1604/apt xenial-cdh${VERSION}.0 contrib\\n\" > /etc/apt/sources.list.d/cloudera.list && \\\n        wget https://archive.cloudera.com/cdh6/${VERSION}.0/ubuntu1604/apt/archive.key -O archive.key \\\n        ;; \\\n    *) \\\n        echo \"Version ${VERSION} not supported\" \\\n        ;; \\\n   esac\nCOPY ${PATH_PREFIX}/conf/cloudera.pref /etc/apt/preferences.d/cloudera.pref\n\nRUN apt-key add archive.key && \\\n    add-apt-repository -y ppa:deadsnakes && \\\n    apt-get update && \\\n    DEBIAN_FRONTEND=noninteractive apt-get --no-install-recommends install -y \\\n        mysql-server libmysql-java libmysqlclient-dev \\\n        hadoop-conf-pseudo python-pip python-dev python-virtualenv \\\n        sudo unzip html2text slapd ldap-utils libkrb5-dev \\\n        vim && rm -rf /var/lib/apt/lists/*;\n\n# Add Hive user\nRUN adduser --disabled-password --gecos \"\" hive\n\nARG H2O_BRANCH=master\nENV H2O_BRANCH=${H2O_BRANCH}\n\n# Set required env vars and install Pythons\nCOPY ${PATH_PREFIX}/scripts/sbin ${PATH_PREFIX}/../common/sbin scripts/install_python_version /usr/sbin/\nRUN \\\n  chmod 700 /usr/sbin/install_python_version && \\\n  sync && \\\n  /usr/sbin/install_python_version && \\\n  /usr/bin/activate_java_8\n\n# Copy hadoop configs\nCOPY ${PATH_PREFIX}/conf/ ${HADOOP_CONF_DIR}/\n\n# Initialize namenode\nRUN service hadoop-hdfs-namenode init\n\n# Copy scripts\nCOPY ${PATH_PREFIX}/../common/startup ${PATH_PREFIX}/scripts/startup /etc/startup/\n\n# Copy sudoers so we can start hadoop stuff without root access to container\nCOPY ${PATH_PREFIX}/../common/sudoers/jenkins /etc/sudoers.d/jenkins\nCOPY ${PATH_PREFIX}/../common/hive-scripts /opt/hive-scripts/\nCOPY ${PATH_PREFIX}/../common/ldap /opt/ldap-scripts/\n\n# Run this script on container run\nRUN chmod 700 /usr/sbin/startup.sh && \\\n    chown -R hive:hive /opt/hive-scripts && \\\n    chmod +x /usr/sbin/install_hive.sh && \\\n    chmod 700 /usr/sbin/install_ldap.sh && \\\n    chmod +x /usr/sbin/mysql_configure.sh && \\\n    chmod 700 /usr/sbin/mysql_configure.sh && \\\n    sync && \\\n    /usr/sbin/install_hive.sh && \\\n    if [ \"${VERSION}\" = \"6.2\" ] ; then echo \"Decrease mysql connection timeout.\" && /usr/sbin/mysql_configure.sh; fi && \\\n    ln -sf /usr/share/java/mysql-connector-java.jar /usr/lib/hive/lib/mysql-connector-java.jar\n\n# Copy hive configs\nCOPY ${PATH_PREFIX}/../common/conf-hive/ /etc/${HIVE_PACKAGE}/conf/\n\nRUN /usr/sbin/install_ldap.sh\n\n# Expose ports\n# H2O, Hadoop UI, Hive, LDAP\nEXPOSE 54321 8088 10000 389\n\n# Remove hadoop pids\nRUN rm -f tmp/*.pid /var/run/hadoop-*/*.pid\n"
+}

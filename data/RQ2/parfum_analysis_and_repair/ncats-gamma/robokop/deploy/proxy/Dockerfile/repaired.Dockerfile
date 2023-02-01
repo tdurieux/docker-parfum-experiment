@@ -1,0 +1,1 @@
+### nginx image that can be configured for robokop services via env variables.

@@ -1,0 +1,62 @@
+{
+  "startTime": 1674252386522,
+  "endTime": 1674252387711,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 6,
+        "lineEnd": 7,
+        "columnStart": 4,
+        "columnEnd": 59
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 8,
+        "lineEnd": 9,
+        "columnStart": 4,
+        "columnEnd": 59
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 40,
+        "lineEnd": 40,
+        "columnStart": 4,
+        "columnEnd": 88
+      }
+    },
+    {
+      "rule": "curlUseHttpsUrl",
+      "position": {
+        "lineStart": 40,
+        "lineEnd": 40,
+        "columnStart": 4,
+        "columnEnd": 88
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 11,
+        "lineEnd": 11,
+        "columnStart": 4,
+        "columnEnd": 54
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 20,
+        "lineEnd": 20,
+        "columnStart": 4,
+        "columnEnd": 55
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM opensuse/tumbleweed\n\nRUN zypper --gpg-auto-import-keys ref\nRUN zypper -n dup\nRUN zypper -n install java-1_8_0-openjdk-devel curl wget tar gzip\nENV JAVA_HOME=/usr/lib64/jvm/java-1.8.0-openjdk\nRUN curl -f https://shibboleth.net/downloads/identity-provider/3.4.7/shibboleth-identity-provider-3.4.7.tar.gz \\\n         --output shibboleth-identity-provider-3.4.7.tar.gz\nRUN curl -f https://repo1.maven.org/maven2/org/eclipse/jetty/jetty-distribution/9.4.10.v20180503/jetty-distribution-9.4.10.v20180503.tar.gz \\\n        --output jetty-distribution-9.4.10.v20180503.tar.gz\n\nRUN tar zxvf shibboleth-identity-provider-3.4.7.tar.gz && rm shibboleth-identity-provider-3.4.7.tar.gz\nRUN sed -i -e 's!idp.entityID = https://idp.example.org!idp.entityID = https://cephdashboard/idp!g' /shibboleth-identity-provider-3.4.7/conf/idp.properties\nRUN sed -i -e 's!idp.scope = example.org!idp.scope = ceph-dev-docker.org!g' /shibboleth-identity-provider-3.4.7/conf/idp.properties\nRUN cd shibboleth-identity-provider-3.4.7 && \\\n    ./bin/install.sh -Didp.target.dir=/opt/shibboleth-idp -Didp.host.name=localhost \\\n                     -Didp.src.dir=/shibboleth-identity-provider-3.4.7 -Didp.noprompt=true \\\n                     -Didp.merge.properties=conf/idp.properties -Didp.scope=ceph-dev-docker.org \\\n                     -Didp.keystore.password=password -Didp.sealer.password=password\n\nRUN tar zxvf jetty-distribution-9.4.10.v20180503.tar.gz && rm jetty-distribution-9.4.10.v20180503.tar.gz\nENV JETTY_HOME=/jetty-distribution-9.4.10.v20180503\nRUN keytool -noprompt -genkey -keystore \"$JETTY_HOME/etc/rc.keystore\" \\\n    -alias cephkeystore -keyalg RSA -keypass helloworld -storepass helloworld \\\n    -dname \"CN=shibboleth.ceph.com, OU=ID, O=ceph, L=Hello, S=Hello, C=GB\" \\\n    -storetype pkcs12\nADD files/jetty-ssl-context.xml $JETTY_HOME/etc/\nRUN sed -i -e 's/8080/9080/g' $JETTY_HOME/etc/jetty-http.xml\nRUN sed -i -e 's/8443/9443/g' $JETTY_HOME/etc/jetty.xml\nRUN sed -i -e 's/8443/9443/g' $JETTY_HOME/etc/jetty-ssl.xml\nRUN sed -i -e 's/--module=http/--module=https/g' $JETTY_HOME/start.ini\n\nRUN zypper -n install which psmisc\n\nRUN cp /opt/shibboleth-idp/war/idp.war $JETTY_HOME/webapps/\n\nRUN zypper -n install apache2 shibboleth-sp\nRUN sed -i -e 's/Listen 80/Listen 9080/g' /etc/apache2/listen.conf\nADD files/shibboleth2.xml /etc/shibboleth/\nRUN shibd && httpd && cd /opt/shibboleth-idp && \\\n    curl -f https://localhost:9080/Shibboleth.sso/Metadata --output metadata/sp-metadata.xml && \\\n    cp metadata/sp-metadata.xml metadata/cephdashboard-metadata.xml && \\\n    killall httpd && killall shibd\n\nRUN sed -i -e 's!localhost:8443!localhost:9443!g' /opt/shibboleth-idp/metadata/idp-metadata.xml\nRUN sed -i -e 's!localhost/!localhost:9443/!g' /opt/shibboleth-idp/metadata/idp-metadata.xml\nRUN sed -i -e 's/#idp.encryption.optional = false/idp.encryption.optional = true/g' /opt/shibboleth-idp/conf/idp.properties\nADD files/metadata-providers.xml /opt/shibboleth-idp/conf/\n\nRUN sed -i -e 's!<PolicyRequirementRule xsi:type=\"Requester\" value=\"https://sp.example.org\" />!<PolicyRequirementRule xsi:type=\"Requester\" value=\"https://cephdashboard.local/auth/saml2/metadata\" />!g' /opt/shibboleth-idp/conf/attribute-filter.xml\nRUN sed -i -e 's/name=\"urn:oid:0.9.2342.19200300.100.1.1\"/name=\"uid\"/g' /opt/shibboleth-idp/conf/attribute-resolver.xml\n\nADD files/ldap.properties /opt/shibboleth-idp/conf/\nADD files/start.sh /\nADD https://raw.githubusercontent.com/vishnubob/wait-for-it/master/wait-for-it.sh /\nRUN chmod +x /wait-for-it.sh\n\nENTRYPOINT [ \"/start.sh\" ]\n\n"
+}

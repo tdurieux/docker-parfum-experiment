@@ -1,0 +1,44 @@
+{
+  "startTime": 1674250768678,
+  "endTime": 1674250768938,
+  "originalSmells": [
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 34,
+        "lineEnd": 38,
+        "columnStart": 4,
+        "columnEnd": 19
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 49,
+        "lineEnd": 50,
+        "columnStart": 4,
+        "columnEnd": 49
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 66,
+        "lineEnd": 72,
+        "columnStart": 7,
+        "columnEnd": 92
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 17,
+        "lineEnd": 19,
+        "columnStart": 22,
+        "columnEnd": 51
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "################################################################################\n# base system\n################################################################################\nFROM ubuntu:18.04 as system\n\nENV USERNAME diUser\nRUN useradd -m $USERNAME && \\\n    echo \"$USERNAME:$USERNAME\" | chpasswd && \\\n    usermod --shell /bin/bash $USERNAME && \\\n    usermod -aG video,audio $USERNAME\n\n\n################################################################################\n# builder\n################################################################################\nFROM system as builder\n\nRUN apt-get update && apt-get install -y --no-install-recommends \\\n    libsdl1.2-dev libsdl-mixer1.2-dev libsdl-image1.2-dev byacc libgtk2.0-dev gcc-5 g++-5 \\\n    automake libtool unzip flex git ca-certificates && rm -rf /var/lib/apt/lists/*;\n\n### set default compilers\nRUN update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-5 100 && \\\n    update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-5 100 && \\\n    update-alternatives --install /usr/bin/cpp cpp-bin /usr/bin/cpp-5 30 && \\\n    update-alternatives --install /usr/bin/c++ c++ /usr/bin/g++ 30 && \\\n    update-alternatives --install /usr/bin/cc cc /usr/bin/gcc 30 && \\\n    cc --version && \\\n    c++ --version && \\\n    cpp --version\n\n### build ffmpeg\nRUN git clone --depth 1 -b v0.5.2 http://github.com/FFmpeg/FFmpeg/ && \\\n    cd FFmpeg && \\\n    ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" \\\n     --prefix=/usr/local/ \\\n\t--disable-ffmpeg \\\n\t--disable-ffplay \\\n\t--disable-ffserver && \\\n    make -j\"$(nproc)\" && \\\n    make install\n\n### ffmpeg built\n\n### build SDL_ffmpeg\nRUN git clone -b v0.9.0 http://github.com/lynxabraxas/SDL_ffmpeg && \\\n    cd /SDL_ffmpeg/trunk/ && \\\n    sed -i 's/CFLAGS=-I$INCDIR/CFLAGS=\"$CFLAGS -I$INCDIR\"/' configure  && \\\n    sed -i 's/LDFLAGS=-L$LIBDIR/LDFLAGS=\"$LDFLAGS -L$LIBDIR\"/' configure && \\\n    LDFLAGS=\"-lm\" \\\n    ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" \\\n    --prefix=/usr/local/ --static=yes && \\\n    make && \\\n    make install\n\n### SDL_ffmpeg built\n\nENV LD_LIBRARY_PATH \"${LD_LIBRARY_PATH}:/usr/local/lib\"\n\n## ctp2CD/ copy not done in builder stage such that stages before are compatible with travis docker build\n## not using `COPY  ./ /ctp2/` to avoid cache out-dating when ctp2CD/ is populated for 3rd stage\nCOPY autogen.sh configure.ac GNUmakefile.am Makefile   /ctp2/\nCOPY ctp2_code/  /ctp2/ctp2_code/\nCOPY ctp2_data/  /ctp2/ctp2_data/\n\nRUN cd /ctp2 \\\n    && ./autogen.sh \\\n    && CPPFLAGS=\"-I/usr/local/include/SDL/\" \\\n    CC=/usr/bin/gcc-5 \\\n    CXX=/usr/bin/g++-5 \\\n    CFLAGS=\"$CFLAGS -w -O3 -fuse-ld=gold\" \\\n    CXXFLAGS=\"$CXXFLAGS -fpermissive -w -O3 -fuse-ld=gold\" \\\n    LDFLAGS=\"$LDFLAGS -L/usr/local/lib\" \\\n    ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" \\\n\n\n\n\n\n    --prefix=/opt/ctp2 --bindir=/opt/ctp2/ctp2_program/ctp --enable-silent-rules \\\n    && make -j\"$(nproc)\" \\\n    && make -j\"$(nproc)\" install \\\n    && cp -r /ctp2/ctp2_data/ /opt/ctp2/ \\\n    && mkdir -p /opt/ctp2/ctp2_program/ctp/dll/map/ \\\n    && cp -v /ctp2/ctp2_code/mapgen/.libs/*.so /opt/ctp2/ctp2_program/ctp/dll/map/\n\n\n################################################################################\n# merge\n################################################################################\nFROM system as install\n\nRUN apt-get update && apt-get install -y --no-install-recommends \\\n    libsdl1.2debian libsdl-mixer1.2 libsdl-image1.2 libgtk2.0-0 && \\\n    apt-get clean && \\\n    rm -rf /var/lib/apt/lists/*\n\n## ctp2CD/ copy done in install stage such that stages before are compatible with travis docker build, results in one additional layer in the final DI (incr. DI download size)\nCOPY ctp2CD/ /opt/ctp2/\n## ctp2/ copy has to be after ctp2CD/ to overwrite with newer versions from civctp2\nCOPY --from=builder /opt/ctp2/ /opt/ctp2/\n\nCOPY --from=builder /usr/local/lib /usr/local/lib\nENV LD_LIBRARY_PATH \"${LD_LIBRARY_PATH}:/usr/local/lib\"\n\nUSER $USERNAME\n\nWORKDIR /opt/ctp2/ctp2_program/ctp/\n\nCMD [\"./ctp2\"]\n"
+}

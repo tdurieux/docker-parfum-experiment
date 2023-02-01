@@ -1,0 +1,28 @@
+FROM registry.access.redhat.com/ubi8/ubi-minimal
+
+RUN microdnf --nodocs install python38-devel mariadb-connector-c-devel tar gzip make \
+    postgresql-devel libffi-devel gcc gettext npm unzip which rust cargo findutils \
+    libjpeg-turbo-devel && \
+    microdnf --nodocs update && \
+    microdnf clean all
+
+
+ENV PATH /venv/bin:${PATH} \
+    VIRTUAL_ENV /venv
+
+# Create a virtualenv for the application dependencies
+RUN python3 -m venv /venv
+
+# because we get some errors from other packages which need newer versions
+RUN pip3 install --no-cache-dir --upgrade pip setuptools twine wheel
+
+# build and install the application
+COPY . /Kiwi/
+WORKDIR /Kiwi
+
+# install app dependencies so we can build the app later
+RUN pip3 install --no-cache-dir -r requirements/mariadb.txt -r requirements/postgres.txt
+
+RUN sed -i "s/tcms.settings.devel/tcms.settings.product/" manage.py
+RUN ./tests/check-build
+RUN pip3 install --no-cache-dir dist/kiwitcms-*.tar.gz

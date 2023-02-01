@@ -1,0 +1,62 @@
+{
+  "startTime": 1674251521132,
+  "endTime": 1674251522248,
+  "originalSmells": [
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 21,
+        "lineEnd": 21,
+        "columnStart": 4,
+        "columnEnd": 38
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 13,
+        "lineEnd": 13,
+        "columnStart": 4,
+        "columnEnd": 97
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 29,
+        "lineEnd": 29,
+        "columnStart": 4,
+        "columnEnd": 37
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 19,
+        "lineEnd": 19,
+        "columnStart": 7,
+        "columnEnd": 43
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 35,
+        "lineEnd": 35,
+        "columnStart": 7,
+        "columnEnd": 46
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 38,
+        "lineEnd": 38,
+        "columnStart": 7,
+        "columnEnd": 60
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM centos:7\n\n# Build ARGs\n# Forcing back to python 3.7 to be in sync with local dev env.\n# Can't run driver and worker on different Python versions when driver is local dev machine and not spark-submit container\n#ARG PYTHON_VERSION=3.8.10\nARG PYTHON_VERSION=3.7.13\nARG HADOOP_VERSION=3.3.1\nARG SPARK_VERSION=3.2.1\nARG PROJECT_LOG_DIR=/logs\n\nRUN yum -y update && yum clean all\n# sqlite-devel added as prerequisite for coverage python lib, used by pytest-cov plugin\nRUN yum -y install wget gcc openssl-devel bzip2-devel libffi libffi-devel zlib-devel sqlite-devel && rm -rf /var/cache/yum\nRUN yum -y groupinstall \"Development Tools\"\n\n# Building Python 3.x\nWORKDIR /usr/src\nRUN wget --quiet https://www.python.org/ftp/python/${PYTHON_VERSION}/Python-${PYTHON_VERSION}.tgz \\\n    && tar xzf Python-${PYTHON_VERSION}.tgz && rm Python-${PYTHON_VERSION}.tgz\nWORKDIR /usr/src/Python-${PYTHON_VERSION}\nRUN ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" --enable-optimizations \\\n    && make altinstall \\\n    && ln -sf /usr/local/bin/python`echo ${PYTHON_VERSION} | awk -F. '{short_version=$1 FS $2; print short_version}'` /usr/bin/python3 \\\n    && echo \"Installed $(python3 --version)\"\n# Ensure Python STDOUT gets sent to container logs\nENV PYTHONUNBUFFERED=1\n\n# Install Java 1.8.x\nRUN yum -y install java-1.8.0-openjdk && rm -rf /var/cache/yum\nENV JAVA_HOME=/usr/lib/jvm/jre\n\n# Install Hadoop and Spark\nWORKDIR /usr/local\nRUN wget --quiet https://archive.apache.org/dist/hadoop/common/hadoop-${HADOOP_VERSION}/hadoop-${HADOOP_VERSION}.tar.gz \\\n    && tar xzf hadoop-${HADOOP_VERSION}.tar.gz \\\n    && ln -sfn /usr/local/hadoop-${HADOOP_VERSION} /usr/local/hadoop \\\n    && wget --quiet https://archive.apache.org/dist/spark/spark-${SPARK_VERSION}/spark-${SPARK_VERSION}-bin-without-hadoop.tgz \\\n    && tar xzf spark-${SPARK_VERSION}-bin-without-hadoop.tgz \\\n    && ln -sfn /usr/local/spark-${SPARK_VERSION}-bin-without-hadoop /usr/local/spark \\\n    && echo \"Installed $(/usr/local/hadoop/bin/hadoop version)\" && rm hadoop-${HADOOP_VERSION}.tar.gz\nENV HADOOP_HOME=/usr/local/hadoop\nENV SPARK_HOME=/usr/local/spark\n# Cannot set ENV var = command-result, [i.e. doing: ENV SPARK_DIST_CLASSPATH=$(${HADOOP_HOME}/bin/hadoop classpath)], so interpolating the hadoop classpath the long way\nENV SPARK_DIST_CLASSPATH=\"$HADOOP_HOME/etc/hadoop/*:$HADOOP_HOME/share/hadoop/common/lib/*:$HADOOP_HOME/share/hadoop/common/*:$HADOOP_HOME/share/hadoop/hdfs/*:$HADOOP_HOME/share/hadoop/hdfs/lib/*:$HADOOP_HOME/share/hadoop/hdfs/*:$HADOOP_HOME/share/hadoop/yarn/lib/*:$HADOOP_HOME/share/hadoop/yarn/*:$HADOOP_HOME/share/hadoop/mapreduce/lib/*:$HADOOP_HOME/share/hadoop/mapreduce/*:$HADOOP_HOME/share/hadoop/tools/lib/*\"\nENV PATH=${SPARK_HOME}/bin:${HADOOP_HOME}/bin:${JAVA_HOME}/bin:${PATH};\nRUN echo \"Installed Spark\" && echo \"$(${SPARK_HOME}/bin/pyspark --version)\"\n\n# Config for starting up the Spark History Server\n# This allows a web entrypoint to see past job runs, and bring up their Spark UI\n# It allows job-run event logs to be monitored (e.g. at /tmp/spark-events)\n# NOTE: The specified eventlog dir and its path does not exist. It is assumed that a host dir will be bind-mounted at /project\n#       so that all containers that do the same can share the events.\nRUN cp $SPARK_HOME/conf/spark-defaults.conf.template $SPARK_HOME/conf/spark-defaults.conf \\\n    && sed -i \"s|^# spark.eventLog.dir.*$|spark.eventLog.dir                 file:///project/$PROJECT_LOG_DIR/spark-events|g\" $SPARK_HOME/conf/spark-defaults.conf \\\n    && sed -i '/spark.eventLog.enabled/s/^# //g' $SPARK_HOME/conf/spark-defaults.conf \\\n    && echo \"spark.history.fs.logDirectory      file:///project/$PROJECT_LOG_DIR/spark-events\" >> $SPARK_HOME/conf/spark-defaults.conf\n\n# Bake project dependencies into any spark-base -based container that will run Project python code (and require these dependencies)\n# NOTE: We must exclude any dependencies on the host machine installed in a virtual environment (assumed to be stored under ./.venv)\nWORKDIR /project\nCOPY requirements/ /project/requirements\nRUN rm -rf /project/.venv\nRUN python3 -m pip install -r requirements/requirements.txt\n\n# Allow for entrypoints and commands to infer that they are running relative to this directory\nWORKDIR ${SPARK_HOME}\n"
+}

@@ -1,0 +1,7 @@
+FROM elonh/opde:base
+LABEL maintainer="Elon Huang <elonhhuang@gmail.com>"
+
+ENV OPDE_MODE=SDK
+ARG SDK_PATH
+RUN echo "${SDK_PATH}"
+COPY --chown=opde:opde ${SDK_PATH}/ /openwrt/

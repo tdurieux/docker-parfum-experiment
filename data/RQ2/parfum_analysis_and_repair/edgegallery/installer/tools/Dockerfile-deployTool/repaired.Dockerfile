@@ -1,0 +1,18 @@
+FROM swr.cn-north-4.myhuaweicloud.com/eg-common/ubuntu:16.04
+
+RUN apt-get update && \
+    apt-get install --no-install-recommends -y wget openjdk-8-jdk && \
+    rm -rf /var/lib/apt/lists/*
+
+RUN wget https://www.openssl.org/source/openssl-1.0.2g.tar.gz -O - | tar -xz
+
+ENV JAVA_HOME /usr/lib/jvm/java-8-openjdk-amd64/
+ENV CERT_VALIDITY_IN_DAYS 365
+
+# Fix certificate issues
+RUN update-ca-certificates -f
+
+COPY generate-certs.sh /home
+
+#Certifcates will be copied at /certs; docker run -v host-path:/certs image-name
+CMD ["bash", "/home/generate-certs.sh"]

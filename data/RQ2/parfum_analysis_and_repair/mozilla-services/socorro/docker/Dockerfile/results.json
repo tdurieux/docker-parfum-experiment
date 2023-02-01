@@ -1,0 +1,26 @@
+{
+  "startTime": 1674252426314,
+  "endTime": 1674252427324,
+  "originalSmells": [
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 58,
+        "lineEnd": 58,
+        "columnStart": 33,
+        "columnEnd": 44
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 61,
+        "lineEnd": 61,
+        "columnStart": 4,
+        "columnEnd": 32
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# =========================================================================\n# Dokcer image with https://github.com/luser/rust-minidump\n# =========================================================================\n\n# https://hub.docker.com/_/rust/\nFROM rust:1.61.0-buster@sha256:4842c3d58bf2cce20c02aa9b0dd2a873ea4144b00d3d0c8ea61bd521f613fae3 as rustminidump\n\nARG groupid=10001\nARG userid=10001\n\nWORKDIR /app/\n\nRUN update-ca-certificates && \\\n    groupadd --gid $groupid app && \\\n    useradd -g app --uid $userid --shell /usr/sbin/nologin --create-home app && \\\n    chown app:app /app/\n\nUSER app\n\n# From: https://github.com/luser/rust-minidump\nARG MINIDUMPREV=d553a2cb6ddfc002c9d2056582269e083376dd1b\nARG MINIDUMPREVDATE=2022-05-02\n\nRUN cargo install --locked --root=/app/ \\\n    --git https://github.com/rust-minidump/rust-minidump.git \\\n    --rev $MINIDUMPREV \\\n    minidump-stackwalk\nRUN echo \"{\\\"sha\\\":\\\"$MINIDUMPREV\\\",\\\"date\\\":\\\"$MINIDUMPREVDATE\\\"}\" > /app/bin/minidump-stackwalk.version.json\nRUN ls -al /app/bin/\n\n\n# =========================================================================\n# Building app image\n# =========================================================================\n\n# https://hub.docker.com/_/python\nFROM python:3.9.12-slim@sha256:131e182eea705eaea14d915829e498da4dd77e0dd3882a04d8e0bffea9efeb69\n\n# Set up user and group\nARG groupid=10001\nARG userid=10001\n\nWORKDIR /app/\n\n# Install OS-level things\nCOPY docker/set_up_ubuntu.sh /tmp/set_up_ubuntu.sh\nRUN groupadd --gid $groupid app && \\\n    useradd -g app --uid $userid --shell /usr/sbin/nologin --create-home app && \\\n    chown app:app /app/ && \\\n    DEBIAN_FRONTEND=noninteractive /tmp/set_up_ubuntu.sh && \\\n    rm /tmp/set_up_ubuntu.sh\n\n# Copy stackwalk bits from rust-minidump minidump-stackwalker; this picks\n# up minidump-stackwalk.sha as well\nCOPY --from=rustminidump /app/bin/* /stackwalk-rust/\n\n# Install frontend JS deps\nCOPY ./webapp-django/package*.json /webapp-frontend-deps/\nRUN cd /webapp-frontend-deps/ && npm install && npm cache clean --force;\n\nCOPY --chown=app:app requirements.txt /app/\nRUN pip install --no-cache-dir -U 'pip==22.1.2' && \\\n    pip install --no-cache-dir -r requirements.txt && \\\n    pip check --disable-pip-version-check\n\nENV PYTHONUNBUFFERED=1 \\\n    PYTHONDONTWRITEBYTECODE=1 \\\n    PYTHONPATH=/app \\\n    LESS_BINARY=/webapp-frontend-deps/node_modules/.bin/lessc \\\n    UGLIFYJS_BINARY=/webapp-frontend-deps/node_modules/.bin/uglifyjs \\\n    CSSMIN_BINARY=/webapp-frontend-deps/node_modules/.bin/cssmin \\\n    NPM_ROOT_PATH=/webapp-frontend-deps/ \\\n    NODE_PATH=/webapp-frontend-deps/node_modules/\n\n# app should own everything under /app in the container\nUSER app\n\n# Copy everything over\nCOPY --chown=app:app . /app/\n\n# Run collectstatic in container which puts files in the default place for\n# static files\nRUN cd /app/webapp-django/ && SECRET_KEY=fakekey python manage.py collectstatic --noinput\n\n# Set entrypoint for this image. The entrypoint script takes a service\n# to run as the first argument. See the script for available arguments.\nENTRYPOINT [\"/app/bin/entrypoint.sh\"]\n"
+}

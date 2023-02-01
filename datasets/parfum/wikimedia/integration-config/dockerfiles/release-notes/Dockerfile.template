@@ -1,0 +1,26 @@
+FROM {{ "ci-buster" | image_tag }}
+
+ENV RELEASE_TOOLS_DIR=/srv/workspace/release
+
+{% set packages|replace('\n', ' ') -%}
+git
+python3-pygerrit2
+python3-requests
+python3-yaml
+php-cli
+php-curl
+jq
+curl
+{%- endset -%}
+
+RUN {{ packages | apt_install }} \
+    && install --owner=nobody --group=nogroup --directory /srv/workspace
+
+USER nobody
+RUN git clone https://gerrit.wikimedia.org/r/mediawiki/tools/release "${RELEASE_TOOLS_DIR}" \
+    && cd "${RELEASE_TOOLS_DIR}" \
+    && git tag -f 'docker-head' && git gc --prune=now
+
+WORKDIR /srv/workspace
+ENTRYPOINT ["/run.sh"]
+COPY run.sh /run.sh

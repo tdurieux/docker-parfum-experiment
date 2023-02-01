@@ -1,0 +1,1 @@
+# A test image to verify the flow of Aktion

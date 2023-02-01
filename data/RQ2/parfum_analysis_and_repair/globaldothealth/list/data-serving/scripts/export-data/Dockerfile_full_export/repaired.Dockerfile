@@ -1,0 +1,9 @@
+FROM alpine:3.14
+RUN apk update
+RUN apk add --no-cache bash aws-cli curl
+
+COPY common.sh .
+COPY full_export.sh .
+COPY data_dictionary.txt .
+COPY citation.txt .
+ENTRYPOINT ["./full_export.sh"]

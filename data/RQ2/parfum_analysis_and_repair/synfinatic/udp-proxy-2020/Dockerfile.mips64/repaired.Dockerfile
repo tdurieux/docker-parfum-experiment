@@ -1,0 +1,40 @@
+FROM ubuntu:20.04 as base
+ENV DEBIAN_FRONTEND=noninteractive
+
+# base applications
+RUN apt-get update && apt-get install --no-install-recommends -y tzdata wget make git flex bison && rm -rf /var/lib/apt/lists/*;
+
+# all our cross compile stuff
+RUN apt-get install --no-install-recommends -y \
+    linux-libc-dev-mips64-cross \
+    gccgo-mips64-linux-gnuabi64 \
+    cpp-10-mips64-linux-gnuabi64 \
+    golang-1.16-go \
+    gccgo-10-mips64-linux-gnuabi64 \
+    libgo16-mips64-cross \
+    libgcc-10-dev-mips64-cross \
+    libc6-mips64-cross \
+    libc6-dev-mips64-cross && rm -rf /var/lib/apt/lists/*;
+
+# don't actually use this... now
+RUN mkdir -p /build/bin && cd /build/bin \
+    ln -s /usr/bin/gccgo-mips64-linux-gnuabi64 gccgo \
+    ln -s /usr/bin/mips64-linux-gnuabi64-ar ar \
+    ln -s /usr/bin/mips64-linux-gnuabi64-gcc gcc
+
+# build libpcap
+FROM base as libpcap
+ENV LIBPCAP_VERSION=1.9.1
+WORKDIR /build
+RUN wget -qO - https://www.tcpdump.org/release/libpcap-${LIBPCAP_VERSION}.tar.gz | tar zxf - && \
+    cd libpcap-${LIBPCAP_VERSION} && \
+    CC=mips64-linux-gnuabi64-gcc BUILD_CC=gcc AR=mips64-linux-gnuabi64-gcc-ar  RANLIB=mips64-linux-gnuabi64-ranlib \
+        ./configure --build i686-pc-linux-gnu --host mips64-linux-gnuapbi64 --prefix=/usr/mips64-linux-gnuabi64 && make install
+
+# build our app
+FROM libpcap
+WORKDIR /build/udp-proxy-2020
+ENV GOROOT=/usr/lib/go-1.16
+ENV PATH=/build/bin:${GOROOT}/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+ENTRYPOINT make .linux-mips64

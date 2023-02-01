@@ -1,0 +1,53 @@
+{
+  "startTime": 1674241781287,
+  "endTime": 1674241781584,
+  "originalSmells": [
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 47,
+        "lineEnd": 47,
+        "columnStart": 4,
+        "columnEnd": 31
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 56,
+        "lineEnd": 56,
+        "columnStart": 4,
+        "columnEnd": 33
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 62,
+        "lineEnd": 63,
+        "columnStart": 4,
+        "columnEnd": 75
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 65,
+        "lineEnd": 65,
+        "columnStart": 4,
+        "columnEnd": 49
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 87,
+        "lineEnd": 87,
+        "columnStart": 4,
+        "columnEnd": 26
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM docker.io/centos:7.3.1611\n\nARG SALT_VERSION\nARG SALT_PATH\nARG PYZMQ_VERSION\nARG PYTHON_APT_VERSION\nARG TRACE\nARG OS\nARG OS_TYPE\n\nLABEL maintainer=Hortonworks\n\nENV container docker\nENV TERM linux\nENV PS1 \"[\\u@cloudbreak \\W]\\$ \"\n\nENV SYSTEMCTL_REPLACEMENT=https://raw.githubusercontent.com/hortonworks/docker-systemctl-replacement/3a885817b377f0307bd03d82323fa5749136de8f/files/docker/systemctl.py\n\n# Fix the default shell from dash to bash\n# Do it one line. Otherwise, after doing rm, docker build cannot find a shell to\n# run more RUN commands :)\nRUN bash -c 'rm /bin/sh; ln -s /bin/bash /bin/sh'\nRUN chsh -s /bin/bash\n\n#################################################################################\n# Systemd stuff\n#################################################################################\nRUN (cd /lib/systemd/system/sysinit.target.wants/; for i in *; do [ $i == systemd-tmpfiles-setup.service ] || rm -f $i; done); \\\n    rm -f /lib/systemd/system/multi-user.target.wants/*;\\\n    rm -f /etc/systemd/system/*.wants/*;\\\n    rm -f /lib/systemd/system/local-fs.target.wants/*; \\\n    rm -f /lib/systemd/system/sockets.target.wants/*udev*; \\\n    rm -f /lib/systemd/system/sockets.target.wants/*initctl*; \\\n    rm -f /lib/systemd/system/basic.target.wants/*;\\\n    rm -f /lib/systemd/system/anaconda.target.wants/*;\n#################################################################################\n\n#################################################################################\n# Setup yum repos\n#################################################################################\n\n# XXX: Disabled for public build\n# Disable fast-mirrors plugin and force everything through our internal repo\n#RUN sed -i -e 's/^enabled=1/enabled=0/g' /etc/yum/pluginconf.d/fastestmirror.conf\n\n# Install epel repo files. epel-release has to go first before some of the other\n# packages can be installed\nRUN yum -y install epel-release && rm -rf /var/cache/yum\n\n# XXX: Disabled for public build\n# BUG-68936 Fixing the image to use the HWX internal repos to avoid massive\n# downloads due to cache-misses on the internal caching-proxy.\n#RUN rm -rf /etc/yum.repos.d/*\n#COPY files/hwx-internal.repo /etc/yum.repos.d/\n\n# Give preference to our repos\nRUN yum -y install yum-priorities && rm -rf /var/cache/yum\n#################################################################################\n\n#################################################################################\n# Install basic OS packages + GCC (to build bootstrap)\n#################################################################################\nRUN yum install -y yum-utils yum-plugin-ovl tar git curl bind-utils \\\n                   unzip wget gcc net-tools sudo zip lsof strace redhat-lsb && rm -rf /var/cache/yum\n\nRUN yum install -y openssh-server openssh-clients && rm -rf /var/cache/yum\nRUN systemctl enable sshd\n\nRUN mkdir -p /tmp/image-build-space/image-prep-scripts\n\n#################################################################################\n# Setup access\n#################################################################################\nRUN mkdir -p /tmp/image-build-space/access\n\nCOPY docker/centos7.3/files/access/* /tmp/image-build-space/access/\n\nCOPY docker/centos7.3/files/pam/* /tmp/image-build-space/access/\n\nCOPY docker/centos7.3/files/image-prep-scripts/setup-access.sh /tmp/image-build-space/image-prep-scripts\nRUN /tmp/image-build-space/image-prep-scripts/setup-access.sh\n\nCOPY docker/centos7.3/files/image-prep-scripts/hwx-internal-setup.sh /tmp/image-build-space/image-prep-scripts\nRUN /tmp/image-build-space/image-prep-scripts/hwx-internal-setup.sh\n#################################################################################\n\n# install iproute explicitly on centos7, it's present by default in centos6, debian7\nRUN yum -y install iproute && rm -rf /var/cache/yum\n\n#################################################################################\n# Setup access\n#################################################################################\nRUN mkdir -p /bootstrap /bootstrap/logs\n\nCOPY docker/centos7.3/files/image-prep-scripts/privileged-start-services-script.c /tmp/image-build-space/image-prep-scripts/\n\nRUN gcc /tmp/image-build-space/image-prep-scripts/privileged-start-services-script.c -D COMMAND=\\\"/bootstrap/start-services-script.sh\\\" -o /bootstrap/start-systemd\nRUN chgrp -v nobody /bootstrap/start-systemd\nRUN chmod 4050 /bootstrap/start-systemd\n\nADD docker/centos7.3/files/image-runtime-scripts/start-services-script.sh /bootstrap/\n\n#################################################################################\n# Operating system specific stuff\n#################################################################################\nCOPY docker/centos7.3/files/base-centos7.3-os-specific-build.sh /tmp/image-build-space/\nRUN /tmp/image-build-space/base-centos7.3-os-specific-build.sh\n\n# Get rid \"Unable to get valid context ..\" message\nCOPY docker/centos7.3/files/autorelabel /.autorelabel\n\n#################################################################################\n# Install Cloudbreak dependencies\n#################################################################################\n# Use docker-systemctl-replacement during SaltStack provisioning:\n# `systemctl start xyz` commands are executed during highstate, which is not supported\n# by systemd. docker-systemctl-replacement overcomes this limitation.\n\n# Need to explicitly call yum update before linking systemctl-replacement to avoid\n# the later update (executed through Salt recipe) overwriting our fix.\nRUN yum -y update\nADD ${SYSTEMCTL_REPLACEMENT} /usr/bin\nRUN chmod 755 /usr/bin/$(basename ${SYSTEMCTL_REPLACEMENT}) && \\\n    mv /usr/bin/systemctl /usr/bin/systemctl.orig && \\\n    ln -sf /usr/bin/systemctl.py /usr/bin/systemctl\n\nCOPY /saltstack /tmp/saltstack\nCOPY /repos /tmp/repos\nCOPY /scripts/salt-install.sh /tmp/saltstack/\nCOPY /scripts/salt-setup.sh /tmp/saltstack/\nCOPY /scripts/salt_requirements.txt /tmp/salt_requirements.txt\n\n# Workaround problem caused by sytemd not being pid-1:\n# Force the minions to use systemd on this host\nRUN echo $'\\n\\\nproviders:\\n\\\n  service: systemd\\n'\\\n>>  /tmp/saltstack/config/minion\n\nCOPY docker/common/_grains/ /tmp/saltstack/base/salt/_grains/\nCOPY docker/common/_grains/ /tmp/saltstack/hortonworks/salt/_grains/\n\nRUN /tmp/saltstack/salt-install.sh centos ${SALT_REPO}\nRUN /tmp/saltstack/salt-setup.sh hortonworks\nRUN rm -f /etc/salt/minion_id /etc/salt/pki/minion/minion.pem /etc/salt/pki/minion/minion.pub\n\n# Fix issue of `systemctl start xyz` yields 'Failed to get D-Bus connection: Operation not permitted' error\nCOPY docker/centos7.3/files/workaround_systemd_start.service /usr/lib/systemd/system/workaround_systemd_start.service\nRUN systemctl enable workaround_systemd_start\n\n# restore systemctl to system default\nRUN ln -sf /usr/bin/systemctl.orig /usr/bin/systemctl\n#################################################################################\n\nVOLUME [ \"/sys/fs/cgroup\" ]\n\nCMD [\"/bootstrap/start-systemd\"]\n"
+}

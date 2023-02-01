@@ -1,0 +1,26 @@
+{
+  "startTime": 1674252332595,
+  "endTime": 1674252333427,
+  "originalSmells": [
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 5,
+        "lineEnd": 5,
+        "columnStart": 4,
+        "columnEnd": 35
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 48,
+        "lineEnd": 48,
+        "columnStart": 4,
+        "columnEnd": 35
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM golang:1.18-alpine3.15 as blobber_build\n\nRUN apk add --update --no-cache build-base linux-headers git cmake bash perl grep\n\n# Install Herumi's cryptography\nRUN apk add --no-cache gmp gmp-dev openssl-dev && \\\n    cd /tmp && \\\n    wget -O - https://github.com/herumi/mcl/archive/master.tar.gz | tar xz && \\\n    wget -O - https://github.com/herumi/bls/archive/master.tar.gz | tar xz && \\\n    mv mcl* mcl && \\\n    mv bls* bls && \\\n    make -C mcl -j $(nproc) lib/libmclbn256.so install && \\\n    cp mcl/lib/libmclbn256.so /usr/local/lib && \\\n    make MCL_DIR=../mcl -C bls -j $(nproc) install && \\\n    rm -R /tmp/mcl && \\\n    rm -R /tmp/bls\n\n#TODO: create shared image and remove code duplicates!\nRUN git clone https://github.com/herumi/bls /tmp/bls && \\\n    cd /tmp/bls && \\\n    git submodule init && \\\n    git submodule update && \\\n    make -j $(nproc) install && \\\n    cd - && \\\n    rm -R /tmp/bls\n\nENV SRC_DIR=/blobber\nENV GO111MODULE=on\n\n# Download the dependencies:\n# Will be cached if we don't change mod/sum files\nCOPY ./code/go/0chain.net/core/go.mod           ./code/go/0chain.net/core/go.sum           $SRC_DIR/go/0chain.net/core/\nCOPY ./code/go/0chain.net/blobbercore/go.mod    ./code/go/0chain.net/blobbercore/go.sum    $SRC_DIR/go/0chain.net/blobbercore/\nCOPY ./code/go/0chain.net/blobber/go.mod        ./code/go/0chain.net/blobber/go.sum        $SRC_DIR/go/0chain.net/blobber/\nCOPY ./code/go/0chain.net/conductor/go.mod      ./code/go/0chain.net/conductor/go.sum      $SRC_DIR/go/0chain.net/conductor/\n\nWORKDIR $SRC_DIR/go/0chain.net/blobber\nRUN go mod download\n\n#Add the source code\nADD ./code/go/0chain.net $SRC_DIR/go/0chain.net\n\nARG GIT_COMMIT\nENV GIT_COMMIT=$GIT_COMMIT\nRUN go build -v -tags \"bn256 development\" -ldflags \"-X 0chain.net/core/build.BuildTag=$GIT_COMMIT\"\n\n# Copy the build artifact into a minimal runtime image:\nFROM alpine:3.15\nRUN apk add --no-cache gmp gmp-dev openssl-dev\nCOPY --from=blobber_build  /usr/local/lib/libmcl*.so \\\n                        /usr/local/lib/libbls*.so \\\n                        /usr/local/lib/\nENV APP_DIR=/blobber\nWORKDIR $APP_DIR\nCOPY --from=blobber_build $APP_DIR/go/0chain.net/blobber/blobber $APP_DIR/bin/blobber\n"
+}

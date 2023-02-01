@@ -1,0 +1,22 @@
+# Ignore everything
+**
+
+# Except
+# Start with a ./??
+!update_butler/
+!ml_models/
+!database/
+!helpers/
+!data_analysis/
+!rtd_crawler/
+!fancy_print_tcp.py
+
+# Ignore unnecessary files inside allowed directories
+# This should go after the allowed directories
+**/*~
+**/__pycache__/
+**/*.log
+**/.DS_Store
+**/Thumbs.db
+
+# Node stuff

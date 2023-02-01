@@ -1,0 +1,35 @@
+{
+  "startTime": 1674248265890,
+  "endTime": 1674248267063,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 16,
+        "lineEnd": 20,
+        "columnStart": 4,
+        "columnEnd": 37
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 16,
+        "lineEnd": 20,
+        "columnStart": 4,
+        "columnEnd": 37
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 16,
+        "lineEnd": 20,
+        "columnStart": 4,
+        "columnEnd": 37
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM ubuntu:xenial\nLABEL Description=\"MSM on FSL6 on ubuntu 16.04\"\n\n# install prerequsites\n# - build tools ... FSL6 on ubuntu is gcc 4.8\n#\t$ objdump -s --section .comment  /usr/local/fsl/bin/fabber\n#\tfabber:     file format elf64-x86-64\n#\n#\tContents of section .comment:\n#\t 0000 4743433a 2028474e 55292034 2e382e35  GCC: (GNU) 4.8.5\n#\t 0010 20323031 35303632 33202852 65642048   20150623 (Red H\n#\t 0020 61742034 2e382e35 2d333629 00        at 4.8.5-36).  \n# - FSL 6.0.0 needs \"dc\"\n# - FSL latest\n\nRUN apt-get update && apt-get install --no-install-recommends -y \\\n    gcc-4.8 g++-4.8 \\\n    wget git cmake unzip bc python python-contextlib2 \\\n    libtbb-dev libboost-dev zlib1g-dev libxt-dev libexpat1-dev \\\n    libgstreamer1.0-dev libqt4-dev dc && rm -rf /var/lib/apt/lists/*;\n\n# install FSL to this prefix ... don't set FSLDIR as an ENV, it'll appear in\n# the image we make and break stuff downstream\nENV fsl_prefix=/usr/local/fsl\n\n# -E is not suported on ubuntu (rhel only), so we make a quick n dirty\n# /etc/fsl/fsl.sh\nRUN mkdir -p /usr/local/src/fsl\nCOPY fslinstaller.py /usr/local/src/fsl\nRUN cd /usr/local/src/fsl \\ \n    && python fslinstaller.py -V 6.0.2 -q -d $fsl_prefix \\\n    && mkdir -p /etc/fsl \\\n    && echo \"FSLDIR=$fsl_prefix; . \\${FSLDIR}/etc/fslconf/fsl.sh; PATH=\\${FSLDIR}/bin:\\${PATH}; export FSLDIR PATH\" > /etc/fsl/fsl.sh\n\n# set FSL up for build:\n# \t- ${FSLDIR}/etc/fslconf/fsl.sh needs to be patched to enable\n# \t  FSLCONFDIR, FSLMACHTYPE, and the associated export\nCOPY fsl.sh.patch /usr/local/src/fsl\nRUN cd $fsl_prefix/etc/fslconf \\\n    && patch < /usr/local/src/fsl/fsl.sh.patch\n\n# switch the default compiler to 4.8 to match the fsl binary\nRUN update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-4.8 50 \\\n    && update-alternatives --set gcc /usr/bin/gcc-4.8 \\\n    && update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-4.8 50 \\\n    && update-alternatives --set g++ /usr/bin/g++-4.8\n\n# now FSLMACHTYPE will be reported as gnu_64-gcc4.8 ... this is not a\n# supported configuration (see the set of configs in /usr/local/fsl/config)\n# so we take a copy of the closest one (linux_64-gcc4.8)\nRUN cp -r $fsl_prefix/config/linux_64-gcc4.8 $fsl_prefix/config/gnu_64-gcc4.8\n\n# FSL6 openblas needs libgfortran.so.3, but this is not linked as\n# libgfortran.so ... fix this\nRUN ln -s $fsl_prefix/lib/libgfortran.so.3 $fsl_prefix/lib/libgfortran.so\n\n# download and set up MSM\n# the struct-pipeline-build branch has a fix to the final MSM makefile\nRUN cd && cd \\\n    && cd /usr/local/src \\\n    && . /etc/fsl/fsl.sh \\\n    && export FSLDEVDIR=$FSLDIR \\\n    && git clone https://github.com/jcupitt/MSM_HOCR.git \\\n    && cd MSM_HOCR \\\n    && git checkout struct-pipeline-build \\\n    && cp -r extras/ELC1.04/ELC $FSLDEVDIR/extras/include/ELC \\\n    && cp -r $FSLDIR/src/FastPDlib $FSLDEVDIR/extras/src\n\n# build MSM, and replace the FSL msm with our own\nRUN cd /usr/local/src \\\n    && . /etc/fsl/fsl.sh \\\n    && export FSLDEVDIR=$FSLDIR \\\n    && cd MSM_HOCR \\\n    && cd src/newmesh \\\n    && make  \\\n    && make install \\\n    && cd ../DiscreteOpt \\\n    && make  \\\n    && make install \\\n    && cd $FSLDEVDIR/extras/src/FastPDlib/ \\\n    && make \\\n    && make install \\\n    && cd /usr/local/src/MSM_HOCR/src/MSMRegLib/ \\\n    && make \\\n    && make install \\\n    && cd ../MSM \\\n    && make \\\n    && make install \\\n    && cp msm $FSLDIR/bin \\\n    && cp msmapplywarp $FSLDIR/bin \\\n    && cp msmresample $FSLDIR/bin\n\nWORKDIR /data\n\n"
+}

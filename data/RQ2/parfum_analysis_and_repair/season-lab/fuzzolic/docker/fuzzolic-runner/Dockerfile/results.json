@@ -1,0 +1,35 @@
+{
+  "startTime": 1674252295819,
+  "endTime": 1674252296605,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 35,
+        "lineEnd": 35,
+        "columnStart": 4,
+        "columnEnd": 33
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 43,
+        "lineEnd": 43,
+        "columnStart": 17,
+        "columnEnd": 84
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 7,
+        "lineEnd": 26,
+        "columnStart": 1,
+        "columnEnd": 21
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM ubuntu:18.04\n\nRUN sed -i -- 's/# deb-src/deb-src/g' /etc/apt/sources.list && cat /etc/apt/sources.list\n\n# dependencies\nRUN apt update -y && \\\n\tapt-get build-dep -y qemu-user && \\\n\tapt install --no-install-recommends -y \\\n\tllvm-8 clang-8 nano \\\n\tqemu-user git libglib2.0-dev libfdt-dev \\\n\tlibpixman-1-dev zlib1g-dev libcapstone-dev \\\n\tstrace cmake python3 libprotobuf10 \\\n\tlibibverbs-dev libjpeg62-dev \\\n\tlibpng16-16 libjbig-dev \\\n\tbuild-essential libtool-bin python3-dev \\\n\tautomake flex bison libglib2.0-dev \\\n\tlibpixman-1-dev clang \\\n\tpython3-setuptools llvm wget \\\n\tllvm-dev g++ g++-multilib python \\\n\tpython-pip lsb-release gcc-4.8 g++-4.8 \\\n\tllvm-3.9 cmake libc6 libstdc++6 \\\n\tlinux-libc-dev gcc-multilib \\\n\tapt-transport-https libtool \\\n        libtool-bin wget \\\n        automake autoconf \\\n        bison git gdb dumb-init valgrind ninja-build \\\n\ttime xxd python3-pip && \\\n\tapt clean && \\\n\trm -rf /var/lib/apt/lists/*\n\nRUN groupadd --gid 1008 ubuntu \\\n    && useradd --uid 1008 --gid ubuntu --shell /bin/bash --create-home ubuntu\n\nUSER ubuntu\n\nRUN pip install --no-cache-dir --user virtualenv\nRUN python3 -m pip install --user pytest\n\nCOPY --chown=1008:1008 . /home/ubuntu/fuzzolic\n\nWORKDIR /home/ubuntu/fuzzolic\n\n# Build QEMU tracer\nRUN cd tracer && ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" --prefix=`pwd`/../build --target-list=x86_64-linux-user && make -j `nproc`\n\n# Build custom Z3\nRUN cd solver/fuzzy-sat/fuzzolic-z3 && mkdir build && cd build && cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=`pwd`/dist && make -j `nproc` && make install\n\n# Set environment vars for Z3\nENV C_INCLUDE_PATH=/home/ubuntu/fuzzolic/solver/fuzzy-sat/fuzzolic-z3/build/dist/include\nENV LIBRARY_PATH=/home/ubuntu/fuzzolic/solver/fuzzy-sat/fuzzolic-z3/build/dist/lib\nENV LD_LIBRARY_PATH=/home/ubuntu/fuzzolic/solver/fuzzy-sat/fuzzolic-z3/build/dist/lib\nENV BASH_ENV=/home/ubuntu/.bashrc\nRUN echo \"export C_INCLUDE_PATH=/home/ubuntu/fuzzolic/solver/fuzzy-sat/fuzzolic-z3/build/dist/include\" >> $BASH_ENV\nRUN echo \"export LIBRARY_PATH=/home/ubuntu/fuzzolic/solver/fuzzy-sat/fuzzolic-z3/build/dist/lib\" >> $BASH_ENV\nRUN echo \"export LD_LIBRARY_PATH=/home/ubuntu/fuzzolic/solver/fuzzy-sat/fuzzolic-z3/build/dist/lib\" >> $BASH_ENV\n\n# Create fuzzy-sat-CLI folder\nRUN cd solver/fuzzy-sat && \\\n\tgit rev-parse HEAD > /tmp/revision && \\\n\tgit checkout master && \\\n\tgit submodule update && \\\n\tcd ../.. && \\\n\tcp -r solver/fuzzy-sat solver/fuzzy-sat-cli && \\\n\trm solver/fuzzy-sat-cli/.git && \\\n\tcd solver/fuzzy-sat && \\\n\tgit checkout `cat /tmp/revision` && \\\n\tgit submodule update\n\n# Build fuzzy-sat-CLI\nRUN cd solver/fuzzy-sat-cli && make -j `nproc`\n\n# Build fuzzy-sat\nRUN cd solver/fuzzy-sat && make -j `nproc`\n\n# Build solver frontend\nRUN cd solver && cmake . && make -j `nproc`\n\n# Build AFL++\nRUN cd utils && git clone https://github.com/AFLplusplus/AFLplusplus.git && \\\n\tcd AFLplusplus && git checkout 2dac4e7 && \\\n\tgit apply ../afl-showmap.c.patch && \\\n\tmake -j `nproc` all && cd qemu_mode && ./build_qemu_support.sh\nENV AFL_PATH=/home/ubuntu/fuzzolic/utils/AFLplusplus\nRUN echo \"export AFL_PATH=/home/ubuntu/fuzzolic/utils/AFLplusplus\" >> $BASH_ENV\n\n# Build fuzzolic tests\nRUN cd tests && make\n\nCMD bash\n"
+}

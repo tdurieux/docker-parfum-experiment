@@ -1,0 +1,17 @@
+ARG ENVOY_IMAGE
+
+FROM $ENVOY_IMAGE
+
+ARG GOARCH=amd64
+
+RUN apk -U upgrade
+
+COPY envoyinit-linux-$GOARCH /usr/local/bin/envoyinit
+
+# SDS-specific setup, only used if ENVOY_SIDECAR=true
+COPY docker-entrypoint.sh /
+
+USER 10101
+
+ENTRYPOINT ["/usr/bin/dumb-init", "--", "/docker-entrypoint.sh"]
+CMD []

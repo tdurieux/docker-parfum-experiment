@@ -1,0 +1,35 @@
+{
+  "startTime": 1674248895217,
+  "endTime": 1674248895591,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 60,
+        "lineEnd": 60,
+        "columnStart": 7,
+        "columnEnd": 52
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 61,
+        "lineEnd": 61,
+        "columnStart": 7,
+        "columnEnd": 56
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 86,
+        "lineEnd": 86,
+        "columnStart": 4,
+        "columnEnd": 29
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM quay.io/mapstory/python-gdal:2.7.x-2.2.x\nLABEL maintainer=\"Tyler Battle <tbattle@boundlessgeo.com>\"\n\nENV MEDIA_ROOT /var/lib/mapstory/media\nENV STATIC_ROOT /var/lib/mapstory/static\nENV APP_PATH /srv/mapstory\nENV TMP /tmp\nENV DJANGO_PORT 8000\nENV PYTHONUNBUFFERED 0\nENV MISSING_THUMBNAIL /static/mapstory/img/missing_thumb.png\n\nWORKDIR $TMP\n\n# Add CA cert for self signing\nCOPY docker/nginx/ca.crt /usr/local/share/ca-certificates/\nCOPY docker/nginx/cacerts/Certificates_v5.3_DoD.pem.crt /usr/local/share/ca-certificates/\nCOPY docker/nginx/cacerts/comodorsacertificationauthority.crt /usr/local/share/ca-certificates/\nCOPY docker/nginx/cacerts/comodorsadomainvalidationsecureserverca.crt /usr/local/share/ca-certificates/\n\nRUN set -ex \\\n    && update-ca-certificates\n\n# Install tools\nRUN set -ex \\\n    && apt-get update \\\n    && apt-get install -y --no-install-recommends \\\n        unzip \\\n    && rm -rf /var/lib/apt/lists/*\n\n# Install WSGI server and python tools\nRUN set -ex \\\n    && pip install --no-cache-dir \\\n        coveralls \\\n        gunicorn \\\n        paver \\\n        pycodestyle \\\n        \"pylint>=1.9,<2\" \\\n        \"pylint-django>=0.11.1,<2\" \\\n        ;\n\n# Install misc libs\nRUN set -ex \\\n    && apt-get update \\\n    && apt-get install -y --no-install-recommends \\\n        libgeos-dev \\\n        libjpeg-dev \\\n        libxml2-dev \\\n    && rm -rf /var/lib/apt/lists/*\n\n# Install phantomjs\nENV QT_QPA_PLATFORM minimal\nRUN set -ex \\\n    && echo \"deb http://ftp.debian.org/debian jessie-backports main\" >> /etc/apt/sources.list \\\n    && apt-get update \\\n    && apt-get install -y --no-install-recommends \\\n        phantomjs \\\n    && rm -rf /var/lib/apt/lists/*\n\n# Install Node and related tools\nRUN set -ex \\\n    && curl -f -sL https://deb.nodesource.com/setup_6.x | /bin/bash - \\\n    && curl -f -sS https://dl.yarnpkg.com/debian/pubkey.gpg | apt-key add - \\\n    && echo \"deb https://dl.yarnpkg.com/debian/ stable main\" | tee /etc/apt/sources.list.d/yarn.list \\\n    && apt-get update \\\n    && apt-get install -y --no-install-recommends \\\n        nodejs \\\n        yarn \\\n    && yarn global add \\\n        bower \\\n        grunt \\\n        gulp-cli \\\n        webpack@^3.10.0 \\\n    && yarn cache clean \\\n    && rm -rf /var/lib/apt/lists/*\n\n#RUN mkdir -p $MEDIA_ROOT && chown www-data $MEDIA_ROOT\n#RUN mkdir -p $STATIC_ROOT && chown www-data $STATIC_ROOT\n\n# Setup user and paths\nRUN set -ex \\\n    && adduser --disabled-password --gecos '' mapstory \\\n    && mkdir -p $APP_PATH/deps && chown -R mapstory $APP_PATH \\\n    && mkdir -p $MEDIA_ROOT && chown mapstory $MEDIA_ROOT \\\n    && mkdir -p $STATIC_ROOT && chown mapstory $STATIC_ROOT\n\nWORKDIR $APP_PATH\nRUN pip install --no-cache-dir celery==4.1.0\n\n# Copy in dependencies\nCOPY --chown=mapstory:mapstory deps ./deps\n# Install dependencies from requirements.txt\nCOPY --chown=mapstory:mapstory requirements.txt ./\nRUN pip install --no-cache-dir -r requirements.txt\nCOPY epsg_extra /usr/local/lib/python2.7/dist-packages/pyproj/data/\n# The httplib2 python library uses its own CA certificates.\n# Add the system and self-signed CAs.\nRUN cat /etc/ssl/certs/ca-certificates.crt >> /usr/local/lib/python2.7/site-packages/httplib2/cacerts.txt\n\n# Override the version of awesome-slugify\n# Using HEAD as of 2018-01-09\n# The version isn't changed, so it has trouble differentiation from the version in pypy. Thus this manual update.\nRUN pip install --no-cache-dir -U git+git://github.com/dimka665/awesome-slugify@a6563949965bcddd976b7b3fb0babf76e3b490f7#egg=awesome-slugify\n\n# Copy in the code\nCOPY --chown=mapstory:mapstory mapstory ./mapstory\nCOPY --chown=mapstory:mapstory ./*.py ./\nCOPY --chown=mapstory:mapstory docker/django/run.sh $APP_PATH/docker/django/\nRUN ln -s $APP_PATH/docker/django/run.sh /opt/run.sh\n\nRUN set -ex \\\n    && chown -R mapstory:mapstory $STATIC_ROOT \\\n    && chown -R mapstory:mapstory $MEDIA_ROOT \\\n    && mkdir -p $APP_PATH/cover \\\n    && chown -R mapstory:mapstory $APP_PATH/cover\n\nUSER mapstory\n\nWORKDIR $APP_PATH/mapstory/static\nRUN set -ex \\\n    && /opt/run.sh --collect-static \\\n    && yarn cache clean \\\n    && rm -rf ~/.cache/bower \\\n    && rm -rf /tmp/phantomjs\n\nWORKDIR $APP_PATH\nVOLUME $STATIC_ROOT\nVOLUME $MEDIA_ROOT\nVOLUME $APP_PATH/cover\nEXPOSE $DJANGO_PORT\nENTRYPOINT [\"/opt/run.sh\"]\nCMD [\"--init-db\", \"--reindex\", \"--serve\"]\n"
+}

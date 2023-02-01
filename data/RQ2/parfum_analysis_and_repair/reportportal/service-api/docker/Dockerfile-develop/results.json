@@ -1,0 +1,53 @@
+{
+  "startTime": 1674250333920,
+  "endTime": 1674250334781,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 30,
+        "lineEnd": 30,
+        "columnStart": 4,
+        "columnEnd": 119
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 2,
+        "lineEnd": 2,
+        "columnStart": 22,
+        "columnEnd": 75
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 50,
+        "lineEnd": 50,
+        "columnStart": 4,
+        "columnEnd": 38
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 2,
+        "lineEnd": 2,
+        "columnStart": 22,
+        "columnEnd": 75
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 50,
+        "lineEnd": 50,
+        "columnStart": 4,
+        "columnEnd": 38
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM adoptopenjdk:11-jdk-hotspot-bionic as builder\n\nRUN apt-get update && apt-get install --no-install-recommends ca-certificates git fonts-noto zip -y && rm -rf /var/lib/apt/lists/*;\n\nRUN addgroup -system --gid 1000 rp-builder\nRUN adduser --disabled-password --system --ingroup rp-builder --uid 1000 --shell /bin/bash rp-builder\n\nUSER rp-builder\nWORKDIR /home/rp-builder\n\n### Copy gradle wrapper's stuff to init and cache gradle wrapper\nCOPY --chown=rp-builder gradle/ ./gradle/\nCOPY --chown=rp-builder gradlew*  ./\nRUN ./gradlew wrapper\n\nARG buildNumber=0.0.1-SNAPSHOT\nARG sealightsSession=\nARG sealightsToken=\n\n### Copy gradle build files to resolve and cache dependencies\nCOPY --chown=rp-builder *.gradle gradle.properties ./\nRUN ./gradlew resolveDependencies -P sealightsToken=${sealightsToken} --stacktrace\n\n### Copy source and run build\nCOPY --chown=rp-builder src/ ./src/\nCOPY --chown=rp-builder .git/ .git/\n\nRUN ./gradlew build -x jacocoTestReport -P gcp -P buildNumber=${buildNumber} -P sealightsToken=${sealightsToken} -P sealightsSession=${sealightsSession} --full-stacktrace\n\nRUN mkdir -p /home/rp-builder/plugins && \\\n    curl -f -o /home/rp-builder/plugins/sealights.zip https://agents.sealights.co/sealights-java/sealights-java-latest.zip && \\\n    unzip /home/rp-builder/plugins/sealights.zip -d /home/rp-builder/plugins && \\\n    mkdir -p /home/rp-builder/sealights && \\\n    sh -c \"echo '${sealightsToken}' > /home/rp-builder/sealights/sealights-token.txt\" && \\\n    sh -c \"echo '${sealightsSession}' > /home/rp-builder/sealights/sealights-session.txt\"\n\nFROM openjdk:11-jre-slim\n\nARG version\n\n### Set quay.io image cache. Since the build is for development only,\n### there is no need to keep them forever\n### details: https://support.coreos.com/hc/en-us/articles/115001384693-Tag-Expiration\nLABEL quay.expires-after=1w\n\nLABEL maintainer=\"Andrei Varabyeu <andrei_varabyeu@epam.com>\"\nLABEL version=${version}\nLABEL description=\"ReportPortal API Service: Development Version\"\n\nRUN apt-get update && \\\n    apt-get install --no-install-recommends fonts-noto-core -y && rm -rf /var/lib/apt/lists/*;\n\nRUN echo '#!/bin/sh \\n exec java ${JAVA_OPTS} -jar ${APP_FILE}' > /start.sh && \\\n    chmod +x /start.sh\n\n# Set default JAVA_OPTS and APP_FILE\nENV JAVA_OPTS=\"-DLOG_FILE=app.log -Xmx2g -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/tmp -Djava.security.egd=file:/dev/./urandom -agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=5005\"\nENV APP_FILE=/app/app.jar\n\nVOLUME /tmp\n\nRUN mkdir plugins app\nCOPY --from=builder /home/rp-builder/plugins/sl-test-listener.jar ./plugins/\nCOPY --from=builder /home/rp-builder/sealights/sealights-token.txt /home/rp-builder/sealights/sealights-session.txt ./\n\nCOPY --from=builder /home/rp-builder/build/libs/app.jar $APP_FILE\n\nRUN sh -c \"touch $APP_FILE\"\n\nEXPOSE 8080\nENTRYPOINT /start.sh\n"
+}

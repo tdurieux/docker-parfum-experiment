@@ -1,0 +1,44 @@
+{
+  "startTime": 1674219905003,
+  "endTime": 1674219905961,
+  "originalSmells": [
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 8,
+        "lineEnd": 8,
+        "columnStart": 75,
+        "columnEnd": 105
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 8,
+        "lineEnd": 8,
+        "columnStart": 22,
+        "columnEnd": 71
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 26,
+        "lineEnd": 26,
+        "columnStart": 8,
+        "columnEnd": 32
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 8,
+        "lineEnd": 8,
+        "columnStart": 22,
+        "columnEnd": 71
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Build Prysm in a stock Go build container\nFROM golang:1.18-buster as builder\n\n# Here only to avoid build-time errors\nARG DOCKER_TAG\n\nARG BUILD_TARGET\n\nRUN apt-get update && apt-get install --no-install-recommends -y cmake libtinfo5 libgmp-dev npm && npm install -g @bazel/bazelisk && bazel version && npm cache clean --force; && rm -rf /var/lib/apt/lists/*;\n\nWORKDIR /go/src\nRUN bash -c \"git clone https://github.com/prysmaticlabs/prysm.git && cd prysm && git config advice.detachedHead false && git fetch --all --tags && git checkout ${BUILD_TARGET} && bazel build --config=release //beacon-chain:beacon-chain && bazel build --config=release //validator:validator && bazel build --config=release //cmd/client-stats:client-stats\"\n\n# Pull all binaries into a second stage deploy debian container\nFROM debian:bullseye-slim as consensus\n\nARG USER=prysmconsensus\nARG UID=10002\n\nRUN apt-get update && DEBIAN_FRONTEND=noninteractive TZ=Etc/UTC apt-get install -y --no-install-recommends \\\n  ca-certificates curl bash tzdata \\\n  && apt-get clean \\\n  && rm -rf /var/lib/apt/lists/*\n\nRUN set -eux; \\\n        apt-get update; \\\n        apt-get install --no-install-recommends -y gosu; \\\n        rm -rf /var/lib/apt/lists/*; \\\n# verify that the binary works\n        gosu nobody true\n\n# See https://stackoverflow.com/a/55757473/12429735RUN\nRUN adduser \\\n    --disabled-password \\\n    --gecos \"\" \\\n    --home \"/nonexistent\" \\\n    --shell \"/sbin/nologin\" \\\n    --no-create-home \\\n    --uid \"${UID}\" \\\n    \"${USER}\"\n\n# Create data mount point with permissions\nRUN mkdir -p /var/lib/prysm && chown ${USER}:${USER} /var/lib/prysm && chmod 700 /var/lib/prysm\n\n# Copy executable\nCOPY --from=builder /go/src/prysm/bazel-bin/cmd/beacon-chain/beacon-chain_/beacon-chain /usr/local/bin/\nCOPY --from=builder /go/src/prysm/bazel-bin/cmd/validator/validator_/validator /usr/local/bin/\nCOPY --from=builder /go/src/prysm/bazel-bin/cmd/client-stats/client-stats_/client-stats /usr/local/bin/\nCOPY ./docker-entrypoint.sh /usr/local/bin/\n\nUSER ${USER}\n\nENTRYPOINT [\"beacon-chain\"]\n\nFROM consensus as validator\n\nARG USER=prysmvalidator\nARG UID=10000\nUSER root\n\n# See https://stackoverflow.com/a/55757473/12429735RUN\nRUN adduser \\\n    --disabled-password \\\n    --gecos \"\" \\\n    --home \"/nonexistent\" \\\n    --shell \"/sbin/nologin\" \\\n    --no-create-home \\\n    --uid \"${UID}\" \\\n    \"${USER}\"\n\n# Create data mount point with permissions\nRUN mkdir -p /var/lib/prysm && chown ${USER}:${USER} /var/lib/prysm && chmod 700 /var/lib/prysm\n\nCOPY ./validator-import.sh /usr/local/bin/\nCOPY ./create-wallet.sh /usr/local/bin/\n\nUSER ${USER}\n\nENTRYPOINT [\"validator\"]\n"
+}

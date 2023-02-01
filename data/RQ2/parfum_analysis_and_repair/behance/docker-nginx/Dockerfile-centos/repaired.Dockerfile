@@ -1,0 +1,46 @@
+FROM behance/docker-base:5.0.1-centos-7
+
+# Use in multi-phase builds, when an init process requests for the container to gracefully exit, so that it may be committed
+# Used with alternative CMD (worker.sh), leverages supervisor to maintain long-running processes
+ENV CONTAINER_ROLE=web \
+    CONTAINER_PORT=8080 \
+    CONF_NGINX_SITE="/etc/nginx/sites-available/default" \
+    CONF_NGINX_SERVER="/etc/nginx/nginx.conf" \
+    NOT_ROOT_USER=nginx \
+    S6_KILL_FINISH_MAXTIME=55000
+
+# Using a non-privileged port to prevent having to use setcap internally
+EXPOSE ${CONTAINER_PORT}
+
+# - Update security packages
+# - Install new stable version of nginx
+RUN /bin/bash -e /security_updates.sh && \
+    mkdir -p /etc/yum.repos.d && \
+    echo $'[nginx-stable] \n\
+name=nginx stable repo \n\
+baseurl=http://nginx.org/packages/centos/$releasever/$basearch/ \n\
+gpgcheck=1 \n\
+enabled=1 \n\
+name=nginx stable repo \n\
+gpgkey=https://nginx.org/keys/nginx_signing.key' > /etc/yum.repos.d/nginx.repo && \
+    yum -y -q install nginx ca-certificates && \
+    /bin/bash -e /clean.sh && rm -rf /var/cache/yum
+
+# Overlay the root filesystem from this repo
+COPY --chown=nginx ./container/root /
+
+# - Set nginx to listen on defined port
+# - NOTE: order of operations is important, new config had to already installed from repo (above)
+# - Make temp directory for .nginx runtime files
+# - Fix woff mime type support
+# - Update nginx.conf user
+# - Set permissions to allow image to be run under a non root user
+RUN sed -i "s/listen [0-9]*;/listen ${CONTAINER_PORT};/" $CONF_NGINX_SITE && \
+    mkdir /tmp/.nginx && \
+    /bin/bash -e /scripts/fix_woff_support.sh && \
+    sed -i "s/^user .*$/user ${NOT_ROOT_USER};/" ${CONF_NGINX_SERVER} && \
+    /bin/bash -e /scripts/set_permissions.sh
+
+RUN yum update -y -q nginx
+RUN goss -g /tests/centos/nginx.goss.yaml validate && \
+    /aufs_hack.sh

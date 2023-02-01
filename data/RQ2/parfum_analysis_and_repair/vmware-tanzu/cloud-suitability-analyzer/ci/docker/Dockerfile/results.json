@@ -1,0 +1,81 @@
+{
+  "startTime": 1674251527856,
+  "endTime": 1674251528821,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 80,
+        "lineEnd": 80,
+        "columnStart": 4,
+        "columnEnd": 44
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 85,
+        "lineEnd": 85,
+        "columnStart": 4,
+        "columnEnd": 53
+      }
+    },
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 82,
+        "lineEnd": 82,
+        "columnStart": 4,
+        "columnEnd": 36
+      }
+    },
+    {
+      "rule": "aptGetInstallUseY",
+      "position": {
+        "lineStart": 88,
+        "lineEnd": 88,
+        "columnStart": 4,
+        "columnEnd": 24
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 88,
+        "lineEnd": 88,
+        "columnStart": 4,
+        "columnEnd": 24
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 88,
+        "lineEnd": 88,
+        "columnStart": 4,
+        "columnEnd": 24
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 88,
+        "lineEnd": 88,
+        "columnStart": 4,
+        "columnEnd": 24
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 88,
+        "lineEnd": 88,
+        "columnStart": 4,
+        "columnEnd": 51
+      }
+    }
+  ],
+  "repairedDockerfile": "ARG GO_VERSION=1.14\n\n# OS-X SDK parameters\n# NOTE: when changing version here, make sure to also change OSX_CODENAME below to match\n# TODO Go 1.13 supports macOS 10.11 (el capitan) and higher. Update this to 10.11 SDK\n# once an updated version of the SDK is available on s3.dockerproject.org\nARG OSX_SDK=MacOSX10.10.sdk\nARG OSX_SDK_SUM=631b4144c6bf75bf7a4d480d685a9b5bda10ee8d03dbf0db829391e2ef858789\n\n# OSX-cross parameters. Go 1.11 requires OSX >= 10.10\n# TODO Go 1.13 supports macOS 10.11 (el capitan) and higher. Update this to 10.11\n# once an updated version of the SDK is available on s3.dockerproject.org\nARG OSX_VERSION_MIN=10.10\nARG OSX_CROSS_COMMIT=a9317c18a3a457ca0a657f08cc4d0d43c6cf8953\n\n# Libtool parameters\nARG LIBTOOL_VERSION=2.4.6\n\n# TODO Go 1.13 supports macOS 10.11 (el capitan) and higher. Update this to 'el_capitan'\n# once an updated version of the SDK is available on s3.dockerproject.org\nARG OSX_CODENAME=yosemite\n\nFROM golang:${GO_VERSION}-buster AS base\nARG APT_MIRROR\nRUN sed -ri \"s/(httpredir|deb).debian.org/${APT_MIRROR:-deb.debian.org}/g\" /etc/apt/sources.list \\\n    && sed -ri \"s/(security).debian.org/${APT_MIRROR:-security.debian.org}/g\" /etc/apt/sources.list\nENV OSX_CROSS_PATH=/osxcross\n\nFROM base AS osx-sdk\nARG OSX_SDK\nARG OSX_SDK_SUM\nADD https://s3.dockerproject.org/darwin/v2/${OSX_SDK}.tar.xz \"${OSX_CROSS_PATH}/tarballs/${OSX_SDK}.tar.xz\"\nRUN echo \"${OSX_SDK_SUM}\"  \"${OSX_CROSS_PATH}/tarballs/${OSX_SDK}.tar.xz\" | sha256sum -c -\n\nFROM base AS osx-cross-base\nARG DEBIAN_FRONTEND=noninteractive\n# Dependencies for https://github.com/tpoechtrager/osxcross:\n# TODO split these into \"build-time\" and \"runtime\" dependencies so that build-time deps do not end up in the final image\nRUN apt-get update -qq && apt-get install -y -q --no-install-recommends \\\n    clang \\\n    file \\\n    llvm \\\n    patch \\\n    xz-utils \\\n    musl-tools \\\n    && rm -rf /var/lib/apt/lists/*\n\nFROM osx-cross-base AS osx-cross\nARG OSX_CROSS_COMMIT\nWORKDIR \"${OSX_CROSS_PATH}\"\nRUN git clone https://github.com/tpoechtrager/osxcross.git . \\\n    && git checkout -q \"${OSX_CROSS_COMMIT}\" \\\n    && rm -rf ./.git\nCOPY --from=osx-sdk \"${OSX_CROSS_PATH}/.\" \"${OSX_CROSS_PATH}/\"\nARG OSX_VERSION_MIN\nRUN UNATTENDED=yes OSX_VERSION_MIN=${OSX_VERSION_MIN} ./build.sh\n\nFROM base AS libtool\nARG LIBTOOL_VERSION\nARG OSX_CODENAME\nARG OSX_SDK\nRUN mkdir -p \"${OSX_CROSS_PATH}/target/SDK/${OSX_SDK}/usr/\"\nRUN curl -fsSL \"https://homebrew.bintray.com/bottles/libtool-${LIBTOOL_VERSION}.${OSX_CODENAME}.bottle.tar.gz\" \\\n    | gzip -dc | tar xf - \\\n    -C \"${OSX_CROSS_PATH}/target/SDK/${OSX_SDK}/usr/\" \\\n    --strip-components=2 \\\n    \"libtool/${LIBTOOL_VERSION}/include/\" \\\n    \"libtool/${LIBTOOL_VERSION}/lib/\"\n\nFROM osx-cross-base AS final\nARG DEBIAN_FRONTEND=noninteractive\nRUN apt-get update -qq && apt-get install -y -q --no-install-recommends \\\n    libltdl-dev \\\n    gcc-mingw-w64 \\\n    parallel \\\n    nodejs \\\n    musl-tools \\\n    && rm -rf /var/lib/apt/lists/*\n\nRUN go get -u github.com/shuLhan/go-bindata/...\nRUN curl -f -L https://www.npmjs.com/install.sh | sh\n\nRUN npm install -g npm-check-updates && npm cache clean --force;\n\n\nRUN curl -f -sS https://dl.yarnpkg.com/debian/pubkey.gpg | apt-key add -\nRUN echo \"deb https://dl.yarnpkg.com/debian/ stable main\" | tee /etc/apt/sources.list.d/yarn.list\nRUN apt-get update\nRUN apt-get install -y --no-install-recommends yarn && rm -rf /var/lib/apt/lists/*;\n\nCOPY --from=osx-cross \"${OSX_CROSS_PATH}/.\" \"${OSX_CROSS_PATH}/\"\nCOPY --from=libtool   \"${OSX_CROSS_PATH}/.\" \"${OSX_CROSS_PATH}/\"\nENV PATH=${OSX_CROSS_PATH}/target/bin:$PATH\nWORKDIR \"/cloud-suitability-analyzer\"\nRUN cd /cloud-suitability-analyzer"
+}

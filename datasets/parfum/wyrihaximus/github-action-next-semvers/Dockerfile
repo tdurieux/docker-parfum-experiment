@@ -1,0 +1,1 @@
+FROM wyrihaximusgithubactions/next-semvers:master

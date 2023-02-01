@@ -1,0 +1,53 @@
+{
+  "startTime": 1674250275801,
+  "endTime": 1674250276123,
+  "originalSmells": [
+    {
+      "rule": "rmRecursiveAfterMktempD",
+      "position": {
+        "lineStart": 17,
+        "lineEnd": 17,
+        "columnStart": 25,
+        "columnEnd": 34
+      }
+    },
+    {
+      "rule": "gpgUseBatchFlag",
+      "position": {
+        "lineStart": 18,
+        "lineEnd": 18,
+        "columnStart": 5,
+        "columnEnd": 100
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 34,
+        "lineEnd": 34,
+        "columnStart": 5,
+        "columnEnd": 31
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 43,
+        "lineEnd": 43,
+        "columnStart": 5,
+        "columnEnd": 41
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 45,
+        "lineEnd": 47,
+        "columnStart": 5,
+        "columnEnd": 34
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM debian:jessie\nMAINTAINER Runnable, Inc.\n\n# Install ca-certificates and wget\nRUN apt-get update \\\n  && set -x \\\n  && apt-get update \\\n  && apt-get install -y --no-install-recommends ca-certificates wget \\\n  && rm -rf /var/lib/apt/lists/*\n\n# Install gosu (postgres refuses to be run as root)\nENV GOSU_VERSION 1.7\nRUN wget -O /usr/local/bin/gosu \\\n  \"https://github.com/tianon/gosu/releases/download/$GOSU_VERSION/gosu-$(dpkg --print-architecture)\"\n\n# Verify gosu\nRUN wget -O /usr/local/bin/gosu.asc \"https://github.com/tianon/gosu/releases/download/$GOSU_VERSION/gosu-$(dpkg --print-architecture).asc\" \\\n  && export GNUPGHOME=\"$(mktemp -d)\" \\\n  && gpg --batch --keyserver ha.pool.sks-keyservers.net --recv-keys B42F6819007F00F88E364FD4036A9C25BF357DD4 \\\n  && gpg --batch --verify /usr/local/bin/gosu.asc /usr/local/bin/gosu \\\n  && rm -r \"$GNUPGHOME\" /usr/local/bin/gosu.asc && rm -rf -d\n\n# Initialize gosu\nRUN chmod +x /usr/local/bin/gosu\nRUN gosu nobody true\nRUN apt-get purge -y --auto-remove ca-certificates wget\n\n# Explicitly set user/group IDs for postgres\nRUN groupadd -r postgres --gid=999 \\\n  && useradd -r -g postgres --uid=999 postgres\n\n# Make the \"en_US.UTF-8\" locale so postgres will be utf-8 enabled by default\nENV LANG en_US.utf8\nRUN apt-get update \\\n  && apt-get install --no-install-recommends -y locales \\\n  && rm -rf /var/lib/apt/lists/* \\\n  && localedef -i en_US -c -f UTF-8 -A /usr/share/locale/locale.alias en_US.UTF-8\n\n# Install PostgreSQL\nENV PG_MAJOR 9.4\nRUN apt-key adv --keyserver ha.pool.sks-keyservers.net --recv-keys B97B0AFCAA1A47F044F244A07FCC7D46ACCC4CF8\nRUN echo 'deb http://apt.postgresql.org/pub/repos/apt/ jessie-pgdg main' $PG_MAJOR > /etc/apt/sources.list.d/pgdg.list\nRUN apt-get update \\\n  && apt-get install --no-install-recommends -y postgresql-common \\\n  && sed -ri 's/#(create_main_cluster) .*$/\\1 = false/' /etc/postgresql-common/createcluster.conf \\\n  && apt-get install --no-install-recommends -y \\\n      postgresql-$PG_MAJOR \\\n      postgresql-contrib-$PG_MAJOR \\\n  && rm -rf /var/lib/apt/lists/*\n\n# Install PostGIS\nENV POSTGIS_MAJOR 2.2\nRUN apt-get update \\\n  && apt-get install -y --no-install-recommends \\\n      \"postgresql-${PG_MAJOR}-postgis-${POSTGIS_MAJOR}\" \\\n      postgis \\\n  && rm -rf /var/lib/apt/lists/*\n\n# make the sample config easier to munge (and \"correct by default\")\nRUN mv -v /usr/share/postgresql/$PG_MAJOR/postgresql.conf.sample /usr/share/postgresql/ \\\n  && ln -sv ../postgresql.conf.sample /usr/share/postgresql/$PG_MAJOR/ \\\n  && sed -ri \"s!^#?(listen_addresses)\\s*=\\s*\\S+.*!\\1 = '*'!\" /usr/share/postgresql/postgresql.conf.sample\n\n# Ensure we have a run directory for postgres and make the group own it\nRUN mkdir -p /var/run/postgresql \\\n  && chown -R postgres /var/run/postgresql\n\nENV PGDATA /var/lib/postgresql/data\nENV PATH /usr/lib/postgresql/$PG_MAJOR/bin:$PATH\n\n# Setup postgresql data directory and initialize database\nRUN mkdir -p \"$PGDATA\"\nRUN chmod 777 \"$PGDATA\"\nRUN chown -R postgres \"$PGDATA\"\nRUN gosu postgres initdb\n\n# Allow all clients on the server\nRUN { echo; echo \"host all all 0.0.0.0/0 trust\"; } >> \"$PGDATA/pg_hba.conf\"\n\n# Copy init script\nCOPY init.sh /\nRUN chmod +x /init.sh\n\n# Add crontab file in the cron directory\nADD crontab /etc/cron.d/update_db\n\n# Give execution rights on the cron job\nRUN chmod 0644 /etc/cron.d/update_db\n\n# Run the command on container startup\nCMD cron && tail -f /var/log/cron.log\n\n# Start postgresql\nEXPOSE 5432\nCMD gosu postgres postgres"
+}

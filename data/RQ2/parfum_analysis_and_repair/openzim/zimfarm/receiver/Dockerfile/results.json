@@ -1,0 +1,62 @@
+{
+  "startTime": 1674219700428,
+  "endTime": 1674219701960,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 71,
+        "lineEnd": 71,
+        "columnStart": 4,
+        "columnEnd": 41
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 16,
+        "lineEnd": 16,
+        "columnStart": 4,
+        "columnEnd": 26
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 23,
+        "lineEnd": 23,
+        "columnStart": 23,
+        "columnEnd": 34
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 14,
+        "lineEnd": 14,
+        "columnStart": 4,
+        "columnEnd": 30
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 22,
+        "lineEnd": 22,
+        "columnStart": 4,
+        "columnEnd": 30
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 59,
+        "lineEnd": 59,
+        "columnStart": 2,
+        "columnEnd": 27
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM python:3.8-buster\nLABEL zimfarm=true\nLABEL org.opencontainers.image.source https://github.com/openzim/zimfarm\n\n# system dependencies\nRUN apt-get update -y \\\n    && apt-get install -y --no-install-recommends openssh-sftp-server openssh-server wget cron parallel \\\n    && apt-get clean \\\n    && rm -rf /var/lib/apt/lists/*\n\n# build and configure rssh\n# we are keeping source here as it's small and hosted on sourceforge\nWORKDIR /usr/src/\nRUN wget https://download.kiwix.org/dev/rssh-2.3.4.tar.gz\nRUN tar -xvf rssh-2.3.4.tar.gz && rm rssh-2.3.4.tar.gz\nWORKDIR /usr/src/rssh-2.3.4\nRUN ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" --prefix=/ && make && make install\nRUN printf \"allowscp\\nallowsftp\\n\" > /etc/rssh.conf\n\nWORKDIR /\n# setup a chroot jail at /jail\nRUN wget https://olivier.sessink.nl/jailkit/jailkit-2.21.tar.gz\nRUN tar xf jailkit-2.21.tar.gz && rm jailkit-2.21.tar.gz\nRUN cd jailkit-2.21 && ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" && make && make install\nRUN rm -rf /jailkit-2.21 && rm -f jailkit-2.21.tar.gz\n# patch ini file\nRUN sed -i.bak -e '116d' /etc/jailkit/jk_init.ini\nRUN printf \"\\n[rssh]\\npaths = /bin/rssh, /etc/rssh.conf\\n\" >> /etc/jailkit/jk_init.ini\nRUN mkdir -p /jail\nRUN chown root:root /jail\nRUN jk_init -v -j /jail rssh ssh scp sftp\nRUN useradd -M -N -r -s /bin/rssh uploader\nRUN jk_jailuser -m -j /jail -s /bin/rssh uploader\n# fix shell for user\nRUN sed -i 's/usr\\/sbin\\/jk_chrootsh/bin\\/rssh/' /etc/passwd\nRUN mkdir -p /jail/zim\nRUN mkdir -p /jail/logs\nRUN chmod 777 /jail/zim\nRUN chmod 777 /jail/logs\n\n# OpenSSH server\nCOPY sshd_config /etc/ssh/sshd_config\nVOLUME /jail/zim\nVOLUME /jail/logs\n\n# Quarantine\nVOLUME /mnt/quarantine\nVOLUME /mnt/zim\nVOLUME /mnt/check_logs\n\nENV ZIM_TOOLS_URL https://download.openzim.org/release/zim-tools/zim-tools_linux-x86_64-3.1.1.tar.gz\nENV ZIM_SRC_DIR /jail/zim\nENV ZIM_DST_DIR /mnt/zim\nENV ZIM_QUAR_DIR /mnt/quarantine\nENV VALIDATION_LOG_DIR /mnt/check_logs\nENV ZIMCHECK_OPTION -A\nENV ZIMCHECK_PARALLEL_JOBS 2\n\nRUN wget -O zim-tools.tar.gz -q $ZIM_TOOLS_URL && \\\n  tar -xzf zim-tools.tar.gz && \\\n  cp zim-tools*/* /usr/local/bin/ && \\\n  rm -rf zim-tools* && rm zim-tools.tar.gz\nCOPY apps/check_zims.sh /usr/local/bin/\nCOPY apps/check_zim.sh /usr/local/bin/\nRUN chmod +x /usr/local/bin/check_zim.sh /usr/local/bin/check_zims.sh\n\n# OpenSSH public-key auth relay\nENV ZIMFARM_WEBAPI https://api.farm.openzim.org/v1\nENV ZIMFARM_USERNAME uploader\n\nCOPY apps/requirements.txt /tmp/requirements.txt\nRUN pip3 install --no-cache-dir -r /tmp/requirements.txt\nCOPY apps/get_zimfarm_key.py /usr/bin/get_zimfarm_keys\n\nCOPY entrypoint.sh /usr/bin/entrypoint.sh\nENTRYPOINT [\"/usr/bin/entrypoint.sh\"]\nCMD [\"cron\", \"-f\"]\n"
+}

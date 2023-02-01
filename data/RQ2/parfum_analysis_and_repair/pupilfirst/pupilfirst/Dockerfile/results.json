@@ -1,0 +1,90 @@
+{
+  "startTime": 1674255059815,
+  "endTime": 1674255060503,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 67,
+        "lineEnd": 67,
+        "columnStart": 4,
+        "columnEnd": 59
+      }
+    },
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 26,
+        "lineEnd": 26,
+        "columnStart": 4,
+        "columnEnd": 16
+      }
+    },
+    {
+      "rule": "gpgUseBatchFlag",
+      "position": {
+        "lineStart": 67,
+        "lineEnd": 67,
+        "columnStart": 62,
+        "columnEnd": 75
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 14,
+        "lineEnd": 14,
+        "columnStart": 4,
+        "columnEnd": 29
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 58,
+        "lineEnd": 63,
+        "columnStart": 22,
+        "columnEnd": 13
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 71,
+        "lineEnd": 71,
+        "columnStart": 22,
+        "columnEnd": 61
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 14,
+        "lineEnd": 14,
+        "columnStart": 4,
+        "columnEnd": 29
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 14,
+        "lineEnd": 14,
+        "columnStart": 4,
+        "columnEnd": 29
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 14,
+        "lineEnd": 14,
+        "columnStart": 4,
+        "columnEnd": 53
+      }
+    }
+  ],
+  "repairedDockerfile": "# This is a multi-stage build with two stages, where the first is used to precompile assets.\nFROM ruby:2.7.6\nWORKDIR /build\n\n# Begin by installing gems.\nCOPY Gemfile .\nCOPY Gemfile.lock .\nRUN gem install bundler -v '2.3.11'\nRUN bundle config set --local deployment true\nRUN bundle config set --local without development test\nRUN bundle install -j4\n\n# We need NodeJS & Yarn for precompiling assets.\nRUN curl -fsSL https://deb.nodesource.com/setup_lts.x | bash -\nRUN apt-get install --no-install-recommends -y nodejs && rm -rf /var/lib/apt/lists/*;\n\n# Install JS dependencies using Yarn.\nCOPY package.json .\nCOPY yarn.lock .\nCOPY .yarnrc.docker.yml .yarnrc.yml\nCOPY .yarn/releases .yarn/releases\nRUN corepack enable\n\n# Remove checksums on problematic JS packages.\nRUN sed '/83bc7758ab676cbb6cf1d12e23cb8125cb0c5c07c62d4e6fcaf6f9194cfafca675c4309e66a39594c60e176d3114bd45b09c9218721d42650554d17c84579d33/d' yarn.lock > yarn.lock\n\nRUN yarn install && yarn cache clean;\n\n# Copy over remaining files and set up for precompilation.\nCOPY . /build\n\n# Some basic keys required by Rails.\nENV RAILS_ENV=\"production\"\nENV DB_ADAPTER=\"nulldb\"\nENV SECRET_KEY_BASE=\"1fe25dabb16153b60531917dce0f70e385be7e4f2581e62f10d91a94999de04225b3363b95bbc2b5967902d60be5dc85ae7661f13d325dcdc44dce4b7756c55e\"\n\n# AWS requires a lot of keys to initialize.\nENV AWS_ACCESS_KEY_ID=dummy_access_key\nENV AWS_SECRET_ACCESS_KEY=dummy_secret_access_key\nENV AWS_REGION=us-east-1\nENV AWS_BUCKET=dummy_bucket_name\n\n# Export the locales.json file.\nRUN bundle exec i18n export\n\n# Compile ReScript files to JS.\nRUN yarn run re:build\n\n# Remove checksums (again) on problematic JS packages because...\nRUN sed '/83bc7758ab676cbb6cf1d12e23cb8125cb0c5c07c62d4e6fcaf6f9194cfafca675c4309e66a39594c60e176d3114bd45b09c9218721d42650554d17c84579d33/d' yarn.lock > yarn.lock\n\n# ...the assets:precompile step will run `yarn install` again.\nRUN bundle exec rails assets:precompile\n\n# With precompilation done, we can move onto the final stage.\nFROM ruby:2.7.6-slim-bullseye\n\n# We'll need a few packages in this image.\nRUN apt-get update && apt-get install --no-install-recommends -y \\\n  ca-certificates \\\n  cron \\\n  curl \\\n  gnupg \\\n  imagemagick \\\n  && rm -rf /var/lib/apt/lists/*\n\n# We'll also need the exact version of PostgreSQL client, matching our server version, so let's get it from official repos.\nRUN curl -f https://www.postgresql.org/media/keys/ACCC4CF8.asc | gpg --batch --dearmor | tee /etc/apt/trusted.gpg.d/apt.postgresql.org.gpg >/dev/null\nRUN echo \"deb http://apt.postgresql.org/pub/repos/apt/ bullseye-pgdg main\" | tee /etc/apt/sources.list.d/pgdg.list\n\n# Now install the exact version of the client we need.\nRUN apt-get update && apt-get install --no-install-recommends -y postgresql-client-12 \\\n  && rm -rf /var/lib/apt/lists/*\n\n# Let's also upgrade bundler to the same version used in the build.\nRUN gem install bundler -v '2.3.11'\n\nWORKDIR /app\nCOPY . /app\n\n# We'll copy over the precompiled assets, public images, and the vendored gems.\nCOPY --from=0 /build/public/assets public/assets\nCOPY --from=0 /build/public/vite public/vite\nCOPY --from=0 /build/vendor vendor\n\n# Now we can set up bundler again, using the copied over gems.\nRUN bundle config set --local deployment true\nRUN bundle config set --local without development test\nRUN bundle install\n\nENV RAILS_ENV=\"production\"\n\nRUN mkdir -p tmp/pids\n\n# Add Tini.\nENV TINI_VERSION v0.19.0\nADD https://github.com/krallin/tini/releases/download/${TINI_VERSION}/tini /tini\nRUN chmod +x /tini\nENTRYPOINT [\"/tini\", \"--\"]\n\n# Run under tini to ensure proper signal handling.\nCMD [ \"bundle\", \"exec\", \"puma\", \"-C\", \"config/puma.rb\" ]\n"
+}

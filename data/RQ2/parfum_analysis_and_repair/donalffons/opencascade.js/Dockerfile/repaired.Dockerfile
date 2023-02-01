@@ -1,0 +1,75 @@
+FROM emscripten/emsdk:3.1.14 AS baseImage
+
+RUN \
+  apt update -y && \
+  apt install --no-install-recommends -y \
+  bash \
+  build-essential \
+  cmake \
+  curl \
+  git \
+  libffi-dev \
+  libgdbm-dev \
+  libncurses5-dev \
+  libnss3-dev \
+  libreadline-dev \
+  libsqlite3-dev \
+  libssl-dev \
+  libbz2-dev \
+  npm \
+  python3 \
+  python3-pip \
+  python3-setuptools \
+  zlib1g-dev && rm -rf /var/lib/apt/lists/*;
+
+RUN \
+  pip install --no-cache-dir \
+  libclang \
+  pyyaml \
+  cerberus \
+  argparse
+
+WORKDIR /rapidjson/
+RUN \
+  git clone https://github.com/Tencent/rapidjson.git .
+
+WORKDIR /freetype/
+RUN \
+  git clone https://git.savannah.nongnu.org/git/freetype/freetype2.git .
+
+ENV OCCT_COMMIT_HASH_FULL bb368e271e24f63078129283148ce83db6b9670a
+WORKDIR /occt/
+RUN \
+  curl -f "https://git.dev.opencascade.org/gitweb/?p=occt.git;a=snapshot;h=${OCCT_COMMIT_HASH_FULL};sf=tgz" -o occt.tar.gz && \
+  tar -xvf occt.tar.gz && \
+  export OCCT_COMMIT_HASH=$(echo ${OCCT_COMMIT_HASH_FULL} | cut -c 1-7) && \
+  mv occt-$OCCT_COMMIT_HASH/* . && \
+  mv occt-$OCCT_COMMIT_HASH/.* . || true && \
+  rm occt-$OCCT_COMMIT_HASH -r && rm occt.tar.gz
+
+WORKDIR /opencascade.js/
+COPY src ./src
+WORKDIR /src/
+
+ARG threading=single-threaded
+ENV threading=$threading
+
+FROM baseImage AS testImage
+
+RUN \
+  mkdir /opencascade.js/build/ && \
+  mkdir /opencascade.js/dist/ && \
+  /opencascade.js/src/applyPatches.py
+
+ENTRYPOINT ["/opencascade.js/src/buildFromYaml.py"]
+
+FROM testImage AS customBuildImage
+
+RUN \
+  /opencascade.js/src/generateBindings.py && \
+  /opencascade.js/src/compileBindings.py ${threading} && \
+  /opencascade.js/src/compileSources.py ${threading} && \
+  chmod -R 777 /opencascade.js/ && \
+  chmod -R 777 /occt
+
+ENTRYPOINT ["/opencascade.js/src/buildFromYaml.py"]

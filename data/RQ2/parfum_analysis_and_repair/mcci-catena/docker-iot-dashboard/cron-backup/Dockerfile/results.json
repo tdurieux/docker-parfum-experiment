@@ -1,0 +1,89 @@
+{
+  "startTime": 1674252793234,
+  "endTime": 1674252793848,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 41,
+        "lineEnd": 41,
+        "columnStart": 4,
+        "columnEnd": 22
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 23,
+        "lineEnd": 25,
+        "columnStart": 114,
+        "columnEnd": 53
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 29,
+        "lineEnd": 33,
+        "columnStart": 22,
+        "columnEnd": 9
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 40,
+        "lineEnd": 40,
+        "columnStart": 22,
+        "columnEnd": 52
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 58,
+        "lineEnd": 58,
+        "columnStart": 22,
+        "columnEnd": 58
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 23,
+        "lineEnd": 25,
+        "columnStart": 114,
+        "columnEnd": 53
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 29,
+        "lineEnd": 33,
+        "columnStart": 22,
+        "columnEnd": 9
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 40,
+        "lineEnd": 40,
+        "columnStart": 22,
+        "columnEnd": 52
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 58,
+        "lineEnd": 58,
+        "columnStart": 22,
+        "columnEnd": 58
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "#\n# Dockerfile for building the cron-backup instance with S3-backup and Mail alert setup for the below service\n# 1. Node-red\n# 2. Grafana\n# 3. Nginx\n# 4. Mqtts\n# 5. mongodb\n\n# To find the version of installed Mongodb service\nFROM mongo:latest AS mongodb\nRUN env | grep MON > /root/env\n\n\n# Building cron-backup instance\nFROM phusion/baseimage:master-amd64\n# Copying mongodb's version\nCOPY --from=mongodb /root/env /root/env\n\n# Installing same Mongodb's tools as in the copied version here in the cron-backup instance\nRUN set -x \\\n        && export $(xargs < /root/env) \\\n        && echo \"deb http://$MONGO_REPO/apt/ubuntu focal/${MONGO_PACKAGE%-unstable}/$MONGO_MAJOR multiverse\" | tee \"/etc/apt/sources.list.d/${MONGO_PACKAGE%-unstable}.list\" \\\n        && apt-key adv --keyserver keyserver.ubuntu.com --recv-keys B00A0BD1E2C63C11 \\\n        && export DEBIAN_FRONTEND=noninteractive && apt-get update && ln -s /bin/true /usr/local/bin/systemctl && apt-get install --no-install-recommends -y \\\n                ${MONGO_PACKAGE}=$MONGO_VERSION \\\n                ${MONGO_PACKAGE}-tools=$MONGO_VERSION && rm -rf /var/lib/apt/lists/*;\n\n\n# some basic package installation for troubleshooting\nRUN apt-get update && apt-get install --no-install-recommends -y \\\n    iputils-ping \\\n    net-tools \\\n    debconf-utils \\\n    rsync && rm -rf /var/lib/apt/lists/*;\n\n# Change workdir\nRUN mkdir -p /opt/backup\nWORKDIR \"/opt/backup\"\n\n# To backup Mongodb to S3 Bucket, some packages need to be installed as follows:\nRUN apt-get update && apt-get install --no-install-recommends -y python3-pip && rm -rf /var/lib/apt/lists/*;\nRUN pip3 install --no-cache-dir s3cmd\nARG AWS_ACCESS_KEY_ID\nARG AWS_DEFAULT_REGION\nARG AWS_HOST_BASE\nARG AWS_HOST_BUCKET\nARG AWS_SECRET_ACCESS_KEY\nRUN set -x \\\n        && echo \"[default]\\naccess_key = ${AWS_ACCESS_KEY_ID}\\nbucket_location = $AWS_DEFAULT_REGION\\nhost_base = $AWS_HOST_BASE\\nhost_bucket = $AWS_HOST_BUCKET\\nsecret_key = $AWS_SECRET_ACCESS_KEY\" | tee /root/.s3cfg\n\n# passing arguments to build postfix image\nARG hostname\nARG relay_ip\nARG domain\n\n# Install Postfix\nRUN echo \"postfix postfix/mailname string $host_name\" | debconf-set-selections\nRUN echo \"postfix postfix/main_mailer_type select Satellite system\" | debconf-set-selections\nRUN apt-get update && apt-get install --no-install-recommends -y postfix mailutils && rm -rf /var/lib/apt/lists/*;\nRUN postconf -e relayhost=$relay_ip\n\n# This will replace local mail addresses by valid Internet addresses when mail leaves the machine via SMTP.\nRUN echo \"root@${hostname} backup@${domain}\" > /etc/postfix/generic\nRUN postconf -e smtp_generic_maps=hash:/etc/postfix/generic\nRUN postmap /etc/postfix/generic\n\n# Backup script for node-red data directory backup\nCOPY nodered_backup.sh /bin/nodered_backup.sh\nRUN chmod +x /bin/nodered_backup.sh\n\n# Backup script for Grafana data directory backup\nCOPY grafana_backup.sh /bin/grafana_backup.sh\nRUN chmod +x /bin/grafana_backup.sh\n\n# Backup script for Nginx data directory backup\nCOPY nginx_backup.sh /bin/nginx_backup.sh\nRUN chmod +x /bin/nginx_backup.sh\n\n# Backup script for Mqtts data directory backup\nCOPY mqtts_backup.sh /bin/mqtts_backup.sh\nRUN chmod +x /bin/mqtts_backup.sh\n\n# Backup script for mongodb\nCOPY mongodb_backup.sh /bin/mongodb_backup.sh\nRUN chmod +x /bin/mongodb_backup.sh\n\n# Start the postfix daemon during container startup\nCOPY postfix.sh /etc/my_init.d/postfix.sh\nRUN chmod +x /etc/my_init.d/postfix.sh\n\n# To Enable crontab\nRUN mkdir -p /etc/my_init.d\nCOPY cron.sh /etc/my_init.d/cron.sh\nRUN chmod +x /etc/my_init.d/cron.sh\n# end of file\n"
+}

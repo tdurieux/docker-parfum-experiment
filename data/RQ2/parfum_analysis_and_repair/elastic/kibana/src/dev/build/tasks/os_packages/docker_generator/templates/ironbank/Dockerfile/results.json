@@ -1,0 +1,26 @@
+{
+  "startTime": 1674246474901,
+  "endTime": 1674246475822,
+  "originalSmells": [
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 11,
+        "lineEnd": 11,
+        "columnStart": 6,
+        "columnEnd": 29
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 34,
+        "lineEnd": 34,
+        "columnStart": 6,
+        "columnEnd": 57
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "################################################################################\n# Build stage 0\n# Extract Kibana and make various file manipulations.\n################################################################################\nARG BASE_REGISTRY=registry1.dso.mil\nARG BASE_IMAGE=redhat/ubi/ubi8\nARG BASE_TAG=8.6\n\nFROM ${BASE_REGISTRY}/${BASE_IMAGE}:${BASE_TAG} as prep_files\n\nRUN yum update --setopt=tsflags=nodocs -y && \\\n      yum install -y tar gzip && \\\n      yum clean all && rm -rf /var/cache/yum\n\nRUN mkdir /usr/share/kibana\nWORKDIR /usr/share/kibana\nCOPY --chown=1000:0 {{artifactTarball}} .\nRUN tar --strip-components=1 -zxf {{artifactTarball}}\n\n# Ensure that group permissions are the same as user permissions.\n# This will help when relying on GID-0 to run Kibana, rather than UID-1000.\n# OpenShift does this, for example.\n# REF: https://docs.openshift.org/latest/creating_images/guidelines.html\nRUN chmod -R g=u /usr/share/kibana\n\n\n################################################################################\n# Build stage 1\n# Copy prepared files from the previous stage and complete the image.\n################################################################################\nFROM ${BASE_REGISTRY}/${BASE_IMAGE}:${BASE_TAG}\nEXPOSE 5601\n\nRUN yum update --setopt=tsflags=nodocs -y && \\\n      yum install -y fontconfig freetype shadow-utils nss && \\\n      yum clean all && rm -rf /var/cache/yum\n\nCOPY LICENSE /licenses/elastic-kibana\n\n# Add a dumb init process\nCOPY tini /bin/tini\nRUN chmod +x /bin/tini\n\n# Noto Fonts\nRUN mkdir /usr/share/fonts/local\nCOPY NotoSansCJK-Regular.ttc /usr/share/fonts/local/NotoSansCJK-Regular.ttc\nRUN fc-cache -v\n\n# Bring in Kibana from the initial stage.\nCOPY --from=prep_files --chown=1000:0 /usr/share/kibana /usr/share/kibana\nWORKDIR /usr/share/kibana\nRUN ln -s /usr/share/kibana /opt/kibana\n\n{{! Please notify @elastic/kibana-security if you want to remove or change this environment variable. }}\nENV ELASTIC_CONTAINER true\nENV PATH=/usr/share/kibana/bin:$PATH\n\n# Set some Kibana configuration defaults.\nCOPY --chown=1000:0 config/kibana.yml /usr/share/kibana/config/kibana.yml\n\n# Add the launcher/wrapper script. It knows how to interpret environment\n# variables and translate them to Kibana CLI options.\nCOPY --chmod=755 bin/kibana-docker /usr/local/bin/\n\n# Remove the suid bit everywhere to mitigate \"Stack Clash\"\nRUN find / -xdev -perm -4000 -exec chmod u-s {} +\n\n# Provide a non-root user to run the process.\nRUN groupadd --gid 1000 kibana && \\\n    useradd --uid 1000 --gid 1000 -G 0 \\\n      --home-dir /usr/share/kibana --no-create-home \\\n      kibana\n\nUSER kibana\n\nENTRYPOINT [\"/bin/tini\", \"--\"]\n\nCMD [\"/usr/local/bin/kibana-docker\"]\n\nHEALTHCHECK --interval=10s --timeout=5s --start-period=1m --retries=5 CMD curl -I -f --max-time 5 http://localhost:5601 || exit 1\n"
+}

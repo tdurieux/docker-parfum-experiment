@@ -1,0 +1,62 @@
+{
+  "startTime": 1674253161126,
+  "endTime": 1674253162685,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 99,
+        "lineEnd": 99,
+        "columnStart": 5,
+        "columnEnd": 51
+      }
+    },
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 86,
+        "lineEnd": 86,
+        "columnStart": 4,
+        "columnEnd": 65
+      }
+    },
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 103,
+        "lineEnd": 103,
+        "columnStart": 5,
+        "columnEnd": 21
+      }
+    },
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 116,
+        "lineEnd": 116,
+        "columnStart": 4,
+        "columnEnd": 19
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 101,
+        "lineEnd": 101,
+        "columnStart": 5,
+        "columnEnd": 63
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 101,
+        "lineEnd": 101,
+        "columnStart": 5,
+        "columnEnd": 63
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "ARG NODE_VERSION=14\nARG BASE_VERSION=latest\n# Will be set on Jenkins\nARG BASE_IMAGE_REGISTRY\n\nFROM node:14-alpine as base\n\n# The root of the monorepo\nWORKDIR /dynatrace\n\nRUN apk update && apk upgrade && \\\n    apk add --no-cache bash git openssh\n\nCOPY ./package.json ./package.json\nCOPY ./package-lock.json ./package-lock.json\n\n# Create shasum from package.json to compare\n# later if a further install have to be done.\nRUN sha1sum ./package-lock.json > package-lock.sha1\n\n# install dependencies without postinstall script\nRUN npm ci\n\nCOPY ./tsconfig.base.json \\\n     ./angular.json \\\n     ./nx.json \\\n     # to\n     ./\n\n#------------------------------------------------------------\n# Temporary layer to build the workspace builder\n# - Output under: node_modules/@dynatrace/barista-builders\n#------------------------------------------------------------\nFROM base as workspace-builders\n\nCOPY ./libs/workspace ./libs/workspace\nCOPY ./libs/shared ./libs/shared\n\n# Build our custom angular builders for the workspace\nRUN npm run nx build workspace\n\n#------------------------------------------------------------\n# The base image for the angular workspace with the builted\n# builders for the angular.json\n#------------------------------------------------------------\nFROM base as angular-base\n\nLABEL maintainer=\"Dynatrace DesignOps Team <designops@dynatrace.com>\" \\\n      description=\"This image is used to have a build setup for our monorepo.\"\n\nCOPY --from=workspace-builders \\\n     /dynatrace/dist \\\n     ./dist\n\n# Cleanup image that only the files that are ignored by git are persisted.\nRUN rm -rf \\\n  tsconfig.base.json \\\n  angular.json \\\n  nx.json \\\n  package.json \\\n  package-lock.json\n\nCOPY  ./.deployment/k8s-barista-builder/entrypoint.sh /dynatrace/entrypoint.sh\n\nENTRYPOINT [ \"/dynatrace/entrypoint.sh\" ]\n\nCMD [ \"/bin/sh\" ]\n\n\n#------------------------------------------------------------\n# Temporary layer to build the public image\n#------------------------------------------------------------\nFROM angular-base as workspace-public\n\n# No actions required only for the copy from statement\n\n#------------------------------------------------------------\n# Temporary layer to build the internal image with icons\n#------------------------------------------------------------\nFROM angular-base as workspace-internal\n\nCOPY .npmrc \\\n     package-lock.json \\\n     package.json \\\n     ./\n\nRUN npm install @dynatrace/barista-icons @dynatrace/barista-fonts && npm cache clean --force;\n\n#------------------------------------------------------------\n# Temporary layer as base for a jenkins agent\n#------------------------------------------------------------\nFROM ${BASE_IMAGE_REGISTRY}/jci/jenkins-slave-cluster-docker-image:5.2 as jenkins-agent\n\nLABEL maintainer=\"Dynatrace DesignOps Team <designops@dynatrace.com>\" \\\n      description=\"This image is used as build agent for our Jenkins build\"\n\nUSER root\nARG NODE_VERSION\n\nRUN curl -f -sL https://deb.nodesource.com/setup_14.x | sudo -E bash - \\\n  && apt-get update \\\n  && apt-get install --no-install-recommends -y libgtk-3-0 libasound2 libxss1 nodejs pv \\\n  && apt-get clean \\\n  && npm install -g n \\\n  && n ${NODE_VERSION} \\\n  && npm -v \\\n  && node -v && npm cache clean --force; && rm -rf /var/lib/apt/lists/*;\n\nWORKDIR /home/dynatrace\n\n\n#------------------------------------------------------------\n# The base image for barista public agent\n#------------------------------------------------------------\nFROM jenkins-agent as public\n\nRUN npm i -g vercel && npm cache clean --force;\n\nCOPY --from=workspace-public /dynatrace/ ./\n\n#------------------------------------------------------------\n# The base image for barista internal agent\n#------------------------------------------------------------\nFROM jenkins-agent as internal\n\nCOPY --from=workspace-internal /dynatrace/ ./\n"
+}

@@ -1,0 +1,26 @@
+{
+  "startTime": 1674249026627,
+  "endTime": 1674249027816,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 4,
+        "lineEnd": 5,
+        "columnStart": 22,
+        "columnEnd": 19
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 4,
+        "lineEnd": 5,
+        "columnStart": 22,
+        "columnEnd": 19
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM golang:1.18-stretch as builder\nLABEL maintainer=\"Andrew Gillis <andrew.gillis@protocol.ai>\"\n\n# Install deps\nRUN apt-get update && apt-get install --no-install-recommends -y \\\n    ca-certificates && rm -rf /var/lib/apt/lists/*;\n\nENV SRC_DIR /storetheindex\n\nRUN mkdir /storetheindex\nWORKDIR /storetheindex\n\n# Download packages first so they can be cached.\nCOPY go.mod go.sum /storetheindex/\nRUN go mod download\nCOPY . .\n\n# Build the executable\nRUN go build -ldflags \"-X 'github.com/filecoin-project/storetheindex/internal/version.GitVersion=$(git rev-list -1 HEAD)'\"\n\n# Get su-exec, a very minimal tool for dropping privileges,\n# and tini, a very minimal init daemon for containers\nENV \\\n    SUEXEC_VERSION=v0.2 \\\n    TINI_VERSION=v0.19.0\n\nRUN set -eux; \\\n    dpkgArch=\"$(dpkg --print-architecture)\"; \\\n    case \"${dpkgArch##*-}\" in \\\n        \"amd64\" | \"armhf\" | \"arm64\") tiniArch=\"tini-static-$dpkgArch\" ;;\\\n        *) echo >&2 \"unsupported architecture: ${dpkgArch}\"; exit 1 ;; \\\n    esac; \\\n    cd /tmp \\\n    && git clone https://github.com/ncopa/su-exec.git \\\n    && cd su-exec \\\n    && git checkout -q $SUEXEC_VERSION \\\n    && make su-exec-static \\\n    && cd /tmp \\\n    && wget -q -O tini https://github.com/krallin/tini/releases/download/$TINI_VERSION/$tiniArch \\\n    && chmod +x tini\n\n# Create the target image\nFROM busybox:1.31-glibc\nLABEL maintainer=\"Andrew Gillis <andrew.gillis@protocol.ai>\"\n\n# Get the storetheindex binary, entrypoint script, and TLS CAs from the build container.\nENV SRC_DIR /storetheindex\nCOPY --from=builder storetheindex/storetheindex /usr/local/bin/storetheindex\nCOPY --from=builder storetheindex/scripts/start_storetheindex /usr/local/bin/start_storetheindex\nCOPY --from=builder /tmp/su-exec/su-exec-static /sbin/su-exec\nCOPY --from=builder /tmp/tini /sbin/tini\nCOPY --from=builder /etc/ssl/certs /etc/ssl/certs\n\n# Set permissions on storetheindex\nRUN chmod 0755 /usr/local/bin/storetheindex\n\n# This shared lib (part of glibc) doesn't seem to be included with busybox.\nCOPY --from=builder /lib/*-linux-gnu*/libdl.so.2 /lib/\n\n# Admin interface\nEXPOSE 3002\n# Finder interface\nEXPOSE 3000\n# Ingest interface\nEXPOSE 3001\n\nENV \\\n    STORETHEINDEX_LOTUS_GATEWAY=\"wss://api.chain.love\" \\\n    STORETHEINDEX_PATH=\"/data/storetheindex\" \\\n    GOLOG_LOG_FMT=\"json\"\n\n# Create the repo directory and switch to a non-privileged user.\nRUN mkdir -p $STORETHEINDEX_PATH \\\n    && adduser -D -h $STORETHEINDEX_PATH -u 1000 -G users storetheindex \\\n    && chown storetheindex:users $STORETHEINDEX_PATH\n\n# Expose the repo as a volume.\n# start_storetheindex initializes a repo if none is mounted.\n# Important this happens after the USER directive so permissions are correct.\nVOLUME $STORETHEINDEX_PATH\n\n# This initializes the storetheindex repo if one does not already exist\nENTRYPOINT [\"/sbin/tini\", \"--\", \"/usr/local/bin/start_storetheindex\"]\n\n# Execute the daemon subcommand by default\nCMD [\"daemon\"]\n"
+}

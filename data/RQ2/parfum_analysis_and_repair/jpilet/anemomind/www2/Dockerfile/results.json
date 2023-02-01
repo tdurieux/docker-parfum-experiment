@@ -1,0 +1,71 @@
+{
+  "startTime": 1674250934132,
+  "endTime": 1674250934653,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 13,
+        "lineEnd": 13,
+        "columnStart": 4,
+        "columnEnd": 85
+      }
+    },
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 23,
+        "lineEnd": 23,
+        "columnStart": 4,
+        "columnEnd": 56
+      }
+    },
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 24,
+        "lineEnd": 24,
+        "columnStart": 4,
+        "columnEnd": 56
+      }
+    },
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 25,
+        "lineEnd": 25,
+        "columnStart": 4,
+        "columnEnd": 66
+      }
+    },
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 31,
+        "lineEnd": 31,
+        "columnStart": 5,
+        "columnEnd": 73
+      }
+    },
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 32,
+        "lineEnd": 32,
+        "columnStart": 5,
+        "columnEnd": 48
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 8,
+        "lineEnd": 9,
+        "columnStart": 4,
+        "columnEnd": 101
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "ARG CPP_DOCKER_IMAGE=anemomind_anemocppserver:latest\n\n#\n# Image used for building only\n#\nFROM debian:bullseye-slim as node-base\n\nRUN apt-get update && \\\n    apt-get install --no-install-recommends -y curl tar xz-utils ca-certificates sudo \\\n    git bash less wget bzip2 gzip iproute2 rsync ssh graphicsmagick graphicsmagick-imagemagick-compat && \\\n    apt-get clean && \\\n    apt-get autoclean && rm -rf /var/lib/apt/lists/*;\n\nRUN curl -f -O https://nodejs.org/download/release/v8.11.3/node-v8.11.3-linux-x64.tar.xz\nRUN /bin/bash && \\\n    mkdir -p /usr/local/lib/nodejs && \\\n    tar -xJvf node-v8.11.3-linux-x64.tar.xz -C /usr/local/lib/nodejs && \\\n    rm -rf node-v8.11.3-linux-x64.tar.xz\n\nENV PATH=\"/usr/local/lib/nodejs/node-v8.11.3-linux-x64/bin:${PATH}\"\n\nFROM node-base as grunt-build\n\nRUN npm install --unsafe-perm=true --allow-root -g mocha && \\\n    npm install --unsafe-perm=true --allow-root -g bower && \\\n    npm install --unsafe-perm=true --allow-root -g grunt grunt-cli && npm cache clean --force;\n\nCOPY www2/package*.json /anemomind/www2/\nCOPY nodemodules /anemomind/nodemodules/\n\nWORKDIR /anemomind/www2\nRUN npm install --unsafe-perm=true --allow-root ../nodemodules/endpoint/ && \\\n     npm install --unsafe-perm=true --allow-root && npm cache clean --force;\n\n# client or esa\nARG VHOST=client\nCOPY www2 /anemomind/www2/\nRUN /anemomind/www2/build.sh\n\nFROM grunt-build as web-dev\n\n# Final runtime image doesn't make any shared libs assumptions - just copy from the appropriate CPP image\nCOPY bin/logimport_try_load bin/nautical_catTargetSpeed /anemomind/bin/\nCOPY lib /anemomind/lib/\n\n# Those file are present on the image already and cause code dumps\n# if present.\nRUN cd /anemomind/lib && rm -f \\\n        ld-linux-x86-64.so.2 libc.so.6 libdl.so.2 libgcc_s.so.1 \\\n        libm.so.6 libpthread.so.0 libstdc++.so.6 linux-vdso.so.1\nENV LD_LIBRARY_PATH=\"/anemomind/lib/:${LD_LIBRARY_PATH}\"\nRUN ldconfig\n\nCMD grunt serve:dev\n\n#\n# Image used for production\n#\n\nFROM node-base as www2\n\nCOPY --from=grunt-build /anemomind/www2/dist /app\nCOPY www2/utilities /app/utilities\nCOPY src/server/production/sendBoatDat.sh /anemomind/bin/\n\n# Final runtime image doesn't make any shared libs assumptions - just copy from the appropriate CPP image\nCOPY bin/logimport_try_load bin/nautical_catTargetSpeed /anemomind/bin/\nCOPY lib /anemomind/lib/\n\n# Those file are present on the image already and cause code dumps\n# if present.\nRUN cd /anemomind/lib && rm -f \\\n        ld-linux-x86-64.so.2 libc.so.6 libdl.so.2 libgcc_s.so.1 \\\n        libm.so.6 libpthread.so.0 libstdc++.so.6 linux-vdso.so.1\nENV LD_LIBRARY_PATH=\"/anemomind/lib/:${LD_LIBRARY_PATH}\"\nRUN ldconfig\n\n## Wait for solution\nADD https://github.com/ufoscout/docker-compose-wait/releases/download/2.7.3/wait /wait\nRUN /bin/chmod -v a+x /wait\n\nENV PATH=${PATH}:/usr/bin:/anemomind/bin \\\n  NODE_ENV=production \\\n  PORT=80\n\nARG MONGO_URL\nARG GCLOUD_PROJECT\nARG GCS_KEYFILE\nARG GCS_BUCKET\nARG PUBSUB_TOPIC_NAME\nARG USE_GS\nENV MONGO_URL=${MONGO_URL} \\\n  GCLOUD_PROJECT=${GCLOUD_PROJECT} \\\n  GCS_KEYFILE=${GCS_KEYFILE} \\\n  GCS_BUCKET=${GCS_BUCKET} \\\n  PUBSUB_TOPIC_NAME=${PUBSUB_TOPIC_NAME}\n\n# Those have to be set when running the container\n# ENV JWT_SECRET REPLACE_WITH_SECRET_HERE\n# ENV MONGOLAB_URI mongodb://anemomindprod:XXX@anemolab1,anemolab2,compute3/anemomind?replicaSet=rs0\n# ENV SMTP_PASSWORD password\n\nEXPOSE 80\n\nCMD /wait && mkdir -p /db/uploads && node /app/server/app.js\n\n"
+}

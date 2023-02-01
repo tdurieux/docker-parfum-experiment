@@ -1,0 +1,89 @@
+{
+  "startTime": 1674248822902,
+  "endTime": 1674248823989,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 81,
+        "lineEnd": 81,
+        "columnStart": 4,
+        "columnEnd": 64
+      }
+    },
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 85,
+        "lineEnd": 85,
+        "columnStart": 4,
+        "columnEnd": 28
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 66,
+        "lineEnd": 70,
+        "columnStart": 4,
+        "columnEnd": 14
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 91,
+        "lineEnd": 91,
+        "columnStart": 4,
+        "columnEnd": 15
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 106,
+        "lineEnd": 106,
+        "columnStart": 7,
+        "columnEnd": 82
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 21,
+        "lineEnd": 29,
+        "columnStart": 25,
+        "columnEnd": 15
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 84,
+        "lineEnd": 84,
+        "columnStart": 25,
+        "columnEnd": 50
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 48,
+        "lineEnd": 63,
+        "columnStart": 25,
+        "columnEnd": 8
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 84,
+        "lineEnd": 84,
+        "columnStart": 25,
+        "columnEnd": 50
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Licensed under the Apache License, Version 2.0 (the \"License\"); you may not\n# use this file except in compliance with the License. You may obtain a copy of\n# the License at\n#\n#   http://www.apache.org/licenses/LICENSE-2.0\n#\n# Unless required by applicable law or agreed to in writing, software\n# distributed under the License is distributed on an \"AS IS\" BASIS, WITHOUT\n# WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the\n# License for the specific language governing permissions and limitations under\n# the License.\n\n# Base layer containing dependencies needed at runtime. This layer will be\n# cached after the initial build.\nFROM debian:buster as runtime\n\nMAINTAINER CouchDB Developers dev@couchdb.apache.org\n\n# Add CouchDB user account\nRUN groupadd -g 5984 -r couchdb && useradd -u 5984 -d /opt/couchdb -g couchdb couchdb\n\nRUN apt-get update -y && apt-get install --no-install-recommends -y \\\n        apt-transport-https \\\n        ca-certificates \\\n        curl \\\n        dirmngr \\\n        gnupg \\\n        libicu63 \\\n        libssl1.1 \\\n        openssl \\\n    && apt-get update -y && apt-get install -y --no-install-recommends libmozjs-60-0 \\\n    && rm -rf /var/lib/apt/lists/*\n\n# grab gosu for easy step-down from root and tini for signal handling\n# see https://github.com/apache/couchdb-docker/pull/28#discussion_r141112407\nENV GOSU_VERSION 1.10\nENV TINI_VERSION 0.16.1\nRUN set -eux; \\\n    apt-get update; \\\n    apt-get install -y --no-install-recommends gosu tini; \\\n    rm -rf /var/lib/apt/lists/*; \\\n    gosu nobody true; \\\n    tini --version\n\n# Dependencies only needed during build time. This layer will also be cached\nFROM runtime AS build_dependencies\n\nRUN set -eux; \\\n    apt-get update -y && apt-get install -y --no-install-recommends \\\n    build-essential \\\n    libmozjs-60-dev \\\n    erlang-nox \\\n    erlang-reltool \\\n    erlang-dev \\\n    erlang-dialyzer \\\n    git \\\n    libcurl4-openssl-dev \\\n    libicu-dev \\\n    python3 \\\n    libpython3-dev \\\n    python3-pip \\\n    python3-sphinx \\\n    python3-setuptools \\\n    wget && rm -rf /var/lib/apt/lists/*;\n\nRUN set -eux; \\\n    pip3 install --no-cache-dir --upgrade \\\n    sphinx_rtd_theme \\\n    nose \\\n    requests \\\n    hypothesis\n\nRUN set -eux; \\\n    wget https://www.foundationdb.org/downloads/6.3.9/ubuntu/installers/foundationdb-clients_6.3.9-1_amd64.deb; \\\n    wget https://www.foundationdb.org/downloads/6.3.9/ubuntu/installers/foundationdb-server_6.3.9-1_amd64.deb; \\\n    dpkg -i ./foundationdb*deb; \\\n    pkill -f fdb || true; pkill -f foundation || true; \\\n    rm -rf ./foundationdb*deb\n\n# Node is special\nRUN set -eux; \\\n    curl -f -s https://deb.nodesource.com/gpgkey/nodesource.gpg.key | apt-key add -; \\\n    echo 'deb https://deb.nodesource.com/node_10.x buster main' > /etc/apt/sources.list.d/nodesource.list; \\\n    echo 'deb-src https://deb.nodesource.com/node_10.x buster main' >> /etc/apt/sources.list.d/nodesource.list; \\\n    apt-get update -y && apt-get install --no-install-recommends -y nodejs; rm -rf /var/lib/apt/lists/*; \\\n    npm install -g grunt-cli && npm cache clean --force;\n\n# Clone CouchDB source code including all dependencies\nARG clone_url=https://github.com/apache/couchdb.git\nRUN git clone $clone_url /usr/src/couchdb\nWORKDIR /usr/src/couchdb\nRUN ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\"\n\n# This layer performs the actual build of a relocatable, self-contained\n# release of CouchDB. It pulls down the latest changes from the remote\n# origin (because the layer above will be cached) and switches to the\n# branch specified in the build_arg (defaults to main)\nFROM build_dependencies AS build\n\nARG checkout_branch=main\nARG configure_options\nARG spidermonkey_version=60\n\nWORKDIR /usr/src/couchdb/\nRUN git fetch origin \\\n    && git checkout $checkout_branch \\\n    && ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" $configure_options --spidermonkey-version $spidermonkey_version \\\n    && make release\n\n# This results in a single layer image (or at least skips the build stuff?)\nFROM runtime\nCOPY --from=build /usr/src/couchdb/rel/couchdb /opt/couchdb\n\n# Add configuration\nCOPY local.ini /opt/couchdb/etc/default.d/\nCOPY vm.args /opt/couchdb/etc/\nCOPY docker-entrypoint.sh /\n\n# Setup directories and permissions\nRUN find /opt/couchdb \\! \\( -user couchdb -group couchdb \\) -exec chown -f couchdb:couchdb '{}' +\n\nWORKDIR /opt/couchdb\nEXPOSE 5984 4369 9100\nVOLUME [\"/opt/couchdb/data\"]\n\nENTRYPOINT [\"tini\", \"--\", \"/docker-entrypoint.sh\"]\nCMD [\"/opt/couchdb/bin/couchdb\"]\n"
+}

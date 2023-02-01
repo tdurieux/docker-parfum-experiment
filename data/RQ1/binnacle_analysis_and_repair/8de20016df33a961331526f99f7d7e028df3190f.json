@@ -1,0 +1,126 @@
+{
+  "startTime": 1674242594012,
+  "endTime": 1674242594496,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 24,
+        "lineEnd": 24,
+        "columnStart": 2,
+        "columnEnd": 138
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 24,
+        "lineEnd": 24,
+        "columnStart": 12,
+        "columnEnd": 94
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 25,
+        "lineEnd": 25,
+        "columnStart": 2,
+        "columnEnd": 163
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 25,
+        "lineEnd": 25,
+        "columnStart": 12,
+        "columnEnd": 114
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 43,
+        "lineEnd": 43,
+        "columnStart": 4,
+        "columnEnd": 73
+      }
+    },
+    {
+      "rule": "aptGetInstallUseY",
+      "position": {
+        "lineStart": 23,
+        "lineEnd": 23,
+        "columnStart": 54,
+        "columnEnd": 91
+      }
+    },
+    {
+      "rule": "aptGetInstallUseY",
+      "position": {
+        "lineStart": 38,
+        "lineEnd": 40,
+        "columnStart": 4,
+        "columnEnd": 59
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 23,
+        "lineEnd": 23,
+        "columnStart": 54,
+        "columnEnd": 91
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 38,
+        "lineEnd": 40,
+        "columnStart": 4,
+        "columnEnd": 59
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 38,
+        "lineEnd": 40,
+        "columnStart": 4,
+        "columnEnd": 59
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 23,
+        "lineEnd": 23,
+        "columnStart": 54,
+        "columnEnd": 91
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 38,
+        "lineEnd": 40,
+        "columnStart": 4,
+        "columnEnd": 59
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 38,
+        "lineEnd": 40,
+        "columnStart": 4,
+        "columnEnd": 59
+      }
+    }
+  ],
+  "repairedDockerfile": "FROM golang:1.12 AS go-builder\n\nENV GOPROXY=https://proxy.golang.org\nENV GO111MODULE=on\n\nWORKDIR /project\n\nCOPY go.mod .\nCOPY go.sum .\nRUN go mod download\n\nCOPY . .\nRUN go build -ldflags='-s -w' -o /builder ./cmd/builder\n\n# electron-builder uses Xenial because of native node deps, but for snap Bionic must be used (as we use base: core18)\nFROM buildpack-deps:bionic-curl\n\n# this package is used for snapcraft and we should not clear apt list - to avoid apt-get update during snap build\n\nENV DEBIAN_FRONTEND noninteractive\n\n# Grab dependencies\n# Grab the core snap from the stable channel and unpack it in the proper place\nRUN apt-get update -qq && apt-get dist-upgrade -qq && apt-get install -y --no-install-recommends -qq jq squashfs-tools && \\\n  curl -f -L $( curl -f -H 'X-Ubuntu-Series: 16' 'https://api.snapcraft.io/api/v1/snaps/details/core' | jq '.download_url' -r) --output core.snap && mkdir -p /snap/core && unsquashfs -d /snap/core/current core.snap && \\\n  curl -f -L $( curl -f -H 'X-Ubuntu-Series: 16' 'https://api.snapcraft.io/api/v1/snaps/details/snapcraft?channel=stable' | jq '.download_url' -r) --output snapcraft.snap && mkdir -p /snap/snapcraft && unsquashfs -d /snap/snapcraft/current snapcraft.snap && rm -rf /var/lib/apt/lists/*;\n\n# Create a snapcraft runner\nRUN mkdir -p /snap/bin && echo \"#!/bin/sh\" > /snap/bin/snapcraft && \\\n  snap_version=\"$(awk '/^version:/{print $2}' /snap/snapcraft/current/meta/snap.yaml)\" && echo \"export SNAP_VERSION=\\\"$snap_version\\\"\" >> /snap/bin/snapcraft && \\\n  echo 'exec \"$SNAP/usr/bin/python3\" \"$SNAP/bin/snapcraft\" \"$@\"' >> /snap/bin/snapcraft && \\\n  chmod +x /snap/bin/snapcraft\n\n# python for node-gyp IS NOT installed, because it is not safe to build some NPM packages on server (as NPM package registry is not trusted)\n# rpm is required for FPM to build rpm package\n# libsecret-1-dev and libgnome-keyring-dev are required even for prebuild keytar\n# do not use  --no-install-recommends - because snapcraft will install with default flags (so, we should also do so to ensure to avoid fetching during build)\n# binutils for deb (ar command)\nRUN apt-get -qq -y --no-install-recommends install bsdtar lzip rpm binutils libopenjp2-tools \\\n  # snap stage packages\n  libnspr4 libnss3 libxss1 libappindicator3-1 libsecret-1-0 && \\\n  apt-mark hold libnspr4 libnss3 libxss1 libappindicator3-1 libsecret-1-0 && rm -rf /var/lib/apt/lists/*;\n\nRUN curl -f -L https://nodejs.org/dist/v12.4.0/node-v12.4.0-linux-x64.tar.gz | tar xz -C /usr/local --strip-components=1 && \\\n  unlink /usr/local/CHANGELOG.md && unlink /usr/local/LICENSE && unlink /usr/local/README.md && \\\n  # https://github.com/npm/npm/issues/4531\n  npm config set unsafe-perm true\n\nCOPY node_modules /node_modules\n\nRUN ln -s /node_modules/7zip-bin/linux/x64/7za /usr/local/bin/7za && /node_modules/app-builder-bin/linux/x64/app-builder prefetch-tools && \\\n  /node_modules/app-builder-bin/linux/x64/app-builder download-electron --configuration '[{\"platform\":\"linux\",\"arch\":\"x64\",\"version\":\"5.0.5\"}]'\n\n# fix error /usr/local/bundle/gems/fpm-1.5.0/lib/fpm/package/freebsd.rb:72:in `encode': \"\\xE2\" from ASCII-8BIT to UTF-8 (Encoding::UndefinedConversionError)\n# http://jaredmarkell.com/docker-and-locales/\n# http://askubuntu.com/a/601498\nENV LANG C.UTF-8\nENV LANGUAGE C.UTF-8\nENV LC_ALL C.UTF-8\n\nENV DEBUG_COLORS true\nENV FORCE_COLOR true\n\nENV PATH=\"/snap/bin:$PATH\"\nENV SNAP=\"/snap/snapcraft/current\"\nENV SNAP_NAME=\"snapcraft\"\nENV SNAP_ARCH=\"amd64\"\n\nCOPY --from=go-builder /builder /builder\n\nCMD [\"/builder\"]"
+}

@@ -1,0 +1,38 @@
+FROM ubuntu:focal-20220531 AS build
+
+RUN apt update && DEBIAN_FRONTEND=noninteractive apt --no-install-recommends install -y \
+  build-essential \
+  clang-10 \
+  cmake \
+  doxygen \
+  git \
+  libssl-dev \
+  locales \
+  ninja-build \
+  wget \
+  && locale-gen en_US.UTF-8 && rm -rf /var/lib/apt/lists/*;
+ENV LANG=en_US.UTF-8
+
+ARG erttag=v0.3.3
+ARG egotag=v0.5.1
+RUN wget -qO- https://golang.org/dl/go1.18.1.linux-amd64.tar.gz | tar -C /usr/local -xz \
+  && git clone -b $erttag --depth=1 https://github.com/edgelesssys/edgelessrt \
+  && git clone -b $egotag --depth=1 https://github.com/edgelesssys/ego \
+  && mkdir ertbuild egobuild
+
+# install ert
+RUN cd edgelessrt && export SOURCE_DATE_EPOCH=$(git log -1 --pretty=%ct) && cd /ertbuild \
+  && cmake -GNinja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTS=OFF /edgelessrt \
+  && ninja install
+
+# build ego
+RUN cd ego && export SOURCE_DATE_EPOCH=$(git log -1 --pretty=%ct) && cd /egobuild \
+  && . /opt/edgelessrt/share/openenclave/openenclaverc \
+  && cmake -DCMAKE_BUILD_TYPE=Release /ego \
+  && PATH=$PATH:/usr/local/go/bin make -j`nproc` \
+  && cpack -G DEB \
+  # the md5sums file is randomly sorted, which affects the hash of the package. To achieve reproducible build, we have to unpack the package, sort md5sums (in any consistent way) and pack it again.
+  && mkdir tmp && dpkg-deb -R ego_*_amd64.deb tmp && sort tmp/DEBIAN/md5sums >tmp/DEBIAN/md5sums && dpkg-deb -b tmp ego_*_amd64.deb
+
+FROM scratch AS export
+COPY --from=build /egobuild/ego_*_amd64.deb /

@@ -1,0 +1,2 @@
+FROM ghcr.io/opsrockin/omnibus_base_centos8:master
+LABEL MAINTAINER=sawanoboriyu@higanworks.com

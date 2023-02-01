@@ -1,0 +1,24 @@
+# builder
+FROM node:14.15.4-alpine as builder
+WORKDIR /usr/src/app
+
+COPY package* ./
+RUN npm install && npm cache clean --force;
+
+COPY . .
+
+RUN npm run build
+
+# final docker image
+FROM node:14.15.4-alpine
+WORKDIR /usr/src/app
+
+COPY package* ./
+RUN npm install && npm cache clean --force;
+
+COPY --from=builder /usr/src/app/build ./
+
+EXPOSE 3000
+
+CMD node index.js
+

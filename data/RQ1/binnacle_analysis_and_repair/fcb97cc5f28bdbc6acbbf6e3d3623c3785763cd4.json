@@ -1,0 +1,26 @@
+{
+  "startTime": 1674234899748,
+  "endTime": 1674234899861,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 31,
+        "lineEnd": 31,
+        "columnStart": 4,
+        "columnEnd": 101
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 36,
+        "lineEnd": 36,
+        "columnStart": 5,
+        "columnEnd": 42
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# This dockerfile initiates set-up for the PSM Wildfly server.\n# The script first downloads necessary resources and artifacts,\n# then calls the \"bin/entrypoint.sh\" shell script to set up the\n# server and build the PSM application.\n\n# NOTE: As of 6-4-2018, the PSM app runs well on Wildfly 12 but\n# not on Wildfly 13 (the version behind the default tag). If PSM\n# eventually works on Wildfly 13, the \"12.0.0.Final\" tag can be\n# removed.\nFROM jboss/wildfly:12.0.0.Final\n\n# Set environment variables, used throughout setup by shell scripts.\nENV JBOSS_HOME /opt/jboss/wildfly\nENV JBOSS_CLI ${JBOSS_HOME}/bin/jboss-cli.sh\nENV JBOSS_STANDALONE ${JBOSS_HOME}/standalone\nENV JBOSS_DEPLOYMENTS  ${JBOSS_STANDALONE}/deployments\nENV JBOSS_STANDALONE_XML ${JBOSS_STANDALONE}/configuration/standalone_xml_history\nENV EAR_NAME cms-portal-services.ear\nENV EAR ${JBOSS_DEPLOYMENTS}/${EAR_NAME}\nENV LAUNCH_JBOSS_IN_BACKGROUND true\nENV PWORD psm\nENV DBUSER psm\n\nUSER root\n\n# Add Wildfly user 'psm' w/ password of 'psm', mirroring setup.\nRUN cd ${JBOSS_HOME} \\\n\t\t&& bin/add-user.sh ${DBUSER} ${PWORD}\n\n# Download Postgres JDBC driver and stage for deploy. If the driver is updated,\n# the version number on this line should be the only one that needs to be changed.\nRUN curl -f -o ${JBOSS_HOME}/postgresql.jar \"https://jdbc.postgresql.org/download/postgresql-42.2.2.jar\"\n\n# Load some packages: netcat (nc), PostgreSQL Server, etc\nCOPY pgdg-centos96-9.6-3.noarch.rpm /\nRUN yum localinstall -y /pgdg-centos96-9.6-3.noarch.rpm \\\n\t\t&& yum install -y nc postgresql10-server \\\n\t\t&& rm /pgdg-centos96-9.6-3.noarch.rpm && rm -rf /var/cache/yum\n\n# Install Tini to use as subreaper in Docker container to adopt zombie\n# processes.  Basically, the JVM makes a poor PID 1\nENV TINI_SHA 066ad710107dc7ee05d3aa6e4974f01dc98f3888\nRUN curl -fL https://github.com/krallin/tini/releases/download/v0.5.0/tini-static -o /bin/tini && chmod +x /bin/tini \\\n                 && echo \"$TINI_SHA /bin/tini\" | sha1sum -c -\n\n# Save wildfly contents.  We'll restore them to a data volume later.\n# This lets wildfly make its writes in a data volume, which means it\n# doesn't have to write to the container's overlayfs.  This lets us\n# avoid the dreaded mount bug:\n# https://bugs.openjdk.java.net/browse/JDK-8165852\nRUN mv /opt/jboss/wildfly /opt/jboss/wildfly.static\n\n# Prepare the configuration scripts that set up the server, build the\n# application, and run the whole setup.\nCOPY bin/* /usr/local/bin/\nRUN chmod a+x /usr/local/bin/*\n\n# Expose ports for configuration and app use.\nEXPOSE 8443 9990 8080\n\n# Run the entrypoint script, which handles the setup and execution\n# of the application.\nENTRYPOINT [\"tini\", \"--\", \"/usr/local/bin/entrypoint.sh\"]\n"
+}

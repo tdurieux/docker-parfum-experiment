@@ -1,0 +1,71 @@
+{
+  "startTime": 1674254100109,
+  "endTime": 1674254100926,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 33,
+        "lineEnd": 33,
+        "columnStart": 4,
+        "columnEnd": 116
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 43,
+        "lineEnd": 43,
+        "columnStart": 4,
+        "columnEnd": 126
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 44,
+        "lineEnd": 44,
+        "columnStart": 4,
+        "columnEnd": 152
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 56,
+        "lineEnd": 56,
+        "columnStart": 4,
+        "columnEnd": 92
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 60,
+        "lineEnd": 60,
+        "columnStart": 4,
+        "columnEnd": 110
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 62,
+        "lineEnd": 62,
+        "columnStart": 4,
+        "columnEnd": 72
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 41,
+        "lineEnd": 41,
+        "columnStart": 28,
+        "columnEnd": 128
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "ARG BASE_VERSION=v5\nARG SPARK_VERSION\nARG HADOOP_VERSION\nARG SCALA_VERSION\nARG JAVA_VERSION\nARG PYTHON_VERSION\n\nFROM dsaidgovsg/spark-k8s-addons:${BASE_VERSION}_${SPARK_VERSION}_hadoop-${HADOOP_VERSION}_scala-${SCALA_VERSION}_java-${JAVA_VERSION}_python-${PYTHON_VERSION} AS base\n\n# Airflow will run as root instead of the spark 185 user meant for k8s\nUSER root\n\n# Set up gosu\nRUN set -euo pipefail && \\\n    apt-get update; \\\n    apt-get install -y --no-install-recommends gosu; \\\n\trm -rf /var/lib/apt/lists/*; \\\n    # Verify that the binary works\n\tgosu nobody true; \\\n    :\n\n# Set up Hadoop\nARG HADOOP_VERSION\n\n## Other Spark / Airflow related defaults\nARG HADOOP_HOME=\"/opt/hadoop\"\nENV HADOOP_HOME=\"${HADOOP_HOME}\"\n\nARG HADOOP_CONF_DIR=\"/opt/hadoop/etc/hadoop\"\nENV HADOOP_CONF_DIR=\"${HADOOP_CONF_DIR}\"\n\nRUN set -euo pipefail && \\\n    mkdir -p \"$(dirname \"${HADOOP_HOME}\")\"; \\\n    curl -f -LO \"https://archive.apache.org/dist/hadoop/core/hadoop-${HADOOP_VERSION}/hadoop-${HADOOP_VERSION}.tar.gz\"; \\\n    tar xf \"hadoop-${HADOOP_VERSION}.tar.gz\"; \\\n    mv \"hadoop-${HADOOP_VERSION}\" \"${HADOOP_HOME}\"; \\\n    rm \"hadoop-${HADOOP_VERSION}.tar.gz\"; \\\n    # Install JARs to Hadoop external\n    ## AWS S3 JARs\n    ## Get the aws-java-sdk version dynamic based on Hadoop version\n    ## Do not use head -n1 because it will trigger 141 exit code due to early return on pipe\n    AWS_JAVA_SDK_VERSION=\"$( curl -f https://raw.githubusercontent.com/apache/hadoop/branch-${HADOOP_VERSION}/hadoop-project/pom.xml | grep -A1 aws-java-sdk | grep -oE \"[[:digit:]]+\\.[[:digit:]]+\\.[[:digit:]]+\" | tr \"\\r\\n\" \" \" | cut -d \" \" -f 1)\" ; \\\n    cd \"${HADOOP_HOME}/share/hadoop/hdfs/\"; \\\n    curl -f -LO \"https://repo1.maven.org/maven2/org/apache/hadoop/hadoop-aws/${HADOOP_VERSION}/hadoop-aws-${HADOOP_VERSION}.jar\"; \\\n    curl -f -LO \"https://repo1.maven.org/maven2/com/amazonaws/aws-java-sdk-bundle/${AWS_JAVA_SDK_VERSION}/aws-java-sdk-bundle-${AWS_JAVA_SDK_VERSION}.jar\"; \\\n    cd -; \\\n    printf \"\\\n<?xml version=\\\"1.0\\\" encoding=\\\"UTF-8\\\" ?>\\n\\\n<configuration>\\n\\\n<property>\\n\\\n    <name>fs.s3a.impl</name>\\n\\\n    <value>org.apache.hadoop.fs.s3a.S3AFileSystem</value>\\n\\\n</property>\\n\\\n</configuration>\\n\" > ${HADOOP_CONF_DIR}/core-site.xml; \\\n    ## Google Storage JAR\n    cd \"${HADOOP_HOME}/share/hadoop/hdfs/\"; \\\n    curl -f -LO https://storage.googleapis.com/hadoop-lib/gcs/gcs-connector-hadoop2-latest.jar; \\\n    cd -; \\\n    cd \"${HADOOP_HOME}/share/hadoop/tools/lib\"; \\\n    ## MariaDB JAR\n    curl -f -LO https://downloads.mariadb.com/Connectors/java/connector-java-2.4.0/mariadb-java-client-2.4.0.jar; \\\n    ## Postgres JDBC JAR\n    curl -f -LO https://jdbc.postgresql.org/download/postgresql-42.2.9.jar; \\\n    cd -; \\\n    :\n\nENV PATH=\"${PATH}:${HADOOP_HOME}/bin\"\n\n# Set up Airflow via poetry\nARG AIRFLOW_VERSION\nENV AIRFLOW_VERSION=\"${AIRFLOW_VERSION}\"\n\nARG SQLALCHEMY_VERSION\nENV SQLALCHEMY_VERSION=\"${SQLALCHEMY_VERSION}\"\n\nRUN set -euo pipefail && \\\n    # Airflow and SQLAlchemy\n    # Postgres dev prereqs to install Airflow\n    apt-get update; \\\n    apt-get install -y --no-install-recommends build-essential libpq5 libpq-dev; \\\n    ## These two version numbers can take MAJ.MIN[.PAT]\n    if [ -z \"${AIRFLOW_VERSION}\" ]; then >&2 echo \"Please specify AIRFLOW_VERSION\" && exit 1; fi; \\\n    if [ -v \"${SQLALCHEMY_VERSION}\" ]; then >&2 echo \"Please specify SQLALCHEMY_VERSION\" && exit 1; fi; \\\n    AIRFLOW_NORM_VERSION=\"$(printf \"%s.%s\" \"${AIRFLOW_VERSION}\" \"*\" | cut -d '.' -f1,2,3)\"; \\\n    SQLALCHEMY_NORM_VERSION=\"$(printf \"%s.%s\" \"${SQLALCHEMY_VERSION}\" \"*\" | cut -d '.' -f1,2,3)\"; \\\n    pushd \"${POETRY_SYSTEM_PROJECT_DIR}\"; \\\n    if [[ \"${AIRFLOW_NORM_VERSION}\" == \"2.1.*\" ]]; then \\\n        poetry add \\\n            \"apache-airflow==${AIRFLOW_NORM_VERSION}\" \\\n            \"sqlalchemy==${SQLALCHEMY_NORM_VERSION}\" \\\n            \"boto3\" \\\n            \"psycopg2\" \\\n            # airflow 2.1 does not use markupsafe>=2, nothing to fix\n            # https://github.com/apache/airflow/blob/v2-1-stable/setup.cfg#L122\n            ; \\\n        popd; \\\n    else \\\n        # Airflow >= 2.2\n        poetry add \\\n            \"apache-airflow==${AIRFLOW_NORM_VERSION}\" \\\n            \"sqlalchemy==${SQLALCHEMY_NORM_VERSION}\" \\\n            \"boto3\" \\\n            \"psycopg2\" \\\n            # Fixes ImportError: cannot import name 'soft_unicode' from 'markupsafe'\n            # https://github.com/dbt-labs/dbt-core/issues/4745#issuecomment-1044354226\n            \"markupsafe==2.0.1\" \\\n            ; \\\n        popd; \\\n    fi; \\\n    ## Clean up dev files and only retain the runtime of Postgres lib\n    apt-get remove -y build-essential libpq-dev; \\\n    rm -rf /var/lib/apt/lists/*; \\\n    :\n\nARG AIRFLOW_HOME=/airflow\nENV AIRFLOW_HOME=\"${AIRFLOW_HOME}\"\n\n# Create the Airflow home\nWORKDIR ${AIRFLOW_HOME}\n\n# Copy the entrypoint as root first but allow user to run\nCOPY entrypoint.sh /entrypoint.sh\nRUN chmod +x \"/entrypoint.sh\"\nENTRYPOINT [\"/entrypoint.sh\"]\n\n# Less verbose logging\nCOPY log4j.properties \"${SPARK_HOME}/conf/log4j.properties\"\n\n# Setup airflow dags path\nENV AIRFLOW_DAG=\"${AIRFLOW_HOME}/dags\"\nRUN mkdir -p \"${AIRFLOW_DAG}\"\n\nCOPY setup_auth.py test_db_conn.py ${AIRFLOW_HOME}/\n\n# All the other env vars that don't affect the build here\nENV PYSPARK_SUBMIT_ARGS=\"--py-files ${SPARK_HOME}/python/lib/pyspark.zip pyspark-shell\"\n"
+}

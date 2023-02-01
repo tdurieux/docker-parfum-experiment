@@ -1,0 +1,26 @@
+{
+  "startTime": 1674218465839,
+  "endTime": 1674218466630,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 49,
+        "lineEnd": 49,
+        "columnStart": 22,
+        "columnEnd": 45
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 49,
+        "lineEnd": 49,
+        "columnStart": 22,
+        "columnEnd": 45
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "################################\n# STEP 1 build executable binary\n################################\n\nFROM golang:1.17-alpine AS build-stage\n\nENV VENDOR kaspersky\n\n# Install git + SSL ca certificates.\n# Git is required for fetching the dependencies.\n# Ca-certificates is required to call HTTPS endpoints.\nRUN apk update && apk add --no-cache git ca-certificates tzdata \\\n\t&& update-ca-certificates 2>/dev/null || true\n\n# Set the Current Working Directory inside the container.\nWORKDIR $GOPATH/src/saferwall/$VENDOR/\n\n# Copy go mod and sum files.\nCOPY go.mod go.sum ./\n\n# Download all dependencies. Dependencies will be cached if the go.mod\n# and go.sum files are not changed.\nRUN go mod download\n\n# Copy our go files.\nCOPY . .\n\n# Build the binary.\nRUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \\\n\tgo build -a -installsuffix cgo -ldflags '-extldflags \"-static\"' \\\n\t-o /go/bin/$VENDOR-svc cmd/services/multiav/$VENDOR/main.go\n\n############################\n# STEP 2 build a small image\n############################\n\nFROM saferwall/kaspersky:latest\nLABEL maintainer=\"https://github.com/saferwall\"\nLABEL version=\"0.0.3\"\nLABEL description=\"Kaspersky Anti-Virus for Linux File Servers in a docker container\"\n\n# Environment variables.\nENV KASPERSKY_INSTALL_DIR\t\t/opt/kaspersky\nENV KASPERSKY_DB_UPDATE_DATE\t/av_db_update_date.txt\n\n# Set the Current Working Directory inside the container.\nWORKDIR /saferwall\n\n# Required packages.\nRUN apt-get update && apt-get install --no-install-recommends -y sudo && rm -rf /var/lib/apt/lists/*;\n\n# Update virus definition file.\nRUN service kesl-supervisor start \\\n\t&& $KASPERSKY_BIN --start-task 6 \\\n\t&& sleep 2m \\\n\t&& $KASPERSKY_BIN --app-info \\\n\t&& echo -n \"$(date +%s)\" >> $KASPERSKY_DB_UPDATE_DATE\n\n# Create an app user so our program doesn't run as root.\nRUN groupadd -r saferwall \\\n\t&& useradd --no-log-init -r -g saferwall saferwall\n\n# Copy our static executable.\nCOPY --from=build-stage /go/bin/kaspersky-svc .\n\n# Copy the config files.\nCOPY configs/services/multiav/kaspersky conf/\n\n# Update permissions.\nRUN usermod -aG sudo saferwall \\\n\t&& echo 'saferwall    ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers \\\n\t&& usermod -u 101 saferwall \\\n\t&& groupmod -g 102 saferwall \\\n\t&& chown -R saferwall:saferwall .\n\n# Switch to our user.\nUSER saferwall\n\nENTRYPOINT [\"/saferwall/kaspersky-svc\", \"-config\", \"/saferwall/conf\"]\n"
+}

@@ -1,0 +1,17 @@
+{
+  "startTime": 1674219810888,
+  "endTime": 1674219811971,
+  "originalSmells": [
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 7,
+        "lineEnd": 7,
+        "columnStart": 4,
+        "columnEnd": 34
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# UI build image\nFROM node:16.5.0 as frontend\n\nWORKDIR /web\n\nCOPY web/package.json web/package-lock.json /web/\n\nRUN npm install --legacy-peer-deps && npm cache clean --force;\n\nCOPY web/ /web/\n\nRUN npm run build-prod\n\n\n# Build image\nFROM golang:1.16-alpine3.13 AS builder\n\nENV GOFLAGS=\"-mod=readonly\"\n\nRUN apk add --update --no-cache ca-certificates make git curl mercurial\n\nRUN mkdir -p /workspace\nWORKDIR /workspace\n\nARG GOPROXY\n\nCOPY go.* /workspace/\nRUN go mod download\n\nCOPY Makefile main-targets.mk /workspace/\n\nCOPY --from=frontend /web/dist/web /workspace/web/dist/web\nCOPY . /workspace\n\nARG BUILD_TARGET\n\nRUN set -xe && \\\n    if [[ \"${BUILD_TARGET}\" == \"debug\" ]]; then \\\n        cd /tmp; GOBIN=/workspace/build/debug go get github.com/go-delve/delve/cmd/dlv; cd -; \\\n        make build-debug; \\\n        mv build/debug /build; \\\n    else \\\n        make build-release; \\\n        mv build/release /build; \\\n    fi\n\n\n# Final image\nFROM alpine:3.14.0\n\nRUN apk add --update --no-cache ca-certificates tzdata bash curl\n\nSHELL [\"/bin/bash\", \"-c\"]\n\n# set up nsswitch.conf for Go's \"netgo\" implementation\n# https://github.com/gliderlabs/docker-alpine/issues/367#issuecomment-424546457\nRUN test ! -e /etc/nsswitch.conf && echo 'hosts: files dns' > /etc/nsswitch.conf\n\nARG BUILD_TARGET\n\nRUN if [[ \"${BUILD_TARGET}\" == \"debug\" ]]; then apk add --update --no-cache libc6-compat; fi\n\nCOPY --from=builder /build/* /usr/local/bin/\n\nCOPY configs /etc/cloudinfo/serviceconfig\n\nRUN sed -i \"s|dataLocation: ./configs/|dataLocation: /etc/cloudinfo/serviceconfig/|g\" /etc/cloudinfo/serviceconfig/services.yaml\n\nENV CLOUDINFO_SERVICELOADER_SERVICECONFIGLOCATION \"/etc/cloudinfo/serviceconfig\"\n\nCMD [\"cloudinfo\"]\n"
+}

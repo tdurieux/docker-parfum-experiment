@@ -1,0 +1,21 @@
+FROM docker:19.03.0-dind
+
+ENV SHELL /bin/bash
+ENV DEBIAN_FRONTEND=noninteractive
+ENV DOCKER_DRIVER=overlay2
+ENV DOCKER_TLS_CERTDIR=''
+
+RUN apk add --no-cache nodejs npm
+RUN apk -v --no-cache --update add \
+        python3 \
+        groff \
+        less \
+        mailcap \
+    && python3 -m ensurepip \
+    && pip3 install --no-cache-dir --upgrade pip \
+    && pip3 install --no-cache-dir --upgrade awscli==1.14.5 s3cmd==2.0.1 python-magic
+
+WORKDIR /usr/local/src/batch
+ADD . /usr/local/src/batch
+
+RUN npm install && npm cache clean --force;

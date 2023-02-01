@@ -1,0 +1,17 @@
+{
+  "startTime": 1674217385580,
+  "endTime": 1674217387038,
+  "originalSmells": [
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 34,
+        "lineEnd": 34,
+        "columnStart": 4,
+        "columnEnd": 75
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "#   Copyright (c) 2021, 2022, Oracle and/or its affiliates.\n#   Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl.\n\n# First layer: dependencies for the project, cached in the /root/.m2 directory\nFROM maven:3.6-jdk-11 as m2repo\nARG MAVEN_OPTS\n\nWORKDIR /project/\nCOPY pom.xml .\nCOPY wls-exporter-core/pom.xml wls-exporter-core/\nCOPY wls-exporter-sidecar/pom.xml wls-exporter-sidecar/\n\nRUN mvn -B -e -C org.apache.maven.plugins:maven-dependency-plugin:3.1.2:go-offline -Ddocker-build\n\n# Now build the project on top of that first layer\nFROM maven:3.6-jdk-11 as build\nARG MAVEN_OPTS\n\nWORKDIR /project/\nCOPY --from=m2repo /root/.m2 /root/.m2\nCOPY pom.xml .\nCOPY wls-exporter-core/ wls-exporter-core/\nCOPY wls-exporter-sidecar/ wls-exporter-sidecar/\n\nRUN mvn -B -e -C install -Ddocker-build -DskipTests=true\n\nFROM ghcr.io/oracle/oraclelinux:8-slim AS jre-build\n\nENV JAVA_URL=\"https://download.java.net/java/GA/jdk18.0.1.1/65ae32619e2f40f3a9af3af1851d6e19/2/GPL/openjdk-18.0.1.1_linux-x64_bin.tar.gz\"\n\nRUN set -eux; \\\n    microdnf -y install gzip tar; \\\n    curl -fL -o /jdk.tar.gz \"$JAVA_URL\"; \\\n    mkdir -p /jdk; \\\n    tar --extract --file /jdk.tar.gz --directory /jdk --strip-components 1; rm /jdk.tar.gz \\\n    /jdk/bin/jlink --verbose --compress 2 --strip-java-debug-attributes --no-header-files --no-man-pages --output jre --add-modules java.base,java.logging,java.desktop,java.instrument,java.management,java.naming,java.net.http,java.security.jgss,java.sql,jdk.attach,jdk.jdi,jdk.jfr,jdk.management,jdk.management.jfr,jdk.net,jdk.unsupported,jdk.crypto.cryptoki,jdk.crypto.ec,jdk.zipfs\n\nFROM ghcr.io/oracle/oraclelinux:8-slim\n\nLABEL \"org.opencontainers.image.authors\"=\"Ryan Eberhard <ryan.eberhard@oracle.com>, Russell Gold <russell.gold@oracle.com>\" \\\n      \"org.opencontainers.image.url\"=\"https://github.com/oracle/weblogic-monitoring-exporter\" \\\n      \"org.opencontainers.image.source\"=\"https://github.com/oracle/weblogic-monitoring-exporter\" \\\n      \"org.opencontainers.image.vendor\"=\"Oracle Corporation\" \\\n      \"org.opencontainers.image.title\"=\"Oracle WebLogic Monitoring Exporter\" \\\n      \"org.opencontainers.image.description\"=\"Oracle WebLogic Monitoring Exporter\" \\\n      \"org.opencontainers.image.documentation\"=\"https://github.com/oracle/weblogic-monitoring-exporter\"\n\nCOPY --from=jre-build /jre jre\n\nRUN set -eux; \\\n    microdnf -y update; \\\n    microdnf clean all; \\\n    for bin in /jre/bin/*; do \\\n        base=\"$(basename \"$bin\")\"; \\\n        [ ! -e \"/usr/bin/$base\" ]; \\\n        alternatives --install \"/usr/bin/$base\" \"$base\" \"$bin\" 20000; \\\n    done; \\\n    java -Xshare:dump\n\nCOPY --from=build project/wls-exporter-sidecar/target/wls-exporter-sidecar.jar ./\nCOPY --from=build project/wls-exporter-sidecar/target/libs ./libs\nCOPY start_exporter.sh .\n\nENTRYPOINT [\"sh\", \"start_exporter.sh\"]\n\nEXPOSE 8080"
+}

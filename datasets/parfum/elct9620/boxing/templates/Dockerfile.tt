@@ -1,0 +1,112 @@
+ARG APP_ROOT=<%= config.root %>
+ARG RUBY_VERSION=<%= RUBY_VERSION %>
+<%- if config.assets_precompile -%>ARG NODE_VERSION=<%= node_version %><%- end -%>
+
+FROM ruby:${RUBY_VERSION}-alpine AS gem
+ARG APP_ROOT
+
+RUN apk add --no-cache <%= packages.select(&:build?).join(' ') %>
+
+RUN mkdir -p ${APP_ROOT}
+COPY Gemfile Gemfile.lock ${APP_ROOT}/
+
+WORKDIR ${APP_ROOT}
+RUN gem install bundler:<%= Bundler::VERSION %> \
+    && bundle config --local deployment 'true' \
+    && bundle config --local frozen 'true' \
+    && bundle config --local no-cache 'true' \
+    && bundle config --local without 'development test' \
+    && bundle install -j "$(getconf _NPROCESSORS_ONLN)" \
+    && find ${APP_ROOT}/vendor/bundle -type f -name '*.c' -delete \
+    && find ${APP_ROOT}/vendor/bundle -type f -name '*.h' -delete \
+    && find ${APP_ROOT}/vendor/bundle -type f -name '*.o' -delete \
+    && find ${APP_ROOT}/vendor/bundle -type f -name '*.gem' -delete
+
+<%- if config.assets_precompile -%>
+FROM node:${NODE_VERSION}-alpine as node
+FROM ruby:${RUBY_VERSION}-alpine as assets
+ARG APP_ROOT
+ARG RAILS_MASTER_KEY
+
+ENV RAILS_MASTER_KEY $RAILS_MASTER_KEY
+
+<%- if packages.select(&:runtime?).any? -%>
+RUN apk add --no-cache <%= packages.select(&:runtime?).join(' ') %> yarn
+
+<%- end -%>
+COPY --from=node /usr/local/bin/node /usr/local/bin/node
+
+COPY --from=gem /usr/local/bundle/config /usr/local/bundle/config
+COPY --from=gem /usr/local/bundle /usr/local/bundle
+COPY --from=gem ${APP_ROOT}/vendor/bundle ${APP_ROOT}/vendor/bundle
+
+RUN mkdir -p ${APP_ROOT}
+COPY . ${APP_ROOT}
+
+ENV RAILS_ENV production
+WORKDIR ${APP_ROOT}
+RUN bundle exec rake assets:precompile
+
+<%- end -%>
+FROM ruby:${RUBY_VERSION}-alpine
+ARG APP_ROOT
+
+<%- if packages.select(&:runtime?).any? -%>
+RUN apk add --no-cache <%= packages.select(&:runtime?).join(' ') %>
+
+<%- end -%>
+COPY --from=gem /usr/local/bundle/config /usr/local/bundle/config
+COPY --from=gem /usr/local/bundle /usr/local/bundle
+COPY --from=gem ${APP_ROOT}/vendor/bundle ${APP_ROOT}/vendor/bundle
+
+RUN mkdir -p ${APP_ROOT}
+
+<%- if has?('rails') -%>
+ENV RAILS_ENV=production
+ENV RAILS_LOG_TO_STDOUT=true
+ENV RAILS_SERVE_STATIC_FILES=yes
+<%- end -%>
+ENV APP_ROOT=$APP_ROOT
+
+COPY . ${APP_ROOT}
+<%- if config.assets_precompile -%>COPY --from=assets /${APP_ROOT}/public /${APP_ROOT}/public
+<%- end -%>
+<%- if config.revision -%>
+
+ARG REVISION
+ENV REVISION $REVISION
+ENV COMMIT_SHORT_SHA $REVISION
+RUN echo "${REVISION}" > ${APP_ROOT}/REVISION
+<%- end -%>
+<%- if config.sentry_release -%>
+
+ARG SENTRY_RELEASE
+ENV SENTRY_RELEASE $SENTRY_RELEASE
+<%- end -%>
+
+# Apply Execute Permission
+RUN adduser -h ${APP_ROOT} -D -s /bin/nologin ruby ruby && \
+    chown ruby:ruby ${APP_ROOT} && \
+    <%- if has?('rails') -%>
+    chown -R ruby:ruby ${APP_ROOT}/log && \
+    chown -R ruby:ruby ${APP_ROOT}/tmp && \
+    <%- end -%>
+    chmod -R +r ${APP_ROOT}
+
+USER ruby
+WORKDIR ${APP_ROOT}
+
+EXPOSE <%= config.port %>
+<%- if has?('liveness') || config.health_check -%>
+HEALTHCHECK CMD curl -f http://localhost:<%= config.port %><%= config.health_check_path %> || exit 1
+<%- end -%>
+<%- if has?('openbox') -%>
+ENTRYPOINT ["bin/openbox"]
+CMD ["server"]
+<%- elsif has?('rails') -%>
+ENTRYPOINT ["bin/rails"]
+CMD ["server", "-b", "0.0.0.0"]
+<%- else -%>
+ENTRYPOINT ["bundle", "exec"]
+CMD ["rackup", "-o", "0.0.0.0"]
+<%- end -%>

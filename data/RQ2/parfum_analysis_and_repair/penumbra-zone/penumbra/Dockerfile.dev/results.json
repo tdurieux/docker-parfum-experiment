@@ -1,0 +1,26 @@
+{
+  "startTime": 1674220766525,
+  "endTime": 1674220767921,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 7,
+        "lineEnd": 7,
+        "columnStart": 22,
+        "columnEnd": 59
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 7,
+        "lineEnd": 7,
+        "columnStart": 22,
+        "columnEnd": 59
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM rust:latest as build\n\n# Specify the cargo cache dir as a volume to improve build speed\nVOLUME [\"/root/.cargo\"]\n\nRUN curl https://sh.rustup.rs -sSf | sh -s -- --no-modify-path --default-toolchain none -y\nRUN rustup component add rustfmt\nRUN apt-get update && apt-get install --no-install-recommends -y clang libclang-dev && rm -rf /var/lib/apt/lists/*;\n\nWORKDIR /usr/src\n\n# Use a dummy entrypoint to build each crate, that way dependencies can be cached\n# without code changes causing a complete rebuild.\n# TODO all these COPY commands add additional layers to the image. I'm not sure\n# how big they are but for the distributed images we likely want to use\n# a simpler Dockerfile.\nCOPY Cargo.toml .\nRUN mkdir -p pcli/src pd/src &&\\\n    echo \"fn main() {}\" > pcli/src/main.rs &&\\\n    echo \"fn main() {}\" > pd/src/main.rs\nCOPY pcli/build.rs ./pcli\nCOPY pcli/Cargo.toml ./pcli\nCOPY pd/Cargo.toml ./pd\nCOPY pd/build.rs ./pd\n# TODO If the protobuf definitions, crypto, or wallet implementations change,\n# there will be a complete rebuild. This is maybe possible to avoid.\nCOPY proto ./proto\nCOPY chain ./chain\nCOPY crypto ./crypto\nCOPY custody ./custody\nCOPY component ./component\nCOPY storage ./storage\nCOPY tct ./tct\nCOPY decaf377-fmd ./decaf377-fmd\nCOPY decaf377-ka ./decaf377-ka\nCOPY measure ./measure\nCOPY tct-property-test ./tct-property-test\nCOPY transaction ./transaction\nCOPY wallet ./wallet\nCOPY view ./view\nCOPY testnets ./testnets\nCOPY .git ./.git\nCOPY testnets ./testnets\nCOPY .cargo ./.cargo\n# Sorry about all that mess ^, but it's worth it during development.\n\n# Fetch dependencies in a separate layer, so that they can be cached.\nRUN cargo fetch\n\nRUN cargo build --release --bin pd\n\n# Remove the cached builds of internal packages.\nRUN rm -rf pcli pd crypto wallet config stake ibc component storage\n\n# Copy the repo source now that dependencies have been built and cached.\nCOPY . .\n\n# For dev leave off the `--release` flag as well for faster builds.\nRUN cargo build --release --bin pd && \\\n    mkdir -p /out && \\\n    mv target/release/pd /out/pd\n\n# Install the penumbra daemon into the runtime image.\n\n# TODO(eliza): it would be nice to be able to run the Penumbra daemon in a\n# `scratch` image rather than Debian or Alpine. However, then we'd have to build\n# with a statically linked libc (read: musl), and musl's malloc exhibits\n# pathologically poor performance for Tokio applications...\nFROM debian:bullseye-slim as runtime\nARG DATABASE_URL\nENV DATABASE_URL=$DATABASE_URL\nWORKDIR /penumbra\nCOPY --from=build /out/pd /usr/bin/pd\nENV RUST_LOG=warn,pd=info,penumbra=info\nCMD [ \"RUST_BACKTRACE=1 /usr/bin/pd\" ]\n"
+}

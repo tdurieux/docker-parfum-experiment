@@ -1,0 +1,17 @@
+{
+  "startTime": 1674244656873,
+  "endTime": 1674244657285,
+  "originalSmells": [
+    {
+      "rule": "sha256sumEchoOneSpaces",
+      "position": {
+        "lineStart": 59,
+        "lineEnd": 59,
+        "columnStart": 2,
+        "columnEnd": 58
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM debian:%%DEBIAN_SUITE%%\n\n# add our user and group first to make sure their IDs get assigned consistently, regardless of whatever dependencies get added\nRUN set -eux; \\\n\tgroupadd -r varnish; \\\n\tfor user in varnish vcache; do \\\n\t\tuseradd -r -g varnish $user; \\\n\tdone\n\n# prevent Debian's Varnish packages from being installed\nRUN set -eux; \\\n\t{ \\\n\t\techo 'Package: varnish*'; \\\n\t\techo 'Pin: release *'; \\\n\t\techo 'Pin-Priority: -1'; \\\n\t} > /etc/apt/preferences.d/no-debian-varnish\n\n# dependencies required for building VMOD (Varnish modules)\nENV VMOD_BUILD_DEPS \\\n\t\tautoconf-archive \\\n\t\tautomake \\\n\t\tautotools-dev \\\n\t\tlibtool \\\n\t\tmake \\\n\t\tpkg-config \\\n\t\tpython3\n\n# persistent / runtime deps\nRUN apt-get update && apt-get install -y \\\n\t\tgcc \\\n\t\tlibc6-dev \\\n\t--no-install-recommends && rm -r /var/lib/apt/lists/*\n\nENV VARNISH_VERSION %%VARNISH_VERSION%%\nENV VARNISH_URL %%VARNISH_URL%%\nENV VARNISH_SHA256 %%VARNISH_SHA256%%\n\nRUN set -eux; \\\n\n\tfetchDeps=' \\\n\t\tca-certificates \\\n\t\twget \\\n\t'; \\\n\tbuildDeps=\" \\\n\t\t$VMOD_BUILD_DEPS \\\n\t\tdpkg-dev \\\n\t\tlibedit-dev \\\n\t\tlibjemalloc-dev \\\n\t\tlibncurses5-dev \\\n\t\tlibpcre3-dev \\\n\t\"; \\\n\tsavedAptMark=\"$(apt-mark showmanual)\"; \\\n\tapt-get update; \\\n\tapt-get install -y --no-install-recommends $fetchDeps $buildDeps; \\\n\trm -rf /var/lib/apt/lists/*; \\\n\n\twget -O varnish.tar.gz \"$VARNISH_URL\"; \\\n\n\tif [ -n \"$VARNISH_SHA256\" ]; then \\\n\t\techo \"$VARNISH_SHA256  *varnish.tar.gz\" | sha256sum -c -; \\\n\tfi; \\\n\n\tmkdir -p /usr/src/varnish; \\\n\ttar -zxf varnish.tar.gz -C /usr/src/varnish --strip-components=1; \\\n\trm varnish.tar.gz; \\\n\n\tcd /usr/src/varnish; \\\n\tgnuArch=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\"; \\\n\t./autogen.sh; \\\n\t./configure \\\n\t\t--build=\"$gnuArch\" \\\n\t\t--with-rst2man=$(command -v true) \\\n\t\t--with-sphinx-build=$(command -v true) \\\n\t; \\\n\tmake -j \"$(nproc)\"; \\\n\tmake install; \\\n\tldconfig; \\\n\n\tcd /; \\\n\trm -r /usr/src/varnish; \\\n\n# reset apt-mark's \"manual\" list so that \"purge --auto-remove\" will remove all build dependencies\n\tapt-mark auto '.*' > /dev/null; \\\n\t[ -z \"$savedAptMark\" ] || apt-mark manual $savedAptMark; \\\n\tfind /usr/local -type f -executable -exec ldd '{}' ';' \\\n\t\t| awk '/=>/ { print $(NF-1) }' \\\n\t\t| sort -u \\\n\t\t| xargs -r dpkg-query --search \\\n\t\t| cut -d: -f1 \\\n\t\t| sort -u \\\n\t\t| xargs -r apt-mark manual \\\n\t; \\\n\tapt-get purge -y --auto-remove -o APT::AutoRemove::RecommendsImportant=false; \\\n\n\tvarnishd -V\n\nWORKDIR /usr/local/var/varnish\nRUN chown -R varnish:varnish /usr/local/var/varnish\nVOLUME /usr/local/var/varnish\n\nCOPY docker-varnish-entrypoint /usr/local/bin/\nENTRYPOINT [\"docker-varnish-entrypoint\"]\n\nEXPOSE 80\nCMD [\"varnishd\", \"-F\", \"-f\", \"/usr/local/etc/varnish/default.vcl\"]\n"
+}

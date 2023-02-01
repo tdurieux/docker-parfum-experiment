@@ -1,0 +1,44 @@
+{
+  "startTime": 1674245036689,
+  "endTime": 1674245037007,
+  "originalSmells": [
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 10,
+        "lineEnd": 10,
+        "columnStart": 4,
+        "columnEnd": 24
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 5,
+        "lineEnd": 5,
+        "columnStart": 4,
+        "columnEnd": 29
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 6,
+        "lineEnd": 6,
+        "columnStart": 4,
+        "columnEnd": 50
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 50,
+        "lineEnd": 50,
+        "columnStart": 4,
+        "columnEnd": 46
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM node:10-stretch AS builder\n\n# tools\nRUN echo \"deb http://ftp.debian.org/debian stretch-backports main\" >> /etc/apt/sources.list && \\\n    apt-get update && \\\n    apt-get install --no-install-recommends -y zopfli && \\\n    apt-get install --no-install-recommends -y -t stretch-backports brotli && \\\n    rm -rf /var/lib/apt/lists/*\n\n# some bower components expect that bower is installed\nRUN npm install -g bower && npm cache clean --force;\n\n# working directory\nRUN mkdir -p /project && \\\n    chown node /project\nWORKDIR /project\nUSER node\n\n# cache node_modules\nCOPY --chown=node package.json yarn.lock /project/\nRUN yarn install --frozen-lockfile --non-interactive --no-progress && \\\n    yarn cache clean && \\\n    bower cache clean\nLABEL cache-this-layer=liipi-web-builder-cache\n\n# do the build\nCOPY --chown=node *.* /project/\nCOPY --chown=node karma /project/karma/\nCOPY --chown=node src /project/src/\nRUN yarn run build\n\n# offline compress static resources\nRUN find /project/bin/static -type f -regextype posix-extended \\\n        -iregex '.*\\.(html?|js|css|svg|otf|ttf|txt|json)' \\\n        -exec zopfli '{}' \\; \\\n        -exec brotli --best '{}' \\;\n\n# ------------------------------------------------------------\n\nFROM nginx:1.15.2 AS nginx-builder\n\n# Add brotli module to nginx. Based on the article\n# https://www.fastfwd.com/improve-http-compression-with-brotli/\n# and the Dockerfile of our parent image.\nRUN set -x && \\\n    # save list of currently installed packages so build dependencies can be cleanly removed later\n    savedAptMark=\"$(apt-mark showmanual)\" && \\\n    \\\n    # tools and source repos\n    apt-get update && \\\n    apt-get install --no-install-recommends -y apt-transport-https git && \\\n    echo \"deb https://nginx.org/packages/mainline/debian/ stretch nginx\" >> /etc/apt/sources.list.d/nginx.list && \\\n    echo \"deb-src https://nginx.org/packages/mainline/debian/ stretch nginx\" >> /etc/apt/sources.list.d/nginx.list && \\\n    apt-get update && \\\n\n    # get ngx_brotli sources\n    cd /usr/local/src/ && \\\n    git clone https://github.com/google/ngx_brotli.git && \\\n    cd /usr/local/src/ngx_brotli/ && \\\n    git submodule update --init --recursive && \\\n\n    # get nginx sources\n    mkdir -p /tmp/nginx-build && \\\n    cd /tmp/nginx-build && \\\n    apt-get build-dep -y nginx=${NGINX_VERSION} && \\\n    apt-get source nginx=${NGINX_VERSION} && \\\n\n    # build nginx\n    cd /tmp/nginx-build/nginx-* && \\\n    configureArgs=$(nginx -V 2>&1 | sed -n -e 's/^configure arguments: //p') && \\\n    eval \"./configure ${configureArgs} --add-module=/usr/local/src/ngx_brotli\" && \\\n    make && \\\n    make install && \\\n\n    # reset apt-mark's \"manual\" list so that \"purge --auto-remove\" will remove all build dependencies\n    apt-mark showmanual | xargs apt-mark auto > /dev/null && \\\n    apt-mark manual $savedAptMark && \\\n\n    # cleanup\n    apt-get purge --auto-remove -y && \\\n    rm -rf /usr/local/src/ngx_brotli/   \\\n           /tmp/nginx-build/            \\\n           /var/lib/apt/lists/*         \\\n           /etc/apt/sources.list.d/nginx.list\nLABEL cache-this-layer=liipi-web-nginx-builder-cache\n\n# ------------------------------------------------------------\n\nFROM nginx:1.15.2\n\nCOPY --from=nginx-builder /usr/sbin/nginx /usr/sbin/nginx\n\nCOPY docker/nginx-default.conf.template /etc/nginx/conf.d/default.conf.template\n\nCOPY docker/docker-entrypoint.sh /\nENTRYPOINT [\"/docker-entrypoint.sh\"]\nCMD [\"nginx\", \"-g\", \"daemon off;\"]\n\nCOPY --from=builder /project/bin/static /usr/share/nginx/html\n"
+}

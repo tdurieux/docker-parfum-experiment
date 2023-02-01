@@ -1,0 +1,20 @@
+####################################################################################################
+# argo-rollouts-dev
+####################################################################################################
+FROM golang:1.17 as builder
+
+RUN apt-get update && apt-get install --no-install-recommends -y \
+    ca-certificates && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
+
+FROM scratch   
+
+COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
+COPY rollouts-controller-linux-amd64 /bin/rollouts-controller
+
+# Use numeric user, allows kubernetes to identify this user as being
+# non-root when we use a security context with runAsNonRoot: true
+USER 999
+
+ENTRYPOINT [ "/bin/rollouts-controller" ]

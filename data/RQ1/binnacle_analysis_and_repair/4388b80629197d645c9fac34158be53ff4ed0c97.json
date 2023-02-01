@@ -1,0 +1,71 @@
+{
+  "startTime": 1674241028116,
+  "endTime": 1674241028438,
+  "originalSmells": [
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 191,
+        "lineEnd": 191,
+        "columnStart": 4,
+        "columnEnd": 16
+      }
+    },
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 191,
+        "lineEnd": 191,
+        "columnStart": 20,
+        "columnEnd": 42
+      }
+    },
+    {
+      "rule": "mkdirUsrSrcThenRemove",
+      "position": {
+        "lineStart": 230,
+        "lineEnd": 230,
+        "columnStart": 4,
+        "columnEnd": 40
+      }
+    },
+    {
+      "rule": "sha256sumEchoOneSpaces",
+      "position": {
+        "lineStart": 67,
+        "lineEnd": 67,
+        "columnStart": 5,
+        "columnEnd": 63
+      }
+    },
+    {
+      "rule": "sha256sumEchoOneSpaces",
+      "position": {
+        "lineStart": 79,
+        "lineEnd": 79,
+        "columnStart": 5,
+        "columnEnd": 117
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 109,
+        "lineEnd": 115,
+        "columnStart": 5,
+        "columnEnd": 10
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 147,
+        "lineEnd": 147,
+        "columnStart": 4,
+        "columnEnd": 16
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "#####################################################\n#\n# Alpine container with\n# (this is used in DEV mode)\n#\n# + ruby:2.6.3\n# + node:8.15.0\n# + yarn:1.12.3\n#\n#####################################################\nFROM node:8.15.1-alpine AS alpine-ruby-node\n\n#------------------------------------------------------------------------------------------\n#\n# Ruby installation, taken from the official ruby alpine dockerfile\n# see : https://github.com/docker-library/ruby/blob/9ae0943fa2935b3a13c72ae7d6afa2439145d7fa/2.6/alpine3.9/Dockerfile\n#\n#------------------------------------------------------------------------------------------\n\nRUN apk add --no-cache \\\n  gmp-dev\n\n# skip installing gem documentation\nRUN mkdir -p /usr/local/etc \\\n  && { \\\n  echo 'install: --no-document'; \\\n  echo 'update: --no-document'; \\\n  } >> /usr/local/etc/gemrc\n\nENV RUBY_MAJOR 2.6\nENV RUBY_VERSION 2.6.3\nENV RUBY_DOWNLOAD_SHA256 11a83f85c03d3f0fc9b8a9b6cad1b2674f26c5aaa43ba858d4b0fcc2b54171e1\n\n# some of ruby's build scripts are written in ruby\n#   we purge system ruby later to make sure our final image uses what we just built\n# readline-dev vs libedit-dev: https://bugs.ruby-lang.org/issues/11869 and https://github.com/docker-library/ruby/issues/75\nRUN set -ex \\\n  \\\n  && apk add --no-cache --virtual .ruby-builddeps \\\n  autoconf \\\n  bison \\\n  bzip2 \\\n  bzip2-dev \\\n  ca-certificates \\\n  coreutils \\\n  dpkg-dev dpkg \\\n  gcc \\\n  gdbm-dev \\\n  glib-dev \\\n  libc-dev \\\n  libffi-dev \\\n  libxml2-dev \\\n  libxslt-dev \\\n  linux-headers \\\n  make \\\n  ncurses-dev \\\n  openssl \\\n  openssl-dev \\\n  procps \\\n  readline-dev \\\n  ruby \\\n  tar \\\n  xz \\\n  yaml-dev \\\n  zlib-dev \\\n  \\\n  && wget -O ruby.tar.xz \"https://cache.ruby-lang.org/pub/ruby/${RUBY_MAJOR%-rc}/ruby-$RUBY_VERSION.tar.xz\" \\\n  && echo \"$RUBY_DOWNLOAD_SHA256  *ruby.tar.xz\" | sha256sum -c - \\\n\n  && mkdir -p /usr/src/ruby \\\n  && tar -xJf ruby.tar.xz -C /usr/src/ruby --strip-components=1 \\\n  && rm ruby.tar.xz \\\n\n  && cd /usr/src/ruby \\\n\n  # https://github.com/docker-library/ruby/issues/196\n  # https://bugs.ruby-lang.org/issues/14387#note-13 (patch source)\n  # https://bugs.ruby-lang.org/issues/14387#note-16 (\"Therefore ncopa's patch looks good for me in general.\" -- only breaks glibc which doesn't matter here)\n  && wget -O 'thread-stack-fix.patch' 'https://bugs.ruby-lang.org/attachments/download/7081/0001-thread_pthread.c-make-get_main_stack-portable-on-lin.patch' \\\n  && echo '3ab628a51d92fdf0d2b5835e93564857aea73e0c1de00313864a94a6255cb645  *thread-stack-fix.patch' | sha256sum -c - \\\n  && patch -p1 -i thread-stack-fix.patch \\\n  && rm thread-stack-fix.patch \\\n\n  # hack in \"ENABLE_PATH_CHECK\" disabling to suppress:\n  #   warning: Insecure world writable dir\n  && { \\\n  echo '#define ENABLE_PATH_CHECK 0'; \\\n  echo; \\\n  cat file.c; \\\n  } > file.c.new \\\n  && mv file.c.new file.c \\\n\n  && autoconf \\\n  && gnuArch=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" \\\n  # the configure script does not detect isnan/isinf as macros\n  && export ac_cv_func_isnan=yes ac_cv_func_isinf=yes \\\n  && ./configure \\\n  --build=\"$gnuArch\" \\\n  --disable-install-doc \\\n  --enable-shared \\\n  && make -j \"$(nproc)\" \\\n  && make install \\\n\n  && runDeps=\"$( \\\n  scanelf --needed --nobanner --format '%n#p' --recursive /usr/local \\\n  | tr ',' '\\n' \\\n  | sort -u \\\n  | awk 'system(\"[ -e /usr/local/lib/\" $1 \" ]\") == 0 { next } { print \"so:\" $1 }' \\\n  )\" \\\n  && apk add --no-cache --no-network --virtual .ruby-rundeps $runDeps \\\n  bzip2 \\\n  ca-certificates \\\n  libffi-dev \\\n  procps \\\n  yaml-dev \\\n  zlib-dev \\\n  && apk del --no-network .ruby-builddeps \\\n  && cd / \\\n  && rm -r /usr/src/ruby \\\n  # rough smoke test\n  && ruby --version && gem --version && bundle --version\n\n# install things globally, for great justice\n# and don't create \".bundle\" in all our apps\nENV GEM_HOME /usr/local/bundle\nENV BUNDLE_PATH=\"$GEM_HOME\" \\\n  BUNDLE_SILENCE_ROOT_WARNING=1 \\\n  BUNDLE_APP_CONFIG=\"$GEM_HOME\"\n# path recommendation: https://github.com/bundler/bundler/pull/6469#issuecomment-383235438\nENV PATH $GEM_HOME/bin:$BUNDLE_PATH/gems/bin:$PATH\n# adjust permissions of a few directories for running \"gem install\" as an arbitrary user\nRUN mkdir -p \"$GEM_HOME\" && chmod 777 \"$GEM_HOME\"\n# (BUNDLE_PATH = GEM_HOME, no need to mkdir/chown both)\n\n#------------------------------------------------------------------------------------------\n#\n# End of ruby installation\n#\n#------------------------------------------------------------------------------------------\n\n# Install alpine equivalent for \"build-essential\"\n#\n# and other dependencies required by dev.to various\n# ruby dependencies (postgresql-dev, tzdata)\nRUN apk add --no-cache alpine-sdk postgresql-dev tzdata\n\n# Im installing bash, as im a bash addict (not that great with sh)\nRUN apk add --no-cache bash\n\n# Let's setup the rails directory\n# (@TODO - consider a production version?)\nWORKDIR /usr/src/app\nENV RAILS_ENV development\n\n#####################################################\n#\n# Let's prepare the dev.to source code files\n# WITHOUT docker related files\n#\n# This allow us to modify the docker\n# entrypoint / run file without recompiling\n# the entire application\n# (especially when creating this build script =| )\n#\n# (@TODO - improve and review ignore to blacklist unneeded items)\n#\n#####################################################\n\n#\n# Prepare the source code and remove any unneeded files\n#\nFROM alpine-ruby-node AS source-code-repo\n\n# The workdir\nWORKDIR /usr/src/app\n# Copy source code\nCOPY ./ /usr/src/app/\n# remove docker related files\nRUN rm Dockerfile && rm docker-*\n\n#\n# Does the source code build\n#\nFROM alpine-ruby-node AS source-code-build\n\n# Copy over files\nCOPY --from=source-code-repo /usr/src/app/ /usr/src/app/\n\n# Run the various installer\nRUN gem install bundler\nRUN bundle install --jobs 20 --retry 5\nRUN yarn install && yarn check --integrity && yarn cache clean;\n\n#####################################################\n#\n# Let's build the DEMO dev.to image\n#\n#####################################################\nFROM alpine-ruby-node\n\n# Copy over the application code (without docker related files)\nCOPY --from=source-code-build /usr/src/app/ /usr/src/app/\n\n# Copy over docker related files\nCOPY Dockerfile [(docker-)]* /usr/src/app/\n\n#\n# Execution environment variables\n#\n\n# timeout extension requried to ensure\n# system work properly on first time load\nENV RACK_TIMEOUT_WAIT_TIMEOUT=10000 \\\n  RACK_TIMEOUT_SERVICE_TIMEOUT=10000 \\\n  STATEMENT_TIMEOUT=10000\n\n# Run mode configuration between dev / demo\n# for entrypoint script behaviour\nENV\tRUN_MODE=\"demo\"\n\n# Database URL configuration - with user/pass\nENV\tDATABASE_URL=\"postgresql://devto:devto@db:5432/PracticalDeveloper_development\"\n\n# DB setup / migrate script triggers on boot\nENV DB_SETUP=\"true\" \\\n  DB_MIGRATE=\"true\"\n\n#\n# Let's setup the public uploads folder volume\n#\nRUN mkdir -p /usr/src/app/public/uploads && rm -rf /usr/src/app/public/uploads\nVOLUME /usr/src/app/public/uploads\n\n# Entrypoint and command to start the server\nENTRYPOINT [\"/usr/src/app/docker-entrypoint.sh\"]\nCMD []\n"
+}

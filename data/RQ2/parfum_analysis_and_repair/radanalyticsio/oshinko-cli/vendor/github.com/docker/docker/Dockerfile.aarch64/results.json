@@ -1,0 +1,80 @@
+{
+  "startTime": 1674251003533,
+  "endTime": 1674251004980,
+  "originalSmells": [
+    {
+      "rule": "curlUseHttpsUrl",
+      "position": {
+        "lineStart": 66,
+        "lineEnd": 66,
+        "columnStart": 2,
+        "columnEnd": 123
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 151,
+        "lineEnd": 151,
+        "columnStart": 4,
+        "columnEnd": 21
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 152,
+        "lineEnd": 152,
+        "columnStart": 4,
+        "columnEnd": 37
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 153,
+        "lineEnd": 153,
+        "columnStart": 4,
+        "columnEnd": 40
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 156,
+        "lineEnd": 156,
+        "columnStart": 4,
+        "columnEnd": 31
+      }
+    },
+    {
+      "rule": "mkdirUsrSrcThenRemove",
+      "position": {
+        "lineStart": 101,
+        "lineEnd": 101,
+        "columnStart": 4,
+        "columnEnd": 21
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 87,
+        "lineEnd": 87,
+        "columnStart": 5,
+        "columnEnd": 36
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 20,
+        "lineEnd": 54,
+        "columnStart": 22,
+        "columnEnd": 24
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# This file describes the standard way to build Docker on aarch64, using docker\n#\n# Usage:\n#\n# # Assemble the full dev environment. This is slow the first time.\n# docker build -t docker -f Dockerfile.aarch64 .\n#\n# # Mount your source in an interactive container for quick testing:\n# docker run -v `pwd`:/go/src/github.com/docker/docker --privileged -i -t docker bash\n#\n# # Run the test suite:\n# docker run --privileged docker hack/make.sh test-unit test-integration-cli test-docker-py\n#\n# Note: AppArmor used to mess with privileged mode, but this is no longer\n# the case. Therefore, you don't have to disable it anymore.\n#\n\nFROM aarch64/ubuntu:xenial\n\n# Packaged dependencies\nRUN apt-get update && apt-get install -y \\\n\tapparmor \\\n\taufs-tools \\\n\tautomake \\\n\tbash-completion \\\n\tbtrfs-tools \\\n\tbuild-essential \\\n\tcmake \\\n\tcreaterepo \\\n\tcurl \\\n\tdpkg-sig \\\n\tg++ \\\n\tgcc \\\n\tgit \\\n\tiptables \\\n\tjq \\\n\tlibapparmor-dev \\\n\tlibc6-dev \\\n\tlibcap-dev \\\n\tlibsystemd-dev \\\n\tlibyaml-dev \\\n\tmercurial \\\n\tnet-tools \\\n\tparallel \\\n\tpkg-config \\\n\tpython-dev \\\n\tpython-mock \\\n\tpython-pip \\\n\tpython-setuptools \\\n\tpython-websocket \\\n\tgolang-go \\\n\tiproute2 \\\n\tiputils-ping \\\n\tvim-common \\\n\t--no-install-recommends && rm -rf /var/lib/apt/lists/*;\n\n# Get lvm2 source for compiling statically\nENV LVM2_VERSION 2.02.103\nRUN mkdir -p /usr/local/lvm2 \\\n\t&& curl -fsSL \"https://mirrors.kernel.org/sourceware/lvm2/LVM2.${LVM2_VERSION}.tgz\" \\\n\t\t| tar -xzC /usr/local/lvm2 --strip-components=1\n# See https://git.fedorahosted.org/cgit/lvm2.git/refs/tags for release tags\n\n# Fix platform enablement in lvm2 to support aarch64 properly\nRUN set -e \\\n\t&& for f in config.guess config.sub; do \\\n\t\tcurl -fsSL -o \"/usr/local/lvm2/autoconf/$f\" \"https://git.savannah.gnu.org/gitweb/?p=config.git;a=blob_plain;f=$f;hb=HEAD\"; \\\n\tdone\n# \"arch.c:78:2: error: #error the arch code needs to know about your machine type\"\n\n# Compile and install lvm2\nRUN cd /usr/local/lvm2 \\\n\t&& ./configure \\\n\t\t--build=\"$(gcc -print-multiarch)\" \\\n\t\t--enable-static_link \\\n\t&& make device-mapper \\\n\t&& make install_device-mapper\n# See https://git.fedorahosted.org/cgit/lvm2.git/tree/INSTALL\n\n# Install seccomp: the version shipped upstream is too old\nENV SECCOMP_VERSION 2.3.2\nRUN set -x \\\n\t&& export SECCOMP_PATH=\"$(mktemp -d)\" \\\n\t&& curl -fsSL \"https://github.com/seccomp/libseccomp/releases/download/v${SECCOMP_VERSION}/libseccomp-${SECCOMP_VERSION}.tar.gz\" \\\n\t\t| tar -xzC \"$SECCOMP_PATH\" --strip-components=1 \\\n\t&& ( cd \"$SECCOMP_PATH\" \\\n\t\t&& ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" --prefix=/usr/local \\\n\t\t&& make \\\n\t\t&& make install \\\n\t\t&& ldconfig) \\\n\n\t&& rm -rf \"$SECCOMP_PATH\"\n\n# Install Go\n# We don't have official binary golang 1.7.5 tarballs for ARM64, either for Go or\n# bootstrap, so we use golang-go (1.6) as bootstrap to build Go from source code.\n# We don't use the official ARMv6 released binaries as a GOROOT_BOOTSTRAP, because\n# not all ARM64 platforms support 32-bit mode. 32-bit mode is optional for ARMv8.\n# IMPORTANT: When updating this please note that stdlib archive/tar pkg is vendored\nENV GO_VERSION 1.8.3\nRUN mkdir /usr/src/go && curl -fsSL https://golang.org/dl/go${GO_VERSION}.src.tar.gz | tar -v -C /usr/src/go -xz --strip-components=1 \\\n\t&& cd /usr/src/go/src \\\n\t&& GOOS=linux GOARCH=arm64 GOROOT_BOOTSTRAP=\"$(go env GOROOT)\" ./make.bash && rm -rf /usr/src/go\n\nENV PATH /go/bin:/usr/src/go/bin:$PATH\nENV GOPATH /go\n\n# Dependency for golint\nENV GO_TOOLS_COMMIT 823804e1ae08dbb14eb807afc7db9993bc9e3cc3\nRUN git clone https://github.com/golang/tools.git /go/src/golang.org/x/tools \\\n\t&& (cd /go/src/golang.org/x/tools && git checkout -q $GO_TOOLS_COMMIT)\n\n# Grab Go's lint tool\nENV GO_LINT_COMMIT 32a87160691b3c96046c0c678fe57c5bef761456\nRUN git clone https://github.com/golang/lint.git /go/src/github.com/golang/lint \\\n\t&& (cd /go/src/github.com/golang/lint && git checkout -q $GO_LINT_COMMIT) \\\n\t&& go install -v github.com/golang/lint/golint\n\n# Only install one version of the registry, because old version which support\n# schema1 manifests is not working on ARM64, we should skip integration-cli\n# tests for schema1 manifests on ARM64.\nENV REGISTRY_COMMIT 47a064d4195a9b56133891bbb13620c3ac83a827\nRUN set -x \\\n\t&& export GOPATH=\"$(mktemp -d)\" \\\n\t&& git clone https://github.com/docker/distribution.git \"$GOPATH/src/github.com/docker/distribution\" \\\n\t&& (cd \"$GOPATH/src/github.com/docker/distribution\" && git checkout -q \"$REGISTRY_COMMIT\") \\\n\t&& GOPATH=\"$GOPATH/src/github.com/docker/distribution/Godeps/_workspace:$GOPATH\" \\\n\t\tgo build -o /usr/local/bin/registry-v2 github.com/docker/distribution/cmd/registry \\\n\t&& rm -rf \"$GOPATH\"\n\n# Install notary and notary-server\nENV NOTARY_VERSION v0.5.0\nRUN set -x \\\n\t&& export GOPATH=\"$(mktemp -d)\" \\\n\t&& git clone https://github.com/docker/notary.git \"$GOPATH/src/github.com/docker/notary\" \\\n\t&& (cd \"$GOPATH/src/github.com/docker/notary\" && git checkout -q \"$NOTARY_VERSION\") \\\n\t&& GOPATH=\"$GOPATH/src/github.com/docker/notary/vendor:$GOPATH\" \\\n\t\tgo build -o /usr/local/bin/notary-server github.com/docker/notary/cmd/notary-server \\\n\t&& GOPATH=\"$GOPATH/src/github.com/docker/notary/vendor:$GOPATH\" \\\n\t\tgo build -o /usr/local/bin/notary github.com/docker/notary/cmd/notary \\\n\t&& rm -rf \"$GOPATH\"\n\n# Get the \"docker-py\" source so we can run their integration tests\nENV DOCKER_PY_COMMIT a962578e515185cf06506050b2200c0b81aa84ef\n# Before running the integration tests conftest.py is\n# loaded which results in loads auth.py that\n# imports the docker-pycreds module.\nRUN git clone https://github.com/docker/docker-py.git /docker-py \\\n\t&& cd /docker-py \\\n\t&& git checkout -q $DOCKER_PY_COMMIT \\\n\t&& pip install --no-cache-dir wheel \\\n\t&& pip install --no-cache-dir docker-pycreds==0.2.1 \\\n\t&& pip install --no-cache-dir -r test-requirements.txt\n\n# Install yamllint for validating swagger.yaml\nRUN pip install --no-cache-dir yamllint==1.5.0\n\n# Install go-swagger for validating swagger.yaml\nENV GO_SWAGGER_COMMIT c28258affb0b6251755d92489ef685af8d4ff3eb\nRUN git clone https://github.com/go-swagger/go-swagger.git /go/src/github.com/go-swagger/go-swagger \\\n\t&& (cd /go/src/github.com/go-swagger/go-swagger && git checkout -q $GO_SWAGGER_COMMIT) \\\n\t&& go install -v github.com/go-swagger/go-swagger/cmd/swagger\n\n# Set user.email so crosbymichael's in-container merge commits go smoothly\nRUN git config --global user.email 'docker-dummy@example.com'\n\n# Add an unprivileged user to be used for tests which need it\nRUN groupadd -r docker\nRUN useradd --create-home --gid docker unprivilegeduser\n\nVOLUME /var/lib/docker\nWORKDIR /go/src/github.com/docker/docker\nENV DOCKER_BUILDTAGS apparmor seccomp selinux\n\n# Let us use a .bashrc file\nRUN ln -sfv $PWD/.bashrc ~/.bashrc\n\n# Register Docker's bash completion.\nRUN ln -sv $PWD/contrib/completion/bash/docker /etc/bash_completion.d/docker\n\n# Get useful and necessary Hub images so we can \"docker load\" locally instead of pulling\nCOPY contrib/download-frozen-image-v2.sh /go/src/github.com/docker/docker/contrib/\nRUN ./contrib/download-frozen-image-v2.sh /docker-frozen-images \\\n\taarch64/buildpack-deps:jessie@sha256:107f4a96837ed89c493fc205cd28508ed0b6b680b4bf3e514e9f0fa0f6667b77 \\\n\taarch64/busybox:latest@sha256:5a06b8b2fdf22dd1f4085c6c3efd23ee99af01b2d668d286bc4be6d8baa10efb \\\n\taarch64/debian:jessie@sha256:e6f90b568631705bd5cb27490977378ba762792b38d47c91c4da7a539f63079a \\\n\taarch64/hello-world:latest@sha256:bd1722550b97668b23ede297abf824d4855f4d9f600dab7b4db1a963dae7ec9e\n# See also ensureFrozenImagesLinux() in \"integration-cli/fixtures_linux_daemon_test.go\" (which needs to be updated when adding images to this list)\n\n# Install tomlv, vndr, runc, containerd, tini, docker-proxy\n# Please edit hack/dockerfile/install-binaries.sh to update them.\nCOPY hack/dockerfile/binaries-commits /tmp/binaries-commits\nCOPY hack/dockerfile/install-binaries.sh /tmp/install-binaries.sh\nRUN /tmp/install-binaries.sh tomlv vndr runc containerd tini proxy dockercli\nENV PATH=/usr/local/cli:$PATH\n\n# Wrap all commands in the \"docker-in-docker\" script to allow nested containers\nENTRYPOINT [\"hack/dind\"]\n\n# Upload docker source\nCOPY . /go/src/github.com/docker/docker\n"
+}

@@ -1,0 +1,19 @@
+FROM balenalib/%%BALENA_MACHINE_NAME%%-debian-python:3.5
+WORKDIR /usr/src
+
+ENV PULSE_SERVER=unix:/run/pulse/pulseaudio.socket
+# Specify a PULSE_SINK, otherwise use the default
+# ENV PULSE_SINK=alsa_output.bcm2835-jack.stereo-fallback
+
+# Install simpleaudio
+RUN install_packages python3-dev libasound2-dev g++
+RUN pip3 install --no-cache-dir simpleaudio
+RUN curl -f https://www.kozco.com/tech/LRMonoPhase4.wav --silent --output test.wav
+
+# Setup ALSA bridge
+RUN curl -f --silent https://raw.githubusercontent.com/balenablocks/audio/master/scripts/alsa-bridge/debian-setup.sh | sh
+
+COPY . .
+
+# To play the file: python3 play.py
+CMD [ "balena-idle" ]

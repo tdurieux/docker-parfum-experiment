@@ -1,0 +1,44 @@
+{
+  "startTime": 1674249999606,
+  "endTime": 1674250000509,
+  "originalSmells": [
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 14,
+        "lineEnd": 14,
+        "columnStart": 4,
+        "columnEnd": 15
+      }
+    },
+    {
+      "rule": "sha256sumEchoOneSpaces",
+      "position": {
+        "lineStart": 36,
+        "lineEnd": 36,
+        "columnStart": 4,
+        "columnEnd": 76
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 34,
+        "lineEnd": 34,
+        "columnStart": 4,
+        "columnEnd": 83
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 34,
+        "lineEnd": 34,
+        "columnStart": 4,
+        "columnEnd": 83
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Multi-stage Dockerfile for `stencila/nixta`\n\n# Build the Nixta binary\n# Note that the `nixta` binary produced will include native modules\n# e.g. `better-sqlite3.node` for the platform it is built on (so it needs\n# to be a Linux builder to run on Linux-based Docker image)\n# You can test this stage alone by building and running like this:\n#   docker build . --target builder --tag stencila/nixta:builder\n#   docker run --rm -it -p 3000:3000 stencila/nixta:builder ./build/nixta serve\n\nFROM node:10 AS builder\nWORKDIR /nixta\n# Copy package.json and install packages, instead of doing it whenever the src changes\nCOPY package.json .\nRUN npm install && npm cache clean --force;\n# Prefetch required Node.js binaries, instead of doing it whenever the src changes\nRUN touch dummy.js && npx pkg dummy.js --target=node10 --out-path=build && rm -rf build && rm dummy.js\n# Copy everything and build!\nCOPY envs envs/\nCOPY src src/\nCOPY tsconfig.json .\nRUN npm run build\n\n# Main image with Nix installed and Nixta copied into it\n#\n# This is based on https://github.com/NixOS/docker/blob/master/Dockerfile\n# but modified to run on Ubuntu.\n\n# TODO cleanup and condense into fewer RUN directives\n\nFROM ubuntu:18.10\n\nENV NIX_VERSION=2.2.1 NIX_SHA=e229e28f250cad684c278c9007b07a24eb4ead239280c237ed2245871eca79e0\nRUN apt-get update \\\n && DEBIAN_FRONTEND=noninteractive apt-get --no-install-recommends install -y wget ca-certificates xz-utils \\\n && wget https://nixos.org/releases/nix/nix-${NIX_VERSION}/nix-${NIX_VERSION}-x86_64-linux.tar.bz2 \\\n && echo \"${NIX_SHA}  nix-${NIX_VERSION}-x86_64-linux.tar.bz2\" | sha256sum -c \\\n && tar xjf nix-${NIX_VERSION}-x86_64-linux.tar.bz2 \\\n && rm nix-${NIX_VERSION}-x86_64-linux.tar.bz2 && rm -rf /var/lib/apt/lists/*;\n\n# Create a non-root user\nRUN groupadd --gid 30000 nixbld \\\n  && for i in $(seq 1 30); do useradd --uid $((30000 + i)) --groups nixbld nixbld$i ; done\nRUN useradd --uid 1001 --create-home --groups nixbld nixta\nRUN install --mode 755 --owner nixta --directory /nix\n\nENV USER root\n\nRUN mkdir -m 0755 /etc/nix \\\n && echo 'sandbox = false' > /etc/nix/nix.conf\n\n#USER nixta\n\nRUN USER=root sh nix-*-x86_64-linux/install \\\n && rm -rf nix-${NIX_VERSION}-x86_64-linux\n#RUN /nix/var/nix/profiles/default/bin/nix-collect-garbage --delete-old \\\n# && /nix/var/nix/profiles/default/bin/nix-store --optimise \\\n# && /nix/var/nix/profiles/default/bin/nix-store --verify --check-contents\n\n# Install Docker (only the client is used in this image, the daemon runs elsewhere)\n# HT to https://stackoverflow.com/a/43594065\nENV DOCKER_VERSION=18.09.1\nRUN wget https://download.docker.com/linux/static/stable/x86_64/docker-${DOCKER_VERSION}.tgz \\\n && tar xzvf docker-${DOCKER_VERSION}.tgz --strip 1 -C /usr/local/bin docker/docker \\\n && rm docker-${DOCKER_VERSION}.tgz\n\nCOPY --from=builder /nixta/bin/nixta /home/nixta\n\nWORKDIR /home/nixta\n\n# Prepend application directory and Nix profile to PATH\nENV PATH=/home/nixta:/root/.nix-profile/bin:/root/.nix-profile/sbin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin\n\n# Check that Nixta is installed properly and do bootstapping of native Node modules\nRUN nixta --help\n\n# Check that Nix is installed properly\nRUN nix-env --version\n\nRUN nix-channel --add https://nixos.org/channels/nixos-18.09 \\\n && nix-channel --update \\\n && nixta update nixos-18.09\n\nCMD nixta serve\n"
+}

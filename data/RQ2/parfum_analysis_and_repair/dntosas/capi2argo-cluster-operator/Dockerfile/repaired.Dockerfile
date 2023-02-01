@@ -1,0 +1,1 @@
+# Switch to distroless as minimal base image to package the capi2argo-cluster-operator binary

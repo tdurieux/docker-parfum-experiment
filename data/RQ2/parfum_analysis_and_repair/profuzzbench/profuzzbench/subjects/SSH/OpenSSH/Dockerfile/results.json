@@ -1,0 +1,90 @@
+{
+  "startTime": 1674248412073,
+  "endTime": 1674248412936,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 31,
+        "lineEnd": 31,
+        "columnStart": 4,
+        "columnEnd": 27
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 94,
+        "lineEnd": 102,
+        "columnStart": 4,
+        "columnEnd": 30
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 114,
+        "lineEnd": 123,
+        "columnStart": 4,
+        "columnEnd": 30
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 5,
+        "lineEnd": 23,
+        "columnStart": 4,
+        "columnEnd": 8
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 64,
+        "lineEnd": 64,
+        "columnStart": 4,
+        "columnEnd": 30
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 64,
+        "lineEnd": 64,
+        "columnStart": 4,
+        "columnEnd": 30
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 5,
+        "lineEnd": 23,
+        "columnStart": 4,
+        "columnEnd": 8
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 64,
+        "lineEnd": 64,
+        "columnStart": 4,
+        "columnEnd": 30
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 64,
+        "lineEnd": 64,
+        "columnStart": 4,
+        "columnEnd": 54
+      }
+    }
+  ],
+  "repairedDockerfile": "FROM ubuntu:20.04\n\n# Install common dependencies\nENV DEBIAN_FRONTEND=noninteractive\nRUN apt-get -y update && \\\n    apt-get -y --no-install-recommends install sudo \\\n    apt-utils \\\n    build-essential \\\n    openssl \\\n    clang \\\n    graphviz-dev \\\n    git \\\n    autoconf \\\n    libgnutls28-dev \\\n    libssl-dev \\\n    llvm \\\n    python3-pip \\\n    nano \\\n    net-tools \\\n    vim \\\n    gdb \\\n    netcat \\\n    strace \\\n    wget && rm -rf /var/lib/apt/lists/*;\n\n# Add a new user ubuntu, pass: ubuntu\nRUN groupadd ubuntu && \\\n    useradd -rm -d /home/ubuntu -s /bin/bash -g ubuntu -G sudo -u 1000 ubuntu -p \"$(openssl passwd -1 ubuntu)\"\n\nRUN chmod 777 /tmp\n\nRUN pip3 install --no-cache-dir gcovr==4.2\n\n# Use ubuntu as default username\nUSER ubuntu\nWORKDIR /home/ubuntu\n\n# Import environment variable to pass as parameter to make (e.g., to make parallel builds with -j)\nARG MAKE_OPT\n\n# Set up fuzzers\nRUN git clone https://github.com/profuzzbench/aflnet.git && \\\n    cd aflnet && \\\n    make clean all $MAKE_OPT && \\\n    cd llvm_mode && make $MAKE_OPT\n\nRUN git clone https://github.com/profuzzbench/aflnwe.git && \\\n    cd aflnwe && \\\n    make clean all $MAKE_OPT && \\\n    cd llvm_mode && make $MAKE_OPT\n\n# Set up environment variables for AFLNet\nENV WORKDIR=\"/home/ubuntu/experiments\"\nENV AFLNET=\"/home/ubuntu/aflnet\"\nENV PATH=\"${PATH}:${AFLNET}:/home/ubuntu/.local/bin:${WORKDIR}\"\nENV AFL_PATH=\"${AFLNET}\"\nENV AFL_I_DONT_CARE_ABOUT_MISSING_CRASHES=1 \\\n    AFL_SKIP_CPUFREQ=1 \\\n    AFL_NO_AFFINITY=1\n\n\nRUN mkdir $WORKDIR\n\nUSER root\nRUN apt-get -y --no-install-recommends install sshpass && rm -rf /var/lib/apt/lists/*;\n\n\nCOPY --chown=ubuntu:ubuntu rand.patch ${WORKDIR}/rand.patch\nCOPY --chown=ubuntu:ubuntu rand.inc ${WORKDIR}/rand.inc\n\n# Set up environment variables for ASAN\nenv ASAN_OPTIONS='abort_on_error=1:symbolize=0:detect_leaks=0:detect_stack_use_after_return=1:detect_container_overflow=0:poison_array_cookie=0:malloc_fill_byte=0:max_malloc_fill_size=16777216'\n\n\n# Download and compile OpenSSL 1.0.2\n# (for compatibility with older OpenSSH used in this benchmark)\nRUN cd ${WORKDIR} && \\\n    git clone https://github.com/openssl/openssl openssl && \\\n    cd openssl && \\\n    git checkout 12ad22d && \\\n    ./Configure linux-x86_64-clang shared --prefix=$WORKDIR/openssl-install && \\\n    make $MAKE_OPT && \\\n    make install\n\nENV LD_LIBRARY_PATH=\"${WORKDIR}/openssl-install/lib\"\n\n# Download and compile OpenSSH for fuzzing\nRUN cd ${WORKDIR} && \\\n    git clone https://github.com/vegard/openssh-portable.git openssh && \\\n    cd openssh && \\\n    git checkout 7cfea58 && \\\n    cp ${WORKDIR}/rand.inc . && \\\n    patch -p1 < ${WORKDIR}/rand.patch && \\\n    autoreconf && \\\n    ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" \\\n    CC=\"afl-clang-fast\" \\\n    CFLAGS=\"-g -O3 -I$WORKDIR/openssl-install/include\" \\\n    --prefix=$PWD/install \\\n    --with-openssl=$WORKDIR/openssl-install \\\n    --with-ldflags=\"-L$WORKDIR/openssl-install/lib\" \\\n    --with-privsep-path=$PWD/var-empty \\\n    --with-sandbox=no \\\n    --with-privsep-user=ubuntu && \\\n    AFL_USE_ASAN=1 make $MAKE_OPT && \\\n    make install\n\n# Download and compile OpenSSH for coverage analysis\nRUN cd ${WORKDIR} && \\\n    git clone https://github.com/vegard/openssh-portable.git openssh-gcov && \\\n    cd openssh-gcov && \\\n    git checkout 7cfea58 && \\\n    cp ${WORKDIR}/rand.inc . && \\\n    patch -p1 < ${WORKDIR}/rand.patch && \\\n    autoreconf && \\\n    ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" \\\n    CC=\"gcc\" \\\n    CFLAGS=\"-g -O3 -fprofile-arcs -ftest-coverage -I$WORKDIR/openssl-install/include\" \\\n    LDFLAGS=\"-fprofile-arcs -ftest-coverage\" \\\n    --with-openssl=$WORKDIR/openssl-install \\\n    --with-ldflags=\"-L$WORKDIR/openssl-install/lib\" \\\n    --prefix=$PWD/install \\\n    --with-privsep-path=$PWD/var-empty \\\n    --with-sandbox=no \\\n    --with-privsep-user=ubuntu && \\\n    make $MAKE_OPT && \\\n    make install\n\nCOPY --chown=ubuntu:ubuntu in-ssh ${WORKDIR}/in-ssh\nCOPY --chown=ubuntu:ubuntu ssh.dict ${WORKDIR}/ssh.dict\nCOPY --chown=ubuntu:ubuntu cov_script.sh ${WORKDIR}/cov_script\nCOPY --chown=ubuntu:ubuntu run.sh ${WORKDIR}/run\n\n"
+}

@@ -1,0 +1,127 @@
+#
+# SPDX-License-Identifier: BSD-3-Clause
+# Copyright 2020-2022, Intel Corporation
+#
+
+#
+# Dockerfile - a 'recipe' for Docker to build an image of ubuntu-based
+#              environment prepared for running tests of librpma.
+#
+
+# Pull base image
+FROM archlinux:latest
+MAINTAINER tomasz.gromadzki@intel.com
+
+# Do full system upgrade
+RUN pacman -Syu --noconfirm
+
+# base deps
+ENV BASE_DEPS "\
+	clang \
+	gcc \
+	git \
+	make \
+	pkg-config \
+	sudo \
+	which"
+
+ENV EXAMPLES_DEPS "\
+	m4 \
+	protobuf-c \
+	time"
+
+ENV TOOLS_DEPS "\
+	python-jinja"
+
+ENV TESTS_DEPS "\
+	python-mccabe \
+	python-pylint \
+	python-pip \
+	python-pytest"
+
+# rdma-core deps
+ENV RDMA_DEPS "\
+	fakeroot \
+	file"
+
+ENV PYTHON_DEPS "\
+	coverage \
+	deepdiff \
+	markdown2 \
+	matplotlib \
+	paramiko \
+	scp"
+
+# PMDK deps
+ENV PMDK_DEPS "\
+	ndctl \
+	wget"
+
+# RPMA deps
+ENV RPMA_DEPS "\
+	cmake \
+	diffutils \
+	file \
+	gawk \
+	groff \
+	graphviz \
+	libunwind \
+	pandoc"
+
+# Install required packages
+RUN pacman -S --noconfirm \
+	$BASE_DEPS \
+	$EXAMPLES_DEPS \
+	$TOOLS_DEPS \
+	$TESTS_DEPS \
+	$RDMA_DEPS \
+	$PMDK_DEPS \
+	$RPMA_DEPS \
+&& rm -rf /var/cache/pacman/pkg/*
+
+RUN pip3 install --no-cache-dir --upgrade pip
+
+# Install cmocka
+COPY install-cmocka.sh install-cmocka.sh
+RUN ./install-cmocka.sh
+
+# Install txt2man
+COPY install-txt2man.sh install-txt2man.sh
+RUN ./install-txt2man.sh
+
+# Install PMDK
+COPY install-pmdk.sh install-pmdk.sh
+RUN ./install-pmdk.sh
+
+# Add user
+ENV USER user
+ENV USERPASS p1a2s3s4
+ENV PFILE ./password
+RUN useradd -m $USER
+RUN echo $USERPASS > $PFILE
+RUN echo $USERPASS >> $PFILE
+RUN passwd $USER < $PFILE
+RUN rm -f $PFILE
+RUN sed -i 's/# %wheel/%wheel/g' /etc/sudoers
+RUN gpasswd wheel -a $USER
+
+# Enable preserving given variables in the privileged environment -
+# - it is required by 'makepkg' to download required packages and sources
+RUN echo 'Defaults env_keep += "ftp_proxy http_proxy https_proxy no_proxy"' >> /etc/sudoers
+RUN echo 'Defaults env_keep += "FTP_PROXY HTTP_PROXY HTTPS_PROXY NO_PROXY"' >> /etc/sudoers
+
+# Install rdma-core and pmdk (requires user 'user')
+COPY install-archlinux-aur.sh install-archlinux-aur.sh
+RUN ./install-archlinux-aur.sh rdma-core
+
+# Switch to user
+USER $USER
+
+# Set required environment variables
+ENV OS archlinux
+ENV OS_VER latest
+ENV PACKAGE_MANAGER none
+ENV NOTTY 1
+
+# install python modules for the default user
+RUN pip3 install --no-cache-dir --user $PYTHON_DEPS

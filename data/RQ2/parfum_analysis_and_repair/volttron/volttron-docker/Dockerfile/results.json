@@ -1,0 +1,35 @@
+{
+  "startTime": 1674255036200,
+  "endTime": 1674255037216,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 73,
+        "lineEnd": 73,
+        "columnStart": 4,
+        "columnEnd": 27
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 97,
+        "lineEnd": 97,
+        "columnStart": 6,
+        "columnEnd": 97
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 22,
+        "lineEnd": 43,
+        "columnStart": 30,
+        "columnEnd": 11
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "ARG image_user=amd64\nARG image_repo=debian\nARG image_tag=buster\n\nFROM ${image_user}/${image_repo}:${image_tag} as volttron_base\n\nSHELL [ \"bash\", \"-c\" ]\n\nENV OS_TYPE=debian\nENV DIST=buster\nENV VOLTTRON_GIT_BRANCH=rabbitmq-volttron\nENV VOLTTRON_USER_HOME=/home/volttron\nENV VOLTTRON_HOME=${VOLTTRON_USER_HOME}/.volttron\nENV CODE_ROOT=/code\nENV VOLTTRON_ROOT=${CODE_ROOT}/volttron\nENV VOLTTRON_USER=volttron\nENV USER_PIP_BIN=${VOLTTRON_USER_HOME}/.local/bin\nENV RMQ_ROOT=${VOLTTRON_USER_HOME}/rabbitmq_server\nENV RMQ_HOME=${RMQ_ROOT}/rabbitmq_server-3.7.7\n\nUSER root\n\nRUN set -eux; apt-get update; apt-get install -y --no-install-recommends \\\n    procps \\\n    gosu \\\n    vim \\\n    tree \\\n    build-essential \\\n    python3-dev \\\n    python3-pip \\\n    python3-setuptools \\\n    python3-wheel \\\n    openssl \\\n    libssl-dev \\\n    libevent-dev \\\n    git \\\n    gnupg \\\n    dirmngr \\\n    apt-transport-https \\\n    wget \\\n    curl \\\n    ca-certificates \\\n    libffi-dev \\\n    sqlite3 && rm -rf /var/lib/apt/lists/*;\n\n# Set default 'python' to 'python3'\nRUN update-alternatives --install /usr/bin/python python /usr/bin/python3 1\n\n# Set default 'pip' to 'pip3'\nRUN ln -s /usr/bin/pip3 /usr/bin/pip\n\n# Create a user called 'volttron'\nRUN id -u $VOLTTRON_USER &>/dev/null || adduser --disabled-password --gecos \"\" $VOLTTRON_USER\n\nRUN mkdir -p /code && chown $VOLTTRON_USER.$VOLTTRON_USER /code && \\\n    echo \"export PATH=/home/volttron/.local/bin:$PATH\" > /home/volttron/.bashrc\n\n############################################\n# ENDING volttron_base stage\n# Creating volttron_core stage\n############################################\nFROM volttron_base AS volttron_core\n\n# copy over /core, i.e. the custom startup scripts for this image\nRUN mkdir /startup $VOLTTRON_HOME && \\\n    chown $VOLTTRON_USER.$VOLTTRON_USER $VOLTTRON_HOME\nCOPY ./core /startup\nRUN chmod +x /startup/*\n\n# copy over volttron repo\nUSER $VOLTTRON_USER\nCOPY --chown=volttron:volttron volttron /code/volttron\nWORKDIR /code/volttron\nRUN pip install --no-cache-dir -e . --user\nRUN echo \"package installed at `date`\"\n\n############################################\n# RABBITMQ SPECIFIC INSTALLATION\n############################################\n# the ARG install_rmq must be declared twice due to scope; see https://docs.docker.com/engine/reference/builder/#using-arg-variables\nUSER root\nARG install_rmq\nRUN if [ \"${install_rmq}\" = \"false\" ] ; then \\\n      echo \"Not installing RMQ dependencies.\";  \\\n    else \\\n      ./scripts/rabbit_dependencies.sh $OS_TYPE $DIST && \\\n      python -m pip install gevent-pika; \\\n    fi\n\nUSER $VOLTTRON_USER\nARG install_rmq\nRUN if [ \"${install_rmq}\" = \"false\" ] ;then \\\n      echo \"Not installing RMQ\"; \\\n    else \\\n      mkdir $RMQ_ROOT && \\\n      set -eux && \\\n      wget -P $VOLTTRON_USER_HOME https://github.com/rabbitmq/rabbitmq-server/releases/download/v3.7.7/rabbitmq-server-generic-unix-3.7.7.tar.xz && \\\n      tar -xf $VOLTTRON_USER_HOME/rabbitmq-server-generic-unix-3.7.7.tar.xz --directory $RMQ_ROOT && \\\n      $RMQ_HOME/sbin/rabbitmq-plugins enable rabbitmq_management rabbitmq_federation rabbitmq_federation_management rabbitmq_shovel rabbitmq_shovel_management rabbitmq_auth_mechanism_ssl rabbitmq_trust_store; rm $VOLTTRON_USER_HOME/rabbitmq-server-generic-unix-3.7.7.tar.xz \\\n    fi\n############################################\n\n\n########################################\n# The following lines should be run from any Dockerfile that\n# is inheriting from this one as this will make the volttron\n# run in the proper location.\n#\n# The user must be root at this point to allow gosu to work\n########################################\nUSER root\nWORKDIR ${VOLTTRON_USER_HOME}\nENTRYPOINT [\"/startup/entrypoint.sh\"]\nCMD [\"/startup/bootstart.sh\"]\n"
+}

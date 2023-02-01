@@ -1,0 +1,35 @@
+{
+  "startTime": 1674252740483,
+  "endTime": 1674252740622,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 35,
+        "lineEnd": 35,
+        "columnStart": 22,
+        "columnEnd": 43
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 18,
+        "lineEnd": 18,
+        "columnStart": 22,
+        "columnEnd": 69
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 35,
+        "lineEnd": 35,
+        "columnStart": 22,
+        "columnEnd": 43
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM --platform=$BUILDPLATFORM tonistiigi/xx:golang@sha256:6f7d999551dd471b58f70716754290495690efa8421e0a1fcf18eb11d0c0a537 AS xgo\n\nFROM --platform=$BUILDPLATFORM golang:1.12 AS base\nCOPY --from=xgo / /\nWORKDIR /src\nENV GOFLAGS=-mod=vendor\n\nFROM base AS version\nARG CHANNEL\n# TODO: PKG should be inferred from go modules\nRUN --mount=target=. \\ \n  PKG=github.com/moby/buildkit/frontend/dockerfile/cmd/dockerfile-frontend VERSION=$(./frontend/dockerfile/cmd/dockerfile-frontend/hack/detect \"$CHANNEL\") REVISION=$(git rev-parse HEAD)$(if ! git diff --no-ext-diff --quiet --exit-code; then echo .m; fi); \\\n  echo \"-X main.Version=${VERSION} -X main.Revision=${REVISION} -X main.Package=${PKG}\" | tee /tmp/.ldflags; \\\n  echo -n \"${VERSION}\" | tee /tmp/.version;\n\nFROM base AS build\nRUN apt-get update && apt-get install -y --no-install-recommends file && rm -rf /var/lib/apt/lists/*;\nARG BUILDTAGS=\"\"\nARG TARGETPLATFORM\nENV TARGETPLATFORM=$TARGETPLATFORM\nRUN --mount=target=. --mount=type=cache,target=/root/.cache \\\n  --mount=target=/go/pkg/mod,type=cache \\\n  --mount=source=/tmp/.ldflags,target=/tmp/.ldflags,from=version \\\n  CGO_ENABLED=0 go build -o /dockerfile-frontend -ldflags \"-d $(cat /tmp/.ldflags)\" -tags \"$BUILDTAGS netgo static_build osusergo\" ./frontend/dockerfile/cmd/dockerfile-frontend && \\\n  file /dockerfile-frontend | grep \"statically linked\"\n\nFROM scratch AS release\nLABEL moby.buildkit.frontend.network.none=\"true\"\nCOPY --from=build /dockerfile-frontend /bin/dockerfile-frontend\nENTRYPOINT [\"/bin/dockerfile-frontend\"]\n\n\nFROM base AS buildid-check\nRUN apt-get update && apt-get install --no-install-recommends -y jq && rm -rf /var/lib/apt/lists/*;\nCOPY /frontend/dockerfile/cmd/dockerfile-frontend/hack/check-daily-outdated .\nCOPY --from=r.j3ss.co/reg /usr/bin/reg /bin\nCOPY --from=build /dockerfile-frontend .\nARG CHANNEL\nARG REPO\nARG DATE\nRUN ./check-daily-outdated $CHANNEL $REPO $DATE /out\n\nFROM scratch AS buildid\nCOPY --from=buildid-check /out/ /\n\nFROM release\n"
+}

@@ -1,0 +1,44 @@
+{
+  "startTime": 1674249243300,
+  "endTime": 1674249243787,
+  "originalSmells": [
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 102,
+        "lineEnd": 102,
+        "columnStart": 4,
+        "columnEnd": 15
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 12,
+        "lineEnd": 14,
+        "columnStart": 22,
+        "columnEnd": 14
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 20,
+        "lineEnd": 51,
+        "columnStart": 22,
+        "columnEnd": 24
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 54,
+        "lineEnd": 58,
+        "columnStart": 22,
+        "columnEnd": 19
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM python:3.6-slim-stretch\n\n# need to compile swig\nENV SWIG_FEATURES=\"-D__x86_64__\"\n\n# Should change it to use ARG instead of ENV for OLYMPIA_UID\n# once the jenkins server is upgraded to support docker >= v1.9.0\nENV OLYMPIA_UID=9500\nRUN useradd -u ${OLYMPIA_UID} -s /sbin/nologin olympia\n\n# Add nodesource repository and requirements\nADD docker/nodesource.gpg.key /etc/pki/gpg/GPG-KEY-nodesource\nRUN apt-get update && apt-get install --no-install-recommends -y \\\n        apt-transport-https \\\n        gnupg2 \\\n    && rm -rf /var/lib/apt/lists/*\nRUN cat /etc/pki/gpg/GPG-KEY-nodesource | apt-key add -\nADD docker/debian-stretch-nodesource-repo /etc/apt/sources.list.d/nodesource.list\nADD docker/debian-buster-testing-repo /etc/apt/sources.list.d/testing.list\n\nRUN apt-get update && apt-get -t stretch --no-install-recommends install -y \\\n        # General (dev-) dependencies\n        bash-completion \\\n        build-essential \\\n        curl \\\n        libcap-dev \\\n        libjpeg-dev \\\n        libpcre3-dev \\\n        libsasl2-dev \\\n        libxml2-dev \\\n        libxslt-dev \\\n        locales \\\n        zlib1g-dev \\\n        libffi-dev \\\n        libmagic-dev \\\n        libssl-dev \\\n        nodejs \\\n        uuid-dev \\\n        # Git, because we're using git-checkout dependencies\n        git \\\n        # Dependencies for mysql-python\n        mysql-client \\\n        default-libmysqlclient-dev \\\n        swig \\\n        gettext \\\n        # Use rsvg-convert to render our static theme previews\n        librsvg2-bin \\\n        # Use pngcrush to optimize the PNGs uploaded by developers\n        pngcrush \\\n        # Use libmaxmind for speedy geoip lookups\n        libmaxminddb0 \\\n        libmaxminddb-dev \\\n    && rm -rf /var/lib/apt/lists/*\n\nRUN apt-get update && apt-get -t buster --no-install-recommends install -y \\\n       # For an up-to-date `file` and `libmagic-dev` library for better file\n       # detection.\n       file \\\n       libmagic-dev \\\n    && rm -rf /var/lib/apt/lists/*\n\n# Compile required locale\nRUN localedef -i en_US -f UTF-8 en_US.UTF-8\nENV LANG en_US.UTF-8\nENV LC_ALL en_US.UTF-8\n\n# version.json is overwritten by CircleCI (see circle.yml).\n# The pipeline v2 standard requires the existence of /app/version.json\n# inside the docker image, thus it's copied there.\nCOPY version.json /app/version.json\nCOPY . /data/olympia\nWORKDIR /data/olympia\n\n# Install all python requires\nRUN pip3 install --no-cache-dir --exists-action=w --no-deps -r requirements/system.txt   \\\n    && pip3 install --no-cache-dir --exists-action=w --no-deps -r requirements/prod.txt  \\\n    && pip3 install --no-cache-dir --exists-action=w --no-deps -r requirements/prod_without_hash.txt \\\n    && pip3 install --no-cache-dir --exists-action=w --no-deps -e .\n\n# Link /usr/bin/uwsgi to /usr/local/bin/uwsgi, as that was the\n# previous location of the binary when installed by apt-get.\nRUN ln -s /usr/local/bin/uwsgi /usr/bin/uwsgi\n\n# Install uwsgi statsd exporter to collect metrics from uwsgi when deployed\nWORKDIR /usr/lib/uwsgi/plugins\nRUN uwsgi --build-plugin https://github.com/Datadog/uwsgi-dogstatsd && \\\n    rm -rf uwsgi-dogstatsd\n\n# Link /usr/sbin/uwsgi and /usr/bin/uwsgi to deal with migration from Centos -> Debian\nRUN ln -s /usr/bin/uwsgi /usr/sbin/uwsgi\n\nWORKDIR /data/olympia\nRUN echo \"from olympia.lib.settings_base import *\\n\\\nLESS_BIN = 'node_modules/less/bin/lessc'\\n\\\nCLEANCSS_BIN = 'node_modules/clean-css-cli/bin/cleancss'\\n\\\nUGLIFY_BIN = 'node_modules/uglify-js/bin/uglifyjs'\\n\\\nFXA_CONFIG = {'default': {}, 'internal': {}}\\n\"\\\n> settings_local.py\n\nRUN DJANGO_SETTINGS_MODULE='settings_local' locale/compile-mo.sh locale\n\n# compile asssets\nRUN npm install \\\n    && make -f Makefile-docker copy_node_js \\\n    && DJANGO_SETTINGS_MODULE='settings_local' python manage.py compress_assets \\\n    && DJANGO_SETTINGS_MODULE='settings_local' python manage.py generate_jsi18n_files \\\n    && DJANGO_SETTINGS_MODULE='settings_local' python manage.py collectstatic --noinput && npm cache clean --force;\n\nRUN rm -f settings_local.py settings_local.pyc\n"
+}

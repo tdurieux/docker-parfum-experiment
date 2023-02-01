@@ -1,0 +1,53 @@
+{
+  "startTime": 1674248635548,
+  "endTime": 1674248636585,
+  "originalSmells": [
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 42,
+        "lineEnd": 42,
+        "columnStart": 8,
+        "columnEnd": 100
+      }
+    },
+    {
+      "rule": "aptGetInstallUseY",
+      "position": {
+        "lineStart": 19,
+        "lineEnd": 21,
+        "columnStart": 2,
+        "columnEnd": 20
+      }
+    },
+    {
+      "rule": "aptGetInstallUseY",
+      "position": {
+        "lineStart": 106,
+        "lineEnd": 115,
+        "columnStart": 2,
+        "columnEnd": 26
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 19,
+        "lineEnd": 21,
+        "columnStart": 2,
+        "columnEnd": 20
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 19,
+        "lineEnd": 21,
+        "columnStart": 2,
+        "columnEnd": 20
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "ARG JAVA_VERSION_MAJOR=8\n\n# layer for download and verifying\nFROM debian:bullseye-slim as graylog-downloader\n\nARG VCS_REF\nARG BUILD_DATE\nARG GRAYLOG_VERSION\nARG LOCAL_BUILD_TGZ\nARG GRAYLOG_HOME=/usr/share/graylog\nARG GRAYLOG_UID=1100\nARG GRAYLOG_GID=1100\nARG TARGETPLATFORM\n\nWORKDIR /tmp\n\n# hadolint ignore=DL3008,DL3015\nRUN \\\n  apt-get update  > /dev/null && \\\n  apt-get install -y --no-install-recommends --assume-yes \\\n    ca-certificates \\\n    curl > /dev/null && rm -rf /var/lib/apt/lists/*;\n\nCOPY build/fetch-and-extract.sh /bin/fetch-and-extract\nRUN chmod +x /bin/fetch-and-extract\n\nRUN if [ -z \"${LOCAL_BUILD_TGZ}\" ]; then \\\n    fetch-and-extract \\\n    \"https://packages.graylog2.org/releases/graylog/graylog-${GRAYLOG_VERSION}.tgz\" \\\n    \"https://packages.graylog2.org/releases/graylog/graylog-${GRAYLOG_VERSION}.tgz.sha256.txt\" \\\n    \"https://packages.graylog2.org/releases/graylog/graylog-integrations-plugins-${GRAYLOG_VERSION}.tgz\" \\\n    \"https://downloads.graylog.org/releases/graylog-integrations/graylog-integrations-plugins-${GRAYLOG_VERSION}.tgz\" \\\n    \"https://downloads.graylog.org/releases/graylog-enterprise-integrations/graylog-enterprise-integrations-plugins-${GRAYLOG_VERSION}.tgz\" \\\n    \"https://downloads.graylog.org/releases/graylog-enterprise/graylog-enterprise-plugins-${GRAYLOG_VERSION}.tgz\" \\\n     ; fi\n\n\n# Does nothing if empty\nCOPY \"${LOCAL_BUILD_TGZ}\" \"/tmp/graylog.tgz\"\n\nRUN if [ \"${LOCAL_BUILD_TGZ}\" ]; then \\\n        mkdir /opt/graylog && \\\n        tar --extract --gzip --file \"/tmp/graylog.tgz\" --strip-components=1 --directory /opt/graylog; rm \"/tmp/graylog.tgz\" \\\n    fi\n\n# Reduce image size by removing large cross platform chromedriver binaries\nRUN if [ \"${TARGETPLATFORM}\" != \"linux/arm64\" ]; then \\\n        rm /opt/graylog/bin/*_arm64; \\\n    fi\nRUN if [ \"${TARGETPLATFORM}\" = \"linux/arm64\" ]; then \\\n        rm /opt/graylog/bin/*_amd64; \\\n    fi\n\nRUN \\\n  install \\\n    --directory \\\n    --mode=0750 \\\n    /opt/graylog/data \\\n    /opt/graylog/data/journal \\\n    /opt/graylog/data/log \\\n    /opt/graylog/data/config \\\n    /opt/graylog/data/plugin \\\n    /opt/graylog/data/data \\\n    /opt/graylog/data/scripts\n\n\nRUN mv /opt/graylog ${GRAYLOG_HOME} && chown -R ${GRAYLOG_UID}:${GRAYLOG_GID} ${GRAYLOG_HOME}\nRUN mv ${GRAYLOG_HOME}/plugin ${GRAYLOG_HOME}/plugins-default\nRUN install -d -o \"${GRAYLOG_UID}\" -g \"${GRAYLOG_GID}\" -m 0755 ${GRAYLOG_HOME}/plugins-merged\nRUN install -d -o \"${GRAYLOG_UID}\" -g \"${GRAYLOG_GID}\" -m 0755 ${GRAYLOG_HOME}/plugin\n\nCOPY config ${GRAYLOG_HOME}/data/config\n\n# -------------------------------------------------------------------------------------------------\n#\n# final layer\n# use the smallest debian with headless openjdk and copying files from download layers\nFROM openjdk:${JAVA_VERSION_MAJOR}-jre-slim-bullseye\n\nARG VCS_REF\nARG GRAYLOG_VERSION\nARG BUILD_DATE\nARG GRAYLOG_HOME=/usr/share/graylog\nARG GRAYLOG_USER=graylog\nARG GRAYLOG_UID=1100\nARG GRAYLOG_GROUP=graylog\nARG GRAYLOG_GID=1100\nARG JAVA_VERSION_MAJOR\n\nCOPY --chown=${GRAYLOG_UID}:${GRAYLOG_GID} --from=graylog-downloader ${GRAYLOG_HOME} ${GRAYLOG_HOME}\n\nWORKDIR ${GRAYLOG_HOME}\n\n# hadolint ignore=DL3027,DL3008\nRUN \\\n  echo \"export JAVA_HOME=/usr/local/openjdk-${JAVA_VERSION_MAJOR}\"     > /etc/profile.d/graylog.sh && \\\n  echo \"export BUILD_DATE=${BUILD_DATE}\"           >> /etc/profile.d/graylog.sh && \\\n  echo \"export GRAYLOG_VERSION=${GRAYLOG_VERSION}\" >> /etc/profile.d/graylog.sh && \\\n  echo \"export GRAYLOG_SERVER_JAVA_OPTS='-Dlog4j2.formatMsgNoLookups=true -Djdk.tls.acknowledgeCloseNotify=true -XX:+UnlockExperimentalVMOptions -XX:NewRatio=1 -XX:MaxMetaspaceSize=256m -server -XX:+ResizeTLAB -XX:-OmitStackTraceInFastThrow'\" >> /etc/profile.d/graylog.sh && \\\n  echo \"export GRAYLOG_HOME=${GRAYLOG_HOME}\"       >> /etc/profile.d/graylog.sh && \\\n  echo \"export GRAYLOG_USER=${GRAYLOG_USER}\"       >> /etc/profile.d/graylog.sh && \\\n  echo \"export GRAYLOG_GROUP=${GRAYLOG_GROUP}\"     >> /etc/profile.d/graylog.sh && \\\n  echo \"export GRAYLOG_UID=${GRAYLOG_UID}\"         >> /etc/profile.d/graylog.sh && \\\n  echo \"export GRAYLOG_GID=${GRAYLOG_GID}\"         >> /etc/profile.d/graylog.sh && \\\n  echo \"export PATH=${GRAYLOG_HOME}/bin:${PATH}\"   >> /etc/profile.d/graylog.sh && \\\n  apt-get update  > /dev/null && \\\n  apt-get install -y --no-install-recommends --assume-yes \\\n    curl \\\n    tini \\\n    libcap2-bin \\\n    libglib2.0-0 \\\n    libx11-6 \\\n    libnss3 \\\n    wait-for-it \\\n    fonts-dejavu \\\n    fontconfig > /dev/null && \\\n  addgroup \\\n    --gid \"${GRAYLOG_GID}\" \\\n    --quiet \\\n    \"${GRAYLOG_GROUP}\" && \\\n  adduser \\\n    --disabled-password \\\n    --disabled-login \\\n    --gecos '' \\\n    --home ${GRAYLOG_HOME} \\\n    --uid \"${GRAYLOG_UID}\" \\\n    --gid \"${GRAYLOG_GID}\" \\\n    --quiet \\\n    \"${GRAYLOG_USER}\" && \\\n  setcap 'cap_net_bind_service=+ep' \"${JAVA_HOME}/bin/java\" && \\\n  apt-get remove --assume-yes --purge \\\n    apt-utils > /dev/null && \\\n  rm -f /etc/apt/sources.list.d/* && \\\n  apt-get clean > /dev/null && \\\n  apt autoremove --assume-yes > /dev/null && \\\n  rm -rf \\\n    /tmp/* \\\n    /var/cache/debconf/* \\\n    /var/lib/apt/lists/* \\\n    /var/log/* \\\n    /usr/share/X11 \\\n    /usr/share/doc/* 2> /dev/null\n\n\nCOPY docker-entrypoint.sh /\nCOPY health_check.sh /\n\nEXPOSE 9000\nUSER ${GRAYLOG_USER}\nVOLUME ${GRAYLOG_HOME}/data\nENTRYPOINT [\"tini\", \"--\", \"/docker-entrypoint.sh\"]\nCMD [\"server\"]\n\n# add healthcheck\nHEALTHCHECK \\\n  --interval=10s \\\n  --timeout=2s \\\n  --retries=12 \\\n  CMD /health_check.sh\n\n# -------------------------------------------------------------------------------------------------\n\nLABEL maintainer=\"Graylog, Inc. <hello@graylog.com>\" \\\n      org.label-schema.name=\"Graylog Docker Image\" \\\n      org.label-schema.description=\"Official Graylog Docker image - with Enterprise Plugins\" \\\n      org.label-schema.url=\"https://www.graylog.org/\" \\\n      org.label-schema.vcs-ref=${VCS_REF} \\\n      org.label-schema.vcs-url=\"https://github.com/Graylog2/graylog-docker\" \\\n      org.label-schema.vendor=\"Graylog, Inc.\" \\\n      org.label-schema.version=${GRAYLOG_VERSION} \\\n      org.label-schema.schema-version=\"1.0\" \\\n      org.label-schema.build-date=${BUILD_DATE}\n"
+}

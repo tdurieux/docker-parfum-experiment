@@ -1,0 +1,80 @@
+{
+  "startTime": 1674252183320,
+  "endTime": 1674252183974,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 54,
+        "lineEnd": 54,
+        "columnStart": 4,
+        "columnEnd": 100
+      }
+    },
+    {
+      "rule": "wgetUseHttpsUrl",
+      "position": {
+        "lineStart": 82,
+        "lineEnd": 82,
+        "columnStart": 4,
+        "columnEnd": 113
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 62,
+        "lineEnd": 62,
+        "columnStart": 4,
+        "columnEnd": 21
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 68,
+        "lineEnd": 70,
+        "columnStart": 4,
+        "columnEnd": 20
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 73,
+        "lineEnd": 73,
+        "columnStart": 68,
+        "columnEnd": 84
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 83,
+        "lineEnd": 83,
+        "columnStart": 4,
+        "columnEnd": 43
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 79,
+        "lineEnd": 79,
+        "columnStart": 22,
+        "columnEnd": 59
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 79,
+        "lineEnd": 79,
+        "columnStart": 22,
+        "columnEnd": 59
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "---\ntitle: Docker Images for PyTorch\n---\n\n<!--\n   Licensed to the Apache Software Foundation (ASF) under one or more\n   contributor license agreements.  See the NOTICE file distributed with\n   this work for additional information regarding copyright ownership.\n   The ASF licenses this file to You under the Apache License, Version 2.0\n   (the \"License\"); you may not use this file except in compliance with\n   the License.  You may obtain a copy of the License at\n   http://www.apache.org/licenses/LICENSE-2.0\n   Unless required by applicable law or agreed to in writing, software\n   distributed under the License is distributed on an \"AS IS\" BASIS,\n   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.\n   See the License for the specific language governing permissions and\n   limitations under the License.\n-->\n\n## How to create docker images to run PyTorch on YARN\n\nDockerfile to run PyTorch on YARN needs two parts:\n\n**Base libraries which PyTorch depends on**\n\n1) OS base image, for example ```ubuntu:18.04```\n\n2) PyTorch dependent libraries and packages. For example ```python```, ```scipy```. For GPU support, you also need ```cuda```, ```cudnn```, etc.\n\n3) PyTorch package.\n\n**Libraries to access HDFS**\n\n1) JDK\n\n2) Hadoop\n\nHere's an example of a base image (with GPU support) to install PyTorch:\n```shell\nFROM nvidia/cuda:10.0-cudnn7-devel-ubuntu18.04\nARG PYTHON_VERSION=3.6\nRUN apt-get update && apt-get install -y --no-install-recommends \\\n         build-essential \\\n         cmake \\\n         git \\\n         curl \\\n         vim \\\n         ca-certificates \\\n         libjpeg-dev \\\n         libpng-dev \\\n         wget &&\\\n     rm -rf /var/lib/apt/lists/*\n\n\nRUN curl -f -o ~/miniconda.sh -O  https://repo.continuum.io/miniconda/Miniconda3-latest-Linux-x86_64.sh && \\\n     chmod +x ~/miniconda.sh && \\\n     ~/miniconda.sh -b -p /opt/conda && \\\n     rm ~/miniconda.sh && \\\n     /opt/conda/bin/conda install -y python=$PYTHON_VERSION numpy pyyaml scipy ipython mkl mkl-include cython typing && \\\n     /opt/conda/bin/conda install -y -c pytorch magma-cuda100 && \\\n     /opt/conda/bin/conda clean -ya\nENV PATH /opt/conda/bin:$PATH\nRUN pip install --no-cache-dir ninja\n# This must be done before pip so that requirements.txt is available\nWORKDIR /opt/pytorch\nRUN git clone https://github.com/pytorch/pytorch.git\nWORKDIR pytorch\nRUN git submodule update --init\nRUN TORCH_CUDA_ARCH_LIST=\"3.5 5.2 6.0 6.1 7.0+PTX\" TORCH_NVCC_FLAGS=\"-Xfatbin -compress-all\" \\\n    CMAKE_PREFIX_PATH=\"$(dirname $(which conda))/../\" \\\n    pip --no-cache-dir \\\n\n    install -v .\n\nWORKDIR /opt/pytorch\nRUN git clone https://github.com/pytorch/vision.git && cd vision && pip install --no-cache-dir -v .\n\n```\n\nOn top of above image, add files, install packages to access HDFS\n```shell\nRUN apt-get update && apt-get install --no-install-recommends -y openjdk-8-jdk wget && rm -rf /var/lib/apt/lists/*;\n# Install hadoop\nENV HADOOP_VERSION=\"2.9.2\"\nRUN wget https://mirrors.hust.edu.cn/apache/hadoop/common/hadoop-${HADOOP_VERSION}/hadoop-${HADOOP_VERSION}.tar.gz\nRUN tar zxf hadoop-${HADOOP_VERSION}.tar.gz && rm hadoop-${HADOOP_VERSION}.tar.gz\nRUN ln -s hadoop-${HADOOP_VERSION} hadoop-current\nRUN rm hadoop-${HADOOP_VERSION}.tar.gz\n```\n\nBuild and push to your own docker registry: Use ```docker build ... ``` and ```docker push ...``` to finish this step.\n\n## Use examples to build your own PyTorch docker images\n\nWe provided some example Dockerfiles for you to build your own PyTorch docker images.\n\nFor latest PyTorch\n\n- *docker/pytorch/base/ubuntu-18.04/Dockerfile.gpu.pytorch_latest*: Latest Pytorch that supports GPU, which is prebuilt to CUDA10.\n- *docker/pytorch/with-cifar10-models/ubuntu-18.04/Dockerfile.gpu.pytorch_latest*: Latest Pytorch that GPU, which is prebuilt to CUDA10, with models.\n\n## Build Docker images\n\n### Manually build Docker image:\n\nUnder `docker/pytorch` directory, run `build-all.sh` to build all Docker images. This command will build the following Docker images:\n\n- `pytorch-latest-gpu-base:0.0.1` for base Docker image which includes Hadoop, PyTorch, GPU base libraries.\n- `pytorch-latest-gpu:0.0.1` which includes cifar10 model as well\n\n### Use prebuilt images\n\n(No liability)\nYou can also use prebuilt images for convenience:\n\n- hadoopsubmarine/pytorch-latest-gpu-base:0.0.1\n"
+}

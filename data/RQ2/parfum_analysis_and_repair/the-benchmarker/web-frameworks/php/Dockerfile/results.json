@@ -1,0 +1,44 @@
+{
+  "startTime": 1674219507464,
+  "endTime": 1674219508228,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 41,
+        "lineEnd": 41,
+        "columnStart": 4,
+        "columnEnd": 47
+      }
+    },
+    {
+      "rule": "mkdirUsrSrcThenRemove",
+      "position": {
+        "lineStart": 23,
+        "lineEnd": 23,
+        "columnStart": 6,
+        "columnEnd": 39
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 2,
+        "lineEnd": 2,
+        "columnStart": 4,
+        "columnEnd": 139
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 15,
+        "lineEnd": 15,
+        "columnStart": 6,
+        "columnEnd": 21
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM php:8.0-fpm-alpine\n\nRUN apk add --no-cache git zlib-dev libzip-dev build-base autoconf nginx openrc curl-dev icu-dev oniguruma-dev php8-pear {{#deps}} {{{.}}} {{/deps}}\n\nWORKDIR /usr/src/app\n\nRUN ln -sfv /usr/bin/pecl8  /usr/local/bin/pecl\n\nRUN docker-php-ext-install zip opcache\n\n{{#environment}}\n  ENV {{{.}}}\n{{/environment}}\n\n{{#build_deps}}\n  RUN apk add --no-cache {{{.}}}\n{{/build_deps}}\n\n{{#php_mod}}\n  RUN docker-php-ext-install {{{.}}}\n{{/php_mod}}\n\n{{#php_ext}}\n  RUN mkdir -p /usr/src/php/ext/{{{.}}} && \\\n    curl -fsSL https://pecl.php.net/get/{{{.}}} | tar xvz -C \"/usr/src/php/ext/{{{.}}}\" --strip 1 && rm -rf /usr/src/php/ext/{{{.}}}\n  RUN docker-php-ext-install {{{.}}}\n{{/php_ext}}\n\n{{#before_build}}\n  RUN {{{.}}}\n{{/before_build}}\n\nCOPY . ./\n\nENV EVENT_EXT_FILE /usr/local/etc/php/conf.d/docker-php-ext-event.ini\nRUN if [[ -f \"${EVENT_EXT_FILE}\" ]] ; then \\\n  rm -fr /usr/local/etc/php/conf.d/docker-php-ext-sockets.ini ; \\\n  sed -e '1i extension=sockets' /usr/local/etc/php/conf.d/docker-php-ext-event.ini > /tmp/file ; \\\n  mv /tmp/file /usr/local/etc/php/conf.d/docker-php-ext-event.ini ; fi\n\n{{^standalone}}\nRUN curl -f -sSL https://getcomposer.org/installer | php -- --install-dir=/usr/local/bin --filename=composer\nRUN composer install --no-dev --prefer-dist --classmap-authoritative\nRUN composer dumpautoload -o\n{{/standalone}}\n\n\n\n{{#before_command}}\n  RUN {{{.}}}\n{{/before_command}}\n\n{{#command}}\n  CMD {{{.}}}\n{{/command}}\n\n{{^command}}\n  {{#slasheddocroot}}\n    RUN sed -i 's/\\;prefix.*/prefix = {{{.}}}/g' /usr/local/etc/php-fpm.d/www.conf\n  {{/slasheddocroot}}\n  {{^slasheddocroot}}\n    RUN sed -i 's/\\;prefix.*/prefix = \\/usr\\/src\\/app\\/public/g' /usr/local/etc/php-fpm.d/www.conf\n  {{/slasheddocroot}}\n  RUN sed -i 's/\\(listen =\\).*/\\1 \\/var\\/run\\/php-fpm.sock/g' /usr/local/etc/php-fpm.d/www.conf\n  RUN sed -i 's/\\;\\(listen\\.owner.*\\).*/\\1/g' /usr/local/etc/php-fpm.d/www.conf\n  RUN sed -i 's/\\;\\(listen\\.group.*\\).*/\\1/g' /usr/local/etc/php-fpm.d/www.conf\n  RUN sed -i 's/\\;\\(listen\\.mode.*\\).*/\\1/g' /usr/local/etc/php-fpm.d/www.conf\n  # pm.max_children set according to nproc\n  RUN if [ $(nproc) = 1 ] ; then sed -i 's/\\(pm\\.max_children =\\).*/\\1 512/g' /usr/local/etc/php-fpm.d/www.conf ; else sed -i 's/\\(pm\\.max_children =\\).*/\\1 1024/g' /usr/local/etc/php-fpm.d/www.conf ; fi\n  # after 15 seconds warm-up, half of the 'idle' children are not killed\n  RUN if [ $(nproc) = 1 ] ; then sed -i 's/\\(pm\\.max_spare_servers =\\).*/\\1 256/g' /usr/local/etc/php-fpm.d/www.conf ; else sed -i 's/\\(pm\\.max_spare_servers =\\).*/\\1 512/g' /usr/local/etc/php-fpm.d/www.conf ; fi\n\n  RUN rm -fr /usr/local/etc/php-fpm.d/zz-docker.conf\n\n  RUN echo -e 'server {\\n\\\n      {{#docroot}}\n        root {{{.}}};\\n\\\n      {{/docroot}}\n      {{^docroot}}\n        root /usr/src/app/public;\\n\\\n      {{/docroot}}\n      listen 0.0.0.0:3000;\\n\\\n      {{#nginx_conf}}\n        {{{.}}}\n      {{/nginx_conf}}\n      {{^nginx_conf}}\n        location / {\\n\\\n          try_files $uri $uri/ /index.php;\\n\\\n          fastcgi_pass unix:/var/run/php-fpm.sock;\\n\\\n          fastcgi_param   SCRIPT_FILENAME         $document_root/index.php;\\n\\\n          include fastcgi_params;\\n\\\n        }\\n\\\n      {{/nginx_conf}}\n  }\\n'\\\n  > /etc/nginx/http.d/default.conf\n\n  RUN echo -e 'opcache.enable=1\\n\\\n  opcache.memory_consumption=512\\n\\\n  opcache.interned_strings_buffer=64\\n\\\n  opcache.max_accelerated_files=32531\\n\\\n  opcache.validate_timestamps=0\\n\\\n  opcache.save_comments=1\\n\\\n  opcache.fast_shutdown=0\\n'\\\n  >> /usr/local/etc/php/conf.d/docker-php-ext-opcache.ini\n\n  CMD /usr/local/sbin/php-fpm --daemonize; nginx -g \"daemon off;\"\n\n{{/command}}\n"
+}

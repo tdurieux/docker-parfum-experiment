@@ -1,0 +1,1 @@
+# Inspired from svendowideit/ambassador

@@ -1,0 +1,64 @@
+FROM ubuntu:20.04
+ENV DEBIAN_FRONTEND noninteractive
+ENV DOTNETCORESDK_VERSION 2.1
+ENV DOCKER_COMPOSE_VERSION 1.22.0
+ENV MAVEN_VERSION=3.5.4
+RUN apt-get update && apt-get install --no-install-recommends -y apt-transport-https ca-certificates curl software-properties-common && \
+    curl -fsSL https://download.docker.com/linux/ubuntu/gpg | apt-key add - && \
+    add-apt-repository "deb [arch=amd64] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" && \
+    apt-get update && \
+    apt-get install --no-install-recommends -y docker-ce && rm -rf /var/lib/apt/lists/*;
+RUN apt-get install --no-install-recommends git gnupg gnupg2 gnupg1 -y && \
+    apt-get install -y --no-install-recommends dialog apt-utils curl apt-transport-https python3-pip libltdl-dev && \
+    curl -f -sL https://deb.nodesource.com/setup_14.x | bash - && \
+    apt-get install --no-install-recommends -y nodejs && rm -rf /var/lib/apt/lists/*;
+RUN apt-get install --no-install-recommends -y wget && \
+    wget -qO- https://packages.microsoft.com/keys/microsoft.asc | gpg --batch --dearmor > microsoft.asc.gpg && \
+    mv microsoft.asc.gpg /etc/apt/trusted.gpg.d/ && \
+    wget -q https://packages.microsoft.com/config/ubuntu/18.04/prod.list && \
+    mv prod.list /etc/apt/sources.list.d/microsoft-prod.list && \
+    apt-get install --no-install-recommends -y apt-transport-https && \
+    apt-get update && \
+    apt-get install --no-install-recommends -y dotnet-sdk-$DOTNETCORESDK_VERSION && rm -rf /var/lib/apt/lists/*;
+RUN curl -f -L https://github.com/docker/compose/releases/download/$DOCKER_COMPOSE_VERSION/docker-compose-$(uname -s)-$(uname -m) -o /usr/local/bin/docker-compose && \
+    chmod +x /usr/local/bin/docker-compose
+RUN curl -f -sL https://aka.ms/InstallAzureCLIDeb | bash
+RUN apt-get update && \
+    npm i npm@latest -g && \
+    npm i -g azure-iothub yo generator-azure-iot-edge-module && \
+    apt-get install -y --no-install-recommends python-dev build-essential libssl-dev libffi-dev libxml2-dev libxslt1-dev zlib1g-dev sudo && npm cache clean --force; && rm -rf /var/lib/apt/lists/*;
+RUN apt install --no-install-recommends python3.9 -y && \
+    rm /usr/bin/python3 && \
+    ln -s /usr/bin/python3.9 /usr/bin/python3 && \
+    python3 -m pip install --upgrade pip && \
+    pip3 install --no-cache-dir setuptools && \
+    pip3 install --no-cache-dir cookiecutter && rm -rf /var/lib/apt/lists/*;
+RUN apt-get -y --no-install-recommends install openjdk-8-jdk && rm -rf /var/lib/apt/lists/*;
+RUN apt-get update && \
+    apt-get install --no-install-recommends -y ca-certificates-java && \
+    update-ca-certificates -f && \
+    rm -rf /var/cache/oracle-jdk8-installer && rm -rf /var/lib/apt/lists/*;
+ENV JAVA_HOME /usr/lib/jvm/java-8-openjdk-amd64
+ENV PATH $JAVA_HOME/bin:$PATH
+RUN mkdir -p /usr/share/maven /usr/share/maven/ref && \
+    curl -fsSL -o /tmp/apache-maven.tar.gz https://www.apache.org/dist/maven/maven-3/$MAVEN_VERSION/binaries/apache-maven-$MAVEN_VERSION-bin.tar.gz && \
+    tar -xzf /tmp/apache-maven.tar.gz -C /usr/share/maven --strip-components=1 && \
+    rm -f /tmp/apache-maven.tar.gz && \
+    ln -s /usr/share/maven/bin/mvn /usr/bin/mvn
+RUN apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+WORKDIR /home/iotedge
+COPY install-dev.sh /scripts/install-dev.sh
+RUN sed -i 's/\r//' /scripts/install-dev.sh
+
+# Switch to a non-root user because Yeoman does not work with root users
+# https://github.com/Azure/iotedgedev/issues/312
+RUN useradd -m iotedgedev && \
+    echo 'iotedgedev ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers && \
+    chown -R iotedgedev:iotedgedev /home/iotedge
+USER iotedgedev
+# Azure CLI extensions are installed per user
+RUN az extension add --name azure-iot && \
+    echo 'alias python=python3' >> ~/.bashrc && \
+    echo 'alias pip=pip3' >> ~/.bashrc
+ENV DEBIAN_FRONTEND teletype

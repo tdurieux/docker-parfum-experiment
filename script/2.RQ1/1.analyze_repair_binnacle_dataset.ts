@@ -140,9 +140,7 @@ export async function analyzeZip(toAnalyze: (filename: string) => boolean) {
     extract.on("finish", function () {
       resolve();
     });
-    fs.createReadStream(
-      join(config.dataFolder, "reproduction", "github.tar.xz")
-    )
+    fs.createReadStream(join(config.datasetFolder, "binnacle", "github.tar.xz"))
       .pipe(lzma.createDecompressor())
       .pipe(extract);
   });

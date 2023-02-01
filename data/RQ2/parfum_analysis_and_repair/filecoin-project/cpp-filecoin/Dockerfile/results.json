@@ -1,0 +1,26 @@
+{
+  "startTime": 1674251992276,
+  "endTime": 1674251993267,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 11,
+        "lineEnd": 11,
+        "columnStart": 4,
+        "columnEnd": 62
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 10,
+        "lineEnd": 10,
+        "columnStart": 4,
+        "columnEnd": 61
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM ubuntu:20.04 AS base\nRUN rm -f /etc/apt/apt.conf.d/docker-clean\nARG DEBIAN_FRONTEND=noninteractive\nRUN --mount=type=cache,target=/var/cache/apt,sharing=shared apt-get update && apt-get install -y --no-install-recommends hwloc ocl-icd-* curl \\\n    && rm -rf /var/lib/apt/lists/*\nRUN groupadd --gid 1000 fuhon && useradd --uid 1000 --gid fuhon fuhon\n\nFROM base AS build\nRUN --mount=type=cache,target=/var/cache/apt,sharing=shared apt-get update && apt-get install -y --no-install-recommends git curl rsync make ninja-build clang-9 jq python3-pip python-setuptools pkg-config opencl-headers libhwloc-dev libhidapi-dev zlib1g-dev libbz2-dev liblzma-dev libssl-dev libxml2-dev \\\n    && rm -rf /var/lib/apt/lists/*\nRUN pip3 install --no-cache-dir scikit-build cmake requests gitpython pyyaml\nRUN curl -f -sL https://golang.org/dl/go1.17.3.linux-amd64.tar.gz | tar -xz -C /usr/local\nENV PATH=\"$PATH:/usr/local/go/bin\"\nCOPY . /tmp/cpp-filecoin\nRUN git -C /tmp/cpp-filecoin submodule update --init --recursive\nRUN ln -s /usr/bin/clang++-9 /usr/bin/clang++\nRUN --mount=type=cache,target=/tmp/.hunter/_Base/Cache CC=clang-9 CXX=clang++-9 cmake /tmp/cpp-filecoin -B /tmp/build -G Ninja -D CMAKE_BUILD_TYPE=Release -D TESTING=OFF\nRUN --mount=type=cache,target=/tmp/.hunter/_Base/Cache CC=clang-9 cmake --build /tmp/build --target fuhon-node fuhon-miner\n\nFROM base AS fuhon-miner\nRUN --mount=type=cache,target=/var/cache/apt,sharing=shared apt-get update && apt-get install -y --no-install-recommends libarchive13 libssl1.1 \\\n    && rm -rf /var/lib/apt/lists/*\n# cmake built libarchive has API v17, but provided version is v13 (https://github.com/libarchive/libarchive/issues/1236)\nRUN ln -s /lib/x86_64-linux-gnu/libarchive.so.13 /lib/x86_64-linux-gnu/libarchive.so.17\nCOPY --from=build /tmp/build/bin/fuhon-miner /usr/local/bin\nCOPY docker/miner_entrypoint.sh /\nRUN chmod +x /miner_entrypoint.sh\nUSER fuhon\nRUN mkdir /tmp/fuhon\nWORKDIR /tmp/fuhon\nENTRYPOINT [\"/miner_entrypoint.sh\"]\nCMD [\"fuhon-miner\", \"--repo\", \"fuhon-node-repo\", \"--miner-repo\", \"fuhon-miner-repo\"]\nHEALTHCHECK --interval=5s --timeout=10s CMD curl http://127.0.0.1:1234/health || exit 1\n\nFROM base AS fuhon-node\nCOPY --from=build /tmp/build/bin/fuhon-node /usr/local/bin\nCOPY docker/node_entrypoint.sh /\nRUN chmod +x /node_entrypoint.sh\nEXPOSE 1234 2000\nUSER fuhon\nRUN mkdir /tmp/fuhon\nWORKDIR /tmp/fuhon\nENTRYPOINT [\"/node_entrypoint.sh\"]\nCMD [\"fuhon-node\", \"--config\", \"fuhon-node.cfg\", \"--genesis\" ,\"genesis.car\", \"--repo\", \"fuhon-node-repo\"]\nHEALTHCHECK --interval=5s --timeout=10s CMD curl http://127.0.0.1:1234/health || exit 1\n"
+}

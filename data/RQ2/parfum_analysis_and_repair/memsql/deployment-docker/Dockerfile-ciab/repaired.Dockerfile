@@ -1,0 +1,39 @@
+ARG BASE_IMAGE
+FROM ${BASE_IMAGE}
+
+# install SingleStore DB packages and additional dependencies
+ARG CLIENT_VERSION
+ARG SERVER_VERSION
+ARG STUDIO_VERSION
+ARG TOOLBOX_VERSION
+RUN yum install -y \
+    singlestore-client-${CLIENT_VERSION} \
+    singlestoredb-server${SERVER_VERSION} \
+    singlestoredb-studio-${STUDIO_VERSION} \
+    singlestoredb-toolbox-${TOOLBOX_VERSION} \
+ && yum clean all && rm -rf /var/cache/yum
+
+RUN mkdir -p /home/memsql && chown memsql:memsql /home/memsql
+ADD ciab-assets/studio.hcl /var/lib/singlestoredb-studio/studio.hcl
+RUN chown memsql:memsql /var/lib/singlestoredb-studio/studio.hcl
+
+VOLUME ["/var/lib/memsql"]
+
+LABEL name="SingleStore DB Cluster in a Box"
+LABEL vendor="SingleStore"
+LABEL version=${SERVER_VERSION}
+LABEL release=1
+LABEL summary="The official docker image for testing SingleStore DB + Studio (cluster-in-a-box)."
+LABEL description="The official Docker image for testing SingleStore DB + Studio. Check out the tutorial: http://docs.singlestore.com/docs/quick-start-with-docker/"
+LABEL io.k8s.display-name="SingleStore DB Cluster in a Box"
+LABEL io.k8s.description="The official Docker image for testing SingleStore DB + Studio. Check out the tutorial: http://docs.singlestore.com/docs/quick-start-with-docker/"
+LABEL io.openshift.tags="database,db,sql,memsql,singlestore,testing,studio,dashboard"
+
+EXPOSE 3306/tcp
+EXPOSE 3307/tcp
+EXPOSE 8080/tcp
+USER memsql
+WORKDIR "/home/memsql"
+
+ADD ciab-assets/startup /startup
+CMD ["bash", "/startup"]

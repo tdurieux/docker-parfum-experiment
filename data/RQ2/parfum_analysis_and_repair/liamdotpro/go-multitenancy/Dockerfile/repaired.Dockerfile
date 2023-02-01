@@ -1,0 +1,1 @@
+# deployment file for the go-multitenancy framework

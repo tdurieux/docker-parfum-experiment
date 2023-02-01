@@ -1,0 +1,11 @@
+FROM alpine:3.16.0
+RUN   apk update && \
+      apk add --no-cache \
+      openssh-keygen bash openssh-client git ca-certificates gnupg
+RUN ssh-keyscan github.com bitbucket.org >> /etc/ssh/ssh_known_hosts
+
+COPY ssh_config /etc/ssh/ssh_config
+
+ENTRYPOINT [ "/server", "start" ]
+
+COPY server /

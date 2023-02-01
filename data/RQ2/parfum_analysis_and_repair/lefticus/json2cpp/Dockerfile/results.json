@@ -1,0 +1,53 @@
+{
+  "startTime": 1674219743502,
+  "endTime": 1674219744746,
+  "originalSmells": [
+    {
+      "rule": "gpgUseBatchFlag",
+      "position": {
+        "lineStart": 35,
+        "lineEnd": 35,
+        "columnStart": 10,
+        "columnEnd": 25
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 4,
+        "lineEnd": 7,
+        "columnStart": 4,
+        "columnEnd": 25
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 23,
+        "lineEnd": 23,
+        "columnStart": 4,
+        "columnEnd": 76
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 29,
+        "lineEnd": 31,
+        "columnStart": 4,
+        "columnEnd": 76
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 38,
+        "lineEnd": 38,
+        "columnStart": 4,
+        "columnEnd": 69
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM ubuntu:bionic\n\n# Install packages available from standard repos\nRUN apt-get update -qq && \\\n    apt-get install -y --no-install-recommends \\\n        software-properties-common wget git gpg-agent file \\\n        python3 python3-pip doxygen graphviz ccache cppcheck build-essential \\\n        neovim emacs nano && rm -rf /var/lib/apt/lists/*;\n\n# Install conan\nRUN python3 -m pip install --upgrade pip setuptools && \\\n    python3 -m pip install conan && \\\n    conan --version\n\n# User-settable versions:\n# This Dockerfile should support gcc-[7, 8, 9, 10] and clang-[10, 11]\n# Earlier versions of clang will require significant modifications to the IWYU section\nARG GCC_VER=\"10\"\nARG LLVM_VER=\"11\"\n\n# Add gcc-${GCC_VER}\nRUN add-apt-repository -y ppa:ubuntu-toolchain-r/test && \\\n    apt-get update -qq && \\\n    apt-get install -y --no-install-recommends gcc-${GCC_VER} g++-${GCC_VER} && rm -rf /var/lib/apt/lists/*;\n\n# Add clang-${LLVM_VER}\nRUN wget -O - https://apt.llvm.org/llvm-snapshot.gpg.key | apt-key add - 2>/dev/null && \\\n    add-apt-repository -y \"deb http://apt.llvm.org/bionic/ llvm-toolchain-bionic-${LLVM_VER} main\" && \\\n    apt-get update -qq && \\\n    apt-get install -y --no-install-recommends \\\n        clang-${LLVM_VER} lldb-${LLVM_VER} lld-${LLVM_VER} clangd-${LLVM_VER} \\\n        llvm-${LLVM_VER}-dev libclang-${LLVM_VER}-dev clang-tidy-${LLVM_VER} && rm -rf /var/lib/apt/lists/*;\n\n# Add current cmake/ccmake, from Kitware\nRUN wget -O - https://apt.kitware.com/keys/kitware-archive-latest.asc 2>/dev/null \\\n        | gpg --batch --dearmor - | tee /etc/apt/trusted.gpg.d/kitware.gpg >/dev/null && \\\n    apt-add-repository 'deb https://apt.kitware.com/ubuntu/ bionic main' && \\\n    apt-get update -qq && \\\n    apt-get install -y --no-install-recommends cmake cmake-curses-gui && rm -rf /var/lib/apt/lists/*;\n\n# Set the default clang-tidy, so CMake can find it\nRUN update-alternatives --install /usr/bin/clang-tidy clang-tidy $(which clang-tidy-${LLVM_VER}) 1\n\n# Install include-what-you-use\nENV IWYU /home/iwyu\nENV IWYU_BUILD ${IWYU}/build\nENV IWYU_SRC ${IWYU}/include-what-you-use\nRUN mkdir -p ${IWYU_BUILD} && \\\n    git clone --branch clang_${LLVM_VER} \\\n        https://github.com/include-what-you-use/include-what-you-use.git \\\n        ${IWYU_SRC}\nRUN CC=clang-${LLVM_VER} CXX=clang++-${LLVM_VER} cmake -S ${IWYU_SRC} \\\n        -B ${IWYU_BUILD} \\\n        -G \"Unix Makefiles\" -DCMAKE_PREFIX_PATH=/usr/lib/llvm-${LLVM_VER} && \\\n    cmake --build ${IWYU_BUILD} -j && \\\n    cmake --install ${IWYU_BUILD}\n\n# Per https://github.com/include-what-you-use/include-what-you-use#how-to-install:\n# `You need to copy the Clang include directory to the expected location before\n#  running (similarly, use include-what-you-use -print-resource-dir to learn\n#  exactly where IWYU wants the headers).`\nRUN mkdir -p $(include-what-you-use -print-resource-dir 2>/dev/null)\nRUN ln -s $(readlink -f /usr/lib/clang/${LLVM_VER}/include) \\\n    $(include-what-you-use -print-resource-dir 2>/dev/null)/include\n\n## Cleanup cached apt data we don't need anymore\n#RUN apt-get clean && \\\n#    rm -rf /var/lib/apt/lists/*\n\n# Set gcc-${GCC_VER} as default gcc\nRUN update-alternatives --install /usr/bin/gcc gcc $(which gcc-${GCC_VER}) 100\nRUN update-alternatives --install /usr/bin/g++ g++ $(which g++-${GCC_VER}) 100\n\n# Set clang-${LLVM_VER} as default clang\nRUN update-alternatives --install /usr/bin/clang clang $(which clang-${LLVM_VER}) 100\nRUN update-alternatives --install /usr/bin/clang++ clang++ $(which clang++-${LLVM_VER}) 100\n\n# Allow the user to set compiler defaults\nARG USE_CLANG\n# if --build-arg USE_CLANG=1, set CC to 'clang' or set to null otherwise.\nENV CC=${USE_CLANG:+\"clang\"}\nENV CXX=${USE_CLANG:+\"clang++\"}\n# if CC is null, set it to 'gcc' (or leave as is otherwise).\nENV CC=${CC:-\"gcc\"}\nENV CXX=${CXX:-\"g++\"}\n\n# By default, anything you run in Docker is done as superuser.\n# Conan runs some install commands as superuser, and will prepend `sudo` to\n# these commands, unless `CONAN_SYSREQUIRES_SUDO=0` is in your env variables.\nENV CONAN_SYSREQUIRES_SUDO 0\n# Some packages request that Conan use the system package manager to install\n# a few dependencies. This flag allows Conan to proceed with these installations;\n# leaving this flag undefined can cause some installation failures.\nENV CONAN_SYSREQUIRES_MODE enabled\n\n# Include project\nADD . /starter_project\nWORKDIR /starter_project\n\nCMD [\"/bin/bash\"]\n"
+}

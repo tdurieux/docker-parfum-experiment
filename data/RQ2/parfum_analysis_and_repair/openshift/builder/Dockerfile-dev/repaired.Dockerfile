@@ -1,0 +1,30 @@
+FROM registry.fedoraproject.org/fedora:33
+LABEL io.k8s.display-name="OpenShift Origin Builder" \
+      io.k8s.description="This is a component of OpenShift Origin and is responsible for executing image builds." \
+      io.openshift.tags="openshift,builder"
+
+RUN INSTALL_PKGS=" \
+      bind-utils bsdtar findutils fuse-overlayfs git hostname lsof \
+      procps-ng runc socat tar tree util-linux wget which \
+      " && \
+    yum install -y --setopt=skip_missing_names_on_install=False ${INSTALL_PKGS} && \
+    yum clean all && rm -rf /var/cache/yum
+RUN rpm --setcaps shadow-utils
+COPY imagecontent/bin /usr/bin
+COPY imagecontent/etc/containers /etc/containers
+COPY imagecontent/usr/share/containers /usr/share/containers
+RUN mkdir -p /var/cache/blobs \
+    /var/lib/shared/overlay-images \
+    /var/lib/shared/overlay-layers \
+    /etc/pki/tls/certs /etc/docker/certs.d && \
+    chmod g+w /etc/pki/tls/certs /etc/docker/certs.d && \
+    touch /var/lib/shared/overlay-images/images.lock \
+    /var/lib/shared/overlay-layers/layers.lock
+
+COPY openshift-builder /usr/bin
+RUN ln -s /usr/bin/openshift-builder /usr/bin/openshift-sti-build && \
+    ln -s /usr/bin/openshift-builder /usr/bin/openshift-docker-build && \
+    ln -s /usr/bin/openshift-builder /usr/bin/openshift-git-clone && \
+    ln -s /usr/bin/openshift-builder /usr/bin/openshift-manage-dockerfile && \
+    ln -s /usr/bin/openshift-builder /usr/bin/openshift-extract-image-content
+ENTRYPOINT [ "/usr/bin/entrypoint.sh" ]

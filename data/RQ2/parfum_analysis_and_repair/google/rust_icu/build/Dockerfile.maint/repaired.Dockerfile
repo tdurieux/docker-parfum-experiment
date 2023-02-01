@@ -1,0 +1,35 @@
+ARG DOCKER_REPO=filipfilmar
+ARG VERSION=0.0.0
+ARG ICU_VERSION_TAG=maint/maint-67
+FROM $DOCKER_REPO/rust_icu_buildenv:$VERSION AS buildenv
+
+# Every FROM declaration clears ARG values; but re-declaring
+# them gets the values back.
+ARG DOCKER_REPO
+ARG VERSION
+ARG ICU_VERSION_TAG
+
+# Install ICU from source.
+ENV ICU_SOURCE_DIR="/src/icu"
+RUN echo "$ICU_VERSION_TAG"
+RUN git clone https://github.com/unicode-org/icu.git && \
+    cd $ICU_SOURCE_DIR && \
+		git fetch origin $ICU_VERSION_TAG && \
+		git checkout $ICU_VERSION_TAG
+
+ENV ICU4C_BUILD_DIR=/build/icu4c-build
+RUN mkdir -p $ICU4C_BUILD_DIR && \
+		cd $ICU_BUILD_DIR && \
+		env CXXFLAGS="-ggdb -DU_DEBUG=1" \
+		    $ICU_SOURCE_DIR/icu4c/source/runConfigureICU Linux \
+			  --enable-static \
+			  --prefix=/usr/local \
+			  --enable-debug && \
+		make -j && \
+		make install && \
+		icu-config --version
+
+ENV CARGO_BUILD_DIR=/build/cargo
+RUN mkdir -p $CARGO_BUILD_DIR
+
+ENTRYPOINT echo "ICU version in this container: $(icu-config --version)"

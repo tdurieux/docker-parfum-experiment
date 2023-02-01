@@ -1,0 +1,17 @@
+{
+  "startTime": 1674255517958,
+  "endTime": 1674255519619,
+  "originalSmells": [
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 63,
+        "lineEnd": 63,
+        "columnStart": 5,
+        "columnEnd": 31
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# This Dockerfile should be used to create an environment to develop\n# applications for cozy-stack. It installs couchdb 2 and the cozy-stack.\n# It should not be used for hosting your cozy cloud in production.\n\n\n# Multi-stage image: this step builds cozy-stack (and mailhog)\nFROM golang:1.18 as build\nWORKDIR /app\n\n# MailHog\nENV MAILHOG_SRC_URL=https://github.com/mailhog/MailHog/releases/download/v1.0.0/MailHog_linux_amd64 \\\n\tMAILHOG_SRC_SHA256=ba921e04438e176c474d533447ae64707ffcdd1230f0153f86cb188d348f25c0\nRUN set -eu; curl -fsSL \"$MAILHOG_SRC_URL\" -o MailHog \\\n  && echo \"$MAILHOG_SRC_SHA256  MailHog\" | sha256sum -c - \\\n  && chmod +x MailHog\n\n# Use docker layer caching to avoid redownloading go modules if the code has\n# changed but not the dependencies.\nCOPY go.mod .\nCOPY go.sum .\nRUN go mod download\n\n# Build cozy-stack\nCOPY . .\nRUN ./scripts/build.sh dev\n\n\n# Multi-stage image: the main image\nFROM debian:stretch-slim\n\n# cozy-stack\nENV COZY_STACK_HOST=cozy.localhost \\\n\tCOZY_STACK_PORT=8080 \\\n\tCOZY_STACK_PATH=cozy-stack \\\n\tCOUCHDB_SRC_URL=https://dist.apache.org/repos/dist/release/couchdb/source/2.3.1/apache-couchdb-2.3.1.tar.gz \\\n\tCOUCHDB_SRC_SHA256=43eb8cec41eb52871bf22d35f3e2c2ce5b806ebdbce3594cf6b0438f2534227d \\\n\tPATH=\"$PATH:/usr/local/couchdb/bin\"\n\nARG DEBIAN_FRONTEND=noninteractive\n\nRUN set -eux; apt-get update \\\n  && apt-get install -y --no-install-recommends \\\n    build-essential \\\n    ca-certificates \\\n    curl \\\n    libicu57 \\\n    libmozjs185-1.0 \\\n    erlang-nox \\\n    erlang-reltool \\\n    erlang-dev \\\n    libicu-dev \\\n    libmozjs185-dev \\\n    openssl \\\n\tfonts-lato \\\n    imagemagick \\\n    git \\\n  && rm -rf /var/lib/apt/lists/* \\\n  && mkdir /usr/src/couchdb \\\n  && curl -fsSL \"$COUCHDB_SRC_URL\" -o couchdb.tar.gz \\\n  && echo \"$COUCHDB_SRC_SHA256  couchdb.tar.gz\" | sha256sum -c - \\\n  && tar -xzf couchdb.tar.gz -C /usr/src/couchdb --strip-components=1 \\\n  && rm couchdb.tar.gz \\\n  && cd /usr/src/couchdb \\\n  && ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" --disable-docs \\\n  && make release \\\n  && mv ./rel/couchdb /usr/local \\\n  && cd / \\\n  && rm -rf /usr/src/couchdb \\\n  && curl -fsSL https://nodejs.org/dist/v12.9.1/node-v12.9.1-linux-x64.tar.xz -o node-v12.9.1-linux-x64.tar.xz \\\n  && tar -xJf \"node-v12.9.1-linux-x64.tar.xz\" -C /usr/local --strip-components=1 --no-same-owner \\\n  && rm \"node-v12.9.1-linux-x64.tar.xz\" \\\n  && ln -s /usr/local/bin/node /usr/local/bin/nodejs \\\n  && node --version \\\n  # Cleanup\n  && apt-get purge -y \\\n    build-essential \\\n    erlang-dev \\\n    libicu-dev \\\n    libmozjs185-dev \\\n    make \\\n  && printf \"[chttpd]\\\\nbind_address = 0.0.0.0\\\\n\" \\\n    > /usr/local/couchdb/etc/local.ini \\\n  && apt-get autoremove -y && apt-get clean \\\n  && mkdir -p /data/cozy-app && mkdir -p /data/cozy-storage\n\n\nCOPY --from=build \\\n  /app/cozy-stack \\\n  /app/scripts/docker-entrypoint.sh \\\n  /app/scripts/cozy-app-dev.sh \\\n  /app/scripts/konnector-node-run.sh \\\n  /app/MailHog \\\n  /usr/bin/\n\nEXPOSE 8080 6060 8025 5984\nENTRYPOINT [\"/usr/bin/docker-entrypoint.sh\"]\n"
+}

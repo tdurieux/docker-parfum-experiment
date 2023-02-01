@@ -1,0 +1,53 @@
+{
+  "startTime": 1674215550781,
+  "endTime": 1674215551341,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 30,
+        "lineEnd": 30,
+        "columnStart": 23,
+        "columnEnd": 89
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 31,
+        "lineEnd": 31,
+        "columnStart": 6,
+        "columnEnd": 104
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 49,
+        "lineEnd": 49,
+        "columnStart": 4,
+        "columnEnd": 142
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 57,
+        "lineEnd": 57,
+        "columnStart": 4,
+        "columnEnd": 190
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 58,
+        "lineEnd": 58,
+        "columnStart": 4,
+        "columnEnd": 237
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "ARG IMAGE_NAME=registry.access.redhat.com/ubi8/ubi-init:8.4\n\nFROM registry.access.redhat.com/ubi8/go-toolset as builder\n\nARG FROM_SOURCE=false\n\nARG ARCH\nARG IPTABLES=nft\n\nENV GOPATH=/opt/app-root GOCACHE=/mnt/cache GO111MODULE=on\n\nWORKDIR $GOPATH/src/github.com/openshift/microshift\n\nCOPY . .\n\nUSER root\n# only need these args and the COPY for FROM_SOURCE=\"true\"\nARG MAKE_TARGET\nARG BIN_TIMESTAMP\nARG SOURCE_GIT_TAG\n\nRUN if [ \"$FROM_SOURCE\" == \"true\" ];then \\\n      wget https://go.dev/dl/go1.18.1.linux-amd64.tar.gz && \\\n      rm -rf /usr/bin/go && rm -rf /usr/local/go && \\\n      tar -C /usr/local -xzf go1.18.1.linux-amd64.tar.gz && \\\n      export PATH=$PATH:/usr/local/go/bin && \\\n      rm go1.18.1.linux-amd64.tar.gz && \\\n      make clean $MAKE_TARGET SOURCE_GIT_TAG=$SOURCE_GIT_TAG BIN_TIMESTAMP=$BIN_TIMESTAMP && \\\n      mv _output/bin/linux_$ARCH/microshift microshift; \\\n    else \\\n      export VERSION=$( curl -f -s https://api.github.com/repos/openshift/microshift/releases | grep tag_name | head -n 1 | cut -d '\"' -f 4) && \\\n      curl -f -LO https://github.com/openshift/microshift/releases/download/$VERSION/microshift-linux-$ARCH && \\\n      mv microshift-linux-$ARCH microshift; \\\n    fi\n\nFROM ${IMAGE_NAME}\n\nARG HOST=rhel8\n\nARG ARCH\n\nENV BUILD_PATH=packaging/images/microshift-aio\n\nCOPY --from=builder /opt/app-root/src/github.com/openshift/microshift/microshift /usr/local/bin/microshift\nCOPY $BUILD_PATH/unit /usr/lib/systemd/system/microshift.service\nCOPY $BUILD_PATH/kubelet-cgroups.conf /etc/systemd/system.conf.d/kubelet-cgroups.conf\nCOPY packaging/crio.conf.d/microshift.conf /etc/crio/crio.conf.d/microshift.conf\n\nRUN export OCP_VERSION=4.10.16 && \\\n    curl -f -o oc.tar.gz https://mirror2.openshift.com/pub/openshift-v4/$ARCH/clients/ocp/$OCP_VERSION/openshift-client-linux-$OCP_VERSION.tar.gz && \\\n    tar -xzvf oc.tar.gz && \\\n    rm oc.tar.gz && \\\n    install -t /usr/local/bin {kubectl,oc}\n\nRUN chmod 755 /usr/local/bin/microshift\nRUN export VERSION=1.23 && \\\n    export OS=CentOS_8_Stream && \\\n    curl -f -L -o /etc/yum.repos.d/devel:kubic:libcontainers:stable.repo https://download.opensuse.org/repositories/devel:/kubic:/libcontainers:/stable/$OS/devel:kubic:libcontainers:stable.repo && \\\n    curl -f -L -o /etc/yum.repos.d/devel:kubic:libcontainers:stable:cri-o:$VERSION.repo https://download.opensuse.org/repositories/devel:/kubic:/libcontainers:/stable:/cri-o:/$VERSION/$OS/devel:kubic:libcontainers:stable:cri-o:$VERSION.repo\n\nRUN dnf install -y cri-o \\\n        cri-tools \\\n        iproute \\\n        procps-ng && \\\n    dnf clean all\n\nRUN sed -i 's|/usr/libexec/crio/conmon|/usr/bin/conmon|' /etc/crio/crio.conf && \\\n    systemctl enable microshift.service && \\\n    systemctl enable crio\n\nENV KUBECONFIG=/var/lib/microshift/resources/kubeadmin/kubeconfig\n\n# rhel7 hosts, or hosts with legacy iptables need the specific iptables binaries, ubi8 comes with iptables-nft translator\n\nRUN if [ \"$HOST\" == \"rhel7\" ] || [ \"$IPTABLES\" != \"nft\" ]; then  \\\n      dnf install -y libnetfilter_conntrack libnfnetlink && dnf clean all && \\\n      export ARCH=$(uname -m) && \\\n      rpm -v -i --force https://archives.fedoraproject.org/pub/archive/fedora/linux/releases/28/Everything/$ARCH/os/Packages/i/iptables-libs-1.6.2-2.fc28.$ARCH.rpm \\\n                   https://archives.fedoraproject.org/pub/archive/fedora/linux/releases/28/Everything/$ARCH/os/Packages/i/iptables-1.6.2-2.fc28.$ARCH.rpm ; \\\n    else \\\n        dnf install -y iptables && dnf clean all; \\\n    fi\n\nRUN if [ \"$HOST\" == \"rhel8\" ]; then \\\n      sed -e '/mountopt/s/,\\?metacopy=on,\\?//' -i /etc/containers/storage.conf; \\\n    fi\n\nCMD [ \"/sbin/init\" ]\n"
+}

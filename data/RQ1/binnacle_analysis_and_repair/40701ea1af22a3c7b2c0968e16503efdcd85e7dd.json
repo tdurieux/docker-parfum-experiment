@@ -1,0 +1,53 @@
+{
+  "startTime": 1674235907605,
+  "endTime": 1674235907853,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 32,
+        "lineEnd": 32,
+        "columnStart": 22,
+        "columnEnd": 60
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 48,
+        "lineEnd": 55,
+        "columnStart": 22,
+        "columnEnd": 10
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 88,
+        "lineEnd": 88,
+        "columnStart": 22,
+        "columnEnd": 47
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 104,
+        "lineEnd": 105,
+        "columnStart": 5,
+        "columnEnd": 26
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 32,
+        "lineEnd": 32,
+        "columnStart": 22,
+        "columnEnd": 60
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Copyright (c) 2018 Red Hat, Inc.\n# Copyright (c) 2016 The Gitea Authors\n# Copyright (c) 2015 The Gogs Authors\n#\n# Permission is hereby granted, free of charge, to any person obtaining a copy\n# of this software and associated documentation files (the \"Software\"), to deal\n# in the Software without restriction, including without limitation the rights\n# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell\n# copies of the Software, and to permit persons to whom the Software is\n# furnished to do so, subject to the following conditions:\n#\n# The above copyright notice and this permission notice shall be included in\n# all copies or substantial portions of the Software.\n#\n# THE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\n# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\n# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\n# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\n# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\n# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN\n# THE SOFTWARE.\n\n###################################\n#Build stage\nFROM golang:1.11-stretch AS build-env\n\nLABEL maintainer=\"infra-root@openstack.org\"\n\nARG GITEA_VERSION=v1.7.4\nENV TAGS \"bindata $TAGS\"\n\n#Build deps\nRUN apt-get update && apt-get -y --no-install-recommends install build-essential git \\\n  && mkdir -p ${GOPATH}/src/code.gitea.io/gitea && rm -rf /var/lib/apt/lists/*;\n\n#Setup repo\nRUN git clone https://github.com/go-gitea/gitea ${GOPATH}/src/code.gitea.io/gitea\nWORKDIR ${GOPATH}/src/code.gitea.io/gitea\n\n#Checkout version if set\nRUN if [ -n \"${GITEA_VERSION}\" ]; then git checkout \"${GITEA_VERSION}\"; fi \\\n && make clean generate build\n\n###################################\n# Basic system setup common to all containers in our pod\n\nFROM debian:testing as base\n\nRUN apt-get update && apt-get -y --no-install-recommends install \\\n    bash \\\n    ca-certificates \\\n    curl \\\n    gettext \\\n    git \\\n    openssh-client \\\n    tzdata \\\n  && apt-get clean \\\n  && rm -rf /var/lib/apt/lists/*\n\nRUN addgroup --system --gid 1000 git \\\n  && adduser \\\n    --system --no-create-home --disabled-login \\\n    --home /data/git \\\n    --shell /bin/bash \\\n    --uid 1000 \\\n    --gid 1000 \\\n    git \\\n  && echo \"git:$(dd if=/dev/urandom bs=24 count=1 status=none | base64)\" | chpasswd \\\n  && mkdir /custom\n\n# Copy the /etc config files and entrypoint script\nCOPY --from=build-env /go/src/code.gitea.io/gitea/docker /\n# Copy our custom sshd_config\nCOPY sshd_config /etc/ssh/sshd_config\n\n# Copy the app\nCOPY --from=build-env /go/src/code.gitea.io/gitea/gitea /app/gitea/gitea\nRUN ln -s /app/gitea/gitea /usr/local/bin/gitea\n\n# Copy our custom templates\nCOPY custom/ /custom/\n\nENV GITEA_CUSTOM /custom\n\n###################################\n# The gitea image\nFROM base as gitea\n\nRUN apt-get update && apt-get -y --no-install-recommends install pandoc \\\n  && apt-get clean \\\n  && rm -rf /var/lib/apt/lists/*\n\nEXPOSE 3000\nENV USER git\nVOLUME [\"/data\"]\nENTRYPOINT [\"/usr/bin/entrypoint\"]\nCMD [\"/app/gitea/gitea\", \"web\"]\nUSER 1000:1000\n\n###################################\n# The openssh server image\nFROM base as gitea-openssh\n\nRUN apt-get update \\\n  && DEBIAN_FRONTEND=noninteractive apt-get --no-install-recommends -y -o Dpkg::Options::=\"--force-confold\" \\\n    install openssh-server \\\n  && apt-get clean \\\n  && rm -rf /var/lib/apt/lists/* \\\n  && mkdir /run/sshd\n\nCOPY sshd-entrypoint.sh /usr/bin/entrypoint\n\nEXPOSE 22\nVOLUME [\"/data\"]\nENTRYPOINT [\"/usr/bin/entrypoint\"]\nCMD [\"/usr/sbin/sshd\", \"-D\"]\n"
+}

@@ -1,0 +1,26 @@
+{
+  "startTime": 1674248610648,
+  "endTime": 1674248610839,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 93,
+        "lineEnd": 93,
+        "columnStart": 4,
+        "columnEnd": 51
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 90,
+        "lineEnd": 90,
+        "columnStart": 4,
+        "columnEnd": 15
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM ubuntu:14.04\n\nMAINTAINER Craig Citro <craigcitro@google.com>\n\nRUN apt-get update && apt-get install -y --no-install-recommends \\\n        build-essential \\\n        curl \\\n        git \\\n        libfreetype6-dev \\\n        libpng12-dev \\\n        libzmq3-dev \\\n        pkg-config \\\n        python-dev \\\n        python-numpy \\\n        python-pip \\\n        rsync \\\n        software-properties-common \\\n        swig \\\n        unzip \\\n        zip \\\n        zlib1g-dev \\\n        && \\\n    apt-get clean && \\\n    rm -rf /var/lib/apt/lists/*\n\nRUN curl -fSsL -O https://bootstrap.pypa.io/get-pip.py && \\\n    python get-pip.py && \\\n    rm get-pip.py\n\nRUN pip --no-cache-dir install \\\n        ipykernel \\\n        jupyter \\\n        matplotlib \\\n        && \\\n    python -m ipykernel.kernelspec\n\n# Set up our notebook config.\nCOPY jupyter_notebook_config.py /root/.jupyter/\n\n# Jupyter has issues with being run directly:\n#   https://github.com/ipython/ipython/issues/7062\n# We just add a little wrapper script.\nCOPY run_jupyter.sh /\n\n# Set up Bazel.\n\n# We need to add a custom PPA to pick up JDK8, since trusty doesn't\n# have an openjdk8 backport.  openjdk-r is maintained by a reliable contributor:\n# Matthias Klose (https://launchpad.net/~doko).  It will do until\n# we either update the base image beyond 14.04 or openjdk-8 is\n# finally backported to trusty; see e.g.\n#   https://bugs.launchpad.net/trusty-backports/+bug/1368094\nRUN add-apt-repository -y ppa:openjdk-r/ppa && \\\n    apt-get update && \\\n    apt-get install -y --no-install-recommends openjdk-8-jdk openjdk-8-jre-headless && \\\n    apt-get clean && \\\n    rm -rf /var/lib/apt/lists/*\n\n# Running bazel inside a `docker build` command causes trouble, cf:\n#   https://github.com/bazelbuild/bazel/issues/134\n# The easiest solution is to set up a bazelrc file forcing --batch.\nRUN echo \"startup --batch\" >>/root/.bazelrc\n# Similarly, we need to workaround sandboxing issues:\n#   https://github.com/bazelbuild/bazel/issues/418\nRUN echo \"build --spawn_strategy=standalone --genrule_strategy=standalone\" \\\n    >>/root/.bazelrc\nENV BAZELRC /root/.bazelrc\n# Install the most recent bazel release.\nENV BAZEL_VERSION 0.3.0\nWORKDIR /\nRUN mkdir /bazel && \\\n    cd /bazel && \\\n    curl -fSsL -O https://github.com/bazelbuild/bazel/releases/download/$BAZEL_VERSION/bazel-$BAZEL_VERSION-installer-linux-x86_64.sh && \\\n    curl -fSsL -o /bazel/LICENSE.txt https://raw.githubusercontent.com/bazelbuild/bazel/master/LICENSE.txt && \\\n    chmod +x bazel-*.sh && \\\n    ./bazel-$BAZEL_VERSION-installer-linux-x86_64.sh && \\\n    cd / && \\\n    rm -f /bazel/bazel-$BAZEL_VERSION-installer-linux-x86_64.sh\n\n# Download and build TensorFlow.\n\nRUN git clone --recursive https://github.com/tensorflow/tensorflow.git && \\\n    cd tensorflow && \\\n    git checkout r0.10\nWORKDIR /tensorflow\n\n# TODO(craigcitro): Don't install the pip package, since it makes it\n# more difficult to experiment with local changes. Instead, just add\n# the built directory to the path.\n\nRUN ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" && \\\n    bazel build -c opt tensorflow/tools/pip_package:build_pip_package && \\\n    bazel-bin/tensorflow/tools/pip_package/build_pip_package /tmp/pip && \\\n    pip install --no-cache-dir --upgrade /tmp/pip/tensorflow-*.whl\n\n# TensorBoard\nEXPOSE 6006\n# IPython\nEXPOSE 8888\n\nWORKDIR /root\nCMD [\"/bin/bash\"]\n"
+}

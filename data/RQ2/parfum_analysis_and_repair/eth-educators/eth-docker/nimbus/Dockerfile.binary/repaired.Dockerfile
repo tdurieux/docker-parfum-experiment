@@ -1,0 +1,32 @@
+ARG DOCKER_TAG
+
+FROM statusim/nimbus-eth2:${DOCKER_TAG}
+
+# Included here to avoid build-time complaints
+ARG BUILD_TARGET
+
+ARG UID=10002
+
+USER root
+
+RUN groupmod -g "${UID}" user && usermod -u "${UID}" -g "${UID}" user
+
+RUN set -eux; \
+        apt-get update; \
+        DEBIAN_FRONTEND=noninteractive TZ=Etc/UTC apt-get --no-install-recommends install -y gosu ca-certificates bash tzdata; \
+        rm -rf /var/lib/apt/lists/*; \
+# verify that the binary works
+        gosu nobody true
+
+# Create data mount point with permissions
+RUN mkdir -p /var/lib/nimbus && chown -R user:user /var/lib/nimbus && chmod 700 /var/lib/nimbus
+
+# Copy beacon_node into $PATH
+RUN cp /home/user/nimbus-eth2/build/nimbus_beacon_node /usr/local/bin/nimbus_beacon_node
+# Scripts for privilege change and validator import
+COPY ./validator-import.sh /usr/local/bin/
+COPY ./docker-entrypoint.sh /usr/local/bin/
+
+USER user
+
+ENTRYPOINT ["nimbus_beacon_node"]

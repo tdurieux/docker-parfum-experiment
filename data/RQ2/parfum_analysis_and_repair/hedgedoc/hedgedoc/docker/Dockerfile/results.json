@@ -1,0 +1,26 @@
+{
+  "startTime": 1674249220902,
+  "endTime": 1674249221523,
+  "originalSmells": [
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 32,
+        "lineEnd": 32,
+        "columnStart": 4,
+        "columnEnd": 57
+      }
+    },
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 72,
+        "lineEnd": 72,
+        "columnStart": 4,
+        "columnEnd": 73
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# SPDX-FileCopyrightText: 2022 The HedgeDoc developers (see AUTHORS file)\n# SPDX-License-Identifier: AGPL-3.0-only\n#\n# This Dockerfile uses features which are only available in BuildKit - see\n# https://docs.docker.com/go/buildkit/ for more information.\n#\n# To build the image, run `docker build` command from the root of the\n# repository:\n#\n#    DOCKER_BUILDKIT=1 docker build -f docker/Dockerfile .\n\n## Stage 0: Base image with only yarn and package.json\nFROM docker.io/node:18-alpine@sha256:e479d86de1ef8403adda6800733a7f8d18df4f3c1c2e68ba3e2bc05fdea9de20 as base\n# Add tini to handle signals\n# https://github.com/nodejs/docker-node/blob/main/docs/BestPractices.md#handling-kernel-signals\nRUN apk add --no-cache tini\nENTRYPOINT [\"tini\"]\n\nUSER node\nWORKDIR /usr/src/app\n\nCOPY --chown=node .yarn .yarn\nCOPY --chown=node package.json yarn.lock .yarnrc.yml ./\n\n\n## Stage 1: Code with all dependencies\nFROM base as code-with-deps\nUSER node\nWORKDIR /usr/src/app\n\n# Install dependencies first to not invalidate the cache on every source change\nRUN --mount=type=cache,sharing=locked,uid=1000,gid=1000,target=/tmp/.yarn \\\n    YARN_CACHE_FOLDER=/tmp/.yarn yarn install --immutable && yarn cache clean;\n\nCOPY --chown=node nest-cli.json tsconfig.json tsconfig.build.json ./\nCOPY --chown=node src src\n\n\n## Stage 2a: Dev config files and tests\nFROM code-with-deps as development\nUSER node\nWORKDIR /usr/src/app\n\nCOPY --chown=node .eslintrc.js eslint-local-rules.js .prettierrc jest-e2e.json  ./\nCOPY --chown=node test test\n\nCMD [\"node\", \"-r\", \"ts-node/register\", \"src/main.ts\"]\n\n## Stage 2b: Compile TypeScript\nFROM code-with-deps as builder\nUSER node\nWORKDIR /usr/src/app\n\nRUN yarn run build\n\n\n## Stage 3: Final image, only production dependencies\nFROM base as prod\n\nLABEL org.opencontainers.image.title='HedgeDoc production image'\nLABEL org.opencontainers.image.url='https://hedgedoc.org'\nLABEL org.opencontainers.image.source='https://github.com/hedgedoc/hedgedoc'\nLABEL org.opencontainers.image.documentation='https://github.com/hedgedoc/hedgedoc/blob/develop/docker/README.md'\nLABEL org.opencontainers.image.licenses='AGPL-3.0'\n\nUSER node\nWORKDIR /usr/src/app\nENV NODE_ENV=production\n\nCOPY --chown=node --from=builder /usr/src/app/dist ./dist\n\nRUN --mount=type=cache,sharing=locked,uid=1000,gid=1000,target=/tmp/.yarn \\\n    YARN_CACHE_FOLDER=/tmp/.yarn yarn workspaces focus --all --production && yarn cache clean;\n\nCMD  [\"node\", \"dist/main.js\"]\n"
+}

@@ -1,0 +1,15 @@
+FROM ${STAGING_IMAGE}
+LABEL python_version=python3.7
+RUN virtualenv --no-download /env -p python3.7
+
+# Set virtualenv environment variables. This is equivalent to running
+# source /env/bin/activate
+ENV VIRTUAL_ENV /env
+ENV PATH /env/bin:$PATH
+ADD requirements.txt /builder/
+#virtualenv's pip is pegged at version 10.0, removing so
+#newer versions get picked up
+RUN pip install --no-cache-dir -r /builder/requirements.txt
+ADD . /builder/
+WORKDIR /workspace
+ENTRYPOINT [ "python", "/builder/gen_dockerfile.py" ]

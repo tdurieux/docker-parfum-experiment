@@ -1,0 +1,26 @@
+{
+  "startTime": 1674251289684,
+  "endTime": 1674251290558,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 7,
+        "lineEnd": 7,
+        "columnStart": 2,
+        "columnEnd": 85
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 7,
+        "lineEnd": 7,
+        "columnStart": 2,
+        "columnEnd": 85
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM rust:1.52.1-buster AS rust\nRUN rustup self update\nRUN rustup install nightly-2021-02-20 --force\nRUN rustup default nightly-2021-02-20\nRUN rustup target add wasm32-unknown-unknown --toolchain nightly-2021-02-20\nRUN rustup component add --toolchain nightly-2021-02-20 clippy\nRUN apt-get update && \\\n  apt-get install --no-install-recommends -y curl git gcc xz-utils sudo pkg-config unzip clang llvm libc6-dev && rm -rf /var/lib/apt/lists/*;\n\nFROM rust AS builder\nLABEL description=\"Compiles all workspace artifacts\"\nWORKDIR /joystream\nCOPY . /joystream\n\n# Build all cargo crates\n# Ensure our tests and linter pass before actual build\nARG CARGO_FEATURES\nRUN echo \"CARGO_FEATURES=$CARGO_FEATURES\"\nRUN export WASM_BUILD_TOOLCHAIN=nightly-2021-02-20 && \\\n    BUILD_DUMMY_WASM_BINARY=1 cargo clippy --release --all -- -D warnings && \\\n    cargo test --release --all --features \"${CARGO_FEATURES}\" && \\\n    cargo build --release --features \"${CARGO_FEATURES}\"\n\nFROM ubuntu:21.04\nLABEL description=\"Joystream node\"\nWORKDIR /joystream\nCOPY --from=builder /joystream/target/release/joystream-node /joystream/node\nCOPY --from=builder /joystream/target/release/wbuild/joystream-node-runtime/joystream_node_runtime.compact.wasm /joystream/runtime.compact.wasm\nCOPY --from=builder /joystream/target/release/chain-spec-builder /joystream/chain-spec-builder\n\n# confirm it works\nRUN /joystream/node --version\n\n# https://manpages.debian.org/stretch/coreutils/b2sum.1.en.html\n# RUN apt-get install coreutils\n# print the blake2 256 hash of the wasm blob\nRUN b2sum -l 256 /joystream/runtime.compact.wasm\n# print the blake2 512 hash of the wasm blob\nRUN b2sum -l 512 /joystream/runtime.compact.wasm\n\nEXPOSE 30333 9933 9944\n\n# Use these volumes to persits chain state and keystore, eg.:\n# --base-path /data\n# optionally separate keystore (otherwise it will be stored in the base path)\n# --keystore-path /keystore\n# if base-path isn't specified, chain state is stored inside container in ~/.local/share/joystream-node/\n# which is not ideal\nVOLUME [\"/data\", \"/keystore\"]\n\nENTRYPOINT [\"/joystream/node\"]\n"
+}

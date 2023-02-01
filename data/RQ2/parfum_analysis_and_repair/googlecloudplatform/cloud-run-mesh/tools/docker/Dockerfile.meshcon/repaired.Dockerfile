@@ -1,0 +1,1 @@
+# Dockerfile using an external build (similar with Istio)

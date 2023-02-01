@@ -1,0 +1,1 @@
+# Dockerfile of addon is defined in /docker/js-addon/

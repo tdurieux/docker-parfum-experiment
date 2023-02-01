@@ -1,0 +1,1 @@
+#FROM adoptopenjdk:16.0.1_9-jdk-hotspot

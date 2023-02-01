@@ -1,0 +1,16 @@
+FROM python:3.9
+
+COPY k8spin_webhook/requirements.txt /src/requirements.txt
+RUN pip install --no-cache-dir -r /src/requirements.txt
+
+COPY k8spin_common /src/k8spin_common
+RUN pip install --no-cache-dir -e /src/k8spin_common
+
+COPY k8spin_webhook /app/k8spin_webhook
+
+EXPOSE 443
+
+VOLUME ["/certs"]
+
+ENTRYPOINT [ "python" ]
+CMD ["/app/k8spin_webhook/app.py"]

@@ -1,0 +1,28 @@
+############################################################
+# Dockerfile to run Traitar - the microbial trait analyzer
+# Based on Ubuntu Image
+############################################################
+
+# Set the base image to use to Ubuntu
+FROM ubuntu:trusty
+
+RUN apt-get update
+MAINTAINER Aaron Weimann (weimann@hhu.de)
+RUN sudo apt-get install --no-install-recommends -y python-scipy python-matplotlib python-pip python-pandas && rm -rf /var/lib/apt/lists/*;
+RUN echo "deb http://archive.ubuntu.com/ubuntu trusty-backports main restricted universe multiverse ">> /etc/apt/sources.list
+RUN sudo apt-get update
+RUN sudo apt-get install --no-install-recommends -y hmmer prodigal && rm -rf /var/lib/apt/lists/*;
+RUN sudo apt-get install --no-install-recommends -y wget && rm -rf /var/lib/apt/lists/*;
+RUN sudo apt-get install --no-install-recommends -y git && rm -rf /var/lib/apt/lists/*;
+RUN mkdir /home/traitar
+RUN wget -O /home/traitar/Pfam-A.hmm.gz ftp://ftp.ebi.ac.uk/pub/databases/Pfam/releases/Pfam27.0/Pfam-A.hmm.gz
+RUN gunzip /home/traitar/Pfam-A.hmm.gz
+RUN sudo apt-get install --no-install-recommends -y parallel && rm -rf /var/lib/apt/lists/*;
+ENV shell /bin/bash
+WORKDIR  /home/traitar
+ADD https://www.random.org/strings/?num=16&len=16&digits=on&upperalpha=on&loweralpha=on&unique=on&format=plain&rnd=new uuid
+RUN git clone https://github.com/aweimann/traitar
+WORKDIR  /home/traitar/traitar
+RUN python setup.py sdist
+RUN pip install --no-cache-dir traitar --find-links file:///home/traitar/traitar/dist
+RUN traitar pfam --local /home/traitar

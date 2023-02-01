@@ -1,0 +1,54 @@
+{
+  "startTime": 1674252745729,
+  "endTime": 1674252746364,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 55,
+        "lineEnd": 55,
+        "columnStart": 4,
+        "columnEnd": 46
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 54,
+        "lineEnd": 54,
+        "columnStart": 4,
+        "columnEnd": 41
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 66,
+        "lineEnd": 66,
+        "columnStart": 4,
+        "columnEnd": 129
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 56,
+        "lineEnd": 56,
+        "columnStart": 4,
+        "columnEnd": 33
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 56,
+        "lineEnd": 56,
+        "columnStart": 4,
+        "columnEnd": 33
+      }
+    }
+  ],
+  "repairedDockerfile": "FROM registry.ci.openshift.org/openshift/release:golang-1.17 AS builder\nWORKDIR /go/src/github.com/openshift-kni/cnf-features-deploy\nCOPY . .\nRUN make test-bin\nRUN git rev-list -1 HEAD > ./cnf-tests/bin/cnftests-sha.txt\n\nFROM quay.io/openshift/origin-oc-rpms:4.8 AS oc\n\nFROM registry.ci.openshift.org/openshift/release:golang-1.17 AS builder-stresser\nENV PKG_NAME=github.com/openshift-kni/cnf-features-deploy\nENV PKG_PATH=/go/src/$PKG_NAME\nENV TESTER_PATH=$PKG_PATH/cnf-tests/pod-utils/stresser\n\nRUN mkdir -p $PKG_PATH\n\nCOPY . $PKG_PATH/\nWORKDIR $TESTER_PATH\n\nRUN go build -mod=vendor -o /stresser\n\nFROM registry.ci.openshift.org/openshift/release:golang-1.17 AS builder-sctptester\nENV PKG_NAME=github.com/openshift-kni/cnf-features-deploy\nENV PKG_PATH=/go/src/$PKG_NAME\nENV TESTER_PATH=$PKG_PATH/cnf-tests/pod-utils/sctptester\n\nRUN mkdir -p $PKG_PATH\n\nCOPY . $PKG_PATH/\nWORKDIR $TESTER_PATH\n\nRUN go build -mod=vendor -o /sctptest\n\n# build latency-test's runner binaries\nFROM registry.ci.openshift.org/openshift/release:golang-1.17 AS builder-latency-test-runners\n\nENV PKG_NAME=github.com/openshift-kni/cnf-features-deploy\nENV PKG_PATH=/go/src/$PKG_NAME\nENV TESTER_PATH=$PKG_PATH/cnf-tests/pod-utils\n\nRUN mkdir -p $PKG_PATH\n\nCOPY . $PKG_PATH/\nWORKDIR $TESTER_PATH\n\nRUN go build -mod=vendor -o /oslat-runner oslat-runner/main.go && \\\n    go build -mod=vendor -o /cyclictest-runner cyclictest-runner/main.go && \\\n    go build -mod=vendor -o /hwlatdetect-runner hwlatdetect-runner/main.go\n\n# Build latency-test binaries\nFROM centos:7 as builder-latency-test-tools\n\nENV RT_TESTS_URL=https://git.kernel.org/pub/scm/utils/rt-tests/rt-tests.git/snapshot\nENV RT_TESTS_PKG=rt-tests-2.0\n\nRUN yum install -y numactl-devel make gcc && \\\n    curl -f -O $RT_TESTS_URL/$RT_TESTS_PKG.tar.gz && \\\n    tar -xvf $RT_TESTS_PKG.tar.gz && \\\n    cd $RT_TESTS_PKG && \\\n    make oslat hwlatdetect cyclictest && \\\n    cp oslat /oslat && \\\n    cp hwlatdetect /hwlatdetect && \\\n    cp cyclictest /cyclictest && rm -rf /var/cache/yum\n\nFROM centos:7\n\n# python3 is needed for hwlatdetect\nRUN yum install -y lksctp-tools iproute libhugetlbfs-utils libhugetlbfs tmux ethtool ping numactl-libs linuxptp iperf3 python3 nc && rm -rf /var/cache/yum\n\nRUN mkdir -p /usr/local/etc/cnf\n\nCOPY --from=builder-stresser /stresser /usr/bin/stresser\nCOPY --from=builder-sctptester /sctptest /usr/bin/sctptest\n\nCOPY --from=builder-latency-test-runners /oslat-runner /usr/bin/oslat-runner\nCOPY --from=builder-latency-test-tools /oslat /usr/bin/oslat\n\nCOPY --from=builder-latency-test-runners /cyclictest-runner /usr/bin/cyclictest-runner\nCOPY --from=builder-latency-test-tools /cyclictest /usr/bin/cyclictest\n\nCOPY --from=builder-latency-test-runners /hwlatdetect-runner /usr/bin/hwlatdetect-runner\nCOPY --from=builder-latency-test-tools /hwlatdetect /usr/bin/hwlatdetect\n\nCOPY --from=oc /go/src/github.com/openshift/oc/oc /usr/bin/oc\nCOPY --from=builder /go/src/github.com/openshift-kni/cnf-features-deploy/cnf-tests/bin/cnftests /usr/bin/cnftests\nCOPY --from=builder /go/src/github.com/openshift-kni/cnf-features-deploy/cnf-tests/bin/configsuite /usr/bin/configsuite\nCOPY --from=builder /go/src/github.com/openshift-kni/cnf-features-deploy/cnf-tests/bin/validationsuite /usr/bin/validationsuite\nCOPY --from=builder /go/src/github.com/openshift-kni/cnf-features-deploy/cnf-tests/entrypoint/test-run.sh /usr/bin/test-run.sh\nCOPY --from=builder /go/src/github.com/openshift-kni/cnf-features-deploy/cnf-tests/bin/mirror /usr/bin/mirror\nCOPY --from=builder /go/src/github.com/openshift-kni/cnf-features-deploy/cnf-tests/mirror/images.json /usr/local/etc/cnf\nCOPY --from=builder /go/src/github.com/openshift-kni/cnf-features-deploy/cnf-tests/bin/cnftests-sha.txt /usr/local/etc/cnf\nCOPY tools/oot-driver/ /usr/src/oot-driver/\nCOPY tools/numaresources/pause /pause\nCOPY --from=builder /go/src/github.com/openshift-kni/cnf-features-deploy/cnf-tests/bin/numacell /bin/numacell\n\nENV SUITES_PATH=/usr/bin/\n\nCMD [\"/usr/bin/test-run.sh\"]\n"
+}

@@ -1,0 +1,72 @@
+{
+  "startTime": 1674221085780,
+  "endTime": 1674221086951,
+  "originalSmells": [
+    {
+      "rule": "sha256sumEchoOneSpaces",
+      "position": {
+        "lineStart": 18,
+        "lineEnd": 18,
+        "columnStart": 4,
+        "columnEnd": 105
+      }
+    },
+    {
+      "rule": "sha256sumEchoOneSpaces",
+      "position": {
+        "lineStart": 49,
+        "lineEnd": 49,
+        "columnStart": 4,
+        "columnEnd": 103
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 23,
+        "lineEnd": 23,
+        "columnStart": 4,
+        "columnEnd": 82
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 31,
+        "lineEnd": 31,
+        "columnStart": 4,
+        "columnEnd": 82
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 7,
+        "lineEnd": 11,
+        "columnStart": 1,
+        "columnEnd": 4
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "gpgUseBatchFlag",
+      "position": {
+        "lineStart": 52,
+        "lineEnd": 52,
+        "columnStart": 4,
+        "columnEnd": 80
+      }
+    },
+    {
+      "rule": "gpgUseBatchFlag",
+      "position": {
+        "lineStart": 53,
+        "lineEnd": 53,
+        "columnStart": 4,
+        "columnEnd": 105
+      }
+    }
+  ],
+  "repairedDockerfile": "FROM ubuntu:20.04 as builder\n\nARG stream_perf_test_url=\"set-url-here\"\n\nRUN set -eux; \\\n\n\tapt-get update; \\\n\tapt-get install --yes --no-install-recommends \\\n\t\tca-certificates \\\n\t\twget \\\n\t\tgnupg \\\n\t\tjq && rm -rf /var/lib/apt/lists/*;\n\nARG JAVA_VERSION=\"17\"\n\nRUN if [ \"$(uname -m)\" = \"aarch64\" ] || [ \"$(uname -m)\" = \"arm64\" ]; then echo \"ARM\"; ARCH=\"arm\"; BUNDLE=\"jdk\"; else echo \"x86\"; ARCH=\"x86\"; BUNDLE=\"jdk\"; fi \\\n    && wget \"https://api.azul.com/zulu/download/community/v1.0/bundles/latest/?java_version=$JAVA_VERSION&ext=tar.gz&os=linux&arch=$ARCH&hw_bitness=64&release_status=ga&bundle_type=$BUNDLE\" -O jdk-info.json\nRUN wget --progress=bar:force:noscroll -O \"jdk.tar.gz\" $(cat jdk-info.json | jq --raw-output .url)\nRUN echo \"$(cat jdk-info.json | jq --raw-output .sha256_hash)  *jdk.tar.gz\" | sha256sum --check --strict -\n\nRUN set -eux; \\\n    if [ \"$(uname -m)\" = \"x86_64\" ] ; then \\\n    JAVA_PATH=\"/usr/lib/jdk-$JAVA_VERSION\"; \\\n    mkdir $JAVA_PATH && \\\n    tar --extract  --file jdk.tar.gz --directory \"$JAVA_PATH\" --strip-components 1; rm jdk.tar.gz \\\n\t\t\t$JAVA_PATH/bin/jlink --compress=2 --output /jre --add-modules java.base,jdk.management,java.naming,java.xml,jdk.unsupported,jdk.crypto.cryptoki,jdk.httpserver; \\\n\t\t\t/jre/bin/java -version; \\\n\t\t\tfi\n\nRUN set -eux; \\\n    if [ \"$(uname -m)\" = \"aarch64\" ] || [ \"$(uname -m)\" = \"arm64\" ] ; then \\\n    JAVA_PATH=\"/jre\"; \\\n    mkdir $JAVA_PATH && \\\n    tar --extract  --file jdk.tar.gz --directory \"$JAVA_PATH\" --strip-components 1; rm jdk.tar.gz \\\n\t\t\tfi\n\n# pgpkeys.uk is quite reliable, but allow for substitutions locally\nARG PGP_KEYSERVER=hkps://keys.openpgp.org\n# If you are building this image locally and are getting `gpg: keyserver receive failed: No data` errors,\n# run the build with a different PGP_KEYSERVER, e.g. docker build --tag rabbitmq:3.7 --build-arg PGP_KEYSERVER=pgpkeys.eu 3.7/ubuntu\n# For context, see https://github.com/docker-library/official-images/issues/4252\n\n# https://www.rabbitmq.com/signatures.html#importing-gpg\nENV RABBITMQ_PGP_KEY_ID=\"0x0A9AF2115F4687BD29803A206B73A36E6026DFCA\"\nENV STREAM_PERF_TEST_HOME=\"/stream_perf_test\"\n\nRUN set -eux; \\\n\n    wget --progress dot:giga --output-document \"/usr/local/src/stream-perf-test.jar.asc\" \"$stream_perf_test_url.asc\"; \\\n    wget --progress dot:giga --output-document \"/usr/local/src/stream-perf-test.jar\" \"$stream_perf_test_url\"; \\\n    STREAM_PERF_TEST_SHA256=\"$(wget -qO- $stream_perf_test_url.sha256)\"; \\\n    echo \"$STREAM_PERF_TEST_SHA256  /usr/local/src/stream-perf-test.jar\" | sha256sum --check --strict -; \\\n\n    export GNUPGHOME=\"$(mktemp -d)\"; \\\n    gpg --batch --keyserver \"$PGP_KEYSERVER\" --recv-keys \"$RABBITMQ_PGP_KEY_ID\"; \\\n    gpg --batch --verify \"/usr/local/src/stream-perf-test.jar.asc\" \"/usr/local/src/stream-perf-test.jar\"; \\\n    gpgconf --kill all; \\\n    rm -rf \"$GNUPGHOME\"; \\\n\n    mkdir -p \"$STREAM_PERF_TEST_HOME\"; \\\n    cp /usr/local/src/stream-perf-test.jar $STREAM_PERF_TEST_HOME/stream-perf-test.jar\n\nFROM ubuntu:20.04\n\n# we need locales support for characters like µ to show up correctly in the console\nRUN set -eux; \\\n\tapt-get update; \\\n\tapt-get install -y --no-install-recommends \\\n\t\tlocales \\\n\t\twget \\\n\t; \\\n\trm -rf /var/lib/apt/lists/*; \\\n\tlocale-gen en_US.UTF-8\n\nENV LANG en_US.UTF-8\nENV LANGUAGE en_US:en\nENV LC_ALL en_US.UTF-8\n\nENV JAVA_HOME=/usr/lib/jvm/java-17-openjdk/jre\nRUN mkdir -p $JAVA_HOME\nCOPY --from=builder /jre $JAVA_HOME/\nRUN ln -svT $JAVA_HOME/bin/java /usr/local/bin/java\n\nRUN mkdir -p /stream_perf_test\nWORKDIR /stream_perf_test\nCOPY --from=builder /stream_perf_test ./\nRUN set -eux; \\\n    if [ \"$(uname -m)\" = \"x86_64\" ] ; then java -jar stream-perf-test.jar --help ; \\\n\t  fi\n\nRUN groupadd --gid 1000 stream-perf-test\nRUN useradd --uid 1000 --gid stream-perf-test --comment \"perf-test user\" stream-perf-test\n\nUSER stream-perf-test:stream-perf-test\n\nENTRYPOINT [\"java\", \"-Dio.netty.processId=1\", \"-jar\", \"stream-perf-test.jar\"]\n"
+}

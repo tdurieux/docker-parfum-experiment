@@ -1,0 +1,17 @@
+FROM golang:1.17 AS build-env
+
+COPY . /reserve-stats
+WORKDIR /reserve-stats/accounting/cmd/accounting-cex-trades-api
+RUN go build -v -mod=mod -o /accounting-cex-trades-api
+
+FROM debian:stretch
+COPY --from=build-env /accounting-cex-trades-api /
+
+RUN apt-get update && \
+    apt-get install --no-install-recommends -y ca-certificates && \
+    rm -rf /var/lib/apt/lists/*
+
+ENV HTTP_ADDRESS=0.0.0.0:8010
+EXPOSE 8010
+
+ENTRYPOINT ["/accounting-cex-trades-api"]

@@ -1,0 +1,71 @@
+{
+  "startTime": 1674251580732,
+  "endTime": 1674251581394,
+  "originalSmells": [
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 57,
+        "lineEnd": 57,
+        "columnStart": 4,
+        "columnEnd": 28
+      }
+    },
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 60,
+        "lineEnd": 60,
+        "columnStart": 4,
+        "columnEnd": 15
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 52,
+        "lineEnd": 52,
+        "columnStart": 4,
+        "columnEnd": 41
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 31,
+        "lineEnd": 31,
+        "columnStart": 4,
+        "columnEnd": 57
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 48,
+        "lineEnd": 48,
+        "columnStart": 4,
+        "columnEnd": 120
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 56,
+        "lineEnd": 56,
+        "columnStart": 17,
+        "columnEnd": 38
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 56,
+        "lineEnd": 56,
+        "columnStart": 17,
+        "columnEnd": 38
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "ARG SOLANA_REVISION\n# Install BPF SDK\nFROM solanalabs/rust:1.61.0 AS builder\nRUN rustup toolchain install nightly\nRUN rustup component add clippy --toolchain nightly\nWORKDIR /opt\nRUN sh -c \"$(curl -sSfL https://release.solana.com/stable/install)\" && \\\n    /root/.local/share/solana/install/active_release/bin/sdk/bpf/scripts/install.sh\nENV PATH=/root/.local/share/solana/install/active_release/bin:/usr/local/cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin\n\n\n# Build evm_loader\n# Note: create stub Cargo.toml to speedup build\nFROM builder AS evm-loader-builder\nCOPY ./evm_loader/ /opt/evm_loader/\nWORKDIR /opt/evm_loader\nRUN cd program && /opt/evm_loader/ci_checks.sh\nARG REVISION\nENV NEON_REVISION=${REVISION}\nRUN cargo +nightly clippy && \\\n    cargo build --release && \\\n    cargo build-bpf --features no-logs,devnet && cp target/deploy/evm_loader.so target/deploy/evm_loader-devnet.so && \\\n    cargo build-bpf --features no-logs,testnet && cp target/deploy/evm_loader.so target/deploy/evm_loader-testnet.so && \\\n    cargo build-bpf --features no-logs,alpha && cp target/deploy/evm_loader.so target/deploy/evm_loader-alpha.so && \\\n    cargo build-bpf --features no-logs,mainnet && cp target/deploy/evm_loader.so target/deploy/evm_loader-mainnet.so && \\\n    cargo build-bpf --features no-logs\n\n# Build Solidity contracts\nFROM ethereum/solc:0.7.0 AS solc\nFROM ubuntu:20.04 AS contracts\nRUN apt-get update && \\\n    DEBIAN_FRONTEND=nontineractive apt-get --no-install-recommends -y install xxd && \\\n    rm -rf /var/lib/apt/lists/* /var/lib/apt/cache/*\nCOPY evm_loader/tests/contracts/*.sol /opt/\n#COPY evm_loader/tests/test_solidity_precompiles.json /opt/\nCOPY --from=solc /usr/bin/solc /usr/bin/solc\nWORKDIR /opt/\nRUN solc --output-dir . --bin *.sol && \\\n    for file in $(ls *.bin); do xxd -r -p $file >${file}ary; done && \\\n        ls -l\n\n# Define solana-image that contains utility\nFROM solanalabs/solana:${SOLANA_REVISION} AS solana\n\n# Build target image\nFROM ubuntu:20.04 AS base\nWORKDIR /opt\nRUN apt-get update && \\\n    DEBIAN_FRONTEND=noninteractive apt-get --no-install-recommends -y install vim less openssl ca-certificates curl python3 python3-pip parallel && \\\n    rm -rf /var/lib/apt/lists/*\n\nCOPY evm_loader/tests/requirements.txt solana-py.patch /tmp/\nRUN pip3 install --no-cache-dir -r /tmp/requirements.txt\n#RUN cd /usr/local/lib/python3.8/dist-packages/ && patch -p0 </tmp/solana-py.patch\n\nRUN curl -fsSL https://deb.nodesource.com/setup_16.x | bash -\nRUN apt update & apt install --no-install-recommends -y nodejs && rm -rf /var/lib/apt/lists/*;\nRUN npm install -g npm@8.6.0 && npm cache clean --force;\nCOPY /evm_loader/solidity/ /opt/contracts/\nWORKDIR /opt/contracts\nRUN npm install && npm cache clean --force;\nWORKDIR /opt\n\nCOPY --from=solana \\\n     /usr/bin/solana \\\n     /usr/bin/solana-validator \\\n     /usr/bin/solana-keygen \\\n     /usr/bin/solana-faucet \\\n     /usr/bin/solana-genesis \\\n     /usr/bin/solana-run.sh \\\n     /usr/bin/fetch-spl.sh \\\n     /usr/bin/spl* \\\n     /opt/solana/bin/\n\nCOPY evm_loader/solana-run-neon.sh \\\n     /opt/solana/bin/\n\nCOPY --from=evm-loader-builder /opt/evm_loader/target/deploy/evm_loader*.so /opt/\nCOPY --from=evm-loader-builder /opt/evm_loader/target/release/neon-cli /opt/\nCOPY --from=solana /usr/bin/spl-token /opt/spl-token\nCOPY --from=contracts /opt/ /opt/solidity/\nCOPY --from=contracts /usr/bin/solc /usr/bin/solc\nCOPY evm_loader/*.py \\\n    evm_loader/wait-for-solana.sh \\\n    evm_loader/wait-for-neon.sh \\\n    evm_loader/create-test-accounts.sh \\\n    evm_loader/deploy-evm.sh \\\n    evm_loader/deploy-test.sh \\\n    evm_loader/neon_token_keypair.json \\\n    evm_loader/permission_allowance_token_keypair.json \\\n    evm_loader/permission_denial_token_keypair.json \\\n    evm_loader/utils/set_single_acct_permission.sh \\\n    evm_loader/utils/set_many_accts_permission.sh \\\n    evm_loader/deploy-contracts.sh \\\n    evm_loader/get_deployer_address.py /opt/\n\nCOPY evm_loader/tests /opt/tests\nCOPY evm_loader/evm_loader-keypair.json /opt/\nCOPY evm_loader/collateral_pool_generator.py evm_loader/collateral-pool-keypair.json /opt/\nCOPY evm_loader/operator1-keypair.json /root/.config/solana/id.json\nCOPY evm_loader/operator2-keypair.json /root/.config/solana/id2.json\n\n\nENV CONTRACTS_DIR=/opt/solidity/\nENV PATH=/opt/solana/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/opt\n"
+}

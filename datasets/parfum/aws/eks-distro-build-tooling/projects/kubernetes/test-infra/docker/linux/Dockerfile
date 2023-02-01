@@ -1,0 +1,3 @@
+ARG BASE_IMAGE #gcr.io/k8s-prow/<image>:v20200924-369a496323 
+
+FROM $BASE_IMAGE

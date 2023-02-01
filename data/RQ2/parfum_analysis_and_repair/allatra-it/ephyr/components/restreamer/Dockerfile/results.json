@@ -1,0 +1,62 @@
+{
+  "startTime": 1674253624545,
+  "endTime": 1674253625241,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 15,
+        "lineEnd": 15,
+        "columnStart": 4,
+        "columnEnd": 91
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 26,
+        "lineEnd": 26,
+        "columnStart": 5,
+        "columnEnd": 40
+      }
+    },
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 27,
+        "lineEnd": 27,
+        "columnStart": 4,
+        "columnEnd": 23
+      }
+    },
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 74,
+        "lineEnd": 74,
+        "columnStart": 4,
+        "columnEnd": 32
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 31,
+        "lineEnd": 31,
+        "columnStart": 4,
+        "columnEnd": 51
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 32,
+        "lineEnd": 33,
+        "columnStart": 4,
+        "columnEnd": 50
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "#\n# Stage 'build-ephyr' builds Ephyr for the final stage.\n#\n\n# https://github.com/jrottenberg/ffmpeg/blob/master/docker-images/4.4/centos7/Dockerfile\nFROM jrottenberg/ffmpeg:4.4-centos7 AS build-ephyr\n\n\n# Install Rust.\nWORKDIR /tmp/rust/\n\nENV RUSTUP_HOME=/tmp/rust/rustup \\\n    CARGO_HOME=/tmp/rust/cargo \\\n    PATH=/tmp/rust/cargo/bin:$PATH\n\nRUN curl -f -sLO https://static.rust-lang.org/rustup/dist/x86_64-unknown-linux-gnu/rustup-init \\\n && chmod +x rustup-init \\\n && ./rustup-init -y --no-modify-path --profile minimal \\\n                  --default-toolchain stable \\\n && chmod -R a+w $RUSTUP_HOME $CARGO_HOME \\\n && rustup --version \\\n && cargo --version \\\n && rustc --version\n\n\n# Install Node.js and Yarn.\nRUN ( curl -f -Ls install-node.vercel.app/16 | bash -s -- --yes) \\\n && npm install -g yarn && npm cache clean --force;\n\n\n# Install build dependencies.\nRUN yum --enablerepo=extras install -y epel-release \\\n && yum --enablerepo=epel install -y automake gcc libtool make \\\n                                     openssl-devel && rm -rf /var/cache/yum\n\n\n# First, build all the dependencies to cache them in a separate Docker layer and\n# avoid recompilation each time project sources are changed.\nWORKDIR /tmp/ephyr/\n\nCOPY common/api/allatra-video/Cargo.toml ./common/api/allatra-video/\nCOPY common/log/Cargo.toml ./common/log/\nCOPY common/serde/Cargo.toml ./common/serde/\nCOPY components/restreamer/Cargo.toml ./components/restreamer/\nCOPY components/vod-meta-server/Cargo.toml ./components/vod-meta-server/\nCOPY Cargo.toml Cargo.lock ./\n\nCOPY components/restreamer/client.graphql.schema.json ./components/restreamer/\n\n\n\nRUN mkdir -p common/api/allatra-video/src/ \\\n && touch common/api/allatra-video/src/lib.rs \\\n && mkdir -p common/log/src/ \\\n && touch common/log/src/lib.rs \\\n && mkdir -p common/serde/src/ \\\n && touch common/serde/src/lib.rs \\\n && mkdir -p components/restreamer/src/ \\\n && touch components/restreamer/src/lib.rs components/restreamer/src/main.rs \\\n && mkdir -p components/vod-meta-server/src/ \\\n && touch components/vod-meta-server/src/lib.rs\n\nRUN cargo build -p ephyr-restreamer --lib --release\n\n\n# Then, prepare Yarn dependencies to cache them in a separate Docker layer and\n# avoid recompilation each time project sources are changed.\nWORKDIR /tmp/ephyr/components/restreamer/\n\nCOPY components/restreamer/client/.yarnrc \\\n     components/restreamer/client/package.json \\\n     components/restreamer/client/yarn.lock \\\n     ./\n\nRUN yarn install --pure-lockfile && yarn cache clean;\n\n\n# Finally, build the whole project.\nWORKDIR /tmp/ephyr/\n\nRUN rm -rf ./target/release/.fingerprint/ephyr-*\n\nCOPY common/log/ ./common/log/\nCOPY components/restreamer/ ./components/restreamer/\n\nRUN cargo build -p ephyr-restreamer --bin ephyr-restreamer --release\n\n\n\n\n#\n# Stage 'build-srs' prepares SRS distribution for the final stage.\n#\n\n# https://github.com/ossrs/srs-docker/blob/v3/Dockerfile\nFROM ossrs/srs:4 AS build-srs\n\n\n\n\n#\n# Stage 'runtime' creates final Docker image to use in runtime.\n#\n\n# https://github.com/jrottenberg/ffmpeg/blob/master/docker-images/4.4/centos7/Dockerfile\nFROM jrottenberg/ffmpeg:4.4-centos7 AS runtime\n\nCOPY --from=build-srs /usr/local/srs/ /usr/local/srs/\n\nCOPY --from=build-ephyr /tmp/ephyr/target/release/ephyr-restreamer \\\n                        /usr/local/bin/ephyr-restreamer\n\nENTRYPOINT  [\"/usr/local/bin/ephyr-restreamer\"]\n"
+}

@@ -1,0 +1,26 @@
+{
+  "startTime": 1674253792936,
+  "endTime": 1674253793709,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 35,
+        "lineEnd": 35,
+        "columnStart": 4,
+        "columnEnd": 89
+      }
+    },
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 11,
+        "lineEnd": 11,
+        "columnStart": 4,
+        "columnEnd": 16
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "ARG PYTHON_VERSION=\"3.8.12-slim-buster\"\nARG NODE_VERSION=\"16.14-buster-slim\"\nFROM node:${NODE_VERSION} AS frontend-builder\n\nCOPY frontend/ /frontend/\nWORKDIR /frontend\nENV PUBLIC_PATH=\"/static/_nuxt/\"\n# hadolint ignore=DL3008\nRUN apt-get update \\\n && apt-get install -y --no-install-recommends git python3 make g++ ca-certificates \\\n && git config --global url.\"https://github.com/\".insteadOf git://github.com/ \\\n && yarn install \\\n && yarn build \\\n && apt-get clean \\\n && rm -rf /var/lib/apt/lists/* && yarn cache clean;\n\nFROM python:${PYTHON_VERSION} AS backend-builder\n\n# hadolint ignore=DL3008\nRUN apt-get update \\\n && apt-get install -y --no-install-recommends \\\n    netcat=1.* \\\n    libpq-dev=11.* \\\n    unixodbc-dev=2.* \\\n    g++=4:* \\\n    libssl-dev=1.* \\\n    curl \\\n && apt-get clean \\\n && rm -rf /var/lib/apt/lists/*\n\nWORKDIR /tmp\nCOPY backend/pyproject.toml backend/poetry.lock /tmp/\nSHELL [\"/bin/bash\", \"-o\", \"pipefail\", \"-c\"]\n\nRUN pip install --no-cache-dir pip==22.0.4 \\\n && curl -f -sSL https://raw.githubusercontent.com/python-poetry/poetry/master/get-poetry.py | python - \\\n && PATH=\"${PATH}:$HOME/.poetry/bin\" \\\n && poetry export --without-hashes -o /requirements.txt \\\n && echo \"psycopg2-binary==2.8.6\" >> /requirements.txt \\\n && echo \"django-heroku==0.3.1\" >> /requirements.txt \\\n && pip install --no-cache-dir -r /requirements.txt\n\nFROM python:${PYTHON_VERSION} AS runtime\n\nRUN apt-get update \\\n && apt-get install -y --no-install-recommends \\\n    libpq-dev=11.* \\\n    unixodbc-dev=2.* \\\n    libssl-dev=1.* \\\n && apt-get clean \\\n && rm -rf /var/lib/apt/lists/*\n\nRUN useradd -ms /bin/sh doccano\nRUN mkdir /data \\\n && chown doccano:doccano /data\n\nCOPY --from=backend-builder /usr/local/lib/python3.8/site-packages /usr/local/lib/python3.8/site-packages\nCOPY --from=backend-builder /usr/local/bin/celery /usr/local/bin/celery\nCOPY --from=backend-builder /usr/local/bin/gunicorn /usr/local/bin/gunicorn\n\nCOPY --chown=doccano:doccano . /doccano\nWORKDIR /doccano/backend\nCOPY --from=frontend-builder /frontend/dist /doccano/backend/client/dist\nRUN python manage.py collectstatic --noinput \\\n && chown -R doccano:doccano .\n\nVOLUME /data\nENV DATABASE_URL=\"sqlite:////data/doccano.db\"\n\nENV DEBUG=\"False\"\nENV STANDALONE=\"True\"\nENV SECRET_KEY=\"change-me-in-production\"\nENV PORT=\"8000\"\nENV WORKERS=\"2\"\nENV CELERY_WORKERS=\"2\"\nENV GOOGLE_TRACKING_ID=\"\"\nENV DJANGO_SETTINGS_MODULE=\"config.settings.production\"\n\nUSER doccano\nEXPOSE ${PORT}\n\nCMD [\"/doccano/tools/run.sh\"]\n"
+}

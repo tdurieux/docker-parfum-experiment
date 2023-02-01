@@ -1,0 +1,52 @@
+# Copyright (c) 2020 Samsung Electronics Co., Ltd. All Rights Reserved
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+FROM ubuntu:20.04
+
+ARG UBUNTU_MIRROR
+
+# Install 'add-apt-repository'
+RUN apt-get update && apt-get -qqy install software-properties-common
+
+# Build tool
+RUN apt-get update && apt-get -qqy install build-essential cmake scons git lcov g++-arm-linux-gnueabihf g++-aarch64-linux-gnu
+
+# Debian build tool
+RUN apt-get update && apt-get -qqy install fakeroot devscripts debhelper python3-all dh-python
+
+# Install extra dependencies (Caffe, nnkit)
+RUN apt-get update && apt-get -qqy install libboost-all-dev libgflags-dev libgoogle-glog-dev libatlas-base-dev libhdf5-dev
+
+# Install protocol buffer
+RUN apt-get update && apt-get -qqy install libprotobuf-dev protobuf-compiler
+
+# Additonal tools
+RUN apt-get update && \
+    DEBIAN_FRONTEND=noninteractive \
+    apt-get -qqy install doxygen graphviz wget zip unzip clang-format-8 python3 python3-pip python3-venv hdf5-tools pylint curl
+RUN python3 -m pip install --upgrade pip
+RUN python3 -m pip install yapf==0.22.0 numpy
+
+# Install google test (source)
+RUN apt-get update && apt-get -qqy install libgtest-dev
+
+# Install gbs & sdb
+RUN echo 'deb [trusted=yes] http://download.tizen.org/tools/latest-release/Ubuntu_20.04/ /' | cat >> /etc/apt/sources.list
+RUN apt-get update && apt-get -qqy install gbs
+RUN wget http://download.tizen.org/sdk/tizenstudio/official/binary/sdb_4.2.19_ubuntu-64.zip -O sdb.zip
+RUN unzip -d tmp sdb.zip && rm sdb.zip
+RUN cp tmp/data/tools/sdb /usr/bin/. && rm -rf tmp/*
+
+# Clean archives (to reduce image size)
+RUN apt-get clean -y

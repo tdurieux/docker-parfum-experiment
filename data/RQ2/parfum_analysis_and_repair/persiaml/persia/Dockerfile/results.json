@@ -1,0 +1,44 @@
+{
+  "startTime": 1674219036349,
+  "endTime": 1674219037922,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 28,
+        "lineEnd": 28,
+        "columnStart": 4,
+        "columnEnd": 96
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 91,
+        "lineEnd": 91,
+        "columnStart": 21,
+        "columnEnd": 84
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 114,
+        "lineEnd": 114,
+        "columnStart": 4,
+        "columnEnd": 22
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 9,
+        "lineEnd": 26,
+        "columnStart": 25,
+        "columnEnd": 18
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "ARG DEVICE=cuda\nARG BASE_IMAGE=nvidia/cuda:11.2.0-devel-ubuntu20.04\n\nFROM ${BASE_IMAGE} AS base\nARG PYTHON_VERSION=3.8\nARG PYTORCH_VERSION=1.8\nARG MAGMA_CUDA_VERSION=magma-cuda110\nARG DEVICE\n\nRUN apt-get -y update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends curl \\\n    build-essential \\\n    ca-certificates \\\n    git \\\n    libgfortran-8-dev \\\n    vim \\\n    zsh \\\n    wget \\\n    ssh \\\n    iputils-ping \\\n    procps \\\n    net-tools \\\n    apt-utils \\\n    rlwrap \\\n    ethtool \\\n    telnet \\\n    openjdk-11-jdk \\\n    openssh-server && rm -rf /var/lib/apt/lists/*;\n\nRUN curl -f -o ~/miniconda.sh https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh && \\\n    chmod +x ~/miniconda.sh && \\\n    ~/miniconda.sh -b -p /opt/conda && \\\n    rm ~/miniconda.sh && \\\n    /opt/conda/bin/conda install -y python=${PYTHON_VERSION} numpy scipy mkl mkl-include ninja cython typing && \\\n    /opt/conda/bin/conda install -y -c conda-forge mpi4py && \\\n    ln -s /usr/share/pyshared /opt/conda/lib/python${PYTHON_VERSION}/site-packages && \\\n    if [ \"${DEVICE}\" = \"cuda\" ]; then \\\n    /opt/conda/bin/conda install -y -c pytorch -c conda-forge ${MAGMA_CUDA_VERSION} pytorch=${PYTORCH_VERSION} torchvision; \\\n    /opt/conda/bin/pip3 install bagua-cuda113 --no-cache-dir; \\\n    else \\ \n    /opt/conda/bin/conda install -y -c pytorch -c conda-forge pytorch=${PYTORCH_VERSION} torchvision cpuonly; \\\n    /opt/conda/bin/pip3 install scikit-learn --no-cache-dir; \\\n    fi && \\\n    /opt/conda/bin/conda install torchserve torch-model-archiver torch-workflow-archiver -c pytorch -y; \\\n    /opt/conda/bin/conda clean -yapf;\n\nRUN mkdir -p /opt/hadoop/; \\\n    cd /opt/hadoop/; \\\n    wget https://dlcdn.apache.org/hadoop/common/hadoop-3.3.1/hadoop-3.3.1.tar.gz; \\\n    tar -zxvf hadoop-3.3.1.tar.gz; \\\n    rm hadoop-3.3.1.tar.gz;\n\nRUN /opt/conda/bin/pip install --no-cache-dir \\ \n    remote-pdb \\\n    pytest \\\n    tqdm \\\n    pandas \\\n    tensorboard \\\n    ipython \\\n    captum \\\n    grpcio \\\n    protobuf \\\n    grpcio-tools && \\\n    apt-get purge --auto-remove && \\\n    apt-get clean\n\nENV PATH=/opt/conda/bin:/opt/hadoop/hadoop-3.3.1/bin/:$PATH\nENV JAVA_HOME=/usr/lib/jvm/java-11-openjdk-amd64/\nENV LIBRARY_PATH=\"/usr/local/lib64:/usr/local/lib:/usr/lib\"\nENV LD_LIBRARY_PATH=\"/opt/conda/lib/python${PYTHON_VERSION}/site-packages/torch/lib/:/opt/conda/lib/\"\n\n# alias for cpu builder image\nFROM base AS cpu-builder-base\n# alias for gpu builder image\nFROM base AS cuda-builder-base\nARG DEVICE\n\nENV USE_CUDA=1\nENV LIBRARY_PATH=\"${LIBRARY_PATH}:/usr/local/cuda/lib64/stubs/\"\n\nFROM ${DEVICE}-builder-base AS builder\n\nENV RUSTUP_HOME=/rust\nENV CARGO_HOME=/cargo\nENV PATH=/cargo/bin:/rust/bin:/opt/conda/bin:$PATH\n\nRUN curl -sSf https://sh.rustup.rs | sh -s -- --default-toolchain stable -y --profile default --no-modify-path\n\nFROM builder AS persia-builder\n\nWORKDIR /workspace\nCOPY . /workspace\nRUN cd /workspace && pip3 install --no-cache-dir colorama setuptools setuptools-rust setuptools_scm \\\n    && python setup.py bdist_wheel --dist-dir=/root/dist && rm -rf /workspace\n\n# Build bagua distributed training framework manully\n# RUN if [ \"${DEVICE}\" = \"cuda\" ]; then \\\n#     rm -rf /etc/apt/sources.list.d; \\\n#     apt-get update; \\\n#     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends zlib1g-dev libhwloc-dev; \\\n#     git clone https://github.com/BaguaSys/bagua.git; \\\n#     cd bagua; \\\n#     pip3 install cmake setuptools-rust colorama tqdm wheel --no-cache-dir; \\\n#     git submodule update --init --recursive; \\\n#     python setup.py bdist_wheel --dist-dir=/root/dist; \\\n#     cd ..; \\\n#     rm -rf bagua; \\\n#     /opt/conda/bin/conda clean -yapf; \\\n#     fi\n\nARG DEVICE\nFROM base AS runtime\n\n# Install the persia-runtime and bagua (Optional for cpu-runtime)\nCOPY --from=persia-builder /root/dist .\nRUN pip3 install --no-cache-dir *.whl && rm -rf *.whl\n\n# Install nats server\nRUN wget https://github.com/nats-io/nats-server/releases/download/v2.6.6/nats-server-v2.6.6-linux-amd64.tar.gz && \\\n    tar -zxvf nats-server-v2.6.6-linux-amd64.tar.gz && \\\n    cp nats-server-v2.6.6-linux-amd64/nats-server /usr/bin/ &&\\\n    rm -rf nats-server-v2.6.6-linux-amd64/ && \\\n    rm nats-server-v2.6.6-linux-amd64.tar.gz\n\n# Prepare examples\nRUN mkdir -p /home/PERSIA/examples\nCOPY examples /home/PERSIA/examples\nRUN cd /home/PERSIA/examples/src/adult-income/data/ && ./prepare_data.sh"
+}

@@ -1,0 +1,80 @@
+{
+  "startTime": 1674215889014,
+  "endTime": 1674215892889,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 27,
+        "lineEnd": 27,
+        "columnStart": 4,
+        "columnEnd": 99
+      }
+    },
+    {
+      "rule": "curlUseHttpsUrl",
+      "position": {
+        "lineStart": 27,
+        "lineEnd": 27,
+        "columnStart": 4,
+        "columnEnd": 99
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 51,
+        "lineEnd": 51,
+        "columnStart": 4,
+        "columnEnd": 29
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 52,
+        "lineEnd": 52,
+        "columnStart": 4,
+        "columnEnd": 65
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 20,
+        "lineEnd": 24,
+        "columnStart": 4,
+        "columnEnd": 24
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 32,
+        "lineEnd": 32,
+        "columnStart": 4,
+        "columnEnd": 25
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 40,
+        "lineEnd": 40,
+        "columnStart": 4,
+        "columnEnd": 68
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 50,
+        "lineEnd": 50,
+        "columnStart": 4,
+        "columnEnd": 30
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM centos:7\nENV container docker\nRUN (cd /lib/systemd/system/sysinit.target.wants/; for i in *; do [ $i == \\\nsystemd-tmpfiles-setup.service ] || rm -f $i; done); \\\nrm -f /lib/systemd/system/multi-user.target.wants/*;\\\nrm -f /etc/systemd/system/*.wants/*;\\\nrm -f /lib/systemd/system/local-fs.target.wants/*; \\\nrm -f /lib/systemd/system/sockets.target.wants/*udev*; \\\nrm -f /lib/systemd/system/sockets.target.wants/*initctl*; \\\nrm -f /lib/systemd/system/basic.target.wants/*;\\\nrm -f /lib/systemd/system/anaconda.target.wants/*;\nVOLUME [ \"/sys/fs/cgroup\" ]\n\n# HTCondor User details:\nENV SUBMIT_USER submitter\nENV GID 1000\nENV UID 1000\nENV PASS password\n\n# Build in one RUN\nRUN yum -y install \\\n         yum-utils \\\n         sudo \\\n         which \\\n         openssh-clients && \\\n    yum -y groupinstall 'Development Tools' && rm -rf /var/cache/yum\n\nRUN curl -f -L -s https://research.cs.wisc.edu/htcondor/yum/RPM-GPG-KEY-HTCondor > RPM-GPG-KEY-HTCondor && \\\n    rpm --import RPM-GPG-KEY-HTCondor && \\\n    yum-config-manager --add-repo https://research.cs.wisc.edu/htcondor/yum/repo.d/htcondor-development-rhel7.repo && \\\n    yum clean all && \\\n    rm -f RPM-GPG-KEY-HTCondor && \\\n    yum -y install condor && \\\n    groupadd -g ${GID} ${SUBMIT_USER} && \\\n    useradd -m -u ${UID} -g ${GID} ${SUBMIT_USER} && \\\n    usermod -a -G condor ${SUBMIT_USER} && \\\n    echo ${PASS} | passwd --stdin ${SUBMIT_USER} && \\\n    sed -i 's/\\(^Defaults.*requiretty.*\\)/#\\1/' /etc/sudoers && \\\n    systemctl enable condor && rm -rf /var/cache/yum\n\nRUN yum -y install epel-release httpd mod_wsgi mod_ssl net-tools vim && rm -rf /var/cache/yum\nRUN systemctl enable httpd\n\nCOPY docker/hostkey.pem /etc/pki/tls/private/localhost.key\nCOPY docker/hostcert.pem /etc/pki/tls/certs/localhost.crt\nCOPY docker/igtf-ca-bundle.crt /etc/pki/tls/certs/server-chain.crt\nRUN mv /etc/httpd/conf.d/ssl.conf /etc/httpd/conf.d/ssl.conf.orig && \\\n    sed 's/#SSLCertificateChainFile/SSLCertificateChainFile/g' /etc/httpd/conf.d/ssl.conf.orig > /etc/httpd/conf.d/ssl.conf && \\\n    rm -f /etc/httpd/conf.d/ssl.conf.orig\n\nRUN yum -y install python2-pip && rm -rf /var/cache/yum\nRUN pip install --no-cache-dir --upgrade pip\nRUN pip install --no-cache-dir git+https://github.com/htcondor/scitokens-credmon\n\n# KNOBS\nCOPY examples/config/condor/50-scitokens-credmon.conf /etc/condor/config.d/\nRUN sed -r -i 's/# ?SEC_DEFAULT_ENCRYPTION/SEC_DEFAULT_ENCRYPTION/' /etc/condor/config.d/50-scitokens-credmon.conf\nCOPY examples/config/apache/scitokens_credmon.conf /etc/httpd/conf.d/\nCOPY examples/wsgi/scitokens-credmon.wsgi /var/www/wsgi-scripts/scitokens-credmon/\nCOPY docker/10-docker.conf /etc/condor/config.d/\nCOPY docker/60-oauth-token-providers.conf.tmpl /etc/condor/config.d/60-oauth-token-providers.conf.tmpl\nRUN mkdir -p $(condor_config_val SEC_CREDENTIAL_DIRECTORY) && \\\n    chgrp condor $(condor_config_val SEC_CREDENTIAL_DIRECTORY) && \\\n    chmod 2770 $(condor_config_val SEC_CREDENTIAL_DIRECTORY)\n\nARG SCITOKENS_CLIENT_ID=clientid\nARG SCITOKENS_CLIENT_SECRET=clientsecret\nARG SCITOKENS_RETURN_URL_SUFFIX=/return/scitokens\nARG SCITOKENS_AUTHORIZATION_URL=https://token.server.address:443/scitokens-server/authorize\nARG SCITOKENS_TOKEN_URL=https://token.server.address:443/scitokens-server/token\nARG SCITOKENS_USER_URL=https://token.server.address:443/scitokens-server/userinfo\n\nRUN sed s+__CLIENT_ID__+${SCITOKENS_CLIENT_ID}+g /etc/condor/config.d/60-oauth-token-providers.conf.tmpl | \\\n    sed s+__RETURN_URL_SUFFIX__+${SCITOKENS_RETURN_URL_SUFFIX}+g | \\\n    sed s+__AUTHORIZATION_URL__+${SCITOKENS_AUTHORIZATION_URL}+g | \\\n    sed s+__TOKEN_URL__+${SCITOKENS_TOKEN_URL}+g | \\\n    sed s+__USER_URL__+${SCITOKENS_USER_URL}+g >> /etc/condor/config.d/60-oauth-token-providers.conf && \\\n    rm -f /etc/condor/config.d/60-oauth-token-providers.conf.tmpl && \\\n    mkdir /etc/condor/.secrets && \\\n    echo ${SCITOKENS_CLIENT_SECRET} > /etc/condor/.secrets/scitokens && \\\n    chmod 600 /etc/condor/.secrets/scitokens\n\nCOPY docker/test.sub /home/${SUBMIT_USER}/test.sub\nCOPY docker/test.sh /home/${SUBMIT_USER}/test.sh\nRUN chown ${UID}:${GID} /home/${SUBMIT_USER}/test.sub\nRUN chown ${UID}:${GID} /home/${SUBMIT_USER}/test.sh\n\nCMD [\"/usr/sbin/init\"]\n"
+}

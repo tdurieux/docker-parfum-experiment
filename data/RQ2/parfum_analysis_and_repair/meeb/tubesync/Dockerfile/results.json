@@ -1,0 +1,53 @@
+{
+  "startTime": 1674249622535,
+  "endTime": 1674249623860,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 34,
+        "lineEnd": 34,
+        "columnStart": 2,
+        "columnEnd": 64
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 82,
+        "lineEnd": 82,
+        "columnStart": 2,
+        "columnEnd": 55
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 60,
+        "lineEnd": 60,
+        "columnStart": 2,
+        "columnEnd": 32
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 28,
+        "lineEnd": 28,
+        "columnStart": 2,
+        "columnEnd": 52
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 32,
+        "lineEnd": 32,
+        "columnStart": 2,
+        "columnEnd": 74
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM debian:bullseye-slim\n\nARG TARGETPLATFORM\nARG S6_VERSION=\"2.2.0.3\"\n\nENV DEBIAN_FRONTEND=\"noninteractive\" \\\n  HOME=\"/root\" \\\n  LANGUAGE=\"en_US.UTF-8\" \\\n  LANG=\"en_US.UTF-8\" \\\n  LC_ALL=\"en_US.UTF-8\" \\\n  TERM=\"xterm\"\n\n# Install third party software\nRUN export ARCH=$(case ${TARGETPLATFORM:-linux/amd64} in \\\n  \"linux/amd64\")   echo \"amd64\"  ;; \\\n  \"linux/arm64\")   echo \"aarch64\" ;; \\\n  *)               echo \"\"        ;; esac) && \\\n  export S6_EXPECTED_SHA256=$(case ${TARGETPLATFORM:-linux/amd64} in \\\n  \"linux/amd64\")   echo \"a7076cf205b331e9f8479bbb09d9df77dbb5cd8f7d12e9b74920902e0c16dd98\"  ;; \\\n  \"linux/arm64\")   echo \"84f585a100b610124bb80e441ef2dc2d68ac2c345fd393d75a6293e0951ccfc5\" ;; \\\n  *)               echo \"\"        ;; esac) && \\\n  export S6_DOWNLOAD=$(case ${TARGETPLATFORM:-linux/amd64} in \\\n  \"linux/amd64\")   echo \"https://github.com/just-containers/s6-overlay/releases/download/v${S6_VERSION}/s6-overlay-amd64.tar.gz\"  ;; \\\n  \"linux/arm64\")   echo \"https://github.com/just-containers/s6-overlay/releases/download/v${S6_VERSION}/s6-overlay-aarch64.tar.gz\" ;; \\\n  *)               echo \"\"        ;; esac) && \\\n  echo \"Building for arch: ${ARCH}|${ARCH44}, downloading S6 from: ${S6_DOWNLOAD}}, expecting S6 SHA256: ${S6_EXPECTED_SHA256}\" && \\\n  set -x && \\\n  apt-get update && \\\n  apt-get -y --no-install-recommends install locales && \\\n  echo \"en_US.UTF-8 UTF-8\" > /etc/locale.gen && \\\n  locale-gen en_US.UTF-8 && \\\n  # Install required distro packages\n  apt-get -y --no-install-recommends install curl ca-certificates binutils && \\\n  # Install s6\n  curl -f -L ${S6_DOWNLOAD} --output /tmp/s6-overlay-${ARCH}.tar.gz && \\\n  sha256sum /tmp/s6-overlay-${ARCH}.tar.gz && \\\n  echo \"${S6_EXPECTED_SHA256}  /tmp/s6-overlay-${ARCH}.tar.gz\" | sha256sum -c - && \\\n  tar xzf /tmp/s6-overlay-${ARCH}.tar.gz -C / && \\\n  # Clean up\n  rm -rf /tmp/s6-overlay-${ARCH}.tar.gz && \\\n  apt-get -y autoremove --purge curl binutils && rm -rf /var/lib/apt/lists/*;\n\n# Copy app\nCOPY tubesync /app\nCOPY tubesync/tubesync/local_settings.py.container /app/tubesync/local_settings.py\n\n# Copy over pip.conf to use piwheels\nCOPY pip.conf /etc/pip.conf\n\n# Add Pipfile\nCOPY Pipfile /app/Pipfile\nCOPY Pipfile.lock /app/Pipfile.lock\n\n# Switch workdir to the the app\nWORKDIR /app\n\n# Set up the app\nRUN set -x && \\\n  apt-get update && \\\n  # Install required distro packages\n  apt-get -y --no-install-recommends install nginx-light && \\\n  apt-get -y --no-install-recommends install \\\n  python3 \\\n  python3-setuptools \\\n  python3-pip \\\n  python3-dev \\\n  gcc \\\n  g++ \\\n  make \\\n  default-libmysqlclient-dev \\\n  libmariadb3 \\\n  postgresql-common \\\n  libpq-dev \\\n  libpq5 \\\n  libjpeg62-turbo \\\n  libwebp6 \\\n  libjpeg-dev \\\n  zlib1g-dev \\\n  libwebp-dev \\\n  ffmpeg \\\n  redis-server && \\\n  # Install pipenv\n  pip3 --disable-pip-version-check --no-cache-dir install wheel pipenv && \\\n  # Create a 'app' user which the application will run as\n  groupadd app && \\\n  useradd -M -d /app -s /bin/false -g app app && \\\n  # Install non-distro packages\n  pipenv install --system && \\\n  # Make absolutely sure we didn't accidentally bundle a SQLite dev database\n  rm -rf /app/db.sqlite3 && \\\n  # Run any required app commands\n  /usr/bin/python3 /app/manage.py compilescss && \\\n  /usr/bin/python3 /app/manage.py collectstatic --no-input --link && \\\n  # Create config, downloads and run dirs\n  mkdir -p /run/app && \\\n  mkdir -p /config/media && \\\n  mkdir -p /downloads/audio && \\\n  mkdir -p /downloads/video && \\\n  # Clean up\n  rm /app/Pipfile && \\\n  rm /app/Pipfile.lock && \\\n  pipenv --clear && \\\n  pip3 --disable-pip-version-check uninstall -y pipenv wheel virtualenv && \\\n  apt-get -y autoremove --purge \\\n  python3-pip \\\n  python3-dev \\\n  gcc \\\n  g++ \\\n  make \\\n  default-libmysqlclient-dev \\\n  postgresql-common \\\n  libpq-dev \\\n  libjpeg-dev \\\n  zlib1g-dev \\\n  libwebp-dev && \\\n  apt-get -y autoremove && \\\n  apt-get -y autoclean && \\\n  rm -rf /var/lib/apt/lists/* && \\\n  rm -rf /var/cache/apt/* && \\\n  rm -rf /tmp/* && \\\n  # Pipenv leaves a bunch of stuff in /root, as we're not using it recreate it\n  rm -rf /root && \\\n  mkdir -p /root && \\\n  chown root:root /root && \\\n  chmod 0700 /root\n\n# Append software versions\nRUN set -x && \\\n  FFMPEG_VERSION=$(/usr/bin/ffmpeg -version | head -n 1 | awk '{ print $3 }') && \\\n  echo \"ffmpeg_version = '${FFMPEG_VERSION}'\" >> /app/common/third_party_versions.py\n\n# Copy root\nCOPY config/root /\n\n# Create a healthcheck\nHEALTHCHECK --interval=1m --timeout=10s CMD /app/healthcheck.py http://127.0.0.1:8080/healthcheck\n\n# ENVS and ports\nENV PYTHONPATH \"/app:${PYTHONPATH}\"\nEXPOSE 4848\n\n# Volumes\nVOLUME [\"/config\", \"/downloads\"]\n\n# Entrypoint, start s6 init\nENTRYPOINT [\"/init\"]\n"
+}

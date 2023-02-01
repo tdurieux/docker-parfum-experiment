@@ -1,0 +1,1 @@
+# Build the go application into a binary

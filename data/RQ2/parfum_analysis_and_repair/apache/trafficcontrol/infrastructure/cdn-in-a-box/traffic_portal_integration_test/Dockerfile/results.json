@@ -1,0 +1,35 @@
+{
+  "startTime": 1674252162738,
+  "endTime": 1674252163897,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 49,
+        "lineEnd": 49,
+        "columnStart": 4,
+        "columnEnd": 88
+      }
+    },
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 52,
+        "lineEnd": 52,
+        "columnStart": 4,
+        "columnEnd": 30
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 24,
+        "lineEnd": 24,
+        "columnStart": 8,
+        "columnEnd": 26
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Licensed to the Apache Software Foundation (ASF) under one\n# or more contributor license agreements.  See the NOTICE file\n# distributed with this work for additional information\n# regarding copyright ownership.  The ASF licenses this file\n# to you under the Apache License, Version 2.0 (the\n# \"License\"); you may not use this file except in compliance\n# with the License.  You may obtain a copy of the License at\n#\n#   http://www.apache.org/licenses/LICENSE-2.0\n#\n# Unless required by applicable law or agreed to in writing,\n# software distributed under the License is distributed on an\n# \"AS IS\" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY\n# KIND, either express or implied.  See the License for the\n# specific language governing permissions and limitations\n# under the License.\n\n    # Change BASE_IMAGE to centos when RHEL_VERSION=7\nARG BASE_IMAGE=rockylinux \\\n    RHEL_VERSION=8\nFROM ${BASE_IMAGE}:${RHEL_VERSION} as os-dependencies\nARG RHEL_VERSION=8\n\nRUN if [[ \"${RHEL_VERSION%%.*}\" -eq 7 ]]; then \\\n        yum -y install dnf || exit 1; rm -rf /var/cache/yum \\\n    fi\n\nRUN if [[ \"${RHEL_VERSION%%.*}\" -eq 7 ]]; then \\\n        utils_package=yum-utils; \\\n    else \\\n        utils_package=dnf-utils; \\\n    fi && \\\n    dnf install -y \\\n        bind-utils \\\n        # chromium and jq are in EPEL\n        epel-release \\\n        # find is required by to-access.sh\n        findutils \\\n        GConf2 \\\n        git \\\n        java-1.8.0-openjdk \\\n        net-tools \\\n        $utils_package && \\\n    set -o pipefail && \\\n    dnf -y install chromium jq && \\\n    dnf -y clean all\n\nFROM os-dependencies AS node-dependencies\n# Download and install node\nRUN curl -f -Lo node.tar.xz https://nodejs.org/dist/v12.16.3/node-v12.16.3-linux-x64.tar.xz && \\\n    tar --strip-components=1 -C /usr/local -xf node.tar.xz && \\\n    rm node.tar.xz && \\\n    npm i -g webdriver-manager && npm cache clean --force;\n\nFROM node-dependencies\n\nCOPY    traffic_portal/ /lang/traffic_portal/\nWORKDIR /lang/traffic_portal/test/integration\n\nRUN npm ci\n\nRUN mkdir /portaltestresults\n\nRUN jq ' \\\n        .capabilities.chromeOptions.args += [ \\\n            \"--disable-extensions\", \\\n            \"--ignore-certificate-errors\", \\\n            \"--no-sandbox\", \\\n            \"--whitelisted-ips=\" \\\n        ] | \\\n        .params.junitReporter = true' \\\n        config.json > conf.json.tmp && \\\n    mv conf.json.tmp config.json\n\n# Install chromium\nRUN dnf -y install chromium\n\nRUN set -o pipefail && \\\n    webdriver-manager clean && \\\n    chromium-browser --version | \\\n        grep -o '[0-9.]\\+' | \\\n        xargs webdriver-manager update --gecko false --versions.chrome\n\nCOPY infrastructure/cdn-in-a-box/traffic_ops/to-access.sh \\\n     infrastructure/cdn-in-a-box/traffic_portal_integration_test/run.sh \\\n     infrastructure/cdn-in-a-box/dns/set-dns.sh \\\n     infrastructure/cdn-in-a-box/dns/insert-self-into-dns.sh \\\n     /usr/local/sbin/\n\nCMD run.sh\n"
+}

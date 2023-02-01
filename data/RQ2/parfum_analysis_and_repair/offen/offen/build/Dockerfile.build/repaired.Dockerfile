@@ -1,0 +1,124 @@
+# Copyright 2020-2021 - Offen Authors <hioffen@posteo.de>
+# SPDX-License-Identifier: Apache-2.0
+
+FROM node:16-alpine as offen_node
+RUN apk add --no-cache git
+RUN apk add --no-cache --virtual .gyp python3 make g++
+RUN npm i -g npm@6 && npm cache clean --force;
+COPY ./packages /code/packages
+ENV ADBLOCK true
+ENV DISABLE_OPENCOLLECTIVE true
+ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD true
+
+FROM offen_node as auditorium
+ARG skip_locales
+ENV SKIP_LOCALES=$skip_locales
+COPY ./auditorium/package.json ./auditorium/package-lock.json /code/deps/
+WORKDIR /code/deps
+RUN npm ci
+COPY ./auditorium /code/auditorium
+COPY ./banner.txt /code/banner.txt
+COPY ./locales /code/auditorium/locales
+WORKDIR /code/auditorium
+RUN cp -a /code/deps/node_modules /code/auditorium/
+ENV NODE_ENV production
+RUN npm run build
+RUN npm run licenses
+
+FROM offen_node as script
+ARG skip_locales
+ENV SKIP_LOCALES=$skip_locales
+COPY ./script/package.json ./script/package-lock.json /code/deps/
+WORKDIR /code/deps
+RUN npm ci
+COPY ./script /code/script
+COPY ./banner.txt /code/banner.txt
+COPY ./locales /code/script/locales
+WORKDIR /code/script
+RUN cp -a /code/deps/node_modules /code/script/
+ENV NODE_ENV production
+RUN npm run build
+RUN npm run licenses
+
+FROM offen_node as vault
+ARG skip_locales
+ENV SKIP_LOCALES=$skip_locales
+COPY ./vault/package.json ./vault/package-lock.json /code/deps/
+WORKDIR /code/deps
+RUN npm ci
+COPY ./vault /code/vault
+COPY ./banner.txt /code/banner.txt
+COPY ./locales /code/vault/locales
+WORKDIR /code/vault
+RUN cp -a /code/deps/node_modules /code/vault/
+ENV NODE_ENV production
+RUN npm run build
+RUN npm run licenses
+
+# packages does not have a build step but we need to derive license information
+FROM offen_node as packages
+COPY ./packages/package.json ./packages/package-lock.json /code/deps/
+WORKDIR /code/deps
+RUN npm ci
+WORKDIR /code/packages
+RUN cp -a /code/deps/node_modules /code/packages/
+ENV NODE_ENV production
+RUN npm run licenses
+
+FROM ruby:2.7-alpine AS server_licenses
+
+COPY --from=golang:1.18-alpine /usr/local/go/ /usr/local/go/
+ENV PATH="/usr/local/go/bin:${PATH}"
+
+RUN gem install license_finder
+
+WORKDIR /code/server
+COPY ./server /code/server
+RUN go mod tidy
+RUN go mod download
+
+RUN echo "repository,version,licenses" > dependencies.csv
+RUN license_finder report | tail -n +2 >> dependencies.csv
+
+FROM python:3.8-alpine as notice
+
+WORKDIR /code
+COPY ./create_notice.py ./NOTICE /code/
+
+COPY --from=script /code/script/dependencies.csv /code/script.csv
+COPY --from=vault /code/vault/dependencies.csv /code/vault.csv
+COPY --from=auditorium /code/auditorium/dependencies.csv /code/auditorium.csv
+COPY --from=packages /code/packages/dependencies.csv /code/packages.csv
+COPY --from=server_licenses /code/server/dependencies.csv /code/server.csv
+
+RUN python ./create_notice.py \
+  --client script.csv \
+  --client vault.csv \
+  --client packages.csv \
+  --client auditorium.csv \
+  --server server.csv >> NOTICE
+
+FROM techknowlogick/xgo:go-1.18.x as compiler
+
+ARG rev
+ENV GIT_REVISION=$rev
+ARG targets
+ENV TARGETS=$targets
+ARG ldflags
+ENV LDFLAGS=$ldflags
+
+COPY ./server /go/src/github.com/offen/offen/server
+COPY --from=script /code/script/dist /go/src/github.com/offen/offen/server/public/static
+COPY --from=vault /code/vault/dist /go/src/github.com/offen/offen/server/public/static
+COPY --from=auditorium /code/auditorium/dist /go/src/github.com/offen/offen/server/public/static
+COPY --from=notice /code/NOTICE /go/src/github.com/offen/offen/server/public/static/NOTICE.txt
+COPY ./locales/* /go/src/github.com/offen/offen/server/public/static/locales/
+
+ENV GOPATH /go
+WORKDIR /build
+
+COPY ./build/compile.sh .
+RUN chmod +x ./compile.sh && ./compile.sh && rm ./compile.sh
+RUN [ ! -f ./offen-linux-arm-7 ] || mv ./offen-linux-arm-7 ./offen-linux-arm-v7
+
+COPY --from=notice /code/NOTICE ./

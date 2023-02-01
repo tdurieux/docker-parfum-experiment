@@ -1,0 +1,26 @@
+{
+  "startTime": 1674249877594,
+  "endTime": 1674249878137,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 21,
+        "lineEnd": 21,
+        "columnStart": 2,
+        "columnEnd": 33
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 21,
+        "lineEnd": 21,
+        "columnStart": 2,
+        "columnEnd": 33
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM rust:latest as planner\nWORKDIR app\nRUN cargo install cargo-chef --version 0.1.23\nCOPY Cargo.toml /app\nCOPY common /app/common\nCOPY quic /app/quic\n# Don't include testing crates\nRUN rm -rf quic/s2n-quic-bench quic/s2n-quic-events quic/s2n-quic-sim\nRUN cargo chef prepare  --recipe-path recipe.json\n\nFROM rust:latest as cacher\nWORKDIR app\nRUN cargo install cargo-chef --version 0.1.23\nCOPY --from=planner /app/recipe.json recipe.json\nRUN cargo chef cook --recipe-path recipe.json\n\nFROM rust:latest AS builder\nWORKDIR app\n\nRUN set -eux; \\\n  apt-get update; \\\n  apt-get install --no-install-recommends -y cmake clang; rm -rf /var/lib/apt/lists/*;\n\n# copy sources\nCOPY Cargo.toml /app\nCOPY common /app/common\nCOPY quic /app/quic\n# Don't include testing crates\nRUN rm -rf quic/s2n-quic-bench quic/s2n-quic-events quic/s2n-quic-sim\n\n# Copy over the cached dependencies\nCOPY --from=cacher /app/target target\nCOPY --from=cacher /usr/local/cargo /usr/local/cargo\n\n# build runner\nARG release=\"false\"\nRUN set -eux; \\\n  if [ \"$release\" = \"true\" ]; then \\\n    RUSTFLAGS=\"-C link-arg=-s -C panic=abort\" \\\n      cargo build --bin s2n-quic-qns --release; \\\n    cp target/release/s2n-quic-qns .; \\\n  else \\\n    cargo build --bin s2n-quic-qns; \\\n    cp target/debug/s2n-quic-qns .; \\\n  fi; \\\n  rm -rf target\n\nFROM martenseemann/quic-network-simulator-endpoint:latest\n\nENV RUST_BACKTRACE=\"1\"\n\n# copy entrypoint\nCOPY quic/s2n-quic-qns/etc/run_endpoint.sh .\nRUN chmod +x run_endpoint.sh\n\n# copy runner\nCOPY --from=builder /app/s2n-quic-qns /usr/bin/s2n-quic-qns\nRUN set -eux; \\\n  chmod +x /usr/bin/s2n-quic-qns; \\\n  ldd /usr/bin/s2n-quic-qns; \\\n  # ensure the binary works \\\n  s2n-quic-qns --help; \\\n  echo done\n\nARG tls\nENV TLS=\"${tls}\"\n\n# enable unstable crypto optimizations for testing\nENV S2N_UNSTABLE_CRYPTO_OPT_TX=100\nENV S2N_UNSTABLE_CRYPTO_OPT_RX=100\n"
+}

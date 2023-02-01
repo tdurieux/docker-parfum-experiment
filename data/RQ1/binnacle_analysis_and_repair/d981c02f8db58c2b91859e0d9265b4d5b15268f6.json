@@ -1,0 +1,26 @@
+{
+  "startTime": 1674239653421,
+  "endTime": 1674239653778,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 34,
+        "lineEnd": 34,
+        "columnStart": 4,
+        "columnEnd": 46
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 18,
+        "lineEnd": 24,
+        "columnStart": 5,
+        "columnEnd": 14
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM node:8 AS compiler\n\nLABEL maintainer=\"Ade Novid <adenvt@gmail.com>\"\n\nWORKDIR /var/www\nCOPY package.json /var/www\nCOPY package-lock.json /var/www\nRUN npm ci\n\nCOPY . /var/www\nRUN npm run lint-js\nRUN npm run lint-css\nRUN npm run prod\nRUN rm -rf /var/www/node_modules/\n\nFROM php:7.2-fpm AS server\nRUN set -x \\\n  && apt-get update -y \\\n  && apt-get install --no-install-recommends --no-install-suggests -y \\\n    nginx \\\n    nginx-extras \\\n    curl \\\n    git \\\n    unzip \\\n    zlib1g-dev \\\n  && apt-get clean && rm -rf /var/lib/apt/lists/*;\nRUN docker-php-ext-install zip\n\nWORKDIR /var/www\n\nENV TZ=Asia/Jakarta\nRUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone\n\nENV COMPOSER_ALLOW_SUPERUSER=1\nRUN curl -f -sS https://getcomposer.org/installer | php -- --install-dir=/usr/local/bin --filename=composer\nRUN composer config -g repos.packagist composer https://packagist.jp\nRUN composer global require hirak/prestissimo\nCOPY composer.json composer.json\nCOPY composer.lock composer.lock\nRUN composer install \\\n  --prefer-dist \\\n  --no-ansi \\\n  --no-dev \\\n  --no-interaction \\\n  --no-progress \\\n  --no-scripts \\\n  --no-autoloader \\\n  && rm -rf /root/.composer\n\nCOPY deploy/web/site.conf /etc/nginx/sites-available/default\nCOPY deploy/web/nginx.conf /etc/nginx/nginx.conf\nCOPY deploy/web/mime.types /etc/nginx/mime.types\nCOPY deploy/web/php.ini /usr/local/etc/php/php.ini\n\n# Force HTTPS\nARG FORCE_HTTPS=false\nRUN if [ ${FORCE_HTTPS} = true ]; then \\\n  sed -i 's/# fastcgi_param HTTPS/fastcgi_param HTTPS/' /etc/nginx/sites-available/default \\\n;fi\n\nCOPY --from=compiler /var/www /var/www\nRUN php php-cs-fixer fix --dry-run\nRUN composer dump-autoload --no-dev --optimize\nRUN grep -q \"APP_KEY=\" .env || echo \"APP_KEY=\" >> .env\nRUN php artisan key:generate \\\n  && php artisan optimize\nRUN chown -R www-data:www-data /var/www\nRUN rm -rf /var/www/html/ /var/www/deploy/\n\nEXPOSE 80 443\n\nCMD service nginx start && php-fpm\n"
+}

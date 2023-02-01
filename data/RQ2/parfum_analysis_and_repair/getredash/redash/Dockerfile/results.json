@@ -1,0 +1,80 @@
+{
+  "startTime": 1674252740774,
+  "endTime": 1674252741830,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 68,
+        "lineEnd": 68,
+        "columnStart": 4,
+        "columnEnd": 58
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 69,
+        "lineEnd": 69,
+        "columnStart": 7,
+        "columnEnd": 114
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 74,
+        "lineEnd": 74,
+        "columnStart": 7,
+        "columnEnd": 70
+      }
+    },
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 2,
+        "lineEnd": 2,
+        "columnStart": 4,
+        "columnEnd": 45
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 89,
+        "lineEnd": 89,
+        "columnStart": 4,
+        "columnEnd": 28
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 93,
+        "lineEnd": 93,
+        "columnStart": 41,
+        "columnEnd": 81
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 96,
+        "lineEnd": 96,
+        "columnStart": 42,
+        "columnEnd": 79
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 99,
+        "lineEnd": 99,
+        "columnStart": 4,
+        "columnEnd": 35
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM node:14.17 as frontend-builder\n\nRUN npm install --global --force yarn@1.22.10 && npm cache clean --force;\n\n# Controls whether to build the frontend assets\nARG skip_frontend_build\n\nENV CYPRESS_INSTALL_BINARY=0\nENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=1\n\nRUN useradd -m -d /frontend redash\nUSER redash\n\nWORKDIR /frontend\nCOPY --chown=redash package.json yarn.lock .yarnrc /frontend/\nCOPY --chown=redash viz-lib /frontend/viz-lib\n\n# Controls whether to instrument code for coverage information\nARG code_coverage\nENV BABEL_ENV=${code_coverage:+test}\n\nRUN if [ \"x$skip_frontend_build\" = \"x\" ] ; then yarn --frozen-lockfile --network-concurrency 1; fi\n\nCOPY --chown=redash client /frontend/client\nCOPY --chown=redash webpack.config.js /frontend/\nRUN if [ \"x$skip_frontend_build\" = \"x\" ] ; then yarn build; else mkdir -p /frontend/client/dist && touch /frontend/client/dist/multi_org.html && touch /frontend/client/dist/index.html; fi\n\nFROM python:3.7-slim-buster\n\nEXPOSE 5000\n\n# Controls whether to install extra dependencies needed for all data sources.\nARG skip_ds_deps\n# Controls whether to install dev dependencies.\nARG skip_dev_deps\n\nRUN useradd --create-home redash\n\n# Ubuntu packages\nRUN apt-get update && \\\n  apt-get install -y --no-install-recommends \\\n    curl \\\n    gnupg \\\n    build-essential \\\n    pwgen \\\n    libffi-dev \\\n    sudo \\\n    git-core \\\n    # Postgres client\n    libpq-dev \\\n    # ODBC support:\n    g++ unixodbc-dev \\\n    # for SAML\n    xmlsec1 \\\n    # Additional packages required for data sources:\n    libssl-dev \\\n    default-libmysqlclient-dev \\\n    freetds-dev \\\n    libsasl2-dev \\\n    unzip \\\n    libsasl2-modules-gssapi-mit && \\\n    apt-get clean && \\\n     rm -rf /var/lib/apt/lists/*\n\n\nARG TARGETPLATFORM\nARG databricks_odbc_driver_url=https://databricks.com/wp-content/uploads/2.6.10.1010-2/SimbaSparkODBC-2.6.10.1010-2-Debian-64bit.zip\nRUN if [ \"$TARGETPLATFORM\" = \"linux/amd64\" ]; then \\\n    curl -f https://packages.microsoft.com/keys/microsoft.asc | apt-key add - \\\n    && curl -f https://packages.microsoft.com/config/debian/10/prod.list > /etc/apt/sources.list.d/mssql-release.list \\\n    && apt-get update \\\n    && ACCEPT_EULA=Y apt-get install  -y --no-install-recommends msodbcsql17 \\\n    && apt-get clean \\\n    && rm -rf /var/lib/apt/lists/* \\\n    && curl -f \"$databricks_odbc_driver_url\" --output /tmp/simba_odbc.zip \\\n    && chmod 600 /tmp/simba_odbc.zip \\\n    && unzip /tmp/simba_odbc.zip -d /tmp/ \\\n    && dpkg -i /tmp/SimbaSparkODBC-*/*.deb \\\n    && printf \"[Simba]\\nDriver = /opt/simba/spark/lib/64/libsparkodbc_sb64.so\" >> /etc/odbcinst.ini \\\n    && rm /tmp/simba_odbc.zip \\\n    && rm -rf /tmp/SimbaSparkODBC*; fi\n\nWORKDIR /app\n\n# Disable PIP Cache and Version Check\nENV PIP_DISABLE_PIP_VERSION_CHECK=1\nENV PIP_NO_CACHE_DIR=1\n\n# rollback pip version to avoid legacy resolver problem\nRUN pip install --no-cache-dir pip==20.2.4;\n\n# We first copy only the requirements file, to avoid rebuilding on every file change.\nCOPY requirements_all_ds.txt ./\nRUN if [ \"x$skip_ds_deps\" = \"x\" ] ; then \\\n pip install --no-cache-dir -r requirements_all_ds.txt; else echo \"Skipping pip install -r requirements_all_ds.txt\" ; fi\n\nCOPY requirements_bundles.txt requirements_dev.txt ./\nRUN if [ \"x$skip_dev_deps\" = \"x\" ] ; then \\\n pip install --no-cache-dir -r requirements_dev.txt; fi\n\nCOPY requirements.txt ./\nRUN pip install --no-cache-dir -r requirements.txt\n\nCOPY --chown=redash . /app\nCOPY --from=frontend-builder --chown=redash /frontend/client/dist /app/client/dist\nRUN chown redash /app\nUSER redash\n\nENTRYPOINT [\"/app/bin/docker-entrypoint\"]\nCMD [\"server\"]\n"
+}

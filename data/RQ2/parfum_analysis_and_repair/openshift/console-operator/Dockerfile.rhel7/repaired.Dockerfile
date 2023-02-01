@@ -1,0 +1,34 @@
+FROM registry.ci.openshift.org/ocp/builder:rhel-8-golang-1.17-openshift-4.10 AS builder
+WORKDIR /go/src/github.com/openshift/console-operator
+COPY . .
+ENV GO_PACKAGE github.com/openshift/console-operator
+RUN go build -ldflags "-X $GO_PACKAGE/pkg/version.versionFromGit=$(git describe --long --tags --abbrev=7 --match 'v[0-9]*')" -tags="ocp" -o console ./cmd/console
+
+FROM registry.ci.openshift.org/ocp/4.10:base
+RUN useradd console-operator
+USER console-operator
+COPY --from=builder /go/src/github.com/openshift/console-operator/console /usr/bin/console
+
+# these manifests are necessary for the installer
+COPY manifests /manifests/
+
+# out-of-the-box quickstarts
+COPY quickstarts/*.yaml /manifests/
+
+# extensions manifests generated from openshift/api types
+COPY vendor/github.com/openshift/api/console/v1/*.yaml /manifests/
+COPY vendor/github.com/openshift/api/console/v1alpha1/*.yaml /manifests/
+COPY vendor/github.com/openshift/api/operator/v1/0000_70_console-operator.crd.yaml /manifests/
+COPY vendor/github.com/openshift/api/helm/v1beta1/0000_10-helm-chart-repository.crd.yaml /manifests/
+COPY vendor/github.com/openshift/api/helm/v1beta1/0000_10-project-helm-chart-repository.crd.yaml /manifests/
+
+LABEL io.k8s.display-name="OpenShift console-operator" \
+      io.k8s.description="This is a component of OpenShift Container Platform and manages the lifecycle of the web console." \
+      io.openshift.tags="openshift" \
+      maintainer="Jakub Hadvig <jhadvig@redhat.com>"
+
+LABEL io.openshift.release.operator true
+
+# entrypoint specified in 03-operator.yaml as `console-operator`
+# CMD ["/usr/bin/console", "operator", "--kubeconfig", "path/to/config", "--config", "./install/config.yaml", "--v", "4"]
+# CMD ["/usr/bin/console", "operator", "--v", "4"]

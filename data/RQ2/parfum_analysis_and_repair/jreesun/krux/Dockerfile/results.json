@@ -1,0 +1,62 @@
+{
+  "startTime": 1674248036312,
+  "endTime": 1674248037875,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 68,
+        "lineEnd": 68,
+        "columnStart": 4,
+        "columnEnd": 22
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 78,
+        "lineEnd": 78,
+        "columnStart": 23,
+        "columnEnd": 40
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 99,
+        "lineEnd": 99,
+        "columnStart": 4,
+        "columnEnd": 36
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 60,
+        "lineEnd": 60,
+        "columnStart": 4,
+        "columnEnd": 150
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 65,
+        "lineEnd": 65,
+        "columnStart": 4,
+        "columnEnd": 33
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 26,
+        "lineEnd": 53,
+        "columnStart": 4,
+        "columnEnd": 26
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# The MIT License (MIT)\n\n# Copyright (c) 2021 Tom J. Sun\n\n# Permission is hereby granted, free of charge, to any person obtaining a copy\n# of this software and associated documentation files (the \"Software\"), to deal\n# in the Software without restriction, including without limitation the rights\n# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell\n# copies of the Software, and to permit persons to whom the Software is\n# furnished to do so, subject to the following conditions:\n\n# The above copyright notice and this permission notice shall be included in\n# all copies or substantial portions of the Software.\n\n# THE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\n# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\n# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\n# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\n# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\n# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN\n# THE SOFTWARE.\n\n# syntax=docker/dockerfile:1\nFROM gcc:9.4.0-buster AS build-base\n\nRUN apt-get update -y && \\\n    apt-get install --no-install-recommends -y -q \\\n        wget \\\n        tar \\\n        zip \\\n        unzip \\\n        build-essential \\\n        libtool \\\n        autoconf \\\n        automake \\\n        autotools-dev \\\n        curl \\\n        libmpc-dev \\\n        libmpfr-dev \\\n        libgmp-dev \\\n        gawk \\\n        bison \\\n        flex \\\n        texinfo \\\n        gperf \\\n        libtool \\\n        patchutils \\\n        bc \\\n        zlib1g-dev \\\n        libexpat-dev \\\n        libisl-dev \\\n        python3 \\\n        python3-pip \\\n        python3-setuptools && rm -rf /var/lib/apt/lists/*;\n\nRUN mkdir -p /opt && \\\n    git clone --recursive https://github.com/kendryte/kendryte-gnu-toolchain && \\\n    cd kendryte-gnu-toolchain && \\\n    git checkout fbf55383711b68c00ecf67e23959822180010398 && \\\n    export PATH=$PATH:/opt/kendryte-toolchain/bin && \\\n    ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" --prefix=/opt/kendryte-toolchain --with-cmodel=medany --with-arch=rv64imafc --with-abi=lp64f --enable-threads=posix --enable-libatomic && \\\n    make -j8\n\nRUN wget https://github.com/Kitware/CMake/releases/download/v3.21.0/cmake-3.21.0.tar.gz && \\\n    echo \"4a42d56449a51f4d3809ab4d3b61fd4a96a469e56266e896ce1009b5768bd2ab  cmake-3.21.0.tar.gz\" | sha256sum -c && \\\n    tar -xzvf cmake-3.21.0.tar.gz && \\\n    cd cmake-3.21.0 && ./bootstrap && make && make install && rm cmake-3.21.0.tar.gz\n\nRUN pip3 install --no-cache-dir astor\n\nFROM build-base as build-software\nARG DEVICE=\"maixpy_m5stickv\"\nRUN mkdir /src\nCOPY ./LICENSE.md /src/LICENSE.md\nCOPY ./firmware /src/firmware\nCOPY ./src /src/src\nCOPY ./vendor /src/vendor\nWORKDIR /src\nRUN cd vendor/embit && pip3 install --no-cache-dir -e .\nRUN mkdir build && \\\n    cp -r src/. build && \\\n    cp -r vendor/embit/src/embit build && \\\n    rm -rf build/embit/util/prebuilt && \\\n    rm -f build/embit/util/ctypes_secp256k1.py && \\\n    rm -f build/embit/util/py_secp256k1.py && \\\n    cp -r vendor/urtypes/src/urtypes build && \\\n    cp -r vendor/foundation-ur-py/src/ur build && \\\n    cp -r firmware/MaixPy/projects/\"${DEVICE}\"/builtin_py/. build && \\\n    cp LICENSE.md build/LICENSE.md && \\\n    find build -type f -name '*.py[co]' -delete && \\\n    find build -type f -name '.DS_Store' -delete && \\\n    find build -type d -name '__pycache__' -exec rm -rv {} + -depth && \\\n    find build -type d -name '.pytest_cache' -exec rm -rv {} + -depth && \\\n    find build -type d -name '*.egg-info' -exec rm -rv {} + -depth\nRUN find /src/build -type f -name \\*.py -exec sh -c \"python3 ./firmware/scripts/minify.py {}\" \\;\n\nFROM build-software AS build-firmware\nARG DEVICE=\"maixpy_m5stickv\"\nWORKDIR /src/firmware/MaixPy\nRUN pip3 install --no-cache-dir -r requirements.txt\nRUN python3 ./components/micropython/core/lib/memzip/make-memzip.py --zip-file ./components/micropython/port/memzip-files.zip --c-file ./components/micropython/port/memzip-files.c /src/build\nRUN cp -rf projects/\"${DEVICE}\"/compile/overrides/. ./\nRUN cd projects/\"${DEVICE}\" && \\\n    python3 project.py clean && \\\n    python3 project.py distclean && \\\n    python3 project.py build && \\\n    mv build/maixpy.bin build/firmware.bin\n\nFROM build-firmware AS build\nARG DEVICE=\"maixpy_m5stickv\"\nWORKDIR /src/firmware/Kboot/build\nRUN cp /src/firmware/MaixPy/projects/\"${DEVICE}\"/build/firmware.bin .\nRUN ./CLEAN.sh && ./BUILD.sh\n"
+}

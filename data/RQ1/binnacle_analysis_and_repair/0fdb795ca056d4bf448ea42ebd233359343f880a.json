@@ -1,0 +1,44 @@
+{
+  "startTime": 1674251245755,
+  "endTime": 1674251246042,
+  "originalSmells": [
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 110,
+        "lineEnd": 110,
+        "columnStart": 7,
+        "columnEnd": 18
+      }
+    },
+    {
+      "rule": "sha256sumEchoOneSpaces",
+      "position": {
+        "lineStart": 70,
+        "lineEnd": 83,
+        "columnStart": 4,
+        "columnEnd": 87
+      }
+    },
+    {
+      "rule": "gpgUseHaPools",
+      "position": {
+        "lineStart": 65,
+        "lineEnd": 65,
+        "columnStart": 4,
+        "columnEnd": 83
+      }
+    },
+    {
+      "rule": "gpgUseHaPools",
+      "position": {
+        "lineStart": 66,
+        "lineEnd": 66,
+        "columnStart": 4,
+        "columnEnd": 81
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM python:3.6-slim\n\n# Set the environment variables\nENV NODE_VERSION=10.14.2 \\\n    # extra python env\n    PYTHONDONTWRITEBYTECODE=1 \\\n    PYTHONUNBUFFERED=1 \\\n    PIP_DISABLE_PIP_VERSION_CHECK=1 \\\n    # disable this when preparing for Django upgrade\n    PYTHONWARNINGS=ignore \\\n    # Kuma Pipeline definitions\n    PIPELINE_CSS_COMPRESSOR=kuma.core.pipeline.cleancss.CleanCSSCompressor \\\n    PIPELINE_CLEANCSS_BINARY=/usr/local/bin/cleancss \\\n    PIPELINE_CLEANCSS_ARGUMENTS=\"-O1 --skip-rebase\" \\\n    PIPELINE_JS_COMPRESSOR=pipeline.compressors.uglifyjs.UglifyJSCompressor \\\n    PIPELINE_SASS_BINARY=/usr/local/bin/node-sass \\\n    PIPELINE_UGLIFYJS_BINARY=/usr/local/bin/uglifyjs \\\n    # gunicorn concurrency\n    WEB_CONCURRENCY=4\n\nRUN set -x \\\n    && apt-get update \\\n    && apt-get install -y --no-install-recommends \\\n        curl \\\n        gpg \\\n        dirmngr \\\n        libsasl2-modules \\\n        gettext \\\n        mime-support \\\n        build-essential \\\n        libtidy-dev \\\n        libxml2-dev \\\n        libxslt1-dev \\\n        libffi-dev \\\n        libjpeg-dev \\\n        libmagic-dev \\\n        default-libmysqlclient-dev \\\n        mysql-client \\\n    && rm -rf /var/lib/apt/lists/*\n\n# ----------------------------------------------------------------------------\n# add node.js 10.x, copied from:\n#     https://github.com/nodejs/docker-node/blob/master/10/stretch/Dockerfile\n# but with:\n#  The NODE_VERSION environment variable is set above\n#  The node user gets uid/gid 1001 rather than 1000\n#  Omit the installation of yarn\n# ----------------------------------------------------------------------------\n\nRUN groupadd --gid 1001 node \\\n  && useradd --uid 1001 --gid node --shell /bin/bash --create-home node\n\n# gpg keys listed at https://github.com/nodejs/node#release-keys\nRUN set -ex \\\n  && for key in \\\n    94AE36675C464D64BAFA68DD7434390BDBE9B9C5 \\\n    FD3A5288F042B6850C66B31F09FE44734EB7990E \\\n    71DCFD284A79C3B38668286BC97EC7A07EDE3FC1 \\\n    DD8F2338BAE7501E3DD5AC78C273792F7D83545D \\\n    C4F0DFFF4E8C1A8236409D08E73BC641CC11F4C8 \\\n    B9AE9905FFD7803F25714661B63B535A4C206CA9 \\\n    56730D5401028683275BD23C23EFEFE93C4CFFFE \\\n    77984A986EBC2AA786BC0F66B01FBB92821C587A \\\n    8FCCA13FEF1D0C2E91008E09770F7A9A5AE15600; \\\n  do \\\n    gpg --batch --keyserver hkp://p80.ha.pool.sks-keyservers.net:80 --recv-keys \"$key\" || \\\n    gpg --batch --keyserver hkp://ipv4.ha.pool.sks-keyservers.net --recv-keys \"$key\" || \\\n    gpg --batch --keyserver hkp://pgp.mit.edu:80 --recv-keys \"$key\"; \\\n  done\n\nRUN ARCH=  && dpkgArch=\"$(dpkg --print-architecture)\" \\\n    && case \"${dpkgArch##*-}\" in \\\n      amd64) ARCH='x64';; \\\n      ppc64el) ARCH='ppc64le';; \\\n      s390x) ARCH='s390x';; \\\n      arm64) ARCH='arm64';; \\\n      armhf) ARCH='armv7l';; \\\n      i386) ARCH='x86';; \\\n      * echo \"unsupported  architecture\"; exit 1;; \\\n    esac \\\n    && curl -fsSLO --compressed \"https://nodejs.org/dist/v$NODE_VERSION/node-v$NODE_VERSION-linux-$ARCH.tar.xz\" \\\n    && curl -fsSLO --compressed \"https://nodejs.org/dist/v$NODE_VERSION/SHASUMS256.txt.asc\" \\\n    && gpg --batch --decrypt --output SHASUMS256.txt SHASUMS256.txt.asc \\\n    && grep \" node-v$NODE_VERSION-linux-$ARCH.tar.xz\\$\" SHASUMS256.txt | sha256sum -c - \\\n    && tar -xJf \"node-v$NODE_VERSION-linux-$ARCH.tar.xz\" -C /usr/local --strip-components=1 --no-same-owner \\\n    && rm \"node-v$NODE_VERSION-linux-$ARCH.tar.xz\" SHASUMS256.txt.asc SHASUMS256.txt \\\n    && ln -s /usr/local/bin/node /usr/local/bin/nodejs\n# ----------------------------------------------------------------------------\n\n# add non-privileged user\nRUN useradd --uid 1000 --shell /bin/bash --create-home kuma \\\n    && mkdir -p app \\\n    && chown kuma:kuma /app \\\n    && chmod 775 /app\n\n# install Python libraries\nWORKDIR /app\nCOPY --chown=kuma:kuma ./requirements /app/requirements\nRUN pip install --no-cache-dir -r requirements/dev.txt\n\n# install Node.js tools\n# config files are symlinks to make updating easier\nCOPY --chown=kuma:kuma ./package.json ./package-lock.json /app/\nRUN mkdir /tools \\\n    && chown kuma:kuma /tools \\\n    && chmod 775 /tools\nWORKDIR /tools\nUSER kuma\nRUN ln -s /app/package.json /tools \\\n    && ln -s /app/package-lock.json /tools \\\n    && npm install && npm cache clean --force;\nUSER root\nRUN find /tools/node_modules/.bin/ -executable -type f -o -type l -exec ln -s {} /usr/local/bin/ \\;\n\n# setup default run parameters\nUSER kuma\nWORKDIR /app\nEXPOSE 8000\nCMD [\"gunicorn\", \"--bind\", \"0.0.0.0:8000\", \"--timeout=120\", \"--worker-class=meinheld.gmeinheld.MeinheldWorker\", \"kuma.wsgi:application\"]\n"
+}

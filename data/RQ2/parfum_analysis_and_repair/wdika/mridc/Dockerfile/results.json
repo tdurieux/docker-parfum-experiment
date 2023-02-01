@@ -1,0 +1,35 @@
+{
+  "startTime": 1674254278720,
+  "endTime": 1674254279342,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 18,
+        "lineEnd": 18,
+        "columnStart": 4,
+        "columnEnd": 54
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 39,
+        "lineEnd": 39,
+        "columnStart": 62,
+        "columnEnd": 82
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 11,
+        "lineEnd": 15,
+        "columnStart": 4,
+        "columnEnd": 21
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "ARG BASE_IMAGE=nvcr.io/nvidia/pytorch:22.04-py3\n\n\n# build an image that includes only the mridc dependencies, ensures that dependencies\n# are included first for optimal caching, and useful for building a development\n# image (by specifying build target as `mridc-deps`)\nFROM ${BASE_IMAGE} as mridc-deps\n\n# Ensure apt-get won't prompt for selecting options\nENV DEBIAN_FRONTEND=noninteractive\nRUN apt-get update && \\\n    apt-get install --no-install-recommends -y \\\n    libsndfile1 sox \\\n    libfreetype6 \\\n    python-setuptools swig \\\n    python-dev ffmpeg && \\\n    rm -rf /var/lib/apt/lists/*\n\nRUN pip install --no-cache-dir llvmlite==0.37.0rc2 --ignore-installed\n\n# install mridc dependencies\nWORKDIR /tmp/mridc\nCOPY requirements .\nRUN for f in $(ls requirements*.txt); do pip install --disable-pip-version-check --no-cache-dir -r $f; done\n\n# copy mridc source into a scratch image\nFROM scratch as mridc-src\nCOPY . .\n\n# start building the final container\nFROM mridc-deps as mridc\nARG MRIDC_VERSION=0.1.0\n\n# Check that MRIDC_VERSION is set. Build will fail without this. Expose MRIDC and base container\n# version information as runtime environment variable for introspection purposes\nRUN /usr/bin/test -n \"MRIDC_VERSION\" && \\\n    /bin/echo \"export MRIDC_VERSION=${MRIDC_VERSION}\" >> /root/.bashrc && \\\n    /bin/echo \"export BASE_IMAGE=${BASE_IMAGE}\" >> /root/.bashrc\n# TODO: remove sed when PTL has updated their torchtext import check\nRUN --mount=from=mridc-src,target=/tmp/mridc cd /tmp/mridc && pip install --no-cache-dir \".[all]\" && \\\n    sed -i \"s/_module_available(\\\"torchtext\\\")/False/g\" /opt/conda/lib/python3.8/site-packages/pytorch_lightning/utilities/imports.py && \\\n    python -c \"import mridc.collections.reconstruction as mridc_reconstruction\"\n\n# TODO: Update to newer numba 0.56.0RC1 for 22.03 container if possible\n# install pinned numba version\n# RUN conda install -c conda-forge numba==0.54.1\n\n# copy scripts/examples/tests into container for end user\nWORKDIR /workspace/mridc\nCOPY tests /workspace/mridc/tests\n# COPY README.rst LICENSE /workspace/mridc/\n\nRUN printf \"#!/bin/bash\\njupyter lab --no-browser --allow-root --ip=0.0.0.0\" >> start-jupyter.sh && \\\n    chmod +x start-jupyter.sh\n"
+}

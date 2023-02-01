@@ -1,0 +1,26 @@
+{
+  "startTime": 1674253969385,
+  "endTime": 1674253970949,
+  "originalSmells": [
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 37,
+        "lineEnd": 37,
+        "columnStart": 22,
+        "columnEnd": 67
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 6,
+        "lineEnd": 6,
+        "columnStart": 4,
+        "columnEnd": 20
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# xx is a helper for cross-compilation\nFROM --platform=$BUILDPLATFORM tonistiigi/xx:golang@sha256:810dc54d5144f133a218e88e319184bf8b9ce01d37d46ddb37573e90decd9eef AS xx\n\nFROM --platform=$BUILDPLATFORM golang:1.18-alpine AS base\nRUN apk add --no-cache git bash\nCOPY --from=xx / /\nWORKDIR /src\nENV GOFLAGS=-mod=vendor\n\nFROM base AS version\nARG CHANNEL\n# TODO: PKG should be inferred from go modules\nRUN --mount=target=. \\ \n  PKG=github.com/moby/buildkit/frontend/dockerfile/cmd/dockerfile-frontend VERSION=$(./frontend/dockerfile/cmd/dockerfile-frontend/hack/detect \"$CHANNEL\") REVISION=$(git rev-parse HEAD)$(if ! git diff --no-ext-diff --quiet --exit-code; then echo .m; fi) \\\n  && echo \"-X main.Version=${VERSION} -X main.Revision=${REVISION} -X main.Package=${PKG}\" | tee /tmp/.ldflags \\\n  && echo -n \"${VERSION}\" | tee /tmp/.version\n\nFROM base AS build\nRUN apk add --no-cache file\nARG BUILDTAGS=\"\"\nARG TARGETPLATFORM\nRUN --mount=target=. --mount=type=cache,target=/root/.cache \\\n  --mount=target=/go/pkg/mod,type=cache \\\n  --mount=source=/tmp/.ldflags,target=/tmp/.ldflags,from=version \\\n  CGO_ENABLED=0 xx-go build -o /dockerfile-frontend -ldflags \"-d $(cat /tmp/.ldflags)\" -tags \"$BUILDTAGS netgo static_build osusergo\" ./frontend/dockerfile/cmd/dockerfile-frontend && \\\n  xx-verify --static /dockerfile-frontend\n\nFROM scratch AS release\nLABEL moby.buildkit.frontend.network.none=\"true\"\nLABEL moby.buildkit.frontend.caps=\"moby.buildkit.frontend.inputs,moby.buildkit.frontend.subrequests,moby.buildkit.frontend.contexts\"\nCOPY --from=build /dockerfile-frontend /bin/dockerfile-frontend\nENTRYPOINT [\"/bin/dockerfile-frontend\"]\n\n\nFROM base AS buildid-check\nRUN apt-get update && apt-get --no-install-recommends install -y jq && rm -rf /var/lib/apt/lists/*;\nCOPY /frontend/dockerfile/cmd/dockerfile-frontend/hack/check-daily-outdated .\nCOPY --from=r.j3ss.co/reg /usr/bin/reg /bin\nCOPY --from=build /dockerfile-frontend .\nARG CHANNEL\nARG REPO\nARG DATE\nRUN ./check-daily-outdated $CHANNEL $REPO $DATE /out\n\nFROM scratch AS buildid\nCOPY --from=buildid-check /out/ /\n\nFROM release\n"
+}

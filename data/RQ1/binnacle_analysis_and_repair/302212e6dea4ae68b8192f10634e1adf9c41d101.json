@@ -1,0 +1,35 @@
+{
+  "startTime": 1674243813720,
+  "endTime": 1674243813952,
+  "originalSmells": [
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 49,
+        "lineEnd": 49,
+        "columnStart": 8,
+        "columnEnd": 27
+      }
+    },
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 49,
+        "lineEnd": 49,
+        "columnStart": 31,
+        "columnEnd": 50
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 23,
+        "lineEnd": 23,
+        "columnStart": 8,
+        "columnEnd": 86
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM kobotoolbox/koboform_base:latest\n\n\n# Note: Additional environment variables have been set in `Dockerfile.koboform_base`.\nENV KPI_LOGS_DIR=/srv/logs \\\n    KPI_WHOOSH_DIR=/srv/whoosh \\\n    BUILD_DIR=/srv/build \\\n    FONTS_DIR=/srv/fonts \\\n    WEBPACK_STATS_PATH=/srv/webpack-stats.json \\\n    DJANGO_SETTINGS_MODULE=kobo.settings.prod \\\n    # The mountpoint of a volume shared with the `nginx` container. Static files will\n    #   be copied there.\n    NGINX_STATIC_DIR=/srv/static\n\n\n##########################################\n# Install any additional `apt` packages. #\n##########################################\n\nCOPY ./dependencies/apt_requirements.txt \"${KPI_SRC_DIR}/dependencies/\"\n# Only install if the current version of `dependencies/apt_requirements.txt` differs from the one used in the base image.\nRUN if ! diff \"${KPI_SRC_DIR}/dependencies/apt_requirements.txt\" /srv/tmp/base__apt_requirements.txt; then \\\n        apt-get update -qq && \\\n        apt-get install --no-install-recommends -qqy $(cat \"${KPI_SRC_DIR}/dependencies/apt_requirements.txt\") && \\\n        apt-get clean && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/* \\\n    ; fi\n\n\n###########################\n# Re-sync `pip` packages. #\n###########################\n\nCOPY ./dependencies/pip/external_services.txt \"${KPI_SRC_DIR}/dependencies/pip/\"\nWORKDIR ${PIP_DIR}/\n# Only install if the current version of `dependencies/pip/external_services.txt` differs from the one used in the base image.\nRUN if ! diff \"${KPI_SRC_DIR}/dependencies/pip/external_services.txt\" /srv/tmp/base__external_services.txt; then \\\n        pip-sync \"${KPI_SRC_DIR}/dependencies/pip/external_services.txt\" 1>/dev/null \\\n    ; fi\n\n\n##########################################\n# Install any additional `npm` packages. #\n##########################################\n\nCOPY ./package.json \"${KPI_SRC_DIR}/\"\nWORKDIR ${KPI_SRC_DIR}/\n# Only install if the current version of `package.json` differs from the one used in the base image.\nRUN if ! diff \"${KPI_SRC_DIR}/package.json\" /srv/tmp/base_package.json; then \\\n        npm install --quiet || npm install --quiet \\\n    ; npm cache clean --force; fi\n\n\n######################\n# Build client code. #\n######################\n\nCOPY ./scripts/copy_fonts.py ${KPI_SRC_DIR}/scripts/copy_fonts.py\nCOPY ./scripts/generate_icons.js ${KPI_SRC_DIR}/scripts/generate_icons.js\nCOPY ./webpack ${KPI_SRC_DIR}/webpack\nCOPY ./.eslintrc.json ${KPI_SRC_DIR}/.eslintrc.json\nCOPY ./.stylelintrc.json ${KPI_SRC_DIR}/.stylelintrc.json\nCOPY ./test ${KPI_SRC_DIR}/test\n\nCOPY ./jsapp ${KPI_SRC_DIR}/jsapp\n\nRUN mkdir \"${BUILD_DIR}\" && \\\n    mkdir \"${FONTS_DIR}\" && \\\n    ln -s \"${BUILD_DIR}\" \"${KPI_SRC_DIR}/jsapp/compiled\" && \\\n    rm -rf \"${KPI_SRC_DIR}/jsapp/fonts\" && \\\n    ln -s \"${FONTS_DIR}\" \"${KPI_SRC_DIR}/jsapp/fonts\" && \\\n    # FIXME: Move `webpack-stats.json` to some build target directory so these ad-hoc workarounds don't continue to accumulate.\n    ln -s \"${WEBPACK_STATS_PATH}\" webpack-stats.json\n\nRUN npm run copy-fonts && npm run build\n\n###############################################\n# Copy over this directory in its current state. #\n###############################################\n\nRUN rm -rf \"${KPI_SRC_DIR}\"\nCOPY . \"${KPI_SRC_DIR}\"\n\n# Restore the backed-up package installation directories.\nRUN ln -s \"${KPI_NODE_PATH}\" \"${KPI_SRC_DIR}/node_modules\" && \\\n    ln -s \"${BUILD_DIR}\" \"${KPI_SRC_DIR}/jsapp/compiled\" && \\\n    ln -s \"${FONTS_DIR}\" \"${KPI_SRC_DIR}/jsapp/fonts\" && \\\n    ln -s \"${WEBPACK_STATS_PATH}\" webpack-stats.json\n\n\n###########################\n# Organize static assets. #\n###########################\n\nRUN python manage.py collectstatic --noinput\n\n\n#####################################\n# Retrieve and compile translations #\n#####################################\n\nRUN git submodule init && \\\n    git submodule update --remote && \\\n    python manage.py compilemessages\n\n\n#################################################################\n# Persist the log directory, email directory, and Whoosh index. #\n#################################################################\n\nRUN mkdir -p \"${KPI_LOGS_DIR}/\" \"${KPI_WHOOSH_DIR}/\" \"${KPI_SRC_DIR}/emails\"\n\n\n#################################################\n# Handle runtime tasks and create main process. #\n#################################################\n\n# Using `/etc/profile.d/` as a repository for non-hard-coded environment variable overrides.\nRUN echo 'source /etc/profile' >> /root/.bashrc\n\n# FIXME: Allow Celery to run as root ...for now.\nENV C_FORCE_ROOT=\"true\"\n\n# Prepare for execution.\nRUN ln -s \"${KPI_SRC_DIR}/docker/init.bash\" /etc/my_init.d/10_init_kpi.bash && \\\n    rm -rf /etc/service/wsgi && \\\n    mkdir -p /etc/service/uwsgi && \\\n    ln -s \"${KPI_SRC_DIR}/docker/run_uwsgi.bash\" /etc/service/uwsgi/run && \\\n    mkdir -p /etc/service/celery && \\\n    ln -s \"${KPI_SRC_DIR}/docker/run_celery.bash\" /etc/service/celery/run && \\\n    mkdir -p /etc/service/celery_beat && \\\n    ln -s \"${KPI_SRC_DIR}/docker/run_celery_beat.bash\" /etc/service/celery_beat/run && \\\n    mkdir -p /etc/service/celery_sync_kobocat_xforms && \\\n    ln -s \"${KPI_SRC_DIR}/docker/run_celery_sync_kobocat_xforms.bash\" /etc/service/celery_sync_kobocat_xforms/run\n\nEXPOSE 8000\n"
+}

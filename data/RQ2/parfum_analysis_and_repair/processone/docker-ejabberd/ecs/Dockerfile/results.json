@@ -1,0 +1,26 @@
+{
+  "startTime": 1674248951227,
+  "endTime": 1674248952337,
+  "originalSmells": [
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 16,
+        "lineEnd": 16,
+        "columnStart": 22,
+        "columnEnd": 33
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 23,
+        "lineEnd": 23,
+        "columnStart": 7,
+        "columnEnd": 56
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM ejabberd/mix as builder\nARG VERSION\nENV VERSION=${VERSION:-latest} \\\n    MIX_ENV=prod\nLABEL maintainer=\"ProcessOne <contact@process-one.net>\" \\\n    product=\"Ejabberd Community Server builder\"\n\n# Get ejabberd sources, dependencies, configuration\nRUN git clone https://github.com/processone/ejabberd.git\nWORKDIR /ejabberd\nCOPY vars.config .\nRUN echo '{vsn, \"'${VERSION}'.0\"}.' >>vars.config\nCOPY config.exs config/\nCOPY rel/*exs rel/\nRUN git checkout ${VERSION/latest/HEAD} \\\n    && mix deps.get \\\n    && ( cd deps/eimp; ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\")\n\n# Compile\nRUN MIX_ENV=prod mix release\n\n# Prepare runtime environment\nRUN mkdir runtime \\\n    && tar -C runtime -zxf _build/prod/ejabberd-*.tar.gz \\\n    && cd runtime \\\n    && cp releases/*/start.boot bin \\\n    && cp releases/*/start_clean.boot bin \\\n    && echo 'beam_lib:strip_files(filelib:wildcard(\"lib/*/ebin/*beam\")), init:stop().' | erl >/dev/null \\\n    && mv erts*/bin/* bin \\\n    && EJABBERD_VERSION=`(cd releases; ls -1 -d *.*.*)` \\\n    && rm -rf releases erts* bin/*src bin/dialyzer bin/typer etc \\\n    && rm bin/ejabberd \\\n    && mkdir lib/ejabberd-$EJABBERD_VERSION/priv/bin \\\n    && cp /usr/lib/elixir/bin/* bin/ \\\n    && sed -i 's|ERL_EXEC=\"erl\"|ERL_EXEC=\"/home/ejabberd/bin/erl\"|' bin/elixir \\\n    && cp /ejabberd/tools/captcha*sh lib/ejabberd-$EJABBERD_VERSION/priv/bin \\\n    && cp -r /ejabberd/sql lib/ejabberd-*/priv && rm _build/prod/ejabberd-*.tar.gz\n\n# Runtime container\nFROM alpine:3.14\nARG VERSION\nARG VCS_REF\nARG BUILD_DATE\nENV TERM=xterm \\\n    LC_ALL=C.UTF-8 \\\n    LANG=en_US.UTF-8 \\\n    LANGUAGE=en_US.UTF-8 \\\n    REPLACE_OS_VARS=true \\\n    HOME=/home/ejabberd \\\n    VERSION=${VERSION:-latest}\nLABEL maintainer=\"ProcessOne <contact@process-one.net>\" \\\n    product=\"Ejabberd Community Server Official Docker Image\" \\\n    version=$VERSION \\\n    org.label-schema.vcs-ref=$VCS_REF \\\n    org.label-schema.vcs-url=\"https://github.com/processone/docker-ejabberd\" \\\n    org.label-schema.build-date=$BUILD_DATE \\\n    org.label-schema.name=\"Ejabberd Community Server Official Docker Image\" \\\n    org.label-schema.description=\"Robust, Scalable and Extensible Realtime Server using XMPP, MQTT and SIP\" \\\n    org.label-schema.url=\"https://www.ejabberd.im/\" \\\n    org.label-schema.vendor=\"ProcessOne\" \\\n    org.label-schema.version=$VERSION \\\n    org.label-schema.schema-version=\"1.0\"\n\n# Create directory structure and user for ejabberd\nRUN addgroup ejabberd -g 9000 \\\n    && adduser -s /bin/sh -D -G ejabberd ejabberd -u 9000 \\\n    && mkdir -p /home/ejabberd/conf /home/ejabberd/database /home/ejabberd/logs /home/ejabberd/upload \\\n    && chown -R ejabberd:ejabberd /home/ejabberd\n\n# Install required dependencies\nRUN apk upgrade --update musl \\\n    && apk add \\\n    expat \\\n    freetds \\\n    gd \\\n    jpeg \\\n    libgd \\\n    libpng \\\n    libstdc++ \\\n    libwebp \\\n    ncurses-libs \\\n    openssl \\\n    sqlite \\\n    sqlite-libs \\\n    unixodbc \\\n    yaml \\\n    zlib \\\n    && ln -fs /usr/lib/libtdsodbc.so.0 /usr/lib/libtdsodbc.so \\\n    && rm -rf /var/cache/apk/*\n\n# Install ejabberd\nWORKDIR $HOME\nCOPY --from=builder /ejabberd/runtime .\nCOPY bin/* bin/\nRUN chmod 755 bin/ejabberdctl bin/ejabberdapi bin/erl\nCOPY --chown=ejabberd:ejabberd conf conf/\nADD --chown=ejabberd:ejabberd https://download.process-one.net/cacert.pem conf/cacert.pem\n\n# Setup runtime environment\nUSER ejabberd\nVOLUME [\"$HOME/database\",\"$HOME/conf\",\"$HOME/logs\",\"$HOME/upload\"]\nEXPOSE 1883 4369-4399 5222 5269 5280 5443\n\nENTRYPOINT [\"/home/ejabberd/bin/ejabberdctl\"]\nCMD [\"foreground\"]\n"
+}

@@ -1,0 +1,17 @@
+{
+  "startTime": 1674248044690,
+  "endTime": 1674248045375,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 15,
+        "lineEnd": 15,
+        "columnStart": 4,
+        "columnEnd": 71
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "#*******************************************************************************\n# Copyright (c) 2019 IBM Corporation and others.\n# All rights reserved. This program and the accompanying materials\n# are made available under the terms of the Eclipse Public License v2.0\n# which accompanies this distribution, and is available at\n# http://www.eclipse.org/legal/epl-v20.html\n#\n# Contributors:\n#     IBM Corporation - initial API and implementation\n#*******************************************************************************\n\n# First use this layer to build the go version of filewatcherd\nFROM golang:1.12 as builder\n\n# Install Dep\nRUN curl -f https://raw.githubusercontent.com/golang/dep/master/install.sh | sh\n\n# Pull down any dependencies and build the filewatcher daemon go app\nWORKDIR /go/src/github.com/eclipse/codewind-filewatchers/Filewatcherd-Go/\nCOPY ./codewind-filewatchers/Filewatcherd-Go/src/codewind/ .\nRUN GOPATH= CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o filewatcherd .\n\n# Build the pfe-deploy utility\nWORKDIR /go/src/deploy-pfe\nCOPY ./src/deploy-pfe/ .\nRUN make && make test\n\n# Pull the CW CLI from archive.eclipse.org, based on branch\n\nCOPY scripts/ /scripts\n\n# Default to master\nARG CW_CLI_BRANCH=master\n\nWORKDIR /cli\n\nRUN /scripts/cli-pull.sh\n\n# On success, the Linux cwctl is available from /cli/linux/cwctl\n\n# Build base image for the nginx based sidecar container\nFROM nginx:stable-alpine\n\nRUN apk --no-cache add curl openssl jq\n\n# Copy the filewatcherd daemon and deploy-pfe over from the previous build stage\nCOPY --from=builder /go/src/github.com/eclipse/codewind-filewatchers/Filewatcherd-Go/filewatcherd /usr/local/bin\nCOPY --from=builder /go/src/deploy-pfe/deploy-pfe /usr/local/bin\n\nCOPY --from=builder /cli/linux/cwctl /usr/local/bin/cwctl\n\nCOPY ./nginx.conf /etc/nginx/nginx.conf\nCOPY ./site.conf /etc/nginx/conf.d-default/default.conf\n\n# ensure non-root user 'www-data' exists\n# set it to group 0 (root) so that arbitrary userIDs in that group used by kube platforms can also access relevant files/folders\nRUN set -x ; \\\n  adduser -u 82 -D -S -G root www-data && exit 0 ; exit 1\n\nRUN touch /var/run/nginx.pid\n\n# ownership and permissions set up on relvant files/folders for user www-data (uid=82) and group root (gid=0)\nRUN chown -R www-data:root /var/run/nginx.pid && \\\n  chown -R www-data:root /var/cache/nginx && \\\n  chown www-data:root /etc/nginx/conf.d /etc/nginx/nginx.conf /etc/nginx/conf.d-default/default.conf\nRUN chmod g+rwx /var/run/nginx.pid && \\\n  chmod -R g+rwx /var/cache/nginx && \\\n  chmod -R g+rwx /etc/nginx/conf.d && \\\n  chmod -R g+rwx /etc/nginx/conf.d-default\n\nCOPY scripts/ /scripts\n\nRUN chmod -R g+rwx /scripts && chown -R www-data:root /scripts\n\nWORKDIR /scripts\n\nUSER www-data\n\nEXPOSE 9090\n\nENTRYPOINT [\"/scripts/entrypoint.sh\"]"
+}

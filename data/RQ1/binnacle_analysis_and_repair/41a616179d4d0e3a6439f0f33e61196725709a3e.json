@@ -1,0 +1,44 @@
+{
+  "startTime": 1674235615053,
+  "endTime": 1674235615281,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 91,
+        "lineEnd": 91,
+        "columnStart": 4,
+        "columnEnd": 100
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 111,
+        "lineEnd": 112,
+        "columnStart": 4,
+        "columnEnd": 144
+      }
+    },
+    {
+      "rule": "curlUseHttpsUrl",
+      "position": {
+        "lineStart": 111,
+        "lineEnd": 112,
+        "columnStart": 4,
+        "columnEnd": 144
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 39,
+        "lineEnd": 42,
+        "columnStart": 1,
+        "columnEnd": 2
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM debian:stretch\nMAINTAINER support@openremote.io\n\n# Install utilities\nRUN apt-get update && apt-get install -y --no-install-recommends \\\n        apt-transport-https \\\n        gnupg2 \\\n        software-properties-common \\\n        procps \\\n\t\tca-certificates \\\n\t\tcurl \\\n\t\twget \\\n\t&& rm -rf /var/lib/apt/lists/*\n\n# Default to UTF-8 file.encoding\nENV LANG C.UTF-8\n\n# add a simple script that can auto-detect the appropriate JAVA_HOME value\n# based on whether the JDK or only the JRE is installed\nRUN { \\\n\t\techo '#!/bin/sh'; \\\n\t\techo 'set -e'; \\\n\t\techo; \\\n\t\techo 'dirname \"$(dirname \"$(readlink -f \"$(which javac || which java)\")\")\"'; \\\n\t} > /usr/local/bin/docker-java-home \\\n\t&& chmod +x /usr/local/bin/docker-java-home\n\n# do some fancy footwork to create a JAVA_HOME that's cross-architecture-safe\nRUN ln -svT \"/usr/lib/jvm/java-8-openjdk-$(dpkg --print-architecture)\" /docker-java-home\nENV JAVA_HOME /docker-java-home\n\nRUN set -ex; \\\n\n# deal with slim variants not having man page directories (which causes \"update-alternatives\" to fail)\n\tif [ ! -d /usr/share/man/man1 ]; then \\\n\t\tmkdir -p /usr/share/man/man1; \\\n\tfi; \\\n\n\tapt-get update; \\\n\tapt-get install --no-install-recommends -y \\\n\t\topenjdk-8-jdk \\\n\t\tca-certificates-java \\\n\t; \\\n\trm -rf /var/lib/apt/lists/*; \\\n\n# verify that \"docker-java-home\" returns what we expect\n\t[ \"$(readlink -f \"$JAVA_HOME\")\" = \"$(docker-java-home)\" ]; \\\n\n# update-alternatives so that future installs of other OpenJDK versions don't change /usr/bin/java\n\tupdate-alternatives --get-selections | awk -v home=\"$(readlink -f \"$JAVA_HOME\")\" 'index($3, home) == 1 { $2 = \"manual\"; print | \"update-alternatives --set-selections\" }'; \\\n# ... and verify that it actually worked for one of the alternatives we care about\n\tupdate-alternatives --query java | grep -q 'Status: manual'\n\n# Run postinst because it might not happen on install\nRUN /var/lib/dpkg/info/ca-certificates-java.postinst configure\n\n# Add git commit label must be specified at build time using --build-arg GIT_COMMIT=dadadadadad\nARG GIT_COMMIT=unknown\nLABEL git-commit=$GIT_COMMIT\n\n############ EDITS ABOVE THIS LINE SHOULD BE DONE IN ALL DOCKERFILES! ################\n\n# Install dependencies for JBoss AS\nRUN apt-get update \\\n      && apt-get install -y --no-install-recommends \\\n            jq xmlstarlet libsaxon-java unzip bsdtar bzip2 xz-utils \\\n      && rm -rf /var/lib/apt/lists/*\n\n# Create a user and group used to launch processes\n# The user ID 1000 is the default for the first \"regular\" user on Fedora/RHEL,\n# so there is a high chance that this ID will be equal to the current user\n# making it easier to use volumes (no permission issues)\nRUN groupadd -r jboss -g 1000 && useradd -u 1000 -r -g jboss -m -d /opt/jboss -s /sbin/nologin -c \"JBoss user\" jboss && \\\n    chmod 755 /opt/jboss\n\n# Set the working directory to jboss' user home directory\nWORKDIR /opt/jboss\nADD docker-entrypoint.sh /opt/jboss/\nRUN chmod +x /opt/jboss/docker-entrypoint.sh\nENV JBOSS_HOME /opt/jboss/keycloak\n\n# Switch to jboss user\nUSER jboss\n\nENV KEYCLOAK_VERSION 2.5.5.Final\nENV POSTGRESQL_DRIVER_VERSION 42.1.4\n\n# Enables signals getting passed from startup script to JVM\n# ensuring clean shutdown when container is stopped.\nENV LAUNCH_JBOSS_IN_BACKGROUND 1\n\nRUN curl -f -L https://downloads.jboss.org/keycloak/$KEYCLOAK_VERSION/keycloak-$KEYCLOAK_VERSION.tar.gz | \\\n    tar zx && mv /opt/jboss/keycloak-$KEYCLOAK_VERSION $JBOSS_HOME\n\nADD setLogLevel.xsl /opt/jboss/keycloak/\nRUN java -jar /usr/share/java/saxon.jar \\\n    -o /opt/jboss/keycloak/standalone/configuration/standalone.xml \\\n    /opt/jboss/keycloak/standalone/configuration/standalone.xml \\\n    /opt/jboss/keycloak/setLogLevel.xsl\n\nADD changeDatabase.xsl /opt/jboss/keycloak/\nRUN java -jar /usr/share/java/saxon.jar \\\n    -o /opt/jboss/keycloak/standalone/configuration/standalone.xml \\\n    /opt/jboss/keycloak/standalone/configuration/standalone.xml \\\n    /opt/jboss/keycloak/changeDatabase.xsl && \\\n    java -jar /usr/share/java/saxon.jar \\\n    -o /opt/jboss/keycloak/standalone/configuration/standalone-ha.xml \\\n    /opt/jboss/keycloak/standalone/configuration/standalone-ha.xml \\\n    /opt/jboss/keycloak/changeDatabase.xsl && \\\n    rm /opt/jboss/keycloak/changeDatabase.xsl\nRUN mkdir -p /opt/jboss/keycloak/modules/system/layers/base/org/postgresql/jdbc/main && \\\n    curl -f -o /opt/jboss/keycloak/modules/system/layers/base/org/postgresql/jdbc/main/postgresql-jdbc.jar \\\n    https://repo1.maven.org/maven2/org/postgresql/postgresql/${POSTGRESQL_DRIVER_VERSION}/postgresql-${POSTGRESQL_DRIVER_VERSION}.jar 2>/dev/null\nADD module.xml /opt/jboss/keycloak/modules/system/layers/base/org/postgresql/jdbc/main/\n\nADD setProxyForwarding.xsl /opt/jboss/keycloak/\nRUN java -jar /usr/share/java/saxon.jar \\\n    -o /opt/jboss/keycloak/standalone/configuration/standalone.xml \\\n    /opt/jboss/keycloak/standalone/configuration/standalone.xml \\\n    /opt/jboss/keycloak/setProxyForwarding.xsl\n\nRUN rm /opt/jboss/keycloak/*.xsl\n\nHEALTHCHECK --interval=3s --timeout=3s --start-period=2s --retries=30 CMD curl --fail --silent http://localhost:8080/auth || exit 1\n\nEXPOSE 8080\n\nENTRYPOINT [\"/opt/jboss/docker-entrypoint.sh\"]\nCMD [\"-b\", \"0.0.0.0\"]\n"
+}

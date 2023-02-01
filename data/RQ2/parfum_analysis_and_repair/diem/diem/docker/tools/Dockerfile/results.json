@@ -1,0 +1,26 @@
+{
+  "startTime": 1674255560711,
+  "endTime": 1674255561845,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 5,
+        "lineEnd": 5,
+        "columnStart": 22,
+        "columnEnd": 83
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 5,
+        "lineEnd": 5,
+        "columnStart": 22,
+        "columnEnd": 83
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM debian:buster-20210721@sha256:cc58a29c333ee594f7624d968123429b26916face46169304f07580644dde6b2 AS toolchain\n\n# To use http/https proxy while building, use:\n# docker build --build-arg https_proxy=http://fwdproxy:8080 --build-arg http_proxy=http://fwdproxy:8080\n\nRUN apt-get update && apt-get install --no-install-recommends -y cmake curl clang git pkg-config libssl-dev && rm -rf /var/lib/apt/lists/*;\n\nRUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain none\nENV PATH \"$PATH:/root/.cargo/bin\"\n\nWORKDIR /diem\nCOPY rust-toolchain /diem/rust-toolchain\nRUN rustup install $(cat rust-toolchain)\n\nFROM toolchain AS builder\n\nARG ENABLE_FAILPOINTS\nCOPY . /diem\n\nRUN IMAGE_TARGETS=\"release\" ./docker/build-common.sh\n\n### Production Image ###\nFROM debian:buster-20210721@sha256:cc58a29c333ee594f7624d968123429b26916face46169304f07580644dde6b2 AS prod\n\nRUN echo \"deb http://deb.debian.org/debian bullseye main\" > /etc/apt/sources.list.d/bullseye.list && \\\n    echo \"Package: *\\nPin: release n=bullseye\\nPin-Priority: 50\" > /etc/apt/preferences.d/bullseye\n\nRUN apt-get update && \\\n    apt-get --no-install-recommends --yes install wget curl libssl1.1 ca-certificates socat python3-botocore/bullseye awscli/bullseye && \\\n    apt-get clean && \\\n    rm -r /var/lib/apt/lists/*\n\nRUN ln -s /usr/bin/python3 /usr/local/bin/python\nCOPY docker/tools/boto.cfg /etc\n\nRUN cd /usr/local/bin && wget https://azcopyvnext.azureedge.net/release20210226/azcopy_linux_amd64_10.9.0.tar.gz -O- | tar --gzip --wildcards --extract '*/azcopy' --strip-components=1 --no-same-owner && chmod +x azcopy\nRUN wget https://storage.googleapis.com/pub/gsutil.tar.gz -O- | tar --gzip --directory /opt --extract && ln -s /opt/gsutil/gsutil /usr/local/bin\n\nCOPY --from=builder /diem/target/release/diem-genesis-tool /usr/local/bin\nCOPY --from=builder /diem/target/release/diem-operational-tool /usr/local/bin\nCOPY --from=builder /diem/target/release/db-bootstrapper /usr/local/bin\nCOPY --from=builder /diem/target/release/db-backup /usr/local/bin\nCOPY --from=builder /diem/target/release/db-backup-verify /usr/local/bin\nCOPY --from=builder /diem/target/release/db-restore /usr/local/bin\nCOPY --from=builder /diem/target/release/diem-transaction-replay /usr/local/bin\nCOPY --from=builder /diem/target/release/diem-writeset-generator /usr/local/bin\n\n### Get Move modules bytecodes for genesis ceremony\nRUN mkdir -p /diem/move\nCOPY --from=builder /diem/language/diem-framework/releases/artifacts/current /diem/move\n\nARG BUILD_DATE\nARG GIT_REV\nARG GIT_UPSTREAM\n\nLABEL org.label-schema.schema-version=\"1.0\"\nLABEL org.label-schema.build-date=$BUILD_DATE\nLABEL org.label-schema.vcs-ref=$GIT_REV\n"
+}

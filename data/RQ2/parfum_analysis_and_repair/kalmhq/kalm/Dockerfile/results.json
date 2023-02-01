@@ -1,0 +1,17 @@
+{
+  "startTime": 1674250747980,
+  "endTime": 1674250749649,
+  "originalSmells": [
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 12,
+        "lineEnd": 12,
+        "columnStart": 4,
+        "columnEnd": 15
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# ============== Frontend ==============\nFROM node:10 as frontend-builder\nWORKDIR /workspace\n\n# Frontend and api will run on the same domain\nENV REACT_APP_K8S_API_PERFIX \"\"\nENV REACT_APP_K8S_API_VERSION v1alpha1\nENV SKIP_PREFLIGHT_CHECK=true\n\n# Copy npm packages manifests\nCOPY frontend/package.json package.json\nCOPY frontend/package-lock.json package-lock.json\nRUN npm install && npm cache clean --force;\n\n# Copy source\nCOPY frontend/ .\n\n# Build\nRUN npm run build\n\n# ============== Api ==============\nFROM golang:1.15.2 as api-builder\nWORKDIR /workspace/api\n\n# Copy dependencies\nCOPY controller/ /workspace/controller\n\n# Copy the Go Modules manifests\nCOPY api/go.mod go.mod\nCOPY api/go.sum go.sum\n\nRUN go mod download\n\n# Copy the go source\nCOPY api/ .\n\nARG KALM_BUILD_ENV_GIT_VERSION\nARG KALM_BUILD_ENV_GIT_COMMIT\n\n# Build\nRUN CGO_ENABLED=1 go build -installsuffix 'static' \\\n    -ldflags \"-X github.com/kalmhq/kalm/api/config.GIT_VERSION=$KALM_BUILD_ENV_GIT_VERSION -X github.com/kalmhq/kalm/api/config.GIT_COMMIT=$KALM_BUILD_ENV_GIT_COMMIT -X 'github.com/kalmhq/kalm/api/config.BUILD_TIME=$(date -Iseconds)' -X 'github.com/kalmhq/kalm/api/config.PLATFORM=$(go version | cut -d ' ' -f 4)' -X 'github.com/kalmhq/kalm/api/config.GO_VERSION=$(go version | cut -d ' ' -f 3)' -extldflags '-static'\" \\\n    -o kalm-api-server main.go\n\nRUN go build -ldflags \"-s -w\" -o auth-proxy ./cmd/auth-proxy\nRUN go build -ldflags \"-s -w\" -o imgconv ./cmd/imgconv\n\n# ============== Finial ==============\nFROM alpine\nWORKDIR /workspace\n# tell kalm api server the location of static files\nENV STATIC_FILE_ROOT build\n\n# Collect binaries and assets\nCOPY --from=api-builder /workspace/api/kalm-api-server .\n\nRUN mkdir /lib64 && ln -s /lib/libc.musl-x86_64.so.1 /lib64/ld-linux-x86-64.so.2\nCOPY --from=api-builder /workspace/api/auth-proxy .\nCOPY --from=api-builder /workspace/api/imgconv .\n\nCOPY --from=frontend-builder /workspace/build/ build/\n"
+}

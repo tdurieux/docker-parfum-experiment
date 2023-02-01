@@ -1,0 +1,9 @@
+# Отдельный сборочный образ
+FROM python:3.9-slim-bullseye as compile-image
+RUN python -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+COPY requirements.txt .
+RUN pip install --no-cache-dir --upgrade pip \
+ && pip install --no-cache-dir -r requirements.txt
+
+# Итоговый образ, в котором будет работать бот

@@ -1,0 +1,21 @@
+FROM alpine:3.13
+
+ARG TRIVY_VERSION=0.29.0
+
+RUN wget -O- https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz | \
+    tar -xzf - -C / \
+    && /trivy --version \
+    && /trivy --cache-dir /trivy-cache image --light --no-progress --download-db-only \
+    && /trivy --cache-dir /trivy-cache image --severity CRITICAL --light --skip-update --no-progress --ignore-unfixed alpine:3.13
+
+FROM scratch
+
+LABEL maintainer="estafette.io" \
+      description="The estafette-vulnerability-scanner regularly scans all containers in a Kubernetes cluster for vulnerabilities"
+
+COPY ca-certificates.crt /etc/ssl/certs/
+COPY estafette-vulnerability-scanner /
+COPY --from=0 /trivy /trivy
+COPY --from=0 /trivy-cache /trivy-cache
+
+ENTRYPOINT ["/estafette-vulnerability-scanner"]

@@ -1,0 +1,50 @@
+FROM python:3.9
+
+WORKDIR /app/
+
+# Install NodeJS
+# --------------
+RUN curl -f -sL https://deb.nodesource.com/setup_14.x | bash -
+RUN apt-get install --no-install-recommends -yq nodejs build-essential && rm -rf /var/lib/apt/lists/*;
+RUN npm install -g npm@8.5.0 && npm cache clean --force;
+
+# Create Python Venv
+# ------------------
+ENV VIRTUAL_ENV=/opt/venv
+RUN python3 -m venv $VIRTUAL_ENV
+ENV PATH="$VIRTUAL_ENV/bin:$PATH"
+RUN pip install --no-cache-dir --upgrade pip
+
+# Install IDOM
+# ------------
+ADD requirements ./requirements
+ADD src ./src
+ADD scripts ./scripts
+ADD setup.py ./
+ADD setup.cfg ./
+ADD MANIFEST.in ./
+ADD README.md ./
+
+RUN pip install --no-cache-dir -e .[all]
+
+# Add License
+# -----------
+Add LICENSE /app/
+
+# Build the Docs
+# --------------
+ADD docs/__init__.py ./docs/
+ADD docs/app.py ./docs/
+ADD docs/examples.py ./docs/
+ADD docs/source ./docs/source
+ADD branding ./branding
+
+RUN pip install --no-cache-dir -r requirements/build-docs.txt
+RUN sphinx-build -W -b html docs/source docs/build
+
+# Define Entrypoint
+# -----------------
+ENV PORT 5000
+ENV IDOM_DEBUG_MODE=1
+ENV IDOM_CHECK_VDOM_SPEC=0
+CMD python scripts/run_docs.py

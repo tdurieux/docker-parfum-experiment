@@ -1,0 +1,24 @@
+FROM golang:alpine AS builder
+
+RUN apk add --no-cache curl
+WORKDIR /build/upx
+RUN curl -f -sL https://github.com/upx/upx/releases/download/v3.95/upx-3.95-amd64_linux.tar.xz -o upx.tar.xz && \
+		tar xf upx.tar.xz --strip-components 1 && mv upx /usr/local/go/bin/ && rm upx.tar.xz
+ENV GOFLAGS=-mod=vendor
+
+WORKDIR /build_dir
+COPY go.* /build_dir/
+COPY vendor vendor
+COPY interface interface
+COPY internal internal
+COPY cmd/autoscaler cmd/autoscaler
+
+RUN cd cmd/autoscaler && go install -ldflags="-s -w" .
+RUN upx -q /go/bin/autoscaler
+
+#---------------------------------------------------------------------------------------------------------------
+
+FROM alpine:3
+EXPOSE 8080
+ENTRYPOINT ["/autoscaler"]
+COPY --from=builder /go/bin/autoscaler /

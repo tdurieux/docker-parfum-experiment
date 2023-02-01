@@ -1,0 +1,71 @@
+{
+  "startTime": 1674217021593,
+  "endTime": 1674217022812,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 22,
+        "lineEnd": 22,
+        "columnStart": 25,
+        "columnEnd": 71
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 31,
+        "lineEnd": 31,
+        "columnStart": 25,
+        "columnEnd": 58
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 22,
+        "lineEnd": 22,
+        "columnStart": 25,
+        "columnEnd": 71
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 31,
+        "lineEnd": 31,
+        "columnStart": 25,
+        "columnEnd": 58
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 49,
+        "lineEnd": 50,
+        "columnStart": 25,
+        "columnEnd": 86
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 54,
+        "lineEnd": 54,
+        "columnStart": 25,
+        "columnEnd": 81
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 78,
+        "lineEnd": 78,
+        "columnStart": 25,
+        "columnEnd": 72
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "#   Copyright The containerd Authors.\n\n#   Licensed under the Apache License, Version 2.0 (the \"License\");\n#   you may not use this file except in compliance with the License.\n#   You may obtain a copy of the License at\n\n#       http://www.apache.org/licenses/LICENSE-2.0\n\n#   Unless required by applicable law or agreed to in writing, software\n#   distributed under the License is distributed on an \"AS IS\" BASIS,\n#   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.\n#   See the License for the specific language governing permissions and\n#   limitations under the License.\n\nARG CONTAINERD_VERSION=v1.4.0-beta.1\nARG RUNC_VERSION=v1.0.0-rc90\n\nFROM golang:1.13-buster AS golang-base\n\n# Build containerd\nFROM golang-base AS containerd-dev\nARG CONTAINERD_VERSION\nRUN apt-get update -y && apt-get install --no-install-recommends -y libbtrfs-dev libseccomp-dev && \\\n    git clone -b ${CONTAINERD_VERSION} --depth 1 \\\n              https://github.com/containerd/containerd $GOPATH/src/github.com/containerd/containerd && \\\n    cd $GOPATH/src/github.com/containerd/containerd && \\\n    GO111MODULE=off make && DESTDIR=/out/ make install && rm -rf /var/lib/apt/lists/*;\n\n# Build runc\nFROM golang-base AS runc-dev\nARG RUNC_VERSION\nRUN apt-get update -y && apt-get install --no-install-recommends -y libseccomp-dev && \\\n    git clone -b ${RUNC_VERSION} --depth 1 \\\n              https://github.com/opencontainers/runc $GOPATH/src/github.com/opencontainers/runc && \\\n    cd $GOPATH/src/github.com/opencontainers/runc && \\\n    GO111MODULE=off make && make install PREFIX=/out/ && rm -rf /var/lib/apt/lists/*;\n\n# Build stargz snapshotter\nFROM golang-base AS snapshotter-dev\nARG SNAPSHOTTER_BUILD_FLAGS\nARG CTR_REMOTE_BUILD_FLAGS\nCOPY . $GOPATH/src/github.com/cvmfs/containerd-remote-snapshotter\nRUN cd $GOPATH/src/github.com/cvmfs/containerd-remote-snapshotter && \\\n    PREFIX=/out/ GO_BUILD_FLAGS=${SNAPSHOTTER_BUILD_FLAGS} make\n\n# Base image which contains containerd with default snapshotter\n# `docker-ce-cli` is used only for users to `docker login` to registries (e.g. DockerHub)\n# with configuring ~/.docker/config.json\nFROM golang-base AS containerd-base\nRUN apt-get update -y && apt-get --no-install-recommends install -y fuse \\\n                                 apt-transport-https gnupg2 software-properties-common && \\\n    curl -fsSL https://download.docker.com/linux/debian/gpg | apt-key add - && \\\n    add-apt-repository \\\n      \"deb [arch=amd64] https://download.docker.com/linux/debian $(lsb_release -cs) stable\" && \\\n    apt-get update -y && apt-get --no-install-recommends install -y docker-ce-cli && rm -rf /var/lib/apt/lists/*;\nCOPY --from=containerd-dev /out/bin/containerd /out/bin/containerd-shim-runc-v2 /usr/local/bin/\nCOPY --from=runc-dev /out/sbin/* /usr/local/sbin/\n\n# Base image which contains containerd with stargz snapshotter\nFROM containerd-base AS snapshotter-base\nCOPY --from=snapshotter-dev /out/* /usr/local/bin/\nRUN ln -s /usr/local/bin/ctr-remote /usr/local/bin/ctr\n\n# Image which can be used as all-in-one single node demo environment\nFROM snapshotter-base AS cind\nCOPY ./script/config/ /\nCOPY ./script/cind/ /\nVOLUME /var/lib/containerd\nVOLUME /var/lib/containerd-cvmfs-grpc\nVOLUME /run/containerd-cvmfs-grpc\nENV CONTAINERD_SNAPSHOTTER=cvmfs\nENTRYPOINT [ \"/entrypoint.sh\" ]\n\n# Image which can be used as a node image for KinD\nFROM kindest/node:v1.18.0\nCOPY --from=containerd-dev /out/bin/containerd /out/bin/containerd-shim-runc-v2 /usr/local/bin/\nCOPY --from=snapshotter-dev /out/* /usr/local/bin/\nCOPY ./script/config/ /\nRUN apt-get update -y && apt-get install --no-install-recommends -y fuse && \\\n    systemctl enable cvmfs-snapshotter && rm -rf /var/lib/apt/lists/*;\nENTRYPOINT [ \"/usr/local/bin/entrypoint\", \"/sbin/init\" ]\n\n"
+}

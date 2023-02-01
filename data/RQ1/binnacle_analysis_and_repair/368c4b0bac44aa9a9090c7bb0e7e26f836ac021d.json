@@ -1,0 +1,62 @@
+{
+  "startTime": 1674240276284,
+  "endTime": 1674240276594,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 11,
+        "lineEnd": 11,
+        "columnStart": 4,
+        "columnEnd": 62
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 12,
+        "lineEnd": 12,
+        "columnStart": 4,
+        "columnEnd": 37
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 7,
+        "lineEnd": 7,
+        "columnStart": 4,
+        "columnEnd": 54
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 67,
+        "lineEnd": 67,
+        "columnStart": 4,
+        "columnEnd": 71
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 7,
+        "lineEnd": 7,
+        "columnStart": 4,
+        "columnEnd": 54
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 67,
+        "lineEnd": 67,
+        "columnStart": 4,
+        "columnEnd": 71
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# ------------------------------------------------------------------------------\n# Base image (for tests, precommit, codegen, etc.)\n# ------------------------------------------------------------------------------\nFROM ubuntu:xenial as base\n\n# Install the runtime deps from apt\nRUN apt-get update && \\\n    apt-get install --no-install-recommends -y curl make git gcc bzr unzip vim && rm -rf /var/lib/apt/lists/*;\n\n# Install Golang 1.11\nWORKDIR /usr/local\nRUN curl -f https://dl.google.com/go/go1.11.linux-amd64.tar.gz -O && \\\n    tar xvf go1.11.linux-amd64.tar.gz && \\\n    cp -r go/bin/* /usr/local/bin/ && rm go1.11.linux-amd64.tar.gz\nENV GO111MODULE on\n\n# Env variables for specifying the output directories\nENV GOBIN /build/bin\nENV PLUGIN_DIR /build/plugins\nENV PATH ${PATH}:${GOBIN}\n# Use public go modules proxy\nENV GOPROXY https://proxy.golang.org\n\n# Install protobuf compiler\nRUN curl -Lfs https://github.com/google/protobuf/releases/download/v3.1.0/protoc-3.1.0-linux-x86_64.zip -o protoc3.zip && \\\n    unzip protoc3.zip -d protoc3 && \\\n    mv protoc3/bin/protoc /bin/protoc && \\\n    chmod a+rx /bin/protoc && \\\n    mv protoc3/include/google /usr/include/ && \\\n    chmod -R a+Xr /usr/include/google && \\\n    rm -rf protoc3.zip protoc3\n\n# Copy just the go.mod files to download the golang deps from internet.\n# This step would allow us to cache the downloads in a layer, and prevent\n# reaching out to the internet unless any of the go.mod file is changed.\nCOPY gomod /gomod\nRUN mkdir -p /gomod/src/modules\nRUN for module in `ls -d /gomod/src/magma/**`; do cd ${module}/cloud/go && go mod download; done\nRUN find /gomod/src/modules -maxdepth 2 -mindepth 2 -type d -exec bash -c \"cd {}/cloud/go && go mod download\" \\;\n\n# Copy the configs\nCOPY configs /etc/magma/configs\n\n# Copy the code\nENV MAGMA_ROOT /src/magma\nCOPY src /src\nRUN mkdir -p /src/modules\nWORKDIR /src/magma/orc8r/cloud\nRUN echo export INTERNAL_MAGMA_MODULES=\"\\\"`ls -d /src/magma/** | tr '\\n' ' '`\\\"\" >> /etc/profile.d/env.sh\nRUN echo export EXTERNAL_MAGMA_MODULES=\"\\\"`find /src/modules -maxdepth 2 -mindepth 2 -type d | tr '\\n' ' '`\\\"\" >> /etc/profile.d/env.sh\nRUN . /etc/profile.d/env.sh && echo export MAGMA_MODULES=\"\\\"$INTERNAL_MAGMA_MODULES $EXTERNAL_MAGMA_MODULES\\\"\" >> /etc/profile.d/env.sh\nRUN . /etc/profile.d/env.sh && make tools\n\n# ------------------------------------------------------------------------------\n# Builder image with binaries and plugins\n# ------------------------------------------------------------------------------\nFROM base as builder\n\nRUN . /etc/profile.d/env.sh && make build\n\n# ------------------------------------------------------------------------------\n# Production image\n# ------------------------------------------------------------------------------\nFROM ubuntu:xenial\n\n# Install the runtime deps from apt\nRUN apt-get update && \\\n    apt-get install --no-install-recommends -y daemontools netcat openssl supervisor wget unzip && rm -rf /var/lib/apt/lists/*;\n\nARG CNTLR_FILES=src/magma/orc8r/cloud/docker/controller\n\n# Setup Swagger UI\nCOPY ${CNTLR_FILES}/setup_swagger_ui /usr/local/bin/setup_swagger_ui\nRUN /usr/local/bin/setup_swagger_ui\n\n# Create an empty envdir for overriding in production\nRUN mkdir -p /var/opt/magma/envdir\n# TODO: automatically read the services from the plugins\nENV CONTROLLER_SERVICES STREAMER,SUBSCRIBERDB,EPS_AUTHENTICATION,METRICSD,CHECKIND,UPGRADE,MAGMAD,CERTIFIER,BOOTSTRAPPER,POLICYDB,METERINGD_RECORDS,ACCESSD,MESH,OBSIDIAN,LOGGER,DISPATCHER,CONFIG,DIRECTORYD,FEG_RELAY,HEALTH,VPNSERVICE,STATE,DEVICE\n# TODO: fix dispatcher to work on containers\nENV SERVICE_HOST_NAME localhost\n# TODO: fix metricsd for fetching host level metrics\nENV HOST_NAME dev\n\n# Copy the configs\nCOPY configs /etc/magma/configs\n\n# Copy the build artifacts\nCOPY --from=builder /build/bin /var/opt/magma/bin\nCOPY --from=builder /build/plugins /var/opt/magma/plugins\nCOPY --from=builder /${CNTLR_FILES}/apidocs /var/opt/magma/static/apidocs\n\n# Copy the scripts from the context\nCOPY ${CNTLR_FILES}/create_test_controller_certs /usr/local/bin/create_test_controller_certs\n\n# Copy the supervisor configs\nCOPY ${CNTLR_FILES}/supervisord.conf /etc/supervisor/conf.d/supervisord.conf\nCOPY ${CNTLR_FILES}/supervisor_logger.py /usr/local/lib/python2.7/dist-packages/supervisor_logger.py\nCMD [\"/usr/bin/supervisord\"]"
+}

@@ -1,0 +1,80 @@
+{
+  "startTime": 1674246793587,
+  "endTime": 1674246795802,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 52,
+        "lineEnd": 59,
+        "columnStart": 7,
+        "columnEnd": 16
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 68,
+        "lineEnd": 68,
+        "columnStart": 7,
+        "columnEnd": 51
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 69,
+        "lineEnd": 69,
+        "columnStart": 58,
+        "columnEnd": 110
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 77,
+        "lineEnd": 77,
+        "columnStart": 7,
+        "columnEnd": 41
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 52,
+        "lineEnd": 59,
+        "columnStart": 7,
+        "columnEnd": 16
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 68,
+        "lineEnd": 68,
+        "columnStart": 7,
+        "columnEnd": 51
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 69,
+        "lineEnd": 69,
+        "columnStart": 58,
+        "columnEnd": 110
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 77,
+        "lineEnd": 77,
+        "columnStart": 7,
+        "columnEnd": 41
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Copyright 2020 The Kubernetes Authors.\n#\n# Licensed under the Apache License, Version 2.0 (the \"License\");\n# you may not use this file except in compliance with the License.\n# You may obtain a copy of the License at\n#\n#     http://www.apache.org/licenses/LICENSE-2.0\n#\n# Unless required by applicable law or agreed to in writing, software\n# distributed under the License is distributed on an \"AS IS\" BASIS,\n# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.\n# See the License for the specific language governing permissions and\n# limitations under the License.\n\n# This file creates a standard build environment for building cross\n# platform go binary for the architecture kubernetes cares about.\n\nARG BASEIMAGE\nFROM ${BASEIMAGE}\n\n##------------------------------------------------------------\n# global ARGs & ENVs\nARG TARGETPLATFORM\nARG DEBIAN_FRONTEND=noninteractive\n\nENV GOARM 7\nENV KUBE_DYNAMIC_CROSSPLATFORMS \\\n  arm64 \\\n  armhf \\\n  i386 \\\n  ppc64el \\\n  s390x\n\nENV KUBE_CROSSPLATFORMS \\\n  linux/386 \\\n  linux/arm linux/arm64 \\\n  linux/ppc64le \\\n  linux/s390x \\\n  darwin/amd64 darwin/386 \\\n  windows/amd64 windows/386\n\n##------------------------------------------------------------\n\n# Pre-compile the standard go library when cross-compiling. This is much easier now when we have go1.5+\nRUN targetArch=$(echo $TARGETPLATFORM | cut -f2 -d '/') \\\n    && if [ ${targetArch} = \"amd64\" ]; then \\\n    for platform in ${KUBE_CROSSPLATFORMS}; do GOOS=${platform%/*} GOARCH=${platform##*/} go install std; done \\\n    && go clean -cache; \\\nfi\n\n# Install packages\nRUN apt-get -q update \\\n    && apt-get install --no-install-recommends -qqy \\\n        apt-utils \\\n        file \\\n        jq \\\n        patch \\\n        rsync \\\n        unzip \\\n        iproute2 && rm -rf /var/lib/apt/lists/*;\n\n# Use dynamic cgo linking for architectures other than amd64 for the server platforms\n# To install crossbuild essential for other architectures add the following repository.\nRUN targetArch=$(echo $TARGETPLATFORM | cut -f2 -d '/') \\\n  && if [ ${targetArch} = \"amd64\" ]; then \\\n    echo \"deb http://archive.ubuntu.com/ubuntu xenial main universe\" > /etc/apt/sources.list.d/cgocrosscompiling.list \\\n    && apt-key adv --no-tty --keyserver keyserver.ubuntu.com --recv-keys 40976EAF437D05B5 3B4FE6ACC0B21F32 \\\n    && apt-get update \\\n    && apt-get install --no-install-recommends -y build-essential mingw-w64 \\\n    && for platform in ${KUBE_DYNAMIC_CROSSPLATFORMS}; do apt-get install --no-install-recommends -y crossbuild-essential-${platform}; done && rm -rf /var/lib/apt/lists/*; \\\nfi\n\nRUN targetArch=$(echo $TARGETPLATFORM | cut -f2 -d '/') \\\n  && if [ ${targetArch} = \"arm64\" ] || [ ${targetArch} = \"ppc64le\" ] || [ ${targetArch} = \"s390x\" ]; then \\\n    echo \"deb http://ports.ubuntu.com/ubuntu-ports/ xenial main\" > /etc/apt/sources.list.d/ports.list \\\n    && apt-key adv --no-tty --keyserver keyserver.ubuntu.com --recv-keys 40976EAF437D05B5 3B4FE6ACC0B21F32 \\\n    && apt-get update \\\n    && apt-get install --no-install-recommends -y build-essential; rm -rf /var/lib/apt/lists/*; \\\nfi\n\nARG PROTOBUF_VERSION\nRUN targetArch=$(echo $TARGETPLATFORM | cut -f2 -d '/') \\\n  && if [ ${targetArch} = \"amd64\" ]; then \\\n  ZIPNAME=\"protoc-${PROTOBUF_VERSION}-linux-x86_64.zip\"; \\\nelif [ ${targetArch} = \"arm64\" ]; then \\\n  ZIPNAME=\"protoc-${PROTOBUF_VERSION}-linux-aarch_64.zip\"; \\\nelif [ ${targetArch} = \"ppc64le\" ]; then \\\n  ZIPNAME=\"protoc-${PROTOBUF_VERSION}-linux-ppcle_64.zip\"; \\\nelif [ ${targetArch} = \"s390x\" ]; then \\\n  ZIPNAME=\"protoc-${PROTOBUF_VERSION}-linux-s390_64.zip\"; \\\nfi \\\n  && mkdir /tmp/protoc && cd /tmp/protoc \\\n  && wget \"https://github.com/protocolbuffers/protobuf/releases/download/v${PROTOBUF_VERSION}/${ZIPNAME}\" \\\n  && unzip \"${ZIPNAME}\" \\\n  && chmod -R +rX /tmp/protoc \\\n  && cp -pr bin /usr/local \\\n  && cp -pr include /usr/local \\\n  && rm -rf /tmp/protoc \\\n  && protoc --version\n\n# work around 64MB tmpfs size in Docker 1.6\nENV TMPDIR /tmp.k8s\nRUN mkdir $TMPDIR \\\n  && chmod a+rwx $TMPDIR \\\n  && chmod o+t $TMPDIR\n\n# Get the code coverage tool and goimports\nRUN for i in {1..5}; do GOPROXY=\"direct\" go install golang.org/x/tools/cmd/cover@latest && break || sleep 15; done  \\\n    && for i in {1..5}; do GOPROXY=\"direct\" go install golang.org/x/tools/cmd/goimports@latest && break || sleep 15; done  \\\n    && go clean -cache\n\n# Cleanup a bit\nRUN apt-get -qqy remove \\\n      wget \\\n    && apt-get clean \\\n    && rm -rf -- \\\n        /var/lib/apt/lists/*\n\nENTRYPOINT []\n"
+}

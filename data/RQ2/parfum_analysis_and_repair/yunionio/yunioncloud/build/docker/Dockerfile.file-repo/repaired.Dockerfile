@@ -1,0 +1,23 @@
+FROM registry.cn-beijing.aliyuncs.com/yunionio/onecloud-base:v0.2
+
+MAINTAINER "Rain Zheng <zhengyu@yunion.com>"
+
+# openssh-client, for ansible ssh connection
+# git, ca-certificates, for fetching ansible roles
+RUN set -x \
+	&& apk update \
+	&& apk add --no-cache git \
+	&& rm -rf /var/cache/apk/*
+
+# install default playbook and install pkg
+Run mkdir -p /opt/yunion/ansible-install-pkg
+Run wget https://yunioniso.oss-cn-beijing.aliyuncs.com/rpms/telegraf/telegraf-1.19.2-yn~be742cbf-0.x86_64.rpm -P /opt/yunion/ansible-install-pkg
+Run wget https://yunioniso.oss-cn-beijing.aliyuncs.com/rpms/telegraf/telegraf-1.19.2-yn~be742cbf-0.aarch64.rpm -P /opt/yunion/ansible-install-pkg
+Run wget https://yunioniso.oss-cn-beijing.aliyuncs.com/rpms/telegraf/telegraf_1.19.2-yn~be742cbf-0_arm64.deb -P /opt/yunion/ansible-install-pkg
+Run wget https://yunioniso.oss-cn-beijing.aliyuncs.com/rpms/telegraf/telegraf_1.19.2-yn~be742cbf-0_amd64.deb -P /opt/yunion/ansible-install-pkg
+Run wget https://yunioniso.oss-cn-beijing.aliyuncs.com/rpms/telegraf/telegraf-1.19.2-yn~be742cbf_windows_amd64.zip -P /opt/yunion/ansible-install-pkg
+Run wget https://yunioniso.oss-cn-beijing.aliyuncs.com/rpms/telegraf/telegraf-1.19.2-yn~be742cbf_windows_i386.zip -P /opt/yunion/ansible-install-pkg
+
+Run mkdir -p /opt/yunion/playbook
+Run mkdir /opt/yunion/playbook/monitor-agent
+Run git clone https://github.com/yunionio/monitor-agent.git /opt/yunion/playbook/monitor-agent --recurse-submodules

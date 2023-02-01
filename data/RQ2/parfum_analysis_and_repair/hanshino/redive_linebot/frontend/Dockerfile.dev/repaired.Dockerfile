@@ -1,0 +1,15 @@
+# pull official base image
+FROM node:lts
+
+LABEL Name="redive前端"
+LABEL description="由react實作的前端頁面，開發模式"
+LABEL version="1.0"
+LABEL maintainer="hanshino@github"
+
+# set working directory
+WORKDIR /app
+
+# add `/app/node_modules/.bin` to $PATH
+ENV PATH /app/node_modules/.bin:$PATH
+
+# start app

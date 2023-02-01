@@ -16,15 +16,7 @@ import {
 import { bytesToSize, percent, createOctokit, wait } from "../utils";
 import config from "../../config";
 
-const outputPath = join(
-  config.dataFolder,
-  "..",
-  "..",
-  "..",
-  "data",
-  "evaluation",
-  "pr_analysis"
-);
+const outputPath = join(config.dataFolder, "RQ4/pr_analysis");
 
 async function getFile(
   repositoryUrl: string,

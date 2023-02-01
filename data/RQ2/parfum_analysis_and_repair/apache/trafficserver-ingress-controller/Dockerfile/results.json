@@ -1,0 +1,53 @@
+{
+  "startTime": 1674250363505,
+  "endTime": 1674250364452,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 35,
+        "lineEnd": 35,
+        "columnStart": 4,
+        "columnEnd": 82
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 38,
+        "lineEnd": 38,
+        "columnStart": 5,
+        "columnEnd": 69
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 53,
+        "lineEnd": 53,
+        "columnStart": 5,
+        "columnEnd": 26
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 64,
+        "lineEnd": 64,
+        "columnStart": 5,
+        "columnEnd": 26
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 75,
+        "lineEnd": 75,
+        "columnStart": 7,
+        "columnEnd": 54
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "#\n# Licensed to the Apache Software Foundation (ASF) under one or more\n# contributor license agreements.  See the NOTICE file distributed with\n# this work for additional information regarding copyright ownership.\n# The ASF licenses this file to You under the Apache License, Version 2.0\n# (the \"License\"); you may not use this file except in compliance with\n# the License.  You may obtain a copy of the License at\n#\n#     http://www.apache.org/licenses/LICENSE-2.0\n#\n# Unless required by applicable law or agreed to in writing, software\n# distributed under the License is distributed on an \"AS IS\" BASIS,\n# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.\n# See the License for the specific language governing permissions and\n# limitations under the License.\n#\n\nFROM alpine:3.14.6 as builder\n\nRUN apk add --no-cache --virtual .tools \\\n  bzip2 curl git automake libtool autoconf make sed file perl openrc openssl\n\n# ATS dependencies\nRUN apk add --no-cache --virtual .ats-build-deps \\\n  build-base openssl-dev tcl-dev pcre-dev zlib-dev \\\n  libexecinfo-dev linux-headers libunwind-dev \\\n  brotli-dev jansson-dev luajit-dev readline-dev geoip-dev\n\nRUN apk add --no-cache --virtual .ats-extra-build-deps --repository https://dl-cdn.alpinelinux.org/alpine/edge/community hwloc-dev\n\nRUN addgroup -Sg 1000 ats\n\nRUN adduser -S -D -H -u 1000 -h /tmp -s /sbin/nologin -G ats -g ats ats\n\n# download and build ATS\nRUN curl -f -L https://downloads.apache.org/trafficserver/trafficserver-9.1.2.tar.bz2 | bzip2 -dc | tar xf - \\\n  && cd trafficserver-9.1.2/ \\\n  && autoreconf -if \\\n  && ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" --enable-debug=yes --prefix=/opt/ats --with-user=ats \\\n  && make \\\n  && make install\n\nCOPY [\"./config/plugin.config\", \"/opt/ats/etc/trafficserver/plugin.config\"]\nCOPY [\"./config/healthchecks.config\", \"/opt/ats/etc/trafficserver/healthchecks.config\"]\nCOPY [\"./config/records.config\", \"/opt/ats/etc/trafficserver/records.config\"]\nCOPY [\"./config/logging.yaml\", \"/opt/ats/etc/trafficserver/logging.yaml\"]\n\n# enable traffic.out for alpine/gentoo\nRUN sed -i \"s/TM_DAEMON_ARGS=\\\"\\\"/TM_DAEMON_ARGS=\\\" --bind_stdout \\/opt\\/ats\\/var\\/log\\/trafficserver\\/traffic.out --bind_stderr \\/opt\\/ats\\/var\\/log\\/trafficserver\\/traffic.out \\\"/\" /opt/ats/bin/trafficserver\nRUN sed -i \"s/TS_DAEMON_ARGS=\\\"\\\"/TS_DAEMON_ARGS=\\\" --bind_stdout \\/opt\\/ats\\/var\\/log\\/trafficserver\\/traffic.out --bind_stderr \\/opt\\/ats\\/var\\/log\\/trafficserver\\/traffic.out \\\"/\" /opt/ats/bin/trafficserver\n\n# luasocket\nRUN wget https://github.com/lunarmodules/luasocket/archive/refs/tags/v3.0.0.tar.gz \\\n  && tar zxf v3.0.0.tar.gz \\\n  && cd luasocket-3.0.0 \\\n  && sed -i \"s/LDFLAGS_linux=-O -shared -fpic -o/LDFLAGS_linux=-O -shared -fpic -L\\/usr\\/lib -lluajit-5.1 -o/\" src/makefile \\\n  && ln -sf /usr/lib/libluajit-5.1.so.2.1.0 /usr/lib/libluajit-5.1.so \\\n  && mkdir -p /usr/include/lua \\\n  && ln -sf /usr/include/luajit-2.1 /usr/include/lua/5.1 \\\n  && make \\\n  && make install-unix prefix=/opt/ats && rm v3.0.0.tar.gz\n\n# redis.lua\nRUN wget https://github.com/nrk/redis-lua/archive/v2.0.4.tar.gz \\\n  && tar zxf v2.0.4.tar.gz \\\n  && cp redis-lua-2.0.4/src/redis.lua /opt/ats/share/lua/5.1/redis.lua && rm v2.0.4.tar.gz\n\n# ingress-ats\nRUN apk add --no-cache --virtual .ingress-build-deps \\\n  bash gcc musl-dev openssl go\n\n# Installing Golang https://github.com/CentOS/CentOS-Dockerfiles/blob/master/golang/centos7/Dockerfile\nCOPY GO_VERSION /\nRUN go_version=$(cat /GO_VERSION) \\\n    && wget https://dl.google.com/go/go${go_version}.src.tar.gz \\\n    && tar -C /opt/ats -xzf go${go_version}.src.tar.gz && cd /opt/ats/go/src/ && ./make.bash && rm go${go_version}.src.tar.gz\nENV PATH=${PATH}:/opt/ats/go/bin\nENV GOPATH=\"/opt/ats/go/bin\"\n\n# ----------------------- Copy over Project Code to Go path ------------------------\nRUN mkdir -p /opt/ats/go/bin/src/github.com/apache/trafficserver-ingress-controller\n\nCOPY [\"./main/\", \"$GOPATH/src/github.com/apache/trafficserver-ingress-controller/main\"]\nCOPY [\"./proxy/\", \"$GOPATH/src/github.com/apache/trafficserver-ingress-controller/proxy\"]\nCOPY [\"./namespace/\", \"$GOPATH/src/github.com/apache/trafficserver-ingress-controller/namespace\"]\nCOPY [\"./endpoint/\", \"$GOPATH/src/github.com/apache/trafficserver-ingress-controller/endpoint\"]\nCOPY [\"./util/\", \"$GOPATH/src/github.com/apache/trafficserver-ingress-controller/util\"]\nCOPY [\"./watcher/\", \"$GOPATH/src/github.com/apache/trafficserver-ingress-controller/watcher\"]\nCOPY [\"./pluginats/\", \"$GOPATH/src/github.com/apache/trafficserver-ingress-controller/pluginats\"]\nCOPY [\"./redis/\", \"$GOPATH/src/github.com/apache/trafficserver-ingress-controller/redis\"]\nCOPY [\"./go.mod\", \"$GOPATH/src/github.com/apache/trafficserver-ingress-controller/go.mod\"]\nCOPY [\"./go.sum\", \"$GOPATH/src/github.com/apache/trafficserver-ingress-controller/go.sum\"]\n\n# Building Project Main\nWORKDIR /opt/ats/go/bin/src/github.com/apache/trafficserver-ingress-controller\nENV GO111MODULE=on\nRUN go build -o ingress_ats main/main.go\n\n# redis conf\nCOPY [\"./config/redis.conf\", \"/opt/ats/etc/redis.conf\"]\n\n# entry.sh + other scripts\nCOPY [\"./bin/tls-config.sh\", \"/opt/ats/bin/tls-config.sh\"]\nCOPY [\"./bin/tls-reload.sh\", \"/opt/ats/bin/tls-reload.sh\"]\nCOPY [\"./bin/records-config.sh\", \"/opt/ats/bin/records-config.sh\"]\nCOPY [\"./bin/entry.sh\", \"/opt/ats/bin/entry.sh\"]\nWORKDIR /opt/ats/bin/\nRUN chmod 755 tls-config.sh\nRUN chmod 755 tls-reload.sh\nRUN chmod 755 records-config.sh\nRUN chmod 755 entry.sh\n\n# redis\nRUN mkdir -p /opt/ats/var/run/redis/ \\\n  && touch /opt/ats/var/run/redis/redis.sock \\\n  && mkdir -p /opt/ats/var/log/redis\n\n# set up ingress log location\nRUN mkdir -p /opt/ats/var/log/ingress/\n\nFROM alpine:3.14.6\n\n# essential library \nRUN apk add --no-cache -U \\\n    bash \\\n    build-base \\\n    curl ca-certificates \\\n    pcre \\\n    zlib \\\n    openssl \\\n    brotli \\\n    jansson \\\n    luajit \\\n    libunwind \\ \n    readline \\\n    geoip \\\n    libexecinfo \\\n    redis \\\n    tcl \\\n    openrc \\\n    inotify-tools \\\n    cpulimit\n\nRUN apk add --no-cache -U --repository https://dl-cdn.alpinelinux.org/alpine/edge/community hwloc\n\n# symlink for luajit\nRUN ln -sf /usr/lib/libluajit-5.1.so.2.1.0 /usr/lib/libluajit-5.1.so\n\n# create ats user/group\nRUN addgroup -Sg 1000 ats\n\nRUN adduser -S -D -H -u 1000 -h /tmp -s /sbin/nologin -G ats -g ats ats\n\nCOPY --from=builder --chown=ats:ats /opt/ats /opt/ats\n\nUSER ats\n\nENTRYPOINT [\"/opt/ats/bin/entry.sh\"]\n"
+}

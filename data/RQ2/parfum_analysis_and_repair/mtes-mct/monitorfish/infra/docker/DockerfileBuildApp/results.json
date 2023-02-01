@@ -1,0 +1,72 @@
+{
+  "startTime": 1674254224747,
+  "endTime": 1674254225373,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 49,
+        "lineEnd": 49,
+        "columnStart": 4,
+        "columnEnd": 50
+      }
+    },
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 57,
+        "lineEnd": 57,
+        "columnStart": 4,
+        "columnEnd": 15
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 50,
+        "lineEnd": 50,
+        "columnStart": 1,
+        "columnEnd": 26
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 50,
+        "lineEnd": 50,
+        "columnStart": 1,
+        "columnEnd": 26
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 41,
+        "lineEnd": 45,
+        "columnStart": 4,
+        "columnEnd": 34
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 50,
+        "lineEnd": 50,
+        "columnStart": 1,
+        "columnEnd": 26
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 49,
+        "lineEnd": 49,
+        "columnStart": 1,
+        "columnEnd": 50
+      }
+    }
+  ],
+  "repairedDockerfile": "#####################\n# Multi stage build #\n#####################\n\nARG GITHUB_SHA=NO_COMMIT\nARG VERSION=NO_VERSION\n\n########################################\n# Build monitorfish backend with maven #\n########################################\nFROM maven:3.6.0-jdk-11-slim as buildBack\n\nARG GITHUB_SHA\nARG VERSION\n\nWORKDIR /tmp/\nCOPY backend/pom.xml /tmp/pom.xml\nRUN mvn dependency:go-offline -B\n\nCOPY backend/ /tmp/\nCOPY backend/pom.xml /tmp/POM_WITH_ENV_VARS\nRUN sed -e 's/COMMIT_TO_CHANGE/${GITHUB_SHA}/' \\\n        -e 's/VERSION_TO_CHANGE/${VERSION}/' \\\n        POM_WITH_ENV_VARS > pom.xml\n\nRUN mvn clean package -DskipTests=true\n\n###########################\n# Build frontend with npm #\n###########################\nFROM ubuntu:18.04 as buildFront\n\nENV DEBIAN_FRONTEND=noninteractive\n\nARG ENV_PROFILE\nENV REACT_APP_ENV $ENV_PROFILE\n\nRUN echo ${REACT_APP_ENV}\n\nRUN apt-get update &&\\\n    apt-get install  --no-install-recommends -y \\\n                   curl \\\n                   zip \\\n                   unzip \\\n                   ca-certificates && \\\n    apt-get clean && rm -rf /var/lib/apt/lists/*;\nUSER root\n\nRUN curl -f -sL https://deb.nodesource.com/setup_10.x | bash && \\\n apt-get install --no-install-recommends -y nodejs && rm -rf /var/lib/apt/lists/*;\n\nCOPY frontend/ /tmp/frontend/\nCOPY infra/ /tmp/infra/\nWORKDIR /tmp/frontend\n\n# Files are expected to be in /tmp/frontend/dist/monitorfish-frontend\nRUN npm install && \\\n    npm run build && npm cache clean --force;\n\n######################\n# Create final image #\n######################\n# There is no more JRE with Java 11 : https://stackoverflow.com/a/53733414\nFROM azul/zulu-openjdk-alpine:11\n\nARG VERSION\nENV VERSION $VERSION\n\nARG ENV_PROFILE\nENV ENV_PROFILE $ENV_PROFILE\n\nENV REACT_APP_ENV $ENV_PROFILE\nENV ENV_DB_URL=\n\n# Add bash\nRUN apk add --no-cache bash\n\nRUN adduser -D monitorfish\nUSER monitorfish\n\nEXPOSE 8880\nEXPOSE 5000\nEXPOSE 5001\nWORKDIR /home/monitorfish\n\nENV JAVA_TOOL_OPTIONS \"-Dcom.sun.management.jmxremote.ssl=false \\\n -Dcom.sun.management.jmxremote.authenticate=false \\\n -Dcom.sun.management.jmxremote.port=5000 \\\n -Dcom.sun.management.jmxremote.rmi.port=5001 \\\n -Dcom.sun.management.jmxremote.registry.ssl=false \\\n -Dcom.sun.management.jmxremote.host=0.0.0.0 \\\n -Djava.rmi.server.hostname=0.0.0.0\"\n\n# Copy files for the back\nCOPY --from=buildBack /tmp/target/monitorfish-${VERSION}-exec.jar /home/monitorfish\nCOPY infra/configurations /home/monitorfish/configurations/\n\nUSER monitorfish\n# Copy files for the front\nRUN mkdir /home/monitorfish/public\nCOPY --from=buildFront /tmp/frontend/build /home/monitorfish/public/\nCOPY --from=buildFront /tmp/infra/docker/env.sh /home/monitorfish/\n\n# Add logs folder to be mounted as volume\nRUN mkdir /home/monitorfish/logs\n\n# Set up environement variable that define the root folder use for serving static files\n# It must point to the front (React) files\nENV STATIC_FILES_PATH /home/monitorfish/public\n\n# Default profile is for local. Can be overiden at start : docker run -e \"SPRING_PROFILES_ACTIVE=prod\"\nENV SPRING_PROFILES_ACTIVE ${ENV_PROFILE}\n\nRUN echo ${ENV_PROFILE}\n\nUSER root\nRUN chown monitorfish /home/monitorfish/env.sh\nRUN chmod +x /home/monitorfish/env.sh\nUSER monitorfish\n\nENV REACT_APP_GEOSERVER_LOCAL_URL=\n\nENTRYPOINT [\"/home/monitorfish/env.sh\"]\n\nCMD exec java -Dspring.config.additional-location=\"/home/monitorfish/configurations/\" -jar \"monitorfish-${VERSION}-exec.jar\"\n"
+}

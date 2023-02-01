@@ -1,0 +1,56 @@
+FROM ubuntu:16.04
+
+# Update image
+RUN apt-get update && apt-get upgrade -y
+
+# Enable CMake PPA
+RUN apt-get install --no-install-recommends -y apt-transport-https ca-certificates gnupg software-properties-common wget && rm -rf /var/lib/apt/lists/*;
+RUN wget -O - https://apt.kitware.com/keys/kitware-archive-latest.asc 2>/dev/null | apt-key add -
+RUN apt-add-repository 'deb https://apt.kitware.com/ubuntu/ xenial main'
+
+# Add g++-8 PPA
+RUN add-apt-repository ppa:ubuntu-toolchain-r/test
+
+# Update apt
+RUN apt-get update
+
+# Install required dependencies
+RUN apt-get install --no-install-recommends -y build-essential devscripts cmake git g++-8 p7zip-full wget libreadline-gplv2-dev libncursesw5-dev libssl-dev libsqlite3-dev tk-dev libgdbm-dev libc6-dev libbz2-dev libffi-dev zlib1g-dev lzma lzma-dev liblzma-dev libcurl4-openssl-dev && rm -rf /var/lib/apt/lists/*;
+
+# Build Python 3.7 - deadsnakes PPA just removed support for Ubuntu 16.04
+# https://stackoverflow.com/a/70866416
+# https://tecadmin.net/install-python-3-7-on-ubuntu-linuxmint/
+RUN cd /usr/src && wget https://www.python.org/ftp/python/3.7.9/Python-3.7.9.tgz && tar xf Python-3.7.9.tgz && cd Python-3.7.9 && ./configure --build="$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)" --enable-optimizations && make -j$(nproc) altinstall && rm Python-3.7.9.tgz
+
+# Make Python 3.7 default
+RUN rm /usr/bin/python3 && ln -s /usr/local/bin/python3.7 /usr/bin/python3
+
+# Fix lsb_release
+RUN sed -i 's|/usr/bin/python3|/usr/bin/python3.5|g' /usr/bin/lsb_release
+
+# Install py7zr
+RUN pip3.7 install --upgrade pip && pip3.7 install py7zr lxml requests semantic_version
+
+# Install Qt 5.15.2
+ADD https://raw.githubusercontent.com/engnr/qt-downloader/master/qt-downloader /qt/qt-downloader
+RUN chmod +x /qt/qt-downloader && cd qt && ./qt-downloader linux desktop 5.15.2 gcc_64
+
+# OpenSSL 1.1.1m
+RUN wget https://www.openssl.org/source/openssl-1.1.1m.tar.gz && tar xf openssl-1.1.1m.tar.gz && rm openssl-1.1.1m.tar.gz
+RUN export CC=gcc-8; export CXX=gcc-8; cd openssl-1.1.1m; ./config && make -j$(nproc) && make install_sw
+
+# Download nlohmann-json and doctest from GitHub
+ADD https://github.com/nlohmann/json/releases/download/v3.7.3/json.hpp /usr/include/nlohmann/json.hpp
+ADD https://raw.githubusercontent.com/onqtam/doctest/2.3.6/doctest/doctest.h /usr/include/doctest/doctest.h
+RUN chmod 644 /usr/include/nlohmann/json.hpp /usr/include/doctest/doctest.h
+
+# Add mesa
+RUN apt-get install --no-install-recommends -y mesa-common-dev libglu1-mesa-dev && rm -rf /var/lib/apt/lists/*;
+
+# Cleanup
+RUN rm -rf /var/lib/apt/lists/*
+
+# Let's not run as root
+RUN useradd -m builduser && passwd -d builduser
+
+USER builduser

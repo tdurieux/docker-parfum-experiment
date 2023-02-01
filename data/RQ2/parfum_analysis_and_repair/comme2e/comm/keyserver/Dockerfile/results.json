@@ -1,0 +1,99 @@
+{
+  "startTime": 1674219892617,
+  "endTime": 1674219893510,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 81,
+        "lineEnd": 81,
+        "columnStart": 4,
+        "columnEnd": 76
+      }
+    },
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 109,
+        "lineEnd": 109,
+        "columnStart": 4,
+        "columnEnd": 21
+      }
+    },
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 118,
+        "lineEnd": 118,
+        "columnStart": 4,
+        "columnEnd": 31
+      }
+    },
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 121,
+        "lineEnd": 121,
+        "columnStart": 4,
+        "columnEnd": 27
+      }
+    },
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 136,
+        "lineEnd": 136,
+        "columnStart": 4,
+        "columnEnd": 39
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 48,
+        "lineEnd": 50,
+        "columnStart": 22,
+        "columnEnd": 14
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 109,
+        "lineEnd": 109,
+        "columnStart": 25,
+        "columnEnd": 41
+      }
+    },
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 118,
+        "lineEnd": 118,
+        "columnStart": 35,
+        "columnEnd": 51
+      }
+    },
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 121,
+        "lineEnd": 121,
+        "columnStart": 31,
+        "columnEnd": 47
+      }
+    },
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 136,
+        "lineEnd": 136,
+        "columnStart": 43,
+        "columnEnd": 59
+      }
+    }
+  ],
+  "repairedDockerfile": "FROM node:16.13-bullseye\n\n#-------------------------------------------------------------------------------\n# STEP 0: SET UP USER\n# Set up Linux user and group for the container\n#-------------------------------------------------------------------------------\n\n# We use bind mounts for our backups folder, which means Docker on Linux will\n# blindly match the UID/GID for the backups folder on the container with the\n# host. In order to make sure the container is able to create backups with the\n# right UID/GID, we need to do two things:\n# 1. Make sure that the user that runs the Docker container on the host has\n#    permissions to write to the backups folder on the host. We rely on the host\n#    to configure this properly\n# 2. Make sure we're running this container with the same UID/GID that the host\n#    is using, so the UID/GID show up correctly on both sides of the bind mount\n# To handle 2 correctly, we have the host pass the UID/GID with which they're\n# running the container. Our approach is based on this one:\n# https://github.com/mhart/alpine-node/issues/48#issuecomment-430902787\n\nARG HOST_UID\nARG HOST_GID\n\nUSER root\nRUN \\\n  if [ -z \"`getent group $HOST_GID`\" ]; then \\\n    addgroup --system --gid $HOST_GID comm; \\\n  else \\\n    groupmod --new-name comm `getent group $HOST_GID | cut -d: -f1`; \\\n  fi && \\\n  if [ -z \"`getent passwd $HOST_UID`\" ]; then \\\n    adduser --system --uid $HOST_UID --ingroup comm --shell /bin/bash comm; \\\n  else \\\n    usermod --login comm --gid $HOST_GID --home /home/comm --move-home \\\n      `getent passwd $HOST_UID | cut -d: -f1`; \\\n  fi\n\n#-------------------------------------------------------------------------------\n# STEP 1: INSTALL PREREQS\n# Install prereqs first so we don't have to reinstall them if anything changes\n#-------------------------------------------------------------------------------\n\n# We add Debian's unstable repo since it's the only way to get mysqldump\nRUN echo \"deb http://deb.debian.org/debian unstable main non-free contrib\" \\\n  >> /etc/apt/sources.list\n\n# We need rsync in the prod-build yarn script\n# We need mysql-client so we can use mysqldump for backups\nRUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get --no-install-recommends install -y \\\n  rsync \\\n  mysql-client \\\n  && rm -rf /var/lib/apt/lists/*\n\n#-------------------------------------------------------------------------------\n# STEP 2: DEVOLVE PRIVILEGES\n# Create another user to run the rest of the commands\n#-------------------------------------------------------------------------------\n\nUSER comm\nWORKDIR /home/comm/app\n\n#-------------------------------------------------------------------------------\n# STEP 3: SET UP MYSQL BACKUPS\n# Prepare the system to properly handle mysqldump backups\n#-------------------------------------------------------------------------------\n\n# Prepare the directory that will hold the backups\nRUN mkdir /home/comm/backups\n\n# We install mysql-client 8.0 above but use it with MySQL 5.7. Unfortunately,\n# we haven't been able to figure out a way to install mysql-client 5.7 on\n# Debian bullseye. Instead, we configure mysqldump 8.0 to work with MySQL 5.7\nRUN echo \"[mysqldump]\\ncolumn-statistics=0\" > /home/comm/.my.cnf\n\n#-------------------------------------------------------------------------------\n# STEP 4: SET UP NVM\n# We use nvm to make sure we're running the right Node version\n#-------------------------------------------------------------------------------\n\n# First we install nvm\nENV NVM_DIR /home/comm/.nvm\nRUN curl -f -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.1/install.sh \\\n  | bash\n\n# Then we use nvm to install the right version of Node. We call this early so\n# Docker build caching saves us from re-downloading Node when any file changes\nCOPY --chown=comm keyserver/.nvmrc keyserver/\nCOPY --chown=comm keyserver/bash/source-nvm.sh keyserver/bash/\nRUN cd keyserver/bash && ./source-nvm.sh\n\n#-------------------------------------------------------------------------------\n# STEP 5: YARN CLEANINSTALL\n# We run yarn cleaninstall before copying most of the files in for build caching\n#-------------------------------------------------------------------------------\n\n# Copy in package.json and yarn.lock files\nCOPY --chown=comm package.json yarn.lock ./\nCOPY --chown=comm keyserver/package.json keyserver/.flowconfig keyserver/\nCOPY --chown=comm lib/package.json lib/.flowconfig lib/\nCOPY --chown=comm web/package.json web/.flowconfig web/\nCOPY --chown=comm native/package.json native/.flowconfig native/\nCOPY --chown=comm landing/package.json landing/.flowconfig landing/\n\n# Copy in files needed for patch-package and pod-patch\nCOPY --chown=comm patches patches/\nCOPY --chown=comm native/ios/pod-patch native/ios/pod-patch/\nCOPY --chown=comm native/ios/Podfile native/ios/\n\n# Actually run yarn\nRUN yarn cleaninstall && yarn cache clean;\n\n#-------------------------------------------------------------------------------\n# STEP 6: WEBPACK BUILD\n# We do this first so Docker doesn't rebuild when only keyserver files change\n#-------------------------------------------------------------------------------\n\nCOPY --chown=comm lib lib/\nCOPY --chown=comm landing landing/\nRUN yarn workspace landing prod && yarn cache clean;\n\nCOPY --chown=comm web web/\nRUN yarn workspace web prod && yarn cache clean;\n\n#-------------------------------------------------------------------------------\n# STEP 7: COPY IN SOURCE FILES\n# We run this later so the above layers are cached if only source files change\n#-------------------------------------------------------------------------------\n\nCOPY --chown=comm . .\n\n#-------------------------------------------------------------------------------\n# STEP 8: RUN BUILD SCRIPTS\n# We need to populate keyserver/dist, among other things\n#-------------------------------------------------------------------------------\n\n# Babel transpilation of keyserver src\nRUN yarn workspace keyserver prod-build && yarn cache clean;\n\n#-------------------------------------------------------------------------------\n# STEP 9: RUN THE SERVER\n# Actually run the Node.js keyserver using nvm\n#-------------------------------------------------------------------------------\n\nEXPOSE 3000\nWORKDIR /home/comm/app/keyserver\nCMD bash/run-prod.sh\n"
+}

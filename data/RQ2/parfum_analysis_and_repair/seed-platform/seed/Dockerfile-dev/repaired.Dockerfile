@@ -1,0 +1,62 @@
+FROM alpine:3.14
+
+RUN apk add --no-cache python3-dev \
+        postgresql-dev \
+        coreutils \
+        alpine-sdk \
+        pcre \
+        pcre-dev \
+        libxslt-dev \
+        linux-headers \
+        libffi-dev \
+        bash \
+        bash-completion \
+        npm \
+        nginx \
+        openssl-dev \
+        geos \
+        gdal \
+        gcc \
+        musl-dev \
+        cargo && \
+    ln -sf /usr/bin/python3 /usr/bin/python && \
+    python -m ensurepip && \
+    rm -r /usr/lib/python*/ensurepip && \
+    ln -sf /usr/bin/pip3 /usr/bin/pip && \
+    pip install --no-cache-dir --upgrade pip setuptools && \
+    pip install --no-cache-dir supervisor==4.2.2 && \
+    mkdir -p /var/log/supervisord/ && \
+    rm -r /root/.cache && \
+    addgroup -g 1000 uwsgi && \
+    adduser -G uwsgi -H -u 1000 -S uwsgi && \
+    mkdir -p /run/nginx
+
+### Install python requirements
+WORKDIR /seed
+COPY ./requirements.txt /seed/requirements.txt
+COPY ./requirements/*.txt /seed/requirements/
+RUN pip uninstall -y enum34
+RUN pip install --no-cache-dir -r requirements/local.txt
+# for remote debugging
+RUN pip install --no-cache-dir remote-pdb
+# for live reloading celery
+RUN pip install --no-cache-dir watchdog[watchmedo]
+
+### Install JavaScript requirements - do this first because they take awhile
+### and the dependencies will probably change slower than python packages.
+### README.md stops the no readme warning
+COPY ./package.json /seed/package.json
+COPY ./vendors/package.json /seed/vendors/package.json
+COPY ./README.md /seed/README.md
+# unsafe-perm allows the package.json postinstall script to run with the elevated permissions
+RUN npm install --unsafe-perm && npm cache clean --force;
+
+### Copy over the remaining part of the SEED application and some helpers
+WORKDIR /seed
+COPY . /seed/
+COPY ./docker/wait-for-it.sh /usr/local/wait-for-it.sh
+RUN git config --system --add safe.directory /seed
+
+EXPOSE 80
+
+CMD ["python3", "manage.py", "runserver", "--settings=config.settings.docker_dev", "0.0.0.0:80"]

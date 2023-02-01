@@ -1,0 +1,35 @@
+{
+  "startTime": 1674242036578,
+  "endTime": 1674242036877,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 46,
+        "lineEnd": 46,
+        "columnStart": 4,
+        "columnEnd": 39
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 47,
+        "lineEnd": 47,
+        "columnStart": 4,
+        "columnEnd": 41
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 48,
+        "lineEnd": 48,
+        "columnStart": 4,
+        "columnEnd": 66
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM nvidia/cuda:9.0-base-ubuntu16.04\n\nRUN apt-get update && apt-get install -y --no-install-recommends \\\n        build-essential \\\n        cuda-command-line-tools-9-0 \\\n        cuda-cublas-dev-9-0 \\\n        cuda-cudart-dev-9-0 \\\n        cuda-cufft-dev-9-0 \\\n        cuda-curand-dev-9-0 \\\n        cuda-cusolver-dev-9-0 \\\n        cuda-cusparse-dev-9-0 \\\n        curl \\\n        git \\\n        libcudnn7=7.0.5.15-1+cuda9.0 \\\n        libcudnn7-dev=7.0.5.15-1+cuda9.0 \\\n        libcurl3-dev \\\n        libfreetype6-dev \\\n        libpng12-dev \\\n        libzmq3-dev \\\n        pkg-config \\\n        python-dev \\\n        rsync \\\n        software-properties-common \\\n        unzip \\\n        zip \\\n        zlib1g-dev \\\n        wget \\\n        && \\\n    rm -rf /var/lib/apt/lists/* && \\\n    find /usr/local/cuda-9.0/lib64/ -type f -name 'lib*_static.a' -not -name 'libcudart_static.a' -delete && \\\n    rm /usr/lib/x86_64-linux-gnu/libcudnn_static_v7.a\n\nRUN curl -fSsL -O https://bootstrap.pypa.io/get-pip.py && \\\n    python get-pip.py && \\\n    rm get-pip.py\n\nRUN pip --no-cache-dir install \\\n        numpy \\\n        scipy \\\n        sklearn \\\n        pandas \\\n        Pillow \\\n        h5py\n\n# Set up grpc\n\nRUN pip install --no-cache-dir enum34 futures mock six && \\\n    pip install --no-cache-dir --pre 'protobuf>=3.0.0a3' && \\\n    pip install --no-cache-dir -i https://testpypi.python.org/simple --pre grpcio\n\n# Set up Bazel.\n\n# Running bazel inside a `docker build` command causes trouble, cf:\n#   https://github.com/bazelbuild/bazel/issues/134\n# The easiest solution is to set up a bazelrc file forcing --batch.\nRUN echo \"startup --batch\" >>/etc/bazel.bazelrc\n# Similarly, we need to workaround sandboxing issues:\n#   https://github.com/bazelbuild/bazel/issues/418\nRUN echo \"build --spawn_strategy=standalone --genrule_strategy=standalone\" \\\n    >>/etc/bazel.bazelrc\n# Install the most recent bazel release.\nENV BAZEL_VERSION 0.8.0\nWORKDIR /\nRUN mkdir /bazel && \\\n    cd /bazel && \\\n    curl -H \"User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/57.0.2987.133 Safari/537.36\" -fSsL -O https://github.com/bazelbuild/bazel/releases/download/$BAZEL_VERSION/bazel-$BAZEL_VERSION-installer-linux-x86_64.sh && \\\n    curl -H \"User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/57.0.2987.133 Safari/537.36\" -fSsL -o /bazel/LICENSE.txt https://raw.githubusercontent.com/bazelbuild/bazel/master/LICENSE && \\\n    chmod +x bazel-*.sh && \\\n    ./bazel-$BAZEL_VERSION-installer-linux-x86_64.sh && \\\n    cd / && \\\n    rm -f /bazel/bazel-$BAZEL_VERSION-installer-linux-x86_64.sh\n\n# Download and build TensorFlow.\nWORKDIR /\nRUN git clone https://github.com/tensorflow/tensorflow.git && \\\n    cd tensorflow && \\\n    git checkout v1.5.0\n\n# Configure the build for our CUDA configuration.\nENV CI_BUILD_PYTHON python\nENV LD_LIBRARY_PATH /usr/local/cuda/extras/CUPTI/lib64:$LD_LIBRARY_PATH\nENV TF_NEED_CUDA 1\nENV TF_CUDA_COMPUTE_CAPABILITIES=3.7,6.1\nENV TF_CUDA_VERSION=9.0\nENV TF_CUDNN_VERSION=7\nENV CUDNN_INSTALL_PATH=/usr/lib/x86_64-linux-gnu\n\nWORKDIR /tensorflow\n\n# Copy patches and apply patches\nCOPY patches /patches\n\nRUN git apply --verbose /patches/*.patch\n\nRUN ln -s /usr/local/cuda/lib64/stubs/libcuda.so /usr/local/cuda/lib64/stubs/libcuda.so.1 && \\\n    LD_LIBRARY_PATH=/usr/local/cuda/lib64/stubs:${LD_LIBRARY_PATH} \\\n    tensorflow/tools/ci_build/builds/configured GPU \\\n    bazel build -c opt --config=cuda \\\n        --cxxopt=\"-D_GLIBCXX_USE_CXX11_ABI=0\" \\\n        tensorflow/tools/pip_package:build_pip_package && \\\n    bazel-bin/tensorflow/tools/pip_package/build_pip_package /tmp/pip && \\\n    pip --no-cache-dir install --upgrade /tmp/pip/tensorflow-*.whl && \\\n    rm -rf /tmp/pip && \\\n    rm -rf /root/.cache\n# Clean up pip wheel and Bazel cache when done.\n\n# Download TensorFlow Serving\nRUN cd / && git clone --recurse-submodules https://github.com/tensorflow/serving && \\\n  cd serving && \\\n  git checkout 1.5.0\n\n# Configure Tensorflow to use the GPU\nWORKDIR /serving\nRUN git clone --recursive https://github.com/tensorflow/tensorflow.git && \\\n  cd tensorflow && \\\n  git checkout v1.5.0 && \\\n  tensorflow/tools/ci_build/builds/configured GPU\n\n# Build TensorFlow Serving and Install it in /usr/local/bin\nWORKDIR /serving\nRUN bazel build -c opt --config=cuda \\\n    --cxxopt=\"-D_GLIBCXX_USE_CXX11_ABI=0\" \\\n    --crosstool_top=@local_config_cuda//crosstool:toolchain \\\n    tensorflow_serving/model_servers:tensorflow_model_server && \\\n    cp bazel-bin/tensorflow_serving/model_servers/tensorflow_model_server /usr/local/bin/ && \\\n    bazel clean --expunge\n\nWORKDIR /root\n\n# cleaning up the container\nRUN rm -rf /tensorflow && \\\n    rm -rf /serving && \\\n    rm -rf /tmp/tensorflow_pkg/tensorflow-1.4.0-cp27-cp27mu-linux_x86_64.whl && \\\n    rm -rf /bazel\n\nRUN [\"/bin/bash\"]\n"
+}

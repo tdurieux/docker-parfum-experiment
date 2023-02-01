@@ -1,0 +1,34 @@
+FROM python:3.9
+
+LABEL org.opencontainers.image.source https://github.com/binarly-io/fwhunt-scan
+
+RUN apt-get update && apt-get install --no-install-recommends -y ninja-build parallel && rm -rf /var/lib/apt/lists/*;
+RUN pip install --no-cache-dir meson
+
+WORKDIR /tmp
+
+# install rizin from source code
+RUN wget https://github.com/rizinorg/rizin/releases/download/v0.3.4/rizin-src-v0.3.4.tar.xz
+RUN tar -xvf rizin-src-v0.3.4.tar.xz && rm rizin-src-v0.3.4.tar.xz
+
+WORKDIR /tmp/rizin-v0.3.4
+RUN meson build
+RUN ninja -C build install
+
+COPY rz_libfix.sh /tmp/rizin-v0.3.4/
+RUN chmod +x rz_libfix.sh
+RUN ./rz_libfix.sh
+
+# install fwhunt_scan
+RUN useradd -u 1001 -m fwhunt_scan
+USER fwhunt_scan
+
+COPY fwhunt_scan_analyzer.py /home/fwhunt_scan/app/
+COPY requirements.txt /home/fwhunt_scan/app/
+COPY fwhunt_scan /home/fwhunt_scan/app/fwhunt_scan
+
+WORKDIR /home/fwhunt_scan/app/
+
+RUN pip install --no-cache-dir --user -r requirements.txt
+
+ENTRYPOINT ["python3", "fwhunt_scan_analyzer.py"]

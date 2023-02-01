@@ -1,0 +1,26 @@
+{
+  "startTime": 1674253963133,
+  "endTime": 1674253963944,
+  "originalSmells": [
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 9,
+        "lineEnd": 9,
+        "columnStart": 4,
+        "columnEnd": 15
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 53,
+        "lineEnd": 53,
+        "columnStart": 39,
+        "columnEnd": 64
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "ARG BKAPP_RUN_ENV=ee\n\n\nFROM node:12.13.1-stretch-slim AS static-builder\n\nENV NPM_VERSION 6.14.4\n\nWORKDIR /frontend\nCOPY frontend ./\nRUN npm install && npm cache clean --force;\nRUN npm run build\n\n\nFROM python:3.6.12-slim-buster AS base\n\nENV LC_ALL=C.UTF-8 \\\n    LANG=C.UTF-8\n\n## PYTHON\n# Seems to speed things up\nENV PYTHONUNBUFFERED=1\n# Turns off writing .pyc files. Superfluous on an ephemeral container.\nENV PYTHONDONTWRITEBYTECODE=1\n\n# Ensures that the python and pip executables used\n# in the image will be those from our virtualenv.\nENV PATH=\"/venv/bin:$PATH\"\n\nRUN set -ex && \\\n    rm /etc/apt/sources.list && \\\n    echo \"deb https://mirrors.cloud.tencent.com/debian buster main contrib non-free\" >> /etc/apt/sources.list && \\\n    echo \"deb https://mirrors.cloud.tencent.com/debian buster-updates main contrib non-free\" >> /etc/apt/sources.list && \\\n    echo \"deb-src https://mirrors.cloud.tencent.com/debian buster main contrib non-free\" >> /etc/apt/sources.list && \\\n    echo \"deb-src https://mirrors.cloud.tencent.com/debian buster-updates main contrib non-free\" >> /etc/apt/sources.list\n\nRUN set -ex && mkdir ~/.pip && printf '[global]\\nindex-url = https://mirrors.tencent.com/pypi/simple/' > ~/.pip/pip.conf\n\n\nFROM base AS builder\n\nWORKDIR /\n\n# Install OS package dependencies.\n# Do all of this in one RUN to limit final image size.\nRUN set -ex &&  \\\n    apt-get update && \\\n    apt-get install -y --no-install-recommends \\\n        gcc gettext mariadb-client libmariadbclient-dev default-libmysqlclient-dev && \\\n    rm -rf /var/lib/apt/lists/*\n\nCOPY requirements.txt /\n\n# 创建 Python 虚拟环境并安装依赖\nRUN set -ex && python -m venv /venv && pip install --no-cache-dir --upgrade pip && pip install --no-cache-dir -r requirements.txt\n\n\nFROM base AS base-app\n\n# 安装运行时依赖\nRUN set -ex &&  \\\n    apt-get update && \\\n    apt-get install -y --no-install-recommends \\\n        gettext curl vim default-libmysqlclient-dev && \\\n    rm -rf /var/lib/apt/lists/*\n\nWORKDIR /app\nUSER root\n\nADD ./ ./\n\n# 换行符兼容转换\nRUN awk 'sub(\"$\",\"\\r\")' script_tools/setup_agent.bat > script_tools/setup_agent.bat_w &&  \\\n    mv -f script_tools/setup_agent.bat_w script_tools/setup_agent.bat && \\\n    awk 'sub(\"$\",\"\\r\")' script_tools/gsectl.bat > script_tools/gsectl.bat_w &&  \\\n    mv -f script_tools/gsectl.bat_w script_tools/gsectl.bat && \\\n    awk 'sub(\"$\",\"\\r\")' script_tools/plugin_scripts/start.bat > script_tools/plugin_scripts/start.bat_w &&  \\\n    mv -f script_tools/plugin_scripts/start.bat_w script_tools/plugin_scripts/start.bat && \\\n    awk 'sub(\"$\",\"\\r\")' script_tools/plugin_scripts/stop.bat > script_tools/plugin_scripts/stop.bat_w &&  \\\n    mv -f script_tools/plugin_scripts/stop.bat_w script_tools/plugin_scripts/stop.bat && \\\n    awk 'sub(\"$\",\"\\r\")' script_tools/plugin_scripts/restart.bat > script_tools/plugin_scripts/restart.bat_w &&  \\\n    mv -f script_tools/plugin_scripts/restart.bat_w script_tools/plugin_scripts/restart.bat\n\n# 拷贝构件\nCOPY --from=builder /venv /venv\nCOPY --from=static-builder /static/ /app/static/\n\n\nFROM base-app AS ieod-app\n\nRUN set -ex && \\\n    rm -rf blueking && \\\n    rm -rf bkoauth && \\\n    pip install --no-cache-dir blueking-component-ieod==0.1.12 && \\\n    pip install --no-cache-dir bkoauth==0.0.22\n\n\nFROM base-app AS ee-app\n\n\nFROM base-app AS ce-app\n\n\nFROM ${BKAPP_RUN_ENV}-app AS app\nENTRYPOINT [\"support-files/kubernetes/images/family_bucket/entrypoint.sh\"]\n"
+}

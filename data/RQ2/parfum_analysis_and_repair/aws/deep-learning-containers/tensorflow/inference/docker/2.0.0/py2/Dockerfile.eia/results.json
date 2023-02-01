@@ -1,0 +1,44 @@
+{
+  "startTime": 1674252710444,
+  "endTime": 1674252711331,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 34,
+        "lineEnd": 34,
+        "columnStart": 4,
+        "columnEnd": 51
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 103,
+        "lineEnd": 103,
+        "columnStart": 4,
+        "columnEnd": 93
+      }
+    },
+    {
+      "rule": "curlUseHttpsUrl",
+      "position": {
+        "lineStart": 34,
+        "lineEnd": 34,
+        "columnStart": 4,
+        "columnEnd": 51
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 84,
+        "lineEnd": 84,
+        "columnStart": 4,
+        "columnEnd": 77
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM ubuntu:18.04\n\nLABEL dlc_major_version=\"3\"\n\n# Add arguments to achieve the version, python and url\nARG PYTHON=python\nARG PIP=pip\nARG HEALTH_CHECK_VERSION=1.7.0\nARG S3_TF_EI_VERSION=1-5\nARG S3_TF_VERSION=2-0-0\n\n\n# See http://bugs.python.org/issue19846\nENV LANG=C.UTF-8\n# Python won’t try to write .pyc or .pyo files on the import of source modules\nENV PYTHONDONTWRITEBYTECODE=1\nENV PYTHONUNBUFFERED=1\nENV LD_LIBRARY_PATH='/usr/local/lib:$LD_LIBRARY_PATH'\nENV MODEL_BASE_PATH=/models\n# The only required piece is the model name in order to differentiate endpoints\nENV MODEL_NAME=model\n# To prevent user interaction when installing time zone data package\nENV DEBIAN_FRONTEND=noninteractive\n\n# nginx + njs\nRUN apt-get update \\\n && apt-get -y install --no-install-recommends \\\n    curl \\\n    gnupg2 \\\n    ca-certificates \\\n    emacs \\\n    git \\\n    wget \\\n    vim \\\n && curl -f -s https://nginx.org/keys/nginx_signing.key | apt-key add - \\\n && echo 'deb http://nginx.org/packages/ubuntu/ bionic nginx' >> /etc/apt/sources.list \\\n && apt-get update \\\n && apt-get -y install --no-install-recommends \\\n    nginx \\\n    nginx-module-njs \\\n    python \\\n    python-pip \\\n    python-setuptools \\\n && apt-get clean \\\n && rm -rf /var/lib/apt/lists/*\n\nRUN ${PIP} --no-cache-dir install --upgrade \\\n    pip \\\n    setuptools\n\n# cython, falcon, gunicorn, grpc\nRUN ${PIP} install --no-cache-dir \\\n    \"awscli<2\" \\\n    cython \\\n    falcon \\\n    gunicorn \\\n    gevent \\\n    requests \\\n    grpcio \\\n    protobuf \\\n# using --no-dependencies to avoid installing tensorflow binary\n && ${PIP} install --no-dependencies --no-cache-dir \\\n    tensorflow-serving-api==2.0.0\n\nWORKDIR /\n\n# Some TF tools expect a \"python\" binary\nRUN ln -s $(which ${PYTHON}) /usr/local/bin/python\n\n# Get EI tools\nRUN wget https://amazonei-tools.s3.amazonaws.com/v${HEALTH_CHECK_VERSION}/ei_tools_${HEALTH_CHECK_VERSION}.tar.gz -O /opt/ei_tools_${HEALTH_CHECK_VERSION}.tar.gz \\\n && tar -xvf /opt/ei_tools_${HEALTH_CHECK_VERSION}.tar.gz -C /opt/ \\\n && rm -rf /opt/ei_tools_${HEALTH_CHECK_VERSION}.tar.gz \\\n && chmod a+x /opt/ei_tools/bin/health_check \\\n && mkdir -p /opt/ei_health_check/bin \\\n && ln -s /opt/ei_tools/bin/health_check /opt/ei_health_check/bin/health_check \\\n && ln -s /opt/ei_tools/lib /opt/ei_health_check/lib\n\n#RUN curl ${TF_MODEL_SERVER_SOURCE} -o /usr/bin/tensorflow_model_server \\\n# && chmod 555 /usr/bin/tensorflow_model_server\n\nRUN wget https://amazonei-tensorflow.s3.amazonaws.com/tensorflow-serving/v2.0/archive/tensorflow-serving-${S3_TF_VERSION}-ei-${S3_TF_EI_VERSION}.tar.gz \\\n -O /tmp/tensorflow-serving-${S3_TF_VERSION}-ei-${S3_TF_EI_VERSION}.tar.gz \\\n && cd /tmp \\\n && tar zxf tensorflow-serving-${S3_TF_VERSION}-ei-${S3_TF_EI_VERSION}.tar.gz \\\n && mv tensorflow-serving-${S3_TF_VERSION}-ei-${S3_TF_EI_VERSION}/amazonei_tensorflow_model_server /usr/bin/tensorflow_model_server \\\n && chmod +x /usr/bin/tensorflow_model_server \\\n && rm -rf tensorflow-serving-${S3_TF_VERSION}* && rm tensorflow-serving-${S3_TF_VERSION}-ei-${S3_TF_EI_VERSION}.tar.gz\n\n\n# Expose ports\n# gRPC and REST\nEXPOSE 8500 8501\n\n# Set where models should be stored in the container\nRUN mkdir -p ${MODEL_BASE_PATH}\n\n# Create a script that runs the model server so we can use environment variables\n# while also passing in arguments from the docker command line\nRUN echo '#!/bin/bash \\n\\n' > /usr/bin/tf_serving_entrypoint.sh \\\n && echo '/usr/bin/tensorflow_model_server --port=8500 --rest_api_port=8501 --model_name=${MODEL_NAME} --model_base_path=${MODEL_BASE_PATH}/${MODEL_NAME} \"$@\"' >> /usr/bin/tf_serving_entrypoint.sh \\\n && chmod +x /usr/bin/tf_serving_entrypoint.sh\n\nRUN curl -f https://aws-dlc-licenses.s3.amazonaws.com/tensorflow-2.0/license.txt -o /license.txt\n\nCMD [\"/usr/bin/tf_serving_entrypoint.sh\"]\n"
+}

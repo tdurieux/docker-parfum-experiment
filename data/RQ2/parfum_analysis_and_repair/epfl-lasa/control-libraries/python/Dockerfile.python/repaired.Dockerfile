@@ -1,0 +1,26 @@
+FROM ghcr.io/epfl-lasa/control-libraries/development-dependencies:latest as python-install
+ARG BRANCH=develop
+
+WORKDIR /source
+RUN git clone --depth 1 --branch $BRANCH https://github.com/epfl-lasa/control-libraries
+RUN bash control-libraries/source/install.sh --auto
+RUN bash control-libraries/protocol/install.sh --auto
+
+RUN rm -rf control-libraries/python/include control-libraries/python/source
+COPY include control-libraries/python/include
+COPY source control-libraries/python/source
+COPY pyproject.toml setup.py control-libraries/python/
+ENV OSQP_INCLUDE_DIR /usr/local/include/osqp
+ENV OPENROBOTS_INCLUDE_DIR /opt/openrobots/include
+RUN pip3 install --no-cache-dir control-libraries/python
+
+
+FROM python-install as build-testing
+
+USER developer
+WORKDIR ${HOME}
+
+COPY test ./test
+RUN python3 -m unittest
+
+CMD ["/bin/bash"]

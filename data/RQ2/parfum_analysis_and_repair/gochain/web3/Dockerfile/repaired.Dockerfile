@@ -1,0 +1,14 @@
+# build stage
+FROM golang:1.17-alpine AS build-env
+RUN apk --no-cache add build-base git mercurial gcc linux-headers
+ENV D=/web3
+WORKDIR $D
+# cache dependencies
+ADD go.mod $D
+ADD go.sum $D
+RUN go mod download
+# now build
+ADD . $D
+RUN cd $D && go build -o web3-alpine ./cmd/web3 && cp web3-alpine /tmp/
+
+# final stage

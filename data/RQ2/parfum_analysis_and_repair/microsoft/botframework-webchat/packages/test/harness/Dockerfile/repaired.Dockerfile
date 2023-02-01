@@ -1,0 +1,1 @@
+# Setting to a different base image to secure your container supply chain.

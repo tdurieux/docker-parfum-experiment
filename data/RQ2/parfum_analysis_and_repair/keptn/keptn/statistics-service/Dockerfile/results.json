@@ -1,0 +1,45 @@
+{
+  "startTime": 1674253260147,
+  "endTime": 1674253261477,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 5,
+        "lineEnd": 5,
+        "columnStart": 4,
+        "columnEnd": 39
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 5,
+        "lineEnd": 5,
+        "columnStart": 4,
+        "columnEnd": 39
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 5,
+        "lineEnd": 5,
+        "columnStart": 4,
+        "columnEnd": 39
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 5,
+        "lineEnd": 5,
+        "columnStart": 4,
+        "columnEnd": 63
+      }
+    }
+  ],
+  "repairedDockerfile": "# Use the official Golang image to create a build artifact.\n# This is based on Debian and sets the GOPATH to /go.\nFROM golang:1.18.4 as builder-base\n\n# install additional dependencies\nRUN apt-get install --no-install-recommends -y gcc libc-dev git && rm -rf /var/lib/apt/lists/*;\n\n# Force the go compiler to use modules\nENV GO111MODULE=on\nENV BUILDFLAGS=\"\"\nENV GOPROXY=https://proxy.golang.org\n\n# Pre-Req for gin-gonic/go-swagger: Install swag cli to generate swagger.yaml and swagger.json\nRUN go install github.com/swaggo/swag/cmd/swag@v1.7.0\n\nWORKDIR /go/src/github.com/keptn/keptn/statistics-service\n\n# Copy `go.mod` for definitions and `go.sum` to invalidate the next layer\n# in case of a change in the dependencies\nCOPY go.mod go.sum ./\n\n# Download dependencies\nRUN go mod download\n\n# Copy local code to the container image.\nCOPY . .\n\nFROM builder-base as builder-test\nENV GOTESTSUM_FORMAT=testname\n\nRUN go install gotest.tools/gotestsum@v1.7.0\nCMD gotestsum --no-color=false -- -race -coverprofile=coverage.txt -covermode=atomic -v ./... && mv ./coverage.txt /shared/coverage.txt\n\nFROM builder-base as builder\nARG version=develop\n\n\n# `skaffold debug` sets SKAFFOLD_GO_GCFLAGS to disable compiler optimizations\nARG SKAFFOLD_GO_GCFLAGS\n\n# generate swagger docs\nRUN GOOS=linux swag init --parseDependency\n\n# replace github.com/alecthomas/template; with text/template in docs/docs.go\nRUN sed -i \"s|github.com/alecthomas/template|text/template|g\" docs/docs.go\n# replace version \"develop\" with actual version\nRUN sed -i \"s/version: develop/version: ${version}/g\" docs/swagger.yaml\n\n# Build the command inside the container.\n# (You may fetch or manage dependencies here,\n# either manually or with a tool like \"godep\".)\nRUN GOOS=linux go build -ldflags '-linkmode=external' -gcflags=\"${SKAFFOLD_GO_GCFLAGS}\" -v main.go\n\n# Use a Docker multi-stage build to create a lean production image.\nFROM alpine:3.16 as production\nARG version=develop\nLABEL org.opencontainers.image.source=\"https://github.com/keptn/keptn\" \\\n    org.opencontainers.image.url=\"https://keptn.sh\" \\\n    org.opencontainers.image.title=\"Keptn Statistics Service\" \\\n    org.opencontainers.image.vendor=\"Keptn\" \\\n    org.opencontainers.image.documentation=\"https://keptn.sh/docs/\" \\\n    org.opencontainers.image.licenses=\"Apache-2.0\" \\\n    org.opencontainers.image.version=\"${version}\"\n\nENV env=production\n\n# we need to install ca-certificates and libc6-compat for go programs to work properly\nRUN apk add --no-cache ca-certificates libc6-compat\n\n# Copy the binary to the production image from the builder stage.\nCOPY --from=builder /go/src/github.com/keptn/keptn/statistics-service/main /statistics-service\nCOPY --from=builder /go/src/github.com/keptn/keptn/statistics-service/swagger-ui /swagger-ui\n\nCOPY --from=builder /go/src/github.com/keptn/keptn/statistics-service/docs/swagger.yaml /swagger-ui/swagger-original.yaml\nCOPY --from=builder /go/src/github.com/keptn/keptn/statistics-service/docs/swagger.yaml /swagger-ui/swagger.yaml\nRUN sed -i \"s|basePath: /v1|basePath: /api/statistics/v1 |g\" /swagger-ui/swagger.yaml\n\nEXPOSE 8080\n\n# required for external tools to detect this as a go binary\nENV GOTRACEBACK=all\n\nRUN adduser -D nonroot -u 65532\nUSER nonroot\n\n# Run the web service on container startup.\nENV GIN_MODE=release\nCMD [\"/statistics-service\"]\n"
+}

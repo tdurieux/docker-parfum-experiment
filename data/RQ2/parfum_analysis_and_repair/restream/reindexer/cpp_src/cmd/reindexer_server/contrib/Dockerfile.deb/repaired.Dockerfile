@@ -1,0 +1,35 @@
+FROM debian:stable-slim AS build
+
+RUN apt update -y && apt install --no-install-recommends -y libunwind-dev build-essential libsnappy-dev libleveldb-dev \
+    make curl unzip git cmake libjemalloc-dev \
+    libgrpc++-dev protobuf-compiler-grpc protobuf-compiler libprotobuf-dev && rm -rf /var/lib/apt/lists/*;
+
+ADD . /src
+
+RUN cd /src && \
+    mkdir build && \
+    cd build && \
+    cmake -DCMAKE_BUILD_TYPE=RelWithDebInfo -DENABLE_GRPC=On -DGRPC_PACKAGE_PROVIDER="MODULE" .. && \
+    make -j8 reindexer_server reindexer_tool && \
+    make install -C cpp_src/cmd/reindexer_server && \
+    make install -C cpp_src/cmd/reindexer_tool && \
+    make install -C cpp_src/server/grpc && \
+    cp /src/cpp_src/cmd/reindexer_server/contrib/entrypoint.sh /entrypoint.sh
+
+FROM debian:stable-slim
+COPY --from=build /usr/local /usr/local
+COPY --from=build /entrypoint.sh /entrypoint.sh
+RUN apt update -y && apt install --no-install-recommends -y libleveldb1d libunwind8 libjemalloc2 libgrpc++1 && rm -rf /var/lib/apt && rm -rf /var/lib/apt/lists/*;
+
+ENV RX_DATABASE /db
+ENV RX_CORELOG stdout
+ENV RX_HTTPLOG stdout
+ENV RX_RPCLOG stdout
+ENV RX_SERVERLOG stdout
+ENV RX_LOGLEVEL info
+
+RUN chmod +x /entrypoint.sh
+
+EXPOSE 9088 6534 16534
+ENTRYPOINT ["/entrypoint.sh"]
+CMD [""]

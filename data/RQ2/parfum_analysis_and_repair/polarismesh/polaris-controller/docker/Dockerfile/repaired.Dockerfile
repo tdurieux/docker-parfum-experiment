@@ -1,0 +1,14 @@
+FROM alpine:latest
+RUN apk update \
+    && apk add --no-cache tzdata \
+    && apk add --no-cache bash \
+    && apk add --no-cache curl \
+    && cp /usr/share/zoneinfo/Asia/Shanghai /etc/localtime \
+    && echo "Asia/Shanghai" > /etc/timezone
+
+RUN mkdir -p /polaris-controller/log && \
+    chmod -R 755 /polaris-controller
+
+WORKDIR /polaris-controller
+COPY ./bin/polaris-controller /polaris-controller/polaris-controller
+COPY ./docker/polaris.yaml /polaris-controller/polaris.yaml

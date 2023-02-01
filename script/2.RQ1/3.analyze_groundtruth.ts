@@ -1,8 +1,7 @@
 import { basename, join } from "path";
 import config from "../../config";
-import { readAnalsysiResults, smellName, walk } from "../utils";
-import { readFile } from "fs/promises";
-import { RULES } from "@tdurieux/docker-parfum";
+import { readAnalsysiResults, smellName, walk, walkSync } from "../utils";
+import { readFile, writeFile } from "fs/promises";
 import { Position } from "@tdurieux/dinghy/build/docker-type";
 
 async function main() {
@@ -16,7 +15,7 @@ async function main() {
 
   const binnacleResultPath = join(
     config.dataFolder,
-    "reproduction/results-github-individual.txt"
+    "dataset/binnacle/results-github-individual.txt"
   );
   const binnacleResults = (await readFile(binnacleResultPath, "utf-8"))
     .split("\n")
@@ -42,8 +41,17 @@ async function main() {
     .filter((f) => f);
 
   let missingAnalysis = 0;
+
+  await writeFile(
+    join(config.docsFolder, `data/ground-truth/dockerfiles.json`),
+    JSON.stringify(
+      walkSync(config.groundTrustDockerfiles).map((x) => basename(x)),
+      null,
+      2
+    )
+  );
+
   await walk(config.groundTrusts, async (path) => {
-    // if (!path.endsWith("fca7c360b3659e3a00471ee952fdcd6b00785667.json")) return;
     const groundTrust: { [key: string]: Partial<Position>[] } = JSON.parse(
       await readFile(path, "utf-8")
     );
@@ -54,6 +62,10 @@ async function main() {
 
     const binnacleResult = binnacleResults.find(
       (r) => r.file === basename(path).replace(".json", "")
+    );
+    await writeFile(
+      join(config.docsFolder, `data/results/binnacle/${basename(path)}`),
+      JSON.stringify(binnacleResult, null, 2)
     );
     const binnacleTruePositive = [];
     const binnacleFalsePositive = [];
@@ -92,6 +104,11 @@ async function main() {
     );
     try {
       const parfumResult = await readAnalsysiResults(parfumResultPath);
+      await writeFile(
+        join(config.docsFolder, `data/results/parfum/${basename(path)}`),
+        JSON.stringify(parfumResult, null, 2)
+      );
+
       // compare results to ground truth
       for (const smell in groundTrust) {
         for (const position of groundTrust[smell]) {
@@ -214,7 +231,7 @@ async function main() {
   console.log(`\\def\\avgBinnacleRecall{${avergage(binnacleRecalls)}}`);
   console.log(`\\def\\medBinnacleRecall{${median(binnacleRecalls)}}`);
 
-  console.log(`\\def{\\avgBinnacleFScore{${avergage(binnacleF1s)}}`);
+  console.log(`\\def\\avgBinnacleFScore{${avergage(binnacleF1s)}}`);
   console.log(`\\def\\medBinnacleFScore{${median(binnacleF1s)}}`);
 }
 

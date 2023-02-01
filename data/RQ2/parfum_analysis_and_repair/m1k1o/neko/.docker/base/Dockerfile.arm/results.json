@@ -1,0 +1,26 @@
+{
+  "startTime": 1674249786567,
+  "endTime": 1674249787755,
+  "originalSmells": [
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 45,
+        "lineEnd": 45,
+        "columnStart": 4,
+        "columnEnd": 15
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 38,
+        "lineEnd": 38,
+        "columnStart": 4,
+        "columnEnd": 70
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "#\n# STAGE 1: SERVER\n#\nFROM arm32v7/golang:1.18-buster as server\nWORKDIR /src\n\n#\n# install dependencies\nRUN set -eux; apt-get update; \\\n    apt-get install -y --no-install-recommends git cmake make python2 libx11-dev libxrandr-dev libxtst-dev \\\n    libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-plugins-bad gstreamer1.0-plugins-ugly gstreamer1.0-omx; \\\n    #\n    # install libclipboard\n    set -eux; \\\n    cd /tmp; \\\n    git clone https://github.com/jtanx/libclipboard; \\\n    cd libclipboard; \\\n    cmake .; \\\n    make -j4; \\\n    make install; \\\n    rm -rf /tmp/libclipboard; \\\n    #\n    # clean up\n    apt-get clean -y; \\\n    rm -rf /var/lib/apt/lists/* /var/cache/apt/*\n\n#\n# build server\nCOPY server/ .\nRUN go get -v -t -d . && go build -o bin/neko cmd/neko/main.go\n\n#\n# STAGE 2: CLIENT\n#\nFROM node:14-buster-slim as client\n\n# install dependencies\nRUN set -eux; apt-get update; \\\n    apt-get install -y --no-install-recommends python2 build-essential && rm -rf /var/lib/apt/lists/*;\n\nWORKDIR /src\n\n#\n# install dependencies\nCOPY client/package*.json ./\nRUN npm install && npm cache clean --force;\n\n#\n# build client\nCOPY client/ .\nRUN npm run build\n\n#\n# STAGE 3: RUNTIME\n#\nFROM arm32v7/debian:buster-slim\n\n#\n# avoid warnings by switching to noninteractive\nENV DEBIAN_FRONTEND=noninteractive\n\n#\n# set custom user\nARG USERNAME=neko\nARG USER_UID=1000\nARG USER_GID=$USER_UID\n\n#\n# install dependencies\nRUN set -eux; apt-get update; \\\n    apt-get install -y --no-install-recommends wget ca-certificates supervisor; \\\n    apt-get install -y --no-install-recommends pulseaudio dbus-x11 xserver-xorg-video-dummy; \\\n    apt-get install -y --no-install-recommends libcairo2 libxcb1 libxrandr2 libxv1 libopus0 libvpx5; \\\n    #\n    # gst\n    apt-get install -y --no-install-recommends libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \\\n                    gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-plugins-bad gstreamer1.0-plugins-ugly gstreamer1.0-pulseaudio gstreamer1.0-omx; \\\n    #\n    # fonts\n    apt-get install -y --no-install-recommends fonts-takao-mincho fonts-wqy-zenhei; \\\n    #\n    # create a non-root user\n    groupadd --gid $USER_GID $USERNAME; \\\n    useradd --uid $USER_UID --gid $USERNAME --shell /bin/bash --create-home $USERNAME; \\\n    adduser $USERNAME audio; \\\n    adduser $USERNAME video; \\\n    adduser $USERNAME pulse; \\\n    #\n    # setup pulseaudio\n    mkdir -p /home/$USERNAME/.config/pulse/; \\\n    echo \"default-server=unix:/tmp/pulseaudio.socket\" > /home/$USERNAME/.config/pulse/client.conf; \\\n    #\n    # workaround for an X11 problem: http://blog.tigerteufel.de/?p=476\n    mkdir /tmp/.X11-unix; \\\n    chmod 1777 /tmp/.X11-unix; \\\n    chown $USERNAME /tmp/.X11-unix/; \\\n    #\n    # make directories for neko\n    mkdir -p /etc/neko /var/www /var/log/neko; \\\n    chmod 1777 /var/log/neko; \\\n    chown $USERNAME /var/log/neko/; \\\n    chown -R $USERNAME:$USERNAME /home/$USERNAME; \\\n    #\n    # clean up\n    apt-get clean -y; \\\n    rm -rf /var/lib/apt/lists/* /var/cache/apt/*\n\n#\n# copy config files\nCOPY .docker/base/dbus /usr/bin/dbus\nCOPY .docker/base/default.pa /etc/pulse/default.pa\nCOPY .docker/base/supervisord.conf /etc/neko/supervisord.conf\nCOPY .docker/base/xorg.conf /etc/neko/xorg.conf\n\n#\n# set default envs\nENV USER=$USERNAME\nENV DISPLAY=:99.0\nENV NEKO_PASSWORD=neko\nENV NEKO_PASSWORD_ADMIN=admin\nENV NEKO_BIND=:8080\n\n#\n# copy static files from previous stages\nCOPY --from=server /src/bin/neko /usr/bin/neko\nCOPY --from=client /src/dist/ /var/www\n\nHEALTHCHECK --interval=10s --timeout=5s --retries=8 \\\n    CMD wget -O - http://localhost:${NEKO_BIND#*:}/health || exit 1\n\n#\n# run neko\nCMD [\"/usr/bin/supervisord\", \"-c\", \"/etc/neko/supervisord.conf\"]\n\n"
+}

@@ -1,0 +1,17 @@
+FROM node:14.13.1
+
+WORKDIR /usr/src/app/
+USER root
+RUN mkdir -p /usr/src/app && cd /usr/src/app && rm -rf /usr/src/app
+COPY src/dashboard /usr/src/app
+RUN yarn --network-timeout 600000 && yarn run build && yarn cache clean;
+
+FROM nginx:1.15.12
+COPY --from=0 /usr/src/app/dist /usr/share/nginx/html
+COPY build_image/docker/common/dashboard/config-nginx.sh /
+RUN chmod +x /config-nginx.sh
+COPY build_image/docker/common/dashboard/nginx.conf /etc/nginx/
+
+EXPOSE 8081
+
+CMD ["bash", "-c", "nginx -g 'daemon off;'"]

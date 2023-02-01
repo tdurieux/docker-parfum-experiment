@@ -1,0 +1,62 @@
+{
+  "startTime": 1674219415081,
+  "endTime": 1674219416600,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 136,
+        "lineEnd": 136,
+        "columnStart": 2,
+        "columnEnd": 107
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 220,
+        "lineEnd": 220,
+        "columnStart": 5,
+        "columnEnd": 30
+      }
+    },
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 222,
+        "lineEnd": 222,
+        "columnStart": 5,
+        "columnEnd": 36
+      }
+    },
+    {
+      "rule": "sha256sumEchoOneSpaces",
+      "position": {
+        "lineStart": 137,
+        "lineEnd": 137,
+        "columnStart": 2,
+        "columnEnd": 54
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 39,
+        "lineEnd": 39,
+        "columnStart": 8,
+        "columnEnd": 131
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 49,
+        "lineEnd": 73,
+        "columnStart": 8,
+        "columnEnd": 22
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "{{- $beatHome := printf \"%s/%s\" \"/usr/share\" .BeatName }}\n{{- $beatBinary := printf \"%s/%s\" $beatHome .BeatName }}\n{{- $repoInfo := repo }}\n\n# Prepare home in a different stage to avoid creating additional layers on\n# the final image because of permission changes.\nFROM {{ .buildFrom }} AS home\n\nCOPY beat {{ $beatHome }}\n\nRUN mkdir -p {{ $beatHome }}/data {{ $beatHome }}/data/elastic-agent-{{ commit_short }}/logs && \\\n    chown -R root:root {{ $beatHome }} && \\\n    find {{ $beatHome }} -type d -exec chmod 0755 {} \\; && \\\n    find {{ $beatHome }} -type f -exec chmod 0644 {} \\; && \\\n    find {{ $beatHome }}/data -type d -exec chmod 0770 {} \\; && \\\n    find {{ $beatHome }}/data -type f -exec chmod 0660 {} \\; && \\\n    rm {{ $beatBinary }} && \\\n    ln -s {{ $beatHome }}/data/elastic-agent-{{ commit_short }}/elastic-agent {{ $beatBinary }} && \\\n    chmod 0755 {{ $beatHome }}/data/elastic-agent-*/elastic-agent && \\\n{{- range $i, $modulesd := .ModulesDirs }}\n    chmod 0775 {{ $beatHome}}/{{ $modulesd }} && \\\n{{- end }}\n{{- if contains .image_name \"-cloud\" }}\n    mkdir -p /opt/filebeat /opt/metricbeat && \\\n    tar xf {{ $beatHome }}/data/elastic-agent-*/downloads/metricbeat-*.tar.gz -C /opt/metricbeat --strip-components=1 && \\\n    tar xf {{ $beatHome }}/data/elastic-agent-*/downloads/filebeat-*.tar.gz -C /opt/filebeat --strip-components=1 && \\\n{{- end }}\n    true\n\nFROM {{ .from }}\n\nENV BEAT_SETUID_AS={{ .user }}\n\n{{- if contains .from \"ubi-minimal\" }}\nRUN for iter in {1..10}; do microdnf update -y && microdnf install -y tar gzip findutils shadow-utils && microdnf clean all && exit_code=0 && break || exit_code=$? && echo \"microdnf error: retry $iter in 10s\" && sleep 10; done; (exit $exit_code)\n{{- else }}\n\nRUN for iter in {1..10}; do \\\n        apt-get update -y && \\\n        DEBIAN_FRONTEND=noninteractive apt-get install --no-install-recommends --yes ca-certificates curl gawk libcap2-bin xz-utils && \\\n        apt-get clean all && \\\n        exit_code=0 && break || exit_code=$? && echo \"apt-get error: retry $iter in 10s\" && sleep 10; \\\n    done; rm -rf /var/lib/apt/lists/*; \\\n    (exit $exit_code)\n{{- end }}\n\n{{- if (and (contains .image_name \"-complete\") (not (contains .from \"ubi-minimal\"))) }}\nRUN apt-get update -y && \\\n    for iter in {1..10}; do \\\n        DEBIAN_FRONTEND=noninteractive apt-get install --no-install-recommends --yes \\\n        libglib2.0-0\\\n        libnss3\\\n        libnspr4\\\n        libatk1.0-0\\\n        libatk-bridge2.0-0\\\n        libcups2\\\n        libdrm2\\\n        libdbus-1-3\\\n        libxcb1\\\n        libxkbcommon0\\\n        libx11-6\\\n        libxcomposite1\\\n        libxdamage1\\\n        libxext6\\\n        libxfixes3\\\n        libxrandr2\\\n        libgbm1\\\n        libpango-1.0-0\\\n        libcairo2\\\n        libasound2\\\n        libatspi2.0-0\\\n        libxshmfence1 \\\n        fonts-noto-core\\\n        fonts-noto-cjk &&\\\n        apt-get clean all && \\\n        exit_code=0 && break || exit_code=$? && echo \"apt-get error: retry $iter in 10s\" && sleep 10; \\\n    done; rm -rf /var/lib/apt/lists/*; \\\n    (exit $exit_code)\nENV NODE_PATH={{ $beatHome }}/.node\nRUN echo \\\n    $NODE_PATH \\\n    {{ $beatHome }}/.config \\\n    {{ $beatHome }}/.synthetics \\\n    {{ $beatHome }}/.npm \\\n    {{ $beatHome }}/.cache \\\n    | xargs -IDIR sh -c 'mkdir -p DIR && chmod 0770 DIR'\n{{- end }}\n\nLABEL \\\n  org.label-schema.build-date=\"{{ date }}\" \\\n  org.label-schema.schema-version=\"1.0\" \\\n  org.label-schema.vendor=\"{{ .BeatVendor }}\" \\\n  org.label-schema.license=\"{{ .License }}\" \\\n  org.label-schema.name=\"{{ .BeatName }}\" \\\n  org.label-schema.version=\"{{ beat_version }}{{if .Snapshot}}-SNAPSHOT{{end}}\" \\\n  org.label-schema.url=\"{{ .BeatURL }}\" \\\n  org.label-schema.vcs-url=\"{{ $repoInfo.RootImportPath }}\" \\\n  org.label-schema.vcs-ref=\"{{ commit }}\" \\\n  io.k8s.description=\"{{ .BeatDescription }}\" \\\n  io.k8s.display-name=\"{{ .BeatName | title }} image\" \\\n  org.opencontainers.image.created=\"{{ date }}\" \\\n  org.opencontainers.image.licenses=\"{{ .License }}\" \\\n  org.opencontainers.image.title=\"{{ .BeatName | title }}\" \\\n  org.opencontainers.image.vendor=\"{{ .BeatVendor }}\" \\\n  name=\"{{ .BeatName }}\" \\\n  maintainer=\"infra@elastic.co\" \\\n  vendor=\"{{ .BeatVendor }}\" \\\n  version=\"{{ beat_version }}{{if .Snapshot}}-SNAPSHOT{{end}}\" \\\n  release=\"1\" \\\n  url=\"{{ .BeatURL }}\" \\\n  summary=\"{{ .BeatName }}\" \\\n  license=\"{{ .License }}\" \\\n  description=\"{{ .BeatDescription }}\"\n\nENV ELASTIC_CONTAINER \"true\"\nENV PATH={{ $beatHome }}:$PATH\nENV GODEBUG=\"madvdontneed=1\"\n\n# Add an init process, check the checksum to make sure it's a match\nRUN set -e ; \\\n  TINI_BIN=\"\"; \\\n  TINI_SHA256=\"\"; \\\n  TINI_VERSION=\"v0.19.0\"; \\\n  case \"$(arch)\" in \\\n    x86_64) \\\n        TINI_BIN=\"tini-amd64\"; \\\n        TINI_SHA256=\"93dcc18adc78c65a028a84799ecf8ad40c936fdfc5f2a57b1acda5a8117fa82c\"; \\\n        ;; \\\n    aarch64) \\\n        TINI_BIN=\"tini-arm64\"; \\\n        TINI_SHA256=\"07952557df20bfd2a95f9bef198b445e006171969499a1d361bd9e6f8e5e0e81\"; \\\n        ;; \\\n    *) \\\n        echo >&2 ; echo >&2 \"Unsupported architecture \\$(arch)\" ; echo >&2 ; exit 1 ; \\\n        ;; \\\n  esac ; \\\n  curl -f --retry 8 -S -L -O \"https://github.com/krallin/tini/releases/download/${TINI_VERSION}/${TINI_BIN}\"; \\\n  echo \"${TINI_SHA256}  ${TINI_BIN}\" | sha256sum -c -; \\\n  mv \"${TINI_BIN}\" /usr/bin/tini ; \\\n  chmod +x /usr/bin/tini\n\nCOPY docker-entrypoint /usr/local/bin/docker-entrypoint\nRUN chmod 755 /usr/local/bin/docker-entrypoint\n\nCOPY --from=home {{ $beatHome }} {{ $beatHome }}\n\n# Elastic Agent needs group permissions in the home itself to be able to\n# create fleet.yml when running as non-root.\nRUN chmod 0770 {{ $beatHome }}\n\nRUN mkdir /licenses\nCOPY --from=home {{ $beatHome }}/LICENSE.txt /licenses\nCOPY --from=home {{ $beatHome }}/NOTICE.txt /licenses\n\n{{- if contains .image_name \"-cloud\" }}\nCOPY --from=home /opt /opt\n{{- end }}\n\n{{- if .linux_capabilities }}\n# Since the beat is stored at the other end of a symlink we must follow the symlink first\n# For security reasons setcap does not support symlinks. This is smart in the general case\n# but in our specific case since we're building a trusted image from trusted binaries this is\n# fine. Thus, we use readlink to follow the link and setcap on the actual binary\nRUN readlink -f {{ $beatBinary }} | xargs setcap {{ .linux_capabilities }}\n{{- end }}\n\n{{- if eq .user \"root\" }}\n{{- if contains .image_name \"-cloud\" }}\n# Generate folder for a stub command that will be overwritten at runtime\nRUN mkdir /app\n{{- end }}\n{{- else }}\nRUN groupadd --gid 1000 {{ .BeatName }}\nRUN useradd -M --uid 1000 --gid 1000 --groups 0 --home {{ $beatHome }} {{ .user }}\n{{- if (and (contains .image_name \"-complete\") (not (contains .from \"ubi-minimal\")))  }}\nRUN chown {{ .user }} $NODE_PATH\n{{- end }}\n{{- if contains .image_name \"-cloud\" }}\n# Generate folder for a stub command that will be overwritten at runtime\nRUN mkdir /app\nRUN chown {{ .user }} /app\n{{- end }}\n{{- end }}\n\n# Unpack beats to default install directory\nRUN mkdir -p {{ $beatHome }}/data/{{.BeatName}}-{{ commit_short }}/{{ .beats_install_path }} && \\\n    for beatPath in {{ $beatHome }}/data/{{.BeatName}}-{{ commit_short }}/downloads/*.tar.gz; do \\\n    tar xf $beatPath -C {{ $beatHome }}/data/{{.BeatName}}-{{ commit_short }}/{{ .beats_install_path }}; \\\n    done && \\\n    chown -R {{ .user }}:{{ .user }} {{ $beatHome }}/data/{{.BeatName}}-{{ commit_short }}/{{ .beats_install_path }} && \\\n    chown -R root:root {{ $beatHome }}/data/{{.BeatName}}-{{ commit_short }}/{{ .beats_install_path }}/*/*.yml && \\\n    chmod 0644 {{ $beatHome }}/data/{{.BeatName}}-{{ commit_short }}/{{ .beats_install_path }}/*/*.yml && \\\n    # heartbeat requires cap_net_raw,cap_setuid to run ICMP checks and change npm user\n    setcap cap_net_raw,cap_setuid+p {{ $beatHome }}/data/{{.BeatName}}-{{ commit_short }}/{{ .beats_install_path }}/heartbeat-*/heartbeat\n\nUSER {{ .user }}\n\n{{- if (and (contains .image_name \"-complete\") (not (contains .from \"ubi-minimal\")))  }}\n# Setup synthetics env vars\nENV ELASTIC_SYNTHETICS_CAPABLE=true\nENV SUITES_DIR={{ $beatHome }}/suites\nENV NODE_VERSION=16.15.0\nENV PATH=\"$NODE_PATH/node/bin:$PATH\"\n# Install the latest version of @elastic/synthetics forcefully ignoring the previously\n# cached node_modules, heartbeat then calls the global executable to run test suites\n# Setup node\nRUN cd {{$beatHome}}/.node \\\n  && NODE_DOWNLOAD_URL=\"\" \\\n  && case \"$(arch)\" in \\\n       x86_64) \\\n           NODE_DOWNLOAD_URL=https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64.tar.xz \\\n           ;; \\\n       aarch64) \\\n           NODE_DOWNLOAD_URL=https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-arm64.tar.xz \\\n           ;; \\\n       *) \\\n           echo >&2 ; echo >&2 \"Unsupported architecture \\$(arch)\" ; echo >&2 ; exit 1 ; \\\n           ;; \\\n     esac \\\n  && mkdir -p node \\\n  && curl -f ${NODE_DOWNLOAD_URL} | tar -xJ --strip 1 -C node \\\n  && chmod ug+rwX -R $NODE_PATH \\\n  && npm i -g -f @elastic/synthetics && chmod ug+rwX -R $NODE_PATH && npm cache clean --force;\n{{- end }}\n\n\n{{- range $i, $port := .ExposePorts }}\nEXPOSE {{ $port }}\n{{- end }}\n\n# When running under Docker, we must ensure libbeat monitoring pulls cgroup\n# metrics from /sys/fs/cgroup/<subsystem>/, ignoring any paths found in\n# /proc/self/cgroup.\nENV LIBBEAT_MONITORING_CGROUPS_HIERARCHY_OVERRIDE=/\n\nWORKDIR {{ $beatHome }}\n\n{{- if contains .image_name \"-cloud\" }}\nENTRYPOINT [\"/usr/bin/tini\", \"--\"]\nCMD [\"/app/apm.sh\"]\n# Generate a stub command that will be overwritten at runtime\nRUN echo -e '#!/bin/sh\\nexec /usr/local/bin/docker-entrypoint' > /app/apm.sh && \\\n    chmod 0555 /app/apm.sh\n{{- else }}\nENTRYPOINT [\"/usr/bin/tini\", \"--\", \"/usr/local/bin/docker-entrypoint\"]\n{{- end }}\n\n"
+}

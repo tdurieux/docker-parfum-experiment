@@ -1,0 +1,13 @@
+FROM centos:8
+RUN yum update -y
+RUN yum install -y initscripts python2 python3 gcc && rm -rf /var/cache/yum
+RUN yum install -y python2-devel python2-pip python3-devel python3-pip && rm -rf /var/cache/yum
+
+COPY dev-requirements.txt dev-requirements.txt
+ADD agent_build/requirement-files agent_build/requirement-files
+
+RUN python2 -m pip install -r dev-requirements.txt
+# We need newer version of pip since old version don't support manylinux wheels
+RUN python3 -m pip install --upgrade "pip==21.0"
+RUN python3 -m pip --version
+RUN python3 -m pip install -r dev-requirements.txt

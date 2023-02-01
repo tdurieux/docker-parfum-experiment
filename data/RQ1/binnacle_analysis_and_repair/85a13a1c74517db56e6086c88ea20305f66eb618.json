@@ -1,0 +1,35 @@
+{
+  "startTime": 1674236006075,
+  "endTime": 1674236006826,
+  "originalSmells": [
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 56,
+        "lineEnd": 63,
+        "columnStart": 4,
+        "columnEnd": 67
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 4,
+        "lineEnd": 4,
+        "columnStart": 4,
+        "columnEnd": 74
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 8,
+        "lineEnd": 8,
+        "columnStart": 4,
+        "columnEnd": 94
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM debian:stretch-slim\nARG cores=12\n#Do not remove /var/lib/apt/lists due to later download\nRUN apt-get update && \\\n    apt-get install -y --no-install-recommends wget ca-certificates gnupg2 && \\\n    (wget https://archive.raspbian.org/raspbian.public.key -O - | apt-key add - ) && \\\n    echo \"deb [arch=amd64] http://deb.debian.org/debian stretch main\\ndeb [arch=armhf] http://mirrordirector.raspbian.org/raspbian/ stretch main rpi\" > /etc/apt/sources.list && \\\n    apt-get update && \\\n    apt-get install -y --no-install-recommends xz-utils bzip2 git make zip g++ python3-minimal && rm -rf /var/lib/apt/lists/*;\n\nENV prebuilt=/build/prebuilt toolchains=/build/toolchains\nWORKDIR /build\n\n# Toolchain from https://github.com/abhiTronix/raspberry-pi-cross-compilers\nENV gcc=8.3.0\nRUN mkdir -p ${toolchains} && cd ${toolchains} && \\\n    (wget -q https://sourceforge.net/projects/raspberry-pi-cross-compilers/files/Raspberry%20Pi%20GCC%20Cross-Compiler%20Toolchains/GCC%20${gcc}/Raspberry%20Pi%201%2C%20Zero/cross-gcc-${gcc}-pi_0-1.tar.gz -O - | tar -xz) && \\\n    (find cross-pi-gcc* -name '*6.3.0*' -print0 | xargs -0 rm -Rf) && \\\n    mv cross-pi-gcc* armhf-linux\n\nENV boost=1.70.0\nRUN bash -c \"wget -q https://dl.bintray.com/boostorg/release/${boost}/source/boost_\\${boost//./_}.tar.bz2 -O - | tar -xj\" && \\\n    cd boost_* && ./bootstrap.sh && \\\n    echo \"using gcc : ${gcc} : ${toolchains}/armhf-linux/bin/arm-linux-gnueabihf-g++  ;\" > tools/build/src/user-config.jam && \\\n    ./bjam toolset=gcc-${gcc} link=static threading=multi target-os=linux variant=release --layout=system \\\n      cflags=\"-march=armv6 -mfpu=vfp -mfloat-abi=hard -ffunction-sections -fdata-sections\" \\\n      --with-filesystem --with-locale --with-program_options --with-system -j${cores} \\\n      --includedir=${prebuilt}/boost-${boost}/include --libdir=${prebuilt}/boost-${boost}-linux-armhf/lib install && \\\n    cd .. && rm -Rf boost_*\n\n# Cross-root\nENV crossroot=${prebuilt}/root-linux-armhf\nRUN mkdir -p ${crossroot} && cd ${crossroot} && \\\n    bash -c \"apt download {libbsd0,libc6,libx11-6,libxau6,libxcb1,libxdmcp6,libxext6}:armhf \\\n               {libfontconfig1,libexpat1,libfreetype6,libx11,libxcursor,libxext,libxfixes,libxrandr,libxrender,zlib1g}-dev:armhf \\\n               x11proto-{core,fixes,randr,render,xext}-dev \\\n               {libasound2,libpulse}-dev:armhf \\\n               2>/dev/null\" && \\\n    (for pkg in *.deb ; do dpkg -x ${pkg} . ; done) && \\\n    rm *.deb\n\nENV qt=4.8.7\nRUN bash -c \"wget -q http://download.qt.io/archive/qt/${qt%.*}/${qt}/qt-everywhere-opensource-src-${qt}.tar.gz -O - | tar -xz\" && \\\n    cd qt-everywhere* && \\\n    (mkdir mkspecs/linux-g++-armhf && cd mkspecs/linux-g++-armhf && \\\n      cp ../linux-g++/qplatformdefs.h . && \\\n      echo \"include(../linux-g++/qmake.conf)\\n\"\\\n        \"QMAKE_CFLAGS = -march=armv6 -mfpu=vfp -mfloat-abi=hard\\n\"\\\n        \"CONFIG += hide_symbols\\n\"\\\n        \"CROSS_COMPILE=${toolchains}/armhf-linux/bin/arm-linux-gnueabihf-\\n\"\\\n        \"CROSSROOT=${crossroot}\\n\"\\\n        \"QMAKE_INCDIR_X11=\\$\\${CROSSROOT}/usr/include \\$\\${CROSSROOT}/usr/include/freetype2\\n\"\\\n        \"QMAKE_LIBDIR_X11=\\$\\${CROSSROOT}/usr/lib/arm-linux-gnueabihf\\n\"\\\n        \"QMAKE_LFLAGS=-Wl,-rpath-link,\\$\\${CROSSROOT}/lib/arm-linux-gnueabihf -Wl,-rpath-link,\\$\\${QMAKE_LIBDIR_X11}\\n\"\\\n      > qmake.conf && \\\n      grep CROSS_COMPILE ../win32-g++/qmake.conf >> qmake.conf ) && \\\n    ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" -v -arch arm -xplatform linux-g++-armhf -prefix ${prebuilt}/qt-${qt}-linux-armhf \\\n      -release -opensource -static -fast -confirm-license \\\n      -no-accessibility -no-opengl -no-openvg -no-sql-sqlite -no-qt3support -no-xmlpatterns -no-multimedia -no-audio-backend -no-phonon -no-phonon-backend \\\n      -no-svg -no-webkit -no-javascript-jit -no-script -no-scripttools -no-declarative -no-declarative-debug \\\n      -qt-libpng -fontconfig -xrender -xrandr -xfixes -xshape -no-sm -no-nas-sound -no-neon \\\n      -no-gif -no-libtiff -no-libmng -no-libjpeg -no-openssl -no-nis -no-cups -no-pch -no-qdbus -no-dbus -no-gtkstyle -no-glib \\\n      -nomake demos -nomake examples -nomake docs -nomake translations -nomake assistant -nomake qdoc3 -nomake qtracereplay -nomake linguist \\\n      -nomake qt3to4 -nomake qcollectiongenerator -nomake pixeltool && \\\n    make -j${cores} install && \\\n    cd .. && rm -Rf qt-everywhere*\n\nWORKDIR /build/zxtune\nRUN git init && \\\n    git remote add --tags origin https://bitbucket.org/zxtune/zxtune.git && \\\n    echo \"platform=linux\\narch=armhf\\npackaging?=any\\ntools.python=python3\\n\"\\\n         \"prebuilt.dir=${prebuilt}\\ntoolchains.root=${toolchains}\\nboost.version=${boost}\\nqt.version=${qt}\\n\"\\\n         \"system.zlib=1\\nlibraries.dirs.linux+=\\$(linux.armhf.crossroot)/usr/lib/arm-linux-gnueabihf\\nlibraries.linux+=expat\\n\" > variables.mak\nCOPY entrypoint.sh .\nENTRYPOINT [\"./entrypoint.sh\"]\nCMD [\"package\", \"-C\", \"apps/bundle\"]\n"
+}

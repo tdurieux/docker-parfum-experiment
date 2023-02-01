@@ -1,0 +1,14 @@
+FROM hazelcast-platform-demos/cva-cpp-tmp2:latest
+
+RUN apt-get install --no-install-recommends -y libboost-all-dev && \
+  wget https://github.com/lballabio/QuantLib/releases/download/QuantLib-v1.18/QuantLib-1.18.tar.gz && \
+  tar xvf QuantLib-1.18.tar.gz && \
+  rm QuantLib-1.18.tar.gz && \
+  cd QuantLib-1.18 && \
+  ./configure --build="$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)" && \
+  make -j 12 && \
+  make install && \
+  ldconfig && rm -rf /var/lib/apt/lists/*;
+
+# Saves 8GB, but needs "--squash"
+#RUN rm -r /QuantLib-1.18

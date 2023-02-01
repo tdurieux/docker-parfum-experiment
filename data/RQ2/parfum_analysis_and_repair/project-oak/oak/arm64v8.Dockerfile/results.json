@@ -1,0 +1,89 @@
+{
+  "startTime": 1674215543982,
+  "endTime": 1674215545571,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 50,
+        "lineEnd": 50,
+        "columnStart": 4,
+        "columnEnd": 161
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 186,
+        "lineEnd": 186,
+        "columnStart": 5,
+        "columnEnd": 109
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 252,
+        "lineEnd": 252,
+        "columnStart": 4,
+        "columnEnd": 54
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 288,
+        "lineEnd": 288,
+        "columnStart": 4,
+        "columnEnd": 37
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 295,
+        "lineEnd": 295,
+        "columnStart": 4,
+        "columnEnd": 36
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 302,
+        "lineEnd": 302,
+        "columnStart": 4,
+        "columnEnd": 36
+      }
+    },
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 209,
+        "lineEnd": 212,
+        "columnStart": 4,
+        "columnEnd": 42
+      }
+    },
+    {
+      "rule": "sha256sumEchoOneSpaces",
+      "position": {
+        "lineStart": 187,
+        "lineEnd": 187,
+        "columnStart": 42,
+        "columnEnd": 101
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 57,
+        "lineEnd": 58,
+        "columnStart": 5,
+        "columnEnd": 5
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Use fixed snapshot of Debian to create a deterministic environment.\n# Snapshot tags can be found at https://hub.docker.com/r/debian/snapshot/tags\nARG debian_snapshot=latest\n# Use a fixed version of Bazel.\nARG bazel_version=3.0.0\n\n# Build up the static musl toolchain using cross-build\nFROM debian:${debian_snapshot} AS musl-build\nWORKDIR /musl\nRUN apt-get --yes update \\\n  && apt-get install --no-install-recommends --yes \\\n  apt-transport-https \\\n  build-essential \\\n  curl \\\n  git \\\n  openjdk-11-jdk \\\n  python \\\n  python3 \\\n  unzip \\\n  wget \\\n  zip \\\n  zlib1g-dev \\\n  # Cleanup\n  && apt-get clean \\\n  && rm --recursive --force /var/lib/apt/lists/*\nRUN git clone https://github.com/richfelker/musl-cross-make.git\nWORKDIR /musl/musl-cross-make\n# Set the target\nRUN echo \"TARGET=aarch64-linux-musl\" > config.mak\n# Build the target - output ends up in 'output'\nRUN make install\n\n# Bootstrap Bazel Stage\nFROM debian:${debian_snapshot} AS bazel-bootstrap\nWORKDIR /bazel/bazel-dist\nRUN apt-get --yes update \\\n  && apt-get install --no-install-recommends --yes \\\n  apt-transport-https \\\n  build-essential \\\n  curl \\\n  openjdk-11-jdk \\\n  python \\\n  python3 \\\n  unzip \\\n  zip \\\n  zlib1g-dev \\\n  # Cleanup\n  && apt-get clean \\\n  && rm --recursive --force /var/lib/apt/lists/*\nARG bazel_version\nRUN curl -f --location -k https://github.com/bazelbuild/bazel/releases/download/${bazel_version}/bazel-${bazel_version}-dist.zip -o bazel-${bazel_version}-dist.zip\nRUN  unzip bazel-${bazel_version}-dist.zip\nRUN  BUILD_DATE=\"$(date --utc --date=\"@${SOURCE_DATE_EPOCH:-$(date +%s)}\" +%Y-%m-%d)\" EXTRA_BAZEL_ARGS=\"--host_javabase=@local_jdk//:jdk\" bash ./compile.sh\n\n# Rebuild Bazel using bootstrap stage\nFROM bazel-bootstrap AS bazel-build\nRUN apt-get --yes update \\\n  && apt-get install --no-install-recommends --yes \\\n  git && rm -rf /var/lib/apt/lists/*;\nWORKDIR /bazel/bazel-build\nARG bazel_version\nRUN git clone -b ${bazel_version}  https://github.com/bazelbuild/bazel\nWORKDIR /bazel/bazel-build/bazel\nCOPY --from=bazel-bootstrap /bazel/bazel-dist/output/bazel ./bazel-bootstrap\nRUN SOURCE_DATE_EPOCH=$(git log -1 --format=%ct) ./bazel-bootstrap build //src:bazel-dev --compilation_mode=opt\n\n# Main Oak Build - We do not re-use the Bazel intermediates here\nFROM debian:${debian_snapshot}\n\n# Set the SHELL option -o pipefail before RUN with a pipe in.\n# See https://github.com/hadolint/hadolint/wiki/DL4006\nSHELL [\"/bin/bash\", \"-o\", \"pipefail\", \"-c\"]\n\n# Uncomment the RUN below if the default snapshot package manager is slow.\n# Please not that this might cause issues and affects reproducible builds,\n# so only use for development.\n# RUN echo \\\n#  deb http://ukdebian.mirror.anlx.net/debian buster main non-free contrib\\\n# > /etc/apt/sources.list\n\n# Getting curl and certificates dependecies.\nRUN apt-get --yes update \\\n  && apt-get install --no-install-recommends --yes \\\n  apt-transport-https \\\n  build-essential \\\n  ca-certificates \\\n  clang-tidy \\\n  curl \\\n  git \\\n  gnupg2 \\\n  gnupg-agent \\\n  libfl2 \\\n  libncurses5 \\\n  libssl-dev \\\n  musl-tools \\\n  npm \\\n  pkg-config \\\n  procps \\\n  protobuf-compiler \\\n  python3 \\\n  python3-six \\\n  python3-distutils \\\n  shellcheck \\\n  software-properties-common \\\n  vim \\\n  xml2 \\\n  # `unzip` and `zlib1g-dev` are needed for Bazel.\n  unzip \\\n  zlib1g-dev \\\n  # Cleanup\n  && apt-get clean \\\n  && rm --recursive --force /var/lib/apt/lists/* \\\n  # Print version of various installed tools.\n  && git --version \\\n  && shellcheck --version\n\n# Install a version of docker CLI.\nRUN curl --fail --silent --show-error --location https://download.docker.com/linux/debian/gpg | apt-key add -\nRUN echo \"deb https://download.docker.com/linux/debian buster stable\"  > /etc/apt/sources.list.d/backports.list \\\n  && apt-get --yes update \\\n  && apt-get install --no-install-recommends --yes docker-ce-cli \\\n  && apt-get clean \\\n  && rm --recursive --force /var/lib/apt/lists/*\n\n# Use a later version of clang-format from buster-backports.\nRUN echo 'deb http://deb.debian.org/debian buster-backports main' > /etc/apt/sources.list.d/backports.list \\\n  && apt-get --yes update \\\n  && apt-get install --no-install-recommends --yes clang-format-8 \\\n  && apt-get clean \\\n  && rm --recursive --force /var/lib/apt/lists/* \\\n  && ln --symbolic --force clang-format-8 /usr/bin/clang-format\n\n\n# [aarch64] Pull in the bootstrapped Bazel, unfortunately Bazel's Debian\n# packaging is currently amd64 specific\nCOPY --from=bazel-build /bazel/bazel-build/bazel /usr/bin/bazel\n\n# [aarch64] Pull in the musl compiler\nCOPY --from=musl-build /musl/musl-cross-make/output /usr\n\n# Install the necessary binaries and SDKs, ordering them from the less frequently changed to the\n# more frequently changed.\n# See https://docs.docker.com/develop/develop-images/dockerfile_best-practices/#leverage-build-cache.\n\n# [aarch64] Binaryen has components that require building from source as the\n# packaging is amd64 specific.\n# It is disabled for now - A multi-stage approach as per Bazel would seem semsible.\n# Install Emscripten.\n#ARG emscripten_version=1.39.20\n#ARG emscripten_node_version=12.9.1_64bit\n#ARG emscripten_sha256=925dd5ca7dd783d0b367386e81847eaf680d54ae86017c4b5846dea951e17dc9\n\n#ARG emscripten_dir=/usr/local/emsdk\n#ARG emscripten_temp=/tmp/emscripten.zip\n#RUN mkdir --parents ${emscripten_dir} \\\n#  && curl --location https://github.com/emscripten-core/emsdk/archive/${emscripten_version}.tar.gz > ${emscripten_temp} \\\n#  && sha256sum --binary ${emscripten_temp} && echo \"${emscripten_sha256} *${emscripten_temp}\" | sha256sum --check \\\n#  && tar --extract --gzip --file=${emscripten_temp} --directory=${emscripten_dir} --strip-components=1 \\\n#  && rm ${emscripten_temp} \\\n#  && ${emscripten_dir}/emsdk install ${emscripten_version} \\\n#  && ${emscripten_dir}/emsdk activate --embedded ${emscripten_version}\n#ENV EMSDK \"${emscripten_dir}\"\n#ENV EM_CONFIG \"${emscripten_dir}/.emscripten\"\n#ENV EM_CACHE \"${emscripten_dir}/.emscripten_cache\"\n#ENV PATH \"${emscripten_dir}:${emscripten_dir}/node/${emscripten_node_version}/bin:${PATH}\"\n# We need to allow a non-root Docker container to write into the directory\n#RUN chmod --recursive go+wx \"${emscripten_dir}\"\n# Emscripten brings Node with it, we need to allow non-root access to temp folders\n#RUN mkdir \"/.npm\" && chmod a+rwx \"/.npm\"\n\n# Install Go.\nARG golang_version=1.14.6\n# [amd64] ARG golang_sha256=aed845e4185a0b2a3c3d5e1d0a35491702c55889192bb9c30e67a3de6849c067\nARG golang_sha256=291bccfd7d7f1915599bbcc90e49d9fccfcb0004b7c62a2f5cdf0f96a09d6a3e\nARG golang_temp=/tmp/golang.tar.gz\nARG TARGETARCH\nENV GOROOT /usr/local/go\nENV GOPATH ${HOME}/go\nENV PATH \"${GOROOT}/bin:${PATH}\"\nENV PATH \"${GOPATH}/bin:${PATH}\"\nRUN echo  \"Getting go for Platform: $TARGETPLATFORM, OS: $TARGETOS, Arch: $TARGETARCH Variant: $TARGETVARIANT\"\n# Enable Go module behaviour even in the presence of GOPATH; this way we can specify precise\n# versions via `go get`.\n# See https://dev.to/maelvls/why-is-go111module-everywhere-and-everything-about-go-modules-24k\nENV GO111MODULE on\nRUN mkdir --parents ${GOROOT} \\\n  && curl -f --location https://dl.google.com/go/go${golang_version}.linux-${TARGETARCH}.tar.gz > ${golang_temp} \\\n  && sha256sum --binary ${golang_temp} && echo \"${golang_sha256}  *${golang_temp}\" | sha256sum --check \\\n  && tar --extract --gzip --file=${golang_temp} --directory=${GOROOT} --strip-components=1 \\\n  && rm ${golang_temp} \\\n  && go version\n\n# Install embedmd (Markdown snippet embedder) (via Go).\n# https://github.com/campoy/embedmd\nRUN go get github.com/campoy/embedmd@97c13d6 \\\n  && embedmd -v\n\n# Install liche (Markdown link checker) (via Go).\n# https://github.com/raviqqe/liche\nRUN go get github.com/raviqqe/liche@f57a5d1 \\\n  && liche --version\n\n# Install prettier and markdownlint (via Node.js).\n# This will use the Node version installed by emscripten.\n# https://prettier.io/\n# https://github.com/igorshubovych/markdownlint-cli\nARG prettier_version=1.19.1\nARG prettier_plugin_toml_version=0.3.1\nARG markdownlint_version=0.22.0\nRUN npm install --global \\\n  prettier@${prettier_version} \\\n  prettier-plugin-toml@${prettier_plugin_toml_version} \\\n  markdownlint-cli@${markdownlint_version} \\\n  && prettier --version \\\n  && markdownlint --version && npm cache clean --force;\n\n\n# This will require a from source approach as\n# stack have removed arm64 support due to CI limitations\n# May require some integration with Haskell Community.\n#\n# Install hadolint.\n# https://github.com/hadolint/hadolint\n#ARG hadolint_version=1.17.5\n#ARG hadolint_sha256=20dd38bc0602040f19268adc14c3d1aae11af27b463af43f3122076baf827a35\n#ARG hadolint_dir=/usr/local/hadolint/bin\n#ARG hadolint_bin=${hadolint_dir}/hadolint\n#ENV PATH \"${hadolint_dir}:${PATH}\"\n#RUN mkdir --parents ${hadolint_dir} \\\n#  && curl --location https://github.com/hadolint/hadolint/releases/download/v${hadolint_version}/hadolint-Linux-x86_64 > ${hadolint_bin} \\\n#  && sha256sum --binary ${hadolint_bin} && echo \"${hadolint_sha256} *${hadolint_bin}\" | sha256sum --check \\\n#  && chmod +x ${hadolint_bin} \\\n#  && hadolint --version\n\n# Install buildifier.\n# https://github.com/bazelbuild/buildtools/tree/master/buildifier\n# ARG bazel_tools_version=2.2.1\n# ARG buildifier_sha256=731a6a9bf8fca8a00a165cd5b3fbac9907a7cf422ec9c2f206b0a76c0a7e3d62\n# ARG buildifier_dir=/usr/local/buildifier/bin\n#ARG buildifier_bin=${buildifier_dir}/buildifier\n#ENV PATH \"${buildifier_dir}:${PATH}\"\n#RUN mkdir --parents ${buildifier_dir} \\\n#  && curl --location https://github.com/bazelbuild/buildtools/releases/download/${bazel_tools_version}/buildifier > ${buildifier_bin} \\\n#  && sha256sum --binary ${buildifier_bin} && echo \"${buildifier_sha256} *${buildifier_bin}\" | sha256sum --check \\\n#  && chmod +x ${buildifier_bin} \\\n#  && buildifier --version\n\n# Install rustup.\nARG rustup_dir=/usr/local/cargo\nENV RUSTUP_HOME ${rustup_dir}\nENV CARGO_HOME ${rustup_dir}\nENV PATH \"${rustup_dir}/bin:${PATH}\"\nRUN curl -f --location https://sh.rustup.rs > /tmp/rustup \\\n  && sh /tmp/rustup -y --default-toolchain=none \\\n  && chmod a+rwx ${rustup_dir} \\\n  && rustup --version\n\n# Install Rust toolchain.\n# We currently need the nightly version in order to be able to compile some of the examples.\n# See https://rust-lang.github.io/rustup-components-history/ for how to pick a version that supports\n# the appropriate set of components.\nARG rust_version=nightly-2020-06-10\nRUN rustup toolchain install ${rust_version} \\\n  && rustup default ${rust_version}\n\n# Install WebAssembly target for Rust.\nRUN rustup target add wasm32-unknown-unknown\n\n# Install musl target for Rust (for statically linked binaries).\nRUN rustup target add aarch64-unknown-linux-musl\n\n# Install rustfmt and clippy.\nRUN rustup component add \\\n  clippy \\\n  rust-src \\\n  rustfmt\n\n# No binary available on Github, have to use cargo install.\nARG deadlinks_version=0.5.0\nRUN cargo install --version=${deadlinks_version} cargo-deadlinks\n\n# Where to install rust tooling\nARG install_dir=${rustup_dir}/bin\n\n# Install grcov.\n# https://github.com/mozilla/grcov\nARG grcov_version=v0.5.15\nARG grcov_location=https://github.com/mozilla/grcov/releases/download/${grcov_version}/grcov-linux-x86_64.tar.bz2\nRUN curl -f --location ${grcov_location} | tar --extract --bzip2 --directory=${install_dir}\nRUN chmod +x ${install_dir}/grcov\n\n# Install cargo-crev.\n# https://github.com/crev-dev/cargo-crev\nARG crev_version=v0.16.1\nARG crev_location=https://github.com/crev-dev/cargo-crev/releases/download/${crev_version}/cargo-crev-${crev_version}-x86_64-unknown-linux-musl.tar.gz\nRUN curl -f --location ${crev_location} | tar --extract --gzip --directory=${install_dir} --strip-components=1\nRUN chmod +x ${install_dir}/cargo-crev\n\n# Install cargo-deny\n# https://github.com/EmbarkStudios/cargo-deny\nARG deny_version=0.7.0\nARG deny_location=https://github.com/EmbarkStudios/cargo-deny/releases/download/${deny_version}/cargo-deny-${deny_version}-x86_64-unknown-linux-musl.tar.gz\nRUN curl -f --location ${deny_location} | tar --extract --gzip --directory=${install_dir} --strip-components=1\nRUN chmod +x ${install_dir}/cargo-deny\n"
+}

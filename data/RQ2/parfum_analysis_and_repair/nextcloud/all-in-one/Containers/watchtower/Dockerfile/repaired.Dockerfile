@@ -1,0 +1,1 @@
+# From https://github.com/containrrr/watchtower/blob/main/dockerfiles/Dockerfile.self-contained

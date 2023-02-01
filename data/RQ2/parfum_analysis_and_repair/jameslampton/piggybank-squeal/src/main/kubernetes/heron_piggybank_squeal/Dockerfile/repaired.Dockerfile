@@ -1,0 +1,1 @@
+# Extend the heron image to have piggybank-squeal

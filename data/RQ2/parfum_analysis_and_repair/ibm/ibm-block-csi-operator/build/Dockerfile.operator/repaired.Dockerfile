@@ -1,0 +1,59 @@
+# Copyright IBM Corporation 2019.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#    http://www.apache.org/licenses/LICENSE-2.0
+
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+FROM golang:1.16.14
+
+WORKDIR /go/src/github.com/IBM/ibm-block-csi-operator/
+COPY . .
+RUN CGO_ENABLED=1 GOOS=linux go build \
+    -o build/_output/bin/ibm-block-csi-operator \
+    -gcflags all=-trimpath=${GOPATH} \
+	-asmflags all=-trimpath=${GOPATH} \
+	-mod=vendor \
+	main.go
+
+
+FROM registry.access.redhat.com/ubi8/ubi-minimal:8.6-751.1655117800
+MAINTAINER IBM Storage
+
+ARG VERSION=1.10.0
+ARG BUILD_NUMBER=0
+
+###Required Labels
+LABEL name="Operator for IBM block storage CSI driver" \
+      vendor="IBM" \
+      version=$VERSION \
+      release=$BUILD_NUMBER \
+      summary="The operator for IBM block storage CSI driver" \
+      description="The IBM block storage CSI driver enables container orchestrators, such as Kubernetes and OpenShift, to manage the life-cycle of persistent storage." \
+      io.k8s.display-name="Operator for IBM block storage CSI driver" \
+      io.k8s.description="The IBM block storage CSI driver enables container orchestrators, such as Kubernetes and OpenShift, to manage the life-cycle of persistent storage." \
+      io.openshift.tags=ibm,csi,ibm-block-csi-operator
+
+ENV OPERATOR=/usr/local/bin/ibm-block-csi-operator \
+    USER_UID=1001 \
+    USER_NAME=ibm-block-csi-operator \
+    IBMBlockCSI_CR_YAML=/usr/local/etc/csi.ibm.com_v1_ibmblockcsi_cr.yaml \
+    HostDefiner_CR_YAML=/usr/local/etc/csi_v1_hostdefiner_cr.yaml
+
+COPY build/health_check.sh .
+RUN chmod 777 ./health_check.sh
+COPY ./LICENSE /licenses/
+COPY ./NOTICES /licenses/
+COPY ./config/samples/csi.ibm.com_v1_ibmblockcsi_cr.yaml ${IBMBlockCSI_CR_YAML}
+COPY ./config/samples/csi_v1_hostdefiner_cr.yaml ${HostDefiner_CR_YAML}
+RUN chmod 0444 ${IBMBlockCSI_CR_YAML} \
+    && chmod 0444 ${HostDefiner_CR_YAML}
+
+# install operator binary

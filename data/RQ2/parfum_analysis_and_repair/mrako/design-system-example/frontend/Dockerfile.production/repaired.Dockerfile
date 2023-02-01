@@ -1,0 +1,23 @@
+FROM --platform=linux/amd64 node:16.3-alpine3.12
+
+RUN mkdir -p /usr/src/app && rm -rf /usr/src/app
+WORKDIR /usr/src/app
+
+COPY package*.json /usr/src/app/
+RUN npm ci
+
+COPY . /usr/src/app
+
+ARG ENDPOINT
+
+RUN npm run build
+
+
+FROM --platform=linux/amd64 nginx:alpine
+
+ADD nginx/nginx.conf /etc/nginx/
+
+COPY --from=0 /usr/src/app/build /usr/share/nginx/html
+
+EXPOSE 80
+CMD ["nginx", "-g", "daemon off;"]

@@ -1,0 +1,54 @@
+{
+  "startTime": 1674254570385,
+  "endTime": 1674254571445,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseY",
+      "position": {
+        "lineStart": 87,
+        "lineEnd": 87,
+        "columnStart": 4,
+        "columnEnd": 34
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 87,
+        "lineEnd": 87,
+        "columnStart": 4,
+        "columnEnd": 34
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 87,
+        "lineEnd": 87,
+        "columnStart": 4,
+        "columnEnd": 34
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 87,
+        "lineEnd": 87,
+        "columnStart": 4,
+        "columnEnd": 34
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 87,
+        "lineEnd": 87,
+        "columnStart": 4,
+        "columnEnd": 61
+      }
+    }
+  ],
+  "repairedDockerfile": "ARG GO_VERSION=1.17\n\n#######################\n## Go dependencies\n## Speed up this step by mounting your local go mod pkg directory\n#######################\nFROM golang:${GO_VERSION} as go-dep\nRUN mkdir -p src/github.com/zitadel/zitadel\nWORKDIR /go/src/github.com/zitadel/zitadel\n\n#download modules\nCOPY . .\nRUN go mod download\n\n# install tools\nCOPY tools ./tools\nRUN ./tools/install.sh\n\n\n#######################\n## generates static files\n#######################\nFROM go-dep AS go-static\nCOPY internal/api/ui/login/static internal/api/ui/login/static\nCOPY internal/api/ui/login/statik internal/api/ui/login/statik\nCOPY internal/notification/static internal/notification/static\nCOPY internal/notification/statik internal/notification/statik\nCOPY internal/static internal/static\nCOPY internal/statik internal/statik\n\nRUN go generate internal/api/ui/login/statik/generate.go \\\n    && go generate internal/api/ui/login/static/generate.go \\\n    && go generate internal/notification/statik/generate.go \\\n    && go generate internal/statik/generate.go\n\n#######################\n## generates grpc stub\n#######################\nFROM go-static AS go-stub\nCOPY --from=zitadel-base:local /proto /proto\nCOPY --from=zitadel-base:local /usr/local/bin /usr/local/bin/.\n\nCOPY build/zitadel/generate-grpc.sh build/zitadel/generate-grpc.sh\nCOPY internal/protoc internal/protoc\nCOPY openapi/statik openapi/statik\nCOPY internal/api/assets/generator internal/api/assets/generator\nCOPY internal/config internal/config\nCOPY internal/errors internal/errors\n\nRUN build/zitadel/generate-grpc.sh \\\n    && go generate openapi/statik/generate.go \\\n    && mkdir -p docs/apis/assets/ \\\n    && go run internal/api/assets/generator/asset_generator.go -directory=internal/api/assets/generator/ -assets=docs/apis/assets/assets.md\n\n#######################\n## Go base build\n#######################\nFROM go-stub as go-base\n# copy remaining zitadel files\nCOPY . .\n\n#######################\n## copy for local dev\n#######################\nFROM scratch as go-copy\nCOPY --from=go-stub /go/src/github.com/zitadel/zitadel/internal/api/ui/login/statik/statik.go internal/api/ui/login/statik/statik.go\nCOPY --from=go-stub /go/src/github.com/zitadel/zitadel/internal/notification/statik/statik.go internal/notification/statik/statik.go\nCOPY --from=go-stub /go/src/github.com/zitadel/zitadel/internal/statik/statik.go internal/statik/statik.go\nCOPY --from=go-stub /go/src/github.com/zitadel/zitadel/openapi/statik/statik.go openapi/statik/statik.go\n\nCOPY --from=go-stub /go/src/github.com/zitadel/zitadel/pkg/grpc pkg/grpc\nCOPY --from=go-stub /go/src/github.com/zitadel/zitadel/openapi/v2/zitadel openapi/v2/zitadel\nCOPY --from=go-stub /go/src/github.com/zitadel/zitadel/openapi/statik/statik.go openapi/statik/statik.go\nCOPY --from=go-stub /go/src/github.com/zitadel/zitadel/internal/protoc/protoc-gen-authoption/templates.gen.go internal/protoc/protoc-gen-authoption/templates.gen.go\nCOPY --from=go-stub /go/src/github.com/zitadel/zitadel/internal/protoc/protoc-gen-authoption/authoption/options.pb.go internal/protoc/protoc-gen-authoption/authoption/options.pb.go\nCOPY --from=go-stub /go/src/github.com/zitadel/zitadel/docs/apis/proto docs/docs/apis/proto\nCOPY --from=go-stub /go/src/github.com/zitadel/zitadel/docs/apis/assets docs/docs/apis/assets\n\nCOPY --from=go-stub /go/src/github.com/zitadel/zitadel/internal/api/assets/authz.go ./internal/api/assets/authz.go\nCOPY --from=go-stub /go/src/github.com/zitadel/zitadel/internal/api/assets/router.go ./internal/api/assets/router.go\n\n#######################\n## Go test\n#######################\nFROM go-base as go-test\n\nARG COCKROACH_BINARY=cockroach\nRUN apt install -y --no-install-recommends openssl tzdata tar && rm -rf /var/lib/apt/lists/*;\n\n# cockroach binary used to backup database\nRUN mkdir /usr/local/lib/cockroach\nRUN wget -qO- https://binaries.cockroachdb.com/cockroach-v22.1.0.linux-amd64.tgz \\\n    | tar  xvz && cp -i cockroach-v22.1.0.linux-amd64/cockroach /usr/local/bin/\nRUN rm -r cockroach-v22.1.0.linux-amd64\n\n# Migrations for cockroach-secure\nRUN go install github.com/rakyll/statik \\\n    && go test -race -v -coverprofile=profile.cov $(go list ./... | grep -v /operator/)\n\n#######################\n## Go test results\n#######################\nFROM scratch as go-codecov\nCOPY --from=go-test /go/src/github.com/zitadel/zitadel/profile.cov profile.cov\n"
+}

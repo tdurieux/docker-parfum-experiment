@@ -1,0 +1,35 @@
+{
+  "startTime": 1674251294842,
+  "endTime": 1674251295475,
+  "originalSmells": [
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 55,
+        "lineEnd": 55,
+        "columnStart": 4,
+        "columnEnd": 23
+      }
+    },
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 36,
+        "lineEnd": 36,
+        "columnStart": 4,
+        "columnEnd": 16
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 10,
+        "lineEnd": 10,
+        "columnStart": 4,
+        "columnEnd": 20
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM node:16.3.0-alpine as node\n\n# ----------------------------------------\n# Builds Docker container for nxtp-poller package.\n# @dev configuraion located ./config.json (relative to this file)\n\n# ----------------------------------------\n\nFROM node as build\nRUN apk update\nRUN apk add --no-cache git curl\n\nRUN curl -fsSL -o /usr/local/bin/dbmate https://github.com/amacneil/dbmate/releases/latest/download/dbmate-linux-amd64 && \\\n        chmod +x /usr/local/bin/dbmate\n\nENV HOME=/tmp/build \\\n    PATH=/tmp/build/node_modules/.bin:./node_modules/.bin:${PATH}\n\nWORKDIR /tmp/build\n\nARG TEMP_DEPS_DIR\n\n# ----- Copy only the files that affect yarn install -----\n# Allows docker to use cache and skip install if dependencies are unchanged.\n# Assumes that ./packages/*/package.json files have been copied to TEMP_DEPS_DIR\n# with that same directory structure. build.sh does this.\nCOPY .yarn /tmp/build/.yarn/\nCOPY .yarnrc.yml /tmp/build/\nCOPY package.json /tmp/build/\nCOPY packages/agents/cartographer/poller/package.json /tmp/build/packages/agents/cartographer/poller/\nCOPY packages/adapters/subgraph/package.json /tmp/build/packages/adapters/subgraph/\nCOPY packages/utils/package.json /tmp/build/packages/utils/\nCOPY yarn.lock /tmp/build/\n\n# ----- Install dependencies -----\n# Install dependencies exactly as in the yarn.lock file - no updates.\nRUN yarn install && yarn cache clean;\n\n# ----- Copy source and all other files that affect lint, test, build -----\nCOPY config config/\nCOPY packages/agents/cartographer/poller /tmp/build/packages/agents/cartographer/poller\nCOPY packages/adapters/subgraph /tmp/build/packages/adapters/subgraph\nCOPY packages/utils /tmp/build/packages/utils\nCOPY .eslintignore /tmp/build/\nCOPY .eslintrc.js /tmp/build/\n\n# ----- Lint, test and build -----\nRUN yarn build\n\n# ----------------------------------------\n# Copy files to the deployment image.\n# ----------------------------------------\n\nFROM node as runtime\n\nRUN npm install pm2 -pg && npm cache clean --force;\n\nENV NODE_ENV=production\n\nARG COMMIT_HASH\nENV COMMIT_HASH ${COMMIT_HASH:-unknown}\n\n# ----- Copy files required at runtime by the app -----\nCOPY --from=build --chown=node:node /tmp/build /home/node\nCOPY --from=build --chown=node:node /usr/local/bin/dbmate /usr/local/bin/dbmate\n\nCOPY docker/cartographer/routers/docker-entrypoint.sh /home/node/packages/agents/cartographer/poller\nRUN chmod +x /home/node/packages/agents/cartographer/poller/docker-entrypoint.sh\n\n# This user is created in the base image with uid and gid = 1000.\nUSER node\n\nWORKDIR /home/node/packages/agents/cartographer/poller\n\nCMD ./docker-entrypoint.sh\n"
+}

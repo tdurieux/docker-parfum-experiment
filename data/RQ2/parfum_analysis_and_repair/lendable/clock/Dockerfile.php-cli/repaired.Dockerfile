@@ -1,0 +1,10 @@
+FROM lendableuk/php-fpm-alpine:8.0.11-alpine3.13
+
+COPY --from=composer:2.3.9 /usr/bin/composer /usr/bin/composer
+
+COPY . /app
+WORKDIR /app
+
+RUN chown -R 'app:app' /app && \
+    su app -c "composer install --prefer-dist --no-progress -n --ansi" && \
+    su app -c "composer clear-cache --ansi -n"

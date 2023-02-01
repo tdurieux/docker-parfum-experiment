@@ -1,0 +1,44 @@
+{
+  "startTime": 1674253440913,
+  "endTime": 1674253441996,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 37,
+        "lineEnd": 37,
+        "columnStart": 4,
+        "columnEnd": 34
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 94,
+        "lineEnd": 94,
+        "columnStart": 4,
+        "columnEnd": 31
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 104,
+        "lineEnd": 104,
+        "columnStart": 31,
+        "columnEnd": 57
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 60,
+        "lineEnd": 60,
+        "columnStart": 4,
+        "columnEnd": 15
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "## Base image with python and entrypoint scripts ##\n## ============================================= ##\nFROM osgeo/gdal:alpine-normal-3.1.2 as gdal\nFROM python:3.7.8-alpine3.12 AS base\n\nLABEL maintainer=\"Adam Hodges <ahodges@shipchain.io>\"\n\nENV LANG C.UTF-8\nENV PYTHONUNBUFFERED 1\n\n# Essential packages for our app environment\nRUN apk add --no-cache bash wget libpq icu-libs && \\\n    apk add --no-cache \\\n            --repository http://dl-3.alpinelinux.org/alpine/edge/main/ \\\n            --repository http://dl-3.alpinelinux.org/alpine/edge/testing/ \\\n            libcrypto1.1 binutils libcurl libwebp zstd-libs libjpeg-turbo libpng openjpeg libwebp pcre libxml2 \\\n            lcms2-dev fontconfig openexr-dev portablexdr-dev cfitsio && \\\n    rm -f /usr/lib/libturbojpeg.so* /usr/lib/libwebpmux.so* /usr/lib/libwebpdemux.so* /usr/lib/libwebpdecoder.so* /usr/lib/libpoppler-cpp.so* && \\\n    wget https://raw.githubusercontent.com/python-poetry/poetry/master/get-poetry.py && \\\n    python get-poetry.py --version 1.0.9 && \\\n    apk del wget\nCOPY --from=gdal /usr/share/gdal /usr/share/gdal\nCOPY --from=gdal /usr/share/proj /usr/share/proj\nCOPY --from=gdal /usr/lib/libgdal.so* /usr/lib/\nCOPY --from=gdal /usr/lib/libproj.so* /usr/lib/\nCOPY --from=gdal /usr/lib/libgeos*.so* /usr/lib/\nCOPY --from=gdal /usr/lib/libpoppler.so* /usr/lib/\nCOPY --from=gdal /usr/lib/libfreexl*.so* /usr/lib/\nCOPY --from=gdal /usr/lib/libxerces-c*.so* /usr/lib/\nCOPY --from=gdal /usr/lib/libnetcdf*.so* /usr/lib/\nCOPY --from=gdal /usr/lib/libhdf5*.so* /usr/lib/\nCOPY --from=gdal /usr/lib/libspatialite*.so* /usr/lib/\nCOPY --from=gdal /usr/lib/libsz*.so* /usr/lib/\nCOPY --from=gdal /usr/lib/lib*df*.so* /usr/lib/\nCOPY --from=gdal /usr/lib/libkea*.so* /usr/lib/\n\n# Install and configure virtualenv\nRUN pip install --no-cache-dir virtualenv==20.0.*\nENV VIRTUAL_ENV=/app/.virtualenv\nENV PATH=$VIRTUAL_ENV/bin:/root/.poetry/bin:$PATH\n\n# Initialize app dir and entrypoint scripts\nRUN mkdir /app\nWORKDIR /app\nCOPY ./compose/django/*.sh /\nRUN chmod +x /*.sh\nENTRYPOINT [\"/entrypoint.sh\"]\n\n## Image with system dependencies for building ##\n## =========================================== ##\nFROM base AS build\n\n# Essential packages for building python packages\nRUN apk add --no-cache build-base git libffi-dev linux-headers jpeg-dev libressl3.1-libssl freetype-dev postgresql-dev su-exec\n\n\n## Image with additional dependencies for local docker usage ##\n## ========================================================= ##\nFROM build as local\nRUN chmod -R 777 /root/  ## Grant all local users access to poetry\nRUN apk add --no-cache gdb\n\n\n## Image with dev-dependencies ##\n## =========================== ##\nFROM build AS test\n\nCOPY . /app/\nRUN \\[ -d \"$VIRTUAL_ENV\" \\] || virtualenv \"$VIRTUAL_ENV\"\nRUN . \"$VIRTUAL_ENV/bin/activate\" && poetry install\n\n\n## Image only used for production building ##\n## ======================================= ##\nFROM build AS prod\n\nCOPY . /app/\nRUN \\[ -d \"$VIRTUAL_ENV\" \\] || virtualenv \"$VIRTUAL_ENV\"\nRUN . \"$VIRTUAL_ENV/bin/activate\" && poetry install --no-dev\n\n# Generate static assets\nRUN python manage.py collectstatic -c --noinput\n\n\n## Image to be deployed to ECS with additional utils and no build tools ##\n## ==================================================================== ##\nFROM base AS deploy\n\n# Install openssh for ECS management container\nRUN apk add --no-cache jq openssl openssh-server-pam shadow nano\nRUN sed -i 's/^CREATE_MAIL_SPOOL=yes/CREATE_MAIL_SPOOL=no/' /etc/default/useradd\n\n# Keymaker for SSH auth via IAM\nRUN mkdir /var/run/sshd /etc/cron.d && touch /etc/pam.d/sshd\nRUN pip install --no-cache-dir keymaker==1.0.8\n\n# Configure public key SSH\nRUN echo \"PubkeyAuthentication yes\" >> /etc/ssh/sshd_config\nRUN echo \"UsePAM yes\" >> /etc/ssh/sshd_config\nRUN echo \"AllowAgentForwarding yes\" >> /etc/ssh/sshd_config\nRUN echo \"PasswordAuthentication no\" >> /etc/ssh/sshd_config\n\n# Create virtualenv for using awscli in entrypoint scripts\nRUN virtualenv /opt/aws\nRUN . /opt/aws/bin/activate && pip install --no-cache-dir awscli==1.16.*\n\n# Copy built virtualenv without having to install build-essentials, etc\nCOPY --from=prod /app /app\n"
+}

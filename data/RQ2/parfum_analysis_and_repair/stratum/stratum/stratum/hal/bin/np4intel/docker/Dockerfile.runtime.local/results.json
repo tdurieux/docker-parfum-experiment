@@ -1,0 +1,44 @@
+{
+  "startTime": 1674217223372,
+  "endTime": 1674217224206,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 113,
+        "lineEnd": 113,
+        "columnStart": 4,
+        "columnEnd": 32
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 114,
+        "lineEnd": 114,
+        "columnStart": 4,
+        "columnEnd": 24
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 55,
+        "lineEnd": 55,
+        "columnStart": 4,
+        "columnEnd": 28
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 108,
+        "lineEnd": 108,
+        "columnStart": 4,
+        "columnEnd": 56
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Copyright 2019-present Dell EMC\n# Copyright 2019-present Open Networking Foundation\n# SPDX-License-Identifier: Apache-2.0\n\n#----------------------------------------------------------------------\n# This Dockerfile builds a container image used to run the stratum_np4intel\n# binary for use with the Intel PAC N3000 FPGA card.  This \"local\" version\n# does not rebuld the stratum source code, instead pulling the normal\n# and debug binary images from the local directory.\n#----------------------------------------------------------------------\n\nARG BUILDER_IMAGE\nARG OPAE_VERSION=1.3.6-4\nARG NP4_BIN\nARG NP4_DIR=/np4_intel\nARG PI_NP4_COMMIT=\"12be7a96f3d903afdd6cc3095f7d4003242af60b\"\n\n#----------------------------------------------------------------------\n# Copy out the stratum binaries and other config files\n#----------------------------------------------------------------------\n\nFROM $BUILDER_IMAGE as builder\n\n# Copy stratum source code\nADD . /stratum\n\nENV OUTPUT_BASE /output/usr/local\nENV NP4_INSTALL /usr\n\nWORKDIR /stratum\n\n# Build the OPAE package\n# Note: Will likely need to update these patches when updating the OPAE\n#       version.\nARG OPAE_VERSION\nENV PATCHES_DIR=/stratum/stratum/hal/bin/np4intel/docker/patches\nRUN git clone https://github.com/OPAE/opae-sdk.git /opae && \\\n    cd /opae && \\\n    git checkout $OPAE_VERSION && \\\n    patch tools/base/fpgainfo/bmcdata.c <${PATCHES_DIR}/bmcdata.c.patch && \\\n    patch CMakeLists.txt <${PATCHES_DIR}/CMakeLists.txt.patch && \\\n    patch cmake/modules/dependency_notifier.cmake \\\n        <${PATCHES_DIR}/dependency_notifier.cmake.patch && \\\n    mkdir mybuild && \\\n    cd mybuild && \\\n    cmake .. -DCPACK_GENERATOR=DEB -DCMAKE_INSTALL_PREFIX=/usr && \\\n    make package_deb\n\n# Build PI python protobuf files\nARG PI_NP4_COMMIT\nRUN git clone https://github.com/craigsdell/PI.git /tmp/PI && \\\n    cd /tmp/PI && \\\n    git checkout $PI_NP4_COMMIT && \\\n    git submodule update --init && \\\n    ./autogen.sh && \\\n    ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" --with-proto && \\\n    make\n\n# Build the forwarding pipeline protobuf\nRUN cd /tmp/PI/proto && \\\n    mkdir -p stratum/hal && \\\n    cp /stratum/stratum/hal/lib/p4/forwarding_pipeline_configs.proto \\\n       stratum/hal/ && \\\n    protoc stratum/hal/forwarding_pipeline_configs.proto \\\n           --python_out py_out  -I ./ && \\\n    touch py_out/stratum/__init__.py && \\\n    touch py_out/stratum/hal/__init__.py && \\\n    mkdir -p /output/py_out/ && \\\n    cp -r py_out/ /output/ && \\\n    rm -rf /tmp/PI\n\n# Copy into output build directory\nARG NP4_BIN\nARG NP4_DIR\nENV STRATUM_NP4INTEL_BASE stratum/hal/bin/np4intel\nRUN mkdir -p $OUTPUT_BASE/bin && \\\n    mkdir -p $OUTPUT_BASE/share/stratum && \\\n    cp $STRATUM_NP4INTEL_BASE/docker/stratum_np4intel $OUTPUT_BASE/bin/ && \\\n    cp $STRATUM_NP4INTEL_BASE/docker/stratum_np4intel.debug $OUTPUT_BASE/bin/ && \\\n    cp $STRATUM_NP4INTEL_BASE/docker/scripts/stratum-entrypoint.sh /output/ && \\\n    cp $STRATUM_NP4INTEL_BASE/docker/configs/stratum.flags $OUTPUT_BASE/share/stratum/ && \\\n    cp $STRATUM_NP4INTEL_BASE/docker/scripts/build_pipeline_configs.py /output/ && \\\n    mkdir /output/opae && \\\n    cp /opae/mybuild/opae-libs-${OPAE_VERSION}.x86_64.deb /output/opae/ && \\\n    cp -r $NP4_DIR /output/$NP4_DIR && \\\n    mkdir -p /output/stratum/hal/lib/common/ && \\\n    cp stratum/hal/lib/common/gnmi_caps.pb.txt /output/stratum/hal/lib/common/\n    # TODO(Yi Tseng): Remove two lines above when we are able to generate cap response automatically\n\n#----------------------------------------------------------------------\n# Now build the stratum runtime container\n#----------------------------------------------------------------------\n\nFROM ubuntu:18.04\nLABEL maintainer=\"Stratum dev <stratum-dev@lists.stratumproject.org>\"\nLABEL description=\"This Docker image is the base runtime for stratum_np4intel\"\n\nCOPY --from=builder /output /\n\nARG JOBS\n\n# Stratum Runtime dependencies\nENV PKG_DEPS pkg-config zip zlib1g-dev unzip python libboost-thread1.62.0 \\\n    ssh git sudo libelf-dev libssl1.1 iproute2 pciutils libjudydebian1 \\\n    libfdt1 libnuma-dev libhugetlbfs-dev libpcap-dev linux-virtual \\\n    vim python-pip dkms libjson-c3 apt-utils uuid-dev\n\nRUN apt-get update && \\\n    apt-get install -y --no-install-recommends $PKG_DEPS && \\\n    ldconfig && rm -rf /var/lib/apt/lists/*;\n\n# Install protobufs\n# Note: needed to run build_pipeline_configs.py\nRUN pip install --no-cache-dir setuptools wheel && \\\n    pip install --no-cache-dir protobuf\n\n# Install the OPAE library\nARG OPAE_VERSION\nRUN dpkg -i /opae/opae-libs-${OPAE_VERSION}.x86_64.deb\n\n# Install the NP4 Intel packages\nARG NP4_BIN\nARG NP4_DIR\nRUN bash $NP4_DIR/$NP4_BIN && \\\n    rm -rf /$NP4_DIR\n\n# Setup stratum_np4intel pre-reqs\nRUN mkdir /stratum_configs && \\\n    mkdir /stratum_logs && \\\n    mkdir /mnt/huge && \\\n    cd /lib/modules && \\\n    ln -s 4.15.0-72-generic `uname -r` && \\\n    echo \"nodev /mnt/huge hugetlbfs defaults 0 0\" >> /etc/fstab && \\\n    echo \"vm.nr_hugepages=8192\" >> /etc/sysctl.conf\n\nEXPOSE 9339/tcp\nEXPOSE 9559/tcp\nENTRYPOINT [\"/stratum-entrypoint.sh\"]\n\n"
+}

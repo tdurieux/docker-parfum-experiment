@@ -1,0 +1,1 @@
+# Image for use in demos, now that official ubuntu:latest doesn't contain nc or ping

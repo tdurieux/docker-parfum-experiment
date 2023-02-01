@@ -1,0 +1,31 @@
+FROM ros:melodic
+
+SHELL ["/bin/bash", "-c"]
+
+RUN echo "yaml https://s3-us-west-2.amazonaws.com/rosdep/base.yaml" > /etc/ros/rosdep/sources.list.d/19-aws-sdk.list
+
+COPY . /opt/package
+WORKDIR /opt/package
+
+RUN (apt-get update || true) && apt-get install --no-install-recommends --yes curl && rm -rf /var/lib/apt/lists/*;
+RUN curl --fail --show-error --silent --location https://raw.githubusercontent.com/ros/rosdistro/master/ros.asc | apt-key add -
+
+RUN apt-get update && \
+	apt-get install --no-install-recommends -y python3-pip python3-apt python-pip enchant sudo wget && rm -rf /var/lib/apt/lists/*;
+
+RUN wget https://packages.osrfoundation.org/gazebo.key -O - | apt-key add -
+
+# NOTE: This is a workaround for setuptools 50.* (see https://github.com/pypa/setuptools/issues/2352)
+ENV SETUPTOOLS_USE_DISTUTILS=stdlib
+
+RUN	rosdep update && \
+	rosdep install --from-paths integration/test_workspace --ignore-src -r -y
+
+RUN pip3 install --no-cache-dir --upgrade pip setuptools
+RUN pip3 install --no-cache-dir -r requirements.txt
+RUN pip3 install --no-cache-dir -e .
+
+WORKDIR /opt/package/integration/test_workspace
+RUN source /opt/ros/melodic/setup.sh; colcon build
+RUN source /opt/ros/melodic/setup.sh; colcon bundle --bundle-version 2 --bundle-base v2 --pip-requirements py27_requirements.txt --pip3-requirements py3_requirements.txt
+RUN source /opt/ros/melodic/setup.sh; colcon bundle --bundle-version 2 --bundle-base v2 --pip-requirements py27_requirements.txt --pip3-requirements py3_requirements.txt

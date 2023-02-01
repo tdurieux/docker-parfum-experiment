@@ -1,0 +1,10 @@
+FROM rednoah/filebot
+
+LABEL maintainer="Reinhard Pointner <rednoah@filebot.net>"
+
+COPY watcher /
+
+ENV SETTLE_DOWN_TIME "300"
+ENV SETTLE_DOWN_CHECK "5 seconds ago"
+
+ENTRYPOINT ["/opt/bin/run-as-user", "/opt/bin/filebot-watcher"]

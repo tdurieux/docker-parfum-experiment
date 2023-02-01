@@ -1,0 +1,55 @@
+FROM eclipse-temurin:18-jdk
+# SHADOWS: FROM mubaldino/opensextant:xponents-3.5
+# 
+# --------------------------
+ENV XLAYER_PORT=8787
+ENV VERSION=Xponents-3.5
+ENV XPONENTS=/home/opensextant/Xponents
+ENV JAVA_XMS=3500m
+ENV JAVA_XMX=3500m
+ENV MVN_VER=3.8.5
+ENV MVN=apache-maven-$MVN_VER
+ENV PATH=/home/opensextant/maven/bin:$PATH
+ENV LOCAL_REPO_NAME=maven-repo
+# NOTE LOCAL_REPO is a absolute path
+ENV LOCAL_REPO=$XPONENTS/$LOCAL_REPO_NAME
+
+RUN adduser opensextant --home /home/opensextant --disabled-password 
+USER opensextant
+WORKDIR /home/opensextant
+
+# --------------------------
+# Copy ./Xponents-3.x/<CONTENT> to target 
+#
+COPY --chown=opensextant:opensextant ./ $XPONENTS/
+
+# OFFLINE
+#---------------------------
+# Install Maven to allow for offline recompilation
+RUN curl -O https://dlcdn.apache.org/maven/maven-3/$MVN_VER/binaries/$MVN-bin.tar.gz && \
+   tar xzf ./$MVN-bin.tar.gz && \
+   mv $MVN ./maven
+
+WORKDIR $XPONENTS
+
+# Stage offline mode
+RUN mvn dependency:go-offline -Dmaven.repo.local=$LOCAL_REPO
+RUN find $LOCAL_REPO  -name "*.sha1"  -exec rm {} \;
+RUN find $LOCAL_REPO  -name "*.repositories"  -exec rm {} \;
+
+# Build inside Docker to confirm "offline mode" works
+# 1. Build fully as a test to show project is buildable inside container.
+RUN cd ./Core && mvn -o install -Dmaven.repo.local=$LOCAL_REPO
+RUN mvn -o -Dopensextant.solr=./xponents-solr/solr7 \
+      -Dmaven.repo.local=$LOCAL_REPO clean package dependency:copy-dependencies
+
+# 1a. Log4J cleanup
+RUN for log4jdir in `find $LOCAL_REPO -type d | grep log4j | grep "2.11"`; do rm -rf $log4jdir; done
+
+
+# 2. Copy built items and metadata from install to final runtime CLASSPATH ./lib
+RUN cp ./target/*jar ./lib/
+
+#---------------------------
+EXPOSE $XLAYER_PORT 7000
+ENTRYPOINT ./script/xlayer-docker.sh $XLAYER_PORT

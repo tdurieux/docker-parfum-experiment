@@ -1,0 +1,12 @@
+FROM        registry.access.redhat.com/ubi8/python-39
+
+USER        root
+
+WORKDIR     /ghmirror
+
+COPY        . ./
+
+RUN         make develop
+
+ENTRYPOINT  ["make"]
+CMD         ["check"]

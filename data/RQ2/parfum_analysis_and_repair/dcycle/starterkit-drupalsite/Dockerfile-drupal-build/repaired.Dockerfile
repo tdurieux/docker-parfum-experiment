@@ -1,0 +1,12 @@
+FROM dcycle/drupal:9php8-fpm-alpine
+
+COPY drupal/scripts /scripts
+COPY drupal/settings/settings.php /var/www/html/sites/default/settings.php
+COPY drupal/settings/services.yml /var/www/html/sites/default/services.yml
+COPY drupal/custom-modules /var/www/html/modules/custom
+COPY drupal/custom-themes /var/www/html/themes/custom
+COPY drupal/config /var/www/config
+COPY drupal/starter-data /starter-data
+COPY docker-resources/drupal /docker-resources
+
+RUN /docker-resources/build-drupal.sh

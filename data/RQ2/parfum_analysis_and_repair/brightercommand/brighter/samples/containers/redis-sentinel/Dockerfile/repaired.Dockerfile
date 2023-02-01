@@ -1,0 +1,1 @@
+# Drawn from https://blog.alexseifert.com/2016/11/14/using-redis-sentinel-with-docker-compose/

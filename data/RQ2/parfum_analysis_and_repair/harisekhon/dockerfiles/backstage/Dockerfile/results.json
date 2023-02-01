@@ -1,0 +1,126 @@
+{
+  "startTime": 1674217383098,
+  "endTime": 1674217384432,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 40,
+        "lineEnd": 40,
+        "columnStart": 4,
+        "columnEnd": 28
+      }
+    },
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 58,
+        "lineEnd": 58,
+        "columnStart": 4,
+        "columnEnd": 59
+      }
+    },
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 58,
+        "lineEnd": 58,
+        "columnStart": 73,
+        "columnEnd": 87
+      }
+    },
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 61,
+        "lineEnd": 61,
+        "columnStart": 4,
+        "columnEnd": 27
+      }
+    },
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 62,
+        "lineEnd": 62,
+        "columnStart": 4,
+        "columnEnd": 81
+      }
+    },
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 89,
+        "lineEnd": 89,
+        "columnStart": 4,
+        "columnEnd": 72
+      }
+    },
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 89,
+        "lineEnd": 89,
+        "columnStart": 86,
+        "columnEnd": 100
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 39,
+        "lineEnd": 39,
+        "columnStart": 4,
+        "columnEnd": 27
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 39,
+        "lineEnd": 39,
+        "columnStart": 4,
+        "columnEnd": 27
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 57,
+        "lineEnd": 57,
+        "columnStart": 93,
+        "columnEnd": 109
+      }
+    },
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 60,
+        "lineEnd": 60,
+        "columnStart": 31,
+        "columnEnd": 47
+      }
+    },
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 61,
+        "lineEnd": 61,
+        "columnStart": 85,
+        "columnEnd": 101
+      }
+    },
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 88,
+        "lineEnd": 88,
+        "columnStart": 106,
+        "columnEnd": 122
+      }
+    }
+  ],
+  "repairedDockerfile": "#\n#  Author: Hari Sekhon\n#  Date: 2021-07-08 15:16:50 +0100 (Thu, 08 Jul 2021)\n#\n#  https://github.com/HariSekhon/Dockerfiles\n#\n#  If you're using my code you're welcome to connect with me on LinkedIn and optionally send me feedback to help steer this or other code I publish\n#\n#  https://www.linkedin.com/in/HariSekhon\n#\n\n# This huge monolith app beast is unfortunately not really designed for the Cloud-native Kubernetes era:\n#\n# - not really modular / microservices\n# - takes ~15 minutes to build!\n# - fails to build on a 2GB local Docker Desktop, had to increase to 4GB!\n\n# Based off https://backstage.io/docs/deployment/docker#multi-stage-build\n#\n# but improved to be more cloud suitable self-contained and not use locally staged repo\n\n# ============================================================================ #\n# Stage 1 - Create yarn install skeleton layer\n# nosemgrep: dockerfile.audit.dockerfile-source-not-pinned.dockerfile-source-not-pinned\nFROM node:14-buster-slim AS packages\n\n# XXX: set this to change the release version\nARG RELEASE=\"2021-07-08\"\n\n# only change this if the URL changes in future or you want to pull from another source, eg. an internal staging area\nARG RELEASE_URL=\"https://github.com/backstage/backstage/archive/refs/tags/release-$RELEASE.tar.gz\"\n\nWORKDIR /app\n\nSHELL [\"/bin/bash\", \"-euxo\", \"pipefail\", \"-c\"]\n\n# hadolint ignore=DL3008,DL3015\nRUN apt-get update && \\\n    apt-get install --no-install-recommends -y curl && \\\n    curl -f -sSL \"$RELEASE_URL\" | tar zxv --strip-components=1 && rm -rf /var/lib/apt/lists/*;\n    # doc removes these package.json but this breaks the cli dependency in the next stage during yarn tsc:\n    #\n    # tsconfig.json(2,14): error TS6053: File '@backstage/cli/config/tsconfig.json' not found.\n    #\n    #find packages \\! -name \"package.json\" -mindepth 2 -maxdepth 2 -exec rm -rf {} \\+\n    #\n    #rm -rf microsite  # 60 out of 100MB we probably don't need including an mp4\n\n# ============================================================================ #\n# Stage 2 - Install dependencies and build packages\n# nosemgrep: dockerfile.audit.dockerfile-source-not-pinned.dockerfile-source-not-pinned\nFROM node:14-buster-slim AS build\n\nWORKDIR /app\n\nCOPY --from=packages /app .\n\nRUN yarn install --frozen-lockfile --network-timeout 600000 && rm -rf \"$(yarn cache dir)\" && yarn cache clean;\n\n# '--jsx preserve' avoids a tonne of errors that exceed the 1MiB docker log and mask later breaking errors\nRUN yarn tsc --jsx preserve && yarn cache clean;\nRUn yarn --cwd packages/backend backstage-cli backend:bundle --build-dependencies && yarn cache clean;\n\n# ============================================================================ #\n# Stage 3 - Build the actual backend image and install production dependencies\n\n# nosemgrep: dockerfile.audit.dockerfile-source-not-pinned.dockerfile-source-not-pinned\nFROM node:14-buster-slim\n\nARG RELEASE=2021-07-08\n\n#ENV PATH $PATH:/NAME/bin\n\nLABEL org.opencontainers.image.description=\"Backstage Developer Portal\" \\\n      org.opencontainers.image.version=\"$RELEASE\" \\\n      org.opencontainers.image.authors=\"Hari Sekhon (https://www.linkedin.com/in/HariSekhon)\" \\\n      org.opencontainers.image.url=\"https://ghcr.io/HariSekhon/backstage\" \\\n      org.opencontainers.image.documentation=\"https://hub.docker.com/r/harisekhon/backstage\" \\\n      org.opencontainers.image.source=\"https://github.com/HariSekhon/Dockerfiles\"\n\nWORKDIR /app\n\n# Copy the install dependencies from the build stage and context\n# ADD doesn't have --from feature\n# hadolint ignore=DL3010\nCOPY --from=build /app/yarn.lock /app/package.json /app/packages/backend/dist/skeleton.tar.gz ./\nRUN tar xzf skeleton.tar.gz && rm skeleton.tar.gz\n\nRUN yarn install --frozen-lockfile --production --network-timeout 600000 && rm -rf \"$(yarn cache dir)\" && yarn cache clean;\n\n# Copy the built packages from the build stage\n# ADD doesn't have --from feature\n# hadolint ignore=DL3010\nCOPY --from=build /app/packages/backend/dist/bundle.tar.gz .\nRUN tar xzf bundle.tar.gz && rm bundle.tar.gz\n\n# contains boilerplate for all sorts of integrations which fail\n#COPY --from=build /app/app-config.yaml ./\n# commented out version\nCOPY app-config.yaml ./\n\nEXPOSE 7000\n\nCMD [\"node\", \"packages/backend\", \"--config\", \"app-config.yaml\"]\n"
+}

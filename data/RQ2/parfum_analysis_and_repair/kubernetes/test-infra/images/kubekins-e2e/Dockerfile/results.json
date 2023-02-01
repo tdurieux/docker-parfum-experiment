@@ -1,0 +1,45 @@
+{
+  "startTime": 1674254780628,
+  "endTime": 1674254781450,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 61,
+        "lineEnd": 61,
+        "columnStart": 29,
+        "columnEnd": 110
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 40,
+        "lineEnd": 42,
+        "columnStart": 4,
+        "columnEnd": 7
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 93,
+        "lineEnd": 93,
+        "columnStart": 4,
+        "columnEnd": 56
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 93,
+        "lineEnd": 93,
+        "columnStart": 4,
+        "columnEnd": 56
+      }
+    }
+  ],
+  "repairedDockerfile": "# Copyright 2016 The Kubernetes Authors.\n#\n# Licensed under the Apache License, Version 2.0 (the \"License\");\n# you may not use this file except in compliance with the License.\n# You may obtain a copy of the License at\n#\n#     http://www.apache.org/licenses/LICENSE-2.0\n#\n# Unless required by applicable law or agreed to in writing, software\n# distributed under the License is distributed on an \"AS IS\" BASIS,\n# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.\n# See the License for the specific language governing permissions and\n# limitations under the License.\n\n# This file creates a build environment for building and running kubernetes\n# unit and integration tests\n\nARG OLD_BAZEL_VERSION\nFROM launcher.gcr.io/google/bazel:${OLD_BAZEL_VERSION} as old\nFROM gcr.io/k8s-staging-test-infra/bootstrap:v20220614-ad0ae57da9\n\n# hint to kubetest that it is in CI\nENV KUBETEST_IN_DOCKER=\"true\"\n\n# Go standard envs\nENV GOPATH /go\nENV PATH /usr/local/go/bin:$PATH\n\nRUN mkdir -p /go/bin\nENV PATH $GOPATH/bin:$PATH\n\n# setup k8s repo symlink\nRUN mkdir -p /go/src/k8s.io/kubernetes \\\n    && ln -s /go/src/k8s.io/kubernetes /workspace/kubernetes\n\n# preinstall:\n# - graphviz package for graphing profiles\n# - bc for shell to junit\n# - rpm for building RPMs with Bazel\nRUN apt-get update && \\\n    apt-get install --no-install-recommends -y bc \\\n    graphviz \\\n    rpm && \\\n    rm -rf /var/lib/apt/lists/*\n# preinstall this for kops tests xref kubetest prepareAws(...)\n# TODO(krzyzacy,justisb,chrislovecnm): remove this\nRUN pip install --no-cache-dir awscli\n\n# install cfssl to prevent https://github.com/kubernetes/kubernetes/issues/55589\n# The invocation at the end is to prevent download failures downloads as in the bug.\n# TODO(porridge): bump CFSSL_VERSION to one where cfssljson supports the -version flag and test it as well.\nARG CFSSL_VERSION\nRUN wget -q -O cfssl \"https://pkg.cfssl.org/${CFSSL_VERSION}/cfssl_linux-amd64\" && \\\n    wget -q -O cfssljson \"https://pkg.cfssl.org/${CFSSL_VERSION}/cfssljson_linux-amd64\" && \\\n    chmod +x cfssl cfssljson && \\\n    mv cfssl cfssljson /usr/local/bin && \\\n    cfssl version\n\n# replace kubectl with one from K8S_RELEASE\nARG K8S_RELEASE=latest\nRUN rm -f $(which kubectl) && \\\n    export KUBECTL_VERSION=$( curl -f https://storage.googleapis.com/kubernetes-release/release/${K8S_RELEASE}.txt) && \\\n    wget https://storage.googleapis.com/kubernetes-release/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl -O /usr/local/bin/kubectl && \\\n    chmod +x /usr/local/bin/kubectl\n\n# install go\nARG GO_VERSION\nENV GO_TARBALL \"go${GO_VERSION}.linux-amd64.tar.gz\"\nRUN wget -q \"https://storage.googleapis.com/golang/${GO_TARBALL}\" && \\\n    tar xzf \"${GO_TARBALL}\" -C /usr/local && \\\n    rm \"${GO_TARBALL}\"\n\n# install yq\nARG YQ_VERSION\nRUN wget -q \"https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_amd64\" \\\n    -O /usr/local/bin/yq && chmod +x /usr/local/bin/yq\n\n# install bazel\nARG BAZEL_VERSION_ARG\nENV BAZEL_VERSION=${BAZEL_VERSION_ARG}\nCOPY images/kubekins-e2e/install-bazel.sh /\nRUN bash /install-bazel.sh\n\nARG OLD_BAZEL_VERSION\nCOPY --from=old \\\n    /usr/local/lib/bazel/bin/bazel-real /usr/local/lib/bazel/bin/bazel-${OLD_BAZEL_VERSION}\n\n# if UPGRADE_DOCKER_ARG, then install the latest docker over whatever we have\n# in the base image.\n# TODO: after code freeze, roll out newer docker in the\n# base image and possibly remove this ...\nARG UPGRADE_DOCKER_ARG=false\nRUN [ \"${UPGRADE_DOCKER_ARG}\" = \"true\" ] && \\\n    apt-get install -y --no-install-recommends docker-ce && \\\n    rm -rf /var/lib/apt/lists/* && \\\n    sed -i 's/cgroupfs_mount$/#cgroupfs_mount\\n/' /etc/init.d/docker || true\n\n# install kind if a version is provided\nARG KIND_VERSION\nRUN if [ -n \"${KIND_VERSION}\" ]; then \\\n    wget -q -O /usr/local/bin/kind https://kind.sigs.k8s.io/dl/v${KIND_VERSION}/kind-linux-amd64 && \\\n    chmod +x /usr/local/bin/kind; \\\n    fi\n\n# install kubetest2 binaries if a version is provided\nARG KUBETEST2_VERSION\nRUN if [ -n \"${KUBETEST2_VERSION}\" ]; then \\\n    wget -q -O /usr/local/bin/kubetest2.tgz https://storage.googleapis.com/k8s-staging-kubetest2/${KUBETEST2_VERSION}/linux-amd64.tgz && \\\n    tar -xzf /usr/local/bin/kubetest2.tgz -C /usr/local/bin && \\\n    rm -f /usr/local/bin/kubetest2.tgz && \\\n    chmod +x /usr/local/bin/kubetest2*; \\\n    fi\n\n# configure dockerd to use mirror.gcr.io\n# per instructions at https://cloud.google.com/container-registry/docs/pulling-cached-images\nARG DOCKER_REGISTRY_MIRROR_URL=https://mirror.gcr.io\nRUN [ -n \"${DOCKER_REGISTRY_MIRROR_URL}\" ] && \\\n    echo \"DOCKER_OPTS=\\\"\\${DOCKER_OPTS} --registry-mirror=${DOCKER_REGISTRY_MIRROR_URL}\\\"\" | \\\n    tee --append /etc/default/docker\n\n# add env we can debug with the image name:tag\nARG IMAGE_ARG\nENV IMAGE=${IMAGE_ARG}\n\n# everything below will be triggered on every new image tag ...\nADD [\"images/kubekins-e2e/kops-e2e-runner.sh\", \\\n    \"images/kubekins-e2e/kubetest\", \\\n    \"https://raw.githubusercontent.com/kubernetes/kubernetes/master/cluster/get-kube.sh\", \\\n    \"logexporter/cluster/log-dump.sh\", \\\n    \"logexporter/cluster/logexporter-daemonset.yaml\", \\\n    \"/workspace/\"]\nENV LOG_DUMP_SCRIPT_PATH \"/workspace/log-dump.sh\"\nRUN [\"chmod\", \"+x\", \"/workspace/get-kube.sh\", \"/workspace/log-dump.sh\"]\n"
+}

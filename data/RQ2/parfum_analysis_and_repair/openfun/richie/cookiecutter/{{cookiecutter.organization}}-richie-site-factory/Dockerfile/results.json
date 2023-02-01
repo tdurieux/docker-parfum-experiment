@@ -1,0 +1,72 @@
+{
+  "startTime": 1674255831173,
+  "endTime": 1674255831949,
+  "originalSmells": [
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 21,
+        "lineEnd": 21,
+        "columnStart": 4,
+        "columnEnd": 34
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 37,
+        "lineEnd": 37,
+        "columnStart": 4,
+        "columnEnd": 29
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 40,
+        "lineEnd": 44,
+        "columnStart": 4,
+        "columnEnd": 75
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 112,
+        "lineEnd": 112,
+        "columnStart": 4,
+        "columnEnd": 40
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 53,
+        "lineEnd": 54,
+        "columnStart": 4,
+        "columnEnd": 11
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 93,
+        "lineEnd": 94,
+        "columnStart": 4,
+        "columnEnd": 10
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 43,
+        "lineEnd": 44,
+        "columnStart": 4,
+        "columnEnd": 75
+      }
+    }
+  ],
+  "repairedDockerfile": "ARG NGINX_IMAGE_NAME=fundocker/openshift-nginx\nARG NGINX_IMAGE_TAG=1.13\nARG STATIC_ROOT=/data/static\nARG SITE=funmooc\n\n# The ID of the user running in the container\nARG DOCKER_USER=10000\n\n# ---- base image to inherit from ----\nFROM python:3.10-buster as base\n\n# ---- front-end builder image ----\nFROM node:16.15 as front-builder\n\nARG SITE\n\n# Copy frontend app sources\nCOPY ./sites/${SITE}/src/frontend /builder/src/frontend\n\nWORKDIR /builder/src/frontend\n\nRUN yarn install --frozen-lockfile && \\\n    yarn compile-translations && \\\n    yarn build-ts-production && \\\n    yarn build-sass-production && yarn cache clean;\n\n# ---- back-end builder image ----\nFROM base as back-builder\n\nARG SITE\n\nWORKDIR /builder\n\n# Copy required python dependencies\nCOPY ./sites/${SITE}/requirements/base.txt /builder/requirements.txt\n\n# Upgrade pip to its latest release to speed up dependencies installation\nRUN pip install --no-cache-dir --upgrade pip\n\nRUN mkdir /install && \\\n    pip install --no-cache-dir --prefix=/install -r requirements.txt \\\n\n\n    pip install --prefix=/install \\\n    git+https://github.com/jbpenrath/django-cms@fun-3.10.0#egg=django-cms\n\n# ---- Core application image ----\nFROM base as core\n\nARG SITE\n\n# Install gettext\nRUN apt-get update && \\\n    apt-get install --no-install-recommends -y \\\n    gettext && \\\n    rm -rf /var/lib/apt/lists/*\n\n# Copy installed python dependencies\nCOPY --from=back-builder /install /usr/local\n\n# Copy runtime-required files\nCOPY ./sites/${SITE}/src/backend /app/\nCOPY ./docker/files/usr/local/bin/entrypoint /usr/local/bin/entrypoint\n\n# Copy distributed application's statics\nCOPY --from=front-builder /builder/src/backend/base/static/richie /app/base/static/richie\n\nWORKDIR /app\n\n# Make sure .mo files are up-to-date\nRUN mkdir -p locale && python manage.py compilemessages\n\n# Gunicorn\nRUN mkdir -p /usr/local/etc/gunicorn\nCOPY ./docker/files/usr/local/etc/gunicorn/app.py /usr/local/etc/gunicorn/app.py\n\n# Give the \"root\" group the same permissions as the \"root\" user on /etc/passwd\n# to allow a user belonging to the root group to add new users; typically the\n# docker user (see entrypoint).\nRUN chmod g=u /etc/passwd\n\n# We wrap commands run in this container by the following entrypoint that\n# creates a user on-the-fly with the container user ID (see USER) and root group\n# ID.\nENTRYPOINT [ \"/usr/local/bin/entrypoint\" ]\n\n# ---- Static files/links collector ----\nFROM core as collector\n\nARG STATIC_ROOT\n\n# Install rdfind\nRUN apt-get update && \\\n    apt-get install --no-install-recommends -y \\\n    rdfind && \\\n    rm -rf /var/lib/apt/lists/*\n\n# Collect static files\nRUN python manage.py collectstatic --noinput\n# Replace duplicated file by a symlink to decrease the overall size of the\n# final image\nRUN rdfind -makesymlinks true ${STATIC_ROOT}\n\n# ---- Development image ----\nFROM core as development\n\nARG SITE\n\n# Copy required python dependencies\nCOPY ./sites/${SITE}/requirements/dev.txt /tmp/requirements.txt\n\n# Install development dependencies\nRUN pip install --no-cache-dir -r /tmp/requirements.txt\n\n# Un-privileged user running the application\nARG DOCKER_USER\nUSER ${DOCKER_USER}\n\n# Run django development server\nCMD python manage.py runserver 0.0.0.0:8000\n\n# ---- Production image ----\nFROM core as production\n\nARG DOCKER_USER\nARG SITE\nARG STATIC_ROOT\n\nENV SITE=${SITE}\n\n# Copy collected symlinks to static files\nCOPY --from=collector ${STATIC_ROOT}/staticfiles.json ${STATIC_ROOT}/\n\n# Un-privileged user running the application\nUSER ${DOCKER_USER}\n\n# The default command runs gunicorn WSGI server in the sandbox\nCMD gunicorn -c /usr/local/etc/gunicorn/app.py ${SITE}.wsgi:application\n\n# ---- Nginx ----\nFROM ${NGINX_IMAGE_NAME}:${NGINX_IMAGE_TAG} as nginx\n\nARG STATIC_ROOT\n\nRUN mkdir -p ${STATIC_ROOT}\n\nCOPY --from=collector ${STATIC_ROOT} ${STATIC_ROOT}\n"
+}

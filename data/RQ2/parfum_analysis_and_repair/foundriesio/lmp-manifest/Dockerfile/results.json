@@ -1,0 +1,81 @@
+{
+  "startTime": 1674218800097,
+  "endTime": 1674218801575,
+  "originalSmells": [
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 8,
+        "lineEnd": 8,
+        "columnStart": 1,
+        "columnEnd": 54
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 21,
+        "lineEnd": 21,
+        "columnStart": 4,
+        "columnEnd": 57
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 4,
+        "lineEnd": 5,
+        "columnStart": 22,
+        "columnEnd": 68
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 19,
+        "lineEnd": 19,
+        "columnStart": 4,
+        "columnEnd": 43
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 19,
+        "lineEnd": 19,
+        "columnStart": 4,
+        "columnEnd": 43
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 4,
+        "lineEnd": 5,
+        "columnStart": 22,
+        "columnEnd": 68
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 19,
+        "lineEnd": 19,
+        "columnStart": 4,
+        "columnEnd": 43
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 19,
+        "lineEnd": 19,
+        "columnStart": 4,
+        "columnEnd": 67
+      }
+    }
+  ],
+  "repairedDockerfile": "# Build container tools\nFROM ubuntu:20.04 AS container-tools\nARG DEBIAN_FRONTEND=noninteractive\n\nRUN apt-get update && apt-get install --no-install-recommends -y wget git make \\\n\tlibgpgme-dev libassuan-dev libbtrfs-dev libdevmapper-dev pkg-config && rm -rf /var/lib/apt/lists/*;\n\nRUN wget -P /tmp https://go.dev/dl/go1.18.linux-amd64.tar.gz && \\\n\ttar -C /usr/local -xzf /tmp/go1.18.linux-amd64.tar.gz && rm /tmp/go1.18.linux-amd64.tar.gz\nENV PATH /usr/local/go/bin:$PATH\n\n# Build skopeo\nRUN git clone https://github.com/containers/skopeo.git /skopeo && \\\n\tcd /skopeo && git checkout -q v1.8.0 && \\\n\tGO_DYN_FLAGS= CGO_ENABLED=0 BUILDTAGS=containers_image_openpgp DISABLE_DOCS=1 make\n\n# Build ostreeuploader, aka fiopush/fiocheck\nFROM ubuntu:20.04 AS fiotools\nRUN apt-get update\nRUN apt-get install --no-install-recommends -y wget git gcc make -y && rm -rf /var/lib/apt/lists/*;\nRUN wget -P /tmp https://go.dev/dl/go1.18.linux-amd64.tar.gz && \\\n    tar -C /usr/local -xzf /tmp/go1.18.linux-amd64.tar.gz && rm /tmp/go1.18.linux-amd64.tar.gz\nENV PATH /usr/local/go/bin:$PATH\n\nRUN git clone https://github.com/foundriesio/ostreeuploader.git /ostreeuploader && \\\n    cd /ostreeuploader && git checkout -q 2022.4 && \\\n    cd /ostreeuploader && make\n\n\nFROM ubuntu:20.04\n\n# bitbake requires a utf8 filesystem encoding\nENV LANG en_US.UTF-8\nENV LANGUAGE en_US:en\nENV LC_ALL en_US.UTF-8\n\nARG DEBIAN_FRONTEND=noninteractive\nARG DEV_USER_NAME=Builder\nARG DEV_USER=builder\nARG DEV_USER_PASSWD=builder\n\n# FIO PPA for additional dependencies and newer packages\nRUN apt-get update \\\n\t&& apt-get install -y --no-install-recommends \\\n\t   software-properties-common \\\n\t&& add-apt-repository ppa:fio-maintainers/ppa \\\n\t&& apt-get clean \\\n\t&& rm -rf /var/lib/apt/lists/*\n\nRUN apt-get update \\\n\t&& apt-get install -y --no-install-recommends \\\n\t\tandroid-sdk-libsparse-utils android-sdk-ext4-utils ca-certificates \\\n\t\tchrpath cpio diffstat file gawk g++ iproute2 iputils-ping less libmagickwand-dev \\\n\t\tlibmath-prime-util-perl libsdl1.2-dev libssl-dev locales \\\n\t\topenjdk-11-jre openssh-client perl-modules python3 python3-requests \\\n\t\tmake patch repo sudo texinfo vim-tiny wget whiptail libelf-dev git-lfs screen \\\n\t\tsocket corkscrew curl xz-utils tcl libtinfo5 device-tree-compiler python3-pip python3-dev \\\n\t\ttmux libncurses-dev vim zstd lz4 liblz4-tool libc6-dev-i386 \\\n\t\tawscli docker-compose \\\n\t&& ln -s /usr/bin/python3 /usr/bin/python \\\n\t&& pip3 --no-cache-dir install jsonFormatter \\\n\t&& apt-get autoremove -y \\\n\t&& apt-get clean \\\n\t&& rm -rf /var/lib/apt/lists/* \\\n\t&& locale-gen en_US.UTF-8\n\n# Create the user which will run the SDK binaries.\nRUN useradd -c $DEV_USER_NAME \\\n\t\t-d /home/$DEV_USER \\\n\t\t-G sudo,dialout,floppy,plugdev,users \\\n\t\t-m \\\n\t\t-s /bin/bash \\\n\t\t$DEV_USER\n\n# Add default password for the SDK user (useful with sudo)\nRUN echo $DEV_USER:$DEV_USER_PASSWD | chpasswd\n\n# Initialize development environment for $DEV_USER.\nRUN sudo -u $DEV_USER -H git config --global credential.helper 'cache --timeout=3600'\n\n# Install ostreeuploader, aka fiopush/fiocheck\nCOPY --from=fiotools /ostreeuploader/bin/fiopush /usr/bin/\nCOPY --from=fiotools /ostreeuploader/bin/fiocheck /usr/bin/\nENV FIO_PUSH_CMD /usr/bin/fiopush\nENV FIO_CHECK_CMD /usr/bin/fiocheck\n\n# Install skopeo\nCOPY --from=container-tools /skopeo/bin/skopeo /usr/bin\n"
+}

@@ -1,0 +1,80 @@
+{
+  "startTime": 1674250829463,
+  "endTime": 1674250830095,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 12,
+        "lineEnd": 12,
+        "columnStart": 5,
+        "columnEnd": 80
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 13,
+        "lineEnd": 13,
+        "columnStart": 5,
+        "columnEnd": 84
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 24,
+        "lineEnd": 37,
+        "columnStart": 5,
+        "columnEnd": 37
+      }
+    },
+    {
+      "rule": "gpgUseBatchFlag",
+      "position": {
+        "lineStart": 16,
+        "lineEnd": 16,
+        "columnStart": 5,
+        "columnEnd": 76
+      }
+    },
+    {
+      "rule": "gpgUseBatchFlag",
+      "position": {
+        "lineStart": 17,
+        "lineEnd": 17,
+        "columnStart": 5,
+        "columnEnd": 74
+      }
+    },
+    {
+      "rule": "gpgUseBatchFlag",
+      "position": {
+        "lineStart": 18,
+        "lineEnd": 18,
+        "columnStart": 5,
+        "columnEnd": 60
+      }
+    },
+    {
+      "rule": "gpgUseHaPools",
+      "position": {
+        "lineStart": 16,
+        "lineEnd": 16,
+        "columnStart": 5,
+        "columnEnd": 76
+      }
+    },
+    {
+      "rule": "gpgUseHaPools",
+      "position": {
+        "lineStart": 17,
+        "lineEnd": 17,
+        "columnStart": 5,
+        "columnEnd": 74
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM alpine:3.10 AS builder\n\nARG NSD_VERSION=4.2.2\nWORKDIR /src\nRUN set -xe; \\\n  apk add --no-cache \\\n    libevent-dev \\\n    libressl-dev \\\n    build-base \\\n    gnupg \\\n    curl \\\n    file \\\n  && curl -f -sSLO https://www.nlnetlabs.nl/downloads/nsd/nsd-${NSD_VERSION}.tar.gz \\\n  && curl -f -sSLO https://www.nlnetlabs.nl/downloads/nsd/nsd-${NSD_VERSION}.tar.gz.asc \\\n  && key='EDFAA3F2CA4E6EB05681AF8E9F6F1C2D7E045F8D' \\\n  && export GNUPGHOME=\"$(mktemp -d)\" \\\n  && gpg --batch --keyserver hkp://p80.ha.pool.sks-keyservers.net:80 --recv-keys \"$key\" \\\n  || gpg --batch --keyserver hkp://ipv4.ha.pool.sks-keyservers.net --recv-keys \"$key\" \\\n  || gpg --batch --keyserver hkp://pgp.mit.edu:80 --recv-keys \"$key\" \\\n  && gpg --batch --verify nsd-${NSD_VERSION}.tar.gz.asc nsd-${NSD_VERSION}.tar.gz \\\n  && rm -rf \"$GNUPGHOME\" nsd-${NSD_VERSION}.tar.gz.asc \\\n  && tar -xzf nsd-${NSD_VERSION}.tar.gz \\\n  && rm nsd-${NSD_VERSION}.tar.gz \\\n  && cd nsd-${NSD_VERSION} \\\n  && ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" \\\n    --sbindir=/usr/sbin \\\n    --mandir=/usr/share/man \\\n    --with-user=nsd \\\n    --with-pidfile=/var/run/nsd/nsd.pid \\\n    --with-xfrdir=/var/db/nsd \\\n    --with-ssl \\\n    --with-libevent \\\n    --enable-ratelimit \\\n    --enable-ratelimit-default-is-off \\\n    --enable-bind8-stats \\\n    --enable-zone-stats \\\n    CFLAGS=\"-O2 -flto -fPIE -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=2 -fstack-protector-strong -Wformat -Werror=format-security\" \\\n    LDFLAGS=\"-Wl,-z,now -Wl,-z,relro\" \\\n\t&& make \\\n  && make DESTDIR=\"/app\" install\n\nFROM alpine:3.10\n\nARG NSD_VERSION=4.2.2\nENV NSD_VERSION=${NSD_VERSION}\nENV NSD_HOME=/etc/nsd\nRUN set -xe; \\\n  addgroup -S nsd \\\n  && adduser -S -D -H -h ${NSD_HOME} -s /sbin/nologin -G nsd nsd \\\n  && apk add --no-cache \\\n    libevent \\\n    libressl \\\n    openssl \\\n  && install -d \\\n    -o nsd \\\n    -g nsd \\\n    /var/db/nsd \\\n    /var/run/nsd \\\n    ${NSD_HOME}/ssl \\\n    ${NSD_HOME}/conf.d\n\nWORKDIR ${NSD_HOME}\nEXPOSE 53 53/udp 8952\n\nCOPY --from=builder /app/usr/sbin/ \\\n  /usr/sbin/\n# core essentials which harmonize with the Dockerfile settings\nCOPY nsd.conf \\\n  ${NSD_HOME}/\n# opiniated defaults\nCOPY server-config/ \\\n  ${NSD_HOME}/server-conf.d/\nCOPY bin/ \\\n  /usr/local/bin/\n\nVOLUME [ \\\n  \"/var/db/nsd\", \\\n  \"${NSD_HOME}/ssl\", \\\n  \"${NSD_HOME}/conf.d\", \\\n  \"${NSD_HOME}/server-conf.d\" \\\n]\nHEALTHCHECK --interval=1m --timeout=3s --start-period=10s \\\n  CMD /usr/sbin/nsd-control -c ${NSD_HOME}/nsd.conf status -s 127.0.0.1:8952 || exit 1\nENTRYPOINT [\"/usr/local/bin/docker-entrypoint.sh\"]\nCMD [ \"nsd\", \"-c\", \"/etc/nsd/nsd.conf\" ]\n\nARG BUILD_DATE=\"1970-01-01T00:00:00Z\"\nARG REVISION=\"0\"\nARG VCS_URL=\"http://localhost/\"\nARG VCS_REF=\"master\"\nLABEL org.opencontainers.image.created=$BUILD_DATE \\\n    org.opencontainers.image.title=\"NSD\" \\\n    org.opencontainers.image.description=\"NSD is an authoritative only, high performance, simple and open source name server.\" \\\n    org.opencontainers.image.url=\"https://www.nlnetlabs.nl/projects/nsd/\" \\\n    org.opencontainers.image.source=$VCS_URL \\\n    org.opencontainers.image.revision=$VCS_REF \\\n    org.opencontainers.image.vendor=\"NLnet Labs\" \\\n    org.opencontainers.image.version=\"${NSD_VERSION}-${REVISION}\" \\\n    com.microscaling.docker.dockerfile=\"/nsd/Dockerfile\" \\\n    org.opencontainers.image.licenses=\"BSD\"\n"
+}

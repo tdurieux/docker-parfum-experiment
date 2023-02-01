@@ -1,0 +1,90 @@
+# ---
+# Cribl AppScope™ - Build under Docker
+#
+# by Paul Dugas <paul@dugas.cc>
+#
+
+# ---
+# Use the Ubuntu 18.04 image by default. Override this like below.
+#
+#     docker build --build-arg IMAGE=ubuntu:latest ...
+#
+ARG IMAGE=ubuntu:18.04
+FROM $IMAGE
+
+# ---
+# Use the current version of Go in the longsleep/golang-backports PPA by
+# default. Override this like below.
+#
+#     docker build --build-arg GOLANG=golang-1.16 ...
+#
+ARG GOLANG=golang
+ENV GOLANG=$GOLANG
+
+# These are needed to bypass the prompts when tzdata is installed.
+ENV DEBIAN_FRONTEND="noninteractive"
+ENV TZ="America/New_York"
+RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
+
+# ---
+# Install packages. Note extra PPA for Go.
+#
+# Also note that this logic duplicates the top-level `install_build_tools.sh`
+# script. Trying to use that script here causes issues because of its use of
+# `sudu` when running the package installer. It clears the environment so the
+# additions above don't apply and we end up with interaction when some of the
+# dependencies (i.e. tzdata) are installed.
+#
+RUN apt-get update && \
+    apt-get install --no-install-recommends -y software-properties-common gpg apt-utils && \
+    add-apt-repository ppa:longsleep/golang-backports && \
+    apt-get update && \
+    apt-key adv --keyserver keyserver.ubuntu.com --recv-keys 52B59B1571A79DBC054901C0F6BC817356A3D45E && \
+    apt-get install --no-install-recommends -y \
+        $GOLANG \
+        autoconf \
+        automake \
+        cmake \
+        curl \
+        emacs \
+        gdb \
+        git \
+        lcov \
+        libtool \
+        lsof \
+        make \
+        strace \
+        sudo \
+        tzdata \
+        upx \
+        vim \
+        && \
+    dpkg-reconfigure --frontend noninteractive tzdata && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*;
+
+RUN useradd -d /home/builder -m builder && \
+    useradd -d /home/builder -m builder1 && \
+    \
+    echo "builder ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers.d/builder && \
+    echo "builder1 ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers.d/builder && \
+    \
+    echo "alias ll='ls -alF'" >> /home/builder/.bashrc && \
+    echo "alias la='ls -A'" >> /home/builder/.bashrc && \
+    echo "alias l='ls -CF'" >> /home/builder/.bashrc && \
+    echo "alias h='history'" >> /home/builder/.bashrc && \
+    \
+    echo "#set environment LD_PRELOAD=/home/builder/appscope/lib/linux/libscope.so" >> /home/builder/.gdbinit && \
+    echo "set follow-fork-mode child" >> /home/builder/.gdbinit && \
+    echo "set breakpoint pending on" >> /home/builder/.gdbinit && \
+    echo "set directories /home/builder/appscope" >> /home/builder/.gdbinit && \
+    \
+    mkdir /home/builder/appscope
+
+# ---
+# The local git clone of the project is mounted as /home/builder/appscope. See Makefile.
+#
+#     docker run -v $(pwd):/home/builder/appscope ...
+#
+WORKDIR /home/builder/appscope
+
+# fini

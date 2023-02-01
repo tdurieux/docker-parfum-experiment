@@ -1,0 +1,34 @@
+FROM IMAGE_URL_ARCH
+ARG pkgname
+ENV pkgname=${pkgname:-python-proton-client}
+RUN pacman -Syu --noconfirm
+RUN pacman -Syu --noconfirm \
+    pacman-contrib \
+    base-devel \
+    bash \
+    sudo \
+    make \
+    python \
+    python-pip \
+    bash \
+    vim \
+    nano \
+    namcap \
+    python-requests \
+    python-pyopenssl \
+    python-bcrypt \
+    python-gnupg \
+    python-pytest \
+    python-dnspython \
+    python-pytest-cov \
+    && useradd -ms /bin/bash user \
+    && usermod -a -G wheel user \
+    && echo '%wheel ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers
+
+COPY docker_entry.sh /usr/local/bin
+COPY . /home/user/$pkgname
+
+RUN chown -R user:user /home/user/
+WORKDIR /home/user/$pkgname
+
+ENTRYPOINT ["/usr/local/bin/docker_entry.sh"]

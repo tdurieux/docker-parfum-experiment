@@ -1,0 +1,18 @@
+FROM ubuntu:18.04
+
+ENV DEBIAN_FRONTEND noninteractive
+RUN apt-get update && apt-get install --no-install-recommends -y sudo git-core subversion ccache build-essential gcc-multilib libssl-dev \
+                       libncurses5-dev zlib1g-dev gawk flex gettext wget unzip python && rm -rf /var/lib/apt/lists/*;
+RUN useradd -m -u 1000 -U openwrt &&\
+    echo 'openwrt ALL=NOPASSWD: ALL' > /etc/sudoers.d/openwrt
+
+ENV OPENWRT_SDK_VERSION 17.01.6
+ENV OPENWRT_SDK_ARCH brcm2708-bcm2709
+ENV OPENWRT_SDK_URL https://downloads.openwrt.org/releases/17.01.6/targets/brcm2708/bcm2709/lede-sdk-17.01.6-brcm2708-bcm2709_gcc-5.4.0_musl-1.1.16_eabi.Linux-x86_64.tar.xz
+RUN sudo -iu openwrt wget --tries=3 "${OPENWRT_SDK_URL}" &&\
+    sudo -iu openwrt tar xf "$(basename ${OPENWRT_SDK_URL})" &&\
+    sudo -iu openwrt rm -f "$(basename ${OPENWRT_SDK_URL})" &&\
+    sudo -iu openwrt mv "$(basename ${OPENWRT_SDK_URL%%.tar.*})" openwrtsdk
+RUN sudo -iu openwrt mkdir -p openwrtsdk/dl openwrtsdk/bin openwrtsdk/feeds
+
+CMD sudo -iu openwrt bash

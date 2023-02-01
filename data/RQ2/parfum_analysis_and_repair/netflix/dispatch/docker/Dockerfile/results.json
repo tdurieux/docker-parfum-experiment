@@ -1,0 +1,72 @@
+{
+  "startTime": 1674246509909,
+  "endTime": 1674246510848,
+  "originalSmells": [
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 98,
+        "lineEnd": 98,
+        "columnStart": 7,
+        "columnEnd": 23
+      }
+    },
+    {
+      "rule": "rmRecursiveAfterMktempD",
+      "position": {
+        "lineStart": 41,
+        "lineEnd": 41,
+        "columnStart": 32,
+        "columnEnd": 41
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 88,
+        "lineEnd": 88,
+        "columnStart": 7,
+        "columnEnd": 37
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 19,
+        "lineEnd": 19,
+        "columnStart": 7,
+        "columnEnd": 32
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 19,
+        "lineEnd": 19,
+        "columnStart": 7,
+        "columnEnd": 32
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 19,
+        "lineEnd": 19,
+        "columnStart": 7,
+        "columnEnd": 32
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 19,
+        "lineEnd": 19,
+        "columnStart": 7,
+        "columnEnd": 56
+      }
+    }
+  ],
+  "repairedDockerfile": "FROM python:3.9.7-slim-buster as sdist\n\nLABEL maintainer=\"oss@netflix.com\"\nLABEL org.opencontainers.image.title=\"Dispatch PyPI Wheel\"\nLABEL org.opencontainers.image.description=\"PyPI Wheel Builder for Dispatch\"\nLABEL org.opencontainers.image.url=\"https://dispatch.io/\"\nLABEL org.opencontainers.image.source=\"https://github.com/netflix/dispatch\"\nLABEL org.opencontainers.image.vendor=\"Netflix, Inc.\"\nLABEL org.opencontainers.image.authors=\"oss@netflix.com\"\n\n# Get and set up Node for front-end asset building\nRUN apt-get update && apt-get install -y --no-install-recommends \\\n    # Needed for fetching stuff\n    ca-certificates \\\n    wget \\\n    && rm -rf /var/lib/apt/lists/*\n\nRUN set -x \\\n    && wget --quiet -O - https://deb.nodesource.com/setup_12.x | bash - \\\n    && apt-get install --no-install-recommends -y nodejs && rm -rf /var/lib/apt/lists/*;\n\nARG SOURCE_COMMIT\nENV DISPATCH_BUILD=${SOURCE_COMMIT:-unknown}\nLABEL org.opencontainers.image.revision=$SOURCE_COMMIT\nLABEL org.opencontainers.image.licenses=\"https://github.com/netflix/dispatch/blob/${SOURCE_COMMIT:-master}/LICENSE\"\n\nARG DISPATCH_LIGHT_BUILD\nENV DISPATCH_LIGHT_BUILD=${DISPATCH_LIGHT_BUILD}\n\nRUN echo \"DISPATCH_LIGHT_BUILD=${DISPATCH_LIGHT_BUILD}\"\n\n# Allow build time variables via --build-arg\nARG VUE_APP_DISPATCH_AUTHENTICATION_PROVIDER_PKCE_CLIENT_ID\nARG VUE_APP_DISPATCH_AUTHENTICATION_PROVIDER_PKCE_OPEN_ID_CONNECT_URL\nARG VUE_APP_DISPATCH_AUTHENTICATION_PROVIDER_SLUG\nARG VUE_APP_DISPATCH_AUTHENTICATION_PROVIDER_USE_ID_TOKEN\nARG VUE_APP_SENTRY_DSN\nARG VUE_APP_SENTRY_APP_KEY\nARG VUE_APP_SENTRY_ENABLED\n\nCOPY . /usr/src/dispatch/\nRUN export YARN_CACHE_FOLDER=\"$(mktemp -d)\" \\\n    && cd /usr/src/dispatch \\\n    && python setup.py bdist_wheel \\\n    && rm -r \"$YARN_CACHE_FOLDER\" \\\n    && mv /usr/src/dispatch/dist /dist && rm -rf -d\n\n# This is the image to be run\nFROM python:3.9.7-slim-buster\n\nLABEL maintainer=\"oss@dispatch.io\"\nLABEL org.opencontainers.image.title=\"Dispatch\"\nLABEL org.opencontainers.image.description=\"Dispatch runtime image\"\nLABEL org.opencontainers.image.url=\"https://github.com/netflix/dispatch\"\nLABEL org.opencontainers.image.documentation=\"https://github.com/netflix/dispatch\"\nLABEL org.opencontainers.image.source=\"https://github.com/netflix/dispatch\"\nLABEL org.opencontainers.image.vendor=\"Netflix, Inc.\"\nLABEL org.opencontainers.image.authors=\"oss@netflix.com\"\n\n\n# add our user and group first to make sure their IDs get assigned consistently\nRUN groupadd -r dispatch && useradd -r -m -g dispatch dispatch\n\n# Sane defaults for pip\nENV PIP_NO_CACHE_DIR=off \\\n    PIP_DISABLE_PIP_VERSION_CHECK=1 \\\n    # Dispatch config params\n    DISPATCH_CONF=/etc/dispatch\n\nRUN apt-get update && apt-get install -y --no-install-recommends \\\n    # Needed for fetching stuff\n    ca-certificates \\\n    wget gnupg \\\n    && rm -rf /var/lib/apt/lists/*\n\nRUN set -x \\\n    && echo \"deb http://apt.postgresql.org/pub/repos/apt buster-pgdg main\" > /etc/apt/sources.list.d/pgdg.list \\\n    && wget --quiet -O - https://www.postgresql.org/media/keys/ACCC4CF8.asc | apt-key add -\n\nRUN set -x \\\n    && wget --quiet -O - https://deb.nodesource.com/setup_12.x | bash -\n\nCOPY --from=sdist /dist/*.whl /tmp/dist/\nRUN set -x \\\n    && buildDeps=\"\" \\\n    && apt-get update \\\n    && apt-get install -y --no-install-recommends $buildDeps \\\n    # remove internal index when internal plugins are seperated \\\n    && pip install --no-cache-dir -U /tmp/dist/*.whl \\\n    && apt-get purge -y --auto-remove $buildDeps \\\n    # We install run-time dependencies strictly after\n    # build dependencies to prevent accidental collusion.\n    # These are also installed last as they are needed\n    # during container run and can have the same deps w/\n    && apt-get install -y --no-install-recommends \\\n    pkg-config postgresql-client-12 nodejs \\\n    && apt-get clean \\\n    && rm -rf /var/lib/apt/lists/* \\\n    && npm install mjml && npm cache clean --force;\n\nEXPOSE 8000\nVOLUME /var/lib/dispatch/files\n\nENTRYPOINT [\"dispatch\"]\nCMD [\"server\", \"start\", \"dispatch.main:app\", \"--host=0.0.0.0\"]\n\nARG SOURCE_COMMIT\nLABEL org.opencontainers.image.revision=$SOURCE_COMMIT\nLABEL org.opencontainers.image.licenses=\"https://github.com/netflix/dispatch/blob/${SOURCE_COMMIT:-master}/LICENSE\"\n"
+}

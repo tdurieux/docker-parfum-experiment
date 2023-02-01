@@ -1,0 +1,22 @@
+FROM composer:2.2 as composer-build
+WORKDIR /opt/php-version-audit
+COPY ./docker/docker-entrypoint.sh ./docker/docker-entrypoint.sh
+COPY ./src ./src
+COPY ./docs/rules-v1.json ./docs/rules-v1.json
+COPY php-version-audit .
+COPY ./composer.json .
+COPY ./composer.lock .
+RUN composer install            \
+    --classmap-authoritative    \
+    --no-dev                    \
+    --no-interaction            \
+    --no-progress               \
+    --no-suggest                \
+    --optimize-autoloader       \
+    --prefer-dist
+
+FROM php:8.1-cli-buster
+WORKDIR /opt/php-version-audit
+ENV REQUIRE_VERSION_ARG=true
+COPY --from=composer-build /opt/php-version-audit /opt/php-version-audit
+ENTRYPOINT ["/opt/php-version-audit/docker/docker-entrypoint.sh"]

@@ -1,0 +1,39 @@
+ARG REPO=library
+FROM golang:1.17 AS builder
+
+RUN mkdir /app
+WORKDIR /app
+
+COPY ./go.mod ./go.sum /app/
+RUN go mod download
+
+COPY ./*.go /app/
+
+ARG ARCH=amd64
+ARG VERSION=dev
+ENV CGO_ENABLED=0 GOOS=linux GOARCH=${ARCH}
+RUN go build -ldflags "-X main.version=${VERSION}" -a -installsuffix nocgo -o minitor .
+
+FROM ${REPO}/alpine:3.12
+RUN mkdir /app
+WORKDIR /app/
+
+# Copy minitor in
+COPY --from=builder /app/minitor .
+
+# Add common checking tools
+RUN apk --no-cache add bash=~5.0 curl=~7.79 jq=~1.6
+
+# Add minitor user for running as non-root
+RUN addgroup -S minitor && adduser -S minitor -G minitor
+
+# Copy scripts
+COPY ./scripts /app/scripts
+RUN chmod -R 755 /app/scripts
+
+# Drop to non-root user
+USER minitor
+
+ENTRYPOINT [ "./minitor" ]
+
+# vim: set filetype=dockerfile:

@@ -1,0 +1,49 @@
+FROM stackhut/{{ service.hutcfg.from_image }}:latest
+{# MAINTAINER "{{ service.usercfg.email }}" <{{ service.usercfg.username }}> -#}
+{# LABEL description="{{ service.hutcfg.description }}" -#}
+
+{% if service.hutcfg.os_deps %}
+# install OS packages needed for service
+RUN echo "Starting..." && \
+    {% for cmd in service.baseos.install_os_pkg(service.hutcfg.os_deps) -%}
+    {{ cmd }} && \
+    {% endfor -%}
+    echo "...done" && exit
+{% endif %}
+
+WORKDIR /workdir
+
+{% if service.dev %}
+# install stackhut-runner from dev branch
+RUN echo "Starting..." && \
+    pip3 install --no-cache-dir --compile https://github.com/StackHut/stackhut-common/archive/master.zip && \
+    pip3 install --no-cache-dir --compile https://s3-eu-west-1.amazonaws.com/stackhut-releases/dev/stackhut_runner-1.0.dev0-py3-none-any.whl && \
+    echo "...done" && exit
+{% else %}
+# install stackhut-runner from release branch
+RUN pip3 install --no-cache-dir --compile https://s3-eu-west-1.amazonaws.com/stackhut-releases/stackhut_runner-1.0.dev0-py3-none-any.whl
+{% endif %}
+
+{% if service.stack.service_package_files %}
+# install lang packages needed for stack
+COPY {{ service.stack.service_package_files }} ./
+RUN {{ service.stack.install_service_packages() }}
+{% endif %}
+
+# copy all source files and dirs across
+COPY Hutfile.yaml .api.json {{ service.stack.entrypoint }} {{ service.stack.shim_files|join(' ') }} {{ service.hutcfg.files|join(' ') }} ./
+{% for d in service.hutcfg.dirs -%}
+COPY {{ d }} ./{{ d }}
+{% endfor -%}
+
+# any other Docker toolkit.commands
+{% for cmd in service.hutcfg.docker_cmds -%}
+{{ cmd }}
+{% endfor -%}
+
+{## cache bust - {{ service.build_date }}#}
+
+{#
+# setup the entrypoint (using -v for now)
+ENTRYPOINT ["/usr/bin/python3", "/usr/bin/stackhut", "-v", "run"]
+#}

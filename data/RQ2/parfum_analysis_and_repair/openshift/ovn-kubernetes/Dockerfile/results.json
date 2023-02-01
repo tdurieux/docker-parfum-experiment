@@ -1,0 +1,44 @@
+{
+  "startTime": 1674254125913,
+  "endTime": 1674254126597,
+  "originalSmells": [
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 30,
+        "lineEnd": 31,
+        "columnStart": 4,
+        "columnEnd": 15
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 45,
+        "lineEnd": 45,
+        "columnStart": 1,
+        "columnEnd": 98
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 46,
+        "lineEnd": 46,
+        "columnStart": 1,
+        "columnEnd": 216
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 47,
+        "lineEnd": 47,
+        "columnStart": 1,
+        "columnEnd": 186
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "#\n# This is the OpenShift ovn overlay network image.\n# it provides an overlay network using ovs/ovn/ovn-kube\n#\n# The standard name for this image is ovn-kube\n\n# Notes:\n# This is for a build where the ovn-kubernetes utilities\n# are built in this Dockerfile and included in the image (instead of the rpm)\n#\n\nFROM registry.ci.openshift.org/ocp/builder:rhel-8-golang-1.18-openshift-4.12 AS builder\n\nWORKDIR /go/src/github.com/openshift/ovn-kubernetes\nCOPY . .\n\n# build the binaries\nRUN cd go-controller; CGO_ENABLED=0 make\nRUN cd go-controller; CGO_ENABLED=0 make windows\n\nFROM registry.ci.openshift.org/ocp/4.12:cli AS cli\n\nFROM registry.ci.openshift.org/ocp/4.12:base\n\nUSER root\n\nENV PYTHONDONTWRITEBYTECODE yes\n\n# install needed rpms - openvswitch must be 2.10.4 or higher\n# install selinux-policy first to avoid a race\nRUN yum install -y  \\\n\tselinux-policy && \\\n\tyum clean all && rm -rf /var/cache/yum\n\nARG ovsver=2.17.0-22.el8fdp\nARG ovnver=22.06.0-7.el8fdp\n\nRUN INSTALL_PKGS=\" \\\n\topenssl python3-pyOpenSSL firewalld-filesystem \\\n\tlibpcap iproute iproute-tc strace \\\n\tcontainernetworking-plugins \\\n\ttcpdump iputils \\\n\tlibreswan \\\n\tethtool conntrack-tools \\\n\t\" && \\\n\tyum install -y --setopt=tsflags=nodocs --setopt=skip_missing_names_on_install=False $INSTALL_PKGS && \\\n\tyum install -y --setopt=tsflags=nodocs --setopt=skip_missing_names_on_install=False \"openvswitch2.17 = $ovsver\" \"openvswitch2.17-devel = $ovsver\" \"python3-openvswitch2.17 = $ovsver\" \"openvswitch2.17-ipsec = $ovsver\" && \\\n\tyum install -y --setopt=tsflags=nodocs --setopt=skip_missing_names_on_install=False \"ovn22.06 = $ovnver\" \"ovn22.06-central = $ovnver\" \"ovn22.06-host = $ovnver\" \"ovn22.06-vtep = $ovnver\" && \\\n\tyum clean all && rm -rf /var/cache/* && rm -rf /var/cache/yum\n\nRUN mkdir -p /var/run/openvswitch && \\\n    mkdir -p /var/run/ovn && \\\n    mkdir -p /etc/cni/net.d && \\\n    mkdir -p /opt/cni/bin && \\\n    mkdir -p /usr/libexec/cni/ && \\\n    mkdir -p /root/windows/\n\nCOPY --from=builder /go/src/github.com/openshift/ovn-kubernetes/go-controller/_output/go/bin/ovnkube /usr/bin/\nCOPY --from=builder /go/src/github.com/openshift/ovn-kubernetes/go-controller/_output/go/bin/ovn-kube-util /usr/bin/\nCOPY --from=builder /go/src/github.com/openshift/ovn-kubernetes/go-controller/_output/go/bin/ovn-k8s-cni-overlay /usr/libexec/cni/\nCOPY --from=builder /go/src/github.com/openshift/ovn-kubernetes/go-controller/_output/go/bin/windows/hybrid-overlay-node.exe /root/windows/\nCOPY --from=builder /go/src/github.com/openshift/ovn-kubernetes/go-controller/_output/go/bin/ovndbchecker /usr/bin/\nCOPY --from=builder /go/src/github.com/openshift/ovn-kubernetes/go-controller/_output/go/bin/ovnkube-trace /usr/bin/\n\nCOPY --from=cli /usr/bin/oc /usr/bin/\nRUN ln -s /usr/bin/oc /usr/bin/kubectl\nRUN stat /usr/bin/oc\n\n# copy git commit number into image\nCOPY .git/HEAD /root/.git/HEAD\nCOPY .git/refs/heads/ /root/.git/refs/heads/\n\n# ovnkube.sh is the entry point. This script examines environment\n# variables to direct operation and configure ovn\nCOPY dist/images/ovnkube.sh /root/\n\n# iptables wrappers\nCOPY ./dist/images/iptables-scripts/iptables /usr/sbin/\nCOPY ./dist/images/iptables-scripts/iptables-save /usr/sbin/\nCOPY ./dist/images/iptables-scripts/iptables-restore /usr/sbin/\nCOPY ./dist/images/iptables-scripts/ip6tables /usr/sbin/\nCOPY ./dist/images/iptables-scripts/ip6tables-save /usr/sbin/\nCOPY ./dist/images/iptables-scripts/ip6tables-restore /usr/sbin/\nCOPY ./dist/images/iptables-scripts/iptables /usr/sbin/\n\nLABEL io.k8s.display-name=\"ovn kubernetes\" \\\n      io.k8s.description=\"This is a component of OpenShift Container Platform that provides an overlay network using ovn.\" \\\n      summary=\"This is a component of OpenShift Container Platform that provides an overlay network using ovn.\" \\\n      io.openshift.tags=\"openshift\" \\\n      maintainer=\"Tim Rozet <trozet@redhat.com>\"\n\nWORKDIR /root\nENTRYPOINT /root/ovnkube.sh\n\n"
+}

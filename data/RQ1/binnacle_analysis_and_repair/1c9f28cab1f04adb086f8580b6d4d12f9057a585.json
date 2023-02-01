@@ -1,0 +1,35 @@
+{
+  "startTime": 1674239748624,
+  "endTime": 1674239748878,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 75,
+        "lineEnd": 75,
+        "columnStart": 7,
+        "columnEnd": 33
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 8,
+        "lineEnd": 8,
+        "columnStart": 7,
+        "columnEnd": 18
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 63,
+        "lineEnd": 67,
+        "columnStart": 4,
+        "columnEnd": 12
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM php:7.3-cli-alpine3.9 AS build-uv\nRUN apk update && \\\n    apk add --no-cache $PHPIZE_DEPS git libuv-dev && \\\n    git clone https://github.com/bwoebi/php-uv uv\nWORKDIR /uv\nRUN git fetch \\\n    && git pull \\\n    && phpize \\\n    && ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" \\\n    && make install \\\n    && EXTENSION_DIR=`php-config --extension-dir 2>/dev/null` && \\\n    cp \"$EXTENSION_DIR/uv.so\" /uv.so\nRUN sha256sum /uv.so\n\nFROM php:7.3-cli-alpine3.9 AS nts\nRUN set -x \\\n    && addgroup -g 1000 app \\\n    && adduser -u 1000 -D -G app app\nCOPY --from=build-uv /uv.so /uv.so\n\n# Patch CVE-2018-14618 (curl), CVE-2018-16842 (libxml2), CVE-2019-1543 (openssl)\nRUN apk upgrade --no-cache curl libxml2 openssl\n\n# Install docker help scripts\nCOPY src/php/utils/docker/ /usr/local/bin/\n\nCOPY src/php/conf/ /usr/local/etc/php/conf.d/\nCOPY src/php/cli/conf/*.ini /usr/local/etc/php/conf.d/\n\nRUN EXTENSION_DIR=`php-config --extension-dir 2>/dev/null` && \\\n\tmv /*.so \"$EXTENSION_DIR/\" && \\\n\tapk add --no-cache \\\n        freetype-dev \\\n        libjpeg-turbo-dev \\\n        libpng-dev \\\n        gmp-dev \\\n        zlib-dev \\\n        icu-dev \\\n        postgresql-dev \\\n        libzip-dev \\\n        libuv-dev \\\n        coreutils \\\n        procps \\\n    && docker-php-ext-configure gd --with-freetype-dir=/usr/include/ --with-jpeg-dir=/usr/include/ \\\n    && docker-php-ext-install -j$(nproc) gd pcntl pgsql pdo intl pdo_pgsql bcmath zip gmp iconv \\\n    && docker-php-ext-enable uv \\\n    && rm -rf /var/cache/apk/*\n\n# Install shush\nCOPY src/php/utils/install-shush /usr/local/bin/\nRUN install-shush && rm -rf /usr/local/bin/install-shush\n\nSTOPSIGNAL SIGTERM\n\nUSER app\n\nENTRYPOINT [\"/usr/local/bin/shush\", \"exec\", \"docker-php-entrypoint\"]\n\n## NTS-DEV STAGE ##\nFROM nts AS nts-dev\n\nUSER root\n\nRUN apk add --no-cache \\\n        make \\\n        git \\\n        openssh-client \\\n        bash\n\n# Install Xdebug and development specific configuration\nRUN docker-php-dev-mode xdebug \\\n    && docker-php-dev-mode config\n\n# Install Docker and Docker Compose\nRUN apk add --no-cache docker py-pip python-dev libffi-dev openssl-dev gcc libc-dev make \\\n    && pip install --no-cache-dir docker-compose\n\n# Install composer\nCOPY src/php/utils/install-composer /usr/local/bin/\nRUN install-composer && rm -rf /usr/local/bin/install-composer\n\nUSER app\n\nRUN composer global require hirak/prestissimo --ansi --no-progress\n\n# Change entrypoint back to the default because we don't need shush in development\nENTRYPOINT [\"docker-php-entrypoint\"]"
+}

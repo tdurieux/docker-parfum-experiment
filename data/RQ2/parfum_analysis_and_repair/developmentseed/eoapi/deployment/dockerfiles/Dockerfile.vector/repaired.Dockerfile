@@ -1,0 +1,17 @@
+FROM lambci/lambda:build-python3.8
+
+WORKDIR /tmp
+
+COPY src/eoapi/vector /tmp/vector
+RUN pip install --no-cache-dir mangum >=0.14, <0.15 /tmp/vector -t /asset --no-binary pydantic
+RUN rm -rf /tmp/vector
+
+# Reduce package size and remove useless files
+RUN cd /asset && find . -type f -name '*.pyc' | while read f; do n=$(echo $f | sed 's/__pycache__\///' | sed 's/.cpython-[2-3][0-9]//'); cp $f $n; done;
+RUN cd /asset && find . -type d -a -name '__pycache__' -print0 | xargs -0 rm -rf
+RUN cd /asset && find . -type f -a -name '*.py' -print0 | xargs -0 rm -f
+RUN find /asset -type d -a -name 'tests' -print0 | xargs -0 rm -rf
+
+COPY deployment/handlers/vector_handler.py /asset/handler.py
+
+CMD ["echo", "hello world"]

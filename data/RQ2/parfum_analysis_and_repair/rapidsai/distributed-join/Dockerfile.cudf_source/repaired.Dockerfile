@@ -1,0 +1,72 @@
+FROM nvidia/cuda:11.0-devel-ubuntu20.04
+ARG DEBIAN_FRONTEND=noninteractive
+ENV CUDA_ROOT=/usr/local/cuda
+WORKDIR /
+
+RUN apt-get update -y && apt-get install --no-install-recommends -y build-essential wget git vim libpciaccess-dev pciutils && rm -rf /var/lib/apt/lists/*;
+
+# Install conda
+ADD https://repo.continuum.io/miniconda/Miniconda3-latest-Linux-x86_64.sh /miniconda.sh
+RUN sh /miniconda.sh -b -p /conda && /conda/bin/conda update -n base conda
+ENV PATH=${PATH}:/conda/bin
+# Enables "source activate conda"
+SHELL ["/bin/bash", "-c"]
+
+# Setup cuDF
+RUN git clone https://github.com/rapidsai/cudf.git /cudf \
+    && cd /cudf \
+    && git checkout branch-0.19 \
+    && git submodule update --init --remote --recursive \
+    && conda env create --name cudf_dev --file conda/environments/cudf_dev_cuda11.0.yml \
+    && source activate cudf_dev \
+    && conda install -c rapidsai -c nvidia -c conda-forge -y openmpi cmake \
+    && mkdir -p cpp/build \
+    && cd cpp/build \
+    && cmake .. -DCMAKE_INSTALL_PREFIX=${CONDA_PREFIX} -DCMAKE_CUDA_ARCHITECTURES="70;80" \
+    && make -j install \
+    && conda clean -a -y
+ENV CUDF_ROOT=/conda/envs/cudf_dev
+ENV LD_LIBRARY_PATH=${CUDA_ROOT}/lib64:${CUDF_ROOT}/lib:${LD_LIBRARY_PATH}
+ENV PATH=${PATH}:${CUDF_ROOT}/bin
+
+# Setup Mellanox OFED
+RUN apt-get install -y --no-install-recommends \
+        ca-certificates \
+        gnupg \
+        wget && rm -rf /var/lib/apt/lists/*;
+RUN wget -qO - https://www.mellanox.com/downloads/ofed/RPM-GPG-KEY-Mellanox | apt-key add - && \
+    mkdir -p /etc/apt/sources.list.d && wget -q -nc --no-check-certificate -P /etc/apt/sources.list.d https://linux.mellanox.com/public/repo/mlnx_ofed/5.2-1.0.4.0/ubuntu20.04/mellanox_mlnx_ofed.list && \
+    apt-get update -y && \
+    apt-get install -y --no-install-recommends \
+        ibverbs-providers \
+        ibverbs-utils \
+        libibmad-dev \
+        libibmad5 \
+        libibumad-dev \
+        libibumad3 \
+        libibverbs-dev \
+        libibverbs1 \
+        librdmacm-dev \
+        librdmacm1 && rm -rf /var/lib/apt/lists/*;
+
+# Setup UCX
+ADD https://github.com/openucx/ucx/releases/download/v1.9.0/ucx-1.9.0.tar.gz .
+RUN apt-get install --no-install-recommends -y numactl libnuma-dev file pkg-config binutils binutils-dev \
+    && tar -zxf ucx-1.9.0.tar.gz && cd ucx-1.9.0 \
+    && ./contrib/configure-release --enable-mt --with-cuda=/usr/local/cuda --with-rdmacm --with-verbs \
+    && make -j \
+    && make install \
+    && cd / && rm -rf ucx-1.9.0 && rm ucx-1.9.0.tar.gz && rm -rf /var/lib/apt/lists/*;
+ENV UCX_ROOT=/usr
+
+# Setup nvcomp
+RUN git clone https://github.com/NVIDIA/nvcomp && cd nvcomp && git checkout branch-2.0 && mkdir -p build && cd build \
+    && ${CUDF_ROOT}/bin/cmake .. && make -j
+ENV NVCOMP_ROOT=/nvcomp/build
+ENV LD_LIBRARY_PATH=${NVCOMP_ROOT}/lib:${LD_LIBRARY_PATH}
+
+# Setup NCCL
+RUN git clone https://github.com/NVIDIA/nccl && cd nccl \
+    && make -j src.build NVCC_GENCODE="-gencode=arch=compute_70,code=sm_70 -gencode=arch=compute_80,code=sm_80 -gencode=arch=compute_80,code=compute_80"
+ENV NCCL_ROOT=/nccl/build
+ENV LD_LIBRARY_PATH=${NCCL_ROOT}/lib:${LD_LIBRARY_PATH}

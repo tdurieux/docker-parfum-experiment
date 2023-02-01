@@ -1,0 +1,35 @@
+{
+  "startTime": 1674248001978,
+  "endTime": 1674248003130,
+  "originalSmells": [
+    {
+      "rule": "wgetUseHttpsUrl",
+      "position": {
+        "lineStart": 37,
+        "lineEnd": 37,
+        "columnStart": 5,
+        "columnEnd": 93
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 4,
+        "lineEnd": 12,
+        "columnStart": 22,
+        "columnEnd": 6
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 4,
+        "lineEnd": 12,
+        "columnStart": 22,
+        "columnEnd": 6
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM ubuntu:16.04\n\nRUN apt-key adv --keyserver hkp://keyserver.ubuntu.com:80 --recv 7F0CEB10\nRUN echo 'deb http://downloads-distro.mongodb.org/repo/ubuntu-upstart dist 10gen' | tee /etc/apt/sources.list.d/mongodb.list\nRUN apt-get update && apt-get install --no-install-recommends -y \\\n\t\topenjdk-8-jdk \\\n\t\tmaven \\\n\t\ttomcat7 \\\n\t\tmongodb-org \\\n\t\tsoftware-properties-common \\\n\t\twget \\\n\t\tgit \\\n\t\tnano && rm -rf /var/lib/apt/lists/*;\n\nENV OLS_HOME /opt/OLS\nENV CATALINA_OPTS \"-Xms2g -Xmx2g\"\n## The 3.1.0.RELEASE has a bug with a hard coded path therefor we use  this commit\nENV OLS_VERSION dc03b5fc6bd46b4052e231dea046d1d4bba6037d\nENV SOLR_VERSION 5.5.3\n\nADD ols-config.yaml /tmp/\t\t\nADD obo-config.yaml /tmp/\t\n## The install_solr_service.sh version from solr 5.5.3 has an issue with certain docker configurations\n## Therefor we use the script of solr 6.3.0.  solr 6.3.0 is not compatible with OLS\nADD 630_install_solr_service.sh /tmp/install_solr_service.sh\n\n## Prepare MongoDB directories\nRUN mkdir /data/\nRUN mkdir /data/db\n\n## Clone GIT repository\nRUN git clone https://github.com/EBISPOT/OLS.git /opt/OLS \\\n  && cd  /opt/OLS \\\n  && git checkout ${OLS_VERSION}\n\n### Install and stop solr\nRUN cd /opt \\\n  && wget https://archive.apache.org/dist/lucene/solr/${SOLR_VERSION}/solr-${SOLR_VERSION}.tgz \\\n\t#&& tar xzf solr-${SOLR_VERSION}.tgz solr-${SOLR_VERSION}/bin/install_solr_service.sh --strip-components=2 \\\n\t&& cp /tmp/install_solr_service.sh /opt/install_solr_service.sh \\\n  && bash ./install_solr_service.sh solr-${SOLR_VERSION}.tgz \\\n\t&& service solr stop\n\n## Prepare configuration files\nRUN sed -i '$a ols.home /opt/OLS' /opt/OLS/ols-web/src/main/resources/application.properties\nRUN mv /opt/OLS/ols-apps/ols-config-importer/src/main/resources/ols-config.yaml /opt/OLS/ols-apps/ols-config-importer/src/main/resources/ols-config.yamlorig\nRUN mv /opt/OLS/ols-apps/ols-config-importer/src/main/resources/obo-config.yaml /opt/OLS/ols-apps/ols-config-importer/src/main/resources/obo-config.yamlorig\nRUN cp /tmp/ols-config.yaml /opt/OLS/ols-apps/ols-config-importer/src/main/resources/\nRUN cp /tmp/obo-config.yaml /opt/OLS/ols-apps/ols-config-importer/src/main/resources/\nRUN sed -i '6 s/^/#/' /opt/OLS/ols-apps/ols-config-importer/src/main/resources/application.properties\n\n##Maven build\nRUN cd /opt/OLS/ \\\n\t&& mvn clean install -Dols.home=/opt/OLS\n\n## Start MongoDB and\n### Load configuration into MongoDB\nRUN mongod --fork --logpath /var/log/mongodb.log \\\n\t&& java -Dols.home=/opt/OLS -jar /opt/OLS/ols-apps/ols-config-importer/target/ols-config-importer.jar \\\n\t&& sleep 10\n\n## Start MongoDB and SOLR\n## Then start the indexation process cd /etc/init.d/\nENV MEMORY_USE \"-Xmx4g -Xms4g\"\nRUN mongod --fork --logpath /var/log/mongodb.log \\\n  && /opt/solr/bin/solr -Dsolr.solr.home=/opt/OLS/ols-solr/src/main/solr-5-config/ -Dsolr.data.dir=/opt/OLS \\  \n\t&& java ${MEMORY_USE} -Dols.home=/opt/OLS -jar /opt/OLS/ols-apps/ols-loading-app/target/ols-indexer.jar \n\n## Copy webapp to tomcat dir, replace the ROOT webapplication with boot-ols.war and set permissions\nRUN rm -R /var/lib/tomcat7/webapps/ROOT/\nRUN cp /opt/OLS/ols-web/target/ols-boot.war /var/lib/tomcat7/webapps/ROOT.war\nRUN chown -R tomcat7:tomcat7 /opt/OLS/\n\n## Expose the tomcat port\nEXPOSE 8080\n\n## Add the bootstrap file and make it executable\nADD bootstrap.sh /opt/OLS/\nRUN chmod +x /opt/OLS/bootstrap.sh\n\nCMD /opt/OLS/bootstrap.sh\n"
+}

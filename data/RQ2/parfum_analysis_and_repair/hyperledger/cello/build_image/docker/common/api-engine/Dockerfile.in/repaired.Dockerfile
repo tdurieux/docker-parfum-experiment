@@ -1,0 +1,30 @@
+FROM python:3.8
+
+# Install software
+RUN apt-get update \
+	&& apt-get install --no-install-recommends -y gettext-base graphviz libgraphviz-dev \
+	&& apt-get autoclean \
+	&& apt-get clean \
+	&& apt-get autoremove && rm -rf /var/cache/apt/ && rm -rf /var/lib/apt/lists/*;
+
+# Set the working dir
+WORKDIR /var/www/server
+
+# Copy source code to the working dir
+COPY src/api-engine ./
+COPY template/node  /opt/node
+
+# Install compiled code tools from Artifactory and copy it to opt folder.
+RUN curl -f "https://hyperledger.jfrog.io/artifactory/fabric-binaries/hyperledger-fabric-linux-amd64-2.2-stable.tar.gz?archiveType=gzip" > bin.tar.gz \
+	&& tar -xzvf bin.tar.gz -C /opt/ && rm bin.tar.gz
+
+# Install python dependencies
+RUN pip3 install --no-cache-dir -r requirements.txt
+
+# Add uwsgi configuration file
+COPY build_image/docker/common/api-engine/server.ini /etc/uwsgi/apps-enabled/
+
+ENV RUN_MODE server
+
+COPY build_image/docker/common/api-engine/entrypoint.sh /
+CMD bash /entrypoint.sh

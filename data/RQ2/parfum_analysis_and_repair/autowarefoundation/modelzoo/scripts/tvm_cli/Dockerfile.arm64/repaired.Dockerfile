@@ -1,0 +1,50 @@
+ARG FROM_ARG
+# hadolint ignore=DL3006
+FROM $FROM_ARG
+
+# hadolint ignore=DL3008
+RUN apt-get update && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+      build-essential \
+      libopencv-dev \
+      python3-dev \
+      python3-pip \
+      python3-opencv && \
+    rm -rf /var/lib/apt/lists/*
+
+# Use linaro binaries of tensorflow
+ENV PIP_EXTRA_INDEX_URL=https://snapshots.linaro.org/ldcg/python-cache/
+
+# hadolint ignore=DL3013
+RUN pip3 install --no-cache-dir --upgrade pip && \
+    pip3 install --no-cache-dir \
+      jinja2 \
+      onnx \
+      pytest \
+      pyyaml \
+      "numpy<1.20.0,>=1.19.0" \
+      "tensorflow-aarch64==2.7.*"
+
+COPY install_tvm.sh /tmp/install_tvm.sh
+RUN /tmp/install_tvm.sh
+
+ENV HOME=/tmp
+WORKDIR /tmp
+COPY tvm_cli.py /tvm_cli/tvm_cli
+# RUN true to work around docker bug with COPY: https://github.com/moby/moby/issues/37965
+RUN true
+COPY templates /tvm_cli/templates
+# hadolint ignore=DL3044
+ENV PATH="/tvm_cli:${PATH}"
+ENV LD_LIBRARY_PATH="$LD_LIBRARY_PATH:/usr/local/lib/"
+ENTRYPOINT [ "tvm_cli"]
+CMD ["-h"]
+
+# Work around opencv issue: https://github.com/opencv/opencv/issues/14884
+ENV LD_PRELOAD=/lib/aarch64-linux-gnu/libgomp.so.1
+
+# Remove lavapipe
+RUN rm -f /usr/share/vulkan/icd.d/lvp_icd.aarch64.json
+
+ENV NVIDIA_VISIBLE_DEVICES all
+ENV NVIDIA_DRIVER_CAPABILITIES compute,graphics

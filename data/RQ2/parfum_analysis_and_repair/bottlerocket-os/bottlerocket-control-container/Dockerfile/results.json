@@ -1,0 +1,35 @@
+{
+  "startTime": 1674248391429,
+  "endTime": 1674248392873,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 82,
+        "lineEnd": 83,
+        "columnStart": 2,
+        "columnEnd": 61
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 21,
+        "lineEnd": 31,
+        "columnStart": 18,
+        "columnEnd": 24
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 4,
+        "lineEnd": 5,
+        "columnStart": 2,
+        "columnEnd": 71
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM public.ecr.aws/amazonlinux/amazonlinux:2 as builder\n\n# Install build dependencies for the package(s) below\nRUN \\\n  yum -y install \\\n    autoconf automake bison gettext-devel libtool make pkgconfig tar xz && rm -rf /var/cache/yum\nCOPY ./sdk-fetch /usr/local/bin\n\nARG utillinux_version=2.37.4\n\nWORKDIR ${HOME}/build\nCOPY ./hashes/util-linux ./hashes\n\nRUN \\\n  sdk-fetch hashes && \\\n  tar -xf util-linux-${utillinux_version}.tar.xz && \\\n  rm util-linux-${utillinux_version}.tar.xz hashes\n\n# Build script for SSM session logging\nWORKDIR ${HOME}/build/util-linux-${utillinux_version}\nRUN \\\n  ./autogen.sh && ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" \\\n      --disable-makeinstall-chown \\\n      --disable-nls \\\n      --disable-rpath \\\n      --prefix=/opt/util-linux \\\n      --without-audit \\\n      --without-python \\\n      --without-readline \\\n      --without-systemd \\\n      --without-udev \\\n      --without-utempter \\\n    || { cat config.log; exit 1; }\nRUN make -j`nproc` lscpu script\nRUN make install-strip\nRUN \\\n  mkdir -p /usr/share/licenses/util-linux && cp -p \\\n      Documentation/licenses/COPYING.BSD-4-Clause-UC \\\n      Documentation/licenses/COPYING.GPL-2.0-or-later \\\n      Documentation/licenses/COPYING.LGPL-2.1-or-later \\\n    /usr/share/licenses/util-linux\n\nFROM public.ecr.aws/amazonlinux/amazonlinux:2\n\n# IMAGE_VERSION is the assigned version of inputs for this image.\nARG IMAGE_VERSION\nENV IMAGE_VERSION=$IMAGE_VERSION\n# IMAGE_VERSION is the assigned version of inputs for this image.\nARG SSM_AGENT_VERSION\nENV SSM_AGENT_VERSION=$SSM_AGENT_VERSION\n\n# Validation\nRUN : \\\n    \"${IMAGE_VERSION:?IMAGE_VERSION is required to build}\" \\\n    \"${SSM_AGENT_VERSION:?SSM Agent version required to build}\"\n\nLABEL \"org.opencontainers.image.version\"=\"$IMAGE_VERSION\"\n\n# Copy util-linux binaries and dependencies\nCOPY --from=builder /opt/util-linux/bin/lscpu /opt/util-linux/bin/script \\\n                    /opt/util-linux/bin/\nCOPY --from=builder /opt/util-linux/include/libsmartcols \\\n                    /opt/util-linux/include/libsmartcols\nCOPY --from=builder /opt/util-linux/lib/libsmartcols* \\\n                    /opt/util-linux/lib/\nCOPY --from=builder /usr/share/licenses/util-linux \\\n                    /usr/share/licenses/util-linux\nRUN ln -s /opt/util-linux/bin/* /usr/bin\n\n# Validate lscpu binary\nRUN /usr/bin/lscpu &>/dev/null\n# Validate script binary\nRUN /usr/bin/script &>/dev/null\n\n# Install the arch specific build of SSM agent *and confirm that it installed* -\n# yum will allow architecture-mismatched packages to not install and consider\n# the run successful.\n# SSM Agent is downloaded from eu-north-1 as this region gets new releases of SSM Agent first.\nCOPY ./hashes/ssm ./hashes\nCOPY ./gpg-keys/amazon-ssm-agent.gpg ./amazon-ssm-agent.gpg\nRUN \\\n  ARCH=$(uname -m | sed 's/aarch64/arm64/' | sed 's/x86_64/amd64/') && \\\n  curl -f -L \"https://s3.eu-north-1.amazonaws.com/amazon-ssm-eu-north-1/${SSM_AGENT_VERSION}/linux_${ARCH}/amazon-ssm-agent.rpm\" \\\n       -o \"amazon-ssm-agent-${SSM_AGENT_VERSION}.${ARCH}.rpm\" && \\\n  grep \"amazon-ssm-agent-${SSM_AGENT_VERSION}.${ARCH}.rpm\" hashes \\\n    | sha512sum --check - && \\\n  rpm --import amazon-ssm-agent.gpg && \\\n  rpm --checksig \"amazon-ssm-agent-${SSM_AGENT_VERSION}.${ARCH}.rpm\" && \\\n  yum update -y && yum install -y jq screen shadow-utils && \\\n  yum install -y \"amazon-ssm-agent-${SSM_AGENT_VERSION}.${ARCH}.rpm\" && \\\n  rm \"amazon-ssm-agent-${SSM_AGENT_VERSION}.${ARCH}.rpm\" && \\\n  rm -rf /var/cache/yum ./hashes && \\\n  rmdir /var/lib/amazon/ssm && \\\n  ln -snf /.bottlerocket/host-containers/current/ssm /var/lib/amazon/ssm\n\n# Add motd explaining the control container.\nRUN rm -f /etc/motd /etc/issue\nCOPY --chown=root:root motd /etc/\n# Add custom PS1 to show you are in the control container.\nARG CUSTOM_PS1='[\\u@control]\\$ '\nRUN echo \"PS1='$CUSTOM_PS1'\" > \"/etc/profile.d/bottlerocket-ps1.sh\"\n# Add bashrc that shows the motd.\nCOPY ./bashrc /etc/skel/.bashrc\n# SSM starts sessions with 'sh', not 'bash', which for us is a link to bash.\n# Furthermore, it starts sh as an interactive shell, but not a login shell.\n# In this mode, the only startup file respected is the one pointed to by the\n# ENV environment variable.  Point it to our bashrc, which just prints motd.\nENV ENV /etc/skel/.bashrc\n\n# Add our helpers to quickly interact with the admin container.\nCOPY --chmod=755 \\\n  ./disable-admin-container \\\n  ./enable-admin-container \\\n  ./enter-admin-container \\\n  /usr/bin/\n\n# Create our user in the group that allows API access.\nRUN groupadd -g 274 api\nRUN useradd -m -G users,api ssm-user\n\nCOPY --chmod=755 start_control_ssm.sh /usr/sbin/\nCMD [\"/usr/sbin/start_control_ssm.sh\"]\n"
+}

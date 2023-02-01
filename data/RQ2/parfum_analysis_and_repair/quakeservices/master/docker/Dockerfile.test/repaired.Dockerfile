@@ -1,0 +1,9 @@
+# syntax=docker/dockerfile:1
+FROM quakeservices/cdk:latest
+
+WORKDIR /code
+
+COPY requirements.test.txt .
+
+RUN --mount=type=cache,target=/root/.cache/pip \
+  python3 -m pip install -r requirements.test.txt

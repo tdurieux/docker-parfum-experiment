@@ -1,0 +1,44 @@
+{
+  "startTime": 1674236900472,
+  "endTime": 1674236900682,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 89,
+        "lineEnd": 89,
+        "columnStart": 4,
+        "columnEnd": 40
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 98,
+        "lineEnd": 98,
+        "columnStart": 4,
+        "columnEnd": 38
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 104,
+        "lineEnd": 104,
+        "columnStart": 7,
+        "columnEnd": 74
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 10,
+        "lineEnd": 42,
+        "columnStart": 7,
+        "columnEnd": 15
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM ubuntu:16.04\nMAINTAINER Shane Frasier <jeremy.frasier@trio.dhs.gov>\n\nENV DEBIAN_FRONTEND=noninteractive \\\n    LANG=C.UTF-8\n\n###\n# Dependencies\n###\nRUN apt-get update -qq \\\n    && apt-get install -qq --yes --no-install-recommends --no-install-suggests \\\n    build-essential \\\n    curl \\\n    git \\\n    libc6-dev \\\n    libfontconfig1 \\\n    libreadline-dev \\\n    libssl-dev \\\n    libxml2-dev \\\n    libxslt1-dev \\\n    libyaml-dev \\\n    make \\\n    unzip \\\n    wget \\\n    zlib1g-dev \\\n    autoconf \\\n    automake \\\n    bison \\\n    gawk \\\n    libffi-dev \\\n    libgdbm-dev \\\n    libncurses5-dev \\\n    libsqlite3-dev \\\n    libtool \\\n    pkg-config \\\n    sqlite3 \\\n    libgeos-dev \\\n    libbz2-dev \\\n    llvm \\\n    libncursesw5-dev \\\n    nodejs \\\n    npm \\\n    redis-tools && rm -rf /var/lib/apt/lists/*;\n\n###\n## Python\n###\nENV PYENV_RELEASE=1.2.2 \\\n    PYENV_PYTHON_VERSION=3.6.4 \\\n    PYENV_ROOT=/opt/pyenv \\\n    PYENV_REPO=https://github.com/pyenv/pyenv\n\nRUN wget ${PYENV_REPO}/archive/v${PYENV_RELEASE}.zip \\\n      --no-verbose \\\n    && unzip v$PYENV_RELEASE.zip -d $PYENV_ROOT \\\n    && mv $PYENV_ROOT/pyenv-$PYENV_RELEASE/* $PYENV_ROOT/ \\\n    && rm -r $PYENV_ROOT/pyenv-$PYENV_RELEASE\n\n#\n# Uncomment these lines if you just want to install python...\n#\nENV PATH=$PYENV_ROOT/bin:$PYENV_ROOT/versions/${PYENV_PYTHON_VERSION}/bin:$PATH\nRUN echo 'eval \"$(pyenv init -)\"' >> /etc/profile \\\n    && eval \"$(pyenv init -)\" \\\n    && pyenv install $PYENV_PYTHON_VERSION \\\n    && pyenv local ${PYENV_PYTHON_VERSION}\n\n#\n# ...uncomment these lines if you want to also debug python code in GDB\n#\n# ENV PATH=$PYENV_ROOT/bin:$PYENV_ROOT/versions/${PYENV_PYTHON_VERSION}-debug/bin:$PATH\n# RUN echo 'eval \"$(pyenv init -)\"' >> /etc/profile \\\n#     && eval \"$(pyenv init -)\" \\\n#     && pyenv install --debug --keep $PYENV_PYTHON_VERSION \\\n#     && pyenv local ${PYENV_PYTHON_VERSION}-debug\n# RUN ln -s /opt/pyenv/sources/${PYENV_PYTHON_VERSION}-debug/Python-${PYENV_PYTHON_VERSION}/python-gdb.py \\\n#     /opt/pyenv/versions/${PYENV_PYTHON_VERSION}-debug/bin/python3.6-gdb.py \\\n#     && ln -s /opt/pyenv/sources/${PYENV_PYTHON_VERSION}-debug/Python-${PYENV_PYTHON_VERSION}/python-gdb.py \\\n#     /opt/pyenv/versions/${PYENV_PYTHON_VERSION}-debug/bin/python3-gdb.py \\\n#     && ln -s /opt/pyenv/sources/${PYENV_PYTHON_VERSION}-debug/Python-${PYENV_PYTHON_VERSION}/python-gdb.py \\\n#     /opt/pyenv/versions/${PYENV_PYTHON_VERSION}-debug/bin/python-gdb.py\n# RUN apt-get -qq --yes --no-install-recommends --no-install-suggests install gdb\n# RUN echo add-auto-load-safe-path \\\n#     /opt/pyenv/sources/${PYENV_PYTHON_VERSION}-debug/Python-${PYENV_PYTHON_VERSION}/ \\\n#     >> etc/gdb/gdbinit\n\n##\n# Make sure pip and setuptools are the latest versions\n##\nRUN pip install --no-cache-dir --upgrade pip setuptools\n\n##\n# We're using Lambda, but we need to install pshtt locally because the\n# pshtt.py and sslyze.py files in the scanners directory of\n# 18F/domain-scan import pshtt and sslyze, respectively, at the top of\n# the file.  (trustymail imports only in the scan function, so it\n# isn't required here.)\n##\nRUN pip install --no-cache-dir --upgrade pshtt==0.6.1\n\n###\n# Install domain-scan\n###\nRUN git clone https://github.com/18F/domain-scan /home/scanner/domain-scan/ \\\n    && pip install --no-cache-dir --upgrade -r /home/scanner/domain-scan/requirements.txt\n\n###\n# Create unprivileged user\n###\nENV SCANNER_HOME=/home/scanner\nRUN groupadd -r scanner \\\n    && useradd -r -c \"Scanner user\" -g scanner scanner\n\n# It would be nice to get rid of some build dependencies at this point\n\n# Clean up aptitude cruft\nRUN apt-get clean && rm -rf /var/lib/apt/lists/*\n\n# Put this just before we change users because the copy (and every\n# step after it) will always be rerun by docker, but we need to be\n# root for the chown command.\nCOPY . $SCANNER_HOME\nRUN chown -R scanner:scanner ${SCANNER_HOME}\n\n###\n# Prepare to Run\n###\n# Right now we need to be root at runtime in order to create files in\n# /home/shared\n# USER scanner:scanner\nWORKDIR $SCANNER_HOME\nENTRYPOINT [\"./scan.sh\"]\n"
+}

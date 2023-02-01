@@ -1,0 +1,1 @@
+# Use a helper to create an emtpy configuration since the agent requires such file

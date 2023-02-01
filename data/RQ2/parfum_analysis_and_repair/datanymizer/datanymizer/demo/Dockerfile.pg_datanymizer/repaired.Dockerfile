@@ -1,0 +1,36 @@
+FROM rust:latest as cargo-chef
+WORKDIR /usr/src
+
+RUN apt-get update && \
+    apt-get dist-upgrade -y && \
+    apt-get install --no-install-recommends -y pkg-config libssl-dev && rm -rf /var/lib/apt/lists/*;
+# We only pay the installation cost once,
+# it will be cached from the second build onwards
+RUN cargo install cargo-chef
+
+FROM cargo-chef as planner
+WORKDIR /usr/src
+COPY . .
+RUN cargo chef prepare --recipe-path recipe.json
+
+FROM cargo-chef as cacher
+WORKDIR /usr/src
+
+RUN cargo install cargo-chef
+COPY --from=planner /usr/src/recipe.json recipe.json
+RUN cargo chef cook --release --recipe-path recipe.json
+
+FROM cargo-chef as builder
+WORKDIR /usr/src
+
+COPY . .
+# Copy over the cached dependencies
+COPY --from=cacher /usr/src/target target
+COPY --from=cacher $CARGO_HOME $CARGO_HOME
+RUN cargo build --release
+
+FROM postgres:latest
+WORKDIR /
+COPY --from=builder /usr/src/target/release/pg_datanymizer .
+USER 1000
+ENTRYPOINT ["./pg_datanymizer"]

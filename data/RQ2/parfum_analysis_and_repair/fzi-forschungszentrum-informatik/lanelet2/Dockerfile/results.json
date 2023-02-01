@@ -1,0 +1,35 @@
+{
+  "startTime": 1674253147431,
+  "endTime": 1674253148570,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 12,
+        "lineEnd": 26,
+        "columnStart": 22,
+        "columnEnd": 12
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 52,
+        "lineEnd": 60,
+        "columnStart": 22,
+        "columnEnd": 39
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 72,
+        "lineEnd": 72,
+        "columnStart": 22,
+        "columnEnd": 81
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "ARG DISTRIBUTION=18.04\nFROM ubuntu:${DISTRIBUTION} AS lanelet2_deps\n\nARG ROS_DISTRO=melodic\nARG ROS=ros\nSHELL [\"/bin/bash\", \"-c\"]\n\n# basics\nRUN if [ \"${ROS_DISTRO}\" = \"melodic\" ] || [ \"${ROS_DISTRO}\" = \"kinetic\" ]; \\\n    then export PY_VERSION=python; \\\n    else export PY_VERSION=python3; \\\n    fi; \\\n    apt-get update && DEBIAN_FRONTEND=noninteractive apt-get --no-install-recommends install -y \\\n        bash-completion \\\n        build-essential \\\n        curl \\\n        git \\\n        cmake \\\n        i${PY_VERSION} \\\n        keyboard-configuration \\\n        locales \\\n        lsb-core \\\n        nano \\\n        lib${PY_VERSION}-dev \\\n        software-properties-common \\\n        sudo \\\n        wget \\\n    && locale-gen en_US.UTF-8 \\\n    && apt-get clean && rm -rf /var/lib/apt/lists/*\n\n# locale\nENV LANG=en_US.UTF-8 \\\n    LANGUAGE=en_US:en \\\n    LC_ALL=en_US.UTF-8 \\\n    ROS_DISTRO=${ROS_DISTRO} \\\n    ROS=${ROS}\n\n# install ROS\nRUN echo \"deb http://packages.ros.org/${ROS}/ubuntu $(lsb_release -sc) main\" > /etc/apt/sources.list.d/ros-latest.list \\\n    && (apt-key adv --keyserver hkp://ha.pool.sks-keyservers.net:80 --recv-key C1CF6E31E6BADE8868B172B4F42ED6FBAB17C654 \\\n      || apt-key adv --keyserver hkp://keyserver.ubuntu.com:80 --recv-key C1CF6E31E6BADE8868B172B4F42ED6FBAB17C654)\n\n# add catkin_tools repo for python3 catkin\nRUN if [ \"${ROS_DISTRO}\" != \"melodic\" ] && [ \"${ROS_DISTRO}\" != \"kinetic\" ]; \\\n    then add-apt-repository ppa:catkin-tools/ppa; \\\n    fi\n\n# dependencies for lanelet2\nRUN if [ \"${ROS_DISTRO}\" = \"melodic\" ] || [ \"${ROS_DISTRO}\" = \"kinetic\" ]; \\\n    then export PY_VERSION=python; \\\n    else export PY_VERSION=python3; \\\n    fi; \\\n    apt-get update && DEBIAN_FRONTEND=noninteractive apt-get --no-install-recommends install -y \\\n        libgtest-dev \\\n        libboost-all-dev \\\n        libeigen3-dev \\\n        libgeographic-dev \\\n        libpugixml-dev \\\n        libboost-python-dev \\\n        ${PY_VERSION}-rospkg \\\n        ros-$ROS_DISTRO-ros-environment \\\n    && apt-get clean && rm -rf /var/lib/apt/lists/*\n\n# ros version specific dependencies\nRUN if [ \"${ROS_DISTRO}\" = \"melodic\" ] || [ \"${ROS_DISTRO}\" = \"kinetic\" ]; \\\n    then export PY_VERSION=python; \\\n    else export PY_VERSION=python3; \\\n    fi; \\\n    if [ \"$ROS\" = \"ros\" ]; \\\n    then export ROS_DEPS=\"ros-$ROS_DISTRO-catkin ros-$ROS_DISTRO-rosbash ${PY_VERSION}-catkin-tools\"; \\\n    else export ROS_DEPS=\"ros-$ROS_DISTRO-ament-cmake python3-colcon-ros ros-$ROS_DISTRO-ros2cli\"; \\\n    fi; \\\n    apt-get update && DEBIAN_FRONTEND=noninteractive apt-get --no-install-recommends install -y $ROS_DEPS \\\n    && apt-get clean && rm -rf /var/lib/apt/lists/*\n\n# create a user\nRUN useradd --create-home --groups sudo --shell /bin/bash developer \\\n    && mkdir -p /etc/sudoers.d \\\n    && echo \"developer ALL=(ALL) NOPASSWD: ALL\" > /etc/sudoers.d/developer \\\n    && chmod 0440 /etc/sudoers.d/developer\n\n\n# environment, dependencies and entry points\nUSER developer\nENV HOME /home/developer\nWORKDIR /home/developer/workspace\n\nRUN sudo chown -R developer:developer /home/developer \\\n    && echo \"export ROS_HOSTNAME=localhost\" > /home/developer/.bashrc \\\n    && echo \"source /opt/ros/$ROS_DISTRO/setup.bash\" >> /home/developer/.bashrc \\\n    && echo \"source /home/developer/workspace/devel/setup.bash || true\" >> /home/developer/.bashrc\n\n# setup workspace, add dependencies\nRUN if [ \"$ROS\" = \"ros\" ]; \\\n    then export CATKIN_INIT=\"source /home/developer/.bashrc && catkin init && catkin config --cmake-args -DCMAKE_BUILD_TYPE=RelWithDebInfo\"; \\\n    fi; \\\n    cd /home/developer/workspace \\\n    && mkdir -p /home/developer/workspace/src \\\n    && /bin/bash -c \"$CATKIN_INIT\" \\\n    && git clone https://github.com/KIT-MRT/mrt_cmake_modules.git /home/developer/workspace/src/mrt_cmake_modules\n\n# second stage: get the code and build the image\nFROM lanelet2_deps AS lanelet2\n\n# bring in the code\nCOPY --chown=developer:developer . /home/developer/workspace/src/lanelet2\n\n# update dependencies\nRUN git -C /home/developer/workspace/src/mrt_cmake_modules pull\n\n# build\nRUN if [ \"$ROS\" = \"ros\" ]; \\\n    then export BUILD_CMD=\"catkin build --no-status\"; \\\n    else export BUILD_CMD=\"colcon build --symlink-install --cmake-args -DCMAKE_BUILD_TYPE=RelWithDebInfo\"; \\\n    fi; \\\n    /bin/bash -c \"source /opt/ros/$ROS_DISTRO/setup.bash && env && echo $ROS && $BUILD_CMD\"\n\n"
+}

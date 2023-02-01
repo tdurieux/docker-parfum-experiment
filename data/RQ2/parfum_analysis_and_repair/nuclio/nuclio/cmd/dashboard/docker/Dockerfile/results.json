@@ -1,0 +1,35 @@
+{
+  "startTime": 1674255750762,
+  "endTime": 1674255751283,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 67,
+        "lineEnd": 67,
+        "columnStart": 7,
+        "columnEnd": 39
+      }
+    },
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 29,
+        "lineEnd": 29,
+        "columnStart": 4,
+        "columnEnd": 23
+      }
+    },
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 32,
+        "lineEnd": 32,
+        "columnStart": 7,
+        "columnEnd": 31
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Copyright 2017 The Nuclio Authors.\n#\n# Licensed under the Apache License, Version 2.0 (the \"License\");\n# you may not use this file except in compliance with the License.\n# You may obtain a copy of the License at\n#\n#     http://www.apache.org/licenses/LICENSE-2.0\n#\n# Unless required by applicable law or agreed to in writing, software\n# distributed under the License is distributed on an \"AS IS\" BASIS,\n# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.\n# See the License for the specific language governing permissions and\n# limitations under the License.\n\n#\n# Build assets stage: builds the dashboard assets (js, html, css, etc)\n#\nARG NGINX_IMAGE=nginx\nARG NUCLIO_LABEL\nARG UHTTPC_ARCH=amd64\nARG NUCLIO_DOCKER_ALPINE_IMAGE\n\nFROM gcr.io/iguazio/node:10.21.0 as build-static\n\n# copy source tree\nCOPY ./pkg/dashboard/ui /home/nuclio/dashboard/src\n\n# install gulp and bower, cd into the source dir and build to create /home/nuclio/dashboard/src/dist\n# which contains all the necessary files (index.html and assets/ dir)\nRUN npm install -g gulp \\\n    && cd /home/nuclio/dashboard/src \\\n    && rm -rf ./dist ./node_modules ./resources/*/node_modules \\\n    && npm install --production \\\n    && gulp build --production && npm cache clean --force;\n\n#\n# Build binary stage: builds the dashboard binary\n#\nFROM nuclio-base:$NUCLIO_LABEL as build-binary\n\nARG NUCLIO_GO_LINK_FLAGS_INJECT_VERSION\nARG GOOS=linux\nARG GOARCH=amd64\n\n# build the dashboard\nRUN GOOS=$GOOS GOARCH=$GOARCH CGO_ENABLED=0 go build \\\n    -a \\\n    -installsuffix cgo \\\n    -ldflags=\"${NUCLIO_GO_LINK_FLAGS_INJECT_VERSION}\" \\\n    -o dashboard cmd/dashboard/main.go\n\n\nFROM gcr.io/iguazio/uhttpc:0.0.1-$UHTTPC_ARCH AS uhttpc\n\n#\n# Output stage: Creates version file, copies binary and assets to an alpine image\n#\n\nFROM $NUCLIO_DOCKER_ALPINE_IMAGE as downloaddocker\n\n# docker client\nARG DOCKER_CLI_ARCH=x86_64\nARG DOCKER_CLI_VERSION=\"19.03.14\"\nENV DOCKER_CLI_DOWNLOAD_URL=\"https://download.docker.com/linux/static/stable/$DOCKER_CLI_ARCH/docker-$DOCKER_CLI_VERSION.tgz\"\n\nRUN apk --update --no-cache add curl \\\n    && mkdir -p /tmp/download \\\n    && curl -f -L $DOCKER_CLI_DOWNLOAD_URL | tar -xz -C /tmp/download\n\n\nFROM $NGINX_IMAGE\n\n# copy dashboard static from build assets stage. /etc/nuclio/dashboard/static will contain index.html and assets\nCOPY --from=build-static /home/nuclio/dashboard/src/dist /etc/nginx/static/\n\n# copy dashboard binary from build binary stage\nCOPY --from=build-binary /nuclio/dashboard /usr/local/bin\n\n# copy a lightweight http client\nCOPY --from=uhttpc /home/nuclio/bin/uhttpc /usr/local/bin/uhttpc\n\n# copy docker client\nCOPY --from=downloaddocker /tmp/download/docker/docker /usr/local/bin\n\n# copy runners\nCOPY cmd/dashboard/docker/runners /runners\nCOPY cmd/dashboard/docker/runner.sh /runner.sh\n\n# copy nginx config\nCOPY cmd/dashboard/docker/default.conf /etc/nginx/conf.d/default.conf\nCOPY cmd/dashboard/docker/nginx.conf /etc/nginx/nginx.conf\n\nRUN apk --update --no-cache add \\\n        parallel \\\n        ca-certificates \\\n        git \\\n    && apk upgrade --no-cache\n\nHEALTHCHECK --interval=1s --timeout=3s CMD /usr/local/bin/uhttpc --url http://127.0.0.1:8082/ready || exit 1\n\nCMD [\"sh\",  \"-c\", \"./runner.sh\"]\n"
+}

@@ -1,0 +1,35 @@
+{
+  "startTime": 1674248210223,
+  "endTime": 1674248211087,
+  "originalSmells": [
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 18,
+        "lineEnd": 22,
+        "columnStart": 4,
+        "columnEnd": 17
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 27,
+        "lineEnd": 27,
+        "columnStart": 4,
+        "columnEnd": 37
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 28,
+        "lineEnd": 28,
+        "columnStart": 4,
+        "columnEnd": 56
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM centos:7\n\n# News:\n#  * 20210525: Grigori updated this container to support the latest CK framework\n#              with the latest CK components from ctuning@ai repo\nLABEL maintainer=\"Grigori Fursin <grigori@octoml.ai>\"\n\n# Use the Bash shell.\nSHELL [\"/bin/bash\", \"-c\"]\n\n# Allow stepping into the Bash shell interactively.\nENTRYPOINT [\"/bin/bash\", \"-c\"]\n\n# Install known system dependencies and immediately clean up to make the image smaller.\n# CK needs: git, wget, zip, unzip.\n# Python 3 needs: open-ssl-devel, bzip2-devel, libffi-devel.\n# Speech Recognition program needs: sndfile-devel.\nRUN yum upgrade -y\\\n && yum install -y\\\n make which patch vim\\\n git wget zip unzip\\\n openssl-devel bzip2-devel libffi-devel\\\n libsndfile-devel \\\n && yum clean all && rm -rf /var/cache/yum\n\n# Install GCC 8. (LoadGen needs C++14, while CentOS 7 comes with ancient GCC 4.)\n# NB: Must be two separate calls to yum install.\nRUN yum install -y centos-release-scl \\\n && yum install -y devtoolset-8-gcc devtoolset-8-gcc-c++ && rm -rf /var/cache/yum\n\n# Install Python 3.7. (If upgrading to 3.8 or higher, also change CK_PYTHON below.)\nENV PYTHON_VERSION=3.7.8\nRUN cd /usr/src \\\n && wget https://www.python.org/ftp/python/${PYTHON_VERSION}/Python-${PYTHON_VERSION}.tgz \\\n && tar xzf Python-${PYTHON_VERSION}.tgz \\\n && rm Python-${PYTHON_VERSION}.tgz \\\n && scl enable devtoolset-8 \"cd /usr/src/Python-${PYTHON_VERSION} && ./configure --enable-optimizations && make altinstall\" \\\n && rm -rf /usr/src/Python-${PYTHON_VERSION}*\n\n# Create non-root user.\nRUN useradd --create-home --user-group --shell /bin/bash dvdt\nUSER dvdt:dvdt\nWORKDIR /home/dvdt\n\n# Install Collective Knowledge (CK).\nENV CK_REPOS=/home/dvdt/CK_REPOS \\\n    CK_TOOLS=/home/dvdt/CK_TOOLS \\\n    PATH=/opt/rh/devtoolset-8/root/usr/bin:${CK_ROOT}/bin:/home/dvdt/.local/bin:${PATH} \\\n    CK_PYTHON=python3.7 \\\n    CK_CC=gcc \\\n    LANG=C.UTF-8\n\nRUN mkdir -p ${CK_REPOS} ${CK_TOOLS}\n\n# Install CK (CK automation f49f20744aba90e2)\n# We need to install new pip and setuptools otherwise there is a conflict\n# with the local CK installation of Python packages ...\nRUN export DUMMY_CK=A\nRUN ${CK_PYTHON} --version\nRUN ${DUMMY_CK} ${CK_PYTHON} -m pip install --ignore-installed pip setuptools wheel --user\nRUN ${DUMMY_CK} ${CK_PYTHON} -m pip install pyyaml virtualenv --user\nRUN ${DUMMY_CK} ${CK_PYTHON} -m pip install ck --user\n\n# Pull CK repositories\nRUN ck pull repo:mlcommons@ck-mlops\n\n# Use generic Linux settings with dummy frequency setting scripts.\nRUN ck detect platform.os --platform_init_uoa=generic-linux-dummy\n\n#-----------------------------------------------------------------------------#\n# Step 1. Install C++ dependencies (FLAC, SoX).\n#-----------------------------------------------------------------------------#\n# Detect C/C++ compiler (gcc).\nRUN ck detect soft:compiler.gcc --full_path=`which ${CK_CC}`\n# Install preprocessing dependencies (FLAC, SoX).\nRUN ck install package --tags=tool,flac\nRUN ck install package --tags=tool,sox\n#-----------------------------------------------------------------------------#\n\n\n#-----------------------------------------------------------------------------#\n# Step 2. Install Python dependencies (pip, Torch, SoX, pandas, Abseil, wheel).\n#-----------------------------------------------------------------------------#\n# Detect Python interpreter (\"compiler\").\nRUN ck detect soft:compiler.python --full_path=`which ${CK_PYTHON}`\n# Install PyTorch.\nRUN ck install package --tags=python-package,torch --force_version=1.6.0\n# Install preprocessing dependencies (SoX, pandas).\nRUN ck install package --tags=python-package,sox\nRUN ck install package --tags=python-package,pandas\n# Install LoadGen dependencies (Abseil, wheel).\nRUN ck install package --tags=python-package,absl\n# Install other program dependencies.\n# NB: Fix numba version: https://github.com/librosa/librosa/issues/1160\nRUN ${CK_PYTHON} -m pip install --user tqdm toml unidecode inflect sndfile librosa numba==0.48\nRUN ck install package --tags=lib,python-package,numpy\n#-----------------------------------------------------------------------------#\n\n\n#-----------------------------------------------------------------------------#\n# Step 3. Download the official MLPerf Inference RNNT dataset (LibriSpeech\n# dev-clean) and preprocess it to wav.\n#-----------------------------------------------------------------------------#\nRUN ck install package --tags=dataset,speech-recognition,dev-clean,original\n# NB: Can ignore the lzma related warning.\nRUN ck install package --tags=dataset,speech-recognition,dev-clean,preprocessed\n#-----------------------------------------------------------------------------#\n\n\n#-----------------------------------------------------------------------------#\n# Step 4. Download the official MLPerf Inference RNNT model.\n#-----------------------------------------------------------------------------#\nRUN ck install package --tags=model,pytorch,rnnt\n#-----------------------------------------------------------------------------#\n\n\n#-----------------------------------------------------------------------------#\n# Step 5. Download the MLPerf Inference repo with dividiti's RNNT tweaks,\n# and build the Python LoadGen API.\n#-----------------------------------------------------------------------------#\nRUN ck install package --tags=mlperf,inference,source,dividiti.rnnt\nRUN ck install package --tags=python-package,loadgen\n#-----------------------------------------------------------------------------#\n\n\n#-----------------------------------------------------------------------------#\n# Run the Speech Recognition RNNT program in the accuracy mode.\n#-----------------------------------------------------------------------------#\nCMD [\"ck run program:speech-recognition-pytorch-loadgen --cmd_key=accuracy --skip_print_timers\"]\n"
+}

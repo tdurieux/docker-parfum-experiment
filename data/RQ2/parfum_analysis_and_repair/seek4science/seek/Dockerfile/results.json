@@ -1,0 +1,17 @@
+{
+  "startTime": 1674248887976,
+  "endTime": 1674248889320,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 46,
+        "lineEnd": 46,
+        "columnStart": 4,
+        "columnEnd": 36
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM ruby:2.7-buster\n\nLABEL maintainer=\"Stuart Owen <orcid.org/0000-0003-2130-0865>, Finn Bacall\"\n\nENV APP_DIR /seek\nENV RAILS_ENV=production\n\n# need to set the locale, otherwise some gems file to install\nENV LANG=\"en_US.UTF-8\" LANGUAGE=\"en_US:UTF-8\" LC_ALL=\"C.UTF-8\"\n\nRUN apt-get update -qq && \\\n    apt-get install -y --no-install-recommends build-essential cmake gettext graphviz git \\\n\t\tlibcurl4-gnutls-dev libmagick++-dev libpq-dev libreadline-dev \\\n\t\tlibreoffice libsqlite3-dev libssl-dev libxml++2.6-dev \\\n\t\tlibxslt1-dev locales default-mysql-client nginx nodejs openjdk-11-jdk-headless \\\n\t\tpython3 python3-pip python3-setuptools python3-wheel python3-psutil python3.7-dev \\\n\t\tpoppler-utils postgresql-client shared-mime-info sqlite3 links telnet vim-tiny zip && \\\n    apt-get clean && \\\n    rm -rf /var/lib/apt/lists/* && \\\n    locale-gen en_US.UTF-8 && \\\n    update-alternatives --install /usr/bin/python python /usr/bin/python3.7 1\n\nRUN mkdir -p $APP_DIR\nRUN chown -R www-data $APP_DIR /var/www\n\nUSER www-data\n\nWORKDIR $APP_DIR\n\n# Bundle install throw errors if Gemfile has been modified since Gemfile.lock\nCOPY Gemfile* ./\nRUN bundle config --local frozen 1 && \\\n    bundle install --deployment --without development test\n\n# App code\nCOPY . .\nRUN mkdir log tmp\nCOPY docker/virtuoso_settings.docker.yml config/virtuoso_settings.yml\n\nUSER root\nRUN chown -R www-data solr config docker public /var/www db/schema.rb\nUSER www-data\nRUN touch config/using-docker #allows us to see within SEEK we are running in a container\n\n# Python dependencies from requirements.txt\nENV PATH=\"/var/www/.local/bin:$PATH\"\nRUN pip3 install --no-cache-dir -r requirements.txt\n\n# SQLite Database (for asset compilation)\nRUN mkdir sqlite3-db && \\\n    cp docker/database.docker.sqlite3.yml config/database.yml && \\\n    chmod +x docker/upgrade.sh docker/start_workers.sh && \\\n    bundle exec rake db:setup\n\n\nRUN bundle exec rake assets:precompile && \\\n    rm -rf tmp/cache/*\n\n#root access needed for next couple of steps\nUSER root\n\n# Install supercronic - a cron alternative\nENV SUPERCRONIC_URL=https://github.com/aptible/supercronic/releases/download/v0.1.12/supercronic-linux-amd64 \\\n    SUPERCRONIC=supercronic-linux-amd64 \\\n    SUPERCRONIC_SHA1SUM=048b95b48b708983effb2e5c935a1ef8483d9e3e\n\nRUN curl -fsSLO \"$SUPERCRONIC_URL\" \\\n && echo \"${SUPERCRONIC_SHA1SUM}  ${SUPERCRONIC}\" | sha1sum -c - \\\n && chmod +x \"$SUPERCRONIC\" \\\n && mv \"$SUPERCRONIC\" \"/usr/local/bin/${SUPERCRONIC}\" \\\n && ln -s \"/usr/local/bin/${SUPERCRONIC}\" /usr/local/bin/supercronic\n\n# Cleanup and remove default nginx index page\nRUN rm -rf /tmp/* /var/tmp/* /usr/share/nginx/html/index.html\n\nUSER www-data\n\n# Network\nEXPOSE 3000\n\n# Shared\nVOLUME [\"/seek/filestore\", \"/seek/sqlite3-db\", \"/seek/tmp/cache\", \"/seek/public/assets\"]\n\nCMD [\"docker/entrypoint.sh\"]\n"
+}

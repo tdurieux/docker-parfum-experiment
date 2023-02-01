@@ -1,0 +1,26 @@
+FROM ubuntu:16.04
+
+RUN apt-get update
+RUN apt-get install --no-install-recommends -y check g++ pkg-config apt-transport-https wget patchelf g++-multilib qemu-user-binfmt && rm -rf /var/lib/apt/lists/*;
+
+### install latest cmake from Kitware ppa
+RUN wget -O - https://apt.kitware.com/keys/kitware-archive-latest.asc 2>/dev/null | gpg --batch --dearmor - | tee /usr/share/keyrings/kitware-archive-keyring.gpg >/dev/null
+RUN echo 'deb [signed-by=/usr/share/keyrings/kitware-archive-keyring.gpg] https://apt.kitware.com/ubuntu/ xenial main' | tee /etc/apt/sources.list.d/kitware.list >/dev/null
+RUN apt-get update
+# Install the kitware-archive-keyring package to ensure that our keyring stays up to date as they rotate keys:
+RUN rm /usr/share/keyrings/kitware-archive-keyring.gpg && apt-get install -y --no-install-recommends kitware-archive-keyring && rm -rf /var/lib/apt/lists/*;
+RUN apt-get install --no-install-recommends -y cmake && rm -rf /var/lib/apt/lists/*;
+
+ENV TARGET_ARCH=gnueabihf
+ENV TARGET_DEB_ARCH="armhf"
+
+RUN dpkg --add-architecture $TARGET_DEB_ARCH;
+RUN echo "deb [arch=$TARGET_DEB_ARCH] http://ports.ubuntu.com/ubuntu-ports xenial main restricted multiverse universe" | tee -a /etc/apt/sources.list;
+RUN echo "deb [arch=$TARGET_DEB_ARCH] http://ports.ubuntu.com/ubuntu-ports xenial-updates main restricted multiverse universe" | tee -a /etc/apt/sources.list;
+RUN echo "deb [arch=$TARGET_DEB_ARCH] http://ports.ubuntu.com/ubuntu-ports xenial-security main restricted multiverse universe" | tee -a /etc/apt/sources.list;
+RUN apt-get update -y || true;
+RUN apt-get install --no-install-recommends -y crossbuild-essential-$TARGET_DEB_ARCH check:$TARGET_DEB_ARCH && rm -rf /var/lib/apt/lists/*;
+
+ENV PKG_CONFIG_PATH=/usr/lib/arm-linux-gnueabihf/pkgconfig/
+
+WORKDIR "/src"

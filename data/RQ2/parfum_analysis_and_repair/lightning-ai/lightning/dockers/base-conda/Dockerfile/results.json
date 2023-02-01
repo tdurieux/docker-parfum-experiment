@@ -1,0 +1,44 @@
+{
+  "startTime": 1674255676044,
+  "endTime": 1674255677367,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 49,
+        "lineEnd": 49,
+        "columnStart": 4,
+        "columnEnd": 111
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 95,
+        "lineEnd": 95,
+        "columnStart": 4,
+        "columnEnd": 23
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 126,
+        "lineEnd": 126,
+        "columnStart": 8,
+        "columnEnd": 137
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 138,
+        "lineEnd": 138,
+        "columnStart": 4,
+        "columnEnd": 51
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Copyright The PyTorch Lightning team.\n#\n# Licensed under the Apache License, Version 2.0 (the \"License\");\n# you may not use this file except in compliance with the License.\n# You may obtain a copy of the License at\n#\n#     http://www.apache.org/licenses/LICENSE-2.0\n#\n# Unless required by applicable law or agreed to in writing, software\n# distributed under the License is distributed on an \"AS IS\" BASIS,\n# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.\n# See the License for the specific language governing permissions and\n# limitations under the License.\n\nARG CUDA_VERSION=11.3.1\n\nFROM nvidia/cuda:${CUDA_VERSION}-devel-ubuntu20.04\n\nARG PYTHON_VERSION=3.9\nARG PYTORCH_VERSION=1.9\nARG CONDA_VERSION=4.11.0\n\nSHELL [\"/bin/bash\", \"-c\"]\n# https://techoverflow.net/2019/05/18/how-to-fix-configuring-tzdata-interactive-input-when-building-docker-images/\nENV \\\n    PATH=\"$PATH:/root/.local/bin\" \\\n    DEBIAN_FRONTEND=noninteractive \\\n    TZ=Europe/Prague \\\n    # CUDA_TOOLKIT_ROOT_DIR=\"/usr/local/cuda\" \\\n    MKL_THREADING_LAYER=GNU\n\nRUN \\\n\n\n    apt-key adv --fetch-keys https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2004/x86_64/3bf863cc.pub && \\\n    apt-get update -qq --fix-missing && \\\n    apt-get install -y --no-install-recommends \\\n        build-essential \\\n        cmake \\\n        git \\\n        wget \\\n        curl \\\n        unzip \\\n        ca-certificates \\\n        libopenmpi-dev \\\n    && \\\n\n# Install conda and python.\n# NOTE new Conda does not forward the exit status... https://github.com/conda/conda/issues/8385\n    curl -f -o ~/miniconda.sh https://repo.anaconda.com/miniconda/Miniconda3-py38_${CONDA_VERSION}-Linux-x86_64.sh && \\\n    chmod +x ~/miniconda.sh && \\\n    ~/miniconda.sh -b && \\\n    rm ~/miniconda.sh && \\\n\n# Cleaning\n    apt-get autoremove -y && \\\n    apt-get clean && \\\n    rm -rf /root/.cache && \\\n    rm -rf /var/lib/apt/lists/*\n\nENV \\\n    PATH=\"/root/miniconda3/bin:$PATH\" \\\n    LD_LIBRARY_PATH=\"/root/miniconda3/lib:$LD_LIBRARY_PATH\" \\\n    CUDA_TOOLKIT_ROOT_DIR=\"/usr/local/cuda\" \\\n    MKL_THREADING_LAYER=GNU \\\n    # MAKEFLAGS=\"-j$(nproc)\" \\\n    MAKEFLAGS=\"-j2\" \\\n    TORCH_CUDA_ARCH_LIST=\"3.7;5.0;6.0;7.0;7.5;8.0\" \\\n    CONDA_ENV=lightning\n\nCOPY environment.yml environment.yml\n\n# conda init\nRUN conda update -n base -c defaults conda && \\\n    conda create -y --name $CONDA_ENV python=${PYTHON_VERSION} pytorch=${PYTORCH_VERSION} torchvision torchtext cudatoolkit=${CUDA_VERSION} -c nvidia -c pytorch -c pytorch-test -c pytorch-nightly && \\\n    conda init bash && \\\n    # NOTE: this requires that the channel is presented in the yaml before packages \\\n    printf \"import re;\\nfname = 'environment.yml';\\nreq = open(fname).read();\\nfor n in ['python', 'pytorch', 'torchtext', 'torchvision']:\\n    req = re.sub(rf'- {n}[>=]+', f'# - {n}=', req);\\nopen(fname, 'w').write(req)\" > prune.py && \\\n    python prune.py && \\\n    rm prune.py && \\\n    cat environment.yml && \\\n    conda env update --name $CONDA_ENV --file environment.yml && \\\n    conda clean -ya && \\\n    rm environment.yml\n\nENV \\\n    PATH=/root/miniconda3/envs/${CONDA_ENV}/bin:$PATH \\\n    LD_LIBRARY_PATH=\"/root/miniconda3/envs/${CONDA_ENV}/lib:$LD_LIBRARY_PATH\"\n\nCOPY ./requirements/pytorch/ ./requirements/pytorch/\nCOPY ./.actions/assistant.py assistant.py\n\nRUN \\\n    pip list | grep torch && \\\n    python -c \"import torch; print(torch.__version__)\" && \\\n    pip install --no-cache-dir -q fire && \\\n    python requirements/pytorch/adjust-versions.py requirements/pytorch/extra.txt && \\\n    python requirements/pytorch/adjust-versions.py requirements/pytorch/examples.txt && \\\n    # Install remaining requirements\n    pip install -r requirements/pytorch/base.txt --no-cache-dir --find-links https://download.pytorch.org/whl/test/torch_test.html && \\\n    pip install -r requirements/pytorch/extra.txt --no-cache-dir --find-links https://download.pytorch.org/whl/test/torch_test.html && \\\n    pip install -r requirements/pytorch/examples.txt --no-cache-dir --find-links https://download.pytorch.org/whl/test/torch_test.html && \\\n    rm assistant.py\n\nENV \\\n    # if you want this environment to be the default o \\ne, uncomment the following line:\n    CONDA_DEFAULT_ENV=${CONDA_ENV} \\\n    HOROVOD_CUDA_HOME=$CUDA_TOOLKIT_ROOT_DIR \\\n    HOROVOD_GPU_OPERATIONS=NCCL \\\n    HOROVOD_WITH_PYTORCH=1 \\\n    HOROVOD_WITHOUT_TENSORFLOW=1 \\\n    HOROVOD_WITHOUT_MXNET=1 \\\n    HOROVOD_WITH_GLOO=1 \\\n    HOROVOD_WITH_MPI=1\n\nRUN \\\n    HOROVOD_BUILD_CUDA_CC_LIST=${TORCH_CUDA_ARCH_LIST//\";\"/\",\"} && \\\n    export HOROVOD_BUILD_CUDA_CC_LIST=${HOROVOD_BUILD_CUDA_CC_LIST//\".\"/\"\"} && \\\n    pip install --no-cache-dir -r requirements/pytorch/strategies.txt\n\nRUN \\\n    CUDA_VERSION_MAJOR=$(python -c \"import torch ; print(torch.version.cuda.split('.')[0])\") && \\\n    py_ver=$(python -c \"print(int('$PYTHON_VERSION'.split('.') >= '3.9'.split('.')))\") && \\\n    # install DALI, needed for examples\n    # todo: waiting for 1.4 - https://github.com/NVIDIA/DALI/issues/3144#issuecomment-877386691\n    if [ $py_ver -eq \"0\" ]; then \\\n        pip install --no-cache-dir --extra-index-url https://developer.download.nvidia.com/compute/redist \"nvidia-dali-cuda${CUDA_VERSION_MAJOR}0>1.0\"; \\\n        python -c 'from nvidia.dali.pipeline import Pipeline' ; \\\n    fi\n\nRUN \\\n    # install NVIDIA apex\n    pip install --no-cache-dir --global-option=\"--cuda_ext\" https://github.com/NVIDIA/apex/archive/refs/heads/master.zip && \\\n    python -c \"from apex import amp\"\n\nRUN \\\n\n    CUDA_VERSION_MM=$(python -c \"print(''.join('$CUDA_VERSION'.split('.')[:2]))\") && \\\n    pip install --no-cache-dir \"bagua-cuda$CUDA_VERSION_MM==0.9.0\" && \\\n    python -c \"import bagua_core; bagua_core.install_deps()\" && \\\n    python -c \"import bagua; print(bagua.__version__)\"\n\nRUN \\\n    # Show what we have\n    pip --version && \\\n    conda info && \\\n    pip list && \\\n    python -c \"import sys; ver = sys.version_info ; assert f'{ver.major}.{ver.minor}' == '$PYTHON_VERSION', ver\" && \\\n    python -c \"import torch; assert torch.__version__.startswith('$PYTORCH_VERSION'), torch.__version__\" && \\\n    python requirements/pytorch/check-avail-extras.py && \\\n    python requirements/pytorch/check-avail-strategies.py && \\\n    rm -rf requirements/\n"
+}

@@ -1,0 +1,79 @@
+#
+# This is a slimmer version of our docker image without the graphical player
+# and notification system integration.
+#
+# Handles compiling and package installation
+FROM ubuntu:20.04 AS compile-image
+
+# Install build dependencies
+ARG DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        python3 python3-pip \
+        # Required for local pip install
+        python3-setuptools \
+        # Required for venv setup
+        python3-venv \
+        # Required to build RLE module
+        build-essential python3-dev \
+        # Required for ARM builds (because we need to build cryptography instead of using a prebuilt wheel)
+        libssl-dev libffi-dev && rm -rf /var/lib/apt/lists/*;
+
+RUN python3 -m venv /opt/venv
+# Make sure we use the virtualenv:
+ENV PATH="/opt/venv/bin:$PATH"
+
+# Required for ARM builds
+# Building dependencies didn't work without an upgraded pip and wheel on ARM
+RUN pip3 --no-cache-dir install -U pip wheel
+
+# Install dependencies only (speeds repetitive builds)
+COPY requirements-slim.txt /pyrdp/requirements.txt
+RUN cd /pyrdp && pip3 --no-cache-dir install -r requirements.txt
+
+# Compile only our C extension and install
+# This way changes to source tree will not trigger full images rebuilds
+COPY ext/rle.c /pyrdp/ext/rle.c
+COPY setup.py /pyrdp/setup.py
+RUN cd /pyrdp \
+    && python setup.py build_ext \
+    && python setup.py install_lib
+
+
+# Handles runtime only (minimize size for distribution)
+FROM ubuntu:20.04 AS docker-image
+
+# Install runtime dependencies except pre-built venv
+ARG DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends python3 \
+        # To generate certificates
+        openssl \
+        # Required for the setup.py install
+        python3-distutils \
+        && rm -rf /var/lib/apt/lists/*
+
+# Copy preinstalled dependencies from compile image
+COPY --from=compile-image /opt/venv /opt/venv
+
+# Create user
+RUN useradd --create-home --home-dir /home/pyrdp pyrdp
+
+# Make sure we use the virtualenv
+ENV PATH="/opt/venv/bin:$PATH"
+
+# Install python source and package
+# NOTE: we are no longer doing this in the compile image to avoid long image rebuilds in development
+COPY --from=compile-image /pyrdp /pyrdp
+COPY bin/ /pyrdp/bin/
+COPY pyrdp/ /pyrdp/pyrdp/
+COPY setup.py /pyrdp/setup.py
+RUN cd /pyrdp \
+    && python setup.py install
+
+USER pyrdp
+
+# UTF-8 support on the console output (for pyrdp-player)
+ENV PYTHONIOENCODING=utf-8
+# Make sure we use the virtualenv
+ENV PATH="/opt/venv/bin:$PATH"
+
+WORKDIR /home/pyrdp

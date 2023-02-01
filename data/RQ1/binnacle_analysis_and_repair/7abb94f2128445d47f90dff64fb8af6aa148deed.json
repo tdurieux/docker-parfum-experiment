@@ -1,0 +1,35 @@
+{
+  "startTime": 1674236443848,
+  "endTime": 1674236444233,
+  "originalSmells": [
+    {
+      "rule": "sha256sumEchoOneSpaces",
+      "position": {
+        "lineStart": 51,
+        "lineEnd": 51,
+        "columnStart": 4,
+        "columnEnd": 62
+      }
+    },
+    {
+      "rule": "sha256sumEchoOneSpaces",
+      "position": {
+        "lineStart": 63,
+        "lineEnd": 63,
+        "columnStart": 4,
+        "columnEnd": 116
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 93,
+        "lineEnd": 99,
+        "columnStart": 4,
+        "columnEnd": 10
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM alpine:3.9\n\nRUN apk add --no-cache \\\n\t\tgmp-dev\n\n# skip installing gem documentation\nRUN mkdir -p /usr/local/etc \\\n\t&& { \\\n\t\techo 'install: --no-document'; \\\n\t\techo 'update: --no-document'; \\\n\t} >> /usr/local/etc/gemrc\n\nENV RUBY_MAJOR 2.4\nENV RUBY_VERSION 2.4.6\nENV RUBY_DOWNLOAD_SHA256 25da31b9815bfa9bba9f9b793c055a40a35c43c6adfb1fdbd81a09099f9b529c\nENV RUBYGEMS_VERSION 3.0.3\n\n# some of ruby's build scripts are written in ruby\n#   we purge system ruby later to make sure our final image uses what we just built\n# readline-dev vs libedit-dev: https://bugs.ruby-lang.org/issues/11869 and https://github.com/docker-library/ruby/issues/75\nRUN set -ex \\\n\t\\\n\t&& apk add --no-cache --virtual .ruby-builddeps \\\n\t\tautoconf \\\n\t\tbison \\\n\t\tbzip2 \\\n\t\tbzip2-dev \\\n\t\tca-certificates \\\n\t\tcoreutils \\\n\t\tdpkg-dev dpkg \\\n\t\tgcc \\\n\t\tgdbm-dev \\\n\t\tglib-dev \\\n\t\tlibc-dev \\\n\t\tlibffi-dev \\\n\t\tlibxml2-dev \\\n\t\tlibxslt-dev \\\n\t\tlinux-headers \\\n\t\tmake \\\n\t\tncurses-dev \\\n\t\topenssl \\\n\t\topenssl-dev \\\n\t\tprocps \\\n\t\treadline-dev \\\n\t\truby \\\n\t\ttar \\\n\t\txz \\\n\t\tyaml-dev \\\n\t\tzlib-dev \\\n\t\\\n\t&& wget -O ruby.tar.xz \"https://cache.ruby-lang.org/pub/ruby/${RUBY_MAJOR%-rc}/ruby-$RUBY_VERSION.tar.xz\" \\\n\t&& echo \"$RUBY_DOWNLOAD_SHA256  *ruby.tar.xz\" | sha256sum -c - \\\n\n\t&& mkdir -p /usr/src/ruby \\\n\t&& tar -xJf ruby.tar.xz -C /usr/src/ruby --strip-components=1 \\\n\t&& rm ruby.tar.xz \\\n\n\t&& cd /usr/src/ruby \\\n\n# https://github.com/docker-library/ruby/issues/196\n# https://bugs.ruby-lang.org/issues/14387#note-13 (patch source)\n# https://bugs.ruby-lang.org/issues/14387#note-16 (\"Therefore ncopa's patch looks good for me in general.\" -- only breaks glibc which doesn't matter here)\n\t&& wget -O 'thread-stack-fix.patch' 'https://bugs.ruby-lang.org/attachments/download/7081/0001-thread_pthread.c-make-get_main_stack-portable-on-lin.patch' \\\n\t&& echo '3ab628a51d92fdf0d2b5835e93564857aea73e0c1de00313864a94a6255cb645  *thread-stack-fix.patch' | sha256sum -c - \\\n\t&& patch -p1 -i thread-stack-fix.patch \\\n\t&& rm thread-stack-fix.patch \\\n\n# hack in \"ENABLE_PATH_CHECK\" disabling to suppress:\n#   warning: Insecure world writable dir\n\t&& { \\\n\t\techo '#define ENABLE_PATH_CHECK 0'; \\\n\t\techo; \\\n\t\tcat file.c; \\\n\t} > file.c.new \\\n\t&& mv file.c.new file.c \\\n\n\t&& autoconf \\\n\t&& gnuArch=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" \\\n# the configure script does not detect isnan/isinf as macros\n\t&& export ac_cv_func_isnan=yes ac_cv_func_isinf=yes \\\n\t&& ./configure \\\n\t\t--build=\"$gnuArch\" \\\n\t\t--disable-install-doc \\\n\t\t--enable-shared \\\n\t&& make -j \"$(nproc)\" \\\n\t&& make install \\\n\n\t&& runDeps=\"$( \\\n\t\tscanelf --needed --nobanner --format '%n#p' --recursive /usr/local \\\n\t\t\t| tr ',' '\\n' \\\n\t\t\t| sort -u \\\n\t\t\t| awk 'system(\"[ -e /usr/local/lib/\" $1 \" ]\") == 0 { next } { print \"so:\" $1 }' \\\n\t)\" \\\n\t&& apk add --no-cache --no-network --virtual .ruby-rundeps $runDeps \\\n\t\tbzip2 \\\n\t\tca-certificates \\\n\t\tlibffi-dev \\\n\t\tprocps \\\n\t\tyaml-dev \\\n\t\tzlib-dev \\\n\t&& apk del --no-network .ruby-builddeps \\\n\t&& cd / \\\n\t&& rm -r /usr/src/ruby \\\n# make sure bundled \"rubygems\" is older than RUBYGEMS_VERSION (https://github.com/docker-library/ruby/issues/246)\n\t&& ruby -e 'exit(Gem::Version.create(ENV[\"RUBYGEMS_VERSION\"]) > Gem::Version.create(Gem::VERSION))' \\\n\t&& gem update --system \"$RUBYGEMS_VERSION\" && rm -r /root/.gem/ \\\n# rough smoke test\n\t&& ruby --version && gem --version && bundle --version\n\n# install things globally, for great justice\n# and don't create \".bundle\" in all our apps\nENV GEM_HOME /usr/local/bundle\nENV BUNDLE_PATH=\"$GEM_HOME\" \\\n\tBUNDLE_SILENCE_ROOT_WARNING=1 \\\n\tBUNDLE_APP_CONFIG=\"$GEM_HOME\"\n# path recommendation: https://github.com/bundler/bundler/pull/6469#issuecomment-383235438\nENV PATH $GEM_HOME/bin:$BUNDLE_PATH/gems/bin:$PATH\n# adjust permissions of a few directories for running \"gem install\" as an arbitrary user\nRUN mkdir -p \"$GEM_HOME\" && chmod 777 \"$GEM_HOME\"\n# (BUNDLE_PATH = GEM_HOME, no need to mkdir/chown both)\n\nCMD [ \"irb\" ]\n"
+}

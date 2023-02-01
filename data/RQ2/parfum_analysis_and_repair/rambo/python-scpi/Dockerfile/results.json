@@ -1,0 +1,62 @@
+{
+  "startTime": 1674218624683,
+  "endTime": 1674218626124,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 53,
+        "lineEnd": 53,
+        "columnStart": 7,
+        "columnEnd": 92
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 9,
+        "lineEnd": 9,
+        "columnStart": 45,
+        "columnEnd": 83
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 67,
+        "lineEnd": 67,
+        "columnStart": 21,
+        "columnEnd": 39
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 70,
+        "lineEnd": 70,
+        "columnStart": 7,
+        "columnEnd": 133
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 103,
+        "lineEnd": 103,
+        "columnStart": 7,
+        "columnEnd": 138
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 143,
+        "lineEnd": 143,
+        "columnStart": 7,
+        "columnEnd": 26
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "#############################################\n# Tox testsuite for multiple python version #\n#############################################\nFROM advian/tox-base:alpine as tox\nARG PYTHON_VERSIONS=\"3.8.7 3.9.1 3.7.9 3.6.12\"\nARG POETRY_VERSION=\"1.1.4\"\nRUN for pyver in $PYTHON_VERSIONS; do pyenv install -s $pyver; done \\\n    && pyenv global $PYTHON_VERSIONS \\\n    && poetry self update $POETRY_VERSION || pip install --no-cache-dir -U poetry==$POETRY_VERSION \\\n    && python -m pip install -U tox \\\n    && apk add --no-cache \\\n        git \\\n    && poetry install \\\n    && docker/pre_commit_init.sh \\\n    && true\n\n######################\n# Base builder image #\n######################\nFROM python:3.7-alpine as builder_base\n\nENV \\\n  # locale\n  LC_ALL=C.UTF-8 \\\n  # python:\n  PYTHONFAULTHANDLER=1 \\\n  PYTHONUNBUFFERED=1 \\\n  PYTHONHASHSEED=random \\\n  # pip:\n  PIP_NO_CACHE_DIR=off \\\n  PIP_DISABLE_PIP_VERSION_CHECK=on \\\n  PIP_DEFAULT_TIMEOUT=100 \\\n  # poetry:\n  POETRY_VERSION=1.1.4\n\n\nRUN apk add --no-cache \\\n        curl \\\n        git \\\n        bash \\\n        build-base \\\n        libffi-dev \\\n        linux-headers \\\n        openssl \\\n        openssl-dev \\\n        zeromq \\\n        tini \\\n        openssh-client \\\n        cargo \\\n    # githublab ssh\n    && mkdir -p -m 0700 ~/.ssh && ssh-keyscan gitlab.com github.com | sort > ~/.ssh/known_hosts \\\n    # Install poetry package manager their way (pypi package sometimes has issues) \\\n    && curl -f -sSL https://raw.githubusercontent.com/python-poetry/poetry/master/get-poetry.py | python3 \\\n    && echo 'source $HOME/.poetry/env' >>/root/.profile \\\n    && source $HOME/.poetry/env \\\n    # We're in a container, do not create useless virtualenvs\n    && poetry config virtualenvs.create false \\\n    && true\n\nSHELL [\"/bin/bash\", \"-lc\"]\n\n\n# Copy only requirements, to cache them in docker layer:\nWORKDIR /pysetup\nCOPY ./poetry.lock ./pyproject.toml /pysetup/\n# Install basic requirements (utilizing an internal docker wheelhouse if available)\nRUN --mount=type=ssh pip3 install --no-cache-dir wheel \\\n    && poetry export -f requirements.txt --without-hashes -o /tmp/requirements.txt \\\n    && pip3 wheel --wheel-dir=/tmp/wheelhouse --trusted-host 172.17.0.1 --find-links=http://172.17.0.1:3141 -r /tmp/requirements.txt \\\n    && pip3 install --no-cache-dir --trusted-host 172.17.0.1 --find-links=http://172.17.0.1:3141 --find-links=/tmp/wheelhouse/ /tmp/wheelhouse/*.whl \\\n    && true\n\n\n####################################\n# Base stage for production builds #\n####################################\nFROM builder_base as production_build\n# Copy entrypoint script\nCOPY ./docker/entrypoint.sh /docker-entrypoint.sh\n# Only files needed by production setup\nCOPY ./poetry.lock ./pyproject.toml ./README.rst ./src /app/\nWORKDIR /app\n# Build the wheel package with poetry and add it to the wheelhouse\nRUN --mount=type=ssh poetry build -f wheel --no-interaction --no-ansi \\\n    && cp dist/*.whl /tmp/wheelhouse \\\n    && chmod a+x /docker-entrypoint.sh \\\n    && true\n\n\n#########################\n# Main production build #\n#########################\nFROM python:3.7-alpine as production\nCOPY --from=production_build /tmp/wheelhouse /tmp/wheelhouse\nCOPY --from=production_build /docker-entrypoint.sh /docker-entrypoint.sh\nWORKDIR /app\n# Install system level deps for running the package (not devel versions for building wheels)\n# and install the wheels we built in the previous step. generate default config\nRUN --mount=type=ssh apk add --no-cache \\\n        bash \\\n        tini \\\n    && chmod a+x /docker-entrypoint.sh \\\n    && pip3 install --no-cache-dir --trusted-host 172.17.0.1 --find-links=http://172.17.0.1:3141 --find-links=/tmp/wheelhouse/ /tmp/wheelhouse/scpi-*.whl \\\n    && rm -rf /tmp/wheelhouse/ \\\n    # Do whatever else you need to\n    && true\nENTRYPOINT [\"/sbin/tini\", \"--\", \"/docker-entrypoint.sh\"]\n\n\n#####################################\n# Base stage for development builds #\n#####################################\nFROM builder_base as devel_build\n# Install deps\nWORKDIR /pysetup\nRUN --mount=type=ssh poetry install --no-interaction --no-ansi \\\n    && true\n\n\n#0############\n# Run tests #\n#############\nFROM devel_build as test\nCOPY . /app\nWORKDIR /app\nENTRYPOINT [\"/sbin/tini\", \"--\", \"docker/entrypoint-test.sh\"]\n# Re run install to get the service itself installed\nRUN --mount=type=ssh poetry install --no-interaction --no-ansi \\\n    && docker/pre_commit_init.sh \\\n    && true\n\n\n###########\n# Hacking #\n###########\nFROM devel_build as devel_shell\n# Copy everything to the image\nCOPY . /app\nWORKDIR /app\nRUN apk add --no-cache zsh \\\n    && sh -c \"$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)\" \\\n    && echo \"source /root/.profile\" >>/root/.zshrc \\\n    && pip3 install --no-cache-dir git-up \\\n    && true\nENTRYPOINT [\"/bin/zsh\", \"-l\"]\n"
+}

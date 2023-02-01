@@ -1,0 +1,44 @@
+{
+  "startTime": 1674218284648,
+  "endTime": 1674218285692,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 89,
+        "lineEnd": 89,
+        "columnStart": 2,
+        "columnEnd": 47
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 72,
+        "lineEnd": 72,
+        "columnStart": 4,
+        "columnEnd": 23
+      }
+    },
+    {
+      "rule": "sha256sumEchoOneSpaces",
+      "position": {
+        "lineStart": 90,
+        "lineEnd": 90,
+        "columnStart": 2,
+        "columnEnd": 112
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 66,
+        "lineEnd": 71,
+        "columnStart": 4,
+        "columnEnd": 12
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "ARG BUILD_IMAGE\nARG DEPLOY_BASE_IMAGE\n\n# This is the folder where the project is built\nARG BUILD=/DLA-Future-build\n# This is where we copy the sources to\nARG SOURCE=/DLA-Future\n# Where a bunch of shared libs live\nARG DEPLOY=/root/DLA-Future.bundle\n\nFROM $BUILD_IMAGE as builder\n\nARG BUILD\nARG SOURCE\nARG DEPLOY\n\n# Build DLA-Future\nCOPY . ${SOURCE}\n\nSHELL [\"/bin/bash\", \"-c\"]\n\n# Inject the coverage option in the spack package\nRUN gawk -i inplace '$0 ~ \"return args\" {print \"        args.append(self.define(\\\"DLAF_WITH_COVERAGE\\\", True))\"} {print $0}' ${SOURCE}/spack/packages/dla-future/package.py\n\n# Note: we force spack to build in ${BUILD} creating a link to it\nRUN spack repo rm --scope site dlaf && \\\n    spack repo add ${SOURCE}/spack && \\\n    spack -e ci develop --no-clone -p ${SOURCE} dla-future@develop && \\\n    spack -e ci concretize -f && \\\n    mkdir ${BUILD} && \\\n    ln -s ${BUILD} `spack -e ci location -b dla-future` && \\\n    spack -e ci install --keep-stage\n\n# Prune and bundle binaries\nRUN mkdir ${BUILD}-tmp && cd ${BUILD} && \\\n    export TEST_BINARIES=`ctest --show-only=json-v1 | jq '.tests | map(.command[0]) | .[]' | tr -d \\\"` && \\\n    libtree -d ${DEPLOY} ${TEST_BINARIES} && \\\n    rm -rf ${DEPLOY}/usr/bin && \\\n    libtree -d ${DEPLOY} $(which ctest gcov addr2line) && \\\n    cp -L ${SOURCE}/ci/{mpi-ctest,upload_codecov} ${DEPLOY}/usr/bin && \\\n    echo \"$TEST_BINARIES\" | xargs -I{file} find -samefile {file} -exec cp --parents '{}' ${BUILD}-tmp ';' && \\\n    find '(' -name CTestTestfile.cmake -o -iname \"*.gcno\" ')' -exec cp --parents '{}' ${BUILD}-tmp ';' && \\\n    rm -rf ${BUILD} && \\\n    mv ${BUILD}-tmp ${BUILD} && \\\n    rm -rf ${SOURCE}/.git\n\n# Multistage build, this is the final small image\nFROM $DEPLOY_BASE_IMAGE\n\n# set jfrog autoclean policy\nLABEL com.jfrog.artifactory.retention.maxDays=\"7\"\nLABEL com.jfrog.artifactory.retention.maxCount=\"10\"\n\nENV DEBIAN_FRONTEND noninteractive\n\nARG BUILD\nARG SOURCE\nARG DEPLOY\n\nARG EXTRA_APTGET_DEPLOY\n# python is needed for fastcov\n# pip is needed only to install fastcov (it is removed with\n#     its dependencies after fastcov installation)\n# codecov upload needs curl + ca-certificates\n# tzdata is needed to print correct time\nRUN apt-get update -qq && \\\n    apt-get install -qq -y --no-install-recommends \\\n      ${EXTRA_APTGET_DEPLOY} \\\n      python3 python3-pip \\\n      curl \\\n      ca-certificates \\\n      tzdata && \\\n    pip install --no-cache-dir fastcov && \\\n    apt-get autoremove -qq -y python3-pip && \\\n    apt-get clean && rm -rf /var/lib/apt/lists/*;\n\n\n# Copy the executables and the codecov gcno files\nCOPY --from=builder ${BUILD} ${BUILD}\nCOPY --from=builder ${DEPLOY} ${DEPLOY}\n\n# Copy the source files into the image as well.\n# This is necessary for code coverage of MPI tests: gcov has to have write temporary\n# data into the source folder. In distributed applications we can therefore not mount\n# the git repo folder at runtime in the container, because it is shared and would\n# cause race conditions in gcov.\nCOPY --from=builder ${SOURCE} ${SOURCE}\n\nRUN cd /usr/local/bin && \\\n  curl -f -Ls https://codecov.io/bash > codecov.sh && \\\n  echo \"f0e7a3ee76a787c37aa400cf44aee0c9b473b2fa79092edfb36d1faa853bbe23  codecov.sh\" | sha256sum --check --quiet && \\\n  chmod +x codecov.sh\n\n# Make it easy to call our binaries.\nENV PATH=\"${DEPLOY}/usr/bin:$PATH\"\nENV NVIDIA_VISIBLE_DEVICES all\nENV NVIDIA_DRIVER_CAPABILITIES compute,utility\nENV NVIDIA_REQUIRE_CUDA \"cuda>=10.2\"\n\n# Used in our ctest wrapper to upload reports\nENV ENABLE_COVERAGE=\"YES\"\n\n# Automatically print stacktraces on segfault\nENV LD_PRELOAD=/lib/x86_64-linux-gnu/libSegFault.so\n\nRUN echo \"${DEPLOY}/usr/lib/\" > /etc/ld.so.conf.d/dlaf.conf && ldconfig\n\nWORKDIR ${BUILD}\n"
+}

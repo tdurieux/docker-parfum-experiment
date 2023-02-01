@@ -1,0 +1,35 @@
+FROM balenalib/amd64-debian-node:16.16.0-bullseye-run
+
+ENV TERM xterm
+
+# Install ops/sre related packages.
+RUN install_packages \
+		htop \
+		ifupdown \
+		jq \
+		nano \
+		net-tools \
+		netcat \
+		strace \
+		vim \
+		wget
+# And configure them.
+COPY src/htoprc /root/.config/htop/
+
+# === Confd part ===
+# May be removed once we switch to a different configuration mechanism.
+
+# Directory where rendered environment files are store.
+RUN mkdir /balena
+
+# Set an entry point that runs confd if necessary before executing the main process.
+ENTRYPOINT ["/usr/bin/confd-entry.sh"]
+COPY src/confd-entry.sh /usr/bin/confd-entry.sh
+
+# balenaMachine automatic configuration script.
+COPY src/configure-balena.sh /usr/bin/configure-balena.sh
+
+# Confd binary installation.
+ENV CONFD_VERSION 0.16.0
+RUN wget -O /usr/local/bin/confd https://github.com/kelseyhightower/confd/releases/download/v${CONFD_VERSION}/confd-${CONFD_VERSION}-linux-amd64 \
+	&& chmod a+x /usr/local/bin/confd

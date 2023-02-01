@@ -1,0 +1,1 @@
+# Build step: docker build --tag gcr.io/coreos-k8s-scale-testing/logcollector -f hack/build/logcollector/Dockerfile .

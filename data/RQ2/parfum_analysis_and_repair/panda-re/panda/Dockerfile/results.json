@@ -1,0 +1,26 @@
+{
+  "startTime": 1674220738971,
+  "endTime": 1674220740201,
+  "originalSmells": [
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 14,
+        "lineEnd": 14,
+        "columnStart": 4,
+        "columnEnd": 140
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 24,
+        "lineEnd": 24,
+        "columnStart": 4,
+        "columnEnd": 132
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "ARG BASE_IMAGE=\"ubuntu:20.04\"\nARG TARGET_LIST=\"x86_64-softmmu,i386-softmmu,arm-softmmu,ppc-softmmu,mips-softmmu,mipsel-softmmu,aarch64-softmmu\"\n\n### BASE IMAGE\nFROM $BASE_IMAGE as base\nARG BASE_IMAGE\n\n# Copy dependencies lists into container. Note this\n#  will rarely change so caching should still work well\nCOPY ./panda/dependencies/${BASE_IMAGE}*.txt /tmp/\n\n# Base image just needs runtime dependencies\nRUN [ -e /tmp/${BASE_IMAGE}_base.txt ] && \\\n    apt-get -qq update && \\\n    DEBIAN_FRONTEND=noninteractive apt-get -qq install -y --no-install-recommends curl $(cat /tmp/${BASE_IMAGE}_base.txt | grep -o '^[^#]*') && \\\n    apt-get clean && rm -rf /var/lib/apt/lists/*;\n\n### BUILD IMAGE - STAGE 2\nFROM base AS builder\nARG BASE_IMAGE\nARG TARGET_LIST\n\nRUN [ -e /tmp/${BASE_IMAGE}_build.txt ] && \\\n    apt-get -qq update && \\\n    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends $(cat /tmp/${BASE_IMAGE}_build.txt | grep -o '^[^#]*') && \\\n    apt-get clean && \\\n    python3 -m pip install --upgrade --no-cache-dir pip && \\\n    python3 -m pip install --upgrade --no-cache-dir \"cffi>1.14.3\" && \\\n    python3 -m pip install --upgrade --no-cache-dir \"capstone\" && \\\n    curl https://sh.rustup.rs -sSf | sh -s -- -y --profile minimal && rm -rf /var/lib/apt/lists/*;\n\n# Then install capstone from source\nRUN cd /tmp && \\\n    git clone https://github.com/capstone-engine/capstone/ -b 4.0.2 && \\\n    cd capstone/ && ./make.sh && make install && cd /tmp && \\\n    rm -rf /tmp/capstone && ldconfig\n\nENV PATH=\"/root/.cargo/bin:${PATH}\"\n\n# Sanity check to ensure cargo is installed\nRUN cargo --help\n\n# install libosi\nRUN cd /tmp && \\\n    git clone https://github.com/panda-re/libosi && \\\n    mkdir /tmp/libosi/build && cd /tmp/libosi/build && \\\n    cmake -GNinja .. && ninja && ninja package && dpkg -i libosi*.deb && \\\n    cd /tmp && rm -rf libosi/ && ldconfig\n\n# Build and install panda\n# Copy repo root directory to /panda, note we explicitly copy in .git directory\n# Note .dockerignore file keeps us from copying things we don't need\nCOPY . /panda/\nCOPY .git /panda/\n\n# Note we diable NUMA for docker builds because it causes make check to fail in docker\nRUN git -C /panda submodule update --init dtc && \\\n    git -C /panda rev-parse HEAD > /usr/local/panda_commit_hash && \\\n    mkdir  /panda/build && cd /panda/build && \\\n    /panda/configure \\\n        --target-list=\"${TARGET_LIST}\" \\\n        --prefix=/usr/local \\\n        --disable-numa \\\n        --enable-llvm && \\\n    make -C /panda/build -j \"$(nproc)\"\n\n#### Develop setup: panda built + pypanda installed (in develop mode) - Stage 3\nFROM builder as developer\nRUN cd /panda/panda/python/core && \\\n    python3 setup.py develop && \\\n    ldconfig && \\\n    update-alternatives --install /usr/bin/python python /usr/bin/python3 10\nWORKDIR /panda/\n\n#### Install PANDA + pypanda from builder - Stage 4\nFROM builder as installer\nRUN  make -C /panda/build install\n# Install pypanda\nRUN cd /panda/panda/python/core && \\\n    python3 setup.py install\n\n### Copy files for panda+pypanda from installer  - Stage 5\nFROM base as panda\n\n# Copy panda + libcapstone.so* + libosi libraries\nCOPY --from=installer /usr/local /usr/local\nCOPY --from=installer /usr/lib/libcapstone* /usr/lib/\nCOPY --from=installer /lib/libosi.so /lib/libiohal.so /lib/liboffset.so /lib/\n\n# Workaround issue #901 - ensure LD_LIBRARY_PATH contains the panda plugins directories\n#ARG TARGET_LIST=\"x86_64-softmmu,i386-softmmu,arm-softmmu,ppc-softmmu,mips-softmmu,mipsel-softmmu\"\nENV LD_LIBRARY_PATH /usr/local/lib/python3.8/dist-packages/pandare/data/x86_64-softmmu/panda/plugins/:/usr/local/lib/python3.8/dist-packages/pandare/data/i386-softmmu/panda/plugins/:/usr/local/lib/python3.8/dist-packages/pandare/data/arm-softmmu/panda/plugins/:/usr/local/lib/python3.8/dist-packages/pandare/data/ppc-softmmu/panda/plugins/:/usr/local/lib/python3.8/dist-packages/pandare/data/mips-softmmu/panda/plugins/:/usr/local/lib/python3.8/dist-packages/pandare/data/mipsel-softmmu/panda/plugins/\n\n\n# Ensure runtime dependencies are installed for our libpanda objects and panda plugins\nRUN ldconfig && \\\n    update-alternatives --install /usr/bin/python python /usr/bin/python3 10 && \\\n    if (ldd /usr/local/lib/python*/dist-packages/pandare/data/*-softmmu/libpanda-*.so | grep 'not found'); then exit 1; fi && \\\n    if (ldd /usr/local/lib/python*/dist-packages/pandare/data/*-softmmu/panda/plugins/*.so | grep 'not found'); then exit 1; fi\n"
+}

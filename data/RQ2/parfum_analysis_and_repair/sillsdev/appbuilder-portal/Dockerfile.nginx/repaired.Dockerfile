@@ -1,0 +1,57 @@
+# ---- Base ----
+FROM nginx:1.15.8-alpine AS base
+# nginx 1.15.8 uses alpine 3.9
+#
+# so here is the nodejs search for that version of alpine
+# https://pkgs.alpinelinux.org/packages?name=nodejs&branch=v3.9&repo=main
+#
+RUN apk add --no-cache git curl bash
+RUN apk add --no-cache \
+      --repository http://dl-3.alpinelinux.org/alpine/edge/community \
+      nodejs=10.19.0-r0 \
+      npm=10.19.0-r0 \
+      build-base \
+    && npm config set unsafe-perm true \
+    && npm install -qg yarn \
+    && npm config set unsafe-perm false && npm cache clean --force;
+WORKDIR /src
+
+# ---- Dependencies ----
+FROM base AS dependencies
+COPY \
+  source/SIL.AppBuilder.Portal.Frontend/package.json \
+  source/SIL.AppBuilder.Portal.Frontend/yarn.lock \
+  /src/
+# Work around 'could not get uid/gid' error during travis build
+RUN npm config set unsafe-perm true
+RUN yarn && yarn cache clean;
+
+# ---- Build ----
+FROM base as build
+
+# defaults
+ENV AUTH0_CLIENT_ID n8IAE2O17FBrlQ667x5mydhpqelCBUWG
+ENV AUTH0_DOMAIN sil-appbuilder.auth0.com
+ENV AUTH0_CONNECTION Username-Password-Authentication
+ENV DWKIT_ADMIN_URL http://localhost:7081
+ENV NODE_ENV production
+
+ARG SHOW_DEBUG
+ARG REVISION
+ENV SHOW_DEBUG=$SHOW_DEBUG
+ENV REVISION=$REVISION
+
+WORKDIR /src
+COPY --from=dependencies /src/node_modules ./node_modules
+COPY source/SIL.AppBuilder.Portal.Frontend /src
+RUN rm -rf /src/node_modules/semantic-ui-react/index.d.ts
+RUN bash -c "/src/scripts/refresh-languages.sh"
+RUN yarn webpack:build --output-path /src/_html_tmp && yarn cache clean;
+
+# ---- Release ----
+FROM nginx:1.15.8-alpine AS release
+COPY --from=build /src/_html_tmp /usr/share/nginx/html
+COPY source/run-nginx.sh /usr/local/bin
+COPY source/config/nginx.conf etc/nginx/conf.d/default.conf.template
+COPY source/config/dwkit.conf etc/nginx/conf.d/dwkit.conf.template
+CMD ["/usr/local/bin/run-nginx.sh"]

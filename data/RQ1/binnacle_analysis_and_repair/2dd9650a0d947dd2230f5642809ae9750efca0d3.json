@@ -1,0 +1,17 @@
+{
+  "startTime": 1674246802448,
+  "endTime": 1674246802616,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 20,
+        "lineEnd": 20,
+        "columnStart": 4,
+        "columnEnd": 47
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM rocker/geospatial:3.6.0\n\nENV NB_USER rstudio\nENV NB_UID 1000\nENV VENV_DIR /srv/venv\nENV REPO_DIR /srv/repo\n\n# Set ENV for all programs...\nENV PATH ${VENV_DIR}/bin:$PATH\n# And set ENV for R! It doesn't read from the environment...\nRUN echo \"PATH=${PATH}\" >> /usr/local/lib/R/etc/Renviron\n\n# The `rsession` binary that is called by jupyter-rsession-proxy to start R\n# doesn't seem to start without this being explicitly set\nENV LD_LIBRARY_PATH /usr/local/lib/R/lib\n\nENV HOME /home/${NB_USER}\nWORKDIR ${HOME}\n\nRUN apt-get update && \\\n    apt-get -y --no-install-recommends install python3-venv python3-dev && \\\n    apt-get purge && \\\n    apt-get clean && \\\n    rm -rf /var/lib/apt/lists/*\n\n# Create a venv dir owned by unprivileged user & set up notebook in it\n# This allows non-root to install python libraries if required\nRUN mkdir -p ${VENV_DIR} && chown -R ${NB_USER} ${VENV_DIR}\nRUN mkdir -p ${REPO_DIR} && chown -R ${NB_USER} ${REPO_DIR}\n\nUSER ${NB_USER}\n\n# Install some R libraries that aren't in the base image\nCOPY --chown=rstudio extras.d  /tmp/extras.d\n# CircleCI stops printing output at 40k chars.\n# We send stdout to a log file, and tail it a bit\n# FIXME: Find something less sucky\n# another hubploy #1\nRUN chmod -R +x /tmp/extras.d && \\\n\trun-parts /tmp/extras.d > /tmp/r-custom-packages.log 2>&1 && \\\n    true || ( echo FAIL ; tail /tmp/r-custom-packages.log ; false )\nRUN tail /tmp/r-custom-packages.log\nRUN rm /tmp/r-custom-packages.log\n\nRUN python3 -m venv ${VENV_DIR}\n\n# Explicitly install a new enough version of pip\nRUN ${VENV_DIR}/bin/pip3 install --no-cache-dir \\\n                         pip==19.1.1\n\nRUN ${VENV_DIR}/bin/pip3 install --no-cache-dir \\\n                         jupyter-rsession-proxy==1.0b6 \\\n                         jupyterhub==1.0.0 \\\n                         jupyterlab==0.35.6 \\\n                         notebook==5.7.8\n\n# Install IRKernel\nRUN R --quiet -e \"install.packages('IRkernel')\" && \\\n    R --quiet -e \"IRkernel::installspec(prefix='${VENV_DIR}')\"\n\nCOPY --chown=rstudio:rstudio . ${REPO_DIR}\n\n# Install requirements.txt if it exists\nRUN [ -f ${REPO_DIR}/requirements.txt ] && \\\n    ${VENV_DIR}/bin/pip3 install --no-cache-dir -r ${REPO_DIR}/requirements.txt\n\n# Execute PostBuild if it exists\nRUN [ -f ${REPO_DIR}/postBuild ] && chmod +x ${REPO_DIR}/postBuild && ${REPO_DIR}/postBuild\n"
+}

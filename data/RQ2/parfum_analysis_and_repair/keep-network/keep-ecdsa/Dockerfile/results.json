@@ -1,0 +1,17 @@
+{
+  "startTime": 1674254375160,
+  "endTime": 1674254375821,
+  "originalSmells": [
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 62,
+        "lineEnd": 62,
+        "columnStart": 28,
+        "columnEnd": 39
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM golang:1.16.5-alpine3.12 AS gobuild\n\n# HOST_CHAIN argument defines the chain implementation which should be used\n# during image build process.\nARG HOST_CHAIN=ethereum\n\n# Several host chain Go modules which use native C code underneath may\n# need to know the C standard library implementation used by the platform.\n# The LIBC env variable specifies that information and is used to pass it\n# to the Go compiler via build tags. The default value of LIBC variable\n# is `musl` as it is the C standard library implementation used on Alpine.\nENV LIBC=musl\n\nENV GOPATH=/go \\\n  GOBIN=/go/bin \\\n  APP_NAME=keep-ecdsa \\\n  APP_DIR=/go/src/github.com/keep-network/keep-ecdsa \\\n  BIN_PATH=/usr/local/bin \\\n  APP_BUILD_TAGS=\"$HOST_CHAIN $LIBC\" \\\n  ABIGEN_BUILD_TAGS=$LIBC\n\nRUN apk add --update --no-cache \\\n  g++ \\\n  linux-headers \\\n  make \\\n  nodejs \\\n  npm \\\n  python3 \\\n  git \\\n  protobuf \\\n  && rm -rf /var/cache/apk/ && mkdir /var/cache/apk/ \\\n  && rm -rf /usr/share/man\n\nRUN adduser -D -g '' keep\nRUN chown keep $BIN_PATH\nUSER keep\n\n# Install Solidity compiler.\nCOPY --chown=keep --from=ethereum/solc:0.5.17 /usr/bin/solc /usr/bin/solc\n\n# Get gotestsum tool\nRUN go get gotest.tools/gotestsum\n\n# Configure GitHub token to be able to get private repositories.\nARG GITHUB_TOKEN\nRUN git config --global url.\"https://$GITHUB_TOKEN:@github.com/\".insteadOf \"https://github.com/\"\n\n# Configure working directory.\nRUN mkdir -p $APP_DIR\nWORKDIR $APP_DIR\n\n# Get dependencies.\nCOPY go.mod $APP_DIR/\nCOPY go.sum $APP_DIR/\n\nRUN go mod download\n\n# Install code generators.\nRUN cd /go/pkg/mod/github.com/gogo/protobuf@v1.3.2/protoc-gen-gogoslick && go install .\n\n# Install Solidity contracts.\nCOPY --chown=keep ./solidity $APP_DIR/solidity\nRUN cd $APP_DIR/solidity && npm install && npm cache clean --force;\n\n# Generate code.\nCOPY --chown=keep ./pkg/chain/gen/$HOST_CHAIN $APP_DIR/pkg/chain/gen/$HOST_CHAIN\nCOPY --chown=keep ./pkg/ecdsa/tss/gen $APP_DIR/pkg/ecdsa/tss/gen\n# Need this to resolve imports in generated chain commands.\nCOPY --chown=keep ./config $APP_DIR/config\nRUN go generate ./...\n\n# Build the application.\nCOPY --chown=keep ./ $APP_DIR/\n\n# Cleanup the `pkg/chain/gen` dir from unused chains bindings. Leave only\n# the ones which are currently in use. This helps reducing the size of\n# resulting binary and can prevent unexpected errors which may occur due to\n# transitive dependencies conflicts.\nRUN cd $APP_DIR/pkg/chain \\\n  && mv ./gen/$HOST_CHAIN ./temp \\\n  && rm -rf ./gen \\\n  && mkdir ./gen \\\n  && mv ./temp ./gen/$HOST_CHAIN\n\n# Client Versioning.\nARG VERSION\nARG REVISION\n\nRUN GOOS=linux go build -tags \"$APP_BUILD_TAGS\" -ldflags \"-X main.version=$VERSION -X main.revision=$REVISION\" -a -o $APP_NAME ./ \\\n  && mv $APP_NAME $BIN_PATH\n\n# Configure runtime container.\nFROM alpine:3.12\n\nENV APP_NAME=keep-ecdsa \\\n  BIN_PATH=/usr/local/bin\n\nCOPY --from=gobuild $BIN_PATH/$APP_NAME $BIN_PATH\n\n# docker caches more when using CMD [] resulting in a faster build.\nCMD []\n"
+}

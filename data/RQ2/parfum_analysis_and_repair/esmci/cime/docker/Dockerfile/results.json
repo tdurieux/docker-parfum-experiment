@@ -1,0 +1,72 @@
+{
+  "startTime": 1674221023589,
+  "endTime": 1674221024812,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 55,
+        "lineEnd": 56,
+        "columnStart": 4,
+        "columnEnd": 87
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 111,
+        "lineEnd": 111,
+        "columnStart": 12,
+        "columnEnd": 88
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 63,
+        "lineEnd": 67,
+        "columnStart": 12,
+        "columnEnd": 40
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 117,
+        "lineEnd": 121,
+        "columnStart": 12,
+        "columnEnd": 41
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 112,
+        "lineEnd": 112,
+        "columnStart": 12,
+        "columnEnd": 35
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 106,
+        "lineEnd": 107,
+        "columnStart": 12,
+        "columnEnd": 54
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 112,
+        "lineEnd": 112,
+        "columnStart": 12,
+        "columnEnd": 35
+      }
+    }
+  ],
+  "repairedDockerfile": "ARG MAMBAFORGE_VERSION=4.11.0-0\nFROM condaforge/mambaforge:${MAMBAFORGE_VERSION} AS base\n\nARG PNETCDF_VERSION=1.12.1\nENV PNETCDF_VERSION=${PNETCDF_VERSION}\n\nARG LIBNETCDF_VERSION=4.8.1\nENV LIBNETCDF_VERSION=${LIBNETCDF_VERSION}\n\nARG NETCDF_FORTRAN_VERSION=4.5.4\nENV NETCDF_FORTRAN_VERSION=${NETCDF_FORTRAN_VERSION}\n\nARG ESMF_VERSION=8.2.0\nENV ESMF_VERSION=${ESMF_VERSION}\n\nARG GCC_VERSION=9.4.*\nENV GCC_VERSION=${GCC_VERSION}\n\nENV USER=root\nENV LOGNAME=root\n\nSHELL [\"/bin/bash\", \"-c\"]\n\n# Install common packages\nRUN mamba install --yes -c conda-forge \\\n            cmake \\\n            make \\\n            wget \\\n            curl \\\n            subversion \\\n            m4 \\\n            pytest \\\n            pytest-cov\\\n            pyyaml \\\n            vim \\\n            openssh && \\\n            rm -rf /opt/conda/pkgs/*\n\n# Install cpan packages\nRUN cpan install LibXML::XML Switch\n\n# Install version locked packages\nRUN mamba install --yes -c conda-forge \\\n            libnetcdf=${LIBNETCDF_VERSION}=*openmpi* \\\n            netcdf-fortran=${NETCDF_FORTRAN_VERSION}=*openmpi* \\\n            esmf=${ESMF_VERSION}=*openmpi* \\\n            gcc_linux-64=${GCC_VERSION} \\\n            gxx_linux-64=${GCC_VERSION} \\\n            openmpi-mpifort \\\n            gfortran_linux-64=${GCC_VERSION} && \\\n            rm -rf /opt/conda/pkgs/* && \\\n            ln -sf /opt/conda/bin/x86_64-conda-linux-gnu-ar /opt/conda/bin/ar && \\\n            ln -sf /opt/conda/bin/x86_64-conda-linux-gnu-ranlib /opt/conda/bin/ranlib\n\n# Build pnetcdf\nRUN curl -f -L -k -o \"${PWD}/pnetcdf.tar.gz\" \\\n            https://parallel-netcdf.github.io/Release/pnetcdf-${PNETCDF_VERSION}.tar.gz && \\\n            mkdir \"${PWD}/pnetcdf\" && \\\n            tar -xvf \"${PWD}/pnetcdf.tar.gz\" -C \"${PWD}/pnetcdf\" --strip-components=1 && \\\n            rm -rf \"${PWD}/pnetcdf.tar.gz\" && \\\n            cd \"${PWD}/pnetcdf\" && \\\n            source /opt/conda/etc/profile.d/conda.sh && \\\n            conda activate base && \\\n            ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" --prefix /opt/conda --disable-cxx --enable-shared \\\n            MPICC=/opt/conda/bin/mpicc \\\n            MPICXX=/opt/conda/bin/mpicxx \\\n            MPIF77=/opt/conda/bin/mpif77 \\\n            MPIF90=/opt/conda/bin/mpif90 && \\\n            make -j4 && \\\n            make install && \\\n            rm -rf \"${PWD}/pnetcdf\"\n\nRUN mkdir /root/.cime\n\nCOPY config_machines.xml /root/.cime/\nCOPY docker.cmake /root/.cime/\nCOPY entrypoint.sh /entrypoint.sh\n\nENTRYPOINT [ \"/entrypoint.sh\" ]\n\nFROM base as slurm\n\nRUN apt-get update && \\\n            DEBIAN_FRONTEND=noninteractive \\\n            apt-get install -y --no-install-recommends \\\n            munge slurmd slurm-client slurmctld && \\\n            rm -rf /var/lib/apt/lists/* && \\\n            sed -i\"\" \"s/\\(.*<BATCH_SYSTEM>\\)[^<]*\\(<\\/BATCH_SYSTEM>\\)/\\1slurm\\2/g\" ~/.cime/config_machines.xml\n\nCOPY slurm/slurm.conf /etc/slurm-llnl/\nCOPY slurm/config_batch.xml /root/.cime/\nCOPY slurm/entrypoint_batch.sh /entrypoint_batch.sh\n\nFROM base as pbs\n\nRUN apt-get update && \\\n            DEBIAN_FRONTEND=noninteractive \\\n            apt-get install -y --no-install-recommends \\\n            curl ca-certificates software-properties-common \\\n            gcc make libtool libhwloc-dev libx11-dev libxt-dev libedit-dev \\\n            libical-dev ncurses-dev perl python-dev tcl-dev tk-dev swig libexpat-dev libssl-dev \\\n            libxext-dev libxft-dev autoconf automake \\\n            postgresql-12 postgresql-server-dev-all postgresql-contrib \\\n            expat libedit2 python3 sendmail-bin sudo tcl tk && \\\n            add-apt-repository ppa:deadsnakes/ppa && \\\n            apt-get update && \\\n            DEBIAN_FRONTEND=noninteractive \\\n            apt-get --no-install-recommends install -y python3.7 python3.7-dev && \\\n            rm -rf /var/lib/apt/lists/*\n\nRUN mkdir /src && pushd /src && \\\n            curl -f -LO https://github.com/openpbs/openpbs/archive/refs/tags/v20.0.1.tar.gz && \\\n            tar -xvf v20.0.1.tar.gz && \\\n            cd openpbs-20.0.1 && \\\n            sed -i\"\" 's/\\(#include \"list_link.h\"\\)/\\1\\n#include <stddef.h>/' /src/openpbs-20.0.1/src/lib/Libifl/list_link.c && \\\n            export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin && \\\n            ./autogen.sh && \\\n            PYTHON=/usr/bin/python3.7 \\\n            CFLAGS=\"`/usr/bin/python3.7m-config --cflags`\" \\\n            LDFLAGS=\"`/usr/bin/python3.7m-config --ldflags`\" \\\n            LIBS=\"-lpthread -lm -lpython3.7m\" \\\n            ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" \\\n\n\n\n            --prefix=/opt/pbs && \\\n            make -j8 && \\\n            make install && \\\n            popd && \\\n            rm -rf /src && \\\n            sed -i\"\" \"s/\\(.*<BATCH_SYSTEM>\\)[^<]*\\(<\\/BATCH_SYSTEM>\\)/\\1pbs\\2/g\" ~/.cime/config_machines.xml && rm v20.0.1.tar.gz\n\nCOPY pbs/pbs.conf /etc/\nCOPY pbs/config_batch.xml /root/.cime/\nCOPY pbs/entrypoint_batch.sh /entrypoint_batch.sh\n"
+}

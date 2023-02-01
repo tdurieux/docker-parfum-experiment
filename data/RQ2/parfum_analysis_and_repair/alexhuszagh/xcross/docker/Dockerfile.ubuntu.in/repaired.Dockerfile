@@ -1,0 +1,5 @@
+# Base image for most images.
+#
+# This image should **NEVER** change except during upgrades.
+# The entire build process takes a long time,
+# so modifications can cause week-long rebuilds.

@@ -1,0 +1,22 @@
+# To build these production upgrade test images, say an Ubuntu 20.04 Focal system
+# preinstalled with Zulip 3.4:
+#   docker build . -f Dockerfile.prod --build-arg=BASE_IMAGE=zulip/ci:focal --build-arg=VERSION=3.4 --tag=zulip/ci:focal-3.4
+#   docker push zulip/ci:focal-3.4
+
+ARG BASE_IMAGE
+FROM $BASE_IMAGE
+
+# Remove already existing rabbitmq mnesia directory files
+RUN sudo rm -rf /var/lib/rabbitmq/mnesia/*
+
+# Download the release tarball, start rabbitmq server and install the server
+ARG VERSION
+RUN cd $(mktemp -d) \
+  && curl -fLO "https://download.zulip.com/server/zulip-server-$VERSION.tar.gz" \
+  && tar -xf "zulip-server-$VERSION.tar.gz" \
+  && sudo service rabbitmq-server start \
+  && sudo service rabbitmq-server status \
+  && sudo -s "./zulip-server-$VERSION/scripts/setup/install" --self-signed-cert --hostname 127.0.0.1 --email circleci@example.com \
+  && sudo service rabbitmq-server stop && rm -rf -d && rm "zulip-server-$VERSION.tar.gz"
+
+CMD ["/bin/sh"]

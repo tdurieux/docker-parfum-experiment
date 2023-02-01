@@ -1,0 +1,45 @@
+{
+  "startTime": 1674248271336,
+  "endTime": 1674248272405,
+  "originalSmells": [
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 30,
+        "lineEnd": 30,
+        "columnStart": 7,
+        "columnEnd": 32
+      }
+    },
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 40,
+        "lineEnd": 40,
+        "columnStart": 4,
+        "columnEnd": 34
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 28,
+        "lineEnd": 28,
+        "columnStart": 7,
+        "columnEnd": 56
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 28,
+        "lineEnd": 28,
+        "columnStart": 7,
+        "columnEnd": 56
+      }
+    }
+  ],
+  "repairedDockerfile": "# Argo CD container\n\n# Stage1: Initial Stage which pulls prepares build dependencies and CLI tooling we need for out final image\nFROM quay.io/cybozu/ubuntu:20.04 AS builder\nWORKDIR /tmp\n\nSHELL [\"/bin/bash\", \"-o\", \"pipefail\", \"-c\"]\n\n# Install kustomize\nENV KUSTOMIZE_VERSION=4.4.1\nRUN curl -sSLf https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2Fv${KUSTOMIZE_VERSION}/kustomize_v${KUSTOMIZE_VERSION}_linux_amd64.tar.gz | \\\n    tar zxf - -C /usr/local/bin\n\n# Install helm\nENV HELM_VERSION=3.8.0\nRUN curl -sSLf https://get.helm.sh/helm-v${HELM_VERSION}-linux-amd64.tar.gz | \\\n    tar zxf - -C /usr/local/bin --strip-components 1\n\n# Stage2; Argo CD Build Stage\nFROM quay.io/cybozu/golang:1.17-focal AS argocd-build\nENV ARGOCD_VERSION=2.3.3\nENV PACKAGE=github.com/argoproj/argo-cd\n\nSHELL [\"/bin/bash\", \"-o\", \"pipefail\", \"-c\"]\n\n# Install Node.js 12.x and yarn\n# https://github.com/nodesource/distributions/blob/master/README.md#debinstall\nRUN curl -sSLf https://deb.nodesource.com/setup_12.x | bash - \\\n    && apt-get install -y --no-install-recommends nodejs \\\n    && rm -rf /var/lib/apt/lists/* \\\n    && npm install --global yarn && npm cache clean --force;\n\nWORKDIR /work\nRUN curl -sSLf \"https://${PACKAGE}/archive/v${ARGOCD_VERSION}.tar.gz\" | \\\n    tar zxf - -C /work/ \\\n    && mkdir -p \"${GOPATH}/src/github.com/argoproj/\" \\\n    && mv \"argo-cd-${ARGOCD_VERSION}\" \"${GOPATH}/src/${PACKAGE}\"\n\n# UI stage\nWORKDIR /go/src/github.com/argoproj/argo-cd/ui\nRUN yarn install --frozen-lockfile && yarn cache clean;\n\nENV ARGO_VERSION=$ARGOCD_VERSION\nRUN NODE_ENV='production' NODE_ONLINE_ENV='online' yarn build\n\n# Perform the build\nWORKDIR /go/src/github.com/argoproj/argo-cd\nRUN make argocd-all\n\n\n# Final image\nFROM quay.io/cybozu/ubuntu:20.04\nRUN groupadd -g 10000 argocd && \\\n    useradd -r -u 10000 -g argocd argocd && \\\n    mkdir -p /home/argocd && \\\n    chown argocd:argocd /home/argocd && \\\n    apt-get update && \\\n    apt-get install -y --no-install-recommends git gpg gpg-agent && \\\n    apt-get clean && \\\n    rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*\n\nCOPY --from=builder /usr/local/bin/kustomize /usr/local/bin/kustomize\nCOPY --from=builder /usr/local/bin/helm /usr/local/bin/helm\n\n# workaround ksonnet issue https://github.com/ksonnet/ksonnet/issues/298\nENV USER=argocd\n\nCOPY --from=argocd-build /go/src/github.com/argoproj/argo-cd/dist/* /usr/local/bin/\nCOPY --from=argocd-build /go/src/github.com/argoproj/argo-cd/hack/gpg-wrapper.sh /usr/local/bin/gpg-wrapper.sh\nCOPY --from=argocd-build /go/src/github.com/argoproj/argo-cd/hack/git-verify-wrapper.sh /usr/local/bin/git-verify-wrapper.sh\nCOPY --from=argocd-build /go/src/github.com/argoproj/argo-cd/LICENSE /usr/local/argocd/LICENSE\n\nRUN ln -s /usr/local/bin/argocd /usr/local/bin/argocd-server\nRUN ln -s /usr/local/bin/argocd /usr/local/bin/argocd-repo-server\nRUN ln -s /usr/local/bin/argocd /usr/local/bin/argocd-cmp-server\nRUN ln -s /usr/local/bin/argocd /usr/local/bin/argocd-application-controller\nRUN ln -s /usr/local/bin/argocd /usr/local/bin/argocd-dex\nRUN ln -s /usr/local/bin/argocd /usr/local/bin/argocd-notifications\n\nUSER 10000:10000\n\nWORKDIR /home/argocd\n"
+}

@@ -1,0 +1,26 @@
+{
+  "startTime": 1674245268735,
+  "endTime": 1674245269096,
+  "originalSmells": [
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 30,
+        "lineEnd": 40,
+        "columnStart": 4,
+        "columnEnd": 20
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 14,
+        "lineEnd": 22,
+        "columnStart": 4,
+        "columnEnd": 21
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM alpine:3.9 as builder\n\nARG APK_FLAGS_COMMON=\"\"\nARG APK_FLAGS_DEV=\"${APK_FLAGS_COMMON} --no-cache\"\n\nARG MAJOR_VERSION=4.2\nARG ZBX_VERSION=${MAJOR_VERSION}.1\nARG ZBX_SOURCES=https://git.zabbix.com/scm/zbx/zabbix.git\nENV TERM=xterm ZBX_VERSION=${ZBX_VERSION} ZBX_SOURCES=${ZBX_SOURCES} \\\n    ZBX_TYPE=agent\n\nRUN sed -i 's/dl-cdn.alpinelinux.org/mirrors.aliyun.com/' /etc/apk/repositories\n\nRUN apk update && \\\n    apk add --no-cache ${APK_FLAGS_DEV} --virtual build-dependencies \\\n            alpine-sdk \\\n            autoconf \\\n            automake \\\n            openssl-dev \\\n            openldap-dev \\\n            pcre-dev \\\n            git \\\n            coreutils && \\\n    cd /tmp/ && \\\n    git clone ${ZBX_SOURCES} --branch ${ZBX_VERSION} --depth 1 --single-branch zabbix-${ZBX_VERSION} && \\\n    cd /tmp/zabbix-${ZBX_VERSION} && \\\n    zabbix_revision=`git rev-parse --short HEAD` && \\\n    sed -i \"s/{ZABBIX_REVISION}/$zabbix_revision/g\" include/version.h && \\\n    ./bootstrap.sh && \\\n    export CFLAGS=\"-fPIC -pie -Wl,-z,relro -Wl,-z,now\" && \\\n    ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" \\\n            --datadir=/usr/lib \\\n            --libdir=/usr/lib/zabbix \\\n            --prefix=/usr \\\n            --sysconfdir=/etc/zabbix \\\n            --prefix=/usr \\\n            --enable-agent \\\n            --with-ldap \\\n            --with-openssl \\\n            --enable-ipv6 \\\n            --silent && \\\n    make -j\"$(nproc)\" -s && \\\n    cd /tmp/ && \\\n    git clone https://github.com/monitoringartist/zabbix-docker-monitoring.git && \\\n    mv zabbix-docker-monitoring/src/modules/zabbix_module_docker zabbix-${ZBX_VERSION}/src/modules/ && \\\n    cd zabbix-${ZBX_VERSION}/src/modules/zabbix_module_docker \\\n    make -j\"$(nproc)\"\n\nFROM alpine:3.9\nLABEL maintainer=\"Alexey Pustovalov <alexey.pustovalov@zabbix.com>\"\n\nARG BUILD_DATE\nARG VCS_REF\n\nARG APK_FLAGS_COMMON=\"\"\nARG APK_FLAGS_PERSISTENT=\"${APK_FLAGS_COMMON} --clean-protected --no-cache\"\n\nARG MAJOR_VERSION=4.2\nARG ZBX_VERSION=${MAJOR_VERSION}.1\nARG ZBX_SOURCES=https://git.zabbix.com/scm/zbx/zabbix.git\nENV TERM=xterm ZBX_VERSION=${ZBX_VERSION} ZBX_SOURCES=${ZBX_SOURCES} \\\n    ZBX_TYPE=agent ZBX_DB_TYPE=none ZBX_OPT_TYPE=none\n\nRUN sed -i 's/dl-cdn.alpinelinux.org/mirrors.aliyun.com/' /etc/apk/repositories\n\nLABEL org.label-schema.name=\"zabbix-${ZBX_TYPE}-alpine\" \\\n      org.label-schema.vendor=\"Zabbix LLC\" \\\n      org.label-schema.url=\"https://zabbix.com/\" \\\n      org.label-schema.description=\"Zabbix agent is deployed on a monitoring target to actively monitor local resources and applications\" \\\n      org.label-schema.vcs-ref=\"${VCS_REF}\" \\\n      org.label-schema.build-date=\"${BUILD_DATE}\" \\\n      org.label-schema.schema-version=\"1.0\" \\\n      org.label-schema.license=\"GPL v2.0\" \\\n      org.label-schema.usage=\"https://www.zabbix.com/documentation/${MAJOR_VERSION}/manual/installation/containers\" \\\n      org.label-schema.version=\"${ZBX_VERSION}\" \\\n      org.label-schema.vcs-url=\"${ZBX_SOURCES}\" \\\n      org.label-schema.docker.cmd=\"docker run --name zabbix-${ZBX_TYPE} --link zabbix-server:zabbix-server -p 10050:10050 -d zabbix-${ZBX_TYPE}:alpine-${ZBX_VERSION}\"\n\nSTOPSIGNAL SIGTERM\n\nCOPY --from=builder /tmp/zabbix-${ZBX_VERSION}/src/zabbix_agent/zabbix_agentd /usr/sbin/zabbix_agentd\nCOPY --from=builder /tmp/zabbix-${ZBX_VERSION}/src/zabbix_get/zabbix_get /usr/bin/zabbix_get\nCOPY --from=builder /tmp/zabbix-${ZBX_VERSION}/src/zabbix_sender/zabbix_sender /usr/bin/zabbix_sender\nCOPY --from=builder  /tmp/zabbix-${ZBX_VERSION}/conf/zabbix_agentd.conf /etc/zabbix/zabbix_agentd.conf\n\nRUN addgroup zabbix && \\\n    adduser -S \\\n            -D -G zabbix \\\n            -h /var/lib/zabbix/ \\\n        zabbix && \\\n    mkdir -p /etc/zabbix && \\\n    mkdir -p /etc/zabbix/zabbix_agentd.d && \\\n    mkdir -p /var/lib/zabbix && \\\n    mkdir -p /var/lib/zabbix/enc && \\\n    mkdir -p /var/lib/zabbix/modules && \\\n    chown --quiet -R zabbix:root /var/lib/zabbix && \\\n    apk update && \\\n    apk add ${APK_FLAGS_PERSISTANT} \\\n            tini \\\n            bash \\\n            coreutils \\\n            iputils \\\n            libldap \\\n            pcre && \\\n    rm -rf /var/cache/apk/*\n\nEXPOSE 10050/TCP\n\nWORKDIR /var/lib/zabbix\n\nVOLUME [\"/etc/zabbix/zabbix_agentd.d\", \"/var/lib/zabbix/enc\", \"/var/lib/zabbix/modules\"]\n\nCOPY [\"docker-entrypoint.sh\", \"/usr/bin/\"]\n\nENTRYPOINT [\"/sbin/tini\", \"--\"]\n\nCMD [\"docker-entrypoint.sh\"]\n"
+}

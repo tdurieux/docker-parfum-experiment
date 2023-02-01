@@ -1,0 +1,44 @@
+{
+  "startTime": 1674251383532,
+  "endTime": 1674251384737,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 82,
+        "lineEnd": 82,
+        "columnStart": 7,
+        "columnEnd": 32
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 83,
+        "lineEnd": 83,
+        "columnStart": 7,
+        "columnEnd": 24
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 84,
+        "lineEnd": 84,
+        "columnStart": 7,
+        "columnEnd": 39
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 23,
+        "lineEnd": 28,
+        "columnStart": 5,
+        "columnEnd": 9
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "#\n# A wger installation under apache with WSGI\n#\n# Note: you MUST build this image from the project's root!\n# docker build -f extras/docker/demo/Dockerfile --tag wger/demo .\n#\n# Please consult the documentation for usage\n# docker run -ti --name wger.demo --publish 8000:80 wger/demo\n#\n# To stop the container:\n# sudo docker container stop wger.apache\n#\n# To start developing again\n# sudo docker container start --attach wger.apache\n#\n\n##########\n# Builder\n##########\nFROM ubuntu:22.04 as builder\nARG DEBIAN_FRONTEND=noninteractive\n\nRUN apt-get update \\\n  && apt-get install --no-install-recommends -y \\\n      build-essential \\\n      python3-dev \\\n      python3-pip \\\n      python3-wheel \\\n      git && rm -rf /var/lib/apt/lists/*;\n\n# Set up the application\nCOPY requirements* ./\nRUN pip3 wheel --no-cache-dir --wheel-dir /usr/src/app/wheels -r requirements_dev.txt\n\n\n########\n# Final\n########\nFROM wger/base:2.1-dev\nLABEL maintainer=\"Roland Geider <roland@geider.net>\"\n\nARG DOCKER_DIR=./extras/docker/demo\nEXPOSE 80\n\n\n# Install dependencies\nRUN apt-get update \\\n  && apt-get install --no-install-recommends -y \\\n    apache2 \\\n    cron \\\n    libapache2-mod-wsgi-py3 \\\n  && rm -rf /var/lib/apt/lists/*\n\n# Configure apache\nCOPY ${DOCKER_DIR}/wger.conf /etc/apache2/sites-available/\nRUN a2dissite 000-default.conf \\\n  && a2enmod headers \\\n  && a2ensite wger \\\n  && echo \"ServerName localhost\" >> /etc/apache2/conf-available/fqdn.conf \\\n  && a2enconf fqdn \\\n  && usermod -G wger www-data\n\n# Configure cron\nCOPY ${DOCKER_DIR}/crontab /etc/cron.d/wger\nCOPY ${DOCKER_DIR}/venvwrapper /home/wger/venvwrapper\nCOPY ${DOCKER_DIR}/entrypoint.sh /home/wger/entrypoint.sh\n\nRUN chmod 0644 /etc/cron.d/wger \\\n  && chmod +x /home/wger/venvwrapper /home/wger/entrypoint.sh \\\n  && touch /var/log/cron.log\n\nCOPY --from=builder /usr/src/app/wheels /wheels\nCOPY --chown=wger:www-data . /home/wger/src\n\n# Set up the application\nRUN ln -s /home/wger/static/CACHE /var/www\nUSER wger\n\nWORKDIR /home/wger/src\n#RUN git clone https://github.com/wger-project/wger.git\nRUN python3 -m venv /home/wger/venv\nRUN . /home/wger/venv/bin/activate \\\n    && pip install --no-cache-dir --upgrade pip \\\n    && pip install --no-cache-dir wheel \\\n    && pip install --no-cache-dir --no-cache /wheels/* \\\n    && python setup.py develop \\\n    && wger create-settings --database-path /home/wger/db/database.sqlite \\\n    && wger bootstrap \\\n    && wger load-online-fixtures \\\n    && python3 manage.py download-exercise-images \\\n    && python3 manage.py sync-exercises\n\n\n# Change permissions of some files and folders so the apache process\n# can access them.\nRUN mkdir -p ~/static/CACHE ~/media \\\n    && ln -s /home/wger/static/CACHE /home/wger/src/CACHE \\\n    && chmod g+w /home/wger/static/CACHE \\\n    && sed -i \"/^MEDIA_ROOT/c\\MEDIA_ROOT='\\/home\\/wger\\/media'\" settings.py \\\n    && echo STATIC_ROOT=\\'/home/wger/static\\' >> settings.py\n\nUSER root\nRUN apt-get remove build-essential -y \\\n    && apt autoremove -y \\\n    && chown :www-data -R /home/wger/db \\\n    && chmod g+w /home/wger/db /home/wger/db/database.sqlite\n\nENTRYPOINT [\"/home/wger/entrypoint.sh\"]\n"
+}

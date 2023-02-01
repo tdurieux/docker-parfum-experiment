@@ -1,0 +1,35 @@
+{
+  "startTime": 1674238964617,
+  "endTime": 1674238964863,
+  "originalSmells": [
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 22,
+        "lineEnd": 22,
+        "columnStart": 1,
+        "columnEnd": 54
+      }
+    },
+    {
+      "rule": "gpgUseBatchFlag",
+      "position": {
+        "lineStart": 61,
+        "lineEnd": 61,
+        "columnStart": 50,
+        "columnEnd": 62
+      }
+    },
+    {
+      "rule": "gpgUseBatchFlag",
+      "position": {
+        "lineStart": 62,
+        "lineEnd": 62,
+        "columnStart": 1,
+        "columnEnd": 54
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Build a docker image from latest YaCy sources on Alpine Linux\n\n# Base image : latest stable official jdk 8 image from Docker based on Alpine Linux\nFROM openjdk:8-alpine\n\n# trace java version\nRUN java -version\n\n# Install needed packages not in base image\n# (curl for sh scripts in /bin, and imagemagick,xvfb and ghostscript to enable PDF and image snapshot generation)\nRUN apk add --no-cache curl imagemagick xvfb ghostscript\n\n# --- Begin of wkhtmltopdf install : compile from sources because the wkhtmltopdf Alpine package is currently only on the Alpine edge branch\n\n# set current working dir\nWORKDIR /tmp\n\n# set wkhtmltopdf version once in a environment variable\nENV WKHTMLTOPDF_VERSION 0.12.5\n\n# Download and extract wkhtmltopdf sources\nRUN curl -fSL https://github.com/wkhtmltopdf/wkhtmltopdf/archive/${WKHTMLTOPDF_VERSION}.tar.gz -o wkhtmltopdf-${WKHTMLTOPDF_VERSION}-src.tar.gz && \\\n\ttar xzf wkhtmltopdf-${WKHTMLTOPDF_VERSION}-src.tar.gz && rm wkhtmltopdf-${WKHTMLTOPDF_VERSION}-src.tar.gz\n\n# set current working dir\nWORKDIR wkhtmltopdf-${WKHTMLTOPDF_VERSION}\n\n# All in one step to reduce image size growth :\n# - add packages necessary to build wkhtmltopdf from sources and then to run it\n# - build wkhtmltopdf\n# - create a symbolic link to the wkhtmltopdf executable at a path where YaCy is expecting it\n# - remove the sources archive\n# - remove the build packages\nRUN apk update && \\\n\tapk add --no-cache g++ make qt5-qtbase-dev qt5-qtwebkit-dev qt5-qtsvg-dev qt5-qtxmlpatterns-dev libgcc libstdc++ musl qt5-qtbase qt5-qtbase-x11 qt5-qtsvg qt5-qtwebkit && \\\n\tqmake-qt5 -makefile && \\\n\tmake && \\\n\tmake install && \\\n\trm -f /tmp/wkhtmltopdf-${WKHTMLTOPDF_VERSION}-src.tar.gz && \\\n\tapk del g++ make qt5-qtbase-dev qt5-qtwebkit-dev qt5-qtsvg-dev qt5-qtxmlpatterns-dev\n\n# --- End of wkhtmltopdf install\n\n# --- Begin of apache ant install : from binary distribution because ant is not in alpine packages\n\n# set current working dir\nWORKDIR /tmp\n\n# set ant version once in a environment variable\nENV ANT_VERSION 1.10.5\n\n# All in one step to reduce image size growth :\n# - add gnupg package\n# - get ant binary file from a mirror and PGP file signature from main repository\n# - import gpg keys from main repository and verify binary file signature\n# - extract binary, make /opt directory, move extracted ant to /opt/ant\n# - remove archive and gnupg package\nRUN apk update && \\\n\tapk add --no-cache gnupg && \\\n\tcurl -fSL https://archive.apache.org/dist/ant/binaries/apache-ant-${ANT_VERSION}-bin.tar.gz -o apache-ant-${ANT_VERSION}-bin.tar.gz && \\\n\tcurl -fSL https://archive.apache.org/dist/ant/binaries/apache-ant-${ANT_VERSION}-bin.tar.gz.asc -o apache-ant-${ANT_VERSION}-bin.tar.gz.asc && \\\n\tcurl -fSL https://www.apache.org/dist/ant/KEYS | gpg --batch --import && \\\n\tgpg --batch --verify apache-ant-${ANT_VERSION}-bin.tar.gz.asc && \\\n\ttar xzf apache-ant-${ANT_VERSION}-bin.tar.gz && \\\n\tmkdir -p /opt && \\\n\tmv apache-ant-${ANT_VERSION} /opt/ant && \\\n\trm -f apache-ant-${ANT_VERSION}-bin.tar.gz && \\\n\tapk del gnupg\n\n# set ant required environment variables\nENV ANT_HOME /opt/ant\nENV PATH ${PATH}:/opt/ant/bin\n\n# --- End of apache ant install\n\n# set current working dir\nWORKDIR /opt\n\n# All in one step to reduce image size growth :\n# - add git package\n# - clone main YaCy git repository (we need to clone git repository to generate correct version when building from source)\n# - compile with apache ant\n# - remove unnecessary and size consuming .git directory\n# - delete git package and ant binary install\n\n# Possible alternative : copy directly your current sources an remove git clone command from the following RUN\n# COPY . /opt/yacy_search_server/\n\nRUN apk add --no-cache git && \\\n\tgit clone https://github.com/yacy/yacy_search_server.git && \\\n\tant compile -f /opt/yacy_search_server/build.xml && \\\n\trm -rf /opt/yacy_search_server/.git && \\\n\trm -rf /opt/ant && \\\n\tapk del git\n\nRUN \\\n# Set initial admin password : \"docker\" (encoded with custom yacy md5 function net.yacy.cora.order.Digest.encodeMD5Hex())\n\tsed -i \"/adminAccountBase64MD5=/c\\adminAccountBase64MD5=MD5:e672161ffdce91be4678605f4f4e6786\" /opt/yacy_search_server/defaults/yacy.init && \\\n# Intially enable HTTPS : this is the most secure option for remote administrator authentication\n\tsed -i \"/server.https=false/c\\server.https=true\" /opt/yacy_search_server/defaults/yacy.init && \\\n# Create user and group yacy : this user will be used to run YaCy main process\n\taddgroup yacy && adduser -S -G yacy -H -D yacy && \\\n# Set ownership of yacy install directory to yacy user/group\n\tchown yacy:yacy -R /opt/yacy_search_server\n\n# Expose HTTP and HTTPS default ports\nEXPOSE 8090 8443\n\n# Set data volume : yacy data and configuration will persist aven after container stop or destruction\nVOLUME [\"/opt/yacy_search_server/DATA\"]\n\n# Next commands run as yacy as non-root user for improved security\nUSER yacy\n\n# Start yacy as a foreground process (-f) to display console logs and to wait for yacy process\nCMD [\"/bin/sh\",\"/opt/yacy_search_server/startYACY.sh\",\"-f\"]"
+}

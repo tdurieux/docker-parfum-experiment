@@ -1,0 +1,17 @@
+{
+  "startTime": 1674256142808,
+  "endTime": 1674256143955,
+  "originalSmells": [
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 47,
+        "lineEnd": 47,
+        "columnStart": 4,
+        "columnEnd": 20
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM adoptopenjdk/maven-openjdk8 as scheduler-builder\n\nCOPY ./gtas-neo4j-scheduler /etl-project\nWORKDIR /etl-project\nRUN mvn clean install -Dskip.unit.tests=true\n\n\n\nFROM alpine as pentaho-extractor\n\nENV PDI_VERSION=8.2.0.3-519\n\nRUN mkdir /opt/pentaho\nRUN /usr/bin/wget https://s3.amazonaws.com/kettle-neo4j/kettle-neo4j-remix-${PDI_VERSION}-REMIX.zip \\\n    -O /tmp/kettle-neo4j-remix-${PDI_VERSION}-REMIX.zip\nRUN /usr/bin/unzip -q /tmp/kettle-neo4j-remix-${PDI_VERSION}-REMIX.zip -d  /opt/pentaho\nRUN rm /tmp/kettle-neo4j-remix-${PDI_VERSION}-REMIX.zip\n\n\n\n# FROM java:8-jre\nFROM openjdk:8-jre-alpine\n\nENV CONFIG_FILE=/gtas-neo4j-etl/config/gtas-neo4j-config.properties \\\n    GTAS_NEO4J_ETL_HOME=/gtas-neo4j-etl\n\nRUN mkdir -p  ${GTAS_NEO4J_ETL_HOME}/config && \\\n    mkdir -p  ${GTAS_NEO4J_ETL_HOME}/job/temp && \\\n    mkdir -p  ${GTAS_NEO4J_ETL_HOME}/log\n\n\nRUN apk add --no-cache bash\nCOPY --from=scheduler-builder /root/.m2/repository/gov/gtas/gtas-neo4j-job-scheduler/1/gtas-neo4j-job-scheduler-1.jar /gtas-neo4j-etl\n\n# Install pentaho\nCOPY --from=pentaho-extractor /opt/pentaho/ /opt/pentaho/\nCOPY ./gtas-neo4j-etl/drivers/mariadb-java-client-2.2.1.jar /opt/pentaho/data-integration/lib/\n\n# copy .pnetaho to user's home directory\nCOPY ./gtas-neo4j-etl/pdi-conf/ /root\n\n# etl job configs\nCOPY ./gtas-neo4j-etl/job ${GTAS_NEO4J_ETL_HOME}/job\nCOPY ./gtas-neo4j-etl/config ${GTAS_NEO4J_ETL_HOME}/config\n\nWORKDIR ${GTAS_NEO4J_ETL_HOME}/\n\nRUN apk add --no-cache dos2unix\nRUN dos2unix config/application.properties\nRUN dos2unix config/gtas-neo4j-config.properties\nRUN dos2unix config/run-record.properties\n\nENTRYPOINT export NEO4J_USER_NAME=$(cat /run/secrets/etl_neo4j_user) NEO4J_PASSWORD=$(cat /run/secrets/etl_neo4j_password) && \\\n    export GTAS_DB_USER_NAME=$(cat /run/secrets/mysql_etl_user) GTAS_DB_PASSWORD=$(cat /run/secrets/mysql_etl_password) && \\\n    sed -i.bak \"/\\(EXT_VAR_GTAS_DB_USER_NAME.*=\\).*/ s//\\1${GTAS_DB_USER_NAME}/\" $CONFIG_FILE && \\\n    sed -i.bak \"/\\(EXT_VAR_GTAS_DB_PASSWORD.*=\\).*/ s//\\1${GTAS_DB_PASSWORD}/\" $CONFIG_FILE && \\\n    sed -i.bak \"/\\(EXT_VAR_NEO4J_DB_USER_NAME.*=\\).*/ s//\\1${NEO4J_USER_NAME}/\" $CONFIG_FILE && \\\n    sed -i.bak \"/\\(EXT_VAR_NEO4J_DB_PASSWORD.*=\\).*/ s//\\1${NEO4J_PASSWORD}/\" $CONFIG_FILE && \\\n    sed -i.bak \"/\\(EXT_VAR_GTAS_DB_HOST_NAME.*=\\).*/ s//\\1${DB_HOSTNAME}/\" $CONFIG_FILE && \\\n    sed -i.bak \"/\\(EXT_VAR_NEO4J_DB_HOST_NAME.*=\\).*/ s//\\1${NEO4J_HOSTNAME}/\" $CONFIG_FILE && \\\n    rm ${GTAS_NEO4J_ETL_HOME}/config/*.bak && \\\n    java -jar /gtas-neo4j-etl/gtas-neo4j-job-scheduler-1.jar"
+}

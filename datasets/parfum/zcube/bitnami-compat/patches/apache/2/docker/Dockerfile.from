@@ -1,0 +1,1 @@
+FROM bitnami/apache:{{{VERSION}}} AS apache

@@ -1,0 +1,81 @@
+#---------------------------------------------------------------------
+# STAGE 1: Build skopeo inside a temporary container
+#---------------------------------------------------------------------
+FROM fedora:32 AS skopeo-build
+
+RUN dnf install -y skopeo
+
+#---------------------------------------------------------------------
+# STAGE 2: Build credential helpers inside a temporary container
+#---------------------------------------------------------------------
+FROM golang:1.18 AS cred-helpers-build
+
+RUN go install github.com/awslabs/amazon-ecr-credential-helper/ecr-login/cli/docker-credential-ecr-login@69c85dc22db6511932bbf119e1a0cc5c90c69a7f
+RUN go install github.com/chrismellard/docker-credential-acr-env@d4055f832e8b16ea2ee93189c5e14faafd36baf6
+
+#---------------------------------------------------------------------
+# STAGE 3: Build the kubernetes-monitor
+#---------------------------------------------------------------------
+FROM registry.access.redhat.com/ubi8/ubi:8.6
+
+LABEL name="Snyk Controller" \
+      maintainer="support@snyk.io" \
+      vendor="Snyk Ltd" \
+      summary="Snyk integration for Kubernetes" \
+      description="Snyk Controller enables you to import and test your running workloads and identify vulnerabilities in their associated images and configurations that might make those workloads less secure."
+
+COPY LICENSE /licenses/LICENSE
+
+ENV NODE_ENV production
+
+RUN yum upgrade -y
+
+RUN curl -f -sL https://rpm.nodesource.com/setup_16.x | bash -
+RUN yum install -y nodejs && rm -rf /var/cache/yum
+
+RUN curl -f -L -o /usr/bin/dumb-init https://github.com/Yelp/dumb-init/releases/download/v1.2.5/dumb-init_1.2.5_x86_64
+RUN chmod 755 /usr/bin/dumb-init
+
+RUN groupadd -g 10001 snyk
+RUN useradd -g snyk -d /srv/app -u 10001 snyk
+
+# Install gcloud
+RUN curl -f -sL https://sdk.cloud.google.com > /install.sh
+RUN bash /install.sh --disable-prompts --install-dir=/ && rm /google-cloud-sdk/bin/anthoscli
+ENV PATH=/google-cloud-sdk/bin:$PATH
+RUN rm /install.sh
+
+# Copy credential helpers
+COPY --chown=snyk:snyk --from=cred-helpers-build /go/bin/docker-credential-ecr-login /usr/bin/docker-credential-ecr-login
+COPY --chown=snyk:snyk --from=cred-helpers-build /go/bin/docker-credential-acr-env /usr/bin/docker-credential-acr-env
+
+WORKDIR /srv/app
+
+COPY --chown=snyk:snyk --from=skopeo-build /usr/bin/skopeo /usr/bin/skopeo
+COPY --chown=snyk:snyk --from=skopeo-build /etc/containers/registries.d/default.yaml /etc/containers/registries.d/default.yaml
+COPY --chown=snyk:snyk --from=skopeo-build /etc/containers/policy.json /etc/containers/policy.json
+
+# Add manifest files and install before adding anything else to take advantage of layer caching
+ADD --chown=snyk:snyk package.json package-lock.json ./
+
+# The `.config` directory is used by `snyk protect` and we also mount a K8s volume there at runtime.
+# This clashes with OpenShift 3 which mounts things differently and prevents access to the directory.
+# TODO: Remove this line once OpenShift 3 comes out of support.
+RUN mkdir -p .config
+
+RUN npm ci
+
+# add the rest of the app files
+ADD --chown=snyk:snyk . .
+
+# OpenShift 4 doesn't allow dumb-init access the app folder without this permission.
+RUN chmod 755 /srv/app && chmod 755 /srv/app/bin && chmod +x /srv/app/bin/start
+
+# This must be in the end for Red Hat Build Service
+RUN chown -R snyk:snyk .
+USER 10001:10001
+
+# Build typescript
+RUN npm run build
+
+ENTRYPOINT ["/usr/bin/dumb-init", "--", "bin/start"]

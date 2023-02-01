@@ -1,0 +1,9 @@
+FROM netenglabs/suzieq:latest
+
+ARG username=suzieq
+
+COPY --chown=$username ./tests/data/parquet /home/$username/parquet
+
+LABEL name=suzieq-demo
+LABEL description="Suzieq demo with data from lab"
+LABEL version=$version

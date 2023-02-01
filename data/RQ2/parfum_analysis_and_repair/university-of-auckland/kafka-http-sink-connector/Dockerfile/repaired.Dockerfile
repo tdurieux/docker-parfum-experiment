@@ -1,0 +1,1 @@
+# https://strimzi.io/docs/operators/0.26.0/deploying.html#creating-new-image-from-base-str

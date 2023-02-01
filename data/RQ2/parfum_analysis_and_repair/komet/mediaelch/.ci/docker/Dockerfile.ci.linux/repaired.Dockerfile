@@ -1,0 +1,108 @@
+FROM ubuntu:rolling
+
+LABEL maintainer="info@andremeyering.de"
+
+#####################################################################
+# This image can be used to develop and test MediaElch
+# It is an ALL-IN-ONE image that includes:
+#  - Latest GCC + gcov
+#  - Latest clang + clang tools
+#  - Latest stable Clazy
+#  - Latest CMake (via pip) + cmake_format
+#  - Mold Linker
+#  - Latest lcov from GitHub
+#  - shellcheck + cppcheck
+#####################################################################
+
+WORKDIR /opt
+
+RUN apt-get update && \
+    apt-get install --no-install-recommends -y software-properties-common && \
+    add-apt-repository ppa:ubuntu-toolchain-r/test && \
+    apt-get update && apt-get upgrade -y && \
+    apt-get install -y --no-install-recommends \
+        build-essential \
+        git \
+        wget \
+        curl \
+        zlib1g \
+        zlib1g-dev \
+        g++-11 \
+        gcc-11 \
+        libclang-13-dev \
+        clang-tidy-13 \
+        clang-tools-11 \
+        clang-format-13 \
+        clang-13 \
+        llvm-13-dev \
+        libstdc++-10-dev \
+        libssl-dev \
+        libxxhash-dev \
+        pkg-config \
+        ccache && \
+    apt-get install -y --no-install-recommends \
+        shellcheck \
+        cppcheck \
+        xvfb \
+        python3 \
+        python3-yaml \
+        python3-pip \
+        libjson-perl \
+        libncurses5-dev \
+        libncurses5 \
+        ninja-build \
+        doxygen \
+        graphviz \
+        libmediainfo-dev \
+        ffmpeg && \
+    apt-get install -y --no-install-recommends \
+        qtbase5-dev \
+        qtbase5-dev-tools \
+        qt5-qmake \
+        qtmultimedia5-dev \
+        qtdeclarative5-dev \
+        qttools5-dev \
+        qttools5-dev-tools \
+        libqt5opengl5 \
+        libqt5opengl5-dev \
+        libqt5svg5 \
+        libqt5svg5-dev && \
+    apt-get autoremove && \
+    update-alternatives --install /usr/bin/gcc           gcc          /usr/bin/gcc-11          10 && \
+    update-alternatives --install /usr/bin/gcov          gcov         /usr/bin/gcov-11         10 && \
+    update-alternatives --install /usr/bin/g++           g++          /usr/bin/g++-11          10 && \
+    update-alternatives --install /usr/bin/clang++       clang++      /usr/bin/clang++-13      10 && \
+    update-alternatives --install /usr/bin/clang         clang        /usr/bin/clang-13        10 && \
+    update-alternatives --install /usr/bin/clang-format  clang-format /usr/bin/clang-format-13 10 && \
+    update-alternatives --install /usr/bin/clang-tidy    clang-tidy   /usr/bin/clang-tidy-13   10 && \
+    update-alternatives --install /usr/bin/llvm-config   llvm-config  /usr/bin/llvm-config-13  10 && \
+    update-alternatives --install /usr/bin/llvm-cov      llvm-cov     /usr/bin/llvm-cov-13     10 && \
+    rm -rf /var/lib/apt/lists/*
+
+# Use latest lcov
+RUN cd /opt && git clone https://github.com/linux-test-project/lcov.git && \
+    cd lcov && make install && \
+    cd ..   && rm -rf lcov
+RUN perl -MCPAN -e 'install PerlIO::gzip'
+RUN perl -MCPAN -e 'JSON'
+
+RUN pip install --no-cache-dir --upgrade pip && pip3 install --no-cache-dir cmake cmake_format
+
+# https://github.com/rui314/mold
+RUN cd /opt && git clone https://github.com/rui314/mold.git && \
+    cd mold && git checkout v1.1 && \
+    make -j$(nproc) CXX=clang++ && \
+    make install
+
+# Multicore build always fails for some reason, so we use -j1
+RUN cd /opt && git clone https://github.com/KDE/clazy.git && \
+    cd /opt/clazy && git checkout 1.11 && \
+    cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_C_COMPILER=clang -GNinja && \
+    cmake --build build && \
+    cmake --build build --target install && \
+    cd /opt && rm -rf clazy
+
+RUN mkdir /opt/src
+VOLUME ["/opt/src"]
+WORKDIR /opt/src

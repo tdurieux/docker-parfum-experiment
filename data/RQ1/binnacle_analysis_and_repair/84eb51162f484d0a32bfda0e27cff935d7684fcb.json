@@ -1,0 +1,81 @@
+{
+  "startTime": 1674248429007,
+  "endTime": 1674248429447,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 29,
+        "lineEnd": 29,
+        "columnStart": 4,
+        "columnEnd": 48
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 34,
+        "lineEnd": 34,
+        "columnStart": 4,
+        "columnEnd": 64
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 42,
+        "lineEnd": 42,
+        "columnStart": 4,
+        "columnEnd": 50
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 40,
+        "lineEnd": 40,
+        "columnStart": 4,
+        "columnEnd": 32
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 70,
+        "lineEnd": 70,
+        "columnStart": 4,
+        "columnEnd": 76
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 11,
+        "lineEnd": 25,
+        "columnStart": 22,
+        "columnEnd": 35
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 70,
+        "lineEnd": 70,
+        "columnStart": 4,
+        "columnEnd": 76
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 70,
+        "lineEnd": 70,
+        "columnStart": 4,
+        "columnEnd": 76
+      }
+    }
+  ],
+  "repairedDockerfile": "FROM nvidia/cuda:10.0-devel-ubuntu16.04\n\n# TensorFlow v1.13 is coupled to CUDA10.\nENV TENSORFLOW_VERSION=1.13.1\nENV CUDNN_VERSION=7.4.2.24-1+cuda10.0\nENV NCCL_VERSION=2.4.2-1+cuda10.0\n\n# Python 2.7 or 3.5 is supported by Ubuntu Xenial out of the box\nARG python=3.5\nENV PYTHON_VERSION=${python}\n\nRUN apt-get update && apt-get install -y --no-install-recommends \\\n        build-essential \\\n        cmake \\\n        git \\\n        curl \\\n        vim \\\n        wget \\\n        ca-certificates \\\n        libcudnn7=${CUDNN_VERSION} \\\n        libnccl2=${NCCL_VERSION} \\\n        libnccl-dev=${NCCL_VERSION} \\\n        libjpeg-dev \\\n        libpng-dev \\\n        python${PYTHON_VERSION} \\\n        python${PYTHON_VERSION}-dev && rm -rf /var/lib/apt/lists/*;\n\nRUN ln -s /usr/bin/python${PYTHON_VERSION} /usr/bin/python\n\nRUN curl -f -O https://bootstrap.pypa.io/get-pip.py && \\\n    python get-pip.py && \\\n    rm get-pip.py\n\n# Install TensorFlow, Keras\nRUN pip install --no-cache-dir tensorflow-gpu==${TENSORFLOW_VERSION} keras h5py\n\n# Install Open MPI 4.0.0\nRUN mkdir /tmp/openmpi && \\\n    cd /tmp/openmpi && \\\n    wget https://download.open-mpi.org/release/open-mpi/v4.0/openmpi-4.0.0.tar.gz && \\\n    tar zxf openmpi-4.0.0.tar.gz && \\\n    cd openmpi-4.0.0 && \\\n    ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" --enable-orterun-prefix-by-default && \\\n    make -j $(nproc) all && \\\n    make install && \\\n    ldconfig && \\\n    rm -rf /tmp/openmpi && rm openmpi-4.0.0.tar.gz\n\n# Install Horovod, temporarily using CUDA stubs\n# /usr/local/cuda links to /usr/local/cuda-10.0\nRUN ldconfig /usr/local/cuda/targets/x86_64-linux/lib/stubs && \\\n    HOROVOD_GPU_ALLREDUCE=NCCL HOROVOD_WITH_TENSORFLOW=1 pip install --no-cache-dir horovod && \\\n    ldconfig\n\n# Create a wrapper for OpenMPI to allow running as root by default\nRUN mv /usr/local/bin/mpirun /usr/local/bin/mpirun.real && \\\n    echo '#!/bin/bash' > /usr/local/bin/mpirun && \\\n    echo 'mpirun.real --allow-run-as-root \"$@\"' >> /usr/local/bin/mpirun && \\\n    chmod a+x /usr/local/bin/mpirun\n\n# Configure OpenMPI to run good defaults:\n#   --bind-to none --map-by slot --mca btl_tcp_if_exclude lo,docker0\nRUN echo \"hwloc_base_binding_policy = none\" >> /usr/local/etc/openmpi-mca-params.conf && \\\n    echo \"rmaps_base_mapping_policy = slot\" >> /usr/local/etc/openmpi-mca-params.conf && \\\n    echo \"btl_tcp_if_exclude = lo,docker0\" >> /usr/local/etc/openmpi-mca-params.conf\n\n# Set default NCCL parameters\nRUN echo NCCL_DEBUG=INFO >> /etc/nccl.conf\n\n# Install OpenSSH for MPI to communicate between containers\nRUN apt-get install -y --no-install-recommends openssh-client openssh-server && \\\n    mkdir -p /var/run/sshd && rm -rf /var/lib/apt/lists/*;\n\n# Allow OpenSSH to talk to containers without asking for confirmation\nRUN cat /etc/ssh/ssh_config | grep -v StrictHostKeyChecking > /etc/ssh/ssh_config.new && \\\n    echo \"    StrictHostKeyChecking no\" >> /etc/ssh/ssh_config.new && \\\n    mv /etc/ssh/ssh_config.new /etc/ssh/ssh_config\n\nRUN mkdir /code && git clone https://github.com/aws-samples/deep-learning-models.git /code\n\nWORKDIR \"/code\"\n\nCMD mpirun \\\n  python models/resnet/tensorflow/train_imagenet_resnet_hvd.py \\\n    --batch_size=256 \\\n    --model=resnet50 \\\n    --num_batches=1000 \\\n    --fp16 \\\n    --lr_decay_mode=poly \\\n    --synthetic\n"
+}

@@ -1,0 +1,71 @@
+{
+  "startTime": 1674251402479,
+  "endTime": 1674251403548,
+  "originalSmells": [
+    {
+      "rule": "wgetUseHttpsUrl",
+      "position": {
+        "lineStart": 37,
+        "lineEnd": 37,
+        "columnStart": 4,
+        "columnEnd": 81
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 30,
+        "lineEnd": 30,
+        "columnStart": 4,
+        "columnEnd": 75
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 31,
+        "lineEnd": 31,
+        "columnStart": 4,
+        "columnEnd": 77
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 89,
+        "lineEnd": 89,
+        "columnStart": 4,
+        "columnEnd": 25
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 102,
+        "lineEnd": 102,
+        "columnStart": 4,
+        "columnEnd": 29
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 131,
+        "lineEnd": 131,
+        "columnStart": 26,
+        "columnEnd": 64
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 131,
+        "lineEnd": 131,
+        "columnStart": 26,
+        "columnEnd": 64
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Builds libgenomicsqlite.so in CentOS 7 (+ devtoolset-8) to maximize compatibility. Bakes in\n# Zstandard, and also builds a compatible libsqlite3.so.0 for users unable/unwilling to upgrade\n# their host's.\nFROM centos:7 as builder\n\nARG CMAKE_VERSION=3.17.3\nARG SQLITE_VERSION=3380200\nARG ZSTD_VERSION=1.5.2\nARG CPU_ARCH=ivybridge\nENV CFLAGS=\"-march=${CPU_ARCH} -O3\"\nENV CXXFLAGS=${CFLAGS}\n# https://www.sqlite.org/compile.html\nENV SQLITE_CFLAGS=\"\\\n        -DSQLITE_ENABLE_LOAD_EXTENSION \\\n        -DSQLITE_USE_URI \\\n        -DSQLITE_LIKE_DOESNT_MATCH_BLOBS \\\n        -DSQLITE_DEFAULT_MEMSTATUS=0 \\\n        -DSQLITE_MAX_EXPR_DEPTH=0 \\\n        -DSQLITE_ENABLE_NULL_TRIM \\\n        -DSQLITE_USE_ALLOCA \\\n        -DSQLITE_HAVE_ISNAN \\\n        -DSQLITE_ENABLE_UPDATE_DELETE_LIMIT \\\n        -DSQLITE_ENABLE_COLUMN_METADATA \\\n        -DSQLITE_ENABLE_DBSTAT_VTAB \\\n        -DSQLITE_ENABLE_FTS5 \\\n        -DSQLITE_ENABLE_RTREE \\\n        -DSQLITE_ENABLE_PREUPDATE_HOOK \\\n        -DSQLITE_ENABLE_SESSION \\\n\"\n\nRUN yum install -y -q wget unzip rsync git libcurl-devel centos-release-scl && rm -rf /var/cache/yum\nRUN yum install -y -q devtoolset-8-gcc devtoolset-8-gcc-c++ devtoolset-8-make && rm -rf /var/cache/yum\n\nRUN mkdir -p /work/GenomicSQLite\n\n# SQLite\nWORKDIR /work\nRUN wget -nv https://www.sqlite.org/2022/sqlite-amalgamation-${SQLITE_VERSION}.zip \\\n        && unzip -o sqlite-amalgamation-${SQLITE_VERSION}.zip\nWORKDIR /work/sqlite-amalgamation-${SQLITE_VERSION}\nRUN bash -c \"scl enable devtoolset-8 'gcc -shared -o libsqlite3.so.0 -fPIC -shared -Wl,-soname,libsqlite3.so.0 -g ${CFLAGS} ${SQLITE_CFLAGS} sqlite3.c' & pid=$? \\\n             scl enable devtoolset-8 'gcc -o sqlite3 -g ${CFLAGS} ${SQLITE_CFLAGS} sqlite3.c shell.c -lpthread -ldl -lm' && wait $pid\"\nRUN cp libsqlite3.so.0 /usr/local/lib && cp *.h /usr/local/include && cp sqlite3 /usr/local/bin\nRUN ln -s /usr/local/lib/libsqlite3.so.0 /usr/local/lib/libsqlite3.so\n\n# Zstandard -- hacked with -fPIC for use with ZSTD_WHOLE_ARCHIVE\nWORKDIR /work\nRUN wget -nv -O - https://github.com/facebook/zstd/releases/download/v${ZSTD_VERSION}/zstd-${ZSTD_VERSION}.tar.gz | tar zx\nWORKDIR /work/zstd-${ZSTD_VERSION}\nRUN scl enable devtoolset-8 \"CFLAGS='${CFLAGS} -fPIC' make install -j $(nproc)\"\n\n# CMake\nWORKDIR /work\nRUN wget -nv https://github.com/Kitware/CMake/releases/download/v${CMAKE_VERSION}/cmake-${CMAKE_VERSION}-Linux-x86_64.sh\nRUN yes | sh cmake-${CMAKE_VERSION}-Linux-x86_64.sh\nRUN rsync -a cmake-${CMAKE_VERSION}-Linux-x86_64/ /usr/local/\n\nRUN ldconfig\n\n# libgenomicsqlite.so\nADD . /work/GenomicSQLite\nWORKDIR /work/GenomicSQLite\nRUN rm -rf build\nRUN scl enable devtoolset-8 \"cmake -DCMAKE_BUILD_TYPE=Release -DZSTD_WHOLE_ARCHIVE=true -B build . && cmake --build build --target genomicsqlite -j $(nproc)\"\nRUN sqlite3 -cmd '.load build/libgenomicsqlite.so' :memory: 'select sqlite_version(); select genomicsqlite_version()'\n\n\n\n\n###################################################################################################\n# Run-up in fresh centos:7, to confirm no dependencies crept into the .so's\n\nFROM centos:7\n\nCOPY --from=builder /usr/local/bin/sqlite3 /usr/local/bin/\nCOPY --from=builder /usr/local/include/sqlite3.h /usr/local/include/\n\n# NOTE: /usr/local/lib is NOT a default ld path in CentOS -- https://unix.stackexchange.com/q/356624\nRUN mkdir -p /work/lib\nWORKDIR /work\nCOPY --from=builder /usr/local/lib/libsqlite3.so.0 ./lib/\nCOPY --from=builder /work/GenomicSQLite/build/libgenomicsqlite.so ./\n# the following approximates how bindings will usually load the extension at runtime:\n#     - libsqlite3.so.0 in the ld search path (if not already resident in the process)\n#     - given absolute path to libgenomicsqlite3.so\nRUN LD_LIBRARY_PATH=$(pwd)/lib sqlite3 -cmd \".load $(pwd)/libgenomicsqlite.so\" :memory: 'select sqlite_version(); select genomicsqlite_version()'\n        # if troubleshooting that: set LD_DEBUG=libs for extremely detailed dlopen() logs\n\n# now try capi_smoke_test, with some hoops to ensure it's not dependent on implicit RPATHs\nRUN yum install -y -q gcc && gcc -v && rm -rf /var/cache/yum\nRUN mv libgenomicsqlite.so lib/ && ln -s libsqlite3.so.0 lib/libsqlite3.so\nADD ./test/capi_smoke_test.c ./include/genomicsqlite.h ./\nRUN gcc -o genomicsqlite_capi_smoke_test ${CFLAGS} -L$(pwd)/lib -Wl,-rpath,\\$ORIGIN -Wl,-z,origin \\\n        capi_smoke_test.c -lgenomicsqlite -lsqlite3 \\\n        && readelf -d genomicsqlite_capi_smoke_test\nRUN mv lib/{libgenomicsqlite.so,libsqlite3.so.0} . && rm -rf lib\nRUN ./genomicsqlite_capi_smoke_test\n        # ^ we didn't need LD_LIBRARY_PATH even though the .so's aren't at their linktime locations\n\n# test rust bindings too\nFROM centos:7\n\nRUN yum install -y -q gcc git && rm -rf /var/cache/yum\nADD https://sh.rustup.rs /usr/local/bin/rustup-init.sh\nRUN chmod +x /usr/local/bin/rustup-init.sh && rustup-init.sh -y\nENV PATH=${PATH}:/root/.cargo/bin\n\nRUN mkdir -p /work/lib\nWORKDIR /work\nCOPY --from=builder /usr/local/lib/libsqlite3.so.0 ./lib/\nRUN ln -s libsqlite3.so.0 lib/libsqlite3.so\nADD ./.git ./.git\nADD ./bindings/rust ./rust\nCOPY --from=builder /work/GenomicSQLite/build/libgenomicsqlite.so ./rust/\nRUN SQLITE_WEB_LOG=99 LD_LIBRARY_PATH=$(pwd)/lib LIBRARY_PATH=$(pwd)/lib rust/cargo test --release\n\n###################################################################################################\n# Run-up in ubuntu 16.04\n\nFROM ubuntu:16.04\n\nCOPY --from=builder /usr/local/bin/sqlite3 /usr/local/bin/\nCOPY --from=builder /usr/local/include/sqlite3.h /usr/local/include/\nCOPY --from=builder /usr/local/lib/libsqlite3.so.0 /work/GenomicSQLite/build/libgenomicsqlite.so /usr/local/lib/\nRUN ln -s libsqlite3.so.0 /usr/local/lib/libsqlite3.so\n\nRUN sqlite3 -cmd '.load /usr/local/lib/libgenomicsqlite.so' :memory: 'select sqlite_version(); select genomicsqlite_version()'\n\nRUN mkdir /work\nWORKDIR /work\n\nRUN apt-get -qq update && apt-get install --no-install-recommends -qq -y build-essential && gcc -v && rm -rf /var/lib/apt/lists/*;\nADD ./test/capi_smoke_test.c ./include/genomicsqlite.h /work/\nRUN gcc -o genomicsqlite_capi_smoke_test ${CFLAGS} capi_smoke_test.c -lgenomicsqlite -lsqlite3\nRUN ./genomicsqlite_capi_smoke_test\n\n# display dependencies & digests in docker build log\nRUN ldd -v -r /usr/local/lib/libgenomicsqlite.so\nRUN objdump -t /usr/local/lib/libgenomicsqlite.so | grep -o 'GLIBC_.*' | sort -Vr | head -n1\nRUN objdump -t /usr/local/lib/libgenomicsqlite.so | grep -o 'GLIBCXX_.*' | sort -Vr | head -n1\nRUN objdump -t /usr/local/lib/libsqlite3.so.0 | grep -o 'GLIBC_.*' | sort -Vr | head -n1\nRUN sha256sum /usr/local/lib/libgenomicsqlite.so /usr/local/lib/libsqlite3.so.0\n"
+}

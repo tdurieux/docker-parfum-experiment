@@ -1,0 +1,62 @@
+{
+  "startTime": 1674248958204,
+  "endTime": 1674248959829,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 57,
+        "lineEnd": 57,
+        "columnStart": 7,
+        "columnEnd": 45
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 58,
+        "lineEnd": 58,
+        "columnStart": 7,
+        "columnEnd": 63
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 62,
+        "lineEnd": 62,
+        "columnStart": 12,
+        "columnEnd": 60
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 64,
+        "lineEnd": 64,
+        "columnStart": 12,
+        "columnEnd": 101
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 66,
+        "lineEnd": 66,
+        "columnStart": 7,
+        "columnEnd": 40
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 72,
+        "lineEnd": 72,
+        "columnStart": 19,
+        "columnEnd": 54
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "ARG BUILD_FROM=\"homeassistant/amd64-base:latest\"\n\nARG OCTOPRINT_VERSION=\"1.5.3\"\nARG CONFIG_DIR_SUFFIX=\"\"\nARG PIP_FLAGS=\"--no-cache-dir\"\nARG PYTHON_VERSION=\"python2\"\n\n# FROM alpine:latest AS curaengine-legacy\n# ARG CURA_VERSION=15.04.6\n# WORKDIR /tmp\n# RUN apk add --no-cache --virtual .build-dependencies build-base libexecinfo-dev \\\n#     && wget -qO- https://github.com/Ultimaker/CuraEngine/archive/${CURA_VERSION}.tar.gz | tar xz \\\n#     && cd CuraEngine-${CURA_VERSION} \\\n#     && make --quiet \\\n#     && mkdir -p /root/copy/sbin/ \\\n#     && mv build/CuraEngine /root/copy/sbin/CuraEngine \\\n#     # Cleanup, should result in smaller stages (at the cost of time)\n#     && rm -rf /tmp \\\n#     && apk del --no-cache .build-dependencies\n\n# FROM alpine:latest AS mjpg-streamer\n# WORKDIR /tmp\n# RUN apk add --no-cache --virtual .build-dependencies build-base cmake linux-headers libexecinfo-dev libjpeg-turbo-dev \\\n#     && wget -qO- https://github.com/jacksonliam/mjpg-streamer/archive/master.tar.gz | tar xz \\\n#     && cd mjpg-streamer-master/mjpg-streamer-experimental/ \\\n#     && make --quiet \\\n#     && make install --quiet \\\n#     # Move files to /root/ for easier copy.\n#     && mkdir -p /root/copy/usr/local/lib/mjpg-streamer \\\n#     && cp *.so /root/copy/usr/local/lib/mjpg-streamer/ \\\n#     && mkdir -p /root/copy/usr/local/bin \\\n#     && cp /usr/local/bin/mjpg_streamer /root/copy/usr/local/bin/ \\\n#     # Cleanup\n#     && apk del --no-cache .build-dependencies \\\n#     && rm -rf /tmp\n\nFROM ${BUILD_FROM} AS final\nARG OCTOPRINT_VERSION\nARG CONFIG_DIR_SUFFIX\nARG PIP_FLAGS\nARG PYTHON_VERSION\nENV LANG C.UTF-8\nENV PYTHONPATH=/data/python\nENV PATH=${PATH}:/data/python/bin\nENV PYTHONUSERBASE=/data/python\nENV PYTHON_VERSION=$PYTHON_VERSION\n# Install requirements to run\nRUN apk add --no-cache --virtual .necessary haproxy ${PYTHON_VERSION} dbus avahi supervisor\nRUN apk add --no-cache --virtual .extra avahi-compat-libdns_sd postgresql-libs libjpeg ffmpeg\n# Install OctoPrint\nRUN echo \"Installing OctoPrint\" \\\n    && apk add --no-cache --virtual .build-dependencies \\\n       py3-virtualenv build-base ${PYTHON_VERSION}-dev linux-headers \\\n       avahi-compat-libdns_sd \\\n       postgresql-dev \\\n    && virtualenv --python=${PYTHON_VERSION} /data/python \\\n    && source /data/python/bin/activate \\\n    && pip install --no-cache-dir ${PIP_FLAGS} --upgrade pip \\\n    && pip install --no-cache-dir ${PIP_FLAGS} OctoPrint==${OCTOPRINT_VERSION} \\\n    # && pip install supervisor \\\n    # The following steps, until cleanup, are optional and could be skipped if small size is required (loosing pybonjour, psycopg2 [for filamentmanager] )\n    && if [ \"${PYTHON_VERSION}\" = \"python2\" ]; then \\\n            pip install --no-cache-dir ${PIP_FLAGS} https://goo.gl/SxQZ06; \\\n       else \\\n            pip install --no-cache-dir ${PIP_FLAGS} https://github.com/kounch/pybonjour-python3/archive/master.zip; \\\n       fi \\\n    && pip install --no-cache-dir ${PIP_FLAGS} psycopg2 \\\n    # Cleanup and move output /root/python\n    && find /data/python | grep -E \"(__pycache__|\\.pyc|\\.pyo$)\" | xargs rm -rf \\\n    && find /usr/lib/python* | grep -E \"(__pycache__|\\.pyc|\\.pyo$)\" | xargs rm -rf \\\n    && rm -rf /root/.cache \\\n    && apk del --no-cache .build-dependencies \\\n    && cd /data && tar -zcf /root/python.tar.gz python \\\n    && rm -rf /data/python && rm /root/python.tar.gz\n    # && mv /data/python /root/python\n# Install mjpg-streamer\nRUN echo \"Installing mjpg-streamer\" \\\n    && apk add --no-cache --virtual .build-dependencies build-base cmake linux-headers libexecinfo-dev libjpeg-turbo-dev \\\n    && wget -qO- https://github.com/jacksonliam/mjpg-streamer/archive/master.tar.gz | tar xz \\\n    && cd mjpg-streamer-master/mjpg-streamer-experimental/ \\\n    && make --silent \\\n    && make install --silent \\\n    # Move files\n    && mv www/ /www_mjpg \\\n    # Cleanup\n    && apk del --no-cache .build-dependencies \\\n    && rm -rf /mjpg-streamer-master\n# Install CuraEngine-Legacy\nARG CURA_VERSION=15.04.6\nRUN echo \"Installing CuraEngine-Legacy\" \\\n    && apk add --no-cache --virtual .build-dependencies build-base libexecinfo-dev \\\n    && wget -qO- https://github.com/Ultimaker/CuraEngine/archive/${CURA_VERSION}.tar.gz | tar xz \\\n    && cd CuraEngine-${CURA_VERSION} \\\n    && make --quiet \\\n    && mv build/CuraEngine /sbin/CuraEngine \\\n    # Cleanup, should result in smaller stages (at the cost of time)\n    && cd .. && rm -rf CuraEngine-${CURA_VERSION} \\\n    && apk del --no-cache .build-dependencies\n# Copy data from filesystem and previous stages\nCOPY FS/ /\n# COPY --from=curaengine-legacy /root/copy/ /\n# COPY --from=mjpg-streamer /root/copy /\n# Make scripts executable\nRUN chmod a+x /*.sh\nRUN dos2unix /run_dev.sh # For development purposes\nRUN dos2unix /mjpgstreamer.sh # For development purposes\nRUN echo \"Update config directory for all files\" \\\n    && sed -i \"s#/config/octoprint#/config/octoprint${CONFIG_DIR_SUFFIX}#g\" /etc/supervisord.conf \\\n    && sed -i \"s#/config/octoprint#/config/octoprint${CONFIG_DIR_SUFFIX}#g\" /run.sh \\\n    && sed -i \"s#/config/octoprint#/config/octoprint${CONFIG_DIR_SUFFIX}#g\" /run_dev.sh \\\n    && sed -i \"s#/config/octoprint#/config/octoprint${CONFIG_DIR_SUFFIX}#g\" /octoprint/configuration.yaml\nWORKDIR /\nCMD [ \"/run.sh\" ]\n"
+}

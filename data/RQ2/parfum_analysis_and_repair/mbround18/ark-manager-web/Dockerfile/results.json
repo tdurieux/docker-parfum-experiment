@@ -1,0 +1,26 @@
+{
+  "startTime": 1674248361419,
+  "endTime": 1674248362571,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 77,
+        "lineEnd": 77,
+        "columnStart": 4,
+        "columnEnd": 38
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 50,
+        "lineEnd": 58,
+        "columnStart": 7,
+        "columnEnd": 33
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Client Build\nFROM --platform=linux/amd64 mbround18/ark-manager-client:latest as ClientBuild\n\n# ----------------------- #\n# -- Project Mangement -- #\n# ----------------------- #\n\nFROM docker.io/mbround18/cargo-make:latest as cargo-make\n\n# ------------- #\n# -- Planner -- #\n# ------------- #\nFROM docker.io/lukemathwalker/cargo-chef:latest-rust-1.58-alpine as planner\nWORKDIR /data/project\nCOPY ./Cargo.lock ./Cargo.toml ./\nCOPY ./server ./server\nCOPY ./agent ./agent\nCOPY ./shared ./shared\nRUN cargo chef prepare --recipe-path recipe.json\n\n# ------------- #\n# -- Builder -- #\n# ------------- #\nFROM docker.io/lukemathwalker/cargo-chef:latest-rust-1.58-alpine as builder\nWORKDIR /data/project\nCOPY --from=planner /data/project/recipe.json recipe.json\nRUN cargo chef cook --release --recipe-path recipe.json\nCOPY ./Cargo.lock ./Cargo.toml ./\nCOPY ./server ./server\nCOPY ./agent ./agent\nCOPY ./shared ./shared\nCOPY --from=cargo-make /usr/local/bin/cargo-make /usr/local/cargo/bin\nRUN /usr/local/cargo/bin/cargo make release\n\n# ------------- #\n# -- Runtime -- #\n# ------------- #\nFROM registry.hub.docker.com/library/debian:11-slim as RustRuntime\nWORKDIR /apps\nCOPY --from=builder /data/project/target/release/server ./\nCOPY --from=builder /data/project/target/release/agent ./\n\n# Bundled Together\nFROM docker.io/steamcmd/steamcmd:ubuntu\n\nENV TZ=America/Los_Angeles\n\nRUN ln -snf /usr/share/zoneinfo/${TZ} /etc/localtime && echo ${TZ} > /etc/timezone \\\n    && apt-get update                             \\\n    && apt-get upgrade -y \\\n    && apt-get install --no-install-recommends -y -q \\\n    # Image utilities\n    htop net-tools nano gcc g++ gdb \\\n    netcat curl wget zip unzip \\\n    sudo dos2unix bash sudo \\\n    # Ark Server Tools requirements\n    perl-modules lsof libc6-i386 lib32gcc1 bzip2 \\\n    # Steam Specific\n    libsdl2-2.0-0 jq libc6-dev \\\n    # Clean Up apt lists\n    && rm -rf /var/lib/apt/lists/*\n\n\n\nRUN addgroup --system steam     \\\n    && adduser --system         \\\n      --home /home/steam        \\\n      --shell /bin/bash         \\\n      steam                     \\\n    && usermod -aG steam steam  \\\n    && chmod ugo+rw /tmp/dumps  \\\n    && usermod -u 2000 steam    \\\n    && groupmod -g 2000 steam   \\\n    && mkdir -p /home/steam/ARK \\\n    && mkdir -p /home/steam/steamcmd \\\n    && echo \"steam ALL=(ALL) NOPASSWD: /root.sh\" > /etc/sudoers.d/steam\n\nRUN curl -f -sL https://git.io/arkmanager | bash -s steam \\\n    && mkdir -p /home/steam/ark-manager-web\n\nCOPY --from=RustRuntime /apps/server /home/steam/ark-manager-web/\nCOPY --from=RustRuntime /apps/agent /home/steam/ark-manager-web/\nCOPY --from=ClientBuild /apps/client /home/steam/ark-manager-web/dist\nCOPY ./scripts/entrypoint.sh /entrypoint.sh\nCOPY ./scripts/root.sh /root.sh\n\nRUN chown -R steam:steam /home/steam \\\n    && usermod -d /home/steam steam\n\nUSER steam\n\nENV HOME=/home/steam\nENV ARK_MANAGER_CONFIG_DIRECTORY=/etc/arkmanager\nWORKDIR /home/steam\n\nVOLUME [\"/home/steam/ARK\"]\n\nHEALTHCHECK --interval=1m --timeout=3s \\\n            CMD curl -f http://127.0.0.1:8000/heartbeat || exit 1\n\nENTRYPOINT [ \"/entrypoint.sh\" ]\n"
+}

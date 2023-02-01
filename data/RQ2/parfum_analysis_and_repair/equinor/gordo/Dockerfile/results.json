@@ -1,0 +1,53 @@
+{
+  "startTime": 1674217550298,
+  "endTime": 1674217551822,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 51,
+        "lineEnd": 51,
+        "columnStart": 4,
+        "columnEnd": 138
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 55,
+        "lineEnd": 55,
+        "columnStart": 4,
+        "columnEnd": 108
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 43,
+        "lineEnd": 43,
+        "columnStart": 4,
+        "columnEnd": 41
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 28,
+        "lineEnd": 30,
+        "columnStart": 22,
+        "columnEnd": 6
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 28,
+        "lineEnd": 30,
+        "columnStart": 22,
+        "columnEnd": 6
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Gordo base image\nFROM python:3.9.12-buster as builder\n\n# Copy source code\nCOPY . /code\n# Copy .git to deduce version number\nCOPY .git /code/\n\nWORKDIR /code\nRUN rm -rf /code/dist \\\n    && python setup.py sdist \\\n    && mv /code/dist/$(ls /code/dist | head -1) /code/dist/gordo-packed.tar.gz\n\n# Extract a few big dependencies which docker will cache even when other dependencies change\nRUN cat /code/requirements/full_requirements.txt | grep tensorflow== > /code/prereq.txt \\\n    && cat /code/requirements/full_requirements.txt | grep pyarrow== >> /code/prereq.txt \\\n    && cat /code/requirements/full_requirements.txt | grep scipy== >> /code/prereq.txt \\\n    && cat /code/requirements/full_requirements.txt | grep catboost== >> /code/prereq.txt\n\nFROM python:3.9.12-slim-buster\n\n# Nonroot user for running CMD\nRUN groupadd -g 999 gordo && \\\n    useradd -r -u 999 -g gordo gordo\n\nENV HOME \"/home/gordo\"\nENV PATH \"${HOME}/.local/bin:${PATH}\"\n\nRUN apt-get update && apt-get install --no-install-recommends -y \\\n    curl \\\n    jq && rm -rf /var/lib/apt/lists/*;\n\n# Install requirements separately for improved docker caching\nCOPY --from=builder /code/prereq.txt .\nRUN --mount=type=secret,id=pip_index_url \\\n    pip install --extra-index-url \"$(cat /run/secrets/pip_index_url)\" --no-deps -r prereq.txt --no-cache-dir\n\nCOPY requirements/full_requirements.txt .\nRUN --mount=type=secret,id=pip_index_url \\\n    pip install --extra-index-url \"$(cat /run/secrets/pip_index_url)\" -r full_requirements.txt --no-cache-dir\n\n# Install gordo, packaged from earlier 'python setup.py sdist'\nCOPY --from=builder /code/dist/gordo-packed.tar.gz .\nRUN pip install --no-cache-dir gordo-packed.tar.gz[full]\n\n# Install GordoDeploy dependencies\nARG HTTPS_PROXY\nARG KUBECTL_VERSION=\"v1.16.9\"\nARG ARGO_VERSION=\"v2.12.11\"\n\n#donwload & install kubectl\nRUN curl -f -sSL -o /usr/local/bin/kubectl https://storage.googleapis.com/kubernetes-release/release/$KUBECTL_VERSION/bin/linux/amd64/kubectl && \\\n  chmod +x /usr/local/bin/kubectl\n\n#download & install argo\nRUN curl -f -sLO https://github.com/argoproj/argo-workflows/releases/download/$ARGO_VERSION/argo-linux-amd64.gz && \\\n    gzip -d < argo-linux-amd64.gz > /usr/local/bin/argo && \\\n    chmod +x /usr/local/bin/argo\n\nCOPY ./functions.sh ${HOME}/functions.sh\nCOPY ./run_workflow_and_argo.sh ${HOME}/run_workflow_and_argo.sh\n\n# Baking in example configs for running tests, as docker.client.containers.run\n# bind doesn't seem to work correctly for non-root users\n# volumes={repo_dir: {\"bind\": \"/home/gordo\", \"mode\": \"ro\"}},\nCOPY ./examples ${HOME}/examples\nCOPY ./resources ${HOME}/resources\n\n# Install ModelBuilder dependencies\nADD build.sh ${HOME}/build.sh\n\n# build.sh (build the model) as executable default command\nRUN cp ${HOME}/build.sh /usr/bin/build \\\n    && chmod a+x /usr/bin/build\n\n\n# Make gordo own all in its home\nRUN chown -R gordo:gordo ${HOME}\n\n# Run things from gordo's home to have write access when needed (e.g. Catboost tmp files)\nWORKDIR ${HOME}\n# Switch user\nUSER 999\n"
+}

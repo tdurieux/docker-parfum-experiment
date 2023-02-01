@@ -1,0 +1,35 @@
+{
+  "startTime": 1674251856059,
+  "endTime": 1674251857343,
+  "originalSmells": [
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 9,
+        "lineEnd": 9,
+        "columnStart": 5,
+        "columnEnd": 17
+      }
+    },
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 9,
+        "lineEnd": 9,
+        "columnStart": 40,
+        "columnEnd": 52
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 3,
+        "lineEnd": 4,
+        "columnStart": 4,
+        "columnEnd": 51
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM node:16.0.0 as frontend\nRUN set -ex; \\\n    apt-get update; \\\n    DEBIAN_FRONTEND=noninteractive \\\n    apt-get install -y --no-install-recommends make && rm -rf /var/lib/apt/lists/*;\nRUN mkdir -p /src/docs/openapi/\nCOPY package.json yarn.lock /src/\nCOPY docs/openapi/package.json docs/openapi/yarn.lock /src/docs/openapi/\nWORKDIR /src\nRUN yarn install && cd docs/openapi && yarn install && yarn cache clean;\nWORKDIR /src\nRUN mkdir -p /src/static/cache/bundle\nCOPY tsconfig.json webpack.config.js jest.config.ts /src/\nCOPY templates /src/templates/\nCOPY docs/openapi /src/docs/openapi/\nCOPY Makefile /src/\nCOPY scripts /src/scripts\nRUN make frontend\n\nFROM rust:latest as planner\nRUN cargo install cargo-chef\nWORKDIR /src\nCOPY . /src/\nRUN cargo chef prepare --recipe-path recipe.json\n\nFROM rust:latest as cacher\nWORKDIR /src/\nRUN cargo install cargo-chef\nCOPY --from=planner /src/recipe.json recipe.json\nRUN cargo chef cook --release --recipe-path recipe.json\n\nFROM rust:latest as rust\nWORKDIR /src\nCOPY . .\nCOPY --from=cacher /src/target target\n#COPY --from=cacher /src/db/db-core/target /src/db/db-core/target\n#COPY --from=cacher /src/db/db-sqlx-postgres/target /src/db/db-sqlx-postgres/target\n#COPY --from=cacher /src/db/db-migrations/target /src/db/db-migrations/target\n#COPY --from=cacher /src/utils/cache-bust/target /src/utils/cache-bust/target\nCOPY --from=frontend /src/static/cache/bundle/ /src/static/cache/bundle/\nRUN cargo --version\nRUN make cache-bust\nRUN cargo build --release\n\nFROM debian:bullseye as mCaptcha\nLABEL org.opencontainers.image.source https://github.com/mCaptcha/mCaptcha\nRUN useradd -ms /bin/bash -u 1001 mcaptcha\nWORKDIR /home/mcaptcha\nCOPY --from=rust /src/target/release/mcaptcha /usr/local/bin/\nCOPY --from=rust /src/config/default.toml /etc/mcaptcha/config.toml\nUSER mcaptcha\nCMD [ \"/usr/local/bin/mcaptcha\" ]\n"
+}

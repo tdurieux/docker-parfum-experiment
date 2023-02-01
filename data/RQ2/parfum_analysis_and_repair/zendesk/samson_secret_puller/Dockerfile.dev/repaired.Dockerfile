@@ -1,0 +1,24 @@
+FROM ruby:2.6-alpine3.11
+
+RUN apk add --update --no-cache bash curl openssl elixir erlang-crypto build-base
+
+WORKDIR /app
+
+# bundle
+COPY .ruby-version Gemfile Gemfile.lock ./
+RUN bundle install --quiet --jobs 4
+
+# code
+COPY bin /app/bin
+COPY lib /app/lib
+
+# test
+COPY Rakefile .travis.yml .rubocop.yml README.md Dockerfile Dockerfile.dev ./
+COPY test /app/test
+
+# clients
+COPY gem gem
+COPY elixir elixir
+RUN mix local.hex --force
+
+CMD ["bash"]

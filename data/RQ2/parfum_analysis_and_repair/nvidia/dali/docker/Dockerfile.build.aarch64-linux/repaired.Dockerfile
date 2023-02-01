@@ -1,0 +1,141 @@
+ARG AARCH64_BASE_IMAGE=nvidia/cuda:10.2-devel-ubuntu18.04
+FROM ${AARCH64_BASE_IMAGE}
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV CUDA_CROSS_VERSION=10.2
+
+RUN apt-key adv --fetch-keys https://developer.download.nvidia.com/compute/cuda/repos/ubuntu1804/x86_64/3bf863cc.pub && \
+    apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    curl \
+    wget \
+    unzip \
+    git \
+    rsync \
+    libjpeg-dev \
+    dh-autoreconf \
+    gcc-aarch64-linux-gnu \
+    g++-aarch64-linux-gnu \
+    pkg-config \
+    libtool \
+    libtool-bin \
+    python3-distutils \
+    autogen \
+    zip \
+    python3.6 python3.6-dev \
+    python3.7 python3.7-dev \
+    python3.8 python3.8-dev \
+    && \
+    if [ $(apt-cache search python3.9 | wc -l) -eq 0 ]; then \
+        apt-get install software-properties-common -y --no-install-recommends && \
+        add-apt-repository ppa:deadsnakes/ppa -y && \
+        apt-get update; \
+    fi && \
+    apt-key adv --fetch-key http://repo.download.nvidia.com/jetson/jetson-ota-public.asc && \
+    add-apt-repository 'deb http://repo.download.nvidia.com/jetson/x86_64 bionic r32.4' && \
+    apt-get update && \
+    apt-get install --no-install-recommends -y cuda-cudart-cross-aarch64-${CUDA_CROSS_VERSION} \
+                       cuda-cufft-cross-aarch64-${CUDA_CROSS_VERSION} \
+                       cuda-curand-cross-aarch64-${CUDA_CROSS_VERSION} \
+                       cuda-driver-cross-aarch64-${CUDA_CROSS_VERSION} \
+                       cuda-misc-headers-cross-aarch64-${CUDA_CROSS_VERSION} \
+                       cuda-npp-cross-aarch64-${CUDA_CROSS_VERSION} \
+    && \
+    apt-get install --no-install-recommends -y python3.9 python3.9-dev python3.9-distutils python3.10 python3.10-dev python3.10-distutils && \
+    rm -rf /var/lib/apt/lists/* && \
+    PYTHON_VER=$(python3 -c "import sys;print(f'{sys.version_info[0]}{sys.version_info[1]}')") && \
+    if [ "${PYTHON_VER}" = "36" ]; then \
+        curl -f -O https://bootstrap.pypa.io/pip/3.6/get-pip.py; \
+    else \
+        curl -f -O https://bootstrap.pypa.io/get-pip.py; \
+    fi && python3 get-pip.py && rm get-pip.py && \
+    # decouple libclang and clang installation so libclang changes are not overriden by clang
+    pip install --no-cache-dir clang && pip install --no-cache-dir libclang && \
+    rm -rf /root/.cache/pip/ && \
+    cd /tmp && git clone https://github.com/NixOS/patchelf && cd patchelf && \
+    ./bootstrap.sh && ./configure --build="$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)" --prefix=/usr/ && make -j install && cd / && rm -rf /tmp/patchelf && \
+    ln -s /usr/bin/python3 /usr/bin/python
+
+ENV PKG_CONFIG_PATH=/usr/aarch64-linux-gnu/lib/pkgconfig
+
+COPY DALI_DEPS_VERSION /tmp
+
+ARG DALI_DEPS_REPO
+ENV DALI_DEPS_REPO=${DALI_DEPS_REPO:-https://github.com/NVIDIA/DALI_deps}
+
+ARG DALI_DEPS_VERSION_SHA
+ENV DALI_DEPS_VERSION_SHA=${DALI_DEPS_VERSION_SHA}
+
+# run in /bin/bash to have more advanced features supported like list
+RUN /bin/bash -c 'DALI_DEPS_VERSION_SHA=${DALI_DEPS_VERSION_SHA:-$(cat /tmp/DALI_DEPS_VERSION)}    && \
+    git clone ${DALI_DEPS_REPO} /tmp/dali_deps                                                     && \
+    cd /tmp/dali_deps                                                                              && \
+    git checkout ${DALI_DEPS_VERSION_SHA}                                                          && \
+    git submodule init                                                                             && \
+    git submodule update --depth 1 --recursive                                                     && \
+    export CC_COMP=aarch64-linux-gnu-gcc                                                           && \
+    export CXX_COMP=aarch64-linux-gnu-g++                                                          && \
+    export INSTALL_PREFIX="/usr/aarch64-linux-gnu/"                                                && \
+    export HOST_ARCH_OPTION="--host=aarch64-unknown-linux-gnu"                                     && \
+    export CMAKE_TARGET_ARCH=aarch64                                                               && \
+    export OPENCV_TOOLCHAIN_FILE="linux/aarch64-gnu.toolchain.cmake"                               && \
+    export WITH_FFMPEG=0                                                                           && \
+    /tmp/dali_deps/build_scripts/build_deps.sh && rm -rf /tmp/dali_deps && rm -rf /tmp/DALI_DEPS_VERSION'
+
+# hack - install cross headers in the default python paths, so host python3-config would point to them
+RUN export PYVERS="3.6.9 3.7.8 3.8.5 3.9.0 3.10.0" && \
+    for PYVER in ${PYVERS}; do \
+        cd /tmp && ( curl -f -L https://www.python.org/ftp/python/${PYVER}/Python-${PYVER}.tgz | tar -xzf - || exit 1) && \
+        rm -rf *.tgz && cd Python* && \
+        ./configure --disable-ipv6 ac_cv_file__dev_ptmx=no ac_cv_file__dev_ptc=no \
+            --disable-shared CC=aarch64-linux-gnu-gcc CXX=aarch64-linux-gnu-g++ \
+            --build=x86_64-pc-linux-gnu --host=aarch64-linux-gnu --prefix=/usr/ && \
+        make -j"$(grep ^processor /proc/cpuinfo | wc -l)" inclinstall && \
+        cd / && rm -rf /tmp/Python*; \
+    done && \
+    # hack - patch the host pythonX-config to return --extension-suffix for the target
+    find /usr/ -iname x86_64-linux-gnu-python* -exec sed -i "s/\(SO.*\)\(x86_64\)\(.*\)/\1aarch64\3/" {} \;
+
+VOLUME /dali
+
+WORKDIR /dali
+
+ENV PATH=/usr/local/cuda-10.2/bin:$PATH
+
+ARG DALI_BUILD_DIR=build_aarch64_linux
+
+WORKDIR /dali/${DALI_BUILD_DIR}
+
+CMD WERROR=ON           \
+    ARCH=aarch64-linux  \
+    BUILD_TEST=ON       \
+    BUILD_BENCHMARK=OFF \
+    BUILD_NVTX=OFF      \
+    BUILD_LMDB=ON       \
+    BUILD_JPEG_TURBO=ON \
+    BUILD_LIBTIFF=ON    \
+    BUILD_LIBSND=ON     \
+    BUILD_LIBTAR=ON     \
+    BUILD_FFTS=ON       \
+    BUILD_NVJPEG=OFF    \
+    BUILD_NVJPEG2K=OFF  \
+    BUILD_NVOF=OFF      \
+    BUILD_NVDEC=OFF     \
+    BUILD_NVML=OFF      \
+    VERBOSE_LOGS=OFF    \
+    BUILD_CUFILE=OFF    \
+    TEST_BUNDLED_LIBS=NO\
+    WITH_DYNAMIC_CUDA_TOOLKIT=ON\
+    WHL_PLATFORM_NAME=manylinux2014_aarch64            \
+    BUNDLE_PATH_PREFIX="/usr/aarch64-linux-gnu"        \
+    EXTRA_CMAKE_OPTIONS="-DCMAKE_TOOLCHAIN_FILE:STRING=$PWD/../platforms/aarch64-linux/aarch64-linux.toolchain.cmake \
+                        -DCMAKE_COLOR_MAKEFILE=ON                                 \
+                        -DCMAKE_CUDA_COMPILER=/usr/local/cuda-10.2/bin/nvcc       \
+                        -DCUDA_HOST=/usr/local/cuda-10.2                          \
+                        -DCUDA_TARGET=/usr/local/cuda-10.2/targets/aarch64-linux" \
+    /dali/docker/build_helper.sh                    && \
+    rm -rf /dali/${DALI_BUILD_DIR}/nvidia*          && \
+    cd /dali/dali_tf_plugin                         && \
+    bash /dali/dali_tf_plugin/make_dali_tf_sdist.sh && \
+    mv /dali_tf_sdist/*.tar.gz /wheelhouse/         && \
+    cp -r /wheelhouse /dali/

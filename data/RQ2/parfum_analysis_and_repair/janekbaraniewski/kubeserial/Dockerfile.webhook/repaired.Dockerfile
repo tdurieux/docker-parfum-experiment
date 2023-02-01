@@ -1,0 +1,33 @@
+# Build the manager binary
+FROM --platform=$BUILDPLATFORM golang:1.18-alpine as builder
+RUN apk update
+RUN apk add --no-cache make bash
+WORKDIR /workspace
+COPY go.mod go.sum ./
+RUN go mod download
+
+# Copy the go source
+COPY Makefile.build Makefile
+COPY cmd/webhook cmd/webhook
+COPY pkg pkg
+
+ARG TARGETOS TARGETARCH TARGETVARIANT
+RUN if [[ -n "${TARGETVARIANT}" ]]; then export GOARM=${TARGETVARIANT}; fi
+# Build
+RUN --mount=type=cache,target=/root/.cache/go-build GOOS=$TARGETOS GOARCH=$TARGETARCH \
+    INJECTOR_WEBHOOK_BUILD_OUTPUT_PATH=/build/bin/injector-webhook \
+    make injector-webhook
+RUN ls -la /build/bin
+
+FROM alpine
+LABEL org.opencontainers.image.source https://github.com/janekbaraniewski/kubeserial
+
+WORKDIR /
+ENV USER_NAME=kubeserial \
+    USER_UID=1001
+COPY entrypoint entrypoint
+COPY --from=builder /build/bin/injector-webhook .
+
+
+ENTRYPOINT ["/entrypoint", "/injector-webhook"]
+USER ${USER_UID}

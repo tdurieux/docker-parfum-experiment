@@ -1,0 +1,10 @@
+FROM sider/devon_rex_ruby:2.46.0
+
+<%= render_erb 'images/Dockerfile.base.erb' %>
+
+# Install the default version
+COPY --chown=<%= chown %> images/<%= analyzer %>/Gemfile ${RUNNERS_DEPS_DIR}/
+RUN cd "${RUNNERS_DEPS_DIR}" && \
+    bundle config set --local system 'true' && \
+    bundle install && \
+    rm -r Gemfile Gemfile.lock .bundle/

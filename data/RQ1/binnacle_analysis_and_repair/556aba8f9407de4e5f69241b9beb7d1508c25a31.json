@@ -1,0 +1,71 @@
+{
+  "startTime": 1674250291932,
+  "endTime": 1674250292290,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 85,
+        "lineEnd": 85,
+        "columnStart": 18,
+        "columnEnd": 71
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 87,
+        "lineEnd": 87,
+        "columnStart": 19,
+        "columnEnd": 35
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 103,
+        "lineEnd": 103,
+        "columnStart": 4,
+        "columnEnd": 21
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 108,
+        "lineEnd": 108,
+        "columnStart": 18,
+        "columnEnd": 50
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 111,
+        "lineEnd": 111,
+        "columnStart": 4,
+        "columnEnd": 31
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 65,
+        "lineEnd": 68,
+        "columnStart": 1,
+        "columnEnd": 2
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 90,
+        "lineEnd": 90,
+        "columnStart": 7,
+        "columnEnd": 55
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM python:2.7-slim\n\nENV RASA_NLU_DOCKER=\"YES\" \\\n    RASA_NLU_HOME=/app \\\n    RASA_NLU_PYTHON_PACKAGES=/usr/local/lib/python2.7/dist-packages\n\n# Run updates, install basics and cleanup\n# - build-essential: Compile specific dependencies\n# - git-core: Checkout git repos\nRUN apt-get update -qq \\\n    && apt-get install -y --no-install-recommends build-essential git-core openssl libssl-dev libffi6 libffi-dev curl  \\\n    && apt-get clean \\\n    && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*\n\nRUN git clone https://github.com/RasaHQ/rasa_nlu.git\n#WORKDIR ${RASA_NLU_HOME}/rasa_nlu\n\n# use bash always\nRUN rm /bin/sh && ln -s /bin/bash /bin/sh\n\n\n#COPY . ${RASA_NLU_HOME}\n\n## install java stuff\n\nRUN echo \"deb http://http.debian.net/debian jessie-backports main\" > /etc/apt/sources.list.d/jessie-backports.list\n\nRUN apt-get update && apt-get install -y --no-install-recommends \\\n\t\tbzip2 \\\n\t\tunzip \\\n\t\txz-utils \\\n\t&& rm -rf /var/lib/apt/lists/*\n\n# Default to UTF-8 file.encoding\nENV LANG C.UTF-8\n\n# add a simple script that can auto-detect the appropriate JAVA_HOME value\n# based on whether the JDK or only the JRE is installed\nRUN { \\\n\t\techo '#!/bin/sh'; \\\n\t\techo 'set -e'; \\\n\t\techo; \\\n\t\techo 'dirname \"$(dirname \"$(readlink -f \"$(which javac || which java)\")\")\"'; \\\n\t} > /usr/local/bin/docker-java-home \\\n\t&& chmod +x /usr/local/bin/docker-java-home\n\n# do some fancy footwork to create a JAVA_HOME that's cross-architecture-safe\nRUN ln -svT \"/usr/lib/jvm/java-8-openjdk-$(dpkg --print-architecture)\" /docker-java-home\nENV JAVA_HOME /docker-java-home\n\nENV JAVA_VERSION 8u141\nENV JAVA_DEBIAN_VERSION 8u141-b15-1~deb9u1\n\n# see https://bugs.debian.org/775775\n# and https://github.com/docker-library/java/issues/19#issuecomment-70546872\nENV CA_CERTIFICATES_JAVA_VERSION 20170531+nmu1\n\nRUN set -ex; \\\n\n# deal with slim variants not having man page directories (which causes \"update-alternatives\" to fail)\n\tif [ ! -d /usr/share/man/man1 ]; then \\\n\t\tmkdir -p /usr/share/man/man1; \\\n\tfi; \\\n\n\tapt-get update; \\\n\tapt-get install --no-install-recommends -y -t jessie-backports \\\n\t\topenjdk-8-jdk \\\n\t\tca-certificates-java \\\n\t; \\\n\trm -rf /var/lib/apt/lists/*; \\\n\n# verify that \"docker-java-home\" returns what we expect\n\t[ \"$(readlink -f \"$JAVA_HOME\")\" = \"$(docker-java-home)\" ]; \\\n\n# update-alternatives so that future installs of other OpenJDK versions don't change /usr/bin/java\n\tupdate-alternatives --get-selections | awk -v home=\"$(readlink -f \"$JAVA_HOME\")\" 'index($3, home) == 1 { $2 = \"manual\"; print | \"update-alternatives --set-selections\" }'; \\\n# ... and verify that it actually worked for one of the alternatives we care about\n\tupdate-alternatives --query java | grep -q 'Status: manual'\n\n# see CA_CERTIFICATES_JAVA_VERSION notes above\nRUN /var/lib/dpkg/info/ca-certificates-java.postinst configure\n\n## done java\n\n\nRUN cd /rasa_nlu; pip install --no-cache-dir -r alt_requirements/requirements_full.txt\n\nRUN cd /rasa_nlu; pip install --no-cache-dir -e .\n\nRUN apt-get update -qq \\\n    && apt-get install -y --no-install-recommends  wget \\\n    && wget -P data/ https://s3-eu-west-1.amazonaws.com/mitie/total_word_feature_extractor.dat \\\n    && apt-get remove -y wget \\\n    && apt-get autoremove -y && rm -rf /var/lib/apt/lists/*;\n\nRUN pip install https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-1.2.0/en_core_web_sm-1.2.0.tar.gz --no-cache-dir > /dev/null \\\n    && python -m spacy link en_core_web_sm en \\\n    && pip install https://github.com/explosion/spacy-models/releases/download/de_core_news_md-1.0.0/de_core_news_md-1.0.0.tar.gz --no-cache-dir > /dev/null \\\n    && python -m spacy link de_core_news_md de\n\nRUN mkdir ${RASA_NLU_HOME}\nRUN cp /rasa_nlu/sample_configs/config_spacy_duckling.json ${RASA_NLU_HOME}/config.json\n\nRUN pip install --no-cache-dir Flask\n\n# RASA CORE\nWORKDIR ${RASA_NLU_HOME}\nRUN git clone https://github.com/syntithenai/rasa_core.git\nRUN cd rasa_core; pip install --no-cache-dir -r requirements.txt;\nRUN cd rasa_core; python setup.py develop\n\nRUN pip install --no-cache-dir paho-mqtt ws4py\nCOPY ./client.conf /etc/pulse/client.conf\nCOPY ./asound-pulse.conf /etc/asound.conf\nCOPY ./snips_services/ /opt/snips_services/\n#RUN apt-get install pulseaudio \n\n\nEXPOSE 5000\n\nENTRYPOINT ['/opt/snips_services/rasa_server.py']\n"
+}

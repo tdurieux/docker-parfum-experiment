@@ -1,0 +1,59 @@
+ARG HElib_tag
+FROM $HElib_tag
+ARG HElib_cmake_lists_version
+ENV container docker
+ENV HELIB_CMAKE_LISTS_VERSON=$HElib_cmake_lists_version
+LABEL maintainer="Flavio Bergamaschi <flavio@uk.ibm.com>"
+
+# Docker Container for Fedora FHE IDE and Example Code Toolkit
+
+# The  code-server runs on HTTPS port 8443 so expose it
+EXPOSE 8443/tcp
+
+# Set root user for installation
+USER root
+WORKDIR /root
+
+# Install code-server so we can access the IDE from a container context...
+#RUN curl -fsSL https://code-server.dev/install.sh | sh 2>&1
+RUN curl -fsSL https://code-server.dev/install.sh | sh -s -- --version 3.9.1 2>&1
+#Install cpptools from the latest vsix version which we are pinning to because we have issues getting it to install normally - 12.03.2020 - greg
+#Previously this was version 1.1.2 and we update to 1.4.0 - 06.02.2021 - greg
+ADD https://github.com/microsoft/vscode-cpptools/releases/download/1.4.0/cpptools-linux.vsix /opt/IBM/FHE-Workspace/
+
+# Create a directory to hold the VSCode user data
+RUN mkdir -p /opt/IBM/IDE-Data
+RUN chown -R fhe:fhe /opt/IBM/IDE-Data
+
+# Create a directory to hold the user's FHE workspace to contain project/sample code
+RUN mkdir -p /opt/IBM/FHE-Workspace
+RUN chown -R fhe:fhe /opt/IBM/FHE-Workspace
+
+# Set fhe user for the remaining of the installation
+USER fhe
+WORKDIR /home/fhe
+
+RUN mkdir /opt/IBM/FHE-Workspace/.vscode
+COPY --chown=fhe:fhe ./IDE_Config /opt/IBM/FHE-Workspace/.vscode 
+RUN mkdir -p /opt/IBM/FHE-Workspace/examples
+RUN cp -rp /opt/IBM/FHE-distro/HElib/examples /opt/IBM/FHE-Workspace
+
+# Copy over additional examples into the FHE-Workspace from the github checkout on this host
+COPY --chown=fhe:fhe ./samples/ /opt/IBM/FHE-Workspace/examples/
+
+ENV HELAYERS_DATA_SETS_DIR="/opt/IBM/FHE-Workspace/examples/data/"
+ENV HELAYERS_EXAMPLES_DIR="/opt/IBM/FHE-Workspace/examples/"
+
+# Install code-server extensions
+#We are installing the cpptools from a specific vsix version manually because it fails to install the traditional way. This version is 1.1.2 which is the latest at this time 12.02.2020 - greg 
+#https://github.com/microsoft/vscode-cpptools/releases/download/1.1.2/cpptools-linux.vsix
+RUN code-server --user-data-dir=/opt/IBM/IDE-Data/ --install-extension /opt/IBM/FHE-Workspace/cpptools-linux.vsix --force; exit 0
+RUN code-server --user-data-dir=/opt/IBM/IDE-Data/ --install-extension ms-vscode.cmake-tools --force
+RUN code-server --user-data-dir=/opt/IBM/IDE-Data/ --install-extension twxs.cmake --force
+# set code-server to create a self signed cert
+RUN sed -i.bak 's/cert: false/cert: true/' ~/.config/code-server/config.yaml
+# Update code-server user settings
+RUN echo "{\"extensions.autoUpdate\": false,\n\"workbench.colorTheme\": \"Dark\"}" > /opt/IBM/IDE-Data/User/settings.json
+
+# Set the default command to launch the code-server project as a web application
+CMD ["code-server",  "--bind-addr", "0.0.0.0:8443", "--user-data-dir", "/opt/IBM/IDE-Data/", "/opt/IBM/FHE-Workspace", "--auth", "none", "--disable-telemetry"]

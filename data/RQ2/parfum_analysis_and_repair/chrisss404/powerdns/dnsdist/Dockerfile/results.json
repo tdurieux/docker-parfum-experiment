@@ -1,0 +1,17 @@
+{
+  "startTime": 1674255027358,
+  "endTime": 1674255028551,
+  "originalSmells": [
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 42,
+        "lineEnd": 52,
+        "columnStart": 4,
+        "columnEnd": 27
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM alpine:3.15 AS builder\n\nARG DNSDIST_VERSION=\"latest\"\n\nARG COMPILER_FLAGS=\"-Os -fomit-frame-pointer\"\nARG LINKER_FLAGS=\"-Wl,--as-needed\"\n\n# Get dependencies\nRUN apk add --no-cache \\\n        autoconf \\\n        automake \\\n        boost-dev \\\n        cmake \\\n        curl \\\n        file \\\n        g++ \\\n        git \\\n        h2o-dev \\\n        lua-dev \\\n        libedit-dev \\\n        libsodium-dev \\\n        libtool \\\n        lmdb-dev \\\n        make \\\n        nghttp2-dev \\\n        openssl-dev \\\n        protobuf-dev \\\n        py3-virtualenv \\\n        ragel \\\n        re2-dev\n\n# Download sources\nRUN git clone -n https://github.com/PowerDNS/pdns.git /build && \\\n    cd /build && \\\n    git checkout $([ \"${DNSDIST_VERSION}\" = \"latest\" ] && echo \"master\" || echo \"dnsdist-${DNSDIST_VERSION}\")\n\nWORKDIR /build/pdns/dnsdistdist\n\n# Compile\nRUN export BUILDER_VERSION=$([ \"${DNSDIST_VERSION}\" = \"latest\" ] && echo `date +%Y-%m-%d` || echo \"${DNSDIST_VERSION}\") && \\\n    sed -i -e \"s|dist_man_MANS=\\$(MANPAGES)|MANPAGES=\\ndist_man_MANS=\\$(MANPAGES)|g\" Makefile.am && \\\n    autoreconf -vif && \\\n    CFLAGS=${COMPILER_FLAGS} CXXFLAGS=${COMPILER_FLAGS} LDFLAGS=${LINKER_FLAGS} ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" \\\n            --sysconfdir=/etc/dnsdist \\\n            --enable-dnscrypt \\\n            --enable-dns-over-https \\\n            --enable-dns-over-tls \\\n            --with-libsodium \\\n            --with-lua \\\n            --with-nghttp2 \\\n            --with-re2 \\\n            --disable-shared \\\n            --enable-static && \\\n    make dist -j $(nproc) && \\\n    make install-strip\n\n\n# Build image\nFROM alpine:3.15\n\nRUN apk add --no-cache h2o libedit libsodium lmdb lua nghttp2 protobuf re2 && \\\n    addgroup -S dnsdist && \\\n    adduser -S -D -G dnsdist dnsdist && \\\n    mkdir -p /etc/dnsdist /var/lib/dnsdist && \\\n    touch /etc/dnsdist/blacklist.txt\n\nCOPY --from=builder /usr/local/bin /usr/bin/\nCOPY ./docker-entrypoint.sh /usr/bin/\nCOPY ./conf /etc/dnsdist/\n\nVOLUME [\"/var/lib/dnsdist\"]\n\nEXPOSE 53/tcp 53/udp 443/tcp 853/tcp 8083/tcp 8443/tcp 8443/udp\n\nHEALTHCHECK CMD [\"dnsdist\", \"-e\", \"showVersion()\", \"||\", \"exit\", \"1\"]\nENTRYPOINT [\"docker-entrypoint.sh\"]\nCMD [\"dnsdist\", \"--supervised\", \"--disable-syslog\", \"--uid\", \"dnsdist\", \"--gid\", \"dnsdist\"]\n"
+}

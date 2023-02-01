@@ -1,0 +1,60 @@
+FROM ghcr.io/graalvm/graalvm-ce:20.3.1.2 AS builder
+
+RUN microdnf update -y \
+    && microdnf install -y nodejs \
+    && microdnf clean all \
+    && gu install native-image \
+    && mkdir workspace \
+    && chown 1001 workspace \
+    && chmod "g+rwX" workspace \
+    && chown 1001:root workspace
+
+WORKDIR /workspace
+
+COPY pom.xml .
+COPY mvnw .
+COPY .mvn .mvn
+
+RUN ./mvnw dependency:copy-dependencies
+
+COPY src src
+COPY resources-config.json .
+
+RUN ./mvnw package -Pnative
+
+FROM frolvlad/alpine-glibc
+
+ENV NPM_CONFIG_PREFIX=/home/node/.npm-global
+ENV PATH=$PATH:/home/node/.npm-global/bin
+ENV PATH=$PATH:/home/node/.npm-global/lib
+ENV NODE_ENV=production
+
+RUN addgroup -g 1000 node \
+    && adduser -u 1000 -G node -s /bin/sh -D node \
+    && apk add --no-cache \
+    curl \
+    nodejs \
+    npm \
+    openjdk11
+
+USER node
+
+WORKDIR /home/node/
+RUN curl -f -sSL https://raw.githubusercontent.com/liferay/liferay-blade-cli/master/cli/installers/local | sh
+ENV PATH "$PATH:/home/node/jpm/bin"
+RUN blade update && \
+    blade version
+
+RUN npm i -g yarn \
+    && yarn global add yo && npm cache clean --force;
+
+RUN yarn global add generator-old-liferay-theme@npm:generator-liferay-theme@^8.0.0 \
+    && yarn global add generator-liferay-theme \
+    && yarn global add generator-liferay-js
+
+COPY --from=builder /workspace/target/*-runner /usr/bin/liferay-starter
+
+USER node
+EXPOSE 8080
+
+CMD ["/usr/bin/liferay-starter", "-Dquarkus.http.host=0.0.0.0"]

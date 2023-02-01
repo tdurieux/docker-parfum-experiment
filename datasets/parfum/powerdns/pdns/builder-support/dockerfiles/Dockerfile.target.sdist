@@ -1,0 +1,30 @@
+@IF [ -n "$M_authoritative$M_all" ]
+@INCLUDE Dockerfile.authoritative
+@ENDIF
+
+@IF [ -n "$M_recursor$M_all" ]
+@INCLUDE Dockerfile.recursor
+@ENDIF
+
+@IF [ -n "$M_dnsdist$M_all" ]
+@INCLUDE Dockerfile.dnsdist
+@ENDIF
+
+FROM alpine:3.10 as sdist
+ARG BUILDER_CACHE_BUSTER=
+
+@IF [ -z "$M_authoritative$M_recursor$M_dnsdist$M_all" ]
+RUN echo "no valid module specified! - please pick just one using -m {authoritative|recursor|dnsdist|all}" ; exit 1
+@ENDIF
+
+@IF [ -n "$M_authoritative$M_all" ]
+COPY --from=pdns-authoritative /sdist/ /sdist/
+@ENDIF
+
+@IF [ -n "$M_recursor$M_all" ]
+COPY --from=pdns-recursor /sdist/ /sdist/
+@ENDIF
+
+@IF [ -n "$M_dnsdist$M_all" ]
+COPY --from=dnsdist /sdist/ /sdist/
+@ENDIF

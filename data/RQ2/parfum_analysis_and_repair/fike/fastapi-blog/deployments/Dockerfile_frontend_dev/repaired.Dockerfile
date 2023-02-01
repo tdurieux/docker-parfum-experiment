@@ -1,0 +1,46 @@
+FROM node:lts-buster as deps
+
+ARG ENVIRONMENT
+
+ENV ENVIRONMENT=${ENVIRONMENT}
+
+RUN mkdir -p /opt/blog/frontend &&\
+    chown -R node: /opt/blog/frontend
+
+WORKDIR /opt/blog/frontend
+
+COPY frontend /opt/blog/frontend
+
+RUN yarn install && yarn cache clean;
+
+
+FROM node:lts-buster AS builder
+
+WORKDIR /opt/blog/frontend
+
+COPY frontend /opt/blog/frontend
+
+COPY --from=deps /opt/blog/frontend/node_modules ./node_modules
+
+RUN yarn build
+
+
+# FROM node:lts-buster AS runner
+
+# WORKDIR /opt/blog/frontend
+
+ARG ENVIRONMENT
+
+ENV ENVIRONMENT=${ENVIRONMENT}
+
+# COPY --from=builder /opt/blog/frontend/* /opt/blog/frontend/
+
+# COPY --from=builder /opt/blog/frontend/.next /opt/blog/frontend/.next
+
+# COPY --from=builder /opt/blog/frontend/node_modules /opt/blog/frontend/node_modules
+
+# COPY --from=builder /opt/blog/frontend/package.json /opt/blog/frontend/package.json
+
+EXPOSE 3000
+
+ENTRYPOINT yarn dev

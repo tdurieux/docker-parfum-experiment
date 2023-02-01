@@ -1,0 +1,35 @@
+{
+  "startTime": 1674251686469,
+  "endTime": 1674251687227,
+  "originalSmells": [
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 50,
+        "lineEnd": 50,
+        "columnStart": 27,
+        "columnEnd": 77
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 23,
+        "lineEnd": 30,
+        "columnStart": 4,
+        "columnEnd": 23
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 43,
+        "lineEnd": 46,
+        "columnStart": 4,
+        "columnEnd": 15
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "ARG FROM=ubuntu:18.04\nFROM ${FROM}\n\nLABEL org.opencontainers.image.authors='airship-discuss@lists.airshipit.org, irc://#airshipit@freenode'\nLABEL org.opencontainers.image.url='https://airshipit.org'\nLABEL org.opencontainers.image.documentation='https://github.com/openstack/airship-maas'\nLABEL org.opencontainers.image.source='https://git.openstack.org/openstack/airship-maas'\nLABEL org.opencontainers.image.vendor='The Airship Authors'\nLABEL org.opencontainers.image.licenses='Apache-2.0'\n\nARG HTTP_PROXY\nARG HTTPS_PROXY\nARG NO_PROXY\nARG http_proxy\nARG https_proxy\nARG no_proxy\n\nENV DEBIAN_FRONTEND noninteractive\nENV container docker\n\nENV MAAS_VERSION 2.8.7-8611-g.f2514168f-0ubuntu1~18.04.1\n\nRUN apt-get -qq update \\\n && apt-get install --no-install-recommends -y \\\n        avahi-daemon \\\n        jq \\\n        patch \\\n        software-properties-common \\\n        sudo \\\n        systemd \\\n        ca-certificates \\\n# Don't start any optional services except for the few we need.\n# (specifically, don't start avahi-daemon)\n && find /etc/systemd/system \\\n         /lib/systemd/system \\\n         -path '*.wants/*' \\\n         -not -name '*journald*' \\\n         -not -name '*systemd-tmpfiles*' \\\n         -not -name '*systemd-user-sessions*' \\\n         -exec rm \\{} \\; \\\n && systemctl set-default multi-user.target \\\n# Install maas from the ppa\n && add-apt-repository -yu ppa:maas/2.8 \\\n && apt-get install --no-install-recommends -y \\\n        maas-region-api=$MAAS_VERSION \\\n        # tcpdump is required by /usr/lib/maas/beacon-monitor\n        tcpdump \\\n && rm -rf /var/lib/apt/lists/*\n\n# Preserve the directory structure, permissions, and contents of /var/lib/maas\nRUN mkdir -p /opt/maas/ && tar -cvzf /opt/maas/var-lib-maas.tgz /var/lib/maas && rm /opt/maas/var-lib-maas.tgz\n\n# MAAS workarounds\nCOPY 2.8_route.patch /tmp/2.8_route.patch\nCOPY 2.8_kernel_package.patch /tmp/2.8_kernel_package.patch\nCOPY 2.8_bios_grub_partition.patch /tmp/2.8_bios_grub_partition.patch\n# sh8121att: allow all requests via the proxy to allow it to work\n# behind ingress\nCOPY 2.8_proxy_acl.patch /tmp/2.8_proxy_acl.patch\n# Patch to add retrying to MaaS BMC user setup, and improve exception handling\nCOPY 2.8_configure_ipmi_user.patch /tmp/2.8_configure_ipmi_user.patch\nCOPY 2.8_secure_headers.patch /tmp/2.8_secure_headers.patch\nCOPY 2.8_region_secret_rotate.patch /tmp/2.8_region_secret_rotate.patch\nCOPY 2.8_partitiontable_does_not_exist.patch /tmp/2.8_partitiontable_does_not_exist.patch\n# Avoid enlistment failures due to exceptions during moonshot detect attempts\nCOPY 2.8_maas_ipmi_autodetect_tool.patch /tmp/2.8_maas_ipmi_autodetect_tool.patch\n\nRUN cd /usr/lib/python3/dist-packages/maasserver && patch preseed_network.py < /tmp/2.8_route.patch\nRUN cd /usr/lib/python3/dist-packages/maasserver && patch preseed.py < /tmp/2.8_kernel_package.patch\nRUN cd /usr/lib/python3/dist-packages/maasserver/models && patch partition.py < /tmp/2.8_bios_grub_partition.patch\nRUN cd /usr/lib/python3/dist-packages/maasserver && patch security.py < /tmp/2.8_region_secret_rotate.patch\nRUN cd /usr/lib/python3/dist-packages/metadataserver/user_data/templates/snippets && patch maas_ipmi_autodetect.py < /tmp/2.8_configure_ipmi_user.patch\nRUN cd /usr/lib/python3/dist-packages/provisioningserver/templates/proxy && patch maas-proxy.conf.template < /tmp/2.8_proxy_acl.patch\nRUN cd /usr/lib/python3/dist-packages/twisted/web && patch server.py < /tmp/2.8_secure_headers.patch\nRUN cd /usr/lib/python3/dist-packages/maasserver/api && patch partitions.py < /tmp/2.8_partitiontable_does_not_exist.patch\nRUN cd /usr/lib/python3/dist-packages/metadataserver/user_data/templates/snippets/ && patch maas_ipmi_autodetect_tool.py < /tmp/2.8_maas_ipmi_autodetect_tool.patch\n\n# echo journalctl logs to the container's stdout\nCOPY journalctl-to-tty.service /etc/systemd/system/journalctl-to-tty.service\nRUN systemctl enable journalctl-to-tty.service\n\n# quiet sudo for the maas user\nRUN umask 0337; echo 'Defaults:maas !pam_session, !syslog' > /etc/sudoers.d/99-maas-no-log\n\n# avoid triggering bind9 high cpu utilization bug\nRUN sed -i -e '$a\\include \"/etc/bind/bind.keys\";' /etc/bind/named.conf\n\n# initalize systemd\nCMD [\"/bin/bash\", \"-c\", \"exec /sbin/init --log-target=console 3>&1\"]\n"
+}

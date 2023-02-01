@@ -1,0 +1,71 @@
+{
+  "startTime": 1674248803221,
+  "endTime": 1674248803540,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 32,
+        "lineEnd": 32,
+        "columnStart": 4,
+        "columnEnd": 50
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 39,
+        "lineEnd": 39,
+        "columnStart": 4,
+        "columnEnd": 73
+      }
+    },
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 58,
+        "lineEnd": 58,
+        "columnStart": 33,
+        "columnEnd": 44
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 15,
+        "lineEnd": 15,
+        "columnStart": 22,
+        "columnEnd": 82
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 35,
+        "lineEnd": 36,
+        "columnStart": 22,
+        "columnEnd": 251
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 15,
+        "lineEnd": 15,
+        "columnStart": 22,
+        "columnEnd": 82
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 35,
+        "lineEnd": 36,
+        "columnStart": 22,
+        "columnEnd": 251
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Download base image ubuntu 18.04\nFROM ubuntu:18.04\n\n# Define ENV Variables\nENV NGINX_VHOST /etc/nginx/sites-available/\nENV NGINX_CONF /etc/nginx/nginx.conf\nENV SUPERVISOR_CONF /etc/supervisor/supervisord.conf\nENV DEBIAN_FRONTEND noninteractive\nENV TZ=UTC\nENV INVOICENEKO_DIRECTORY /var/www/html/invoiceneko\n\n# Set Timezone\nRUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone\n\n# Update Software repository\nRUN apt-get update && apt-get install --no-install-recommends -y software-properties-common curl apt-utils \\\n    && { \\\n            echo debconf debconf/frontend select Noninteractive; \\\n            echo mysql-community-server mysql-community-server/data-dir \\\n                select ''; \\\n            echo mysql-community-server mysql-community-server/root-pass \\\n                password '347FE11595E31F2854CDFF51F53C093231997710'; \\\n            echo mysql-community-server mysql-community-server/re-root-pass \\\n                password '347FE11595E31F2854CDFF51F53C093231997710'; \\\n            echo mysql-community-server mysql-community-server/remove-test-db \\\n                select true; \\\n        } | debconf-set-selections && rm -rf /var/lib/apt/lists/*;\n\n# Add official nginx repository\nRUN add-apt-repository ppa:nginx/stable\n\n# Add NodeJS v11.x\nRUN curl -f -sL https://deb.nodesource.com/setup_10.x | bash -\n\n# Install nginx, php-fpm and supervisord from ubuntu repository\nRUN apt-get update && apt-get install --no-install-recommends -y nginx mysql-server supervisor git build-essential debconf-utils nodejs unzip xvfb autogen autoconf libtool pkg-config nasm \\\n    php7.2-common php7.2-cli php7.2-fpm php7.2-curl php7.2-json php7.2-mysql php7.2-readline php7.2-sqlite3 php7.2-tidy php7.2-xmlrpc php7.2-xsl php7.2-zip php7.2-mbstring php7.2-gd php7.2-soap php7.2-opcache php7.2-xml php7.2-bcmath php7.2 php7.2-bz2 && rm -rf /var/lib/apt/lists/*;\n\n# Install composer\nRUN curl -f https://getcomposer.org/composer.phar -o /usr/local/bin/composer && chmod +x /usr/local/bin/composer && composer self-update\n\n# Create the run-time directories\nRUN mkdir -p /run/php && \\\n    mkdir -p /var/run/mysqld && \\\n    chown -R mysql:mysql /var/run/mysqld && \\\n    chown -R www-data:www-data /var/www/html && \\\n    chown -R www-data:www-data /run/php\n\n# Clone InvoiceNeko\nRUN git clone https://github.com/poowf/invoiceneko.git /var/www/html/invoiceneko\n\n# Environment Setup\nCOPY docker/.env.docker ${INVOICENEKO_DIRECTORY}/.env\n\n# Install package dependencies\nRUN cd $INVOICENEKO_DIRECTORY && composer install --no-dev --no-interaction --prefer-dist --no-suggest && php artisan key:generate && php artisan storage:link\n\n## Generating build assets\nRUN cd $INVOICENEKO_DIRECTORY && npm install && npm run prod && npm cache clean --force;\n\n# Set application permissions\nRUN chown -R www-data:www-data /var/www/html && \\\n    find $INVOICENEKO_DIRECTORY -type f -exec chmod 664 {} \\; && \\\n    find $INVOICENEKO_DIRECTORY -type d -exec chmod 755 {} \\; && \\\n    chgrp -R www-data $INVOICENEKO_DIRECTORY/storage $INVOICENEKO_DIRECTORY/bootstrap/cache && \\\n    chmod -R ug+rwx $INVOICENEKO_DIRECTORY/storage $INVOICENEKO_DIRECTORY/bootstrap/cache && \\\n    chmod -R g+s $INVOICENEKO_DIRECTORY/storage $INVOICENEKO_DIRECTORY/bootstrap/cache && \\\n    touch $INVOICENEKO_DIRECTORY/storage/logs/laravel.log && \\\n    chmod 775 $INVOICENEKO_DIRECTORY/storage/logs/laravel.log\n\n# Volume configuration\nVOLUME [\"/etc/nginx/sites-enabled\", \"/etc/nginx/certs\", \"/etc/nginx/conf.d\", \"/var/log/nginx\", \"/var/lib/mysql\", \"/var/www/html\"]\n\n# Enable php-fpm on nginx virtualhost configuration\nARG CACHE_BUST=0\nCOPY docker/invoiceneko-nginx.conf ${NGINX_VHOST}/\nRUN echo \"\\ndaemon off;\" >> ${NGINX_CONF}\n\n# Copy supervisor configuration\nCOPY docker/supervisord.conf ${SUPERVISOR_CONF}\n\n# Copy bootstrapper script\nCOPY docker/bootstrapper.sh /usr/local/sbin/bootstrapper.sh\n\n# Configure Services and Port\nCOPY docker/start.sh /start.sh\nCMD [\"./start.sh\"]\n\nEXPOSE 80 443"
+}

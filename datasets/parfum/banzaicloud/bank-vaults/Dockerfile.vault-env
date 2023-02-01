@@ -1,0 +1,22 @@
+FROM golang:1.18.3-alpine AS builder
+
+RUN apk add --update --no-cache build-base git mercurial
+
+RUN mkdir -p /build
+WORKDIR /build
+
+COPY go.* /build/
+COPY pkg/sdk/go.* /build/pkg/sdk/
+RUN go mod download
+
+COPY . /build
+RUN CGO_ENABLED=0 go build ./cmd/vault-env
+
+
+FROM alpine:3.16.0
+
+RUN apk add --update --no-cache ca-certificates
+COPY --from=builder /build/vault-env /usr/local/bin/vault-env
+
+# Avoid running as root or named user, to satisfy PSPs
+USER 65534

@@ -1,0 +1,89 @@
+{
+  "startTime": 1674246260032,
+  "endTime": 1674246261585,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 50,
+        "lineEnd": 50,
+        "columnStart": 4,
+        "columnEnd": 144
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 30,
+        "lineEnd": 30,
+        "columnStart": 4,
+        "columnEnd": 23
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 44,
+        "lineEnd": 44,
+        "columnStart": 4,
+        "columnEnd": 33
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 48,
+        "lineEnd": 48,
+        "columnStart": 4,
+        "columnEnd": 64
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 77,
+        "lineEnd": 77,
+        "columnStart": 4,
+        "columnEnd": 59
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 78,
+        "lineEnd": 78,
+        "columnStart": 4,
+        "columnEnd": 57
+      }
+    },
+    {
+      "rule": "mkdirUsrSrcThenRemove",
+      "position": {
+        "lineStart": 46,
+        "lineEnd": 46,
+        "columnStart": 4,
+        "columnEnd": 25
+      }
+    },
+    {
+      "rule": "sha256sumEchoOneSpaces",
+      "position": {
+        "lineStart": 19,
+        "lineEnd": 19,
+        "columnStart": 4,
+        "columnEnd": 57
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 34,
+        "lineEnd": 34,
+        "columnStart": 4,
+        "columnEnd": 26
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM python:3.9 as tikv_driver\n\nENV RUSTUP_HOME=/usr/local/rustup \\\n    CARGO_HOME=/usr/local/cargo \\\n    PATH=/usr/local/cargo/bin:$PATH \\\n    RUST_VERSION=1.57.0 \\\n    CLIENT_VERSION=0.0.3\n\nRUN set -eux; \\\n    dpkgArch=\"$(dpkg --print-architecture)\"; \\\n    case \"${dpkgArch##*-}\" in \\\n        amd64) rustArch='x86_64-unknown-linux-gnu'; rustupSha256='3dc5ef50861ee18657f9db2eeb7392f9c2a6c95c90ab41e45ab4ca71476b4338' ;; \\\n        armhf) rustArch='armv7-unknown-linux-gnueabihf'; rustupSha256='67777ac3bc17277102f2ed73fd5f14c51f4ca5963adadf7f174adf4ebc38747b' ;; \\\n        arm64) rustArch='aarch64-unknown-linux-gnu'; rustupSha256='32a1532f7cef072a667bac53f1a5542c99666c4071af0c9549795bbdb2069ec1' ;; \\\n        i386) rustArch='i686-unknown-linux-gnu'; rustupSha256='e50d1deb99048bc5782a0200aa33e4eea70747d49dffdc9d06812fd22a372515' ;; \\\n        *) echo >&2 \"unsupported architecture: ${dpkgArch}\"; exit 1 ;; \\\n    esac; \\\n    url=\"https://static.rust-lang.org/rustup/archive/1.24.3/${rustArch}/rustup-init\"; \\\n    wget \"$url\"; \\\n    echo \"${rustupSha256}  *rustup-init\" | sha256sum -c -; \\\n    chmod +x rustup-init; \\\n    ./rustup-init -y --no-modify-path --profile minimal --default-toolchain $RUST_VERSION --default-host ${rustArch}; \\\n    rm rustup-init; \\\n    chmod -R a+w $RUSTUP_HOME $CARGO_HOME; \\\n    rustup --version; \\\n    cargo --version; \\\n    rustc --version;\n\nRUN apt-get update -y && apt-get install --yes --no-install-recommends  cmake && apt-get clean && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*\n\nRUN pip install --no-cache-dir maturin\n\nRUN set -eux; \\\n    wget \"https://github.com/tikv/client-py/archive/refs/tags/${CLIENT_VERSION}.tar.gz\"; \\\n    tar -xzf 0.0.3.tar.gz; rm 0.0.3.tar.gz \\\n    cd client-py-${CLIENT_VERSION}; \\\n    maturin build; \\\n    cp target/wheels/tikv_client-${CLIENT_VERSION}-*.whl /\n\n# --------------------------------------------\n\nFROM python:3.9\n\nCOPY --from=tikv_driver /tikv_client*.whl /\nRUN pip install --no-cache-dir tikv_client-*.whl\n\nRUN mkdir -p /usr/src/app && rm -rf /usr/src/app\n\nRUN pip install --no-cache-dir Cython==0.29.24 pybind11 gunicorn uvicorn uvloop\n\nRUN curl -f -L -o /bin/grpc_health_probe https://github.com/grpc-ecosystem/grpc-health-probe/releases/download/v0.3.1/grpc_health_probe-linux-amd64 && \\\n    chmod +x /bin/grpc_health_probe\n\n# Copy requirements from all packages to install them before\n# transfering the source code.\nCOPY nucliadb_utils/requirements.txt /usr/src/app/requirements-utils.txt\nCOPY nucliadb_protos/python/requirements.txt /usr/src/app/requirements-protos.txt\nCOPY nucliadb_ingest/requirements.txt /usr/src/app/requirements-ingest.txt\n\nRUN set -eux; \\\n    pip install --no-cache-dir \\\n    -r /usr/src/app/requirements-utils.txt \\\n    -r /usr/src/app/requirements-protos.txt \\\n    -r /usr/src/app/requirements-ingest.txt\n\n# Copy source code\nCOPY nucliadb_cluster /usr/src/app/nucliadb_cluster\nCOPY nucliadb_utils /usr/src/app/nucliadb_utils\nCOPY nucliadb_protos /usr/src/app/nucliadb_protos\nCOPY nucliadb_ingest /usr/src/app/nucliadb_ingest\n\nCOPY test_logging.ini /\nCOPY nucliadb_ingest/entrypoint.sh /\nRUN chmod 750 /entrypoint.sh\n\nWORKDIR /usr/src/app\n\nRUN pip install --no-cache-dir -r nucliadb_ingest/requirements-sources.txt\nRUN pip install --no-cache-dir --no-deps -e /usr/src/app/nucliadb_ingest\n\n# METRICS\nEXPOSE 8081/tcp\n# GRPC\nEXPOSE 8030/tcp\n"
+}

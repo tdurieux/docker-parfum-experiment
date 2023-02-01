@@ -1,0 +1,21 @@
+# SPDX-License-Identifier: BSD-3-Clause
+# Copyright © 2020 Fragcolor Pte. Ltd.
+
+FROM ubuntu:20.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get -y update
+RUN apt-get -y --no-install-recommends install tzdata && rm -rf /var/lib/apt/lists/*;
+RUN apt-get -y --no-install-recommends install libboost-context1.71.0 libboost-filesystem1.71.0 libssl1.1 libx11-6 libgl1 ca-certificates && rm -rf /var/lib/apt/lists/*;
+
+ARG USER_ID=1000
+
+RUN useradd -ms /bin/bash -u ${USER_ID} chainblocks
+
+USER chainblocks
+
+WORKDIR /home/chainblocks
+
+COPY --chown=chainblocks ./build/cbl /usr/bin/cbl
+
+ENV HOME=/home/chainblocks

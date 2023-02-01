@@ -1,0 +1,34 @@
+#
+# Copyright 2018-2022 Intel Corporation
+#
+# 'recipe' for Docker to build an RPM
+#
+
+# Pull base image
+FROM fedora:latest
+LABEL maintainer="daos@daos.groups.io"
+
+# Use local repo server if present
+ARG REPO_FILE_URL
+RUN if [ -n "$REPO_FILE_URL" ]; then                            \
+        cd /etc/yum.repos.d/ &&                                 \
+        curl -f -o daos_ci-fedora-artifactory.repo.tmp          \
+             "$REPO_FILE_URL"daos_ci-fedora-artifactory.repo && \
+        rm -f *.repo &&                                         \
+        mv daos_ci-fedora-artifactory.repo{.tmp,};              \
+    fi
+
+# Install basic tools
+RUN dnf -y install mock make \
+                   rpm-build createrepo rpmlint redhat-lsb-core git \
+                   python-srpm-macros rpmdevtools
+
+# use same UID as host and default value of 1000 if not specified
+ARG UID=1000
+
+# Add build user (to keep rpmbuild happy)
+ENV USER build
+ENV PASSWD build
+RUN useradd -u $UID -ms /bin/bash $USER
+RUN echo "$USER:$PASSWD" | chpasswd
+# add the user to the mock group so it can run mock

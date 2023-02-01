@@ -1,0 +1,25 @@
+# use alpine linux with standard python-3.9
+FROM python:3.9-slim
+
+# install necessities and c compilers for msSQL drivers compilation
+RUN apt-get -y update && apt-get -y upgrade && apt-get -y --no-install-recommends install g++ gcc && rm -rf /var/lib/apt/lists/*;
+
+# open up port 5000
+EXPOSE 5000
+
+# set working directory
+WORKDIR /server
+
+# copy files over
+COPY requirements.txt /server/requirements.txt
+
+# set env variables
+ENV FLASK_ENV development
+ENV DEBUG true
+
+# install python dependencies
+RUN pip install --no-cache-dir functions-framework
+RUN pip install --no-cache-dir -r requirements.txt
+
+# spin up gcloud functions server
+CMD ["functions-framework", "--target=dispatcher", "--port=5000", "--debug"]

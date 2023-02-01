@@ -1,0 +1,62 @@
+{
+  "startTime": 1674249888123,
+  "endTime": 1674249889666,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 35,
+        "lineEnd": 35,
+        "columnStart": 4,
+        "columnEnd": 100
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 36,
+        "lineEnd": 36,
+        "columnStart": 4,
+        "columnEnd": 110
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 45,
+        "lineEnd": 45,
+        "columnStart": 4,
+        "columnEnd": 161
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 47,
+        "lineEnd": 47,
+        "columnStart": 4,
+        "columnEnd": 59
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 16,
+        "lineEnd": 16,
+        "columnStart": 24,
+        "columnEnd": 78
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 16,
+        "lineEnd": 16,
+        "columnStart": 24,
+        "columnEnd": 78
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "################################################################################\n# This Dockerfile was generated from the template at distribution/src/docker/Dockerfile\n#\n# Beginning of multi stage Dockerfile\n################################################################################\n\n################################################################################\n# Build stage 1 `builder`:\n# Extract Elasticsearch artifact\n################################################################################\n\nFROM ubuntu:20.04 AS builder\n\n# Install required packages to extract the Elasticsearch distribution\n\nRUN for iter in 1 2 3 4 5 6 7 8 9 10; do \\\n      apt-get update && DEBIAN_FRONTEND=noninteractive apt-get --no-install-recommends install -y curl && \\\n      exit_code=0 && break || \\\n        exit_code=$? && echo \"apt-get error: retry $iter in 10s\" && sleep 10; \\\n    done; rm -rf /var/lib/apt/lists/*; \\\n    exit $exit_code\n\n# `tini` is a tiny but valid init for containers. This is used to cleanly\n# control how ES and any child processes are shut down.\n#\n# The tini GitHub page gives instructions for verifying the binary using\n# gpg, but the keyservers are slow to return the key and this can fail the\n# build. Instead, we check the binary against the published checksum.\nRUN set -eux ; \\\n    tini_bin=\"\" ; \\\n    case \"$(arch)\" in \\\n        aarch64) tini_bin='tini-arm64' ;; \\\n        x86_64)  tini_bin='tini-amd64' ;; \\\n        *) echo >&2 ; echo >&2 \"Unsupported architecture $(arch)\" ; echo >&2 ; exit 1 ;; \\\n    esac ; \\\n    curl -f --retry 10 -S -L -O https://github.com/krallin/tini/releases/download/v0.19.0/${tini_bin}; \\\n    curl -f --retry 10 -S -L -O https://github.com/krallin/tini/releases/download/v0.19.0/${tini_bin}.sha256sum; \\\n    sha256sum -c ${tini_bin}.sha256sum ; \\\n    rm ${tini_bin}.sha256sum ; \\\n    mv ${tini_bin} /bin/tini ; \\\n    chmod 0555 /bin/tini\n\nRUN mkdir /usr/share/elasticsearch\nWORKDIR /usr/share/elasticsearch\n\nRUN curl -f --retry 10 -S -L --output /tmp/elasticsearch.tar.gz https://artifacts-no-kpi.elastic.co/downloads/elasticsearch/elasticsearch-8.3.2-linux-$(arch).tar.gz\n\nRUN tar -zxf /tmp/elasticsearch.tar.gz --strip-components=1 && rm /tmp/elasticsearch.tar.gz\n\n# The distribution includes a `config` directory, no need to create it\nCOPY config/elasticsearch.yml config/\nCOPY config/log4j2.properties config/log4j2.docker.properties\n\n#  1. Configure the distribution for Docker\n#  2. Create required directory\n#  3. Move the distribution's default logging config aside\n#  4. Move the generated docker logging config so that it is the default\n#  5. Reset permissions on all directories\n#  6. Reset permissions on all files\n#  7. Make CLI tools executable\n#  8. Make some directories writable. `bin` must be writable because\n#     plugins can install their own CLI utilities.\n#  9. Make some files writable\nRUN sed -i -e 's/ES_DISTRIBUTION_TYPE=tar/ES_DISTRIBUTION_TYPE=docker/' bin/elasticsearch-env && \\\n    mkdir data && \\\n    mv config/log4j2.properties config/log4j2.file.properties && \\\n    mv config/log4j2.docker.properties config/log4j2.properties && \\\n    find . -type d -exec chmod 0555 {} + && \\\n    find . -type f -exec chmod 0444 {} + && \\\n    chmod 0555 bin/* jdk/bin/* jdk/lib/jspawnhelper modules/x-pack-ml/platform/linux-*/bin/* && \\\n    chmod 0775 bin config config/jvm.options.d data logs plugins && \\\n    find config -type f -exec chmod 0664 {} +\n\n################################################################################\n# Build stage 2 (the actual Elasticsearch image):\n#\n# Copy elasticsearch from stage 1\n# Add entrypoint\n################################################################################\n\nFROM ubuntu:20.04\n\n# Change default shell to bash, then install required packages with retries.\nRUN yes no | dpkg-reconfigure dash && \\\n    for iter in 1 2 3 4 5 6 7 8 9 10; do \\\n      export DEBIAN_FRONTEND=noninteractive && \\\n      apt-get update && \\\n      apt-get upgrade -y && \\\n      apt-get install -y --no-install-recommends \\\n        ca-certificates curl netcat p11-kit unzip vim-tiny zip  && \\\n      apt-get clean && \\\n      rm -rf /var/lib/apt/lists/* && \\\n      exit_code=0 && break || \\\n        exit_code=$? && echo \"apt-get error: retry $iter in 10s\" && sleep 10; \\\n    done; \\\n    exit $exit_code\n\nRUN groupadd -g 1000 elasticsearch && \\\n    adduser --uid 1000 --gid 1000 --home /usr/share/elasticsearch elasticsearch && \\\n    adduser elasticsearch root && \\\n    chown -R 0:0 /usr/share/elasticsearch\n\nENV ELASTIC_CONTAINER true\n\nWORKDIR /usr/share/elasticsearch\n\nCOPY --from=builder --chown=0:0 /usr/share/elasticsearch /usr/share/elasticsearch\nCOPY --from=builder --chown=0:0 /bin/tini /bin/tini\n\nENV PATH /usr/share/elasticsearch/bin:$PATH\n\nCOPY bin/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh\n\n# 1. Sync the user and group permissions of /etc/passwd\n# 2. Set correct permissions of the entrypoint\n# 3. Ensure that there are no files with setuid or setgid, in order to mitigate \"stackclash\" attacks.\n#    We've already run this in previous layers so it ought to be a no-op.\n# 4. Replace OpenJDK's built-in CA certificate keystore with the one from the OS\n#    vendor. The latter is superior in several ways.\n#    REF: https://github.com/elastic/elasticsearch-docker/issues/171\n# 5. Tighten up permissions on the ES home dir (the permissions of the contents are handled earlier)\n# 6. You can't install plugins that include configuration when running as `elasticsearch` and the `config`\n#    dir is owned by `root`, because the installed tries to manipulate the permissions on the plugin's\n#    config directory.\nRUN chmod g=u /etc/passwd && \\\n    chmod 0555 /usr/local/bin/docker-entrypoint.sh && \\\n    find / -xdev -perm -4000 -exec chmod ug-s {} + && \\\n    chmod 0775 /usr/share/elasticsearch && \\\n    chown elasticsearch bin config config/jvm.options.d data logs plugins\n\n# Update \"cacerts\" bundle to use Ubuntu's CA certificates (and make sure it\n# stays up-to-date with changes to Ubuntu's store)\nCOPY bin/docker-openjdk /etc/ca-certificates/update.d/docker-openjdk\nRUN /etc/ca-certificates/update.d/docker-openjdk\n\nEXPOSE 9200 9300\n\nLABEL org.label-schema.build-date=\"2022-07-06T18:43:46.958800049Z\" \\\n  org.label-schema.license=\"Elastic-License-2.0\" \\\n  org.label-schema.name=\"Elasticsearch\" \\\n  org.label-schema.schema-version=\"1.0\" \\\n  org.label-schema.url=\"https://www.elastic.co/products/elasticsearch\" \\\n  org.label-schema.usage=\"https://www.elastic.co/guide/en/elasticsearch/reference/index.html\" \\\n  org.label-schema.vcs-ref=\"8b0b1f23fbebecc3c88e4464319dea8989f374fd\" \\\n  org.label-schema.vcs-url=\"https://github.com/elastic/elasticsearch\" \\\n  org.label-schema.vendor=\"Elastic\" \\\n  org.label-schema.version=\"8.3.2\" \\\n  org.opencontainers.image.created=\"2022-07-06T18:43:46.958800049Z\" \\\n  org.opencontainers.image.documentation=\"https://www.elastic.co/guide/en/elasticsearch/reference/index.html\" \\\n  org.opencontainers.image.licenses=\"Elastic-License-2.0\" \\\n  org.opencontainers.image.revision=\"8b0b1f23fbebecc3c88e4464319dea8989f374fd\" \\\n  org.opencontainers.image.source=\"https://github.com/elastic/elasticsearch\" \\\n  org.opencontainers.image.title=\"Elasticsearch\" \\\n  org.opencontainers.image.url=\"https://www.elastic.co/products/elasticsearch\" \\\n  org.opencontainers.image.vendor=\"Elastic\" \\\n  org.opencontainers.image.version=\"8.3.2\"\n\n# Our actual entrypoint is `tini`, a minimal but functional init program. It\n# calls the entrypoint we provide, while correctly forwarding signals.\nENTRYPOINT [\"/bin/tini\", \"--\", \"/usr/local/bin/docker-entrypoint.sh\"]\n# Dummy overridable parameter parsed by entrypoint\nCMD [\"eswrapper\"]\n\nUSER elasticsearch:root\n\n################################################################################\n# End of multi-stage Dockerfile\n################################################################################\n"
+}

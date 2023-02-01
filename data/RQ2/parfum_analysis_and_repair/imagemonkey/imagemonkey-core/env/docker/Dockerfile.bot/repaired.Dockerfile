@@ -1,0 +1,18 @@
+FROM golang:1.14.4-buster
+
+RUN mkdir -p /home/go/bin
+ENV GOPATH=/home/go
+ENV GOBIN=/home/go/bin
+
+COPY src/commons /tmp/src/commons
+COPY src/datastructures /tmp/src/datastructures
+COPY src/bot.go /tmp/src/bot.go
+COPY src/go.mod /tmp/src/go.mod
+COPY src/go.sum /tmp/src/go.sum
+
+RUN cd /tmp/src/ && go install bot.go
+
+RUN mkdir -p /home/imagemonkey/bin/ \
+	&& mv /home/go/bin/bot /home/imagemonkey/bin/bot
+
+WORKDIR /home/imagemonkey/bin/

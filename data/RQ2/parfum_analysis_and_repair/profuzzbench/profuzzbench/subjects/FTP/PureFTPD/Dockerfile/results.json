@@ -1,0 +1,126 @@
+{
+  "startTime": 1674250811813,
+  "endTime": 1674250813096,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 31,
+        "lineEnd": 31,
+        "columnStart": 4,
+        "columnEnd": 26
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 80,
+        "lineEnd": 80,
+        "columnStart": 4,
+        "columnEnd": 199
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 90,
+        "lineEnd": 90,
+        "columnStart": 4,
+        "columnEnd": 220
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 5,
+        "lineEnd": 23,
+        "columnStart": 4,
+        "columnEnd": 8
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 67,
+        "lineEnd": 67,
+        "columnStart": 4,
+        "columnEnd": 27
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 106,
+        "lineEnd": 106,
+        "columnStart": 4,
+        "columnEnd": 26
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 67,
+        "lineEnd": 67,
+        "columnStart": 4,
+        "columnEnd": 27
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 106,
+        "lineEnd": 106,
+        "columnStart": 4,
+        "columnEnd": 26
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 5,
+        "lineEnd": 23,
+        "columnStart": 4,
+        "columnEnd": 8
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 67,
+        "lineEnd": 67,
+        "columnStart": 4,
+        "columnEnd": 27
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 106,
+        "lineEnd": 106,
+        "columnStart": 4,
+        "columnEnd": 26
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 67,
+        "lineEnd": 67,
+        "columnStart": 4,
+        "columnEnd": 51
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 106,
+        "lineEnd": 106,
+        "columnStart": 4,
+        "columnEnd": 50
+      }
+    }
+  ],
+  "repairedDockerfile": "FROM ubuntu:20.04\n\n# Install common dependencies\nENV DEBIAN_FRONTEND=noninteractive\nRUN apt-get -y update && \\\n    apt-get -y --no-install-recommends install sudo \\\n    apt-utils \\\n    build-essential \\\n    openssl \\\n    clang \\\n    graphviz-dev \\\n    git \\\n    autoconf \\\n    libgnutls28-dev \\\n    libssl-dev \\\n    llvm \\\n    python3-pip \\\n    nano \\\n    net-tools \\\n    vim \\\n    gdb \\\n    netcat \\\n    strace \\\n    wget && rm -rf /var/lib/apt/lists/*;\n\n# Add a new user ubuntu, pass: ubuntu\nRUN groupadd ubuntu && \\\n    useradd -rm -d /home/ubuntu -s /bin/bash -g ubuntu -G sudo -u 1000 ubuntu -p \"$(openssl passwd -1 ubuntu)\"\n\nRUN chmod 777 /tmp\n\nRUN pip install --no-cache-dir gcovr==4.2\n\n# Use ubuntu as default username\nUSER ubuntu\nWORKDIR /home/ubuntu\n\n# Import environment variable to pass as parameter to make (e.g., to make parallel builds with -j)\nARG MAKE_OPT\n\n# Set up fuzzers\nRUN git clone https://github.com/profuzzbench/aflnet.git && \\\n    cd aflnet && \\\n    make clean all $MAKE_OPT && \\\n    cd llvm_mode && make $MAKE_OPT\n\nRUN git clone https://github.com/profuzzbench/aflnwe.git && \\\n    cd aflnwe && \\\n    make clean all $MAKE_OPT && \\\n    cd llvm_mode && make $MAKE_OPT\n\n# Set up environment variables for AFLNet\nENV WORKDIR=\"/home/ubuntu/experiments\"\nENV AFLNET=\"/home/ubuntu/aflnet\"\nENV PATH=\"${PATH}:${AFLNET}:/home/ubuntu/.local/bin:${WORKDIR}\"\nENV AFL_PATH=\"${AFLNET}\"\nENV AFL_I_DONT_CARE_ABOUT_MISSING_CRASHES=1 \\\n    AFL_SKIP_CPUFREQ=1 \\\n    AFL_NO_AFFINITY=1\n\n\nRUN mkdir $WORKDIR\n\nCOPY --chown=ubuntu:ubuntu fuzzing.patch ${WORKDIR}/fuzzing.patch\nCOPY --chown=ubuntu:ubuntu gcov.patch ${WORKDIR}/gcov.patch\n\nUSER root\nRUN apt -y --no-install-recommends install automake && rm -rf /var/lib/apt/lists/*;\nUSER ubuntu\n\n# Set up environment variables for ASAN\nenv ASAN_OPTIONS='abort_on_error=1:symbolize=0:detect_leaks=0:detect_stack_use_after_return=1:detect_container_overflow=0:poison_array_cookie=0:malloc_fill_byte=0:max_malloc_fill_size=16777216'\n\n# Set up PureFTPD for fuzzing\nRUN cd ${WORKDIR} && \\\n    git clone https://github.com/jedisct1/pure-ftpd.git && \\\n    cd pure-ftpd && \\\n    git checkout c21b45f && \\\n    patch -p1 < ${WORKDIR}/fuzzing.patch && \\\n    ./autogen.sh && \\\n    CC=\"afl-clang-fast\" CXX=\"afl-clang-fast++\" CFLAGS=\"-fsanitize=address -g -O0\" CXXFLAGS=\"-fsanitize=address -g -O0\" LDFLAGS=\"-fsanitize=address\" ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" --without-privsep -without-capabilities && \\\n    make $MAKE_OPT\n\n# Set up PureFTPD for coverage analysis\nRUN cd ${WORKDIR} && \\\n    git clone https://github.com/jedisct1/pure-ftpd.git pure-ftpd-gcov && \\\n    cd pure-ftpd-gcov && \\\n    git checkout c21b45f && \\\n    patch -p1 < ${WORKDIR}/gcov.patch && \\\n    ./autogen.sh && \\\n    CFLAGS=\"-fprofile-arcs -ftest-coverage\" CPPFLAGS=\"-fprofile-arcs -ftest-coverage\" CXXFLAGS=\"-fprofile-arcs -ftest-coverage\" LDFLAGS=\"-fprofile-arcs -ftest-coverage\" ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" --without-privsep -without-capabilities && \\\n    make $MAKE_OPT\n\nCOPY --chown=ubuntu:ubuntu in-ftp ${WORKDIR}/in-ftp\nCOPY --chown=ubuntu:ubuntu ftp.dict ${WORKDIR}/ftp.dict\nCOPY --chown=ubuntu:ubuntu run.sh ${WORKDIR}/run\nCOPY --chown=ubuntu:ubuntu clean.sh ${WORKDIR}/clean\nCOPY --chown=ubuntu:ubuntu cov_script.sh ${WORKDIR}/cov_script\n\n# Switch default user to root\nUSER root\nWORKDIR /home/ubuntu\n\nRUN useradd -rm -d /home/fuzzing -s /bin/bash -g ubuntu -G sudo -u 1001 fuzzing -p \"$(openssl passwd -1 fuzzing)\"\n\n# For debugging purposes\nRUN apt-get -y --no-install-recommends install ftp && rm -rf /var/lib/apt/lists/*;\n"
+}

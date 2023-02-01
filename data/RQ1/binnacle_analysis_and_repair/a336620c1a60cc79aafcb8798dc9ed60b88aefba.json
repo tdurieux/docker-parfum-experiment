@@ -1,0 +1,62 @@
+{
+  "startTime": 1674241340809,
+  "endTime": 1674241340934,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 42,
+        "lineEnd": 42,
+        "columnStart": 4,
+        "columnEnd": 168
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 50,
+        "lineEnd": 50,
+        "columnStart": 152,
+        "columnEnd": 362
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 55,
+        "lineEnd": 55,
+        "columnStart": 4,
+        "columnEnd": 163
+      }
+    },
+    {
+      "rule": "curlUseHttpsUrl",
+      "position": {
+        "lineStart": 55,
+        "lineEnd": 55,
+        "columnStart": 4,
+        "columnEnd": 163
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 80,
+        "lineEnd": 80,
+        "columnStart": 4,
+        "columnEnd": 39
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 81,
+        "lineEnd": 81,
+        "columnStart": 7,
+        "columnEnd": 32
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "#\n# Copyright 2014-2015 Red Hat, Inc. and/or its affiliates\n# and other contributors as indicated by the @author tags.\n#\n# Licensed under the Apache License, Version 2.0 (the \"License\");\n# you may not use this file except in compliance with the License.\n# You may obtain a copy of the License at\n#\n#    http://www.apache.org/licenses/LICENSE-2.0\n#\n# Unless required by applicable law or agreed to in writing, software\n# distributed under the License is distributed on an \"AS IS\" BASIS,\n# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.\n# See the License for the specific language governing permissions and\n# limitations under the License.\n#\n\n# Hawkular-Metrics DockerFile\n#\n# This dockerfile can be used to create a Hawkular-Metrics docker\n# image to be run on Openshift.\n\nFROM jboss/wildfly:11.0.0.Final\n\n# The image is maintained by the Hawkular Metrics team\nMAINTAINER Hawkular Metrics <hawkular-dev@lists.jboss.org>\n\n#\nENV HAWKULAR_METRICS_ENDPOINT_PORT=\"8080\" \\\n    HAWKULAR_METRICS_VERSION=\"0.31.0.Final\" \\\n    HAWKULAR_METRICS_DIRECTORY=\"/opt/hawkular\" \\\n    HAWKULAR_METRICS_SCRIPT_DIRECTORY=\"/opt/hawkular/scripts/\" \\\n    PATH=$PATH:$HAWKULAR_METRICS_SCRIPT_DIRECTORY \\\n    JAVA_OPTS_APPEND=\"-XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/tmp/heapdump\"\n\nARG DEV_BUILD=\"false\"\n\n# The http and https ports\nEXPOSE 8080 8444\n\n# Set up the Prometheus endpoint for monitoring\nRUN cd $JBOSS_HOME/bin && \\\n    curl -f -Lo $JBOSS_HOME/bin/jmx_prometheus_javaagent.jar https://repo1.maven.org/maven2/io/prometheus/jmx/jmx_prometheus_javaagent/0.9/jmx_prometheus_javaagent-0.9.jar\nCOPY prometheus.yaml $JBOSS_HOME/standalone/configuration/prometheus.yaml\n\nRUN mkdir /tmp/hawkular\nCOPY dev/* /tmp/hawkular/\n\n# Get and copy the hawkular metrics war to the deployment directory\nRUN cd $JBOSS_HOME/standalone/deployments/ && \\\n    if [ ${DEV_BUILD} = \"true\" ] && [ -s /tmp/hawkular/hawkular-metrics.war ];then mv /tmp/hawkular/hawkular-metrics.war .; rm -rf /tmp/hawkular;else curl -f -Lo hawkular-metrics.war https://origin-repository.jboss.org/nexus/service/local/artifact/maven/content?r=public\\&g=org.hawkular.metrics\\&a=hawkular-metrics-openshift\\&e=war\\&v=${HAWKULAR_METRICS_VERSION}; fi\n\n# Enable http2/spdy\n# TODO: remove when we are running on JDK9 which will already have this support added\nENV ALPN_VERSION=\"8.1.9.v20160720\"\nRUN curl -f -Lo $JBOSS_HOME/bin/alpn-boot-$ALPN_VERSION.jar https://central.maven.org/maven2/org/mortbay/jetty/alpn/alpn-boot/$ALPN_VERSION/alpn-boot-$ALPN_VERSION.jar && \\\n    echo 'JAVA_OPTS=\"$JAVA_OPTS' \" -Xbootclasspath/p:$JBOSS_HOME/bin/alpn-boot-$ALPN_VERSION.jar\" '\"' >> $JBOSS_HOME/bin/standalone.conf\n\n# Copy the scripts\nCOPY hawkular-metrics-readiness.py \\\n     hawkular-metrics-liveness.py \\\n     hawkular-metrics-wrapper.sh \\\n     hawkular-client-initialization.py \\\n     client \\\n     $HAWKULAR_METRICS_SCRIPT_DIRECTORY\n\nCOPY standalone.conf \\\n     $JBOSS_HOME/bin/\n\n# Overwrite the welcome-content to display a more appropriate status page\nCOPY welcome-content $JBOSS_HOME/welcome-content/\n\n# Overwrite the default Standalone.xml file with one that activates the HTTPS endpoint\nCOPY standalone.xml $JBOSS_HOME/standalone/configuration/standalone.xml\n\n# Overwrite the default logging.properties file\nCOPY logging.properties $JBOSS_HOME/standalone/configuration/logging.properties\n\n# Install Hawkular-Metrics Python client, only available on EPEL\nUSER root\nRUN yum -y install openssl epel-release \\\n    && yum -y install python-pip \\\n    && yum clean all \\\n    && pip install --no-cache-dir 'hawkular-client==0.5.2' && rm -rf /var/cache/yum\n\n# Change the permissions so that the user running the image can start up Hawkular Metrics\nRUN chmod -R 777 /opt\nUSER 1000\n\n## remove this ugly hack as soon as Hawkular ships with JGroups 3.6.12 or higher\n## we need it because of JGRP-2152\n#RUN cd $JBOSS_HOME/modules/system/layers/base/org/jgroups/main && \\\n#    curl https://repo1.maven.org/maven2/org/jgroups/jgroups/3.6.12.Final/jgroups-3.6.12.Final.jar -o jgroups-3.6.10.Final.jar\n\nCMD $HAWKULAR_METRICS_SCRIPT_DIRECTORY/hawkular-metrics-wrapper.sh -b 0.0.0.0 -Dhawkular-metrics.cassandra-nodes=hawkular-cassandra\n"
+}

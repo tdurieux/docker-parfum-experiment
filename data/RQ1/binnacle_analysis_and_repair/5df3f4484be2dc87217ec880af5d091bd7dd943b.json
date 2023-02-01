@@ -1,0 +1,44 @@
+{
+  "startTime": 1674251668744,
+  "endTime": 1674251669165,
+  "originalSmells": [
+    {
+      "rule": "wgetUseHttpsUrl",
+      "position": {
+        "lineStart": 26,
+        "lineEnd": 26,
+        "columnStart": 5,
+        "columnEnd": 115
+      }
+    },
+    {
+      "rule": "wgetUseHttpsUrl",
+      "position": {
+        "lineStart": 31,
+        "lineEnd": 31,
+        "columnStart": 5,
+        "columnEnd": 85
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 69,
+        "lineEnd": 69,
+        "columnStart": 5,
+        "columnEnd": 46
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 13,
+        "lineEnd": 25,
+        "columnStart": 5,
+        "columnEnd": 8
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM rocker/r-ver:3.5.1\n\nARG RSTUDIO_VERSION\nENV RSTUDIO_VERSION=${RSTUDIO_VERSION:-1.1.463}\nARG S6_VERSION\nENV S6_VERSION=${S6_VERSION:-v1.21.7.0}\nENV S6_BEHAVIOUR_IF_STAGE2_FAILS=2\nENV PATH=/usr/lib/rstudio-server/bin:$PATH\n\n## Download and install RStudio server & dependencies\n## Attempts to get detect latest version, otherwise falls back to version given in $VER\n## Symlink pandoc, pandoc-citeproc so they are available system-wide\nRUN apt-get update \\\n  && apt-get install -y --no-install-recommends \\\n    file \\\n    git \\\n    libapparmor1 \\\n    libcurl4-openssl-dev \\\n    libedit2 \\\n    libssl-dev \\\n    lsb-release \\\n    psmisc \\\n    procps \\\n    python-setuptools \\\n    sudo \\\n    wget \\\n  && wget -O libssl1.0.0.deb https://ftp.debian.org/debian/pool/main/o/openssl/libssl1.0.0_1.0.1t-1+deb8u8_amd64.deb \\\n  && dpkg -i libssl1.0.0.deb \\\n  && rm libssl1.0.0.deb \\\n  && RSTUDIO_LATEST=$(wget --no-check-certificate -qO- https://s3.amazonaws.com/rstudio-server/current.ver) \\\n  && [ -z \"$RSTUDIO_VERSION\" ] && RSTUDIO_VERSION=$RSTUDIO_LATEST || true \\\n  && wget -q https://download2.rstudio.org/rstudio-server-${RSTUDIO_VERSION}-amd64.deb \\\n  && dpkg -i rstudio-server-${RSTUDIO_VERSION}-amd64.deb \\\n  && rm rstudio-server-*-amd64.deb \\\n  ## Symlink pandoc & standard pandoc templates for use system-wide\n  && ln -s /usr/lib/rstudio-server/bin/pandoc/pandoc /usr/local/bin \\\n  && ln -s /usr/lib/rstudio-server/bin/pandoc/pandoc-citeproc /usr/local/bin \\\n  && git clone https://github.com/jgm/pandoc-templates \\\n  && mkdir -p /opt/pandoc/templates \\\n  && cp -r pandoc-templates*/* /opt/pandoc/templates && rm -rf pandoc-templates* \\\n  && mkdir /root/.pandoc && ln -s /opt/pandoc/templates /root/.pandoc/templates \\\n  && apt-get clean \\\n  && rm -rf /var/lib/apt/lists/ \\\n  ## RStudio wants an /etc/R, will populate from $R_HOME/etc\n  && mkdir -p /etc/R \\\n  ## Write config files in $R_HOME/etc\n  && echo '\\n\\\n    \\n# Configure httr to perform out-of-band authentication if HTTR_LOCALHOST \\\n    \\n# is not set since a redirect to localhost may not work depending upon \\\n    \\n# where this Docker container is running. \\\n    \\nif(is.na(Sys.getenv(\"HTTR_LOCALHOST\", unset=NA))) { \\\n    \\n  options(httr_oob_default = TRUE) \\\n    \\n}' >> /usr/local/lib/R/etc/Rprofile.site \\\n  && echo \"PATH=${PATH}\" >> /usr/local/lib/R/etc/Renviron \\\n  ## Need to configure non-root user for RStudio\n  && useradd rstudio \\\n  && echo \"rstudio:rstudio\" | chpasswd \\\n\t&& mkdir /home/rstudio \\\n\t&& chown rstudio:rstudio /home/rstudio \\\n\t&& addgroup rstudio staff \\\n  ## Prevent rstudio from deciding to use /usr/bin/R if a user apt-get installs a package\n  && echo 'rsession-which-r=/usr/local/bin/R' >> /etc/rstudio/rserver.conf \\\n  ## use more robust file locking to avoid errors when using shared volumes:\n  && echo 'lock-type=advisory' >> /etc/rstudio/file-locks \\\n  ## configure git not to request password each time\n  && git config --system credential.helper 'cache --timeout=3600' \\\n  && git config --system push.default simple \\\n  ## Set up S6 init system\n  && wget -P /tmp/ https://github.com/just-containers/s6-overlay/releases/download/${S6_VERSION}/s6-overlay-amd64.tar.gz \\\n  && tar xzf /tmp/s6-overlay-amd64.tar.gz -C / \\\n  && mkdir -p /etc/services.d/rstudio \\\n  && echo '#!/usr/bin/with-contenv bash \\\n          \\n## load /etc/environment vars first: \\\n  \t\t  \\n for line in $( cat /etc/environment ) ; do export $line ; done \\\n          \\n exec /usr/lib/rstudio-server/bin/rserver --server-daemonize 0' \\\n          > /etc/services.d/rstudio/run \\\n  && echo '#!/bin/bash \\\n          \\n rstudio-server stop' \\\n          > /etc/services.d/rstudio/finish \\\n  && mkdir -p /home/rstudio/.rstudio/monitored/user-settings \\\n  && echo 'alwaysSaveHistory=\"0\" \\\n          \\nloadRData=\"0\" \\\n          \\nsaveAction=\"0\"' \\\n          > /home/rstudio/.rstudio/monitored/user-settings/user-settings \\\n  && chown -R rstudio:rstudio /home/rstudio/.rstudio && rm /tmp/s6-overlay-amd64.tar.gz && rm -rf /var/lib/apt/lists/*;\n\nCOPY userconf.sh /etc/cont-init.d/userconf\n\n## running with \"-e ADD=shiny\" adds shiny server\nCOPY add_shiny.sh /etc/cont-init.d/add\nCOPY disable_auth_rserver.conf /etc/rstudio/disable_auth_rserver.conf\nCOPY pam-helper.sh /usr/lib/rstudio-server/bin/pam-helper\n\nEXPOSE 8787\n\n## automatically link a shared volume for kitematic users\nVOLUME /home/rstudio/kitematic\n\nCMD [\"/init\"]\n"
+}

@@ -1,0 +1,53 @@
+{
+  "startTime": 1674253081059,
+  "endTime": 1674253082088,
+  "originalSmells": [
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 62,
+        "lineEnd": 62,
+        "columnStart": 5,
+        "columnEnd": 45
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 75,
+        "lineEnd": 75,
+        "columnStart": 5,
+        "columnEnd": 47
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 6,
+        "lineEnd": 17,
+        "columnStart": 5,
+        "columnEnd": 18
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 43,
+        "lineEnd": 53,
+        "columnStart": 5,
+        "columnEnd": 10
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 84,
+        "lineEnd": 88,
+        "columnStart": 5,
+        "columnEnd": 8
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "ARG base_image=ubuntu:18.04\nFROM ${base_image} AS base\n\n# Install dependencies of simulator\nRUN set -ex \\\n  && apt-get update \\\n  && DEBIAN_FRONTEND=noninteractive apt-get install --no-install-recommends -y \\\n    ca-certificates \\\n    jq \\\n    libgl1 \\\n    libgtk2.0-0 \\\n    libvulkan1 \\\n    libx11-6 \\\n    libxau6 \\\n    libxcb1 \\\n    libxdmcp6 \\\n    libxext6 \\\n    netcat-openbsd \\\n  && apt-get clean && rm -rf /var/lib/apt/lists/*;\n\n# NB. This is overwritten when launched by docker with --gpus=N option\nENV NVIDIA_VISIBLE_DEVICES all\n# Include \"utility\" to get nvidia-smi\nENV NVIDIA_DRIVER_CAPABILITIES graphics,display,utility,compute,video\n\n# Contents of https://gitlab.com/nvidia/container-images/vulkan/-/blob/dc389b0445c788901fda1d85be96fd1cb9410164/nvidia_icd.json\nRUN mkdir -p /etc/vulkan/icd.d/ \\\n  && printf '%s\\n' \\\n'{' \\\n'    \"file_format_version\" : \"1.0.0\",' \\\n'    \"ICD\": {' \\\n'        \"library_path\": \"libGLX_nvidia.so.0\",' \\\n'        \"api_version\" : \"1.1.99\"' \\\n'    }' \\\n'}' > /etc/vulkan/icd.d/nvidia_icd.json\n\n# Build patched libvulkan1\nARG base_image=ubuntu:18.04\nFROM ${base_image} AS vulkan_loader\n\n# No need cleanup as this layer will be discarded.\nRUN set -ex \\\n  && apt-get update \\\n  && DEBIAN_FRONTEND=noninteractive apt-get install --no-install-recommends -y \\\n    build-essential \\\n    ca-certificates \\\n    cmake \\\n    git \\\n    libx11-xcb-dev \\\n    libxkbcommon-dev \\\n    libwayland-dev  \\\n    libxrandr-dev \\\n    pkg-config \\\n    python && rm -rf /var/lib/apt/lists/*;\n\nARG vulkan_loader_version=sdk-1.2.131.2\nADD https://github.com/KhronosGroup/Vulkan-Loader/archive/${vulkan_loader_version}.tar.gz /tmp\n\nADD 0001-loader.c-Implement-VK_LOADER_SINGLE_PHYSDEV_INDEX_LG.patch /tmp\n\nRUN set -ex \\\n  && cd /tmp \\\n  && tar -xzf ${vulkan_loader_version}.tar.gz \\\n  && cd Vulkan-Loader-${vulkan_loader_version} \\\n  && patch -p1 < ../0001-loader.c-Implement-VK_LOADER_SINGLE_PHYSDEV_INDEX_LG.patch \\\n  && mkdir build \\\n  && cd build \\\n  && ../scripts/update_deps.py \\\n  && cmake -C helper.cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/tmp .. \\\n  && cmake --build . \\\n  && make install \\\n  && cd /tmp/lib \\\n  && : Add a link to indicate that it is our version \\\n  && ln -s $(readlink libvulkan.so) libvulkan.so.${vulkan_loader_version}+lge1 \\\n  && : COPY does not copy symlinks, so extract from a tarball. libvulkan.so is only needed for development, so do not include it \\\n  && tar -cvf /tmp/libvulkan.tar libvulkan.so.* && rm ${vulkan_loader_version}.tar.gz\n\n# Unzip LGSVL Simulator\nARG base_image=ubuntu:18.04\nFROM ${base_image} AS unzipper\n\n# No need to cleanup as this build stage will be discarded\nRUN set -ex \\\n  && apt-get update \\\n  && DEBIAN_FRONTEND=noninteractive apt-get install --no-install-recommends -y \\\n    ca-certificates \\\n    jq \\\n    unzip \\\n    wget && rm -rf /var/lib/apt/lists/*;\n\nARG simulator_zipfile\nARG simulator_version=latest\nARG simulator_url\n\n# We have to copy something ...\nCOPY ${simulator_zipfile:-Dockerfile} /tmp/\n\nRUN set -ex \\\n  && cd /tmp \\\n  && : If simulator_zipfile is set, then skip downloading from simulator_url but rename the .zip as if it had been \\\n  && if [ -e Dockerfile ]; then rm Dockerfile; else mv *.zip svlsimulator.zip; exit 0; fi  \\\n  && if [ \"${simulator_url}\" = \"\" ]; then version=${simulator_version}; else version=\":ignored\" ; fi \\\n  && if [ $version = \"latest\" ]; then version=$(wget -q -O- https://api.github.com/repos/lgsvl/simulator/releases/latest | jq -r '.tag_name'); else true; fi \\\n  && url=${simulator_url} \\\n  && if [ \"$url\" = \"\" ]; then url=\"https://github.com/lgsvl/simulator/releases/download/${version}/svlsimulator-linux64-${version}.zip\"; else true; fi \\\n  && wget -q -O svlsimulator.zip $url\n\nRUN set -ex \\\n  && cd /tmp \\\n  && unzip svlsimulator.zip \\\n  && mv svlsimulator-linux64-* svlsimulator\n\n# Final image\nFROM base\n\n# Add our libvulkan, removing any that might already be there.\nCOPY --from=vulkan_loader /tmp/libvulkan.tar /tmp/\nRUN set -ex \\\n  && rm -f /usr/lib/x86_64-linux-gnu/libvulkan.* \\\n  && tar -xvf /tmp/libvulkan.tar -C /usr/lib/x86_64-linux-gnu \\\n  && rm -f /tmp/libvulkan.tar\n\nARG image_git_describe=(unknown)\nARG image_uuidgen=(unset)\n\nRUN set -ex \\\n  && echo \"IMAGE_APP=simulator\\n\\\nIMAGE_CREATED_BY=Dockerfile\\n\\\nIMAGE_CREATED_FROM=${image_git_describe}\\n\\\nIMAGE_CREATED_ON=$(date --iso-8601=seconds --utc)\\n\\\n# Increment IMAGE_INTERFACE_VERSION whenever changes to the image require that the launcher be updated.\\n\\\nIMAGE_INTERFACE_VERSION=2\\n\\\nIMAGE_UUID=${image_uuidgen}\"\\\n  >> /etc/wise-image-info.source \\\n  && echo \"Simulator wise-image-info.source:\" \\\n  && cat /etc/wise-image-info.source\n\nCOPY --from=unzipper /tmp/svlsimulator /opt/simulator\n\nCMD /opt/simulator/simulator\n"
+}

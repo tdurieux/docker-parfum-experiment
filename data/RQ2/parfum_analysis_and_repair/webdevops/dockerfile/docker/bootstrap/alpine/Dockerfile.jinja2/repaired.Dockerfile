@@ -1,0 +1,14 @@
+{{ baselayout.dockerStage() }}
+
+{{ docker.fromOfficial("alpine", "3.11") }}
+
+{{ docker.version() }}
+
+{{ environment.general() }}
+
+{{ baselayout.copy() }}
+
+RUN set -x \
+    {{ bootstrap.alpine("3.11") }} \
+    {{ provision.runBootstrap() }} \
+    {{ docker.cleanup() }}

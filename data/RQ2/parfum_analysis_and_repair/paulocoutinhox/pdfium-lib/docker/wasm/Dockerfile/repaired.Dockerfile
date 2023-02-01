@@ -1,0 +1,86 @@
+FROM ubuntu:18.04
+
+# general
+ARG DEBIAN_FRONTEND=noninteractive
+
+ENV PROJ_TARGET="wasm"
+
+ENV JAVA_VERSION="8"
+ENV JAVA_HOME="/usr/lib/jvm/java-8-openjdk-amd64/"
+
+ENV PYTHONIOENCODING="utf8"
+ENV LC_ALL=C.UTF-8
+
+# packages
+RUN apt-get -y update
+RUN apt-get install -y build-essential sudo file git wget curl cmake ninja-build zip unzip tar python3 python3-pip openjdk-${JAVA_VERSION}-jdk nano lsb-release libglib2.0-dev tzdata doxygen python3-setuptools --no-install-recommends && \
+    rm -rf /var/lib/apt/lists/* && \
+    apt-get clean
+
+# define timezone
+RUN echo "America/Sao_Paulo" > /etc/timezone
+RUN dpkg-reconfigure -f noninteractive tzdata
+RUN /bin/echo -e "LANG=\"en_US.UTF-8\"" > /etc/default/local
+
+# java
+ENV PATH=${PATH}:${JAVA_HOME}/bin
+RUN echo ${JAVA_HOME}
+RUN java -version
+
+# google depot tools
+RUN git clone https://chromium.googlesource.com/chromium/tools/depot_tools.git /opt/depot-tools
+ENV PATH=${PATH}:/opt/depot-tools
+
+# pdfium - dependencies
+RUN mkdir /build
+WORKDIR /build
+RUN gclient config --unmanaged https://pdfium.googlesource.com/pdfium.git
+RUN gclient sync
+WORKDIR /build/pdfium
+RUN git checkout 7e2c12e172e644744fc2828e7000b3689537af12
+
+RUN ln -s /usr/bin/python3 /usr/bin/python
+RUN ln -s /usr/bin/pip3 /usr/bin/pip
+
+RUN apt-get install -y --no-install-recommends -o APT::Immediate-Configure=false -f apt \
+    && apt-get -f -y install \
+    && dpkg --configure -a \
+    && apt-get -y dist-upgrade \
+    && echo n | ./build/install-build-deps.sh \
+    && rm -rf /build && rm -rf /var/lib/apt/lists/*;
+
+# ninja
+RUN ln -nsf /opt/depot-tools/ninja-linux64 /usr/bin/ninja
+
+# dependencies
+RUN pip3 install --no-cache-dir --upgrade pip
+RUN pip3 install --no-cache-dir setuptools docopt pygemstones
+
+# libjpeg
+RUN mkdir /opt/libjpeg
+WORKDIR /opt/libjpeg
+RUN curl -f https://ijg.org/files/jpegsrc.v9c.tar.gz -o jpegsrc.v9c.tar.gz
+RUN tar -xvf jpegsrc.v9c.tar.gz && rm jpegsrc.v9c.tar.gz
+WORKDIR /opt/libjpeg/jpeg-9c
+RUN ./configure --build="$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)" --prefix=/usr
+RUN make && make install
+
+# emsdk
+RUN mkdir /emsdk
+WORKDIR /emsdk
+RUN git clone https://github.com/emscripten-core/emsdk.git .
+RUN ./emsdk install 2.0.24
+RUN ./emsdk activate 2.0.24
+ENV PATH="${PATH}:/emsdk:/emsdk/upstream/emscripten"
+
+# cache system libraries
+RUN bash -c 'echo "int main() { return 0; }" > /tmp/main.cc'
+RUN bash -c 'source /emsdk/emsdk_env.sh && em++ -s USE_ZLIB=1 -s USE_LIBJPEG=1 -s USE_PTHREADS=1 -s ASSERTIONS=1 -o /tmp/main.html /tmp/main.cc'
+
+# nodejs and npm
+RUN curl -f -sL https://deb.nodesource.com/setup_14.x | sudo -E bash -
+RUN apt-get install --no-install-recommends -y nodejs && rm -rf /var/lib/apt/lists/*;
+RUN npm install -g npm@latest && npm cache clean --force;
+
+# working dir
+WORKDIR /app

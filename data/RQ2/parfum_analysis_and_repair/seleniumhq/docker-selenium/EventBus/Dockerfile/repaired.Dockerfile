@@ -1,0 +1,18 @@
+# !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+# NOTE: DO *NOT* EDIT THIS FILE.  IT IS GENERATED.
+# PLEASE UPDATE Dockerfile.txt INSTEAD OF THIS FILE
+# !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+FROM selenium/base:4.3.0-20220706
+LABEL authors=SeleniumHQ
+
+USER 1200
+
+#=================================
+# Selenium Event Bus Configuration
+#=================================
+
+# Port where events are published
+EXPOSE 4442
+# Port where to subscribe for events
+EXPOSE 4443
+# Event Bus port

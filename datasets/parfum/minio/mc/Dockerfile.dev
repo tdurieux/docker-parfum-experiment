@@ -1,0 +1,14 @@
+FROM registry.access.redhat.com/ubi8/ubi-minimal:8.6
+
+LABEL maintainer="MinIO Inc <dev@min.io>"
+
+COPY mc /usr/bin/
+COPY CREDITS /licenses/CREDITS
+COPY LICENSE /licenses/LICENSE
+
+RUN  \
+     microdnf update --nodocs && \
+     microdnf install ca-certificates --nodocs && \
+     microdnf clean all
+
+ENTRYPOINT ["mc"]

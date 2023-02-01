@@ -1,0 +1,4 @@
+FROM --platform=linux/amd64 ubuntu:20.04
+
+RUN apt-get update && \
+    apt-get install openssh-client --no-install-recommends -y && rm -rf /var/lib/apt/lists/*;

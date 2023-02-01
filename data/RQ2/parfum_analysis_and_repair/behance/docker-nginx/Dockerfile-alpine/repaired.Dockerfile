@@ -1,0 +1,38 @@
+FROM behance/docker-base:5.0.1-alpine
+
+# Use in multi-phase builds, when an init process requests for the container to gracefully exit, so that it may be committed
+# Used with alternative CMD (worker.sh), leverages supervisor to maintain long-running processes
+ENV CONTAINER_ROLE=web \
+    CONTAINER_PORT=8080 \
+    CONF_NGINX_SITE="/etc/nginx/sites-available/default" \
+    CONF_NGINX_SERVER="/etc/nginx/nginx.conf" \
+    NOT_ROOT_USER=www-data \
+    S6_KILL_FINISH_MAXTIME=55000
+
+# Using a non-privileged port to prevent having to use setcap internally
+EXPOSE ${CONTAINER_PORT}
+
+# Create an unprivileged user
+RUN adduser -D -S -H $NOT_ROOT_USER
+
+RUN apk update --no-cache && \
+    apk add --no-cache \
+        ca-certificates \
+        nginx \
+    && \
+    /bin/bash -e /clean.sh
+
+# Overlay the root filesystem from this repo
+COPY --chown=www-data ./container/root /
+
+# - Set nginx to listen on defined port
+# - Make temp directory for .nginx runtime files
+# - Fix permissions for nginx folders and run set_permissions.sh to allow running image under a non root user
+RUN sed -i "s/listen [0-9]*;/listen ${CONTAINER_PORT};/" $CONF_NGINX_SITE && \
+    bash -c "chown www-data:www-data /var/{lib,log}/nginx -Rh" && \
+    bash -c "chmod 0755 -R /var/{lib,log}/nginx" && \
+    mkdir /tmp/.nginx && \
+    /bin/bash -e /scripts/set_permissions.sh
+
+RUN goss -g /tests/alpine/nginx.goss.yaml validate && \
+    /aufs_hack.sh

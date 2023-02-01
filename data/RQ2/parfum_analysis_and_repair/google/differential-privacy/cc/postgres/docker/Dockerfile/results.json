@@ -1,0 +1,26 @@
+{
+  "startTime": 1674252481129,
+  "endTime": 1674252482352,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 24,
+        "lineEnd": 24,
+        "columnStart": 5,
+        "columnEnd": 51
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 28,
+        "lineEnd": 28,
+        "columnStart": 5,
+        "columnEnd": 35
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM postgres:12 AS build\n\nENV PROTOC_VERSION=1.3\n\n\n# Install the packages which will be required to get everything to compile\nRUN apt-get update \\\n    && apt-get install -f -y --no-install-recommends \\\n        software-properties-common \\\n        build-essential \\\n        pkg-config \\\n        git \\\n        curl \\\n        libreadline-dev \\\n        bison \\\n        flex \\\n        postgresql-server-dev-$PG_MAJOR \\\n    && add-apt-repository \"deb http://ftp.debian.org/debian testing main contrib\" \\\n    && apt-get update && apt-get install -f -y --no-install-recommends \\\n        libprotobuf-c-dev=$PROTOC_VERSION.* \\\n    && rm -rf /var/lib/apt/lists/*\n\n#Install Bazel to build code\nRUN echo \"deb [arch=amd64] http://storage.googleapis.com/bazel-apt stable jdk1.8\" | tee /etc/apt/sources.list.d/bazel.list \\\n  && curl -f https://bazel.build/bazel-release.pub.gpg | apt-key add -\n\n\nRUN apt-get update \\\n  && apt-get install --no-install-recommends -y bazel=4.1.0 \\\n  && rm -rf /var/lib/apt/lists/*\n\n\n##Download differential privacy module\n\n\nRUN git clone https://github.com/google/differential-privacy.git --single-branch /tmp/differential-privacy \\\n    && cd /tmp/differential-privacy \\\n    && git checkout fc4f2abda5052f654539fc128 \\\n    && cd /tmp/differential-privacy/cc \\\n    && bazel build postgres/anon_func.so\n\n\n\n\nFROM postgres:12\n\nRUN apt-get update \\\n    && apt-get install -f -y --no-install-recommends \\\n        software-properties-common \\\n    && add-apt-repository \"deb http://ftp.debian.org/debian testing main contrib\" \\\n    && apt-get update && apt-get install -f -y --no-install-recommends \\\n        libprotobuf-c1 \\\n    && rm -rf /var/lib/apt/lists/*\n\nCOPY --from=build /tmp/differential-privacy/cc/bazel-bin/postgres/anon_func.so  /usr/lib/postgresql/$PG_MAJOR/lib/\nCOPY --from=build /tmp/differential-privacy/cc/postgres/anon_func.control /usr/share/postgresql/$PG_MAJOR/extension/\nCOPY --from=build /tmp/differential-privacy/cc/postgres/anon_func--1.0.0.sql /usr/share/postgresql/$PG_MAJOR/extension/\n\n#Copy Dataset sample\nCOPY --from=build /tmp/differential-privacy/cc/postgres/fruiteaten.csv  /\nCOPY --from=build /tmp/differential-privacy/cc/postgres/shirts.csv  /\n\n# Copy the custom configuration which will be passed down to the server (using a .sample file is the preferred way of doing it by\n# the base Docker image)\nCOPY postgresql.conf.sample /usr/share/postgresql/postgresql.conf.sample\nRUN chmod 755 /usr/share/postgresql/postgresql.conf.sample\n\n# Copy the script which will initialize the replication permissions\nCOPY /docker-entrypoint-initdb.d /docker-entrypoint-initdb.d\nRUN chmod 755 /docker-entrypoint-initdb.d\n"
+}

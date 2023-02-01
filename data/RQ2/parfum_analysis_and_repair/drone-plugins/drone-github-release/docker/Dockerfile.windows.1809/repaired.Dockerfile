@@ -1,0 +1,10 @@
+# escape=`
+FROM plugins/base:windows-1809-amd64@sha256:397e27589c78e49866fe415840b328920d1dfcb9bd399f2fb8784f18cd36b7f8
+
+LABEL maintainer="Drone.IO Community <drone-dev@googlegroups.com>" `
+  org.label-schema.name="Drone GitHub Release" `
+  org.label-schema.vendor="Drone.IO Community" `
+  org.label-schema.schema-version="1.0"
+
+ADD release/windows/amd64/drone-github-release.exe C:/bin/drone-github-release.exe
+ENTRYPOINT [ "C:\\bin\\drone-github-release.exe" ]

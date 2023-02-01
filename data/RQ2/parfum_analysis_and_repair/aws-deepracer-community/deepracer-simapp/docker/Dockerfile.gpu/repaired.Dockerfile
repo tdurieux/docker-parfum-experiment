@@ -1,0 +1,78 @@
+FROM nvidia/cuda:11.4.2-cudnn8-runtime-ubuntu18.04
+
+RUN apt-get update && \ 
+    apt-get upgrade -y && \
+    TZ="America/New_York" DEBIAN_FRONTEND="noninteractive" apt-get install lsb-core build-essential wget cmake python3-dev python3-pip python-boto3 python-pip jq xmlstarlet gnupg --no-install-recommends -y && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+
+# install ROS Melodic
+RUN sh -c 'echo "deb http://packages.ros.org/ros/ubuntu $(lsb_release -sc) main" > /etc/apt/sources.list.d/ros-latest.list'
+RUN apt-key adv --keyserver 'hkp://keyserver.ubuntu.com:80' --recv-key C1CF6E31E6BADE8868B172B4F42ED6FBAB17C654
+RUN apt-get update -y && \
+    apt-get install ros-melodic-ros-base python-rosdep python-rosinstall \
+	ros-melodic-media-export ros-melodic-web-video-server ros-melodic-rosmsg ros-melodic-h264-encoder-core \
+	python-rosinstall-generator python-wstool python-matplotlib -y --allow-unauthenticated --no-install-recommends && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+
+RUN rosdep init && rosdep update
+
+ENV ROS_DISTRO=melodic
+
+# install gazebo9
+RUN sh -c 'echo "deb http://packages.osrfoundation.org/gazebo/ubuntu-stable $(lsb_release -sc) main" > /etc/apt/sources.list.d/gazebo-stable.list'
+RUN wget https://packages.osrfoundation.org/gazebo.key -O - | apt-key add -
+RUN apt-get update -y && \
+    apt-get install gazebo9 libgazebo9-dev  xvfb x11vnc net-tools x11-xserver-utils jwm rviz x264 libx264-dev --no-install-recommends -y && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+
+
+ARG TENSORFLOW_VER
+RUN python3 -m pip install -U 'pip<20' 'setuptools<50' && python3 -m pip install --no-cache-dir \
+    annoy==1.8.3 \
+    Pillow==4.3.0 \
+    matplotlib==2.0.2 \
+    numpy==1.18.5 \
+    pandas==0.22.0 \
+    pygame==1.9.3 \
+    PyOpenGL==3.1.0 \
+    scipy==1.2.1 \
+    scikit-image==0.15.0 \
+    futures==3.1.1 \
+    boto3==1.9.23 \ 
+    minio==4.0.5 \
+    rl-coach-slim==1.0.0 \
+    PyYAML==3.13 \
+    rospkg>=1.1 \
+    shapely==1.6.4 \
+    $TENSORFLOW_VER \
+    redis==3.2.1 \
+    opencv-python==4.1.1.26 \
+    'tokenize-rt>=3,<4'
+
+RUN python2 -m pip install --no-cache-dir 'opencv-python>=4.2,<4.3'
+
+COPY bundle /opt/install
+WORKDIR /opt/install
+RUN apt-get update -y && rosdep install --from-paths . --ignore-src -r -y deepracer_gazebo_system_plugin deepracer_msgs deepracer_simulation_environment h264_video_encoder && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+ENV COLCON_CURRENT_PREFIX="/opt/install"
+ENV COLCON_PYTHON_EXECUTABLE="/usr/bin/python3"
+ENV _CATKIN_SETUP_DIR="/opt/ros/melodic"
+
+COPY ./docker/files/rl_coach.patch /opt/amazon/rl_coach.patch
+RUN patch -p1 -N --directory=/usr/local/lib/python3.6/dist-packages/ < /opt/amazon/rl_coach.patch
+
+COPY ./docker/files/run.sh run.sh
+COPY ./docker/files/debug-reward.diff debug-reward.diff
+
+COPY VERSION .
+ARG IMG_VERSION
+LABEL maintainer "AWS DeepRacer Community - deepracing.io"
+LABEL version $IMG_VERSION
+
+ENTRYPOINT ["/bin/bash", "-c"]
+CMD ["./run.sh run distributed_training.launch"]

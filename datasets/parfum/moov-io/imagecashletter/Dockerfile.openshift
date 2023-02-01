@@ -1,0 +1,16 @@
+FROM registry.access.redhat.com/ubi8/go-toolset as builder
+COPY . .
+RUN make build-server
+
+FROM registry.access.redhat.com/ubi8/ubi-minimal
+
+ARG VERSION=unknown
+LABEL maintainer="Moov <support@moov.io>"
+LABEL name="imagecashletter"
+LABEL version=$VERSION
+
+COPY --from=builder /opt/app-root/src/bin/server /bin/server
+
+EXPOSE 8080
+EXPOSE 9090
+ENTRYPOINT ["/bin/server"]

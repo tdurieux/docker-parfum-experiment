@@ -1,0 +1,10 @@
+FROM registry.cn-beijing.aliyuncs.com/yunionio/kubectl:1.18.6
+
+MAINTAINER "Zexi Li <lizexi@yunionyun.com>"
+
+ENV TZ UTC
+
+RUN mkdir -p /opt/yunion/bin
+
+RUN apk add --no-cache sshpass ipmitool openssh-client tzdata ca-certificates && \
+    rm -rf /var/cache/apk/*

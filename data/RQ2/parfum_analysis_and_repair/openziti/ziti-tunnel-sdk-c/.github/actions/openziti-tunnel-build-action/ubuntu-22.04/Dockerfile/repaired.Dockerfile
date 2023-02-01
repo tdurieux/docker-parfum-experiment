@@ -1,0 +1,29 @@
+FROM ubuntu:jammy
+
+LABEL org.opencontainers.image.authors="netfoundry.io"
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV GIT_DISCOVERY_ACROSS_FILESYSTEM=1
+ENV TZ=UTC
+
+USER root
+WORKDIR /root/
+
+RUN apt-get -y update \
+    && apt-get -y --no-install-recommends install \
+        build-essential \
+        cmake \
+        curl \
+        doxygen \
+        git \
+        graphviz \
+        libsystemd-dev \
+        iproute2 \
+        pkg-config \
+        python3 \
+        zlib1g-dev \
+        libssl-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY ./entrypoint.sh /root/
+ENTRYPOINT [ "/root/entrypoint.sh" ]

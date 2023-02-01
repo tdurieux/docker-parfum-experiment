@@ -1,0 +1,1 @@
+# docker build -t quorum-local -f Dockerfile.quorum .

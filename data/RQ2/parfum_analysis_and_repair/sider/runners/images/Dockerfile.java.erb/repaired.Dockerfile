@@ -1,0 +1,17 @@
+FROM sider/devon_rex_java:2.46.0
+
+<%= render_erb 'images/Dockerfile.base.erb' %>
+
+# Copy wrapper script
+COPY --chown=<%= chown %> images/runjava ${RUNNER_USER_BIN}/
+
+# Install dependencies via Gradle
+COPY --chown=<%= chown %> images/<%= analyzer %>/build.gradle ${RUNNERS_DEPS_DIR}/
+RUN cd "${RUNNERS_DEPS_DIR}" && \
+    echo 'task installDeps(type: Copy) {' >> build.gradle && \
+    echo '  from configurations.runtimeClasspath' >> build.gradle && \
+    echo '  into "."' >> build.gradle && \
+    echo '}' >> build.gradle && \
+    gradle --no-build-cache --parallel --quiet installDeps && \
+    rm build.gradle
+ENV CLASSPATH ${RUNNERS_DEPS_DIR}/*:${CLASSPATH}

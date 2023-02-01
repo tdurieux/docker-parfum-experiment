@@ -1,0 +1,89 @@
+{
+  "startTime": 1674246919402,
+  "endTime": 1674246931121,
+  "originalSmells": [
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 34,
+        "lineEnd": 34,
+        "columnStart": 4,
+        "columnEnd": 131
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 10,
+        "lineEnd": 10,
+        "columnStart": 22,
+        "columnEnd": 48
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 18,
+        "lineEnd": 18,
+        "columnStart": 22,
+        "columnEnd": 66
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 21,
+        "lineEnd": 21,
+        "columnStart": 22,
+        "columnEnd": 54
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 55,
+        "lineEnd": 55,
+        "columnStart": 22,
+        "columnEnd": 48
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 64,
+        "lineEnd": 64,
+        "columnStart": 19,
+        "columnEnd": 48
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 77,
+        "lineEnd": 77,
+        "columnStart": 8,
+        "columnEnd": 174
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 18,
+        "lineEnd": 18,
+        "columnStart": 22,
+        "columnEnd": 66
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 21,
+        "lineEnd": 21,
+        "columnStart": 22,
+        "columnEnd": 54
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM debian:11-slim AS build\n#FROM --platform=$BUILDPLATFORM debian:10-slim AS build\n\nENV DEBIAN_FRONTEND=noninteractive\n\nARG TARGETPLATFORM\nARG BUILDPLATFORM\n\nRUN echo \"I am running build on $BUILDPLATFORM, building for $TARGETPLATFORM\"\n\nRUN apt-get update && apt-get install --no-install-recommends -y locales && rm -rf /var/lib/apt/lists/* \\\n        && localedef -i en_US -c -f UTF-8 -A /usr/share/locale/locale.alias en_US.UTF-8\n\nENV LANG=en_US.utf8\nENV NODE_VERSION=v16.15.1\nENV NODE_ENV=production\n\n# install build deps\nRUN apt-get update && apt-get install --no-install-recommends -y python make cmake gcc g++ && rm -rf /var/lib/apt/lists/*;\n\n# install node\nRUN apt-get update && apt-get install --no-install-recommends -y wget xz-utils && rm -rf /var/lib/apt/lists/*;\nADD docker/node-installer.sh /usr/local/sbin\nRUN chmod +x /usr/local/sbin/node-installer.sh && node-installer.sh\nENV PATH=/usr/local/lib/nodejs/bin:$PATH\n\n# Run as a non-root user\nRUN useradd --create-home csi \\\n        && mkdir /home/csi/app \\\n        && chown -R csi: /home/csi\nWORKDIR /home/csi/app\nUSER csi\n\nCOPY --chown=csi:csi package*.json ./\nRUN npm install --only=production --grpc_node_binary_host_mirror=https://grpc-uds-binaries.s3-us-west-2.amazonaws.com/debian-buster && npm cache clean --force;\nCOPY --chown=csi:csi . .\nRUN rm -rf docker\n\n\n######################\n# actual image\n######################\nFROM debian:11-slim\n\nLABEL org.opencontainers.image.source https://github.com/democratic-csi/democratic-csi\nLABEL org.opencontainers.image.url https://github.com/democratic-csi/democratic-csi\nLABEL org.opencontainers.image.licenses MIT\n\nENV DEBIAN_FRONTEND=noninteractive\n\nARG TARGETPLATFORM\nARG BUILDPLATFORM\n\nRUN echo \"I am running on final $BUILDPLATFORM, building for $TARGETPLATFORM\"\n\nRUN apt-get update && apt-get install --no-install-recommends -y locales && rm -rf /var/lib/apt/lists/* \\\n        && localedef -i en_US -c -f UTF-8 -A /usr/share/locale/locale.alias en_US.UTF-8\n\nENV LANG=en_US.utf8\nENV NODE_ENV=production\n\n# Workaround for https://github.com/nodejs/node/issues/37219\nRUN test $(uname -m) != armv7l || ( apt-get update \\\n                && apt-get install --no-install-recommends -y libatomic1 \\\n                && rm -rf /var/lib/apt/lists/*)\n\n# install node\n#ENV PATH=/usr/local/lib/nodejs/bin:$PATH\n#COPY --from=build /usr/local/lib/nodejs /usr/local/lib/nodejs\nCOPY --from=build /usr/local/lib/nodejs/bin/node /usr/local/bin/node\n\n# node service requirements\n# netbase is required by rpcbind/rpcinfo to work properly\n# /etc/{services,rpc} are required\nRUN apt-get update && \\\n        apt-get install --no-install-recommends -y netbase socat e2fsprogs exfatprogs xfsprogs btrfs-progs fatresize dosfstools ntfs-3g nfs-common cifs-utils fdisk gdisk cloud-guest-utils sudo rsync && \\\n        rm -rf /var/lib/apt/lists/*\n\n# controller requirements\n#RUN apt-get update && \\\n#        apt-get install -y ansible && \\\n#        rm -rf /var/lib/apt/lists/*\n\n# install wrappers\nADD docker/iscsiadm /usr/local/sbin\nRUN chmod +x /usr/local/sbin/iscsiadm\n\nADD docker/multipath /usr/local/sbin\nRUN chmod +x /usr/local/sbin/multipath\n\n## USE_HOST_MOUNT_TOOLS=1\nADD docker/mount /usr/local/bin/mount\nRUN chmod +x /usr/local/bin/mount\n\n## USE_HOST_MOUNT_TOOLS=1\nADD docker/umount /usr/local/bin/umount\nRUN chmod +x /usr/local/bin/umount\n\nADD docker/zfs /usr/local/bin/zfs\nRUN chmod +x /usr/local/bin/zfs\nADD docker/zpool /usr/local/bin/zpool\nRUN chmod +x /usr/local/bin/zpool\nADD docker/oneclient /usr/local/bin/oneclient\nRUN chmod +x /usr/local/bin/oneclient\n\n# Run as a non-root user\nRUN useradd --create-home csi \\\n        && chown -R csi: /home/csi\n\nCOPY --from=build --chown=csi:csi /home/csi/app /home/csi/app\n\nWORKDIR /home/csi/app\n\nEXPOSE 50051\nENTRYPOINT [ \"bin/democratic-csi\" ]\n"
+}

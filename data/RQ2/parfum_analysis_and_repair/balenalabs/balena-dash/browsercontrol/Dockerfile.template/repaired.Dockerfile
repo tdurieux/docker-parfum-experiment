@@ -1,0 +1,1 @@
+FROM bh.cr/will_philson/browsercontrol-%%BALENA_ARCH%%/1.1.0

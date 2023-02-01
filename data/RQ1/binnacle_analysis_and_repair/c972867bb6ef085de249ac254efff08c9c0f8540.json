@@ -1,0 +1,26 @@
+{
+  "startTime": 1674248979516,
+  "endTime": 1674248979862,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 3,
+        "lineEnd": 3,
+        "columnStart": 4,
+        "columnEnd": 91
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 3,
+        "lineEnd": 3,
+        "columnStart": 4,
+        "columnEnd": 91
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM openjdk:8-jdk\n\nRUN apt-get update \\\n && apt-get install --no-install-recommends -y wget git maven python gcc python-dev python-setuptools --fix-missing \\\n && /usr/bin/easy_install -U pip \\\n && /usr/local/bin/pip install crcmod && rm -rf /var/lib/apt/lists/*;\n\nMAINTAINER MacArthur Lab\n\nCOPY settings.xml /root/.m2/settings.xml\nCOPY entrypoint.sh  /root/bin/entrypoint.sh\n\nenv MVN=mvn\n\n#first get Exomiser built in the local maven for matchbox to import in\n#---------------------------------------------------------------------------\n# _n.b._ check that the tag here is the same as the exomiser.version declared in the pom\n\nRUN git clone https://github.com/exomiser/Exomiser\nWORKDIR Exomiser\nRUN $MVN -DskipTests=true clean install\n\n#now matchbox (and it will see Exomiser in local maven repo)\n#---------------------------------------------------------------------------\n\nRUN git clone https://github.com/macarthur-lab/matchbox\nWORKDIR matchbox\nRUN $MVN -Dmaven.test.skip=true clean install package\n\nenv MATCHBOX_JAR=/Exomiser/matchbox/target/matchbox-0.1.0.jar\nenv MATCHBOX_CONFIG_DIR=/Exomiser/matchbox/config\nenv MATCHBOX_DEPLOYMENT_CONFIG_DIR=/matchbox_deployment/config\n\n\n#Now get support data for Exomiser models (for now, cpying, switch with wget)\n#-----------------------------------------------------\n\n#----first get gsutils to interface with google\nRUN wget https://storage.googleapis.com/pub/gsutil.tar.gz \\\n && mkdir /root/gsutils_dir \\\n && tar xfz gsutil.tar.gz -C /root/gsutils_dir \\\n && rm gsutil.tar.gz \\\n && export PATH=${PATH}:/root/gsutils_dir/gsutil\n\n\n#----now get the data and untar it\n\nWORKDIR data\nRUN /root/gsutils_dir/gsutil/gsutil -m -o GSUtil:parallel_composite_upload_threshold=150M cp gs://seqr-reference-data/1807_phenotype.tar.gz data.local.tar.gz \\\n && tar -xzf data.local.tar.gz \\\n && rm data.local.tar.gz \\\n && pwd \\\n && ls -l \\\n && /root/gsutils_dir/gsutil/gsutil -m -o GSUtil:parallel_composite_upload_threshold=150M cp gs://seqr-reference-data/gene_symbol_to_ensembl_id_map.txt gene_symbol_to_ensembl_id_map.txt \\\n && pwd \\\n && ls -l\n\n#Now set matchbox up for deployment and copy over jar and config files\n#---------------------------------------------------------------------------\nWORKDIR /matchbox_deployment\nRUN cp -rf $MATCHBOX_CONFIG_DIR . \\\n && cp $MATCHBOX_JAR .\n\n\n\n#############################################\n#                                           #\n# Please note the EXOMISER_DATA_DIR         #\n# value. The file system path with ref      #\n# data (viewable by docker daemon) must     # \n# be mounted to this location in            #\n# container at the docker run step          #\n#                                           #\n#############################################\nenv EXOMISER_DATA_DIR=/Exomiser/matchbox/data\nenv EXOMISER_PHENOTYPE_DATA_VERSION=1807\n\n\n#############################################\n#                                           #\n# This defines if matches that have no      #\n# genotypes in common, BUT have a high      #\n# phenotype score should be returned as     #\n# results                                   #\n#                                           #\n#############################################\nenv ALLOW_NO_GENE_IN_COMMON_MATCHES=false\n\n#############################################\n#                                           #\n# Environment variables for Mongo           #\n# connection. Please populate before        #\n# doing docker build command                #\n#                                           #\n#############################################\nenv MONGODB_HOSTNAME=\nenv MONGODB_PORT=\nenv MONGODB_USERNAME=\nenv MONGODB_PASSWORD=\nenv MONGODB_DATABASE=\n\n\n\n#############################################\n#                                           #\n# This port is exposed by container         #\n#                                           #\n#############################################\nARG MATCHBOX_SERVICE_PORT\nENV MATCHBOX_SERVICE_PORT=$MATCHBOX_SERVICE_PORT\n\nEXPOSE $MATCHBOX_SERVICE_PORT\n\n\nCMD [\"/root/bin/entrypoint.sh\"]\n"
+}

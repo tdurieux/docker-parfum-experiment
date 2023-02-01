@@ -1,0 +1,15 @@
+# Build GoChain in a stock Go builder container
+FROM golang:1.17-alpine as builder
+
+RUN apk --no-cache add build-base git mercurial gcc linux-headers
+ENV D=/rpc-proxy
+WORKDIR $D
+# cache dependencies
+ADD go.mod $D
+ADD go.sum $D
+RUN go mod download
+# build
+ADD . $D
+RUN cd $D && go build && cp rpc-proxy /tmp
+
+# Pull all binaries into a second stage deploy alpine container

@@ -1,0 +1,34 @@
+ARG GO_VERSION=1.16
+
+FROM golang:${GO_VERSION}-alpine3.12 AS builder
+
+# set up nsswitch.conf for Go's "netgo" implementation
+# https://github.com/gliderlabs/docker-alpine/issues/367#issuecomment-424546457
+RUN echo 'hosts: files dns' > /etc/nsswitch.conf.build
+
+RUN apk add --update --no-cache bash ca-certificates make curl git mercurial tzdata
+
+RUN go get -d github.com/kubernetes-sigs/aws-iam-authenticator/cmd/aws-iam-authenticator
+RUN cd $GOPATH/src/github.com/kubernetes-sigs/aws-iam-authenticator && \
+    git checkout 981ecbe && \
+    go install ./cmd/aws-iam-authenticator
+
+RUN go get github.com/derekparker/delve/cmd/dlv
+
+FROM alpine:3.13
+
+RUN apk add --update --no-cache bash curl libc6-compat
+
+COPY --from=builder /etc/nsswitch.conf.build /etc/nsswitch.conf
+COPY --from=builder /usr/share/zoneinfo /usr/share/zoneinfo
+COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
+COPY --from=builder /go/bin/aws-iam-authenticator /usr/bin/
+COPY --from=builder /go/bin/dlv /
+
+COPY build/debug/pipeline /
+COPY build/debug/worker /
+COPY build/debug/pipelinectl /
+COPY templates /templates
+COPY config/anchore/policies/ /policies/
+
+ENTRYPOINT ["/dlv", "--listen=:40000", "--headless=true", "--api-version=2", "--log", "exec", "/pipeline-debug"]

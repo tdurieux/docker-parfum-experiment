@@ -1,0 +1,18 @@
+ARG BASE
+
+FROM ${BASE}
+
+ARG PRE
+ENV PRE=${PRE}
+ARG RMJSONC
+ENV RMJSONC=${RMJSONC}
+ENV DISABLE_TELEMETRY=1
+ENV GITHUB_ACTIONS=true
+
+RUN echo "${PRE}" > /prep-cmd.sh && \
+    echo "${RMJSONC}" > /rmjsonc.sh && chmod +x /rmjsonc.sh && \
+    /bin/sh /prep-cmd.sh
+
+COPY . /netdata
+
+RUN /netdata/packaging/installer/install-required-packages.sh --dont-wait --non-interactive netdata

@@ -1,0 +1,16 @@
+ARG golang_src_repo=golang:latest
+ARG photon_src_repo=photon:latest
+
+FROM ${golang_src_repo} as build
+ENV BUILD_PATH "github.com/vmware/global-load-balancing-services-for-kubernetes/"
+RUN mkdir -p $GOPATH/src/$BUILD_PATH
+
+COPY . $GOPATH/src/$BUILD_PATH
+WORKDIR $GOPATH/src/$BUILD_PATH
+
+RUN GOARCH=amd64 CGO_ENABLED=0 GOOS=linux go build -o $GOPATH/bin/amko -mod=vendor $BUILD_PATH/cmd/gslb
+
+FROM ${photon_src_repo}
+RUN yum install -y tar.x86_64 && rm -rf /var/cache/yum
+COPY --from=build /go/bin/amko .
+ENTRYPOINT [ "./amko" ]

@@ -1,0 +1,35 @@
+{
+  "startTime": 1674248927880,
+  "endTime": 1674248928553,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseY",
+      "position": {
+        "lineStart": 49,
+        "lineEnd": 49,
+        "columnStart": 4,
+        "columnEnd": 28
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 49,
+        "lineEnd": 49,
+        "columnStart": 4,
+        "columnEnd": 28
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 49,
+        "lineEnd": 49,
+        "columnStart": 4,
+        "columnEnd": 28
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "################################\n# STEP 1 build executable binary\n################################\n\nFROM golang:1.17-alpine AS build-stage\n\nENV VENDOR symantec\n\n# Install git + SSL ca certificates.\n# Git is required for fetching the dependencies.\n# Ca-certificates is required to call HTTPS endpoints.\nRUN apk update && apk add --no-cache git ca-certificates tzdata \\\n\t&& update-ca-certificates 2>/dev/null || true\n\n# Set the Current Working Directory inside the container.\nWORKDIR $GOPATH/src/saferwall/$VENDOR/\n\n# Copy go mod and sum files.\nCOPY go.mod go.sum ./\n\n# Download all dependencies. Dependencies will be cached if the go.mod\n# and go.sum files are not changed.\nRUN go mod download\n\n# Copy our go files.\nCOPY . .\n\n# Build the binary.\nRUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \\\n\tgo build -a -installsuffix cgo -ldflags '-extldflags \"-static\"' \\\n\t-o /go/bin/$VENDOR-svc cmd/services/multiav/$VENDOR/main.go\n\n############################\n# STEP 2 build a small image\n############################\n\nFROM saferwall/symantec:latest\nLABEL maintainer=\"https://github.com/saferwall\"\nLABEL version=\"0.0.3\"\nLABEL description=\"symantec endpoint protection linux version with nsq consumer\"\n\n# Environment variables.\nENV SYMANTEC_DB_UPDATE_DATE\t/av_db_update_date.txt\n\n# Set the Current Working Directory inside the container.\nWORKDIR /saferwall\n\n# Install sudo.\nRUN apt-get update \\\n\t&& apt-get install -y --no-install-recommends -qq sudo && rm -rf /var/lib/apt/lists/*;\n\n# Download EICAR Anti-Virus Test File.\nADD http://www.eicar.org/download/eicar.com.txt /eicar\n\n# Update virus definition file.\nRUN /etc/init.d/symcfgd start \\\n\t&& /etc/init.d/rtvscand start \\\n\t&& /etc/init.d/smcd start \\\n\t# && $SYMANTEC_SAV liveupdate --update \\\n\t# && $SYMANTEC_SAV info --defs \\\n\t&& echo -n \"$(date +%s)\" >> $SYMANTEC_DB_UPDATE_DATE \\\n    && $SYMANTEC_SAV manualscan --clscan /eicar || true \\\n\t&& TODAY=\"$(date '+%m%d%Y')\" \\\n\t&& cat /var/symantec/sep/Logs/$TODAY.log | grep -q 'EICAR Test String'\n\n# Create an app user so our program doesn't run as root.\nRUN groupadd -r saferwall \\\n\t&& useradd --no-log-init -r -g saferwall saferwall\n\n# Copy our static executable.\nCOPY --from=build-stage /go/bin/symantec-svc .\n\n# Copy the config files.\nCOPY configs/services/multiav/symantec conf/\n\n# Update permissions.\nRUN usermod -aG sudo saferwall \\\n\t&& echo 'saferwall    ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers \\\n\t&& usermod -u 101 saferwall \\\n\t&& groupmod -g 102 saferwall \\\n\t&& chown -R saferwall:saferwall . \\\n\t&& chown -R saferwall:saferwall $SYMANTEC_INSTALL_DIR \\\n\t&& chown -R saferwall:saferwall $SYMANTEC_VAR_DIR\n\n# Switch to our user.\nUSER saferwall\n\nENTRYPOINT [\"/saferwall/symantec-svc\", \"-config\", \"/saferwall/conf\"]\n"
+}

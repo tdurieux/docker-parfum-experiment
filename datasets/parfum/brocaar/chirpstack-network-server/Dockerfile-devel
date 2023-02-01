@@ -1,0 +1,17 @@
+FROM golang:1.17-alpine
+
+ENV PROJECT_PATH=/chirpstack-network-server
+ENV PATH=$PATH:$PROJECT_PATH/build
+ENV CGO_ENABLED=0
+ENV GO_EXTRA_BUILD_ARGS="-a -installsuffix cgo"
+
+RUN apk add --no-cache ca-certificates tzdata make git bash protobuf rpm redis
+
+RUN git clone https://github.com/protocolbuffers/protobuf.git /protobuf
+RUN git config --global --add safe.directory $PROJECT_PATH
+
+RUN mkdir -p $PROJECT_PATH
+COPY . $PROJECT_PATH
+WORKDIR $PROJECT_PATH
+
+RUN make dev-requirements

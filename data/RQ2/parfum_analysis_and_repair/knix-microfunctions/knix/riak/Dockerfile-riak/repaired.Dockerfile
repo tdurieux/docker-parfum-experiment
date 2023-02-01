@@ -1,0 +1,71 @@
+#   Copyright 2020 The KNIX Authors
+#
+#   Licensed under the Apache License, Version 2.0 (the "License");
+#   you may not use this file except in compliance with the License.
+#   You may obtain a copy of the License at
+#
+#       http://www.apache.org/licenses/LICENSE-2.0
+#
+#   Unless required by applicable law or agreed to in writing, software
+#   distributed under the License is distributed on an "AS IS" BASIS,
+#   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+#   See the License for the specific language governing permissions and
+#   limitations under the License.
+
+FROM ubuntu:18.04
+
+RUN apt-get update && apt-get install --no-install-recommends -y curl cron libpopt0 libssl1.0.0 logrotate sudo dnsutils && rm -rf /var/lib/apt/lists/*;
+
+ENV RIAK_VERSION 2.9.0
+RUN groupadd -o -g 1000 -r riak && useradd -m -d /home/riak -u 1000 -c 'Riak user' -r -g riak riak
+
+# Download riak package
+RUN curl -f https://files.tiot.jp/riak/kv/2.9/2.9.0/ubuntu/bionic64/riak_2.9.0-1_amd64.deb -o /home/riak/riak_2.9.0-1_amd64.deb
+
+RUN dpkg -i /home/riak/riak_2.9.0-1_amd64.deb
+
+# Clean up APT cache
+RUN rm -rf /var/lib/apt/lists/* /tmp/*
+
+# Install Jiffy - Json parser for Erlang
+ADD lib/jiffy.tgz /usr/lib/riak/lib/
+
+# Copy mfn counter triggers source (compiled by prestart script)
+RUN mkdir /usr/lib/riak/lib/mfn_counter_triggers
+COPY src/mfn_counter_triggers.erl /usr/lib/riak/lib/mfn_counter_triggers
+
+# Copy workflow_triggers source (compiled by prestart script)
+RUN mkdir /usr/lib/riak/lib/workflow_triggers
+COPY src/workflow_triggers.erl /usr/lib/riak/lib/workflow_triggers
+
+# Install custom start script
+COPY script/riak-cluster.sh /usr/lib/riak/riak-cluster.sh
+COPY script/shutdown.sh /usr/lib/riak/shutdown.sh
+RUN chmod a+x /usr/lib/riak/riak-cluster.sh
+RUN chmod a+x /usr/lib/riak/shutdown.sh
+RUN echo "riak soft nofile 65536" >> /etc/security/limits.conf
+RUN echo "riak hard nofile 200000" >> /etc/security/limits.conf
+
+# Install custom hooks
+COPY script/prestart.d /etc/riak/prestart.d
+COPY script/poststart.d /etc/riak/poststart.d
+
+# Prepare for bootstrapping schemas
+RUN mkdir -p /etc/riak/schemas
+
+RUN chown riak:riak -R /etc/riak
+RUN chown riak:riak -R /usr/lib/riak/lib/mfn_counter_triggers
+RUN chown riak:riak -R /usr/lib/riak/lib/workflow_triggers
+
+# Prepare data dir
+RUN mkdir -p /var/lib/riak
+RUN chown riak:riak -R /var/lib/riak
+
+USER riak
+WORKDIR /home/riak
+
+# Expose default ports
+EXPOSE 8087
+EXPOSE 8098
+
+CMD ["/usr/lib/riak/riak-cluster.sh"]

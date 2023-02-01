@@ -1,0 +1,44 @@
+{
+  "startTime": 1674252250255,
+  "endTime": 1674252251195,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 65,
+        "lineEnd": 65,
+        "columnStart": 4,
+        "columnEnd": 116
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 79,
+        "lineEnd": 79,
+        "columnStart": 7,
+        "columnEnd": 94
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 57,
+        "lineEnd": 57,
+        "columnStart": 7,
+        "columnEnd": 32
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 58,
+        "lineEnd": 58,
+        "columnStart": 7,
+        "columnEnd": 40
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM alpine:3.10 AS builder\n\n# Based on https://github.com/better/alpine-tensorflow/blob/master/Dockerfile\n#\n# Based on https://github.com/tatsushid/docker-alpine-py3-tensorflow-jupyter/blob/master/Dockerfile\n# Changes:\n# - Bumping versions of Bazel and Tensorflow\n# - Add -Xmx to the Java params when building Bazel\n# - Disable TF_GENERATE_BACKTRACE and TF_GENERATE_STACKTRACE\n\nRUN apk add --no-cache \\\n        python3 \\\n        python3-tkinter \\\n        py3-numpy \\\n        py3-numpy-f2py \\\n        freetype \\\n        libpng \\\n        libjpeg-turbo \\\n        imagemagick \\\n        graphviz \\\n        git \\\n        bash \\\n        nss \\\n        nss-dev\n\nRUN apk add --no-cache --update-cache --repository http://dl-3.alpinelinux.org/alpine/edge/testing/ --allow-untrusted \\\n        hdf5 \\\n        hdf5-dev\n\nRUN apk add --no-cache --virtual=.build-deps \\\n        cmake \\\n        curl \\\n        freetype-dev \\\n        g++ \\\n        libjpeg-turbo-dev \\\n        libpng-dev \\\n        linux-headers \\\n        make \\\n        musl-dev \\\n        openblas-dev \\\n        patch \\\n        perl \\\n        python3-dev \\\n        py-numpy-dev \\\n        py3-scipy \\\n        py3-numpy \\\n        rsync \\\n        sed \\\n        swig \\\n        zip \\\n        unzip \\\n        openjdk8 \\\n        libarchive \\\n        curl\n\n# Note: Cython is pinned as newer versions cannot compile h5py.\nRUN cd /tmp \\\n    && pip3 install --no-cache-dir Cython~=0.29 \\\n    && pip3 install --no-cache-dir wheel keras requests \\\n    && $(cd /usr/bin && ln -s python3 python)\n\nENV JAVA_HOME /usr/lib/jvm/default-jvm\nENV BAZEL_VERSION 0.26.1\n\n# Bazel download\nRUN curl -f -SLO https://github.com/bazelbuild/bazel/releases/download/${BAZEL_VERSION}/bazel-${BAZEL_VERSION}-dist.zip \\\n    && mkdir bazel-${BAZEL_VERSION} \\\n    && unzip -qd bazel-${BAZEL_VERSION} bazel-${BAZEL_VERSION}-dist.zip\n\n# Bazel install\nRUN cd bazel-${BAZEL_VERSION} \\\n    && sed -i -e 's/-classpath/-J-Xmx8192m -J-Xms128m -classpath/g' scripts/bootstrap/compile.sh \\\n    && EXTRA_BAZEL_ARGS=--host_javabase=@local_jdk//:jdk ./compile.sh \\\n    && cp -p output/bazel /usr/bin/\n\nENV TENSORFLOW_VERSION 1.15.2\n\n# Download Tensorflow\nRUN cd /tmp \\\n    && curl -f -SL https://github.com/tensorflow/tensorflow/archive/v${TENSORFLOW_VERSION}.tar.gz \\\n        | tar xzf -\n\n# Build Tensorflow\nRUN cd /tmp/tensorflow-${TENSORFLOW_VERSION} \\\n    && : musl-libc does not have \"secure_getenv\" function \\\n    && sed -i -e '/define TF_GENERATE_BACKTRACE/d' tensorflow/core/platform/default/stacktrace.h \\\n    && sed -i -e '/define TF_GENERATE_STACKTRACE/d' tensorflow/core/platform/default/stacktrace_handler.cc \\\n    && sed -i -e 's/int res = pthread_getname_np.*/int res=-1; return false;/g' tensorflow/core/platform/posix/env.cc \\\n    && sed -i -e '/\\\"ENABLE_BACKTRACES\\\": 1,/d' third_party/llvm/llvm.bzl \\\n    && sed -i -e '/\\\"HAVE_MALLINFO\\\": 1,/d' third_party/llvm/llvm.bzl \\\n    && sed -i -e '/\\\"HAVE_EXECINFO_H\\\": 1,/d' third_party/llvm/llvm.bzl \\\n    && sed -i -e '/\\\"HAVE_BACKTRACE\\\": 1,/d' third_party/llvm/llvm.bzl \\\n    && touch /usr/include/sys/sysctl.h \\\n    &&  CC_OPT_FLAGS=\"-mavx -mavx2 -mfma -mfpmath=both -msse4.2\" \\\n        TF_NEED_JEMALLOC=1 \\\n        TF_NEED_GCP=0 \\\n        TF_NEED_HDFS=0 \\\n        TF_NEED_S3=0 \\\n        TF_ENABLE_XLA=0 \\\n        TF_NEED_GDR=0 \\\n        TF_NEED_VERBS=0 \\\n        TF_NEED_OPENCL=0 \\\n        TF_NEED_CUDA=0 \\\n        TF_NEED_MPI=0 \\\n        bash configure\n\nRUN cd /tmp/tensorflow-${TENSORFLOW_VERSION} \\\n    && bazel build -c opt --config opt --host_copt=-w --copt=-w //tensorflow/tools/pip_package:build_pip_package\n\n# Replace with    && bazel build --cxxopt=-g --copt=-g -c dbg --strip=never //tensorflow/tools/pip_package:build_pip_package\n# to build with debug symbols.\n\n# Add -s for verbose build output (Logs all invoked build commands)\n\nRUN cd /tmp/tensorflow-${TENSORFLOW_VERSION} \\\n    && ./bazel-bin/tensorflow/tools/pip_package/build_pip_package /tmp/tensorflow_pkg\n\n# Create wheelhouse containing tensorflow and other libraries with their dependencies.\n# gast is pinned due to https://github.com/tensorflow/autograph/issues/1.\nRUN pip3 wheel --wheel-dir /tmp/wheelhouse \\\n    /tmp/tensorflow_pkg/tensorflow-${TENSORFLOW_VERSION}-cp37-cp37m-linux_x86_64.whl \\\n    gast==0.2.2\n\nRUN cp /tmp/tensorflow_pkg/tensorflow-${TENSORFLOW_VERSION}-cp37-cp37m-linux_x86_64.whl /root\n\n##############\n# Main stage #\n##############\nFROM alpine:3.10\n\n# 'requests' is needed by /tf-models.\nRUN apk add --no-cache \\\n    git python3 py3-pip py3-numpy py3-requests \\\n    protobuf\n\nRUN apk add --no-cache --update-cache --repository http://dl-3.alpinelinux.org/alpine/edge/testing/ --allow-untrusted \\\n    hdf5\n\nCOPY --from=builder /tmp/wheelhouse /tmp/wheelhouse\n\nRUN pip3 install --no-cache-dir --no-index --find-links=/tmp/wheelhouse \\\n    tensorflow \\\n    && python3 -c 'import tensorflow'\n\n# Comment out\n#    && python3 -c 'import tensorflow'\n# when building for a different platform/machine with instruction set extensions like AVX/SSE that are not supported on the build machine.\n\nRUN rm -rf /tmp/*\n\n# Clone Tensorflow models and benchmarks repositories\nRUN git clone --depth 1 https://github.com/tensorflow/models.git /tf-models\nRUN git clone --depth 1 https://github.com/tensorflow/benchmarks.git -b cnn_tf_v1.15_compatible /tf-benchmarks\n\nADD app app\n\nADD app/data/mnist data\n"
+}

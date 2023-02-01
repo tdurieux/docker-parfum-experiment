@@ -1,0 +1,1 @@
+# https://github.com/operator-framework/operator-sdk/blob/09c3aa14625965af9f22f513cd5c891471dbded2/images/custom-scorecard-tests/Dockerfile

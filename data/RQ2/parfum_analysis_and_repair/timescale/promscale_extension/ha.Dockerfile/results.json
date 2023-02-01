@@ -1,0 +1,90 @@
+{
+  "startTime": 1674219302086,
+  "endTime": 1674219302715,
+  "originalSmells": [
+    {
+      "rule": "gpgUseBatchFlag",
+      "position": {
+        "lineStart": 10,
+        "lineEnd": 10,
+        "columnStart": 67,
+        "columnEnd": 128
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 8,
+        "lineEnd": 8,
+        "columnStart": 4,
+        "columnEnd": 139
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 17,
+        "lineEnd": 17,
+        "columnStart": 4,
+        "columnEnd": 83
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 8,
+        "lineEnd": 8,
+        "columnStart": 4,
+        "columnEnd": 139
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 17,
+        "lineEnd": 17,
+        "columnStart": 4,
+        "columnEnd": 83
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 8,
+        "lineEnd": 8,
+        "columnStart": 4,
+        "columnEnd": 139
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 17,
+        "lineEnd": 17,
+        "columnStart": 4,
+        "columnEnd": 83
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 7,
+        "lineEnd": 7,
+        "columnStart": 4,
+        "columnEnd": 163
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 16,
+        "lineEnd": 16,
+        "columnStart": 4,
+        "columnEnd": 107
+      }
+    }
+  ],
+  "repairedDockerfile": "ARG PG_VERSION=14\nARG TIMESCALEDB_VERSION_MAJMIN=2.6\nFROM ubuntu:21.10 as builder\nARG PG_VERSION\n\nENV DEBIAN_FRONTEND=noninteractive\nRUN apt-get update\nRUN apt-get install --no-install-recommends -y clang pkg-config wget lsb-release libssl-dev curl gnupg2 binutils devscripts equivs git libkrb5-dev libperl-dev make && rm -rf /var/lib/apt/lists/*;\n\nRUN wget -O - https://www.postgresql.org/media/keys/ACCC4CF8.asc | gpg --batch --dearmor --output /usr/share/keyrings/postgresql.keyring\nRUN for t in deb deb-src; do \\\n        echo \"$t [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/postgresql.keyring] http://apt.postgresql.org/pub/repos/apt/ $(lsb_release -s -c)-pgdg main\" >> /etc/apt/sources.list.d/pgdg.list; \\\n    done\n\nRUN apt-get update\n\nRUN apt-get install --no-install-recommends -y postgresql-${PG_VERSION} postgresql-server-dev-${PG_VERSION} && rm -rf /var/lib/apt/lists/*;\n\nRUN <<EOF\n    curl -L \"https://github.com/mozilla/sccache/releases/download/v0.2.15/sccache-v0.2.15-x86_64-unknown-linux-musl.tar.gz\" | tar zxf -\n    chmod +x sccache-*/sccache\n    mv sccache-*/sccache /usr/local/bin/sccache\n    sccache --show-stats\nEOF\n\nENV RUSTC_WRAPPER=sccache\nENV SCCACHE_BUCKET=promscale-extension-sccache\n\nWORKDIR /home/promscale\n\nENV HOME=/home/promscale \\\n    PATH=/home/promscale/.cargo/bin:$PATH\n\nRUN chown postgres:postgres /home/promscale\n\nUSER postgres\n\nENV RUST_VERSION=1.58.1\n\nRUN \\\n    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --no-modify-path --profile minimal --component rustfmt --default-toolchain ${RUST_VERSION} && \\\n    rustup --version && \\\n    rustc --version && \\\n    cargo --version\n\nRUN --mount=type=secret,uid=1000,id=AWS_ACCESS_KEY_ID --mount=type=secret,uid=1000,id=AWS_SECRET_ACCESS_KEY \\\n    [ -f \"/run/secrets/AWS_ACCESS_KEY_ID\" ] && export AWS_ACCESS_KEY_ID=\"$(cat /run/secrets/AWS_ACCESS_KEY_ID)\" ; \\\n    [ -f \"/run/secrets/AWS_SECRET_ACCESS_KEY\" ] && export AWS_SECRET_ACCESS_KEY=\"$(cat /run/secrets/AWS_SECRET_ACCESS_KEY)\" ; \\\n    sccache --show-stats && \\\n    cargo install cargo-pgx --git https://github.com/timescale/pgx --branch promscale-staging --rev ee52db6b && \\\n    sccache --show-stats\n\nRUN cargo pgx init --pg${PG_VERSION} /usr/lib/postgresql/${PG_VERSION}/bin/pg_config\n\nWORKDIR /build/promscale\nRUN chown -R postgres:postgres /build\n\nUSER postgres\n\nCOPY --chown=postgres:postgres Cargo.* /build/promscale/\nCOPY --chown=postgres:postgres Makefile build.rs create-upgrade-symlinks.sh extract-extension-version.sh /build/promscale/\nCOPY --chown=postgres:postgres .cargo/ /build/promscale/.cargo/\nCOPY --chown=postgres:postgres test-common/ /build/promscale/test-common/\nCOPY --chown=postgres:postgres sql-tests/ /build/promscale/sql-tests/\nCOPY --chown=postgres:postgres e2e/ /build/promscale/e2e/\nCOPY --chown=postgres:postgres src/ /build/promscale/src/\nCOPY --chown=postgres:postgres gendoc/ /build/promscale/gendoc/\nCOPY --chown=postgres:postgres sql/*.sql /build/promscale/sql/\nCOPY --chown=postgres:postgres migration/ /build/promscale/migration\nCOPY --chown=postgres:postgres templates/ /build/promscale/templates/\n\nRUN --mount=type=secret,uid=1000,id=AWS_ACCESS_KEY_ID --mount=type=secret,uid=1000,id=AWS_SECRET_ACCESS_KEY \\\n    [ -f \"/run/secrets/AWS_ACCESS_KEY_ID\" ] && export AWS_ACCESS_KEY_ID=\"$(cat /run/secrets/AWS_ACCESS_KEY_ID)\" ; \\\n    [ -f \"/run/secrets/AWS_SECRET_ACCESS_KEY\" ] && export AWS_SECRET_ACCESS_KEY=\"$(cat /run/secrets/AWS_SECRET_ACCESS_KEY)\" ; \\\n    sccache --show-stats && \\\n    make package && \\\n    sccache --show-stats\n\n# Yes, fixed pg14 image is intentional. The image ships with PG 12, 13 and 14 binaries\n# PATH environment variable below is used to specify runtime version.\nFROM timescale/timescaledb-ha:pg14-ts${TIMESCALEDB_VERSION_MAJMIN}-latest\nARG PG_VERSION\nCOPY --from=builder --chown=root:postgres /build/promscale/target/release/promscale-pg${PG_VERSION}/usr/lib/postgresql /usr/lib/postgresql\nCOPY --from=builder --chown=root:postgres /build/promscale/target/release/promscale-pg${PG_VERSION}/usr/share/postgresql /usr/share/postgresql\nENV PATH=\"/usr/lib/postgresql/${PG_VERSION}/bin:${PATH}\"\nUSER root\n# The timescale/timescaledb-ha docker image sets the sticky bit on the lib and extension directories, which we overwrote\n# with the copy above. We need to set it back and set permissions correctly to allow us to later (in a test) remove the\n# timescale extension files (for our \"no timescaledb\" tests).\nRUN chmod 1775 /usr/lib/postgresql/${PG_VERSION}/lib\nRUN chmod 1775 /usr/share/postgresql/${PG_VERSION}/extension\nUSER postgres\n"
+}

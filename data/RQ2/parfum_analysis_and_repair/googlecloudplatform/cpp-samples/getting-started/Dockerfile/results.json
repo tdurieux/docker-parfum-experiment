@@ -1,0 +1,44 @@
+{
+  "startTime": 1674250879681,
+  "endTime": 1674250880461,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 43,
+        "lineEnd": 43,
+        "columnStart": 4,
+        "columnEnd": 76
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 26,
+        "lineEnd": 37,
+        "columnStart": 4,
+        "columnEnd": 11
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 26,
+        "lineEnd": 37,
+        "columnStart": 4,
+        "columnEnd": 11
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 64,
+        "lineEnd": 64,
+        "columnStart": 4,
+        "columnEnd": 73
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Copyright 2021 Google LLC\n#\n# Licensed under the Apache License, Version 2.0 (the \"License\");\n# you may not use this file except in compliance with the License.\n# You may obtain a copy of the License at\n#\n#     http://www.apache.org/licenses/LICENSE-2.0\n#\n# Unless required by applicable law or agreed to in writing, software\n# distributed under the License is distributed on an \"AS IS\" BASIS,\n# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.\n# See the License for the specific language governing permissions and\n# limitations under the License.\n\nFROM ubuntu:22.04 AS base\n\n# Create separate targets for each phase, this allows us to cache intermediate\n# stages when using Google Cloud Build, and makes the final deployment stage\n# small as it contains only what is needed.\nFROM base AS devtools\n\n# Install the typical development tools and some additions:\n#   - ninja-build is a backend for CMake that often compiles faster than\n#     CMake with GNU Make.\nENV DEBIAN_FRONTEND=noninteractive\nRUN apt update && \\\n    apt install --no-install-recommends -y \\\n        build-essential \\\n        cmake \\\n        curl \\\n        gcc \\\n        g++ \\\n        git \\\n        ninja-build \\\n        pkg-config \\\n        tar \\\n        unzip \\\n        zip && rm -rf /var/lib/apt/lists/*;\n\n# Copy the source code to /v/source and compile it.\nFROM devtools AS build\n\nWORKDIR /v/vcpkg\nRUN curl -f -sSL \"https://github.com/Microsoft/vcpkg/archive/2022.06.15.tar.gz\" | \\\n    tar --strip-components=1 -zxf - \\\n    && ./bootstrap-vcpkg.sh -disableMetrics\n\nCOPY vcpkg.json /v/deps/\nRUN /v/vcpkg/vcpkg install --x-manifest-root=/v/deps  --clean-after-build\n\n# Run the CMake configuration step.\nCOPY . /v/source\nRUN cmake -S/v/source -B/v/binary -GNinja \\\n    -DCMAKE_BUILD_TYPE=Release \\\n    -DCMAKE_TOOLCHAIN_FILE=/v/vcpkg/scripts/buildsystems/vcpkg.cmake \\\n    && cmake --build /v/binary --target gke_index_gcs \\\n    && strip /v/binary/gke_index_gcs\n\n# Create the final deployment image, install the minimal dependencies for the\n# program.\nFROM base AS getting-started-gke\n\nENV DEBIAN_FRONTEND=noninteractive\nRUN apt update && \\\n    apt-get --no-install-recommends install -y libstdc++6 ca-certificates && \\\n    rm -rf /var/cache/apt/* && rm -rf /var/lib/apt/lists/*;\n\nWORKDIR /r\n\n# Copy the program from the previously created stage and make it the entry point.\nCOPY --from=build /v/binary/gke_index_gcs /r\n\nENTRYPOINT [ \"/r/gke_index_gcs\" ]\n"
+}

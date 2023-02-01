@@ -1,0 +1,252 @@
+{% set prefix = DEFAULT_CONTAINER_REGISTRY %}
+FROM {{ prefix }}ubuntu:18.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install --no-install-recommends -y build-essential \
+                                         cmake \
+                                         curl \
+                                         default-jre \
+                                         gcc \
+                                         git \
+                                         inetutils-ping \
+                                         iproute2 \
+                                         isc-dhcp-client \
+                                         libffi-dev \
+                                         libssl-dev \
+                                         libxml2 \
+                                         libxslt1-dev \
+                                         make \
+                                         openssh-server \
+                                         psmisc \
+                                         python \
+                                         python-dev \
+                                         python-scapy \
+                                         python-pip \
+                                         python3-pip \
+                                         python3-venv \
+                                         rsyslog \
+                                         snmp \
+                                         sshpass \
+                                         sudo \
+                                         tcpdump \
+                                         telnet \
+                                         vim && rm -rf /var/lib/apt/lists/*;
+
+RUN pip install --no-cache-dir setuptools==44.1.1
+RUN pip install --no-cache-dir cffi==1.10.0 \
+                contextlib2==0.6.0.post1 \
+                cryptography==3.3.2 \
+                "future>=0.16.0" \
+                gitpython \
+                ipaddr \
+                ipython==5.4.1 \
+                ixnetwork-restpy==1.0.64 \
+                ixnetwork-open-traffic-generator==0.0.79 \
+                snappi[ixnetwork,convergence]==0.7.44 \
+                jinja2==2.7.2 \
+                jsonpatch \
+                lxml \
+                natsort \
+                netaddr \
+                netmiko==2.4.2 \
+                paramiko==2.7.1 \
+                passlib \
+                pexpect \
+                prettytable \
+                psutil \
+                pyasn1==0.1.9 \
+                pyfiglet \
+                lazy-object-proxy==1.6.0 \
+                pylint==1.8.1 \
+                pyro4 \
+                pysnmp==4.2.5 \
+                pytest-repeat \
+                pytest-html \
+                pytest-xdist==1.28.0 \
+                pytest==4.6.5 \
+                redis \
+                requests \
+                rpyc \
+                six \
+                tabulate \
+                statistics \
+                textfsm==1.1.2 \
+                virtualenv \
+                retry \
+                thrift==0.11.0 \
+                allure-pytest==2.8.22 \
+    && git clone https://github.com/p4lang/scapy-vxlan.git \
+    && cd scapy-vxlan \
+    && python setup.py install \
+    && cd .. \
+    && rm -fr scapy-vxlan \
+    && wget https://github.com/nanomsg/nanomsg/archive/1.0.0.tar.gz \
+    && tar xvfz 1.0.0.tar.gz \
+    && cd nanomsg-1.0.0 \
+    && mkdir -p build \
+    && cd build \
+    && cmake .. \
+    && make install \
+    && ldconfig \
+    && cd ../.. \
+    && rm -fr nanomsg-1.0.0 \
+    && rm -f 1.0.0.tar.gz \
+    && pip install --no-cache-dir nnpy \
+    && pip install --no-cache-dir dpkt \
+    && pip install --no-cache-dir scapy==2.4.5 --upgrade
+
+# Install docker-ce-cli
+RUN apt-get update \
+    && apt-get install --no-install-recommends -y \
+      apt-transport-https \
+      ca-certificates \
+      curl \
+      gnupg-agent \
+      software-properties-common \
+    && curl -fsSL https://download.docker.com/linux/ubuntu/gpg | apt-key add - \
+    && add-apt-repository "deb [arch=amd64] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" \
+    && apt-get update \
+    && apt-get install --no-install-recommends -y docker-ce-cli && rm -rf /var/lib/apt/lists/*;
+
+# Install Azure CLI
+RUN curl -f -sL https://aka.ms/InstallAzureCLIDeb | bash
+
+# Install Microsoft Azure Kusto Library for Python
+RUN pip install --no-cache-dir azure-kusto-data==0.0.13 \
+                azure-kusto-ingest==0.0.13
+
+RUN pip install --no-cache-dir wheel==0.33.6
+
+## Copy and install sonic-mgmt docker dependencies
+COPY \
+{% for deb in docker_sonic_mgmt_debs.split(' ') -%}
+debs/{{ deb }}{{' '}}
+{%- endfor -%}
+debs/
+
+RUN dpkg -i \
+{% for deb in docker_sonic_mgmt_debs.split(' ') -%}
+debs/{{ deb }}{{' '}}
+{%- endfor %}
+
+RUN pip install --no-cache-dir ansible==2.8.12
+
+RUN pip install --no-cache-dir pysubnettree
+
+# Install pytest-ansible module with 'become', 'become_user' parameters support
+RUN git clone https://github.com/ansible/pytest-ansible.git \
+    && cd pytest-ansible \
+    && git checkout d33c025f070a9c870220a157cc5a999fda68de44 \
+    && python setup.py install \
+    && cd .. \
+    && rm -fr pytest-ansible
+
+RUN mkdir /var/run/sshd
+EXPOSE 22
+
+# Add user
+ARG user
+ARG uid
+ARG guid
+ARG hostname
+
+ENV BUILD_HOSTNAME $hostname
+ENV USER $user
+ENV CC=gcc CPP=cpp CXX=c++ LDSHARED="gcc -pthread -shared" PYMSSQL_BUILD_WITH_BUNDLED_FREETDS=1
+
+RUN groupadd -f -r -g $guid g$user
+
+RUN useradd $user -l -u $uid -g $guid -d /var/$user -m -s /bin/bash
+
+COPY sonic-jenkins.pub /var/$user/.ssh/authorized_keys2
+
+RUN echo "Host *\n\tStrictHostKeyChecking no\n" > /var/$user/.ssh/config
+RUN chown $user /var/$user/.ssh -R
+RUN chmod go= /var/$user/.ssh -R
+
+# Add user to sudoers
+RUN echo "$user ALL=(ALL) NOPASSWD:ALL" >>/etc/sudoers
+
+USER $user
+WORKDIR /var/$user
+
+# Add az symlink for backwards compatibility
+RUN mkdir bin && ln -s /usr/bin/az bin/az
+
+# Install Virtual Environments
+RUN python -m virtualenv --system-site-packages env-201811
+RUN env-201811/bin/pip install cryptography==3.3.2 ansible==2.0.0.2
+
+RUN python3 -m venv env-python3
+
+# NOTE: There is an ordering dependency for pycryptodome. Leaving this at
+#       the end until we figure that out.
+RUN pip install --no-cache-dir pycryptodome==3.9.8
+
+# Activating a virtualenv. The virtualenv automatically works for RUN, ENV and CMD.
+ENV VIRTUAL_ENV=env-python3
+ARG BACKUP_OF_PATH="$PATH"
+ENV PATH="$VIRTUAL_ENV/bin:$PATH"
+
+ENV LANG=C.UTF-8 LC_ALL=C.UTF-8 PYTHONIOENCODING=UTF-8
+
+RUN python3 -m pip install --upgrade --ignore-installed pip setuptools==58.4.0
+
+RUN python3 -m pip install setuptools-rust \
+                            aiohttp \
+                            defusedxml \
+                            azure-kusto-ingest \
+                            azure-kusto-data \
+                            cffi \
+                            contextlib2==0.6.0.post1 \
+                            cryptography==3.3.2 \
+                            "future>=0.16.0" \
+                            gitpython \
+                            ipaddr \
+                            ipython==5.4.1 \
+                            ixnetwork-restpy==1.0.64 \
+                            ixnetwork-open-traffic-generator==0.0.79 \
+                            snappi[ixnetwork,convergence]==0.7.44 \
+                            jinja2==2.7.2 \
+                            jsonpatch \
+                            lxml \
+                            natsort \
+                            netaddr \
+                            netmiko==2.4.2 \
+                            paramiko==2.7.1 \
+                            passlib \
+                            pexpect \
+                            prettytable \
+                            psutil \
+                            pyasn1==0.4.8 \
+                            pyfiglet \
+                            pylint==1.8.1 \
+                            pyro4 \
+                            pysnmp==4.4.12 \
+                            pytest-repeat \
+                            pytest-html \
+                            pytest-xdist==1.28.0 \
+                            pytest \
+                            redis \
+                            requests \
+                            rpyc \
+                            six \
+                            tabulate \
+                            textfsm==1.1.2 \
+                            virtualenv \
+                            wheel==0.33.6 \
+                            pysubnettree \
+                            nnpy \
+                            dpkt \
+                            pycryptodome==3.9.8 \
+                            ansible==2.8.12 \
+                            pytest-ansible \
+                            allure-pytest==2.8.22 \
+                            retry \
+                            thrift==0.11.0 \
+                            ptf \
+                            scapy==2.4.5
+
+# Deactivating a virtualenv.
+ENV PATH="$BACKUP_OF_PATH"

@@ -1,0 +1,80 @@
+{
+  "startTime": 1674252184300,
+  "endTime": 1674252185249,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 64,
+        "lineEnd": 64,
+        "columnStart": 4,
+        "columnEnd": 30
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 68,
+        "lineEnd": 68,
+        "columnStart": 42,
+        "columnEnd": 112
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 19,
+        "lineEnd": 19,
+        "columnStart": 22,
+        "columnEnd": 69
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 92,
+        "lineEnd": 92,
+        "columnStart": 22,
+        "columnEnd": 53
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 19,
+        "lineEnd": 19,
+        "columnStart": 22,
+        "columnEnd": 69
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 92,
+        "lineEnd": 92,
+        "columnStart": 22,
+        "columnEnd": 53
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 25,
+        "lineEnd": 34,
+        "columnStart": 18,
+        "columnEnd": 7
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 79,
+        "lineEnd": 79,
+        "columnStart": 18,
+        "columnEnd": 44
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Base image that creates all necessary dependencies for the scalyr-agent docker image.\n# NOTE: multi-stage builds require Docker 17.05 or greater\n\n# Suffix for the python dockerhub image. For now can be:\n#   - 'slim' for debian based image\n#   - 'alpine' for alpine based image.\nARG BASE_IMAGE_SUFFIX\n\n# Install dependency packages for debian.\nFROM python:3.8.13-slim as scalyr-dependencies-slim\nMAINTAINER Scalyr Inc <support@scalyr.com>\n\n# Workaround for weird build failure on Circle CI, see\n# https://github.com/docker/buildx/issues/495#issuecomment-995503425 for details\nRUN ln -s /usr/bin/dpkg-split /usr/sbin/dpkg-split\nRUN ln -s /usr/bin/dpkg-deb /usr/sbin/dpkg-deb\nRUN ln -s /bin/rm /usr/sbin/rm\nRUN ln -s /bin/tar /usr/sbin/tar\n\nRUN apt-get update && apt-get install --no-install-recommends -y build-essential git tar curl && rm -rf /var/lib/apt/lists/*;\n\n# Install dependency packages for alpine.\nFROM python:3.8.13-alpine as scalyr-dependencies-alpine\nMAINTAINER Scalyr Inc <support@scalyr.com>\n\nRUN apk update && apk add --no-cache --virtual build-dependencies \\\n    binutils \\\n    build-base \\\n    gcc \\\n    g++ \\\n    make \\\n    curl \\\n    python3-dev \\\n    patchelf \\\n    git\n\nFROM scalyr-dependencies-$BASE_IMAGE_SUFFIX as scalyr-dependencies\n\nARG TARGETVARIANT\nARG TARGETARCH\nARG COVERAGE_VERSION\nARG BASE_IMAGE_SUFFIX\n\nADD agent_build/requirement-files/docker-image-requirements.txt agent_build/requirement-files/docker-image-requirements.txt\nADD agent_build/requirement-files/compression-requirements.txt agent_build/requirement-files/compression-requirements.txt\nADD agent_build/requirement-files/main-requirements.txt agent_build/requirement-files/main-requirements.txt\n\n# orjson is wheel is not available for armv7 + musl yet so we exclude it here. We can't exclude it\n# with pip environment markers since they are not specific enough.\nRUN if [ \"$TARGETVARIANT\" = \"v7\" ] && [ \"$BASE_IMAGE_SUFFIX\" = \"alpine\" ]; then sed -i '/^orjson/d' agent_build/requirement-files/main-requirements.txt; fi\n\n# Right now we don't support lz4 on server side yet so we don't include this dependency since it doesn't offer pre built\n# wheel and it substantially slows down base image build\nRUN sed -i '/^lz4/d' agent_build/requirement-files/compression-requirements.txt\n\n# Workaround so we can use pre-built orjson wheel for musl. We need to pin pip to older version for\n# manylinux2014 wheel format to work.\n# See https://github.com/ijl/orjson/issues/8 for details.\n# If we don't that and we include orjson and zstandard, we need rust chain and building the image\n# will be very slow due to cross compilation in emulated environment (QEMU)\n# TODO: Remove once orjson and zstandard musl wheel is available - https://github.com/pypa/auditwheel/issues/305#issuecomment-922251777\nRUN echo 'manylinux2014_compatible = True' > /usr/local/lib/python3.8/_manylinux.py\n\n# Install agent dependencies.\nRUN pip3 install --no-cache-dir --upgrade pip\nRUN pip3 --no-cache-dir install --root /tmp/dependencies -r agent_build/requirement-files/docker-image-requirements.txt\n\n# Install coverage if its version if specified. Only used in testing.\nRUN if [ -n \"${COVERAGE_VERSION}\" ]; then \\\n pip3 install --no-cache-dir --root /tmp/dependencies coverage==\"${COVERAGE_VERSION}\"; fi\n\n# Clean up files which were installed to use manylinux2014 workaround\nRUN rm /usr/local/lib/python3.8/_manylinux.py\n\n# Install packages and tools that will be required during the final image build.\n\n# Install tools for alpine\nFROM python:3.8.13-alpine as ready-base-alpine\nMAINTAINER Scalyr Inc <support@scalyr.com>\n\nRUN apk update && apk add --no-cache --virtual curl git\n\n# Install tools for debian.\nFROM python:3.8.13-slim as ready-base-slim\nMAINTAINER Scalyr Inc <support@scalyr.com>\n\n# Workaround for weird build failure on Circle CI, see\n# https://github.com/docker/buildx/issues/495#issuecomment-995503425 for details\nRUN ln -s /usr/bin/dpkg-split /usr/sbin/dpkg-split\nRUN ln -s /usr/bin/dpkg-deb /usr/sbin/dpkg-deb\nRUN ln -s /bin/rm /usr/sbin/rm\nRUN ln -s /bin/tar /usr/sbin/tar\n\nRUN apt-get update && apt-get install --no-install-recommends -y git tar curl && rm -rf /var/lib/apt/lists/*;\n\n# Create a final base stage from one of the prefious OS-specific stages.\nFROM ready-base-$BASE_IMAGE_SUFFIX\n\n# Copy Agent's Python dependencies, so they also can be used in the final image build.\nCOPY --from=scalyr-dependencies  /tmp/dependencies/ /tmp/dependencies/\nWORKDIR /\n"
+}

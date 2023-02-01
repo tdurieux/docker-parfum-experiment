@@ -1,0 +1,25 @@
+FROM ubuntu:18.04
+
+# Required packages to install SQL Server Driver
+RUN apt-get update -qq && apt-get install --no-install-recommends -y curl gnupg2 && rm -rf /var/lib/apt/lists/*;
+
+# Update package list manually to install SQL Server Driver
+RUN curl -f https://packages.microsoft.com/keys/microsoft.asc | apt-key add - \
+    && curl -f https://packages.microsoft.com/config/ubuntu/18.04/prod.list > /etc/apt/sources.list.d/mssql-release.list \
+    && apt-get update \
+    && ACCEPT_EULA=Y apt-get --no-install-recommends install -y msodbcsql17 && rm -rf /var/lib/apt/lists/*;
+
+# Required packages to enable Kerberos Authentication
+RUN apt-get install --no-install-recommends -y unixodbc-dev krb5-user && rm -rf /var/lib/apt/lists/*;
+RUN yes | apt-get install --no-install-recommends -y mssql-tools && rm -rf /var/lib/apt/lists/*;
+
+ENV PATH=${PATH}:/opt/mssql-tools/bin
+
+# Required packages for the Application
+RUN apt-get install --no-install-recommends -y vim python3-pip git && rm -rf /var/lib/apt/lists/*;
+RUN mkdir /works
+ADD requirements.txt /works
+WORKDIR /works
+
+# Install libraries the Application will use
+RUN pip3 install --no-cache-dir --default-timeout=1000 -r requirements.txt

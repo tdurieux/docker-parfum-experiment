@@ -1,0 +1,1 @@
+# Create Kafka Connect image with Scalyr Sink Connector

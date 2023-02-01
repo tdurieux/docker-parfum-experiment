@@ -1,0 +1,44 @@
+{
+  "startTime": 1674244465244,
+  "endTime": 1674244465778,
+  "originalSmells": [
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 58,
+        "lineEnd": 58,
+        "columnStart": 36,
+        "columnEnd": 47
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 82,
+        "lineEnd": 90,
+        "columnStart": 4,
+        "columnEnd": 30
+      }
+    },
+    {
+      "rule": "gpgUseBatchFlag",
+      "position": {
+        "lineStart": 73,
+        "lineEnd": 73,
+        "columnStart": 4,
+        "columnEnd": 28
+      }
+    },
+    {
+      "rule": "gpgUseBatchFlag",
+      "position": {
+        "lineStart": 74,
+        "lineEnd": 74,
+        "columnStart": 19,
+        "columnEnd": 81
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM alpine:3.10\n\nENV UID=991 GID=991\n\nARG NGINX_VERSION=1.17.1\nARG GPG_NGINX=\"B0F4 2533 73F8 F6F5 10D4  2178 520A 9993 A1C0 52F8\"\nARG BUILD_CORES\n\nARG NGINX_MODULES=\" \\\n    --with-http_ssl_module \\\n    --with-http_v2_module \\\n    --with-http_gzip_static_module \\\n    --with-http_stub_status_module \\\n    --with-file-aio \\\n    --with-threads \\\n    --with-pcre-jit \\\n    --without-http_ssi_module \\\n    --without-http_scgi_module \\\n    --without-http_uwsgi_module \\\n    --without-http_geo_module \\\n    --without-http_autoindex_module \\\n    --without-http_split_clients_module \\\n    --without-http_memcached_module \\\n    --without-http_empty_gif_module \\\n    --without-http_browser_module\"\n\nARG NGINX_3RD_PARTY_MODULES=\" \\\n    --add-module=/tmp/headers-more-nginx-module \\\n    --add-module=/tmp/ngx_brotli\"\n\nRUN NB_CORES=${BUILD_CORES-$(getconf _NPROCESSORS_CONF)} \\\n && apk -U upgrade \\\n && apk add \\\n    ${BUILD_DEPS} \\\n    pcre \\\n    zlib \\\n    libgcc \\\n    libstdc++ \\\n    su-exec \\\n    libressl \\\n    bind-tools \\\n    tini \\\n && apk add -t build-dependencies \\\n    build-base \\\n    linux-headers \\\n    ca-certificates \\\n    automake \\\n    autoconf \\\n    git \\\n    tar \\\n    libtool \\\n    pcre-dev \\\n    zlib-dev \\\n    binutils \\\n    gnupg \\\n    cmake \\\n    go \\\n && cd /tmp && git clone https://github.com/bagder/libbrotli --depth=1 \\\n && cd libbrotli && ./autogen.sh && ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" && make -j ${NB_CORES} && make install \\\n && cd /tmp && git clone https://github.com/google/ngx_brotli --depth=1 \\\n && cd ngx_brotli && git submodule update --init \\\n && cd /tmp && git clone https://github.com/openresty/headers-more-nginx-module --depth=1 \\\n && git clone https://boringssl.googlesource.com/boringssl --depth=1 \\\n && cd boringssl \\\n && mkdir build && cd build && cmake -DCMAKE_BUILD_TYPE=Release .. \\\n && make -j ${NB_CORES} && cd .. \\\n && mkdir -p .openssl/lib/ && cd .openssl && ln -s ../include && cd .. \\\n && cp build/crypto/libcrypto.a build/ssl/libssl.a .openssl/lib && cd /tmp \\\n && NGINX_TARBALL=\"nginx-${NGINX_VERSION}.tar.gz\" \\\n && wget -q https://nginx.org/download/${NGINX_TARBALL} \\\n && echo \"Verifying ${NGINX_TARBALL} using GPG...\" \\\n && wget -q https://nginx.org/download/${NGINX_TARBALL}.asc \\\n && wget -q https://nginx.org/keys/mdounin.key \\\n && gpg --batch --import mdounin.key \\\n && FINGERPRINT=\"$( LANG=C gpg --batch --verify ${NGINX_TARBALL}.asc ${NGINX_TARBALL} 2>&1 \\\n  | sed -n \"s#Primary key fingerprint: \\(.*\\)#\\1#p\")\" \\\n && if [ -z \"${FINGERPRINT}\" ]; then echo \"Warning! Invalid GPG signature!\" && exit 1; fi \\\n && if [ \"${FINGERPRINT}\" != \"${GPG_NGINX}\" ]; then echo \"Warning! Wrong GPG fingerprint!\" && exit 1; fi \\\n && echo \"All seems good, now unpacking ${NGINX_TARBALL}...\" \\\n && tar xzf ${NGINX_TARBALL} && cd nginx-${NGINX_VERSION} \\\n && wget -q https://raw.githubusercontent.com/hoellen/dockerfiles/master/boring-nginx/dynamic_records.patch -O dynamic_records.patch \\\n && patch -p1 < dynamic_records.patch \\\n && ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" \\\n    --prefix=/etc/nginx \\\n    --sbin-path=/usr/sbin/nginx \\\n    --with-cc-opt=\"-O3 -fPIE -fstack-protector-strong -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security -Wno-deprecated-declarations -I ../boringssl/.openssl/include/\" \\\n    --with-ld-opt=\"-lrt -Wl,-Bsymbolic-functions -Wl,-z,relro -L ../boringssl/.openssl/lib\" \\\n    --http-log-path=/var/log/nginx/access.log \\\n    --error-log-path=/var/log/nginx/error.log \\\n    ${NGINX_MODULES} \\\n    ${NGINX_3RD_PARTY_MODULES} \\\n && make -j ${NB_CORES} && make install && make clean \\\n && strip -s /usr/sbin/nginx \\\n && apk del build-dependencies \\\n && rm -rf /tmp/* /var/cache/apk/* /root/.gnupg\n\nCOPY rootfs /\n\nRUN chmod +x /usr/local/bin/*\n\nEXPOSE 8000 4430\n\nVOLUME /sites-enabled /www /conf.d /passwds /certs /var/log/nginx\n\nLABEL description=\"nginx built from source\" \\\n      openssl=\"BoringSSL\" \\\n      nginx=\"nginx ${NGINX_VERSION}\" \\\n      maintainer=\"hoellen <info@hoellen.eu>\"\n\nCMD [\"run.sh\"]\n"
+}

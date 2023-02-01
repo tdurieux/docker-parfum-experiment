@@ -1,0 +1,18 @@
+ARG ALPINE_VERSION
+FROM alpine:${ALPINE_VERSION} as builder
+RUN apk add --no-cache tar gzip
+RUN mkdir /build
+COPY ./_build/prod/prod-*.tar.gz /
+RUN tar -zxf /prod-*.tar.gz -C /build/ && rm /prod-*.tar.gz
+
+FROM alpine:${ALPINE_VERSION} as runtime
+RUN apk add --no-cache ncurses-libs libstdc++ libgcc ffmpeg
+
+COPY --from=builder /build/ /app/
+COPY data/cache/ /app/data/cache/
+WORKDIR /app/
+EXPOSE 4000
+VOLUME "/app/build/videos"
+CMD ["bin/prod", "start"]
+ARG GIT_COMMIT
+ENV GIT_COMMIT=${GIT_COMMIT}

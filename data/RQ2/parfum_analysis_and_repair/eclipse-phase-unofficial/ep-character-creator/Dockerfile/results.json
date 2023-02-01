@@ -1,0 +1,17 @@
+{
+  "startTime": 1674217107125,
+  "endTime": 1674217108080,
+  "originalSmells": [
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 32,
+        "lineEnd": 32,
+        "columnStart": 4,
+        "columnEnd": 15
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "#This is meant to run a full version of the creator in standalone mode.\n#No external databases or volume mounts required\nFROM php:fpm-alpine\n\nEXPOSE 80\nCMD [\"s6-svscan\", \"/etc/s6\"]\n\nHEALTHCHECK --interval=1m --timeout=3s \\\n    CMD curl -f http://localhost/ || exit 1\n\nRUN apk update && apk add nginx npm composer sqlite s6 --no-cache\n\nCOPY .docker/s6/ /etc/s6/\nCOPY .docker/nginx.conf /etc/nginx/\n\n#The timezone must be set or else the pdf exporter, and anything else that uses date functions, will fail.\nRUN echo '\\ndate.timezone = \"UTC\"' >> /usr/local/etc/php/php.ini\n\n#########\n#Everything after this changes somewhat frequently\n#########\n\n#So the RUN commands are done in the proper context\nUSER www-data:www-data\nWORKDIR /var/www/html/\n\n#Use Composer to install PHP vendor packages\nCOPY --chown=www-data:www-data composer.json composer.lock ./\nRUN composer install --no-interaction --no-dev --no-autoloader\n\n#Use npm to install Javascript vendor packages\nCOPY --chown=www-data:www-data package.json package-lock.json ./\nRUN npm install && npm cache clean --force;\n\n#Actual App\nCOPY --chown=www-data:www-data . ./\n\n#SQLite Database prep\nENV DB_DATABASE /var/www/html/database/database.sqlite\nRUN touch $DB_DATABASE && \\\n    sed --in-place 's/\\\\n/ /g' /var/www/html/database/database.sql && \\\n    sqlite3 --init /var/www/html/database/database.sql $DB_DATABASE\n\n#Re-run composer because we now have a few more Classes, and compile the javascript/css for production\nRUN composer install --no-interaction --no-dev --optimize-autoloader && npm run production\n\n#Set default mode to standalone\nRUN mv standalone.env .env && php artisan key:generate\n\n#Needed for nginx to run\nUSER root\n"
+}

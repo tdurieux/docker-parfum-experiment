@@ -1,0 +1,26 @@
+FROM wordpress:php5.6
+# this uses WordPress 5.0
+
+# Install packages
+RUN apt-get update && \
+    apt-get -y --no-install-recommends install vim subversion default-mysql-client less && rm -rf /var/lib/apt/lists/*;
+
+# Install wp-cli
+RUN curl -f -L -s https://raw.githubusercontent.com/wp-cli/builds/gh-pages/phar/wp-cli.phar > /usr/local/bin/wp && chmod +x /usr/local/bin/wp
+
+# Add non-privileged user, best for using wp-cli
+RUN groupadd -r user && useradd --no-log-init -r -g user user
+
+# Install composer
+RUN curl -f https://raw.githubusercontent.com/composer/getcomposer.org/76a7060ccb93902cd7576b67264ad91c8a2700e2/web/installer | php -- --quiet && chmod +x composer.phar && mv composer.phar /usr/local/bin/composer
+
+COPY ./install-wp-tests-docker.sh /tmp
+
+RUN /tmp/install-wp-tests-docker.sh 5.0 db-5.0:3307
+
+# See: https://github.com/docker-library/wordpress/issues/205
+COPY ./apache2-custom.sh /usr/local/bin/apache2-custom.sh
+
+COPY ./add-hosts.sh /tmp
+
+CMD ["docker-entrypoint.sh"]

@@ -1,0 +1,93 @@
+FROM ubuntu:20.04
+
+ARG DEBIAN_FRONTEND=noninteractive
+ARG FAKE_ROOT_CA=DOIRootCA.crt
+ARG KUBERNETES_URL=https://vm.docker.internal:6443
+ARG TZ=America/Chicago
+
+SHELL ["/bin/bash", "-euxo", "pipefail", "-c"]
+
+#
+# Update and install system packages; runs before certificate work below because we must have ca-certificates package installed first
+#
+RUN apt update && apt upgrade -y && apt install --no-install-recommends -y bind9-host bsdmainutils ca-certificates curl git iputils-ping libpq-dev postgresql sqlite3 sudo unzip vim && rm -rf /var/lib/apt/lists/*;
+
+#
+# OPTIONAL: fake root CA for e.g. USGS / DOI networks
+#
+WORKDIR /usr/local/share/ca-certificates/mycerts
+COPY *.crt .
+RUN if [ "x$FAKE_ROOT_CA" = "x" ] ; then echo No root CAs provided ; else update-ca-certificates ; fi
+
+#
+# user dockeruser
+#
+RUN useradd -m dockeruser \
+    && echo "dockeruser:dockeruser" | chpasswd \
+    && adduser dockeruser sudo \
+    && echo "dockeruser ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers \
+    && chsh --shell /bin/bash dockeruser
+USER dockeruser
+RUN mkdir ~/downloads
+
+#
+# Node.js
+#
+WORKDIR /home/dockeruser
+ENV NODE_VERSION 12.19.0
+RUN bash -c 'mkdir ~/.nvm' \
+    && curl -f -o - https://raw.githubusercontent.com/creationix/nvm/v0.36.0/install.sh | bash
+ENV NODE_PATH /home/dockeruser/.nvm/versions/node/v$NODE_VERSION/lib/modules
+ENV PATH      /home/dockeruser/.nvm/versions/node/v$NODE_VERSION/bin:$PATH
+RUN bash -c "npm config set registry http://registry.npmjs.org/"
+
+#
+# AWS cli
+#
+WORKDIR /home/dockeruser/downloads
+RUN curl -f "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip" \
+    && unzip -q awscliv2.zip \
+    && sudo ./aws/install
+
+#
+# Python and python environment
+#
+WORKDIR /home/dockeruser/venv
+RUN sudo apt-get install --no-install-recommends -y python3-pip python3-venv \
+    && python3 -m venv harmony \
+    && source ./harmony/bin/activate \
+    && pip install --no-cache-dir awscli-local boto3 ipykernel wheel && rm -rf /var/lib/apt/lists/*;
+
+#
+# Docker in Docker; allows containers to start sibling containers
+#
+RUN sudo apt-get install --no-install-recommends -y apt-transport-https ca-certificates curl software-properties-common \
+    && curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo apt-key add - \
+    && sudo add-apt-repository "deb [arch=amd64] https://download.docker.com/linux/ubuntu focal stable" \
+    && sudo apt-get install --no-install-recommends -y docker-ce-cli docker-compose && rm -rf /var/lib/apt/lists/*;
+
+#
+# Kubectl, CLI command for interfacing with Kubernetes
+#
+WORKDIR /home/dockeruser/downloads
+RUN curl -f -LO "https://storage.googleapis.com/kubernetes-release/release/$( curl -f -s https://storage.googleapis.com/kubernetes-release/release/stable.txt)/bin/linux/amd64/kubectl" \
+    && chmod +x ./kubectl \
+    && sudo mv ./kubectl /usr/local/bin/kubectl \
+    && echo alias kubectl=\"kubectl -s $KUBERNETES_URL\" >> ~/.bash_aliases
+# needed for the dev container to authenticate to the kubernetes API
+COPY .kube/config ~/.kube/config
+
+#
+# GDAL
+#
+WORKDIR /home/dockeruser/venv
+ENV CPLUS_INCLUDE_PATH=/usr/include/gdal
+ENV C_INCLUDE_PATH=/usr/include/gdal
+RUN sudo add-apt-repository ppa:ubuntugis/ubuntugis-unstable \
+    && sudo apt update \
+    && sudo apt install --no-install-recommends -y gdal-bin libgdal-dev && rm -rf /var/lib/apt/lists/*;
+RUN source ./harmony/bin/activate \
+    && pip install --no-cache-dir --global-option=build_ext --global-option="-I/usr/include/gdal" GDAL==`gdal-config --version` --global-option="-I/usr/include/gdal" GDAL==`gdal-config --version`
+
+
+WORKDIR /home/dockeruser

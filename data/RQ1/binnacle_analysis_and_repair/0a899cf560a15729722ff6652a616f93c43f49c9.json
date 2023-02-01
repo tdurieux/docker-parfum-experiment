@@ -1,0 +1,62 @@
+{
+  "startTime": 1674241588868,
+  "endTime": 1674241589056,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 28,
+        "lineEnd": 28,
+        "columnStart": 4,
+        "columnEnd": 65
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 43,
+        "lineEnd": 43,
+        "columnStart": 4,
+        "columnEnd": 43
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 4,
+        "lineEnd": 4,
+        "columnStart": 4,
+        "columnEnd": 99
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 80,
+        "lineEnd": 80,
+        "columnStart": 4,
+        "columnEnd": 49
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 4,
+        "lineEnd": 4,
+        "columnStart": 4,
+        "columnEnd": 99
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 80,
+        "lineEnd": 80,
+        "columnStart": 4,
+        "columnEnd": 49
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM ubuntu:17.10 as BUILD\nMAINTAINER source{d}\n\nRUN apt-get -y update && \\\n    apt-get -y --no-install-recommends install curl git bc make dpkg-dev libssl-dev module-init-tools p7zip-full libelf-dev && \\\n    apt-get autoremove && \\\n    apt-get clean && rm -rf /var/lib/apt/lists/*;\n\n\nARG COREOS_RELEASE_CHANNEL=stable\nARG COREOS_VERSION\nARG NVIDIA_DRIVER_VERSION\nARG KERNEL_VERSION\nARG KERNEL_TAG\n\nENV KERNEL_PATH /usr/src/kernels/linux\nENV KERNEL_REPOSITORY git://git.kernel.org/pub/scm/linux/kernel/git/stable/linux-stable.git\nENV COREOS_RELEASE_URL https://${COREOS_RELEASE_CHANNEL}.release.core-os.net/amd64-usr/${COREOS_VERSION}\n\nRUN git clone ${KERNEL_REPOSITORY} \\\n        --single-branch \\\n        --depth 1 \\\n        --branch v${KERNEL_TAG} \\\n        ${KERNEL_PATH}\n\nWORKDIR ${KERNEL_PATH}\n\nRUN git checkout -b stable v${KERNEL_TAG} && rm -rf .git\nRUN curl -f ${COREOS_RELEASE_URL}/coreos_developer_container.bin.bz2 | \\\n        bzip2 -d > /tmp/coreos_developer_container.bin\nRUN 7z e /tmp/coreos_developer_container.bin \"usr/lib64/modules/*-coreos*/build/.config\"\nRUN 7z e /tmp/coreos_developer_container.bin \"usr/lib64/modules/*-coreos*/build/include/config/kernel.release\" && cp kernel.release /tmp/kernel.release\nRUN make modules_prepare\nRUN sed -i -e \"s/${KERNEL_VERSION}/$(cat /tmp/kernel.release)/\" include/generated/utsrelease.h\n\nENV NVIDIA_DRIVER_URL http://us.download.nvidia.com/XFree86/Linux-x86_64/${NVIDIA_DRIVER_VERSION}/NVIDIA-Linux-x86_64-${NVIDIA_DRIVER_VERSION}.run\n\nENV NVIDIA_PATH /opt/nvidia\nENV NVIDIA_BUILD_PATH /opt/nvidia/build\n\n# NVIDIA driver\nWORKDIR ${NVIDIA_PATH}/download\n\nRUN curl -f ${NVIDIA_DRIVER_URL} -o driver.run && \\\n    chmod +x driver.run\nRUN ${NVIDIA_PATH}/download/driver.run \\\n        --accept-license \\\n        --extract-only \\\n        --ui=none\n\nENV NVIDIA_INSTALLER /opt/nvidia/download/NVIDIA-Linux-x86_64-${NVIDIA_DRIVER_VERSION}/nvidia-installer\nRUN ${NVIDIA_INSTALLER} \\\n    --accept-license \\\n    --no-questions \\\n    --ui=none \\\n    --no-precompiled-interface \\\n    --kernel-source-path=${KERNEL_PATH} \\\n    --kernel-name=$(cat /tmp/kernel.release) \\\n    --installer-prefix=${NVIDIA_BUILD_PATH} \\\n    --utility-prefix=${NVIDIA_BUILD_PATH} \\\n    --opengl-prefix=${NVIDIA_BUILD_PATH}\n\nRUN mkdir  ${NVIDIA_BUILD_PATH}/lib/modules/ && \\\n    cp -rf /lib/modules/$(cat /tmp/kernel.release) ${NVIDIA_BUILD_PATH}/lib/modules/${KERNEL_VERSION}\n\nFROM ubuntu:17.10\nMAINTAINER source{d}\n\nARG COREOS_RELEASE_CHANNEL=stable\nARG COREOS_VERSION\nARG KERNEL_VERSION\nARG NVIDIA_DRIVER_VERSION\n\nLABEL vendor=\"source{d}\" \\\n      com.coreos.release-channel=${COREOS_RELEASE_CHANNEL} \\\n      com.coreos.version=${COREOS_VERSION} \\\n      com.coreos.kernel.version=${KERNEL_VERSION} \\\n      com.nvidia.driver.version=${NVIDIA_DRIVER_VERSION}\n\nRUN apt-get -y update && \\\n    apt-get -y --no-install-recommends install module-init-tools pciutils && \\\n    apt-get autoremove && \\\n    apt-get clean && rm -rf /var/lib/apt/lists/*;\n\nENV COREOS_RELEASE_CHANNEL ${COREOS_RELEASE_CHANNEL}\nENV COREOS_VERSION ${COREOS_VERSION}\nENV NVIDIA_DRIVER_VERSION ${NVIDIA_DRIVER_VERSION}\nENV KERNEL_VERSION ${KERNEL_VERSION}\n\nENV NVIDIA_PATH /opt/nvidia\nENV NVIDIA_BIN_PATH ${NVIDIA_PATH}/bin\nENV NVIDIA_LIB_PATH ${NVIDIA_PATH}/lib\nENV NVIDIA_MODULES_PATH ${NVIDIA_LIB_PATH}/modules/${KERNEL_VERSION}/video\n\nCOPY --from=BUILD /opt/nvidia/build ${NVIDIA_PATH}\nCOPY scripts/nvidia-mkdevs ${NVIDIA_BIN_PATH}/nvidia-mkdevs\n\nENV PATH $PATH:${NVIDIA_BIN_PATH}\nENV LD_LIBRARY_PATH=$LD_LIBRARY_PATH:${NVIDIA_LIB_PATH}\n\nVOLUME ${NVIDIA_PATH}\n\nCMD if ! lsmod | grep \"ipmi_msghandler\" &> /dev/null; then insmod `find /rootfs/usr -iname ipmi_msghandler.ko`; fi \\\n    if ! lsmod | grep \"ipmi_devintf\" &> /dev/null; then insmod `find /rootfs/usr -iname ipmi_devintf.ko`; fi && \\\n    insmod ${NVIDIA_MODULES_PATH}/nvidia.ko && \\\n    insmod ${NVIDIA_MODULES_PATH}/nvidia-uvm.ko && \\\n    nvidia-mkdevs\n"
+}

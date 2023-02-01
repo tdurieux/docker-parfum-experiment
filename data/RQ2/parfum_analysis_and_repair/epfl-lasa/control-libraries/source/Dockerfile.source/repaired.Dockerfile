@@ -1,0 +1,27 @@
+FROM ghcr.io/epfl-lasa/control-libraries/development-dependencies as build
+ARG BUILD_TESTING=ON
+ARG BUILD_CONTROLLERS=ON
+ARG BUILD_DYNAMICAL_SYSTEMS=ON
+ARG BUILD_ROBOT_MODEL=ON
+
+WORKDIR /tmp/control_lib
+COPY ./ ./
+
+WORKDIR /tmp/control_lib/build
+RUN cmake -DBUILD_CONTROLLERS="${BUILD_CONTROLLERS}" \
+    -DBUILD_DYNAMICAL_SYSTEMS="${BUILD_DYNAMICAL_SYSTEMS}" \
+    -DBUILD_ROBOT_MODEL="${BUILD_ROBOT_MODEL}" \
+    -DBUILD_TESTING="${BUILD_TESTING}" .. \
+  && make -j all
+
+
+FROM build as testing
+
+RUN CTEST_OUTPUT_ON_FAILURE=1 make test
+RUN rm -rf /tmp/control_lib/
+
+
+FROM build as install
+
+RUN make install
+RUN rm -rf /tmp/control_lib/

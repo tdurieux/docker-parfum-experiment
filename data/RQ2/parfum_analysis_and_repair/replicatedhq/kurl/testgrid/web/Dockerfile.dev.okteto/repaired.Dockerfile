@@ -1,0 +1,16 @@
+FROM node:14-stretch-slim as builder
+WORKDIR /src
+
+RUN --mount=type=cache,target=/var/lib/apt/lists apt-get update \
+  && apt-get install -y --no-install-recommends make && rm -rf /var/lib/apt/lists/*;
+
+COPY package.json package-lock.json Makefile ./
+RUN --mount=type=cache,id=tgweb-npmcache,target=/tmp/.cache/npm \
+    npm config set cache /tmp/.cache/npm --global \
+    && make deps \
+    && mkdir -p /.cache/npm \
+    && cp -r /tmp/.cache/npm/* /.cache/npm
+
+COPY . .
+
+EXPOSE 8080

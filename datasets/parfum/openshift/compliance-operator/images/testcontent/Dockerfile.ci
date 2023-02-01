@@ -1,0 +1,1 @@
+FROM quay.io/compliance-operator/compliance-operator-content:latest

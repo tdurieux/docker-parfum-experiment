@@ -1,0 +1,17 @@
+{
+  "startTime": 1674216710953,
+  "endTime": 1674216711901,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 35,
+        "lineEnd": 35,
+        "columnStart": 4,
+        "columnEnd": 47
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "##################################################################################################################\n# Dependency Stage\n##################################################################################################################\nFROM composer:latest AS vendor\n\nWORKDIR /app/\n\nCOPY composer.json composer.lock /app/\n\nCOPY . /app/\n\nRUN composer install \\\n    --ignore-platform-reqs \\\n    --no-interaction \\\n    --no-plugins \\\n    --no-scripts \\\n    --prefer-dist \\\n    --classmap-authoritative \\\n    --no-ansi \\\n    --no-dev\n\n##################################################################################################################\n# Base Stage\n##################################################################################################################\nFROM php:8.0-cli-alpine3.12 as base_image\n\nRUN apk --no-cache update \\\n    && apk --no-cache add gmp-dev python3 py3-pip \\\n    && docker-php-ext-install -j$(nproc) gmp bcmath opcache\n\nCOPY . /app/\nCOPY --from=vendor /app/vendor/ /app/vendor/\n\nWORKDIR /app/resources/xpub_derive\n\nRUN pip3 install --no-cache-dir --no-cache -r requirements.txt\n\nCOPY docker/docker-entrypoint.sh /usr/local/bin/docker-entrypoint\nRUN chmod +x /usr/local/bin/docker-entrypoint\nENTRYPOINT [\"docker-entrypoint\"]\n\nWORKDIR /app/\n\n##################################################################################################################\n# Development Stage\n##################################################################################################################\nFROM base_image as development_build\n\nRUN mv \"$PHP_INI_DIR/php.ini-development\" \"$PHP_INI_DIR/php.ini\"\n\nCOPY docker/php-development.ini \"$PHP_INI_DIR/php.ini\"\nCOPY --from=vendor /usr/bin/composer /usr/bin/composer\n\n# php code coverage & development\nRUN apk --no-cache update \\\n    && apk --no-cache add autoconf g++ make \\\n    && pecl install pcov xdebug \\\n    && docker-php-ext-enable pcov xdebug\n\n##################################################################################################################\n# Test Stage\n##################################################################################################################\nFROM development_build AS testing_stage\n\n# run the test script(s) from composer, this validates the application before allowing the build to succeed\n# this does make the tests run multiple times, but with different architectures\nRUN composer install --no-interaction --no-plugins --no-scripts --prefer-dist --no-ansi --ignore-platform-reqs\nRUN vendor/bin/phpunit --testdox --coverage-clover /tmp/tests_coverage.xml --log-junit /tmp/tests_log.xml\n\n##################################################################################################################\n# Production Stage\n##################################################################################################################\nFROM base_image as production_build\n\nCOPY docker/php-production.ini \"$PHP_INI_DIR/php.ini\"\n\n# run the app to precompile the DI container\nRUN /app/bin/bitcoin-dca\n"
+}

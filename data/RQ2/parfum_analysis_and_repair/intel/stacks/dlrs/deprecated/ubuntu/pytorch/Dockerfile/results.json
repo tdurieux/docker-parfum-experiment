@@ -1,0 +1,44 @@
+{
+  "startTime": 1674251377515,
+  "endTime": 1674251379047,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 11,
+        "lineEnd": 11,
+        "columnStart": 7,
+        "columnEnd": 69
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 54,
+        "lineEnd": 56,
+        "columnStart": 7,
+        "columnEnd": 53
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 11,
+        "lineEnd": 11,
+        "columnStart": 7,
+        "columnEnd": 69
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 54,
+        "lineEnd": 56,
+        "columnStart": 7,
+        "columnEnd": 53
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "#--------------------------------------------------------------------\n# Builder stage for MKL version of Pytorch and Torchvision on ClearLinux OS\n#--------------------------------------------------------------------\nARG ubuntu_ver\nFROM ubuntu:$ubuntu_ver as builder\nLABEL maintainer=otc-swstacks@intel.com\n\n# Install SW packages\nARG DEBIAN_FRONTEND=noninteractive\nRUN apt-get update \\\n    && apt-get -y upgrade \\\n    && apt-get -y --no-install-recommends install wget git gcc g++ libopenmpi-dev python3-pip && rm -rf /var/lib/apt/lists/*;\n\n# Fix for /usr/bin/python not found issue\nRUN ln -s /usr/bin/python3.8 /usr/bin/python \\\n    && ln -s /usr/bin/pip3 /usr/bin/pip\n\n# Install Pytorch build requirements\nRUN python -m pip install --upgrade pip \\\n    && pip install --no-cache-dir cmake numpy ninja pyyaml mkl mkl-include setuptools cffi typing wheel\n\n# Pytorch build\nENV GCC_IGNORE_WERROR=1 \\\n    CFLAGS=\"$CFLAGS -O3 -mfma -mtune=skylake-avx512 -march=native\" \\\n    CXXFLAGS=\"$CXXFLAGS -O3 -mfma -mtune=skylake-avx512 -march=native\" \\\n    GIT_BRANCH=v1.4.0 USE_FBGEMM=0\n\nRUN git clone --recurse-submodules -j15 https://github.com/pytorch/pytorch.git --branch $GIT_BRANCH \\\n    && cd pytorch && mkdir /torch-wheels \\\n    && rm -rf caffe2/opt/onnxifi_op.* \\\n# Workaround for https://github.com/pytorch/pytorch/issues/26555\n    && sed -i 's#^  ${CMAKE_CURRENT_SOURCE_DIR}/tensor_iterator_test.cpp##g' aten/src/ATen/test/CMakeLists.txt \\\n    && python setup.py bdist_wheel -d /torch-wheels && python setup.py install\n\n# Torchvision build\nENV GCC_IGNORE_WERROR=1 \\\n    CFLAGS=\"$CFLAGS -O3 -mfma -mtune=skylake-avx512\" \\\n    CXXFLAGS=\"$CXXFLAGS -O3 -mfma -mtune=skylake-avx512\" \\\n    GIT_HASH=v0.5.0\nRUN git clone https://github.com/pytorch/vision.git \\\n    && cd vision && git checkout ${GIT_HASH} && python setup.py bdist_wheel -d /torch-wheels \\\n    && cd / && rm -rf /scripts/vision\n\n#--------------------------------------------------------------------\n# Pytorch CPU on Ubuntu\n#--------------------------------------------------------------------\nARG ubuntu_ver\nFROM ubuntu:$ubuntu_ver\nLABEL maintainer=otc-swstacks@intel.com\n\n# Install SW packages\nARG DEBIAN_FRONTEND=noninteractive\nRUN apt-get update \\\n    && apt-get -y upgrade \\\n    && apt-get -y --no-install-recommends install cmake protobuf-compiler \\\n    gcc g++ libjpeg-dev python3-pip openmpi-bin \\\n    openssh-server git libsm6 libxext6 libxrender-dev && rm -rf /var/lib/apt/lists/*;\n\n# Fix for /usr/bin/python not found issue                                                                                                                                     \nRUN ln -s /usr/bin/python3.8 /usr/bin/python \\\n    && ln -s /usr/bin/pip3 /usr/bin/pip\n\n# Copy and install torch wheels from builder stage\nCOPY --from=builder /torch-wheels /torch-wheels\nRUN pip --no-cache-dir install torch-wheels/* \\\n    && rm -rf /torch-wheels\n\n# Set workdir\nWORKDIR /workspace\n\n# Install python packages\nRUN pip --no-cache-dir install \\\n    psutil \\\n    tornado==5.1.1 \\\n    seldon-core \\\n    mkl \\\n    mkl-include \\\n    cython \\\n    docutils==0.15 \\\n    networkx==2.2 \\\n    typing-extensions \\\n    onnx \"opencv-python==4.2.0.32\" \\\n    && pip --no-cache-dir install horovod==0.19.0 \\\n    && pip --no-cache-dir install pip==18.1 \\\n    && pip --no-cache-dir install jupyterhub==1.1.0 --upgrade pip\n\nCOPY scripts/ ./scripts\n\n# Install utils & addons\nRUN ldconfig \\\n    && cd scripts \\\n    && ./install_addons.sh \\\n    && cd /workspace\n\n# Generate defaults\nENV BASH_ENV /etc/profile\nRUN cp ./scripts/generate_defaults.py /workspace && rm -rf ./scripts \\\n    && python generate_defaults.py --generate \\\n    && cat mkl_env.sh >> /etc/bash.bashrc \\\n    && chmod -R a+w /workspace\n\nCOPY /licenses/ /workspace/licenses/\n\n# Init\nSHELL [\"/bin/bash\",  \"-c\"]\n"
+}

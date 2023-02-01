@@ -1,0 +1,1 @@
+# Based on https://github.com/kubernetes-csi/external-snapshotter/blob/master/cmd/snapshot-validation-webhook/Dockerfile

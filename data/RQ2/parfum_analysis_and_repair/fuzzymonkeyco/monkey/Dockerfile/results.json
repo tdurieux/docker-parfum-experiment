@@ -1,0 +1,53 @@
+{
+  "startTime": 1674245300325,
+  "endTime": 1674245301907,
+  "originalSmells": [
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 95,
+        "lineEnd": 95,
+        "columnStart": 4,
+        "columnEnd": 64
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 24,
+        "lineEnd": 24,
+        "columnStart": 4,
+        "columnEnd": 31
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 26,
+        "lineEnd": 26,
+        "columnStart": 4,
+        "columnEnd": 15
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 69,
+        "lineEnd": 69,
+        "columnStart": 4,
+        "columnEnd": 15
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 172,
+        "lineEnd": 172,
+        "columnStart": 4,
+        "columnEnd": 32
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Use --build-arg PREBUILT=1 with default target to fetch binaries from GitHub releases\nARG PREBUILT\n\n# Fetched 2022/04/04\nFROM --platform=$BUILDPLATFORM docker.io/library/alpine@sha256:f22945d45ee2eb4dd463ed5a431d9f04fcd80ca768bb1acf898d91ce51f7bf04 AS alpine\nFROM --platform=$BUILDPLATFORM docker.io/nilslice/protolock@sha256:baf9bca8b7a28b945c557f36d562a34cf7ca85a63f6ba8cdadbe333e12ccea51 AS protolock\nFROM --platform=$BUILDPLATFORM docker.io/library/golang@sha256:5eb58ca0a747ed2e2f4e069d1116badb02a172cf160d31f801776a2342c12863 AS golang\nFROM --platform=$BUILDPLATFORM docker.io/goreleaser/goreleaser@sha256:dfc806a6a7363fd87231b145bd8fb0749121585a3b996851c35e1304e2e12430 AS goreleaser\n# On this image:\n#  go env GOCACHE    => /root/.cache/go-build\n#  go env GOMODCACHE => /go/pkg/mod\n\n\nFROM goreleaser AS base\nWORKDIR /w\nENV CGO_ENABLED=0\nCOPY go.??? .\nRUN \\\n  --mount=type=cache,target=/go/pkg/mod \\\n  --mount=type=cache,target=/root/.cache/go-build \\\n  --mount=type=cache,target=/var/cache/apk ln -vs /var/cache/apk /etc/apk/cache && \\\n    set -ux \\\n && apk add --no-cache the_silver_searcher \\\n && ag --version \\\n && apk add --no-cache git \\\n && git version \\\n && git init \\\n && git add -A . \\\n && go mod download \\\n && git --no-pager diff --exit-code\nCOPY . .\n\n\n## CI checks\n\nFROM base AS ci-check--lint\nRUN \\\n  --mount=type=cache,target=/go/pkg/mod \\\n  --mount=type=cache,target=/root/.cache/go-build \\\n    set -ux \\\n && make lint \\\n && git --no-pager diff --exit-code\n\nFROM base AS ci-check--mod\nRUN \\\n  --mount=type=cache,target=/go/pkg/mod \\\n  --mount=type=cache,target=/root/.cache/go-build \\\n    set -ux \\\n && go mod tidy \\\n && go mod verify \\\n && git --no-pager diff --exit-code\n\nFROM base AS ci-check--test\nENV TESTPWDID=1\nRUN \\\n  --mount=type=cache,target=/go/pkg/mod \\\n  --mount=type=cache,target=/root/.cache/go-build \\\n    set -ux \\\n && go test ./... \\\n && go test -count 10 ./... \\\n && git --no-pager diff --exit-code\n\nFROM alpine AS ci-check--protolock-\nWORKDIR /app\nRUN \\\n  --mount=type=cache,target=/var/cache/apk ln -vs /var/cache/apk /etc/apk/cache && \\\n    set -ux \\\n && apk add --no-cache git\nCOPY pkg/internal/fm/proto.lock .\nCOPY pkg/internal/fm/*.proto .\nARG FORCE\nRUN \\\n  --mount=from=protolock,source=/usr/bin/protolock,target=/usr/bin/protolock \\\n    set -ux \\\n && if [ -n \"${FORCE:-}\" ]; then \\\n      /usr/bin/protolock commit --force && exit ; \\\n    fi \\\n && git init \\\n && git add -A . \\\n && /usr/bin/protolock commit \\\n && git --no-pager diff --exit-code\nFROM scratch AS ci-check--protolock\nCOPY --from=ci-check--protolock- /app/proto.lock /\n\nFROM golang AS ci-check--protoc-\nWORKDIR /app\nENV GOBIN /go/bin\n# https://github.com/moby/buildkit/blob/a1cfefeaeb66501a95a4d2f5858c939211f331ac/frontend/dockerfile/docs/syntax.md#example-cache-apt-packages\nRUN rm -f /etc/apt/apt.conf.d/docker-clean; echo 'Binary::apt::APT::Keep-Downloaded-Packages \"true\";' > /etc/apt/apt.conf.d/keep-cache\nRUN \\\n  --mount=type=cache,target=/var/cache/apt--mount=type=cache,target=/var/lib/apt \\\n    set -ux \\\n && apt update \\\n && apt-get --no-install-recommends install -y protobuf-compiler && rm -rf /var/lib/apt/lists/*;\nRUN \\\n  --mount=type=cache,target=/go/pkg/mod \\\n  --mount=type=cache,target=/root/.cache/go-build \\\n    set -ux \\\n# Not using ADD as a network call is always performed\n && mkdir -p /wellknown/google/protobuf \\\n && curl -#fsSLo /wellknown/google/protobuf/struct.proto https://raw.githubusercontent.com/protocolbuffers/protobuf/2f91da585e96a7efe43505f714f03c7716a94ecb/src/google/protobuf/struct.proto \\\n && go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.27.1 \\\n && go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest \\\n && go install github.com/planetscale/vtprotobuf/cmd/protoc-gen-go-vtproto@eabc7615daf8a34ee7ccb8012755f323d8e42fe7\nCOPY pkg/internal/fm/*.proto .\nRUN \\\n  --mount=type=cache,target=/var/cache/apt --mount=type=cache,target=/var/lib/apt \\\n    set -ux \\\n && protoc \\\n      -I . \\\n      -I /wellknown \\\n      --go_out=.         --plugin protoc-gen-go=\"$GOBIN\"/protoc-gen-go \\\n      --go-grpc_out=.    --plugin protoc-gen-go-grpc=\"$GOBIN\"/protoc-gen-go-grpc \\\n      --go-vtproto_out=. --plugin protoc-gen-go-vtproto=\"$GOBIN\"/protoc-gen-go-vtproto \\\n      --go-vtproto_opt=features=marshal+unmarshal+size+equal \\\n      *.proto\nFROM scratch AS ci-check--protoc\nCOPY --from=ci-check--protoc- /app/github.com/FuzzyMonkeyCo/monkey/pkg/internal/fm/*.pb.go /\n\n## Build all platforms/OS\n\nFROM base AS monkey-build\nRUN \\\n  --mount=type=cache,target=/go/pkg/mod \\\n  --mount=type=cache,target=/root/.cache/go-build \\\n    set -ux \\\n && grep -F . Tagfile \\\n && CURRENT_TAG=$(cat Tagfile) goreleaser release --snapshot\n\n\n## Goreleaser's dist/ for GitHub release\n\nFROM scratch AS goreleaser-dist-many\nCOPY --from=monkey-build /w/dist/checksums.sha256.txt /\nCOPY --from=monkey-build /w/dist/monkey-*.tar.gz /\nCOPY --from=monkey-build /w/dist/monkey-*.zip /\nFROM scratch AS goreleaser-dist\nCOPY --from=goreleaser-dist-many / /\n\n\n## Binaries for each OS\n\nFROM alpine AS archmap-darwin-amd64-\nRUN        echo monkey-Darwin-x86_64.tar.gz >/archmap\nFROM alpine AS archmap-linux-386-\nRUN        echo monkey-Linux-i386.tar.gz    >/archmap\nFROM alpine AS archmap-linux-amd64-\nRUN        echo monkey-Linux-x86_64.tar.gz  >/archmap\nFROM alpine AS archmap-windows-386-\nRUN        echo monkey-Windows-i386.zip     >/archmap\nFROM alpine AS archmap-windows-amd64-\nRUN        echo monkey-Windows-x86_64.zip   >/archmap\n\nFROM archmap-$TARGETOS-$TARGETARCH-$TARGETVARIANT AS archmap\n\n\nFROM monkey-build AS zxf\nRUN \\\n    --mount=from=archmap,source=/archmap,target=/archmap \\\n    set -ux \\\n && tar zxvf ./dist/$(cat /archmap) -C .\nFROM scratch AS binaries-\nCOPY --from=zxf /w/monkey* /\n\nFROM alpine AS monkey-prebuilt\nWORKDIR /w\nRUN \\\n  --mount=type=cache,target=/var/cache/apk ln -vs /var/cache/apk /etc/apk/cache && \\\n    set -ux \\\n && apk update \\\n && apk add --no-cache curl ca-certificates\nRUN \\\n    --mount=source=Tagfile,target=Tagfile \\\n    --mount=from=archmap,source=/archmap,target=/archmap \\\n    set -ux \\\n && TAG=$(cat Tagfile) \\\n && ARCHIVE=$(cat /archmap) \\\n && curl -fsSL -o $ARCHIVE https://github.com/FuzzyMonkeyCo/monkey/releases/download/$TAG/$ARCHIVE \\\n && curl -fsSL -o checksums.sha256.txt https://github.com/FuzzyMonkeyCo/monkey/releases/download/$TAG/checksums.sha256.txt \\\n && grep $ARCHIVE checksums.sha256.txt >only \\\n && sha256sum -s -c only \\\n && tar zxvf $ARCHIVE -C . \\\n && rm $ARCHIVE\nFROM scratch AS binaries-1\nCOPY --from=monkey-prebuilt /w/monkey* /\n\nFROM binaries-$PREBUILT AS binaries\n\n\n## Default target\n\nFROM binaries\n"
+}

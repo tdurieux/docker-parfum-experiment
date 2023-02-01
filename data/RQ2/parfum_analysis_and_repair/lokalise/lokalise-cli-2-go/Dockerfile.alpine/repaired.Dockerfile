@@ -1,0 +1,19 @@
+FROM golang:1.16-alpine3.14 as builder
+
+RUN mkdir -p /build
+WORKDIR /build
+COPY go.mod .
+COPY go.sum .
+RUN go mod download
+
+COPY . .
+
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -a -installsuffix cgo -o /bin/lokalise2
+
+FROM alpine:3.14
+
+RUN apk --update --no-cache add ca-certificates
+COPY --from=builder /bin/lokalise2 /bin/lokalise2
+
+ENV PATH="/bin:${PATH}"
+CMD ["/bin/lokalise2"]

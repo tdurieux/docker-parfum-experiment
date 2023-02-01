@@ -1,0 +1,81 @@
+{
+  "startTime": 1674246126781,
+  "endTime": 1674246128181,
+  "originalSmells": [
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 47,
+        "lineEnd": 47,
+        "columnStart": 4,
+        "columnEnd": 188
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 27,
+        "lineEnd": 27,
+        "columnStart": 7,
+        "columnEnd": 26
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 16,
+        "lineEnd": 16,
+        "columnStart": 18,
+        "columnEnd": 66
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 41,
+        "lineEnd": 41,
+        "columnStart": 4,
+        "columnEnd": 66
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 41,
+        "lineEnd": 41,
+        "columnStart": 4,
+        "columnEnd": 66
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 16,
+        "lineEnd": 16,
+        "columnStart": 18,
+        "columnEnd": 66
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 41,
+        "lineEnd": 41,
+        "columnStart": 4,
+        "columnEnd": 66
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 41,
+        "lineEnd": 41,
+        "columnStart": 4,
+        "columnEnd": 90
+      }
+    }
+  ],
+  "repairedDockerfile": "#Basic Image\nFROM ubuntu:20.04\n\n#Args for compliance of inner and outer uid and gid\n\nARG cuid=1000\nARG cgid=1000\nARG cuidname=crusher\nARG cgidname=crusher\n\n#Just a notes\nLABEL maintainer=\"ponomarev@fobos-nt.ru\"\nLABEL version=\"1.0\"\nLABEL description=\"Boilerplate for crusher work in stat inst mode\"\n\n#Install system packages\nRUN apt update && apt install --no-install-recommends -y gcc clang llvm make sudo git wget && rm -rf /var/lib/apt/lists/*;\n\n#Add group and user (like my HOST group and user)\nRUN groupadd -g $cgid $cgidname &&  useradd -m -u $cuid -g $cgidname -G sudo -s /usr/bin/bash $cuidname\n\n#Unpack Crusher\nADD crusher.tar.gz /home/$cuidname\n\n#Compile afl++ compilers\nWORKDIR /home/$cuidname\nRUN wget https://github.com/AFLplusplus/AFLplusplus/archive/3.0c.tar.gz \\\n    && tar xvf 3.0c.tar.gz && rm 3.0c.tar.gz\nWORKDIR /home/$cuidname/AFLplusplus-3.0c\nRUN make -j10\n\n#Getting inputs from HOST\nWORKDIR /home/$cuidname\nCOPY in in/\n\n################### Add your target here\n#Set Timezone or get hang during the docker build...\nENV TZ=Europe/Moscow\nRUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone\n\n#Install Target for fuzzing\nRUN apt install --no-install-recommends -y libreadline-dev zlib1g-dev bison flex libfl-dev && rm -rf /var/lib/apt/lists/*;\nUSER $cuidname\nRUN git clone --single-branch --branch REL_12_STABLE --depth 1 https://github.com/postgres/postgres\nWORKDIR /home/$cuidname/postgres\n\n#Configuring and compiling the Target for fuzzing\nRUN CC=/home/$cuidname/AFLplusplus-3.0c/afl-clang-fast CXX=/home/$cuidname/AFLplusplus-3.0c/afl-clang-fast++ AFL_USE_UBSAN=1 AFL_LLVM_LAF_ALL=1 ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" --prefix /home/$cuidname/pgbuild\nRUN make -j10 && make install\nWORKDIR /home/$cuidname/\n\nRUN /home/$cuidname/pgbuild/bin/initdb -D /home/$cuidname/data\n\n###################\n\n#Start fuzzer in a container (change ownership for output folder)\nUSER root\nENV cuidname=$cuidname\nENV cgidname=$cgidname\nCMD echo core >/proc/sys/kernel/core_pattern \\\r\n    && chown -R $cuidname:$cgidname /home/$cuidname/out \\\r\n    && sudo -u $cuidname ./crusher/bin_x86-64/fuzz_manager --start 1 --eat-cores 0 --dse-cores 0 --dse-threads 0 -i in/ -o out/ -F -I StaticForkSrv --bitmap-size 150000 -T stdin -t 3000 -m 10000 --session $FUZZ_INSTANCE -- /home/$cuidname/pgbuild/bin/postgres --single -D /home/$cuidname/data postgres\n"
+}

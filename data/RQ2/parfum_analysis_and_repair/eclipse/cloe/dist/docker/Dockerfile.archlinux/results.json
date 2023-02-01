@@ -1,0 +1,17 @@
+{
+  "startTime": 1674216212706,
+  "endTime": 1674216213580,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 27,
+        "lineEnd": 27,
+        "columnStart": 4,
+        "columnEnd": 30
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Dockerfile.archlinux\n#\n# See Dockerfile.focal for documentation of each of the lines.\nARG VTD_IMAGE=scratch\nFROM ${VTD_IMAGE} AS vtd\nWORKDIR /vtd\n\nFROM archlinux:latest\n\n# Install System Packages\nCOPY Makefile.setup /cloe/Makefile.setup\nRUN pacman -Syu --noconfirm --needed make ccache && \\\n    make -f /cloe/Makefile.setup \\\n        WITHOUT_DEV_DEPS=yes \\\n        PACMAN_ARGS=\"--noconfirm --needed\" \\\n        install-system-deps \\\n        && \\\n    sed -r -i 's/#(en_US.UTF-8.*)/\\1/' /etc/locale.gen && \\\n    locale-gen && \\\n    pacman -Scc --noconfirm\n\nENV LANG=en_US.UTF-8\nENV LC_ALL=en_US.UTF-8\nENV CCACHE_DIR=/ccache\nENV PATH=/usr/lib/ccache:$PATH\n\nRUN pip3 install --no-cache-dir --upgrade pip && \\\n    make -f /cloe/Makefile.setup \\\n        PIP_INSTALL_ARGS=\"\" \\\n        install-python-deps\n\n# Install and Setup Conan\nARG BUILD_TYPE=RelWithDebInfo\nRUN conan config init && \\\n    conan profile update settings.build_type=${BUILD_TYPE} default && \\\n    conan profile update settings.compiler.libcxx=libstdc++11 default && \\\n    conan profile update settings.compiler.version=11 default && \\\n    sed -r -i 's/10.1\"]/10.1\", \"11\", \"11.1\"]/' /root/.conan/settings.yml\n\nENV CONAN_NON_INTERACTIVE=yes\n\n# Build and Install Cloe\nWORKDIR /cloe\nARG WITH_VTD=0\nARG KEEP_SOURCES=0\n\n# Download or build dependencies:\nCOPY vendor /cloe/vendor\nCOPY Makefile.package /cloe\nCOPY Makefile.all /cloe\nARG VENDOR_TARGET=\"export-vendor download-vendor\"\nRUN --mount=type=cache,target=/ccache \\\n    --mount=type=secret,target=/root/setup.sh,id=setup,mode=0400 \\\n    --mount=type=bind,target=/root/.conan/data/vtd,source=/vtd,from=vtd,rw \\\n    if [ -r /root/setup.sh ]; then . /root/setup.sh; fi && \\\n    make -f Makefile.all WITH_VTD=${WITH_VTD} ${VENDOR_TARGET} && \\\n    # Clean up:\n    conan user --clean && \\\n    if [ ${KEEP_SOURCES} -eq 0 ]; then \\\n        find /root/.conan/data -name dl -type d -maxdepth 5 -exec rm -r {} + && \\\n        conan remove \\* -s -b -f; \\\n    else \\\n        conan remove \\* -b -f; \\\n    fi\n\n# Build Cloe.\nCOPY . /cloe\nARG PROJECT_VERSION=unknown\nARG PACKAGE_TARGET=package-auto\nRUN --mount=type=cache,target=/ccache \\\n    --mount=type=secret,target=/root/setup.sh,id=setup,mode=0400 \\\n    if [ -r /root/setup.sh ]; then . /root/setup.sh; fi && \\\n    echo \"${PROJECT_VERSION}\" > /cloe/VERSION && \\\n    make WITH_VTD=${WITH_VTD} ${PACKAGE_TARGET} && \\\n    # Clean up:\n    conan user --clean && \\\n    if [ ${KEEP_SOURCES} -eq 0 ]; then \\\n        find /root/.conan/data -name dl -type d -maxdepth 5 -exec rm -r {} + && \\\n        conan remove \\* -s -b -f; \\\n    else \\\n        conan remove \\* -b -f; \\\n    fi\n\n# Run smoketests.\nRUN --mount=type=secret,target=/root/setup.sh,id=setup,mode=0400 \\\n    --mount=type=bind,target=/root/.conan/data/vtd,source=/vtd,from=vtd,rw \\\n    if [ -r /root/setup.sh ]; then . /root/setup.sh; fi && \\\n    make WITH_VTD=${WITH_VTD} smoketest && \\\n    conan user --clean\n"
+}

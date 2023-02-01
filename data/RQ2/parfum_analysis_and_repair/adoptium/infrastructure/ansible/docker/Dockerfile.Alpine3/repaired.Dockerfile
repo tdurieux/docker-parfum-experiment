@@ -1,0 +1,28 @@
+FROM alpine:3.15
+
+RUN apk update \
+    && apk upgrade \
+    && apk add --no-cache ansible
+
+COPY . /ansible
+
+RUN echo "localhost ansible_connection=local" > /ansible/hosts
+
+RUN set -eux; \
+ cd /ansible; \
+ ansible-playbook -i hosts ansible/playbooks/AdoptOpenJDK_Unix_Playbook/main.yml --skip-tags="debug,hosts_file,hostname,adoptopenjdk,jenkins,nagios,superuser,docker,swap_file,crontab,nvidia_cuda_toolkit"; \
+ rm -rf /ansible; apk del ansible
+
+ENV \
+    JDK7_BOOT_DIR="/usr/lib/jvm/jdk8" \ 
+    JDK8_BOOT_DIR="/usr/lib/jvm/jdk8" \
+    JDK10_BOOT_DIR="/usr/lib/jvm/jdk-11" \
+    JDK11_BOOT_DIR="/usr/lib/jvm/jdk-11" \
+    JDK14_BOOT_DIR="/usr/lib/jvm/zulu14" \
+    JDK15_BOOT_DIR="/usr/lib/jvm/zulu15" \
+    JDK16_BOOT_DIR="/usr/lib/jvm/zulu16" \
+    JDK17_BOOT_DIR="/usr/lib/jvm/jdk-17" \
+    JDK18_BOOT_DIR="/usr/lib/jvm/zulu18" \
+    JDK19_BOOT_DIR="/usr/lib/jvm/zulu18" \
+    JDKLATEST_BOOT_DIR="/usr/lib/jvm/zulu18" \
+    JAVA_HOME="/usr/lib/jvm/jdk8"

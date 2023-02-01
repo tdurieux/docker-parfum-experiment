@@ -1,0 +1,2 @@
+FROM archlinux:latest
+RUN pacman -Sy --noconfirm gcc make cmake mariadb-clients libconfig syslog-ng bash-bats ruby pkgconf

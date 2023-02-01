@@ -1,0 +1,71 @@
+{
+  "startTime": 1674251100273,
+  "endTime": 1674251101159,
+  "originalSmells": [
+    {
+      "rule": "wgetUseHttpsUrl",
+      "position": {
+        "lineStart": 39,
+        "lineEnd": 39,
+        "columnStart": 2,
+        "columnEnd": 75
+      }
+    },
+    {
+      "rule": "wgetUseHttpsUrl",
+      "position": {
+        "lineStart": 52,
+        "lineEnd": 52,
+        "columnStart": 2,
+        "columnEnd": 77
+      }
+    },
+    {
+      "rule": "wgetUseHttpsUrl",
+      "position": {
+        "lineStart": 67,
+        "lineEnd": 67,
+        "columnStart": 2,
+        "columnEnd": 75
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 41,
+        "lineEnd": 41,
+        "columnStart": 2,
+        "columnEnd": 150
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 69,
+        "lineEnd": 69,
+        "columnStart": 2,
+        "columnEnd": 230
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 79,
+        "lineEnd": 79,
+        "columnStart": 2,
+        "columnEnd": 40
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 20,
+        "lineEnd": 20,
+        "columnStart": 2,
+        "columnEnd": 83
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "#\n# Copyright Elasticsearch B.V. and/or licensed to Elasticsearch B.V. under one\n# or more contributor license agreements. Licensed under the Elastic License\n# 2.0 and the following additional limitation. Functionality enabled by the\n# files subject to the Elastic License 2.0 may only be used in production when\n# invoked by an Elasticsearch process with a license key installed that permits\n# use of machine learning features. You may not use this file except in\n# compliance with the Elastic License 2.0 and the foregoing additional\n# limitation.\n#\n\nFROM centos:7\n\n# This is basically automating the setup instructions in build-setup/linux_aarch64_cross_compiled.md\n\nMAINTAINER David Roberts <dave.roberts@elastic.co>\n\n# Make sure OS packages are up to date and required packages are installed\nRUN \\\n  rm /var/lib/rpm/__db.* && \\\n  yum install -y bzip2 gcc gcc-c++ git make texinfo unzip wget which zip zlib-devel && rm -rf /var/cache/yum\n\n# Add build dependencies transferred from native aarch64 build server\nRUN \\\n  mkdir -p /usr/local/sysroot-aarch64-linux-gnu/usr && \\\n  cd /usr/local/sysroot-aarch64-linux-gnu/usr && \\\n  wget --quiet -O - https://s3-eu-west-1.amazonaws.com/prelert-artifacts/dependencies/usr-aarch64-linux-gnu-9.tar.bz2 | tar jxf - && \\\n  cd .. && \\\n  ln -s usr/lib lib && \\\n  ln -s usr/lib64 lib64\n\n# For compiling with hardening and optimisation\nENV CFLAGS \"-g -O3 -fstack-protector -D_FORTIFY_SOURCE=2 -msse4.2 -mfpmath=sse\"\nENV CXXFLAGS \"-g -O3 -fstack-protector -D_FORTIFY_SOURCE=2 -msse4.2 -mfpmath=sse\"\nENV LDFLAGS \"-Wl,-z,relro -Wl,-z,now\"\nENV LDFLAGS_FOR_TARGET \"-Wl,-z,relro -Wl,-z,now\"\n\n# Build binutils (bootstrap version)\nRUN \\\n  wget --quiet -O - https://ftpmirror.gnu.org/binutils/binutils-2.27.tar.bz2 | tar jxf - && \\\n  cd binutils-2.27 && \\\n  ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" --with-sysroot=/usr/local/sysroot-aarch64-linux-gnu --target=aarch64-linux-gnu --with-system-zlib --disable-multilib --disable-libstdcxx && \\\n  make -j`nproc` && \\\n  make install && \\\n  cd .. && \\\n  rm -rf binutils-2.27\n\n# Update the path so that the bootstrap cross tools are visible\nENV PATH /usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin\n\n# Build gcc 10.3 cross compiler\nRUN \\\n  wget --quiet -O - https://ftpmirror.gnu.org/gcc/gcc-10.3.0/gcc-10.3.0.tar.gz | tar zxf - && \\\n  cd gcc-10.3.0 && \\\n  contrib/download_prerequisites && \\\n  sed -i -e 's/$(SHLIB_LDFLAGS)/-Wl,-z,relro -Wl,-z,now $(SHLIB_LDFLAGS)/' libgcc/config/t-slibgcc && \\\n  cd .. && \\\n  mkdir gcc-10.3.0-build && \\\n  cd gcc-10.3.0-build && \\\n  ../gcc-10.3.0/configure --prefix=/usr/local/gcc103 --with-sysroot=/usr/local/sysroot-aarch64-linux-gnu --target=aarch64-linux-gnu --enable-languages=c,c++ --enable-vtable-verify --with-system-zlib --disable-multilib && \\\n  make -j`nproc` && \\\n  make install && \\\n  cd .. && \\\n  rm -rf gcc-10.3.0 gcc-10.3.0-build\n\n# Build binutils (final version)\nRUN \\\n  wget --quiet -O - https://ftpmirror.gnu.org/binutils/binutils-2.37.tar.bz2 | tar jxf - && \\\n  cd binutils-2.37 && \\\n  ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" --prefix=/usr/local/gcc103 --with-sysroot=/usr/local/sysroot-aarch64-linux-gnu --target=aarch64-linux-gnu --enable-vtable-verify --with-system-zlib --disable-multilib --disable-libstdcxx --with-gcc-major-version-only && \\\n  make -j`nproc` && \\\n  make install && \\\n  cd .. && \\\n  rm -rf binutils-2.37\n\n# Build patchelf\nRUN \\\n  wget --quiet -O - https://github.com/NixOS/patchelf/releases/download/0.13/patchelf-0.13.tar.bz2 | tar jxf - && \\\n  cd patchelf-0.13.20210805.a949ff2 && \\\n  ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" --prefix=/usr/local/gcc103 && \\\n  make -j`nproc` && \\\n  make install && \\\n  cd .. && \\\n  rm -rf patchelf-0.13.20210805.a949ff2\n\n# Install CMake\n# v3.19.2 minimum is required\nRUN \\\n  cd ${build_dir} && \\\n  wget --quiet https://github.com/Kitware/CMake/releases/download/v3.23.2/cmake-3.23.2-Linux-x86_64.sh && \\\n  chmod +x cmake-3.23.2-Linux-x86_64.sh && \\\n  ./cmake-3.23.2-Linux-x86_64.sh --skip-license --prefix=/usr/local/gcc103 && \\\n  rm -f cmake-3.23.2-Linux-x86_64.sh\n\n"
+}

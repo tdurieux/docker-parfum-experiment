@@ -1,0 +1,71 @@
+{
+  "startTime": 1674242472380,
+  "endTime": 1674242472573,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 5,
+        "lineEnd": 5,
+        "columnStart": 4,
+        "columnEnd": 148
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 20,
+        "lineEnd": 20,
+        "columnStart": 4,
+        "columnEnd": 69
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 21,
+        "lineEnd": 21,
+        "columnStart": 4,
+        "columnEnd": 69
+      }
+    },
+    {
+      "rule": "curlUseHttpsUrl",
+      "position": {
+        "lineStart": 20,
+        "lineEnd": 20,
+        "columnStart": 4,
+        "columnEnd": 69
+      }
+    },
+    {
+      "rule": "curlUseHttpsUrl",
+      "position": {
+        "lineStart": 21,
+        "lineEnd": 21,
+        "columnStart": 4,
+        "columnEnd": 69
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 8,
+        "lineEnd": 9,
+        "columnStart": 5,
+        "columnEnd": 96
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 13,
+        "lineEnd": 13,
+        "columnStart": 4,
+        "columnEnd": 168
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM centos:latest\nMAINTAINER John Exby <exby@ucar.edu>\n#\n# This Dockerfile compiles WRF from source during \"docker build\" step\nENV WRF_VERSION 3.7.1\nRUN curl -f -SL https://ral.ucar.edu/sites/default/files/public/projects/ncar-docker-wrf/ucar-bsd-3-clause-license.pdf > /UCAR-BSD-3-Clause-License.pdf\n#\nRUN yum -y update \\\n  && yum -y install file gcc gcc-gfortran gcc-c++ glibc.i686 libgcc.i686 libpng-devel jasper jasper-devel hostname m4 make perl \\ \n  tar tcsh time wget which zlib zlib-devel openssh-clients openssh-server net-tools epel-release \\\n  && yum clean all && rm -rf /var/cache/yum\n#\n# now get 3rd party EPEL builds of netcdf and openmpi dependencies\nRUN yum -y install netcdf-openmpi-devel.x86_64 netcdf-fortran-openmpi-devel.x86_64 netcdf-fortran-openmpi.x86_64 hdf5-openmpi.x86_64 openmpi.x86_64 openmpi-devel.x86_64 \\\n  && yum clean all && rm -rf /var/cache/yum\n#\nWORKDIR /wrf\n#\n# Download original sources\n#\nRUN curl -f -SL https://www2.mmm.ucar.edu/wrf/src/WRFV$WRF_VERSION.TAR.gz | tar zxC /wrf \\\n && curl -f -SL https://www2.mmm.ucar.edu/wrf/src/WPSV$WRF_VERSION.TAR.gz | tar zxC /wrf\n#\n# Set environment for interactive container shells\n#\nRUN echo export LDFLAGS=\"-lm\" >> /etc/bashrc \\\n && echo export NETCDF=/wrf/netcdf_links >> /etc/bashrc \\\n && echo export JASPERINC=/usr/include/jasper/ >> /etc/bashrc \\\n && echo export JASPERLIB=/usr/lib64/ >> /etc/bashrc \\\n && echo export LD_LIBRARY_PATH=\"/usr/lib64/openmpi/lib\" >> /etc/bashrc \\\n && echo export PATH=\"/usr/lib64/openmpi/bin:$PATH\" >> /etc/bashrc \\\n && echo setenv LDFLAGS \"-lm\" >> /etc/csh.cshrc \\\n && echo setenv NETCDF \"/wrf/netcdf_links\" >> /etc/csh.cshrc \\\n && echo setenv JASPERINC \"/usr/include/jasper/\" >> /etc/csh.cshrc \\\n && echo setenv JASPERLIB \"/usr/lib64/\" >> /etc/csh.cshrc \\\n && echo setenv LD_LIBRARY_PATH \"/usr/lib64/openmpi/lib\" >> /etc/csh.cshrc \\\n && echo setenv PATH \"/usr/lib64/openmpi/bin:$PATH\" >> /etc/csh.cshrc\n#\n# Build WRF first\n#\n# input 34 and 1 to configure script alternative line = && echo -e \"34\\r1\\r\" | ./configure\nRUN mkdir netcdf_links \\\n && ln -sf /usr/include/openmpi-x86_64/ netcdf_links/include \\\n && ln -sf /usr/lib64/openmpi/lib netcdf_links/lib \\\n && export NETCDF=/wrf/netcdf_links \\\n && export JASPERINC=/usr/include/jasper/ \\\n && export JASPERLIB=/usr/lib64/ \\\n && cd ./WRFV3 \\\n && ./configure <<< $'34\\r1\\r' \\\n && sed -i -e '/^DM_CC/ s/$/ -DMPI2_SUPPORT/' ./configure.wrf \\\n && /bin/csh ./compile em_real\n#\n# Build WPS second\n#\n# input 1 to configure script\nRUN cd ./WPS \\\n && export NETCDF=/wrf/netcdf_links \\\n && export JASPERINC=/usr/include/jasper/ \\\n && export JASPERLIB=/usr/lib64/ \\\n && ./configure <<< $'1\\r' \\\n && sed -i -e 's/-L$(NETCDF)\\/lib/-L$(NETCDF)\\/lib -lnetcdff /' ./configure.wps \\\n && /bin/csh ./compile\n#\nENV LD_LIBRARY_PATH /usr/lib64/openmpi/lib\nENV PATH  /usr/lib64/openmpi/bin:$PATH\n#\n# copy in a couple custom scripts\nCOPY run-wrf /wrf\nCOPY docker-clean /wrf\nRUN chmod +x /wrf/run-wrf \\\n && chmod +x /wrf/docker-clean\n#\n# set up ssh configuration\nCOPY ssh_config /root/.ssh/config\nRUN mkdir -p /root/.openmpi\nCOPY default-mca-params.conf /root/.openmpi/mca-params.conf\nRUN /wrf/docker-clean \\\n    && mkdir -p /var/run/sshd \\\n    && ssh-keygen -A \\\n    && sed -i 's/#PermitRootLogin yes/PermitRootLogin yes/g' /etc/ssh/sshd_config \\\n    && sed -i 's/#RSAAuthentication yes/RSAAuthentication yes/g' /etc/ssh/sshd_config \\\n    && sed -i 's/#PubkeyAuthentication yes/PubkeyAuthentication yes/g' /etc/ssh/sshd_config \\\n    && ssh-keygen -f /root/.ssh/id_rsa -t rsa -N '' \\\n    && chmod 600 /root/.ssh/config \\\n    && chmod 700 /root/.ssh \\\n    && cp /root/.ssh/id_rsa.pub /root/.ssh/authorized_keys\n#\nVOLUME /wrf\nCMD [\"/wrf/run-wrf\"]\n"
+}

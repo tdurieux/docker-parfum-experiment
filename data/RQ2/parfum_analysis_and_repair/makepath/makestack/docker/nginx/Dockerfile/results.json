@@ -1,0 +1,26 @@
+{
+  "startTime": 1674217004404,
+  "endTime": 1674217006385,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 39,
+        "lineEnd": 39,
+        "columnStart": 4,
+        "columnEnd": 50
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 41,
+        "lineEnd": 43,
+        "columnStart": 4,
+        "columnEnd": 79
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM nginx:1.21.6\n\nARG ENV\n\nENV CERTBOT_DNS_AUTHENTICATORS \\\n    azure \\\n    cloudflare \\\n    cloudxns \\\n    digitalocean \\\n    dnsimple \\\n    dnsmadeeasy \\\n    gehirn \\\n    google \\\n    linode \\\n    luadns \\\n    nsone \\\n    ovh \\\n    rfc2136 \\\n    route53 \\\n    sakuracloud\n\n# Do a single run command to make the intermediary containers smaller.\nRUN set -ex && \\\n# Install packages necessary during the build phase (for all architectures).\n    apt-get update && \\\n    apt-get install -y --no-install-recommends \\\n            build-essential \\\n            cargo \\\n            curl \\\n            libffi7 \\\n            libffi-dev \\\n            libssl-dev \\\n            openssl \\\n            procps \\\n            python3 \\\n            python3-dev \\\n            vim \\\n    && \\\n# Install the latest version of PIP, Setuptools and Wheel.\n    curl -f -L 'https://bootstrap.pypa.io/get-pip.py' | python3 && \\\n# Install certbot.\n    pip3 install --no-cache-dir -U cffi certbot \\\n# And the supported extra authenticators\n        $(echo $CERTBOT_DNS_AUTHENTICATORS | sed 's/\\(^\\| \\)/\\1certbot-dns-/g') \\\n    && \\\n# Remove everything that is no longer necessary.\n    apt-get remove --purge -y \\\n            build-essential \\\n            cargo \\\n            curl \\\n            libffi-dev \\\n            libssl-dev \\\n            python3-dev \\\n    && \\\n    apt-get autoremove -y && \\\n    apt-get clean && \\\n    rm -rf /var/lib/apt/lists/* && \\\n    rm -rf /root/.cache && \\\n    rm -rf /root/.cargo && \\\n# Create new directories and set correct permissions.\n    mkdir -p /var/www/letsencrypt && \\\n    mkdir -p /etc/nginx/user_conf.d && \\\n    chown www-data:www-data -R /var/www \\\n    && \\\n# Make sure there are no surprise config files inside the config folder.\n    rm -f /etc/nginx/conf.d/*\n\n# Copy in our \"default\" Nginx server configurations, which make sure that the\n# ACME challenge requests are correctly forwarded to certbot and then redirects\n# everything else to HTTPS.\nCOPY ./docker/nginx/nginx_conf.d/ /etc/nginx/conf.d/\n\n# Copy in the nginx config files\nCOPY ./docker/nginx/user_conf.d/ /tmp/\n\n# Copy in the authenticator provider files\nCOPY ./docker/nginx/authenticator_providers/ /etc/letsencrypt/\n\n# Copy in all our scripts and make them executable.\nCOPY ./docker/nginx/scripts/ /scripts\nRUN chmod +x -R /scripts && \\\n# Make so that the parent's entrypoint script is properly triggered (issue #21).\n    sed -ri '/^if \\[ \"\\$1\" = \"nginx\" -o \"\\$1\" = \"nginx-debug\" \\]; then$/,${s//if echo \"$1\" | grep -q \"nginx\"; then/;b};$q1' /docker-entrypoint.sh\n\n# Move in the nginx config files\nRUN /scripts/copy_config.sh $ENV\n\n# Create a volume to have persistent storage for the obtained certificates.\nVOLUME /etc/letsencrypt\n\n# The Nginx parent Docker image already expose port 80, so we only need to add\n# port 443 here.\nEXPOSE 443\n\n# Change the container's start command to launch our Nginx and certbot\n# management script.\nCMD [ \"/scripts/start_nginx_certbot.sh\" ]"
+}

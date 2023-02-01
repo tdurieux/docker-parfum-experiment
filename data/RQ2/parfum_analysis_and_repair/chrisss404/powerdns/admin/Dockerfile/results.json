@@ -1,0 +1,45 @@
+{
+  "startTime": 1674220744697,
+  "endTime": 1674220745530,
+  "originalSmells": [
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 37,
+        "lineEnd": 37,
+        "columnStart": 4,
+        "columnEnd": 20
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 33,
+        "lineEnd": 33,
+        "columnStart": 4,
+        "columnEnd": 35
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 65,
+        "lineEnd": 65,
+        "columnStart": 4,
+        "columnEnd": 30
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 39,
+        "lineEnd": 39,
+        "columnStart": 26,
+        "columnEnd": 42
+      }
+    }
+  ],
+  "repairedDockerfile": "FROM alpine:3.15 AS builder\n\nENV FLASK_APP=/build/powerdnsadmin/__init__.py\n\nARG ADMIN_VERSION=\"latest\"\n\nARG BUILD_DEPENDENCIES=\"build-base \\\n    cargo \\\n    git \\\n    libffi-dev \\\n    libxml2-dev \\\n    mariadb-connector-c-dev \\\n    openldap-dev \\\n    python3-dev \\\n    xmlsec-dev \\\n    yarn\"\n\n# Get dependencies\nRUN apk add --no-cache ${BUILD_DEPENDENCIES} py3-pip && \\\n    echo 'INPUT ( libldap.so )' > /usr/lib/libldap_r.so\n\n# Download sources\nRUN git clone -n https://github.com/ngoduykhanh/PowerDNS-Admin.git /build && \\\n    cd /build && \\\n    git checkout $([ \"${ADMIN_VERSION}\" = \"latest\" ] && echo \"master\" || echo \"${ADMIN_VERSION}\")\n\nWORKDIR /build\n\n# Get application dependencies\nRUN sed -i 's/Flask==1.1.2/Flask==1.1.4\\nmarkupsafe==2.0.1/g' requirements.txt && \\\n    sed -i 's/Jinja2==3.0.3/Jinja2==2.11.3/g' requirements.txt && \\\n    sed -i 's/itsdangerous==2.0.1/itsdangerous==1.1.0/g' requirements.txt && \\\n    sed -i 's/werkzeug==2.0.3/werkzeug==1.0.1/g' requirements.txt && \\\n    pip install --no-cache-dir -r requirements.txt\n\n# Prepare assets\nRUN yarn install --pure-lockfile --production && \\\n    yarn cache clean && \\\n    sed -i -r -e \"s|'cssmin',\\s?'cssrewrite'|'cssmin'|g\" /build/powerdnsadmin/assets.py && \\\n    flask assets build && yarn cache clean;\n\nRUN mv /build/powerdnsadmin/static /tmp/static && \\\n    mkdir /build/powerdnsadmin/static && \\\n    cp -r /tmp/static/generated /build/powerdnsadmin/static && \\\n    find /tmp/static/node_modules -name 'fonts' -exec cp -r {} /build/powerdnsadmin/static \\; && \\\n    find /tmp/static/node_modules/icheck/skins/square -name '*.png' -exec cp {} /build/powerdnsadmin/static/generated \\;\n\nRUN { \\\n      echo \"from flask_assets import Environment\"; \\\n      echo \"assets = Environment()\"; \\\n      echo \"assets.register('js_login', 'generated/login.js')\"; \\\n      echo \"assets.register('js_validation', 'generated/validation.js')\"; \\\n      echo \"assets.register('css_login', 'generated/login.css')\"; \\\n      echo \"assets.register('js_main', 'generated/main.js')\"; \\\n      echo \"assets.register('css_main', 'generated/main.css')\"; \\\n    } > /build/powerdnsadmin/assets.py\n\n# Move application\nRUN mkdir -p /var/www/pdns-admin && \\\n    sed -i \"/^SQLALCHEMY_DATABASE_URI/d\" /build/configs/docker_config.py && \\\n    cp -r /build/configs/docker_config.py /build/migrations/ /build/powerdnsadmin/ /build/run.py /var/www/pdns-admin\n\nCOPY ./update_db_settings.py /var/www/pdns-admin/\n\n# Cleanup\nRUN pip install --no-cache-dir pip-autoremove && \\\n    pip-autoremove cssmin -y && \\\n    pip-autoremove jsmin -y && \\\n    pip-autoremove mysqlclient -y && \\\n    pip uninstall -y pip-autoremove pytest && \\\n    apk del ${BUILD_DEPENDENCIES}\n\n\n# Build image\nFROM alpine:3.15\n\nENV FLASK_APP=/var/www/pdns-admin/powerdnsadmin/__init__.py\n\nRUN apk add --no-cache libldap postgresql-client py3-gunicorn py3-psycopg2 xmlsec && \\\n    addgroup -S pda && \\\n    adduser -S -D -G pda pda\n\nCOPY --from=builder /usr/bin/flask /usr/bin/\nCOPY --from=builder /usr/lib/python3.9/site-packages /usr/lib/python3.9/site-packages/\nCOPY --from=builder --chown=pda:pda /var/www/pdns-admin /var/www/pdns-admin/\nCOPY ./docker-entrypoint.sh /usr/bin/\n\nWORKDIR /var/www/pdns-admin\n\nEXPOSE 3031/tcp\n\nHEALTHCHECK CMD [\"wget\", \"--output-document=-\", \"--quiet\", \"--tries=1\", \"http://127.0.0.1:3031/\"]\nENTRYPOINT [\"docker-entrypoint.sh\"]\nCMD [ \"gunicorn\", \"powerdnsadmin:create_app()\", \"--timeout\", \"120\", \"--workers\", \"4\", \\\n        \"--user\", \"pda\", \"--group\", \"pda\", \"--bind\", \"0.0.0.0:3031\", \"--log-level\", \"info\"]\n"
+}

@@ -1,0 +1,17 @@
+{
+  "startTime": 1674236056531,
+  "endTime": 1674236056799,
+  "originalSmells": [
+    {
+      "rule": "gpgUseBatchFlag",
+      "position": {
+        "lineStart": 38,
+        "lineEnd": 38,
+        "columnStart": 4,
+        "columnEnd": 31
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM node:8.11.4-alpine\n\n# Build arguments to change source url, branch or tag\nARG HACKMD_REPOSITORY=https://github.com/hackmdio/hackmd.git\nARG VERSION=master\n\n# Set some default config variables\nENV DOCKERIZE_VERSION=v0.6.1\nENV NODE_ENV=production\n\n# Disable PDF export on alpine\n# PhantomJS is broken on alpine and crashes HackMD\nENV HMD_ALLOW_PDF_EXPORT=false\n\nRUN apk add --no-cache --virtual .download wget  ca-certificates && \\\n    wget https://github.com/jwilder/dockerize/releases/download/$DOCKERIZE_VERSION/dockerize-alpine-linux-amd64-$DOCKERIZE_VERSION.tar.gz && \\\n    tar -C /usr/local/bin -xzvf dockerize-alpine-linux-amd64-$DOCKERIZE_VERSION.tar.gz && \\\n    rm dockerize-alpine-linux-amd64-$DOCKERIZE_VERSION.tar.gz && \\\n    apk del .download\n\nENV GOSU_VERSION 1.10\nCOPY resources/gosu-gpg.key /tmp/gosu.key\nRUN set -ex; \\\n\n    apk add --no-cache --virtual .gosu-deps \\\n        wget \\\n        ca-certificates \\\n        dpkg \\\n        gnupg \\\n        openssl \\\n    ; \\\n\n    dpkgArch=\"$(dpkg --print-architecture | awk -F- '{ print $NF }')\"; \\\n    wget -O /usr/local/bin/gosu \"https://github.com/tianon/gosu/releases/download/$GOSU_VERSION/gosu-$dpkgArch\"; \\\n    wget -O /usr/local/bin/gosu.asc \"https://github.com/tianon/gosu/releases/download/$GOSU_VERSION/gosu-$dpkgArch.asc\"; \\\n\n# verify the signature\n    export GNUPGHOME=\"$(mktemp -d)\"; \\\n    gpg --batch --import /tmp/gosu.key; \\\n    gpg --batch --verify /usr/local/bin/gosu.asc /usr/local/bin/gosu; \\\n    rm -rf \"$GNUPGHOME\" /usr/local/bin/gosu.asc; \\\n\n    chmod +x /usr/local/bin/gosu; \\\n# verify that the binary works\n    gosu nobody true; \\\n\n    apk del .gosu-deps\n\n# Add configuraton files\nCOPY resources/config.json resources/.sequelizerc /files/\n\n# Install all dependencies and build project\nRUN apk add --no-cache --virtual .dep build-base python git bash && \\\n    # Clone the source\n    git clone --depth 1 --branch $VERSION $HACKMD_REPOSITORY /hackmd && \\\n    # Print the cloned version and clean up git files\n    cd /hackmd && \\\n    git log --pretty=format:'%ad %h %d' --abbrev-commit --date=short -1 && echo && \\\n    rm -rf /hackmd/.git && \\\n    # Symlink configuration files\n    rm -f /hackmd/config.json && ln -s /files/config.json /hackmd/config.json && \\\n    rm -f /hackmd/.sequelizerc && ln -s /files/.sequelizerc /hackmd/.sequelizerc && \\\n    # Install NPM dependencies and build project\n    yarn install --pure-lockfile && \\\n    yarn install --production=false --pure-lockfile && \\\n    yarn global add webpack && \\\n    npm run build && \\\n    # Clean up this layer\n    yarn install && \\\n    yarn cache clean && \\\n    apk del .dep && \\\n    adduser -u 10000 -h /hackmd/ -D -S hackmd && \\\n    chown -R hackmd /hackmd/\n\nWORKDIR /hackmd\nEXPOSE 3000\n\n# Add entrypoint and set command\nCOPY resources/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh\nENTRYPOINT [\"/usr/local/bin/docker-entrypoint.sh\"]\n\nCMD [\"node\", \"app.js\"]\n"
+}

@@ -1,0 +1,37 @@
+# Build image
+FROM golang:1.18.1-alpine3.15 AS build
+
+ENV SRC_DIR=/go/src/github.com/kyma-incubator/reconciler
+COPY . $SRC_DIR
+
+RUN mkdir /user && \
+    echo 'appuser:x:2000:2000:appuser:/:' > /user/passwd && \
+    echo 'appuser:x:2000:' > /user/group
+
+WORKDIR $SRC_DIR
+
+COPY configs /configs
+RUN CGO_ENABLED=0 go build -o /bin/mothership -ldflags '-s -w' ./cmd/mothership/main.go
+
+# Get latest CA certs
+# hadolint ignore=DL3007
+FROM alpine:latest as certs
+RUN apk add --no-cache ca-certificates
+
+# Final image
+FROM scratch
+LABEL source=git@github.com:kyma-incubator/reconciler.git
+
+# Add SSL certificates
+COPY --from=certs /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
+
+# Add system users
+COPY --from=build /user/group /user/passwd /etc/
+
+# Add reconciler
+COPY --from=build /bin/mothership /bin/mothership
+COPY --from=build /configs/ /configs/
+
+USER appuser:appuser
+
+CMD ["/bin/mothership"]

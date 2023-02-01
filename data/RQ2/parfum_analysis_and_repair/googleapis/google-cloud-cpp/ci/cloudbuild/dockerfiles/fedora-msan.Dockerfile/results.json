@@ -1,0 +1,35 @@
+{
+  "startTime": 1674254947085,
+  "endTime": 1674254947588,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 63,
+        "lineEnd": 63,
+        "columnStart": 4,
+        "columnEnd": 122
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 31,
+        "lineEnd": 31,
+        "columnStart": 4,
+        "columnEnd": 30
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 32,
+        "lineEnd": 32,
+        "columnStart": 4,
+        "columnEnd": 33
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Copyright 2021 Google LLC\n#\n# Licensed under the Apache License, Version 2.0 (the \"License\");\n# you may not use this file except in compliance with the License.\n# You may obtain a copy of the License at\n#\n#     https://www.apache.org/licenses/LICENSE-2.0\n#\n# Unless required by applicable law or agreed to in writing, software\n# distributed under the License is distributed on an \"AS IS\" BASIS,\n# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.\n# See the License for the specific language governing permissions and\n# limitations under the License.\n\nFROM fedora:35\nARG NCPU=4\n\n# Install the minimal packages needed to compile libcxx, install Bazel, and\n# then compile our code.\nRUN dnf makecache && \\\n    dnf install -y ccache clang clang-tools-extra cmake findutils gcc-c++ \\\n        git llvm llvm-devel make ninja-build openssl-devel patch python \\\n        python3.8 python3-devel python3-lit python-pip tar unzip which wget xz\n\n# Sets root's password to the empty string to enable users to get a root shell\n# inside the container with `su -` and no password. Sudo would not work because\n# we run these containers as the invoking user's uid, which does not exist in\n# the container's /etc/passwd file.\nRUN echo 'root:' | chpasswd\n\n# Install the Python modules needed to run the storage emulator\nRUN pip3 install --no-cache-dir --upgrade pip\nRUN pip3 install --no-cache-dir setuptools wheel\n\nWORKDIR /var/tmp/build\n\n# Install instructions from:\n# https://github.com/google/sanitizers/wiki/MemorySanitizerLibcxxHowTo\nRUN git clone --depth=1 --branch llvmorg-11.0.0 https://github.com/llvm/llvm-project\nWORKDIR llvm-project/build\n# configure cmake\nRUN cmake -GNinja ../llvm \\\n    -DCMAKE_BUILD_TYPE=Release \\\n    -DLLVM_ENABLE_PROJECTS=\"libcxx;libcxxabi\" \\\n    -DCMAKE_C_COMPILER=clang \\\n    -DCMAKE_CXX_COMPILER=clang++ \\\n    -DLLVM_USE_SANITIZER=MemoryWithOrigins \\\n    -DCMAKE_INSTALL_PREFIX=/usr\n# build the libraries\nRUN cmake --build . -- cxx cxxabi\nRUN cmake --build . -- install-cxx install-cxxabi\n\n# Install the Cloud SDK and some of the emulators. We use the emulators to run\n# integration tests for the client libraries.\nCOPY . /var/tmp/ci\nWORKDIR /var/tmp/downloads\nENV CLOUDSDK_PYTHON=python3.8\nRUN /var/tmp/ci/install-cloud-sdk.sh\nENV CLOUD_SDK_LOCATION=/usr/local/google-cloud-sdk\nENV PATH=${CLOUD_SDK_LOCATION}/bin:${PATH}\n# The Cloud Pub/Sub emulator needs Java :shrug:\nRUN dnf makecache && dnf install -y java-latest-openjdk\n\nRUN curl -f -o /usr/bin/bazelisk -sSL \"https://github.com/bazelbuild/bazelisk/releases/download/v1.12.0/bazelisk-linux-amd64\" && \\\n    chmod +x /usr/bin/bazelisk && \\\n    ln -s /usr/bin/bazelisk /usr/bin/bazel\n"
+}

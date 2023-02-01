@@ -1,0 +1,12 @@
+FROM golang:1.16.3 AS goose
+RUN go get -u github.com/pressly/goose/cmd/goose
+
+FROM python:3.7
+COPY --from=goose /go/bin/goose /usr/local/bin/
+
+RUN pip install --no-cache-dir tox
+
+COPY . /app
+WORKDIR /app
+
+CMD /app/wait-for-postgres.sh tox

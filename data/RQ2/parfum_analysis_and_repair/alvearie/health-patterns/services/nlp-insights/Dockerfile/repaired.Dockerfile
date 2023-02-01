@@ -1,0 +1,27 @@
+FROM python:3.9-slim-buster
+
+WORKDIR /app
+
+COPY pinned.txt pinned.txt
+COPY setup.py setup.py
+COPY setup.properties setup.properties
+
+RUN pip3 install --no-cache-dir -r pinned.txt
+
+RUN mkdir src && mkdir src/main && mkdir src/main/py
+COPY src/main/py src/main/py
+
+RUN pip3 install --no-cache-dir .
+
+ENV FLASK_APP nlp_insights.app
+
+EXPOSE 5000
+
+# must run under non-root user
+RUN useradd alvearie
+RUN mkdir /home/alvearie
+RUN chown -R alvearie: /home/alvearie
+RUN chown -R alvearie: /app
+
+USER alvearie
+CMD [ "python3", "-m" , "flask", "run", "--host=0.0.0.0", "--port=5000"]

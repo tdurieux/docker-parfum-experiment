@@ -1,0 +1,80 @@
+{
+  "startTime": 1674249014378,
+  "endTime": 1674249015401,
+  "originalSmells": [
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 37,
+        "lineEnd": 40,
+        "columnStart": 7,
+        "columnEnd": 59
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 49,
+        "lineEnd": 51,
+        "columnStart": 7,
+        "columnEnd": 77
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 25,
+        "lineEnd": 25,
+        "columnStart": 7,
+        "columnEnd": 50
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 35,
+        "lineEnd": 35,
+        "columnStart": 7,
+        "columnEnd": 45
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 47,
+        "lineEnd": 47,
+        "columnStart": 7,
+        "columnEnd": 49
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 17,
+        "lineEnd": 17,
+        "columnStart": 4,
+        "columnEnd": 83
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 17,
+        "lineEnd": 17,
+        "columnStart": 4,
+        "columnEnd": 83
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 17,
+        "lineEnd": 17,
+        "columnStart": 4,
+        "columnEnd": 83
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "ARG OS_NAME=ubuntu\nARG OS_VERSION\nARG CUDA_VERSION\nFROM nvidia/cuda:${CUDA_VERSION}-cudnn8-devel-${OS_NAME}${OS_VERSION}\n\nARG PYTHON_VERSION\n\nENV DOCKER_BUILD_DIR /build\nENV BOOST_VERSION 1.78.0\nENV OPENUCX_VERSION 1.9.0\nENV OPENMPI_VERSION 4.0.5\nENV CONDA_VERSION 4.9.2\nENV PYTORCH_VERSION 1.11.0\n\nSHELL [\"/bin/bash\", \"-c\"]\n\nRUN apt-get update && apt-get install --no-install-recommends -y wget git libnuma-dev libibverbs-dev librdmacm-dev libssl-dev && apt-get clean && rm -rf /var/lib/apt/lists/*;\n\nRUN mkdir -p $DOCKER_BUILD_DIR\n\n# Boost\nRUN cd ${DOCKER_BUILD_DIR} \\\n    && export BOOST_VERSION_FILE=${BOOST_VERSION//./_} \\\n    && wget --quiet https://boostorg.jfrog.io/artifactory/main/release/${BOOST_VERSION}/source/boost_${BOOST_VERSION_FILE}.tar.gz \\\n    && tar -xzf boost_${BOOST_VERSION_FILE}.tar.gz \\\n    && cd boost_${BOOST_VERSION_FILE} \\\n    && /bin/bash ./bootstrap.sh \\\n    && ./b2 cxxflags=-fPIC cflags=-fPIC link=static -a \\\n            define=_GLIBCXX_USE_CXX11_ABI=0 --with-graph --with-filesystem --with-system \\\n            -j2 install && rm boost_${BOOST_VERSION_FILE}.tar.gz\n\n# UCX\nRUN cd ${DOCKER_BUILD_DIR} \\\n    && wget --quiet https://github.com/openucx/ucx/releases/download/v${OPENUCX_VERSION}/ucx-${OPENUCX_VERSION}.tar.gz \\\n    && tar -xzf ucx-${OPENUCX_VERSION}.tar.gz \\\n    && cd ucx-${OPENUCX_VERSION} \\\n    && ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" --prefix=/usr/local/ucx --disable-dependency-tracking --disable-optimizations --disable-logging \\\n          --disable-debug --disable-assertions --enable-mt --disable-params-check --without-java --enable-cma \\\n          --with-verbs --without-cm --with-rdmacm --without-rocm --without-xpmem --without-ugni \\\n          --disable-doxygen-doc --with-cuda=/usr/local/cuda \\\n    && make -j 4 \\\n    && make install && rm ucx-${OPENUCX_VERSION}.tar.gz\n\n# OpenMPI\nRUN cd ${DOCKER_BUILD_DIR} \\\n    && wget --quiet https://download.open-mpi.org/release/open-mpi/v${OPENMPI_VERSION%.*}/openmpi-${OPENMPI_VERSION}.tar.gz \\\n    && tar -xzf openmpi-${OPENMPI_VERSION}.tar.gz \\\n    && cd openmpi-${OPENMPI_VERSION} \\\n    && ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" --with-cuda \\\n        --with-ucx=/usr/local/ucx --disable-dependency-tracking \\\n        --disable-getpwuid --without-usnic --enable-orterun-prefix-by-default \\\n    && make -j 4 && make install && rm openmpi-${OPENMPI_VERSION}.tar.gz\n\n# Miniconda\nRUN wget --quiet https://repo.anaconda.com/miniconda/Miniconda3-py38_${CONDA_VERSION}-Linux-x86_64.sh -O ~/miniconda.sh \\\n    && /bin/bash ~/miniconda.sh -b -p /opt/conda \\\n    && rm ~/miniconda.sh \\\n    && ln -s /opt/conda/etc/profile.d/conda.sh /etc/profile.d/conda.sh \\\n    && echo \". /opt/conda/etc/profile.d/conda.sh\" >> /root/.bashrc\n\n## Env & PyTorch\nRUN . /opt/conda/etc/profile.d/conda.sh \\\n    && conda create -y -n rannc python=${PYTHON_VERSION} \\\n    && conda activate rannc \\\n    && if [[ $CUDA_VERSION =~ ^11. ]]; then \\\n          export CUDA_TOOLKIT_VERSION=\"11.3\"; \\\n       else \\\n          export CUDA_TOOLKIT_VERSION=\"10.2\"; \\\n       fi \\\n    && conda install -y pytorch=${PYTORCH_VERSION} torchvision torchaudio cudatoolkit=${CUDA_TOOLKIT_VERSION} -c pytorch -c conda-forge \\\n    && conda clean --all \\\n    && echo \"conda activate rannc\" >> /root/.bashrc\n\nRUN cd ${DOCKER_BUILD_DIR} \\\n    && git clone https://github.com/NVIDIA/nccl \\\n    && cd nccl \\\n    && git checkout v2.11.4-1 \\\n    && make -j src.build \\\n    && make install\n\nRUN ldconfig\n"
+}

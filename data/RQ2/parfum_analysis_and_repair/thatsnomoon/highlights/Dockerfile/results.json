@@ -1,0 +1,26 @@
+{
+  "startTime": 1674219093233,
+  "endTime": 1674219093994,
+  "originalSmells": [
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 18,
+        "lineEnd": 18,
+        "columnStart": 8,
+        "columnEnd": 37
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 2,
+        "lineEnd": 2,
+        "columnStart": 4,
+        "columnEnd": 94
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM --platform=$BUILDPLATFORM rust:1.61-slim-bullseye AS auditor\nRUN apt-get update && \\\n    apt-get install -y --no-install-recommends pkg-config=0.29.2-1 libssl-dev=1.1.1n-1+deb11u1 && \\\n    USER=root cargo new --bin highlights && \\\n    cargo install cargo-audit && rm -rf /var/lib/apt/lists/*;\nCOPY [\"Cargo.*\", \"./\"]\nRUN cargo audit -D unsound -D yanked\n\nFROM --platform=$BUILDPLATFORM rust:1.61-alpine3.15 AS builder\nRUN apk add --no-cache --update musl-dev=1.2.2-r7 && \\\n    USER=root cargo new --bin highlights\n\nARG RUSTTARGET\nARG MUSLHOST\nARG MUSLTARGET\nRUN if [[ ! -z \"$RUSTTARGET\" ]]; then \\\n        rustup target add $RUSTTARGET && \\\n        wget https://more.musl.cc/10.2.1/$MUSLHOST/$MUSLTARGET-cross.tgz && \\\n        tar xzf $MUSLTARGET-cross.tgz; rm $MUSLTARGET-cross.tgz \\\n    fi\n\nWORKDIR /highlights\nCOPY [\"Cargo.toml\", \"Cargo.lock\", \"./\"]\nRUN cargo fetch ${RUSTTARGET:+--target $RUSTTARGET}\nRUN if [[ ! -z \"$RUSTTARGET\" ]]; then \\\n        export CC=/$MUSLTARGET-cross/bin/$MUSLTARGET-gcc; \\\n        mkdir .cargo && \\\n        echo \"[target.$RUSTTARGET]\" > .cargo/config.toml && \\\n        echo \"linker = \\\"$CC\\\"\" >> .cargo/config.toml; \\\n    fi; \\\n    cargo build --release ${RUSTTARGET:+--target $RUSTTARGET} && \\\n    rm src/main.rs target/$RUSTTARGET/release/deps/highlights*\nCOPY [\"src\", \"./src\"]\nRUN if [[ ! -z \"$RUSTTARGET\" ]]; then \\\n        export CC=/$MUSLTARGET-cross/bin/$MUSLTARGET-gcc; \\\n    fi; \\\n    cargo build --release ${RUSTTARGET:+--target $RUSTTARGET} && \\\n    if [[ ! -z \"$RUSTTARGET\" ]]; then \\\n        mv target/$RUSTTARGET/release/highlights target/release/highlights; \\\n    fi\n\nFROM alpine:3.15.0\nRUN apk add --no-cache --update tini=0.19.0-r0 && \\\n    addgroup -g 1000 highlights \\\n    && adduser -u 1000 -H -D -G highlights -s /bin/sh highlights\nENTRYPOINT [\"/sbin/tini\", \"--\"]\nUSER highlights\nWORKDIR /opt/highlights\nRUN mkdir data\nCOPY --from=builder /highlights/target/release/highlights /usr/local/bin/highlights\nCMD [\"/usr/local/bin/highlights\"]\n"
+}

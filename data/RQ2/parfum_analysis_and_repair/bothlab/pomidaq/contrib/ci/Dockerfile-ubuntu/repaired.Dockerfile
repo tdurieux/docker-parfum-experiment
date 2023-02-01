@@ -1,0 +1,37 @@
+#
+# Docker file for PoMiDAQ CI
+#
+FROM ubuntu:jammy
+
+# prepare
+RUN apt-get update -qq && apt-get install --no-install-recommends -yq eatmydata && rm -rf /var/lib/apt/lists/*;
+
+# install build essentials
+RUN DEBIAN_FRONTEND=noninteractive eatmydata apt-get install -yq \
+    build-essential gcc g++
+
+# install build dependencies
+RUN DEBIAN_FRONTEND=noninteractive eatmydata apt-get install -yq --no-install-recommends \
+    git-core \
+    dpkg-dev \
+    devscripts \
+    debhelper \
+    debspawn \
+    libdistro-info-perl \
+    cmake \
+    ninja-build \
+    appstream \
+    qtbase5-dev \
+    libqt5opengl5-dev \
+    libkf5configwidgets-dev \
+    libopencv-dev \
+    libavcodec-dev \
+    libavformat-dev \
+    libswscale-dev \
+    pybind11-dev \
+    python3-dev \
+    python3-numpy
+
+# finish
+RUN mkdir /build
+WORKDIR /build

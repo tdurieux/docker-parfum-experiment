@@ -1,0 +1,26 @@
+{
+  "startTime": 1674255852161,
+  "endTime": 1674255853366,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 61,
+        "lineEnd": 61,
+        "columnStart": 4,
+        "columnEnd": 121
+      }
+    },
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 57,
+        "lineEnd": 57,
+        "columnStart": 4,
+        "columnEnd": 37
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "ARG FROM_BACKEND_IMAGE=baserow_backend\nARG FROM_WEBFRONTEND_IMAGE=baserow_web-frontend\n# This is pinned as version pinning is done by the CI setting FROM_IMAGE.\n# hadolint ignore=DL3006\nFROM $FROM_BACKEND_IMAGE as backend_image_base\n# hadolint ignore=DL3006\nFROM $FROM_WEBFRONTEND_IMAGE as web_frontend_image_base\nFROM debian:buster-slim as base\n\nSHELL [\"/bin/bash\", \"-o\", \"pipefail\", \"-c\"]\n\nARG UID\nENV UID=${UID:-9999}\nARG GID\nENV GID=${GID:-9999}\nARG DOCKER_USER\nENV DOCKER_USER=${DOCKER_USER:-baserow_docker_user}\n\nENV DATA_DIR=/baserow/data\nENV BASEROW_PLUGIN_DIR=$DATA_DIR/plugins\nENV POSTGRES_VERSION=11\nENV POSTGRES_LOCATION=/etc/postgresql/11/main\nENV BASEROW_IMAGE_TYPE=\"all-in-one\"\n\n# ========================\n# = APT-GET UPDATE/UPGRADE/INSTALL DEPS + NODE + CADDY\n# ========================\nRUN apt-get update && \\\n    apt-get upgrade -y && \\\n    DEBIAN_FRONTEND=noninteractive TZ=Etc/UTC apt-get install --no-install-recommends -y \\\n    make supervisor curl gnupg2 \\\n    build-essential \\\n    libpq-dev \\\n    redis-server \\\n    postgresql \\\n    postgresql-contrib \\\n    postgresql-client \\\n    python3 \\\n    python3-pip \\\n    python3-dev \\\n    python3-venv \\\n    ca-certificates \\\n    tini \\\n    psmisc \\\n    gosu \\\n    nano \\\n    vim \\\n    gawk \\\n    git \\\n    && \\\n    # ========================\n    # Install Node and Yarn\n    # ========================\n    curl -fsSL https://deb.nodesource.com/setup_16.x | bash - && \\\n    apt-get install --no-install-recommends -y nodejs && \\\n    apt-get clean && \\\n    rm -rf /var/lib/apt/lists/* &&  \\\n    npm install --global yarn@1.22.19 && \\\n    # ========================\n    # Install Caddy\n    # ========================\n    curl -f -o caddy.tar.gz -sL https://github.com/caddyserver/caddy/releases/download/v2.4.6/caddy_2.4.6_linux_amd64.tar.gz && \\\n    tar -xf caddy.tar.gz && \\\n    mv caddy /usr/bin/ && \\\n    rm caddy.tar.gz && \\\n    # ========================\n    # Setup Users\n    # ========================\n    ( groupadd -g \"$GID\" baserow_docker_group || true ) && \\\n    ( useradd --shell /bin/bash -u $UID -g \"$GID\" -o -c \"\" -m \"$DOCKER_USER\" -l || true) && \\\n    usermod -a -G tty \"$DOCKER_USER\" && \\\n    # ========================\n    # Setup supervisor so it logs to stdout\n    # ========================\n    ln -sf /dev/stdout /var/log/supervisor/supervisord.log && \\\n    # ========================\n    # Setup redis\n    # ========================\n    usermod -a -G tty redis && \\\n    # Ensure redis is not running in daemon mode as supervisor will supervise it directly\n    sed -i 's/daemonize yes/daemonize no/g' /etc/redis/redis.conf && \\\n    # Ensure redis logs to stdout by removing any logfile statements\n    sed -i 's/daemonize no/daemonize no\\nbind 127.0.0.1/g' /etc/redis/redis.conf && \\\n    # Sedding changes the owner, change it back.\n    sed -i '/^logfile/d' /etc/redis/redis.conf && \\\n    chown redis:redis /etc/redis/redis.conf && npm cache clean --force;\n\n# In slim docker images, mime.types is removed and we need it for mimetypes guessing\nCOPY --chown=$UID:$GID ./backend/docker/mime.types /etc/\n\nCOPY --chown=$UID:$GID Caddyfile /baserow/caddy/Caddyfile\n\nHEALTHCHECK --interval=60s CMD [\"/bin/bash\", \"/baserow/backend/docker/docker-entrypoint.sh\", \"backend-healthcheck\"]\n\n# ========================\n# = BASEROW\n# ========================\n\n# We have to explicitly copy the node modules and .nuxt build as otherwise the\n# .dockerignore will exclude them.\nCOPY --chown=$UID:$GID --from=web_frontend_image_base /baserow/web-frontend/node_modules/ /baserow/web-frontend/node_modules/\nCOPY --chown=$UID:$GID --from=web_frontend_image_base /baserow/web-frontend/.nuxt/ /baserow/web-frontend/.nuxt/\nCOPY --chown=$UID:$GID --from=web_frontend_image_base /baserow/ /baserow/\nCOPY --chown=$UID:$GID --from=backend_image_base /baserow/ /baserow/\n\n\nCOPY --chown=$UID:$GID deploy/all-in-one/supervisor/ /baserow/supervisor\n\nCOPY --chown=$UID:$GID deploy/all-in-one/baserow.sh /baserow.sh\nCOPY --chown=$UID:$GID deploy/plugins/*.sh /baserow/plugins/\nENTRYPOINT [\"/baserow.sh\"]\nCMD [\"start\"]\nEXPOSE 80\n"
+}

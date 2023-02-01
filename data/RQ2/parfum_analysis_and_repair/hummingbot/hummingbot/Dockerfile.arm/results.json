@@ -1,0 +1,44 @@
+{
+  "startTime": 1674252808323,
+  "endTime": 1674252809555,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 19,
+        "lineEnd": 19,
+        "columnStart": 4,
+        "columnEnd": 102
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 30,
+        "lineEnd": 30,
+        "columnStart": 4,
+        "columnEnd": 76
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 5,
+        "lineEnd": 7,
+        "columnStart": 4,
+        "columnEnd": 35
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 120,
+        "lineEnd": 120,
+        "columnStart": 4,
+        "columnEnd": 69
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Set the base image\nFROM arm64v8/python:3.8-slim AS builder\n\n# Install linux dependencies\nRUN apt-get update && \\\n    DEBIAN_FRONTEND=noninteractive apt-get --no-install-recommends install -y gcc \\\n        build-essential pkg-config libusb-1.0 curl git \\\n        sudo libudev-dev libssl-dev && \\\n    rm -rf /var/lib/apt/lists/*\n\n# Add hummingbot user and group\nRUN groupadd -g 8211 hummingbot && \\\n    useradd -m -s /bin/bash -u 8211 -g 8211 hummingbot\n\n# Switch to hummingbot user\nUSER hummingbot:hummingbot\nWORKDIR /home/hummingbot\n\n# Install miniconda\nRUN curl -f https://repo.anaconda.com/miniconda/Miniconda3-py38_4.10.3-Linux-aarch64.sh -o ~/miniconda.sh && \\\n    /bin/bash ~/miniconda.sh -b && \\\n    rm ~/miniconda.sh && \\\n    ~/miniconda3/bin/conda update -n base conda -y && \\\n    ~/miniconda3/bin/conda clean -tipy\n\n# Dropping default ~/.bashrc because it will return if not running as interactive shell, thus not invoking PATH settings\nRUN :> ~/.bashrc\n\n# Install nvm and CeloCLI; note: nvm adds own section to ~/.bashrc\nSHELL [ \"/bin/bash\", \"-lc\" ]\nRUN curl -f -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.0/install.sh | bash && \\\n    export NVM_DIR=\"/home/hummingbot/.nvm\" && \\\n    source \"/home/hummingbot/.nvm/nvm.sh\" && \\\n    nvm install 10 && \\\n    npm install --only=production -g @celo/celocli@1.0.3 && \\\n    nvm cache clear && \\\n    npm cache clean --force && \\\n    rm -rf /home/hummingbot/.cache\n\n# Copy environment only to optimize build caching, so changes in sources will not cause conda env invalidation\nCOPY --chown=hummingbot:hummingbot setup/environment-linux-aarch64.yml setup/\n\n# ./install | create hummingbot environment\nRUN ~/miniconda3/bin/conda env create -f setup/environment-linux-aarch64.yml && \\\n    ~/miniconda3/bin/conda clean -tipy && \\\n    # clear pip cache\n    rm -rf /home/hummingbot/.cache\n\n# Copy remaining files\nCOPY --chown=hummingbot:hummingbot bin/ bin/\nCOPY --chown=hummingbot:hummingbot hummingbot/ hummingbot/\nCOPY --chown=hummingbot:hummingbot gateway/setup/ gateway/setup/\nCOPY --chown=hummingbot:hummingbot gateway/src/templates gateway/src/templates\nCOPY --chown=hummingbot:hummingbot setup.py .\nCOPY --chown=hummingbot:hummingbot LICENSE .\nCOPY --chown=hummingbot:hummingbot README.md .\nCOPY --chown=hummingbot:hummingbot DATA_COLLECTION.md .\n\n# activate hummingbot env when entering the CT\nRUN echo \"source /home/hummingbot/miniconda3/etc/profile.d/conda.sh && conda activate $(head -1 setup/environment-linux-aarch64.yml | cut -d' ' -f2)\" >> ~/.bashrc\n\n# ./compile + cleanup build folder\nRUN /home/hummingbot/miniconda3/envs/$(head -1 setup/environment-linux-aarch64.yml | cut -d' ' -f2)/bin/python3 setup.py build_ext --inplace -j 8 && \\\n    rm -rf build/ && \\\n    find . -type f -name \"*.cpp\" -delete\n\n# Build final image using artifacts from builer\nFROM arm64v8/python:3.8-slim AS release\n# Dockerfile author / maintainer\nLABEL maintainer=\"CoinAlpha, Inc. <dev@coinalpha.com>\"\n\n# Build arguments\nARG BRANCH=\"\"\nARG COMMIT=\"\"\nARG BUILD_DATE=\"\"\nLABEL branch=${BRANCH}\nLABEL commit=${COMMIT}\nLABEL date=${BUILD_DATE}\n\n# Set ENV variables\nENV COMMIT_SHA=${COMMIT}\nENV COMMIT_BRANCH=${BRANCH}\nENV BUILD_DATE=${DATE}\n\nENV STRATEGY=${STRATEGY}\nENV CONFIG_FILE_NAME=${CONFIG_FILE_NAME}\nENV WALLET=${WALLET}\nENV CONFIG_PASSWORD=${CONFIG_PASSWORD}\n\nENV INSTALLATION_TYPE=docker\n\n# Add hummingbot user and group\nRUN groupadd -g 8211 hummingbot && \\\n    useradd -m -s /bin/bash -u 8211 -g 8211 hummingbot\n\n# Create sym links\nRUN ln -s /conf /home/hummingbot/conf && \\\n  ln -s /logs /home/hummingbot/logs && \\\n  ln -s /data /home/hummingbot/data && \\\n  ln -s /pmm_scripts /home/hummingbot/pmm_scripts && \\\n  ln -s /scripts /home/hummingbot/scripts\n\n# Create mount points\nRUN mkdir -p /conf /logs /data /pmm_scripts /scripts \\\n    /home/hummingbot/.hummingbot-gateway/conf \\\n    /home/hummingbot/.hummingbot-gateway/certs && \\\n  chown -R hummingbot:hummingbot /conf /logs /data /pmm_scripts /scripts \\\n    /home/hummingbot/.hummingbot-gateway\nVOLUME /conf /logs /data /pmm_scripts /scripts \\\n  /home/hummingbot/.hummingbot-gateway/conf \\\n  /home/hummingbot/.hummingbot-gateway/certs\n\n# Pre-populate pmm_scripts/ volume with default pmm_scripts\nCOPY --chown=hummingbot:hummingbot pmm_scripts/ pmm_scripts/\n\n# Pre-populate scripts/ volume with default scripts\nCOPY --chown=hummingbot:hummingbot scripts/ scripts/\n\n# Install packages required in runtime\nRUN apt-get update && \\\n    DEBIAN_FRONTEND=noninteractive apt-get --no-install-recommends install -y sudo libusb-1.0 && \\\n    rm -rf /var/lib/apt/lists/*\n\nWORKDIR /home/hummingbot\n\n# Copy all build artifacts from builder image\nCOPY --from=builder --chown=hummingbot:hummingbot /home/ /home/\n\n# additional configs (sudo)\nCOPY docker/etc /etc\n\n# Setting bash as default shell because we have .bashrc with customized PATH (setting SHELL affects RUN, CMD and ENTRYPOINT, but not manual commands e.g. `docker run image COMMAND`!)\nSHELL [ \"/bin/bash\", \"-lc\" ]\nCMD /home/hummingbot/miniconda3/envs/$(head -1 setup/environment-linux-aarch64.yml | cut -d' ' -f2)/bin/python3 bin/hummingbot_quickstart.py \\\n    --auto-set-permissions $(id -u hummingbot):$(id -g hummingbot)\n"
+}

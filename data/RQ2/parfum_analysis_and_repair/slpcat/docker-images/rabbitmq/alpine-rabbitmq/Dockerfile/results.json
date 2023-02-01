@@ -1,0 +1,26 @@
+{
+  "startTime": 1674249379822,
+  "endTime": 1674249382689,
+  "originalSmells": [
+    {
+      "rule": "gpgUseBatchFlag",
+      "position": {
+        "lineStart": 83,
+        "lineEnd": 83,
+        "columnStart": 1,
+        "columnEnd": 76
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 18,
+        "lineEnd": 27,
+        "columnStart": 7,
+        "columnEnd": 15
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "#upstream https://github.com/docker-library/rabbitmq/tree/1a37166704d2ca7c386980387e81615985d5db47/3.7/alpine\nFROM alpine:3.7\nMAINTAINER 若虚 <slpcat@qq.com>\n\n# Container variables\nENV \\\n    TERM=\"xterm\" \\\n    LANG=\"en_US.UTF-8\" \\\n    LANGUAGE=\"en_US.UTF-8\" \\\n    LC_ALL=\"en_US.UTF-8\" \\\n    TIMEZONE=\"Asia/Shanghai\"\n\nRUN sed -i 's/dl-cdn.alpinelinux.org/mirrors.aliyun.com/' /etc/apk/repositories\n\n# Set timezone and locales\nRUN set -ex \\\n    && apk update \\\n    && apk upgrade \\\n    && apk add --no-cache \\\n           bash \\\n           tzdata \\\n           vim \\\n           tini \\\n           su-exec \\\n           gzip \\\n           tar \\\n           wget \\\n           curl \\\n    && echo \"${TIMEZONE}\" > /etc/TZ \\\n    && ln -sf /usr/share/zoneinfo/${TIMEZONE} /etc/localtime\n\n# add our user and group first to make sure their IDs get assigned consistently, regardless of whatever dependencies get added\nRUN addgroup -S rabbitmq && adduser -S -h /var/lib/rabbitmq -G rabbitmq rabbitmq\n\n# grab su-exec for easy step-down from root\nRUN apk add --no-cache 'su-exec>=0.2'\n\nRUN apk add --no-cache \\\n# Bash for docker-entrypoint\n\t\tbash \\\n# Procps for rabbitmqctl\n\t\tprocps \\\n# Erlang for RabbitMQ\n\t\terlang-asn1 \\\n\t\terlang-hipe \\\n\t\terlang-crypto \\\n\t\terlang-eldap \\\n\t\terlang-inets \\\n\t\terlang-mnesia \\\n\t\terlang \\\n\t\terlang-os-mon \\\n\t\terlang-public-key \\\n\t\terlang-sasl \\\n\t\terlang-ssl \\\n\t\terlang-syntax-tools \\\n\t\terlang-xmerl\n\n# get logs to stdout (thanks @dumbbell for pushing this upstream! :D)\nENV RABBITMQ_LOGS=- RABBITMQ_SASL_LOGS=-\n# https://github.com/rabbitmq/rabbitmq-server/commit/53af45bf9a162dec849407d114041aad3d84feaf\n\nENV RABBITMQ_HOME /opt/rabbitmq\nENV PATH $RABBITMQ_HOME/sbin:$PATH\n\n# gpg: key 6026DFCA: public key \"RabbitMQ Release Signing Key <info@rabbitmq.com>\" imported\nENV RABBITMQ_GPG_KEY 0A9AF2115F4687BD29803A206B73A36E6026DFCA\n\nENV RABBITMQ_VERSION 3.7.4\nENV RABBITMQ_GITHUB_TAG v3.7.4\n\nRUN set -ex; \\\n\n\tapk add --no-cache --virtual .build-deps \\\n\t\tca-certificates \\\n\t\tgnupg \\\n\t\tlibressl \\\n\t\txz \\\n\t; \\\n\n\twget -O rabbitmq-server.tar.xz.asc \"https://github.com/rabbitmq/rabbitmq-server/releases/download/$RABBITMQ_GITHUB_TAG/rabbitmq-server-generic-unix-${RABBITMQ_VERSION}.tar.xz.asc\"; \\\n\twget -O rabbitmq-server.tar.xz     \"https://github.com/rabbitmq/rabbitmq-server/releases/download/$RABBITMQ_GITHUB_TAG/rabbitmq-server-generic-unix-${RABBITMQ_VERSION}.tar.xz\"; \\\n\n\texport GNUPGHOME=\"$(mktemp -d)\"; \\\n\tgpg --batch --keyserver ha.pool.sks-keyservers.net --recv-keys \"$RABBITMQ_GPG_KEY\"; \\\n\tgpg --batch --verify rabbitmq-server.tar.xz.asc rabbitmq-server.tar.xz; \\\n\trm -rf \"$GNUPGHOME\"; \\\n\n\tmkdir -p \"$RABBITMQ_HOME\"; \\\n\ttar \\\n\t\t--extract \\\n\t\t--verbose \\\n\t\t--file rabbitmq-server.tar.xz \\\n\t\t--directory \"$RABBITMQ_HOME\" \\\n\t\t--strip-components 1 \\\n\t; \\\n\trm -f rabbitmq-server.tar.xz*; \\\n\n# update SYS_PREFIX (first making sure it's set to what we expect it to be)\n\tgrep -qE '^SYS_PREFIX=\\$\\{RABBITMQ_HOME\\}$' \"$RABBITMQ_HOME/sbin/rabbitmq-defaults\"; \\\n\tsed -ri 's!^(SYS_PREFIX=).*$!\\1!g' \"$RABBITMQ_HOME/sbin/rabbitmq-defaults\"; \\\n\tgrep -qE '^SYS_PREFIX=$' \"$RABBITMQ_HOME/sbin/rabbitmq-defaults\"; \\\n\n\tapk del .build-deps\n\n# set home so that any `--user` knows where to put the erlang cookie\nENV HOME /var/lib/rabbitmq\n\nRUN mkdir -p /var/lib/rabbitmq /etc/rabbitmq /var/log/rabbitmq \\\n\t&& chown -R rabbitmq:rabbitmq /var/lib/rabbitmq /etc/rabbitmq /var/log/rabbitmq \\\n\t&& chmod -R 777 /var/lib/rabbitmq /etc/rabbitmq /var/log/rabbitmq\nVOLUME /var/lib/rabbitmq\n\n# add a symlink to the .erlang.cookie in /root so we can \"docker exec rabbitmqctl ...\" without gosu\nRUN ln -sf /var/lib/rabbitmq/.erlang.cookie /root/\n\nRUN ln -sf \"$RABBITMQ_HOME/plugins\" /plugins\n\nCOPY docker-entrypoint.sh /usr/local/bin/\nENTRYPOINT [\"docker-entrypoint.sh\"]\n\nEXPOSE 4369 5671 5672 25672\nCMD [\"rabbitmq-server\"]\n"
+}

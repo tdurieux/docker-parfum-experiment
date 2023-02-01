@@ -1,0 +1,53 @@
+{
+  "startTime": 1674246785198,
+  "endTime": 1674246785586,
+  "originalSmells": [
+    {
+      "rule": "wgetUseHttpsUrl",
+      "position": {
+        "lineStart": 77,
+        "lineEnd": 77,
+        "columnStart": 4,
+        "columnEnd": 119
+      }
+    },
+    {
+      "rule": "mkdirUsrSrcThenRemove",
+      "position": {
+        "lineStart": 4,
+        "lineEnd": 4,
+        "columnStart": 4,
+        "columnEnd": 27
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 62,
+        "lineEnd": 62,
+        "columnStart": 4,
+        "columnEnd": 30
+      }
+    },
+    {
+      "rule": "gpgUseHaPools",
+      "position": {
+        "lineStart": 49,
+        "lineEnd": 49,
+        "columnStart": 6,
+        "columnEnd": 85
+      }
+    },
+    {
+      "rule": "gpgUseHaPools",
+      "position": {
+        "lineStart": 50,
+        "lineEnd": 50,
+        "columnStart": 6,
+        "columnEnd": 83
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM python:2-slim\n\nRUN groupadd -r snuba && useradd -r -g snuba snuba\n\nRUN mkdir -p /usr/src/snuba && rm -rf /usr/src/snuba\nWORKDIR /usr/src/snuba\n\nENV PIP_DISABLE_PIP_VERSION_CHECK=on \\\n    PYTHONDONTWRITEBYTECODE=1\n\n# these are required all the way through, and removing them will cause bad things\nRUN set -ex; \\\n    apt-get update; \\\n    apt-get install --no-install-recommends -y \\\n        libexpat1 \\\n        libffi6 \\\n        liblz4-1 \\\n        libpcre3 \\\n    ; \\\n    rm -rf /var/lib/apt/lists/*\n\n# grab gosu for easy step-down from root\nENV GOSU_VERSION=1.11\nRUN set -ex; \\\n\n    LIBRDKAFKA_VERSION=0.11.5; \\\n    buildDeps=' \\\n        bzip2 \\\n        dirmngr \\\n        git \\\n        g++ \\\n        gcc \\\n        libc6-dev \\\n        liblz4-dev \\\n        libpcre3-dev \\\n        gnupg \\\n        make \\\n        wget \\\n    '; \\\n    apt-get update; \\\n    apt-get install -y --no-install-recommends libexpat1 libffi6 liblz4-1 libpcre3 $buildDeps; \\\n    rm -rf /var/lib/apt/lists/*; \\\n\n    wget -O /usr/local/bin/gosu \"https://github.com/tianon/gosu/releases/download/$GOSU_VERSION/gosu-$(dpkg --print-architecture)\"; \\\n    wget -O /usr/local/bin/gosu.asc \"https://github.com/tianon/gosu/releases/download/$GOSU_VERSION/gosu-$(dpkg --print-architecture).asc\"; \\\n    export GNUPGHOME=\"$(mktemp -d)\"; \\\n    for key in \\\n      B42F6819007F00F88E364FD4036A9C25BF357DD4; \\\n    do \\\n      gpg --batch --keyserver hkp://p80.ha.pool.sks-keyservers.net:80 --recv-keys \"$key\" || \\\n      gpg --batch --keyserver hkp://ipv4.ha.pool.sks-keyservers.net --recv-keys \"$key\" || \\\n      gpg --batch --keyserver hkp://pgp.mit.edu:80 --recv-keys \"$key\"; \\\n    done; \\\n    gpg --batch --verify /usr/local/bin/gosu.asc /usr/local/bin/gosu; \\\n    rm -rf \"$GNUPGHOME\" /usr/local/bin/gosu.asc; \\\n    chmod +x /usr/local/bin/gosu; \\\n    gosu nobody true; \\\n\n    mkdir -p /usr/src/librdkafka; \\\n    cd /usr/src/librdkafka; \\\n    wget -O v${LIBRDKAFKA_VERSION}.tar.gz https://github.com/edenhill/librdkafka/archive/v${LIBRDKAFKA_VERSION}.tar.gz; \\\n    tar xf v${LIBRDKAFKA_VERSION}.tar.gz --strip-components=1; \\\n    ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" --prefix=/usr; \\\n    make; \\\n    PREFIX=/usr make install; \\\n    rm -r /usr/src/librdkafka; \\\n\n# Install PyPy at /pypy, for running the consumer code. Note that PyPy is built\n# against libssl1.0.0, so this is required for using the SSL module, which is\n# required to bootstrap pip. Since this is a short term stopgap it seemed better\n# than building PyPy ourselves.\n    cd ; \\\n    wget https://bitbucket.org/pypy/pypy/downloads/pypy2-v6.0.0-linux64.tar.bz2; \\\n    [ \"$(sha256sum pypy2-v6.0.0-linux64.tar.bz2)\" = '6cbf942ba7c90f504d8d6a2e45d4244e3bf146c8722d64e9410b85eac6b5af67  pypy2-v6.0.0-linux64.tar.bz2' ]; \\\n    tar xf pypy2-v6.0.0-linux64.tar.bz2; \\\n    rm -rf pypy2-v6.0.0-linux64.tar.bz2; \\\n    mv pypy2-v6.0.0-linux64 /pypy; \\\n    wget https://security.debian.org/debian-security/pool/updates/main/o/openssl/libssl1.0.0_1.0.1t-1+deb8u11_amd64.deb; \\\n    DEBIAN_FRONTEND=noninteractive dpkg -i libssl1.0.0_1.0.1t-1+deb8u11_amd64.deb; \\\n    rm -rf libssl1.0.0_1.0.1t-1+deb8u11_amd64.deb; \\\n    wget https://bootstrap.pypa.io/get-pip.py; \\\n    /pypy/bin/pypy get-pip.py; \\\n    rm -rf get-pip.py; \\\n\n    apt-get purge -y --auto-remove $buildDeps\n\nCOPY snuba ./snuba/\nCOPY setup.py Makefile README.md MANIFEST.in ./\n\nRUN chown -R snuba:snuba /usr/src/snuba/\n\nRUN set -ex; \\\n    \\\n    buildDeps=' \\\n        git \\\n        gcc \\\n        libc6-dev \\\n        liblz4-dev \\\n        libpcre3-dev \\\n        make \\\n    '; \\\n    apt-get update; \\\n    apt-get install -y $buildDeps --no-install-recommends; \\\n    rm -rf /var/lib/apt/lists/*; \\\n    \\\n    make install-python-dependencies; \\\n    snuba --help; \\\n    PATH=/pypy/bin:$PATH make install-python-dependencies; \\\n    /pypy/bin/snuba --help; \\\n    \\\n    rm -rf ~/.cache/pip; \\\n    apt-get purge -y --auto-remove $buildDeps\n\nENV CLICKHOUSE_SERVER clickhouse-server:9000\nENV FLASK_DEBUG 0\nARG SNUBA_VERSION_SHA\nENV SNUBA_RELEASE=$SNUBA_VERSION_SHA\n\nEXPOSE 1218\n\nCOPY docker_entrypoint.sh ./\nENTRYPOINT [ \"./docker_entrypoint.sh\" ]\nCMD [ \"api\" ]\n"
+}

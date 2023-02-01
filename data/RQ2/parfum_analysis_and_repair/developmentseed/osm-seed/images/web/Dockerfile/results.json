@@ -1,0 +1,71 @@
+{
+  "startTime": 1674248457978,
+  "endTime": 1674248459205,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 42,
+        "lineEnd": 42,
+        "columnStart": 4,
+        "columnEnd": 129
+      }
+    },
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 36,
+        "lineEnd": 36,
+        "columnStart": 4,
+        "columnEnd": 23
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 31,
+        "lineEnd": 31,
+        "columnStart": 4,
+        "columnEnd": 15
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 9,
+        "lineEnd": 12,
+        "columnStart": 7,
+        "columnEnd": 98
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 18,
+        "lineEnd": 22,
+        "columnStart": 7,
+        "columnEnd": 71
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 72,
+        "lineEnd": 72,
+        "columnStart": 22,
+        "columnEnd": 65
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 72,
+        "lineEnd": 72,
+        "columnStart": 22,
+        "columnEnd": 65
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM ubuntu:20.04\nENV DEBIAN_FRONTEND=noninteractive\nENV workdir /var/www\n\n# Production OSM setup\nENV RAILS_ENV=production\n\n# Install the openstreetmap-website dependencies\nRUN apt-get update \\\n    && apt-get install --no-install-recommends -y \\\n    ruby2.7 libruby2.7 ruby2.7-dev libmagickwand-dev libxml2-dev libxslt1-dev \\\n    nodejs npm apache2 apache2-dev build-essential git-core firefox-geckodriver postgresql-client \\\n    libpq-dev libsasl2-dev imagemagick libffi-dev libgd-dev libarchive-dev libbz2-dev yarnpkg curl \\\n    && apt-get clean \\\n    && rm -rf /var/lib/apt/lists/*\n\n# Install openstreetmap-cgimap requiriments\nRUN apt-get update \\\n    && apt-get -y --no-install-recommends install \\\n    libxml2-dev libpqxx-dev libfcgi-dev zlib1g-dev \\\n    libboost-dev libboost-program-options-dev libboost-filesystem-dev \\\n    libboost-system-dev libboost-locale-dev libmemcached-dev \\\n    libcrypto++-dev libargon2-dev libyajl-dev automake autoconf libtool \\\n    && apt-get clean \\\n    && rm -rf /var/lib/apt/lists/*\n\n# Install cgimap\nENV cgimap /tmp/openstreetmap-cgimap\nRUN git clone https://github.com/zerebubuth/openstreetmap-cgimap.git $cgimap\nRUN cd $cgimap && \\\n    ./autogen.sh && \\\n    ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" && \\\n    make && \\\n    make install\n\n# Install svgo required\nRUN npm install -g svgo && npm cache clean --force;\n\n# Install openstreetmap-website\nRUN rm -rf $workdir/html\n# GITSHA value at 15-02-2022\nENV OPENSTREETMAP_WEBSITE_GITSHA=c24b5481812aba9e83da1fd855ccb37f92c5d75e\nRUN curl -f -L https://github.com/openstreetmap/openstreetmap-website/archive/$OPENSTREETMAP_WEBSITE_GITSHA.zip --output website.zip && unzip website.zip\nRUN mv openstreetmap-website-$OPENSTREETMAP_WEBSITE_GITSHA/* $workdir/\nWORKDIR $workdir\nRUN echo \"gem 'image_optim_pack', :git => 'https://github.com/toy/image_optim_pack.git'\" >> Gemfile\n\n# Install Ruby packages\nRUN gem install bundler && bundle install\n\n# Configure database.yml and secrets.yml\nRUN cp $workdir/config/example.database.yml $workdir/config/database.yml\nRUN touch $workdir/config/settings.local.yml\nRUN cp $workdir/config/example.storage.yml $workdir/config/storage.yml\nRUN echo \"#session key \\n\\\nproduction: \\n\\\n  secret_key_base: $(bundle exec rake secret)\" > $workdir/config/secrets.yml\n# Protect sensitive information\nRUN chmod 600 $workdir/config/database.yml $workdir/config/secrets.yml\nRUN bundle exec rake yarn:install\nRUN bundle exec rake i18n:js:export\nRUN bundle exec rake assets:precompile\n\n# The rack interface requires a `tmp` directory to use openstreetmap-cgimap\nRUN ln -s /tmp /var/www/tmp\n\n# Add Apache configuration file\nADD config/production.conf /etc/apache2/sites-available/production.conf\nRUN a2dissite 000-default\nRUN a2ensite production\n\n# Install Passenger + Apache module\nRUN apt-get update && apt-get install --no-install-recommends -y libapache2-mod-passenger && rm -rf /var/lib/apt/lists/*;\n\n# Enable the Passenger Apache module and restart Apache\nRUN echo \"ServerName $(cat /etc/hostname)\" >> /etc/apache2/apache2.conf\nRUN a2enmod passenger\n\n# Check installation\nRUN /usr/bin/passenger-config validate-install\nRUN /usr/sbin/passenger-memory-stats\n\n# Enable required apache modules for the cgimap Apache service\nRUN a2enmod proxy proxy_http rewrite\n\n# Config the virtual host apache2\nADD config/cgimap.conf /tmp/\nRUN sed -e 's/RewriteRule ^(.*)/#RewriteRule ^(.*)/' \\\n        -e 's/\\/var\\/www/\\/var\\/www\\/public/g' \\\n        /tmp/cgimap.conf > /etc/apache2/sites-available/cgimap.conf\nRUN chmod 644 /etc/apache2/sites-available/cgimap.conf\nRUN a2ensite cgimap\nRUN apache2ctl configtest\n\n# Set Permissions for www-data\nRUN chown -R www-data: $workdir\n\n# Add settings\nADD config/settings.yml $workdir/config/settings.yml\n\nCOPY start.sh $workdir/\n\nCMD $workdir/start.sh\n"
+}

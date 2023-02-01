@@ -1,0 +1,26 @@
+{
+  "startTime": 1674242941297,
+  "endTime": 1674242941443,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 54,
+        "lineEnd": 54,
+        "columnStart": 7,
+        "columnEnd": 77
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 8,
+        "lineEnd": 13,
+        "columnStart": 4,
+        "columnEnd": 9
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM golang:1.10-alpine AS go-builder\n\nARG DOCKER_GEN_VERSION=0.7.4\nARG FOREGO_VERSION=20180216151118\n\nLABEL stage=intermediate\n\n# Install build dependencies for docker-gen and forego\nRUN apk add --no-cache --update \\\n\tcurl \\\n\tgcc \\\n\tgit \\\n\tmake \\\n\tmusl-dev\n\n# Build forego\nRUN go get github.com/ddollar/forego \\\n    && cd /go/src/github.com/ddollar/forego \\\n    && git checkout $FOREGO_VERSION \\\n    && make all\n\n# Build docker-gen\nRUN go get github.com/jwilder/docker-gen \\\n    && cd /go/src/github.com/jwilder/docker-gen \\\n    && git checkout $DOCKER_GEN_VERSION \\\n    && make get-deps \\\n    && make all\n\nFROM nginx:1.13-alpine\n\nLABEL maintainer=\"Nicolas Duchon <nicolas.duchon@gmail.com>\"\n\n# DOCKER_GEN_VERSION environment variable is required by letsencrypt-nginx-proxy-companion\nENV DOCKER_GEN_VERSION=0.7.4 \\\n    DOCKER_HOST=unix:///tmp/docker.sock\n\n# Install/update run dependencies\nRUN apk add --update \\\n    bash \\\n    ca-certificates \\\n    curl \\\n    openssl \\\n    && rm -rf /var/cache/apk/*\n\n# Configure Nginx and apply fix for very long server names\nRUN echo \"daemon off;\" >> /etc/nginx/nginx.conf \\\n    && sed -i 's/worker_processes  1/worker_processes  auto/' /etc/nginx/nginx.conf\n\n# Copy forego and docker-gen binaries from build stage\nCOPY --from=go-builder /go/src/github.com/ddollar/forego/forego /usr/local/bin/\nCOPY --from=go-builder /go/src/github.com/jwilder/docker-gen/docker-gen /usr/local/bin/\n\n# Install nginx-proxy\nRUN mkdir /src /app \\\n    && curl -f -sSL https://github.com/jwilder/nginx-proxy/archive/master.tar.gz \\\n    | tar -C /src -xz \\\n    && cp /src/nginx-proxy-master/Procfile /app/ \\\n    && cp /src/nginx-proxy-master/dhparam.pem.default /app/ \\\n    && cp /src/nginx-proxy-master/docker-entrypoint.sh /app/ \\\n    && cp /src/nginx-proxy-master/generate-dhparam.sh /app/ \\\n    && cp /src/nginx-proxy-master/nginx.tmpl /app/ \\\n    && cp /src/nginx-proxy-master/network_internal.conf /etc/nginx/ \\\n    && rm -rf /src\n\nWORKDIR /app\n\nVOLUME [\"/etc/nginx/certs\", \"/etc/nginx/dhparam\"]\n\nENTRYPOINT [\"/app/docker-entrypoint.sh\"]\nCMD [\"forego\", \"start\", \"-r\"]\n"
+}

@@ -1,0 +1,35 @@
+FROM golang:1.12.6 AS tfmask
+
+RUN git clone https://github.com/cloudposse/tfmask.git
+RUN cd tfmask && make && make go/build
+
+FROM debian:bullseye-slim as base
+
+# Terraform environment variables
+ENV CHECKPOINT_DISABLE=true
+ENV TF_IN_AUTOMATION=true
+ENV TF_INPUT=false
+ENV TF_PLUGIN_CACHE_DIR=/usr/local/share/terraform/plugin-cache
+
+RUN apt-get update  \
+ && apt-get install --no-install-recommends -y \
+    git \
+    ssh \
+    tar \
+    gzip \
+    ca-certificates \
+    curl \
+    unzip \
+    jq \
+    python3 \
+    python3-requests \
+    python3-pip \
+    wget \
+ && rm -rf /var/lib/apt/lists/*
+
+RUN mkdir -p $TF_PLUGIN_CACHE_DIR
+
+COPY --from=tfmask /go/tfmask/release/tfmask /usr/local/bin/tfmask
+ENV TFMASK_RESOURCES_REGEX="(?i)^(random_id|kubernetes_secret|acme_certificate).*$"
+
+ENTRYPOINT ["/usr/local/bin/terraform"]

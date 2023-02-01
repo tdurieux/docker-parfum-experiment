@@ -1,0 +1,36 @@
+{
+  "startTime": 1674215688669,
+  "endTime": 1674215690072,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 10,
+        "lineEnd": 16,
+        "columnStart": 4,
+        "columnEnd": 8
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 10,
+        "lineEnd": 16,
+        "columnStart": 4,
+        "columnEnd": 8
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 10,
+        "lineEnd": 13,
+        "columnStart": 4,
+        "columnEnd": 8
+      }
+    }
+  ],
+  "repairedDockerfile": "ARG BUILDPLATFORM=linux/amd64\n\nARG ALPINE_VERSION=3.14\nARG RUST_VERSION=1-slim-bullseye\n\nFROM --platform=${BUILDPLATFORM} rust:${RUST_VERSION} AS base\nWORKDIR /usr/src/prometheus_wireguard_exporter\n\n# Setup\nRUN apt-get update -y && \\\n    apt-get install --no-install-recommends -y \\\n\n    musl-tools \\\n\n    wget \\\n\n    file && rm -rf /var/lib/apt/lists/*;\n\n# Download dependencies\nRUN mkdir src && \\\n    echo 'fn main() {}' > src/main.rs\nCOPY Cargo.toml Cargo.lock ./\nRUN cargo fetch && \\\n    rm src/main.rs\n\nARG STATIC=yes\nRUN touch /tmp/rustflags && \\\n    if [ \"${STATIC}\" != \"yes\" ]; then \\\n      echo \"-C target-feature=-crt-static\" | tee /tmp/rustflags; \\\n    fi\n\nARG TARGETPLATFORM\nRUN echo \"Setting variables for ${TARGETPLATFORM:=linux/amd64}\" && \\\n    case \"${TARGETPLATFORM}\" in \\\n      linux/amd64) \\\n        MUSL=\"x86_64-linux-musl\"; \\\n        RUSTTARGET=\"x86_64-unknown-linux-musl\"; \\\n        break;; \\\n      linux/arm64) \\\n        MUSL=\"aarch64-linux-musl\"; \\\n        RUSTTARGET=\"aarch64-unknown-linux-musl\"; \\\n        break;; \\\n      linux/arm/v7) \\\n        MUSL=\"armv7m-linux-musleabi\"; \\\n        RUSTTARGET=\"armv7-unknown-linux-musleabi\"; \\\n        break;; \\\n      linux/arm/v6) \\\n        MUSL=\"armv6-linux-musleabi\"; \\\n        RUSTTARGET=\"arm-unknown-linux-musleabi\"; \\\n        break;; \\\n      linux/386) \\\n        MUSL=\"i686-linux-musl\"; \\\n        RUSTTARGET=\"i686-unknown-linux-musl\"; \\\n        break;; \\\n      linux/ppc64le) \\\n        MUSL=\"powerpc64le-linux-musl\"; \\\n        RUSTTARGET=\"powerpc64le-unknown-linux-musl\"; \\\n        break;; \\\n      linux/s390x) \\\n        MUSL=\"s390x-linux-musl\"; \\\n        RUSTTARGET=\"s390x-unknown-linux-musl\"; \\\n        break;; \\\n      linux/riscv64) \\\n        MUSL=\"riscv64-linux-musl\"; \\\n        RUSTTARGET=\"riscv64gc-unknown-linux-musl\"; \\\n        break;; \\\n      *) echo \"unsupported platform ${TARGETPLATFORM}\"; exit 1;; \\\n    esac && \\\n    echo \"${MUSL}\" | tee /tmp/musl && \\\n    echo \"${RUSTTARGET}\" | tee /tmp/rusttarget\n\nRUN MUSL=\"$(cat /tmp/musl)\" && \\\n    wget -qO- \"https://musl.cc/$MUSL-cross.tgz\" | tar -xzC /tmp && \\\n    rm \"/tmp/$MUSL-cross/usr\" && \\\n    cp -fr /tmp/\"$MUSL\"-cross/* / && \\\n    rm -rf \"/tmp/$MUSL-cross\"\n\nRUN rustup target add \"$(cat /tmp/rusttarget)\"\n\n# Copy .cargo/config for cross build configuration\nCOPY .cargo ./.cargo\n\n# Install Clippy for build platform\nRUN rustup component add clippy\n\n# Install dependencies\nRUN echo 'fn main() {}' > src/main.rs && \\\n    RUSTFLAGS=\"$(cat /tmp/rustflags)\" \\\n    CC=\"$(cat /tmp/musl)-gcc\" \\\n    cargo build --target \"$(cat /tmp/rusttarget)\" --release\nRUN rm -r \\\n    target/*-linux-*/release/deps/prometheus_wireguard_exporter* \\\n    target/*-linux-*/release/prometheus_wireguard_exporter* \\\n    src/main.rs\n\nCOPY . .\n\nFROM base AS lint\nRUN RUSTFLAGS=\"$(cat /tmp/rustflags)\" \\\n    CC=\"$(cat /tmp/musl)-gcc\" \\\n    cargo clippy --target \"$(cat /tmp/rusttarget)\"\n\nFROM base AS test\nENTRYPOINT \\\n    RUSTFLAGS=\"$(cat /tmp/rustflags)\" \\\n    CC=\"$(cat /tmp/musl)-gcc\" \\\n    cargo test --target \"$(cat /tmp/rusttarget)\"\n\nFROM base AS build\n# Build static binary with musl built-in\nRUN RUSTFLAGS=\"$(cat /tmp/rustflags)\" \\\n    CC=\"$(cat /tmp/musl)-gcc\" \\\n    cargo build --target \"$(cat /tmp/rusttarget)\" --release && \\\n    mv target/*-linux-*/release/prometheus_wireguard_exporter /tmp/binary\nRUN description=\"$(file /tmp/binary)\" && \\\n    echo \"$description\" && \\\n    if [ \"${STATIC}\" = \"yes\" ] && [ ! -z \"$(echo $description | grep musl)\" ]; then \\\n      echo \"binary is not statically built!\" && exit 1; \\\n    fi\n\nFROM alpine:${ALPINE_VERSION}\nEXPOSE 9586/tcp\nWORKDIR /usr/local/bin\nRUN apk add --no-cache --q tini && \\\n    rm -rf /var/cache/apk/*\nRUN adduser prometheus-wireguard-exporter -s /bin/sh -D -u 1000 1000 && \\\n    mkdir -p /etc/sudoers.d && \\\n    echo 'prometheus-wireguard-exporter ALL=(root) NOPASSWD:/usr/bin/wg show * dump' > /etc/sudoers.d/prometheus-wireguard-exporter && \\\n    chmod 0440 /etc/sudoers.d/prometheus-wireguard-exporter\nRUN apk add --update -q --no-cache wireguard-tools-wg sudo\nUSER prometheus-wireguard-exporter\nENTRYPOINT [\"/sbin/tini\", \"--\", \"/usr/local/bin/prometheus_wireguard_exporter\"]\nCMD [ \"-a\" ]\nCOPY --from=build --chown=prometheus-wireguard-exporter /tmp/binary ./prometheus_wireguard_exporter\n"
+}

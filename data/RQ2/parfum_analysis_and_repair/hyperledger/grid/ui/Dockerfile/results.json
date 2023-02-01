@@ -1,0 +1,89 @@
+{
+  "startTime": 1674253126261,
+  "endTime": 1674253127015,
+  "originalSmells": [
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 20,
+        "lineEnd": 20,
+        "columnStart": 39,
+        "columnEnd": 50
+      }
+    },
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 50,
+        "lineEnd": 50,
+        "columnStart": 4,
+        "columnEnd": 15
+      }
+    },
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 58,
+        "lineEnd": 58,
+        "columnStart": 4,
+        "columnEnd": 15
+      }
+    },
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 63,
+        "lineEnd": 63,
+        "columnStart": 4,
+        "columnEnd": 15
+      }
+    },
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 69,
+        "lineEnd": 69,
+        "columnStart": 4,
+        "columnEnd": 15
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 28,
+        "lineEnd": 28,
+        "columnStart": 4,
+        "columnEnd": 52
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 74,
+        "lineEnd": 74,
+        "columnStart": 4,
+        "columnEnd": 58
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 81,
+        "lineEnd": 81,
+        "columnStart": 4,
+        "columnEnd": 65
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 85,
+        "lineEnd": 86,
+        "columnStart": 4,
+        "columnEnd": 50
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Copyright 2018-2021 Cargill Incorporated\n#\n# Licensed under the Apache License, Version 2.0 (the \"License\");\n# you may not use this file except in compliance with the License.\n# You may obtain a copy of the License at\n#\n#     http://www.apache.org/licenses/LICENSE-2.0\n#\n# Unless required by applicable law or agreed to in writing, software\n# distributed under the License is distributed on an \"AS IS\" BASIS,\n# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.\n# See the License for the specific language governing permissions and\n# limitations under the License.\n\n# Canopy build stage\nFROM node:14.18.1-alpine3.11 as canopy-app-build-stage\n\nRUN apk add --no-cache python g++ git make\nWORKDIR /ui\nCOPY ui/grid-ui/package*.json ./\nRUN npm config set unsafe-perm true && npm install && npm cache clean --force;\nCOPY ui/grid-ui .\nENV REACT_APP_SPLINTER_URL \"/splinterd\"\nENV REACT_APP_SAPLING_URL \"/sapling-dev-server\"\nENV REACT_APP_GRID_URL \"/gridd\"\nRUN npm run build\nWORKDIR /ui/build\nARG REPO_VERSION\nRUN tar c -z . -f ../grid_ui_v${REPO_VERSION}.tar.gz && rm ../grid_ui_v${REPO_VERSION}.tar.gz\n\n# Log the commit hash\nCOPY .git/ /tmp/.git/\nWORKDIR /tmp\nRUN git rev-parse HEAD > /commit-hash\n\n# Sapling build stage\nFROM node:14.18.1-alpine3.11 as sapling-build-stage\n\nRUN apk add --no-cache python g++ git make \\\n && npm config set unsafe-perm true\n\nCOPY ui/saplings /saplings\nCOPY ui/sapling-dev-server /sapling-dev-server\nCOPY ui/protos /protos\n\nARG PUBLIC_URL_PARTIAL\nENV PUBLIC_URL $PUBLIC_URL_PARTIAL\n\nENV PUBLIC_URL ${PUBLIC_URL_PARTIAL}/product\nWORKDIR  /saplings/product\nRUN npm install \\\n && npm run deploy && npm cache clean --force;\n\nWORKDIR /\nRUN git clone -b 0-1 https://github.com/Cargill/splinter-ui\n\nWORKDIR /saplings/register-login\nRUN cp -r /splinter-ui/saplings/register-login /saplings \\\n && npm install \\\n && npm run deploy && npm cache clean --force;\n\nWORKDIR /saplings/profile\nRUN cp -r /splinter-ui/saplings/profile /saplings \\\n && npm install \\\n && npm run deploy && npm cache clean --force;\n\nENV PUBLIC_URL ${PUBLIC_URL_PARTIAL}/circuits\nWORKDIR /saplings/circuits\nRUN cp -r /splinter-ui/saplings/circuits /saplings \\\n && npm install \\\n && npm run deploy && npm cache clean --force;\n\nWORKDIR /sapling-dev-server\nARG REPO_VERSION\nRUN tar c -z . -f ../grid_saplings_v${REPO_VERSION}.tar.gz && rm ../grid_saplings_v${REPO_VERSION}.tar.gz\n\n# prod stage\nFROM httpd:2.4 as prod-stage\n\nCOPY --from=canopy-app-build-stage /ui/grid_ui_v*.tar.gz /tmp\nCOPY --from=canopy-app-build-stage /commit-hash /commit-hash\nRUN tar -xzvf /tmp/grid_ui_*.tar.gz -C /usr/local/apache2/htdocs/ && rm /tmp/grid_ui_*.tar.gz\n\nCOPY --from=sapling-build-stage /grid_saplings_v*.tar.gz /tmp\nRUN mkdir /usr/local/apache2/htdocs/sapling-dev-server \\\n && tar -xzvf /tmp/grid_saplings_*.tar.gz \\\n  -C /usr/local/apache2/htdocs/sapling-dev-server/ && rm /tmp/grid_saplings_*.tar.gz\n\nCOPY ui/configs/apache/httpd.conf /usr/local/apache2/conf/httpd.conf\n\n# hadolint ignore=SC2059\nRUN printf \"\\\n  \\n\\\n  LoadModule headers_module modules/mod_headers.so\\n\\\n  ProxyPass /splinterd \\${SPLINTER_URL}\\n\\\n  ProxyPassReverse /splinterd \\${SPLINTER_URL}\\n\\\n  ProxyPass /gridd \\${GRID_URL}\\n\\\n  ProxyPassReverse /gridd \\${GRID_URL}\\n\\\n  <Directory \\\"/usr/local/apache2/htdocs/sapling-dev-server\\\">\\n\\\n  Header set Access-Control-Allow-Origin \"*\"\\n\\\n  </Directory>\\n\\\n  \\n\\\n  \" >>/usr/local/apache2/conf/httpd.conf\n\nEXPOSE 80/tcp\n"
+}

@@ -1,0 +1,35 @@
+{
+  "startTime": 1674254528471,
+  "endTime": 1674254529730,
+  "originalSmells": [
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 38,
+        "lineEnd": 38,
+        "columnStart": 191,
+        "columnEnd": 215
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 42,
+        "lineEnd": 42,
+        "columnStart": 152,
+        "columnEnd": 174
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 46,
+        "lineEnd": 46,
+        "columnStart": 163,
+        "columnEnd": 183
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM amd64/debian:buster-slim\n\nRUN export DEBIAN_FRONTEND=noninteractive && apt-get update \\\n    && apt-get install -y --no-install-recommends \\\n        ca-certificates \\\n        apt-transport-https \\\n        libc6 \\\n        libgcc1 \\\n        libgssapi-krb5-2 \\\n        libicu63 \\\n        libssl1.1 \\\n        libstdc++6 \\\n        zlib1g \\\n        curl \\\n        sudo \\\n        tar \\\n        gcc \\\n        gcc-multilib \\\n        procps \\\n        apache2-utils \\\n    && rm -rf /var/lib/apt/lists/*\n\nARG USER_NAME=\"\"\nENV USER ${USER_NAME:-hippouser}\n\nRUN groupadd --gid 1000 ${USER} &&  useradd -s /bin/bash --uid 1000 --gid 1000 -m ${USER}  &&  echo ${USER}  ALL=\\(root\\) NOPASSWD:ALL > /etc/sudoers.d/${USER}  && chmod 0440 /etc/sudoers.d/${USER}\nRUN mkdir /data && chown ${USER} /data && chgrp ${USER} /data\nRUN su ${USER} -c \"mkdir -p /data/certs && mkdir -p /data/bindleserver && mkdir -p /data/hippo && mkdir -p /data/logs\"\n\n# Install Node.js\n\nARG NODE_VERSION=\"lts/*\"\nRUN su ${USER} -c \"curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.38.0/install.sh |  bash && chmod +x /home/${USER}/.nvm/nvm.sh\"\n\nWORKDIR /tmp\n\n# Install hippo cli\nARG HIPPO_CLI_VERSION=\"v0.14.1\"\nRUN mkdir hippocli && cd hippocli && curl -fsSLo hippocli.tar.gz https://github.com/deislabs/hippo-cli/releases/download/${HIPPO_CLI_VERSION}/hippo-${HIPPO_CLI_VERSION}-linux-amd64.tar.gz && tar -xvf hippocli.tar.gz && mv hippo README.md LICENSE /usr/local/bin/ && cd - && rm -r hippocli && rm hippocli.tar.gz\n\n# Install bindle\nARG BINDLE_VERSION=\"v0.8.0\"\nRUN mkdir bindle && cd bindle && curl -fsSLo bindle.tar.gz https://bindle.blob.core.windows.net/releases/bindle-${BINDLE_VERSION}-linux-amd64.tar.gz && tar -xvf bindle.tar.gz && mv bindle bindle-server README.md LICENSE.txt /usr/local/bin/ && cd - && rm -r bindle && rm bindle.tar.gz\n\n# Install spin\nARG SPIN_VERSION=\"v0.2.0\"\nRUN mkdir spin && cd spin && curl -fsSLo spin.tar.gz https://github.com/fermyon/spin/releases/download/${SPIN_VERSION}/spin-${SPIN_VERSION}-linux-amd64.tar.gz  && tar -xvf spin.tar.gz && mv spin readme.md LICENSE /usr/local/bin/ && cd - && rm -r spin && rm spin.tar.gz\n\n# Install Rust\nRUN su ${USER} -c \"mkdir rust && cd rust && curl -fsSLo install_rust.sh https://sh.rustup.rs && chmod +x ./install_rust.sh  && ./install_rust.sh -y -t wasm32-wasi && cd - && rm -r rust\"\n\nCOPY --chown=1000:1000 . /hippo\n\nWORKDIR /hippo\n\nARG ENVIRONMENT=\"Development\"\nENV ASPNETCORE_ENVIRONMENT ${ENVIRONMENT}\n\nARG BINDLE_PORT=\"8080\"\nENV BINDLE_URL http://localhost:${BINDLE_PORT}/v1\nENV BINDLE_LISTEN_ADDRESS 0.0.0.0:${BINDLE_PORT}\n\nARG BINDLE_SERVER_USER=\"\"\nENV BINDLE_USERNAME ${BINDLE_SERVER_USER:-bindleuser}\n\nARG FORCE_GLOBAL_AGENT=\"false\"\nENV GLOBAL_AGENT_FORCE_GLOBAL_AGENT ${FORCE_GLOBAL_AGENT}\n\n# Docker/WSL2 has an issue exposing ports from localhost. the following tries to work around this issue.\n# See https://github.com/microsoft/WSL/issues/4983\nARG HIPPO_PORT=\"5309\"\n\nARG HIPPOURL=http://hippo.hippofactory.io:${HIPPO_PORT}\nENV HIPPO_URL ${HIPPOURL}\n\nENV ASPNETCORE_URLS http://0.0.0.0:${HIPPO_PORT}\n\n# Generate certs for hippo-server and proxy\nWORKDIR /data/certs\nRUN openssl req -x509 -nodes -days 365 -newkey rsa:2048 -keyout localhost.key -out localhost.crt -config /hippo/certs/localhost.conf && openssl pkcs12 -export -out localhost.pfx -inkey localhost.key -in localhost.crt -password pass: &&  sudo chgrp ${USER} localhost.pfx && chmod g+r localhost.pfx\nRUN cp /data/certs/localhost.crt /usr/local/share/ca-certificates && update-ca-certificates\nENV KESTREL__CERTIFICATES__DEFAULT__PATH /data/certs/localhost.pfx\nENV HIPPO_REVERSE_PROXY_KESTREL__CERTIFICATES__DEFAULT__PATH /data/certs/localhost.pfx\n\n# Set the data source to a local folder that can be mounted from the host.\nENV CONNECTIONSTRINGS__HIPPO Data Source=/data/hippo/hippo.db;Cache=Shared\n\nWORKDIR /hippo\n\n# Run bindle-server and hippo-server.\n\nUSER 1000\n\nENTRYPOINT if [ -z ${BINDLE_PASSWORD} ]; then export BINDLE_PASSWORD=$(openssl rand -base64 12);echo export BINDLE_PASSWORD=${BINDLE_PASSWORD} >> ~/.bashrc;  fi && echo ${BINDLE_PASSWORD}|htpasswd -Bic /data/bindleserver/bindle-htpasswd ${BINDLE_USERNAME} && RUST_LOG=info bindle-server -i ${BINDLE_LISTEN_ADDRESS} --htpasswd-file /data/bindleserver/bindle-htpasswd -d /data/bindleserver >> /data/logs/bindle-server.log 2>&1 & ./hippo-server >> /data/logs/hippo-server.log 2>&1\n"
+}

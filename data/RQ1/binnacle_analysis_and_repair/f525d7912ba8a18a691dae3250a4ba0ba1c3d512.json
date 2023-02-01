@@ -1,0 +1,35 @@
+{
+  "startTime": 1674245577400,
+  "endTime": 1674245577654,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 33,
+        "lineEnd": 33,
+        "columnStart": 4,
+        "columnEnd": 114
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 61,
+        "lineEnd": 61,
+        "columnStart": 7,
+        "columnEnd": 39
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 28,
+        "lineEnd": 28,
+        "columnStart": 9,
+        "columnEnd": 44
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM ruby:2.4-alpine3.7 AS elektra\n\nENV OVERLAY=sucks3\n\nRUN apk --no-cache add git curl tzdata nodejs postgresql-client yarn\n\n# Install gems with native extensions before running bundle install\n# This avoids recompiling them everytime the Gemfile.lock changes.\n# The versions need to be kept in sync with the Gemfile.lock\nRUN apk --no-cache add build-base postgresql-dev --virtual .builddeps \\\n      && gem install byebug -v 9.0.6 \\\n      && gem install ffi -v 1.9.25 \\\n      && gem install json -v 1.8.6 \\\n      && gem install nio4r -v 2.3.1 \\\n      && gem install nokogiri -v 1.10.2 \\\n      && gem install pg -v 0.21.0 \\\n      && gem install puma -v 3.9.1  \\\n      && gem install redcarpet -v 3.4.0 \\\n      && gem install unf -v 0.2.0.beta2 \\\n      && gem install websocket-driver -v 0.7.0 \\\n      && gem install bindex -v 0.6.0 \\\n      && runDeps=\"$( \\\n\t\t      scanelf --needed --nobanner --recursive /usr/local \\\n            | awk '{ gsub(/,/, \"\\nso:\", $2); print \"so:\" $2 }' \\\n            | sort -u \\\n            | xargs -r apk info --installed \\\n            | sort -u \\\n          )\" \\\n      && apk add --no-cache --virtual .rundeps $runDeps \\\n      && apk del .builddeps \\\n      && gem sources -c \\\n      && rm -f /usr/local/bundle/cache/*\n\nRUN curl -f -L -o /usr/bin/dumb-init https://github.com/Yelp/dumb-init/releases/download/v1.2.0/dumb-init_1.2.0_amd64 && \\\n    chmod +x /usr/bin/dumb-init && \\\n    dumb-init -V\n\nWORKDIR /home/app/webapp\nENV RAILS_ENV=production\nARG MONSOON_RAILS_SECRET_TOKEN\nENV MONSOON_RAILS_SECRET_TOKEN=$MONSOON_RAILS_SECRET_TOKEN\nLABEL quay.expires-after=26w\n\n# add Gemfile and Gemfile.lock to /home/app/webapp/\nADD Gemfile Gemfile.lock ./\n\n# add package.json yarn.lock to /home/app/webapp\nADD package.json yarn.lock ./\n\n# copy all gemspec files from plugins folder into /home/app/webapp/tmp/plugins/\nADD plugins/*/*.gemspec tmp/plugins/\n\n# copy organize_plugins_gemspecs script (see comments in docker/organize_plugins_gemspecs) and execute it\nADD script/organize_plugins_gemspecs script/\nRUN script/organize_plugins_gemspecs\n\nARG ELEKTRA_EXTENSION=false\nENV ELEKTRA_EXTENSION=$ELEKTRA_EXTENSION\n# Install the SAP Global Root CA\nADD docker/certs/*.crt /usr/local/share/ca-certificates/\nRUN update-ca-certificates \\\n    && curl -f https://github.wdf.sap.corp\n\n# install gems, copy app and run rake tasks\nRUN bundle install --without \"development integration_tests\"\n# install js packages\nRUN if [ -z ${http_proxy} ]; then \\\n      echo do not use proxy && yarn; \\\n      else echo use proxy && yarn --proxy $http_proxy --https-proxy $https_proxy; fi\n\nADD . /home/app/webapp\n\n# precompile assets including webpacker packs\n# We use dummy master.key to workaround the fact that\n# assets:precompile needs them but we don't want the real master.key to be built\n# into the container. The MONSOON_RAILS_SECRET_TOKEN should be injected as env var when starting the\n# container.\n# https://github.com/rails/rails/issues/32947\nENV MONSOON_RAILS_SECRET_TOKEN=dummy_monsoon_rails_build_secret_token_for_assets_precompiling_change_it_in_production\nRUN bin/rails assets:precompile && rm -rf tmp/cache/assets\n\nENTRYPOINT [\"dumb-init\", \"-c\", \"--\" ]\nCMD [\"script/start.sh\"]\n\nFROM elektra AS tests\nRUN apk add --no-cache postgresql bash\nENV RAILS_ENV=test\nRUN LISTENTO=127.0.0.1 su postgres -c 'script/pg_tmp.sh -p 5432 -w 300 -d /tmp/pg start' \\\n      && rake db:create db:migrate \\\n      && bundle exec rspec \\\n      && su postgres -c 'script/pg_tmp.sh -d /tmp/pg stop'\n\nFROM elektra\n"
+}

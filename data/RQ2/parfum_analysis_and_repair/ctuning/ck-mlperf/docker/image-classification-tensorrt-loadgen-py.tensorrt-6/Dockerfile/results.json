@@ -1,0 +1,44 @@
+{
+  "startTime": 1674247981009,
+  "endTime": 1674247982144,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 17,
+        "lineEnd": 17,
+        "columnStart": 4,
+        "columnEnd": 28
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 19,
+        "lineEnd": 24,
+        "columnStart": 4,
+        "columnEnd": 4
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 17,
+        "lineEnd": 17,
+        "columnStart": 4,
+        "columnEnd": 28
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 19,
+        "lineEnd": 24,
+        "columnStart": 4,
+        "columnEnd": 4
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# 19.12-py3 is the last image to come with TensorRT 6.\n# 20.01-py3 comes with TensorRT 7.\nFROM nvcr.io/nvidia/tensorrt:19.12-py3\n\nLABEL maintainer=\"Anton Lokhmotov <anton@dividiti.com>\"\n\n# Use the Bash shell.\nSHELL [\"/bin/bash\", \"-c\"]\n\n# Allow stepping into the Bash shell interactively.\nENTRYPOINT [\"/bin/bash\", \"-c\"]\n\n# Install known system dependencies and immediately clean up to make the image smaller.\n# CK needs: git, wget, zip.\n# TF needs: curl.\n# TF Object Detection API needs ProtoBuf 3.0 which needs CMake.\nRUN apt update -y \\\n && apt install --no-install-recommends -y apt-utils \\\n && apt upgrade -y \\\n && apt install --no-install-recommends -y \\\n git wget zip libz-dev \\\n curl \\\n cmake \\\n python3 python3-pip \\\n vim \\\n && apt clean && rm -rf /var/lib/apt/lists/*;\n\n# Create a non-root user with a fixed group id 1500 and a fixed user id 2000\n# (hopefully distinct from any host user id for security reasons).\n# See the README for the gory details.\nRUN groupadd -g 1500 dvdtg\nRUN useradd -u 2000 -g dvdtg --create-home --shell /bin/bash dvdt\nUSER dvdt:dvdtg\nWORKDIR /home/dvdt\n\n# Install Collective Knowledge (CK). Make it group-executable.\nENV CK_ROOT=/home/dvdt/CK \\\n    CK_REPOS=/home/dvdt/CK_REPOS \\\n    CK_TOOLS=/home/dvdt/CK_TOOLS \\\n    PATH=${CK_ROOT}/bin:/home/dvdt/.local/bin:${PATH} \\\n    CK_CC=gcc \\\n    CK_PYTHON=python3 \\\n    GIT_USER=\"dividiti\" \\\n    GIT_EMAIL=\"info@dividiti.com\" \\\n    LANG=C.UTF-8\nRUN mkdir -p ${CK_ROOT} ${CK_REPOS} ${CK_TOOLS}\nRUN git config --global user.name ${GIT_USER} && git config --global user.email ${GIT_EMAIL}\nRUN git clone https://github.com/ctuning/ck.git ${CK_ROOT}\nRUN cd ${CK_ROOT}\\\n && ${CK_PYTHON} setup.py install --user\\\n && ${CK_PYTHON} -c \"import ck.kernel as ck; print ('Collective Knowledge v%s' % ck.__version__)\"\\\n && chmod -R g+rx /home/dvdt/.local \\\n && umask 002 && chgrp dvdtg ${CK_TOOLS} && chmod g+ws ${CK_TOOLS}\n\n# Explicitly create a CK experiment entry, a folder that will be mounted\n# (with '--volume=<folder_for_results>:/home/dvdt/CK_REPOS/local/experiment').\n# as a shared volume between the host and the container, and make it group-writable.\n# For consistency, use the \"canonical\" uid from ck-analytics:module:experiment.\nRUN ck create_entry --data_uoa=experiment --data_uid=bc0409fb61f0aa82 --path=${CK_REPOS}/local\\\n && chmod -R g+w ${CK_REPOS}/local/experiment\n\n# Pull CK repositories (including ck-mlperf, ck-env, ck-autotuning, ck-tensorflow, ck-docker).\nRUN ck pull repo:ck-mlperf\nRUN ck pull repo:ck-tensorrt\n\n# Use generic Linux settings with dummy frequency setting scripts.\nRUN ck detect platform.os --platform_init_uoa=generic-linux-dummy\n\n#-----------------------------------------------------------------------------#\n# Step 1. Install Python packages.\n#-----------------------------------------------------------------------------#\n# Detect Python.\nRUN ck detect soft:compiler.python --full_path=`which ${CK_PYTHON}`\n# Install the latest Python package installer (pip) and some dependencies.\nRUN ${CK_PYTHON} -m pip install --ignore-installed pip setuptools --user\nRUN ck install package --tags=python-package,cython\nRUN ck install package --tags=python-package,numpy\nRUN ck install package --tags=python-package,absl\nRUN ck install package --tags=python-package,opencv-python-headless\n\n#-----------------------------------------------------------------------------#\n# Step 2. Detect GCC, CUDA and install PyCUDA.\n#-----------------------------------------------------------------------------#\nRUN ck detect soft:compiler.gcc --full_path=`which ${CK_CC}`\nRUN ck detect soft:compiler.cuda --full_path=/usr/local/cuda/bin/nvcc\nRUN ck install package --tags=python-package,pycuda\n\n#-----------------------------------------------------------------------------#\n# Step 3. Detect TensorRT and PyTensorRT.\n#-----------------------------------------------------------------------------#\nRUN ck detect soft:lib.tensorrt --full_path=/usr/lib/x86_64-linux-gnu/libnvinfer.so\nRUN ck detect soft:lib.python.tensorrt --full_path=/usr/lib/python3.6/dist-packages/tensorrt/__init__.py\n\n#-----------------------------------------------------------------------------#\n# Step 4. Download and preprocess the first 500 images of the ImageNet 2012\n# validation dataset.\n#-----------------------------------------------------------------------------#\nRUN ck install package --tags=dataset,imagenet,aux\nRUN ck install package --tags=dataset,imagenet,val,original,min --no_tags=resized\nRUN ck install package --tags=dataset,imagenet,val,full,preprocessed,using-opencv\n\n#-----------------------------------------------------------------------------#\n# Step 5. Install MLPerf Inference packages.\n#-----------------------------------------------------------------------------#\nRUN ck install package --tags=mlperf,inference,source\nRUN ck install package --tags=mlperf,loadgen,python-package\n\n#-----------------------------------------------------------------------------#\n# Step 6. Make final preparations to run Image Classification with TensorRT.\n#-----------------------------------------------------------------------------#\n# Install the official MLPerf ResNet ONNX model.\nRUN ck install package --tags=model,onnx,resnet,downloaded\n# Allow to create new environments when running under an external user.\nRUN chmod -R g+rwx $CK_REPOS/local/env\n# Allow a few programs to create tmp files when running under an external user.\nRUN chmod -R g+rwx `ck find program:image-classification-tensorrt-loadgen-py`\n#RUN chmod -R g+rwx `ck find program:dump-repo-to-submission`\n#RUN chmod -R g+rwx `ck find program:dump-submissions-to-dashboard`\n## Need pandas and ipython for dumping submissions.\n#RUN ${CK_PYTHON} -m pip install pandas --user\n#RUN ${CK_PYTHON} -m pip install ipython --user\n\n## Print CUDA device info.\n#RUN ck compile program:tool-print-cuda-devices\n#CMD [ \"ck run program:tool-print-cuda-devices\" ]\n\nCMD [ \"ck run program:image-classification-tensorrt-loadgen-py --skip_print_timers --env.CK_SILENT_MODE \\\n--env.CK_LOADGEN_CONF_FILE=`ck find program:image-classification-tensorrt-loadgen-py`/user.conf \\\n--env.CK_LOADGEN_MODE=AccuracyOnly --env.CK_LOADGEN_SCENARIO=MultiStream \\\n--env.CK_LOADGEN_DATASET_SIZE=500 --env.CK_LOADGEN_BUFFER_SIZE=500 \\\n--env.CK_LOADGEN_MULTISTREAMNESS=32 --env.CK_BATCH_SIZE=32 \\\n--dep_add_tags.weights=model,resnet,converted-from-onnx,fp32,maxbatch.32 \\\n&& head -n 12 `ck find program:image-classification-tensorrt-loadgen-py`/tmp/mlperf_log_summary.txt\" ]\n"
+}

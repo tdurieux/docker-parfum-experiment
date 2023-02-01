@@ -1,0 +1,11 @@
+FROM fedora:36
+%%%OS%%%
+ENV LANG en_US.UTF-8
+ENV LANGUAGE en_US:en
+ENV LC_ALL en_US.UTF-8
+RUN echo fubar > /etc/machine-id
+RUN dnf -y update
+RUN echo fubar > /etc/machine-id
+%%%INSTALL_DEPENDENCIES_COMMAND%%%
+WORKDIR /github/workspace
+CMD ["./contrib/ci/fedora.sh"]

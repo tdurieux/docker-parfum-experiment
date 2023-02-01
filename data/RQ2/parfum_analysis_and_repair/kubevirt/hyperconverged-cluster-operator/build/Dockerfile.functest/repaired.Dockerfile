@@ -1,0 +1,31 @@
+FROM docker.io/golang:1.18.2 AS builder
+
+WORKDIR /go/src/github.com/kubevirt/hyperconverged-cluster-operator/
+COPY . .
+RUN make build-functest
+
+FROM registry.access.redhat.com/ubi8/ubi-minimal
+
+ENV USER_UID=1001 \
+    TEST_OUT_PATH=/test
+
+WORKDIR ${TEST_OUT_PATH}
+ENTRYPOINT ["./hack/run-tests.sh"]
+
+RUN curl -f -Lo /usr/local/bin/kubectl "https://storage.googleapis.com/kubernetes-release/release/$( curl -f -s https://storage.googleapis.com/kubernetes-release/release/stable.txt)/bin/linux/amd64/kubectl" && \
+    chmod a+x /usr/local/bin/kubectl && \
+    curl -f -Lo /usr/local/bin/jq https://github.com/stedolan/jq/releases/download/jq-1.6/jq-linux64 && \
+    chmod a+x /usr/local/bin/jq && \
+    microdnf install tar
+
+COPY --from=builder --chown=${USER_UID}:0 /go/src/github.com/kubevirt/hyperconverged-cluster-operator/tests/func-tests/_out/func-tests.test  ${TEST_OUT_PATH}/
+COPY --from=builder --chown=${USER_UID}:0 /go/src/github.com/kubevirt/hyperconverged-cluster-operator/hack  ${TEST_OUT_PATH}/hack
+COPY --from=builder --chown=${USER_UID}:0 /go/src/github.com/kubevirt/hyperconverged-cluster-operator/tools  ${TEST_OUT_PATH}/tools
+COPY --from=builder --chown=${USER_UID}:0 /go/src/github.com/kubevirt/hyperconverged-cluster-operator/deploy  ${TEST_OUT_PATH}/deploy
+COPY --from=builder --chown=${USER_UID}:0 /go/src/github.com/kubevirt/hyperconverged-cluster-operator/cluster ${TEST_OUT_PATH}/cluster
+
+ARG git_url=https://github.com/kubevirt/hyperconverged-cluster-operator.git
+ARG git_sha=NONE
+
+LABEL multi.GIT_URL=${git_url} \
+      multi.GIT_SHA=${git_sha}

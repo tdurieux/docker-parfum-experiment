@@ -1,0 +1,3 @@
+FROM cassandra:3.11.12
+COPY ./cassandra.yaml /etc/cassandra/
+CMD ["cassandra", "-f"]

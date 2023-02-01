@@ -1,0 +1,98 @@
+{
+  "startTime": 1674250255262,
+  "endTime": 1674250256283,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 29,
+        "lineEnd": 29,
+        "columnStart": 4,
+        "columnEnd": 65
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 30,
+        "lineEnd": 30,
+        "columnStart": 11,
+        "columnEnd": 76
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 44,
+        "lineEnd": 44,
+        "columnStart": 4,
+        "columnEnd": 97
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 45,
+        "lineEnd": 45,
+        "columnStart": 4,
+        "columnEnd": 76
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 50,
+        "lineEnd": 50,
+        "columnStart": 4,
+        "columnEnd": 453
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 61,
+        "lineEnd": 61,
+        "columnStart": 21,
+        "columnEnd": 282
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 31,
+        "lineEnd": 31,
+        "columnStart": 4,
+        "columnEnd": 34
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 46,
+        "lineEnd": 46,
+        "columnStart": 4,
+        "columnEnd": 44
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 7,
+        "lineEnd": 23,
+        "columnStart": 22,
+        "columnEnd": 14
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 7,
+        "lineEnd": 23,
+        "columnStart": 22,
+        "columnEnd": 14
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# See Dockerfile.win for an explanation of some aspects of this file.\nFROM debian:buster-slim\n# OpenSSL build requires perl\n# Qt tarball requires xz-utils\n# Qt build requires libgl1-mesa-dev, libxkbcommon-dev, python, zlib1g-dev\n# aria2 build requires autoconf, autopoint, gettext\n# updater build requires git\nRUN apt-get update && apt-get install --no-install-recommends -y \\\n    autoconf \\\n    autopoint \\\n    curl \\\n    gettext \\\n    git \\\n    g++ \\\n    libgl1-mesa-dev \\\n    libtool \\\n    libxkbcommon-dev \\\n    make \\\n    perl \\\n    p7zip-full \\\n    pkg-config \\\n    python \\\n    xz-utils \\\n    zlib1g-dev && rm -rf /var/lib/apt/lists/*;\n\n#################\n# Build OpenSSL #\n#################\nWORKDIR /build-ssl\nRUN curl -f -LO https://www.openssl.org/source/openssl-1.1.1i.tar.gz && \\\n    echo $( curl -f -L https://www.openssl.org/source/openssl-1.1.1i.tar.gz.sha1) openssl-1.1.1i.tar.gz | sha1sum --check\nRUN tar -xzf openssl-1.1.1i.tar.gz && rm openssl-1.1.1i.tar.gz\nWORKDIR /build-ssl/openssl-1.1.1i\nRUN ./config no-shared --prefix=/openssl\nRUN make -j`nproc` && make install_sw && rm -rf /build-ssl\n\n############\n# Build Qt #\n############\nWORKDIR /build-qt\n# We set the results of the renameat2 and statx feature tests to failure with sed below, but the\n# statx test is actually ignored so this extra patch is needed to disable it.\nCOPY disable-statx.patch .\nENV UPDATER_MODULES=qtbase,qtquickcontrols,qtquickcontrols2,qtsvg,qtgraphicaleffects\nRUN curl -f -LO https://download.qt.io/archive/qt/5.14/5.14.2/single/qt-everywhere-src-5.14.2.tar.xz && \\\n    curl -f -L https://download.qt.io/archive/qt/5.14/5.14.2/single/md5sums.txt | md5sum --check --ignore-missing && \\\n    tar -xJf qt-everywhere-src-5.14.2.tar.xz && \\\n    cd qt-everywhere-src-5.14.2 && \\\n    sed -i -E 's/tests[.](statx|renameat2)/false/' qtbase/src/corelib/configure.json && \\\n    patch qtbase/src/corelib/io/qfilesystemengine_unix.cpp < ../disable-statx.patch && \\\n    OPENSSL_LIBS='-L/openssl/lib -lssl -lcrypto -lpthread -ldl' ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" -opensource -confirm-license -release -optimize-size -no-shared -static --c++std=14 -nomake tests -nomake tools -nomake examples -no-gif -no-icu -no-glib -no-qml-debug -opengl desktop -no-eglfs -no-opengles3 -no-angle -no-egl -qt-xcb -xkbcommon -dbus-runtime -qt-freetype -qt-pcre -qt-harfbuzz -qt-libpng -qt-libjpeg -system-zlib -I /openssl/include -openssl-linked -prefix /qt && \\\n    bash -c \"make -j`nproc` module-{$UPDATER_MODULES} && make module-{$UPDATER_MODULES}-install_subtargets\" && \\\n    rm -rf /build-qt && rm qt-everywhere-src-5.14.2.tar.xz\n\n###############\n# Build aria2 #\n###############\nCOPY aria2 /updater2/aria2\nCOPY .git/modules/aria2 /updater2/.git/modules/aria2\nWORKDIR /updater2/aria2\nRUN git clean -dXff\nRUN autoreconf -i && PKG_CONFIG_PATH=/openssl/lib/pkgconfig ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" --without-libxml2 --without-libexpat --without-sqlite3 --enable-libaria2 --without-zlib --without-libcares --enable-static=yes ARIA2_STATIC=yes --without-libssh2 --disable-websocket --disable-nls --with-openssl && make -j`nproc`\n\n#################\n# Build updater #\n#################\nCOPY . /updater2\nRUN set -e; for D in . quazip fluid; do cd /updater2/$D && git clean -dXff; done\nWORKDIR /build\nRUN /qt/bin/qmake -config release QMAKE_LFLAGS+=\"-no-pie\" /updater2 && make -j`nproc`\nRUN mv updater2 updater2-nonstripped && strip updater2-nonstripped -o updater2\n# Version check: do not depend on glibc > 2.26\nRUN echo GLIBC_2.26 > target_version && \\\n    grep -aoE 'GLIBC_[0-9.]+' updater2 > symbol_versions && \\\n    cat target_version symbol_versions | sort -V | tail -1 > max_version && \\\n    diff -q target_version max_version\nARG release\nRUN if [ -n \"$release\" ]; then cp updater2 UnvanquishedUpdater && 7z -tzip -mx=9 a UnvUpdaterLinux.zip UnvanquishedUpdater; fi\nENV zipfile=${release:+UnvUpdaterLinux.zip}\nCMD cp updater2 updater2-nonstripped $zipfile /build-docker\n"
+}

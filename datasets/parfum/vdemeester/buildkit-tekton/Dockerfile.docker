@@ -1,0 +1,13 @@
+ARG GOLANG_IMAGE=golang:1.17.8-alpine@sha256:b35984144ec2c2dfd6200e112a9b8ecec4a8fd9eff0babaff330f1f82f14cb2a
+
+FROM ${GOLANG_IMAGE} AS build-buildkit
+WORKDIR /src
+ENV CGO_ENABLED=0
+RUN --mount=target=. --mount=target=/root/.cache,type=cache --mount=target=/go/pkg,type=cache \
+ go build -trimpath -ldflags "-s -w" -o /out/buildkit-tekton ./cmd/buildkit-tekton
+
+FROM scratch
+COPY --from=build-buildkit /out/ /
+LABEL moby.buildkit.frontend.network.none="false"
+LABEL moby.buildkit.frontend.caps="moby.buildkit.frontend.inputs,moby.buildkit.frontend.subrequests,moby.buildkit.frontend.contexts"
+ENTRYPOINT ["/buildkit-tekton"]

@@ -1,0 +1,44 @@
+{
+  "startTime": 1674246575731,
+  "endTime": 1674246576553,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 33,
+        "lineEnd": 33,
+        "columnStart": 4,
+        "columnEnd": 98
+      }
+    },
+    {
+      "rule": "gpgUseBatchFlag",
+      "position": {
+        "lineStart": 27,
+        "lineEnd": 27,
+        "columnStart": 4,
+        "columnEnd": 99
+      }
+    },
+    {
+      "rule": "gpgUseBatchFlag",
+      "position": {
+        "lineStart": 28,
+        "lineEnd": 28,
+        "columnStart": 4,
+        "columnEnd": 90
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 29,
+        "lineEnd": 29,
+        "columnStart": 18,
+        "columnEnd": 37
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Copyright 2022 ChainSafe Systems (ON)\n# SPDX-License-Identifier: LGPL-3.0-only\n\nARG POLKADOT_VERSION=v0.9.10\n\nFROM golang:1.18 as openmetrics\nARG METRICS_NAMESPACE=substrate.local.devnet\n\nWORKDIR /devnet\n\nCOPY ./devnet/go.mod ./devnet/go.sum ./\nRUN go mod download\n\nCOPY ./devnet .\nRUN go run cmd/update-dd-agent-confd/main.go -n=${METRICS_NAMESPACE} -t=key:alice > conf.yaml\n\nFROM parity/polkadot:${POLKADOT_VERSION}\n\nARG POLKADOT_VERSION\n# Using a genesis file with 3 authority nodes (alice, bob, charlie) generated using polkadot $POLKADOT_VERSION\nARG CHAIN=3-auth-node-${POLKADOT_VERSION}\nARG DD_API_KEY=somekey\n\nENV DD_API_KEY=${DD_API_KEY}\nENV CHAIN=${CHAIN}\n\nUSER root\nRUN gpg --batch --recv-keys --keyserver hkps://keys.mailvelope.com 9D4B2B6EB8F97156D19669A9FF0812D491B96798\nRUN gpg --batch --export 9D4B2B6EB8F97156D19669A9FF0812D491B96798 > /usr/share/keyrings/parity.gpg\nRUN apt update && apt install --no-install-recommends -y curl && rm -r /var/cache/* /var/lib/apt/lists/*\n\nWORKDIR /cross-client\n\nRUN curl -f -L https://s3.amazonaws.com/dd-agent/scripts/install_script.sh --output install_script.sh && \\\n    chmod +x ./install_script.sh\n\nRUN DD_AGENT_MAJOR_VERSION=7 DD_INSTALL_ONLY=true DD_SITE=\"datadoghq.com\" ./install_script.sh\nCOPY --from=openmetrics /devnet/conf.yaml /etc/datadog-agent/conf.d/openmetrics.d/\n\nUSER polkadot\n\nCOPY ./devnet/chain ./chain/\n\n# The substrate node-key argument should be a 32 bytes long sr25519 secret key\n# while gossamer nodes uses a 64 bytes long sr25519 key (32 bytes long to secret key + 32 bytes long to public key).\n# Then to keep both substrate and gossamer alice nodes with the same libp2p node keys we just need to use\n# the first 32 bytes from `alice.node.key` which means the 32 bytes long sr25519 secret key used here.\nENTRYPOINT service datadog-agent start && /usr/bin/polkadot \\\n    --chain ./chain/$CHAIN/genesis-raw.json \\\n    --alice \\\n    --port 7001 \\\n    --rpc-port 8545 \\\n    --ws-port 8546 \\\n    --node-key \"93ce444331ced4d2f7bfb8296267544e20c2591dbf310c7ea3af672f2879cf8f\" \\\n    --tmp \\\n    --prometheus-external \\\n    --prometheus-port 9876 \\\n    --unsafe-rpc-external \\\n    --unsafe-ws-external\n\nEXPOSE 7001/tcp 8545/tcp 8546/tcp 9876/tcp\n"
+}

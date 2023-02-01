@@ -1,0 +1,17 @@
+# Stage 1: Build the project and package it into a .jar file.
+FROM maven:3.8.4 as maven
+
+WORKDIR .
+COPY . .
+
+ARG URL
+ARG CLIENT_ID
+ENV REACT_APP_URL=$URL
+ENV REACT_APP_CLIENT_ID=$CLIENT_ID
+
+RUN mvn package
+
+# Stage 2: Copy the .jar file and server.xml into the required location.
+FROM icr.io/appcafe/open-liberty:full-java11-openj9-ubi
+
+# Copy from the intermediate build container.

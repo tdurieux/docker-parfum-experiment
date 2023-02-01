@@ -1,0 +1,1 @@
+# The base version of the Kyma Operator that will be used to build Control Plane Installer

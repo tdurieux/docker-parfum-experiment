@@ -1,0 +1,44 @@
+{
+  "startTime": 1674248917440,
+  "endTime": 1674248918697,
+  "originalSmells": [
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 23,
+        "lineEnd": 23,
+        "columnStart": 4,
+        "columnEnd": 33
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 20,
+        "lineEnd": 20,
+        "columnStart": 4,
+        "columnEnd": 71
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 14,
+        "lineEnd": 14,
+        "columnStart": 4,
+        "columnEnd": 74
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 30,
+        "lineEnd": 30,
+        "columnStart": 4,
+        "columnEnd": 39
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Build the traceroute-caller binary.\nFROM golang:1.18 as build_caller\nADD . /go/src/github.com/m-lab/traceroute-caller\nRUN rm /go/src/github.com/m-lab/traceroute-caller/Dockerfile\nENV CGO_ENABLED 0\nENV GOOS linux\nWORKDIR /go/src/github.com/m-lab/traceroute-caller\nRUN go get -v . && \\\n    go install -v -ldflags \"-X github.com/m-lab/go/prometheusx.GitShortCommit=$(git log -1 --format=%h)\" . && \\\n    chmod -R a+rx /go/bin/traceroute-caller\n\n# Build and install the tools that are called by traceroute-caller.\nFROM ubuntu:20.04 as build_tracers\nRUN apt-get update && \\\n    apt-get install --no-install-recommends -y make coreutils autoconf libtool git build-essential && \\\n    apt-get clean && \\\n    rm -rf /var/lib/apt/lists/*\n# Build and install scamper.\nRUN mkdir /scamper-src\nADD ./third_party/scamper/ /scamper-src\nRUN tar xvzf /scamper-src/scamper-cvs-20211026.tar.gz -C /scamper-src/ && rm /scamper-src/scamper-cvs-20211026.tar.gz\nWORKDIR /scamper-src/scamper-cvs-20211026/\nRUN chmod +x ./configure && \\\n    ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" --prefix=/scamper && \\\n    make -j 8 && \\\n    make install\n\n# Create an image for traceroute-caller and the tools that it calls.\nFROM ubuntu:20.04\nRUN apt-get update && \\\n    apt-get install --no-install-recommends -y python3-pip tini && \\\n    apt-get clean && \\\n    rm -rf /var/lib/apt/lists/*\n# Create /var/empty to avoid a race condition in scamper that results\n# in the following failure:\n#   scamper_privsep_init: could not mkdir /var/empty: File exists\nRUN mkdir -p /var/empty && \\\n    chmod 555 /var/empty\n# Copy the statically-linked traceroute-caller binary.\nCOPY --from=build_caller /go/bin/traceroute-caller /\n# Copy the dynamically-linked scamper binary and its associated libraries.\nCOPY --from=build_tracers /scamper /usr/local\n# Install fast-mda-traceroute from PyPI.\n# We build pycaracal from source to avoid pulling precompiled binaries.\nRUN pip3 install --no-binary pycaracal --no-cache-dir --verbose fast-mda-traceroute==0.1.10\n# Run ldconfig to locate all new libraries and verify the tools we need\n# are available.\nRUN ldconfig && \\\n    which scamper tini\nWORKDIR /\nENTRYPOINT [\"tini\", \"--\", \"/traceroute-caller\"]\n"
+}

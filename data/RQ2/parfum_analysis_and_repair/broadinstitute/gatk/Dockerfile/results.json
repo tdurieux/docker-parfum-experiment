@@ -1,0 +1,63 @@
+{
+  "startTime": 1674251844211,
+  "endTime": 1674251844945,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 10,
+        "lineEnd": 10,
+        "columnStart": 4,
+        "columnEnd": 62
+      }
+    },
+    {
+      "rule": "aptGetInstallUseY",
+      "position": {
+        "lineStart": 12,
+        "lineEnd": 12,
+        "columnStart": 4,
+        "columnEnd": 40
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 12,
+        "lineEnd": 12,
+        "columnStart": 4,
+        "columnEnd": 40
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 12,
+        "lineEnd": 12,
+        "columnStart": 4,
+        "columnEnd": 40
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 12,
+        "lineEnd": 12,
+        "columnStart": 4,
+        "columnEnd": 40
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 12,
+        "lineEnd": 12,
+        "columnStart": 4,
+        "columnEnd": 67
+      }
+    }
+  ],
+  "repairedDockerfile": "# stage 1 for constructing the GATK zip\nFROM broadinstitute/gatk:gatkbase-2.3.0 AS gradleBuild\nLABEL stage=gatkIntermediateBuildImage\nARG RELEASE=false\n\nRUN ls .\nADD . /gatk\nWORKDIR /gatk\n\n# Get an updated gcloud signing key, in case the one in the base image has expired\nRUN curl -f https://packages.cloud.google.com/apt/doc/apt-key.gpg | apt-key add -\nRUN add-apt-repository universe && apt update\nRUN apt-get --assume-yes -y --no-install-recommends install git-lfs && rm -rf /var/lib/apt/lists/*;\nRUN git lfs install --force\n\n#Download only resources required for the build, not for testing\nRUN git lfs pull --include src/main/resources/large\n\nRUN export GRADLE_OPTS=\"-Xmx4048m -Dorg.gradle.daemon=false\" && /gatk/gradlew clean collectBundleIntoDir shadowTestClassJar shadowTestJar -Drelease=$RELEASE\nRUN cp -r $( find /gatk/build -name \"*bundle-files-collected\" )/ /gatk/unzippedJar/\nRUN unzip -o -j $( find /gatk/unzippedJar -name \"gatkPython*.zip\" ) -d /gatk/unzippedJar/scripts\n\n# Using OpenJDK 8\nFROM broadinstitute/gatk:gatkbase-2.3.0\n\nWORKDIR /gatk\n\n# Location of the unzipped gatk bundle files\nCOPY --from=gradleBuild /gatk/unzippedJar .\n\n#Setup linked jars that may be needed for running gatk\nRUN ln -s $( find /gatk -name \"gatk*local.jar\" ) gatk.jar\nRUN ln -s $( find /gatk -name \"gatk*local.jar\" ) /root/gatk.jar\nRUN ln -s $( find /gatk -name \"gatk*spark.jar\" ) gatk-spark.jar\n\nWORKDIR /root\n\n # Make sure we can see a help message\nRUN java -jar gatk.jar -h\nRUN mkdir /gatkCloneMountPoint\nRUN mkdir /jars\nRUN mkdir .gradle\n\nWORKDIR /gatk\n\n# Create a simple unit test runner\nENV CI true\nRUN echo \"source activate gatk\" > /root/run_unit_tests.sh && \\\n    echo \"export GATK_DOCKER_CONTAINER=true\" >> /root/run_unit_tests.sh && \\\n    echo \"export TEST_JAR=\\$( find /jars -name \\\"gatk*test.jar\\\" )\" >> /root/run_unit_tests.sh && \\\n    echo \"export TEST_DEPENDENCY_JAR=\\$( find /jars -name \\\"gatk*testDependencies.jar\\\" )\" >> /root/run_unit_tests.sh && \\\n    echo \"export GATK_JAR=$( find /gatk -name \"gatk*local.jar\" )\" >> /root/run_unit_tests.sh && \\\n    echo \"export GATK_LAUNCH_SCRIPT=/gatk/gatk\" >> /root/run_unit_tests.sh && \\\n    echo \"mkdir /gatk/srcdir\" >> /root/run_unit_tests.sh && \\\n    echo \"cp -rp /gatkCloneMountPoint/src/main/java/* /gatk/srcdir\" >> /root/run_unit_tests.sh && \\\n    echo \"export SOURCE_DIR=/gatk/srcdir\" >> /root/run_unit_tests.sh && \\\n    echo \"export GRADLE_OPTS=\\\"-Xmx1024m -Dorg.gradle.daemon=false\\\"\" /root/run_unit_tests.sh && \\\n    echo \"export CP_DIR=/gatk/testClasses\" /root/run_unit_tests.sh && \\\n    echo \"ln -s /gatkCloneMountPoint/src/ /gatkCloneMountPoint/scripts/docker/src\" >> /root/run_unit_tests.sh && \\\n    echo \"ln -s /gatkCloneMountPoint/build/ /gatkCloneMountPoint/scripts/docker/build\" >> /root/run_unit_tests.sh && \\\n    echo \"cd /gatk/ && /gatkCloneMountPoint/gradlew -b /gatkCloneMountPoint/dockertest.gradle testOnPackagedReleaseJar jacocoTestReportOnPackagedReleaseJar -a -p /gatkCloneMountPoint\" >> /root/run_unit_tests.sh\n\nWORKDIR /root\nRUN cp -r /root/run_unit_tests.sh /gatk\nRUN cp -r gatk.jar /gatk\nENV CLASSPATH /gatk/gatk.jar:$CLASSPATH\n\n# Start GATK Python environment\n\nWORKDIR /gatk\nRUN chmod -R a+rw /gatk\nENV PATH $CONDA_PATH/envs/gatk/bin:$CONDA_PATH/bin:$PATH\nRUN conda env create -n gatk -f /gatk/gatkcondaenv.yml && \\\n    echo \"source activate gatk\" >> /gatk/gatkenv.rc && \\\n    echo \"source /gatk/gatk-completion.sh\" >> /gatk/gatkenv.rc && \\\n    conda clean -afy && \\\n    find /opt/miniconda/ -follow -type f -name '*.a' -delete && \\\n    find /opt/miniconda/ -follow -type f -name '*.pyc' -delete && \\\n    rm -rf /root/.cache/pip\n\nCMD [\"bash\", \"--init-file\", \"/gatk/gatkenv.rc\"]\n\n# End GATK Python environment\n\nENV PATH /gatk:$PATH\n"
+}

@@ -1,0 +1,35 @@
+{
+  "startTime": 1674246118384,
+  "endTime": 1674246120663,
+  "originalSmells": [
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 116,
+        "lineEnd": 116,
+        "columnStart": 7,
+        "columnEnd": 26
+      }
+    },
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 119,
+        "lineEnd": 119,
+        "columnStart": 7,
+        "columnEnd": 26
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 102,
+        "lineEnd": 102,
+        "columnStart": 7,
+        "columnEnd": 35
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM debian:bullseye-slim as bench\n\nLABEL author=frappé\n\nARG GIT_REPO=https://github.com/frappe/bench.git\nARG GIT_BRANCH=develop\n\nRUN apt-get update \\\n    && DEBIAN_FRONTEND=noninteractive apt-get install --no-install-recommends -y \\\n    # For frappe framework\n    git \\\n    mariadb-client \\\n    postgresql-client \\\n    gettext-base \\\n    wget \\\n    # for ERPNext v12\n    # TODO: Remove after v12 is deprecated\n    python2 \\\n    # for PDF\n    libssl-dev \\\n    fonts-cantarell \\\n    xfonts-75dpi \\\n    xfonts-base \\\n    # to work inside the container\n    locales \\\n    build-essential \\\n    cron \\\n    curl \\\n    vim \\\n    sudo \\\n    iputils-ping \\\n    watch \\\n    tree \\\n    nano \\\n    less \\\n    software-properties-common \\\n    bash-completion \\\n    # For psycopg2\n    libpq-dev \\\n    # Other\n    libffi-dev \\\n    liblcms2-dev \\\n    libldap2-dev \\\n    libmariadb-dev \\\n    libsasl2-dev \\\n    libtiff5-dev \\\n    libwebp-dev \\\n    redis-tools \\\n    rlwrap \\\n    tk8.6-dev \\\n    ssh-client \\\n    # VSCode container requirements\n    net-tools \\\n    && rm -rf /var/lib/apt/lists/*\n\nRUN sed -i -e 's/# en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/' /etc/locale.gen \\\n    && dpkg-reconfigure --frontend=noninteractive locales\n\n# Detect arch and install wkhtmltopdf\nENV WKHTMLTOPDF_VERSION 0.12.6-1\nRUN if [ \"$(uname -m)\" = \"aarch64\" ]; then export ARCH=arm64; fi \\\n    && if [ \"$(uname -m)\" = \"x86_64\" ]; then export ARCH=amd64; fi \\\n    && downloaded_file=wkhtmltox_$WKHTMLTOPDF_VERSION.buster_${ARCH}.deb \\\n    && wget -q https://github.com/wkhtmltopdf/packaging/releases/download/$WKHTMLTOPDF_VERSION/$downloaded_file \\\n    && dpkg -i $downloaded_file \\\n    && rm $downloaded_file\n\n# Create new user with home directory, improve docker compatibility with UID/GID 1000,\n# add user to sudo group, allow passwordless sudo, switch to that user\n# and change directory to user home directory\nRUN groupadd -g 1000 frappe \\\n    && useradd --no-log-init -r -m -u 1000 -g 1000 -G sudo frappe \\\n    && echo \"frappe ALL=(ALL) NOPASSWD: ALL\" >> /etc/sudoers\n\nUSER frappe\nWORKDIR /home/frappe\n\n# Install Python via pyenv\n# Python 3.7 sits here for ERPNext version-12\n# TODO: Remove Python 3.7 when version-12 will not be supported\nENV PYTHON_VERSION_V12=3.7.12\nENV PYTHON_VERSION_V13=3.9.9\nENV PYTHON_VERSION=3.10.5\nENV PYENV_ROOT /home/frappe/.pyenv\nENV PATH $PYENV_ROOT/shims:$PYENV_ROOT/bin:$PATH\n\n# From https://github.com/pyenv/pyenv#basic-github-checkout\nRUN git clone --depth 1 https://github.com/pyenv/pyenv.git .pyenv \\\n    && pyenv install $PYTHON_VERSION_V12 \\\n    && pyenv install $PYTHON_VERSION_V13 \\\n    && pyenv install $PYTHON_VERSION \\\n    && pyenv global $PYTHON_VERSION $PYTHON_VERSION_V12 $PYTHON_VERSION_v13 \\\n    && sed -Ei -e '/^([^#]|$)/ {a export PYENV_ROOT=\"/home/frappe/.pyenv\" a export PATH=\"$PYENV_ROOT/bin:$PATH\" a ' -e ':a' -e '$!{n;ba};}' ~/.profile \\\n    && echo 'eval \"$(pyenv init --path)\"' >>~/.profile \\\n    && echo 'eval \"$(pyenv init -)\"' >>~/.bashrc\n\n# Clone and install bench in the local user home directory\n# For development, bench source is located in ~/.bench\nENV PATH /home/frappe/.local/bin:$PATH\n# Skip editable-bench warning\n# https://github.com/frappe/bench/commit/20560c97c4246b2480d7358c722bc9ad13606138\nRUN git clone ${GIT_REPO} --depth 1 -b ${GIT_BRANCH} .bench \\\n    && pip install --no-cache-dir --user -e .bench \\\n    && echo \"export PATH=/home/frappe/.local/bin:\\$PATH\" >>/home/frappe/.bashrc \\\n    && echo \"export BENCH_DEVELOPER=1\" >>/home/frappe/.bashrc\n\n# Install Node via nvm\nENV NODE_VERSION=14.18.1\nENV NODE_VERSION_FRAPPEV11=10.24.1\nENV NVM_DIR /home/frappe/.nvm\nENV PATH ${NVM_DIR}/versions/node/v${NODE_VERSION}/bin/:${PATH}\n\nRUN wget -qO- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.0/install.sh | bash \\\n    && . ${NVM_DIR}/nvm.sh \\\n    && nvm install ${NODE_VERSION_FRAPPEV11} \\\n    && nvm use v${NODE_VERSION_FRAPPEV11} \\\n    && npm install -g yarn \\\n    && nvm install ${NODE_VERSION} \\\n    && nvm use v${NODE_VERSION} \\\n    && npm install -g yarn \\\n    && nvm alias default v${NODE_VERSION} \\\n    && rm -rf ${NVM_DIR}/.cache \\\n    && echo 'export NVM_DIR=\"/home/frappe/.nvm\"' >>~/.bashrc \\\n    && echo '[ -s \"$NVM_DIR/nvm.sh\" ] && \\. \"$NVM_DIR/nvm.sh\"  # This loads nvm' >> ~/.bashrc \\\n    && echo '[ -s \"$NVM_DIR/bash_completion\" ] && \\. \"$NVM_DIR/bash_completion\"  # This loads nvm bash_completion' >> ~/.bashrc && npm cache clean --force;\n\n\nEXPOSE 8000-8005 9000-9005 6787\n\nFROM bench as bench-test\n\n# Print version and verify bashrc is properly sourced so that everything works\n# in the interactive shell and Dockerfile\n\nRUN node --version \\\n    && npm --version \\\n    && yarn --version \\\n    && bench --help\n\nRUN bash -c \"node --version\" \\\n    && bash -c \"npm --version\" \\\n    && bash -c \"yarn --version\" \\\n    && bash -c \"bench --help\"\n"
+}

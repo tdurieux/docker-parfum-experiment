@@ -1,0 +1,26 @@
+{
+  "startTime": 1674254243984,
+  "endTime": 1674254245536,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 41,
+        "lineEnd": 41,
+        "columnStart": 8,
+        "columnEnd": 39
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 41,
+        "lineEnd": 41,
+        "columnStart": 8,
+        "columnEnd": 39
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "ARG ROOT_CONTAINER_TAG=devel\nARG ROOT_CONTAINER=tensorflow/tensorflow\n\nFROM ${ROOT_CONTAINER}:${ROOT_CONTAINER_TAG}\n\nLABEL maintainer=\"Clayne Robison <clayne.b.robison@intel.com>\"\n\n# These parameters can be overridden\nARG PYTHON=\"python\"\nARG WHL_DIR=\"/tmp/pip\"\nARG PIP=\"pip\"\nARG TARGET_PLATFORM=\"haswell\"\nARG CONFIG_V2_DISABLE=\"\"\nARG CONFIG_BFLOAT16_BUILD=\"\"\nARG ENABLE_SECURE_BUILD\nARG BAZEL_VERSION=\"\"\nARG ENABLE_DNNL1=\"\"\nARG ENABLE_HOROVOD=\"\"\nARG ENABLE_GCC8=\"\"\nARG OPENMPI_VERSION=\"\"\nARG OPENMPI_DOWNLOAD_URL=\"\"\nARG HOROVOD_VERSION=\"\"\nARG INSTALL_HOROVOD_FROM_COMMIT=\"\"\nARG BUILD_SSH=\"\"\nARG TF_NIGHTLY_FLAG=\"\"\nARG RELEASE_CONTAINER=\"\"\n\nENV DEBIAN_FRONTEND=noninteractive\n\n# Upgrade Bazel version if argument is passed\nRUN if [ \"${BAZEL_VERSION}\" != \"\" ]; then \\\n        curl -fSsL -O https://github.com/bazelbuild/bazel/releases/download/$BAZEL_VERSION/bazel-$BAZEL_VERSION-installer-linux-x86_64.sh && \\\n        chmod +x bazel-$BAZEL_VERSION-installer-linux-x86_64.sh && \\\n        ./bazel-$BAZEL_VERSION-installer-linux-x86_64.sh && \\\n        rm -rf bazel-$BAZEL_VERSION-installer-linux-x86_64.sh; \\\n    fi\n\n# Upgrade gcc-8 if argument is passed\nRUN if [ \"${ENABLE_GCC8}\" = \"yes\" ]; then \\\n        add-apt-repository ppa:ubuntu-toolchain-r/test -y && \\\n        apt-get update && \\\n        apt-get install --no-install-recommends gcc-8 g++-8 -y && \\\n        update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-8 80 --slave /usr/bin/g++ g++ /usr/bin/g++-8 --slave /usr/bin/gcov gcov /usr/bin/gcov-8 && \\\n        update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-7 70 --slave /usr/bin/g++ g++ /usr/bin/g++-7 --slave /usr/bin/gcov gcov /usr/bin/gcov-7; rm -rf /var/lib/apt/lists/*; \\\n    fi\n\n# Download and build TensorFlow from the latest sources found in the root container\n# make sure that if they pass in a tag, that it is loaded or we'll get an error\nWORKDIR /\n\nCOPY tensorflow/ /tensorflow/\n\nWORKDIR /tensorflow\n\nRUN yes \"\" | ${PYTHON} configure.py\n\nENV CI_BUILD_PYTHON ${PYTHON}\n\n# This script detects the version of gcc in the container, sets the appropriate\n# compiler flags based on parameters\nADD set-build-env.py .\nRUN ${PYTHON} set-build-env.py -p ${TARGET_PLATFORM} -f /root/.mkl.bazelrc \\\n    ${CONFIG_V2_DISABLE} ${ENABLE_SECURE_BUILD} ${CONFIG_BFLOAT16_BUILD} ${ENABLE_DNNL1}\n\n# Pull the compiler flags we just wrote into root user's .bazelrc file\nRUN echo \"import /root/.mkl.bazelrc\" >>/root/.bazelrc\n\n# Install futures>=0.17.1 for Python2.7 compatibility mode\nRUN ${PIP} install future>=0.17.1\n\nRUN bazel --bazelrc=/root/.bazelrc build -c opt \\\n    tensorflow/tools/pip_package:build_pip_package && \\\n    bazel-bin/tensorflow/tools/pip_package/build_pip_package \"${TF_NIGHTLY_FLAG}\" \"${WHL_DIR}\" && \\\n    ${PIP} --no-cache-dir install --upgrade \"${WHL_DIR}\"/*.whl && \\\n    rm -rf /root/.cache\n    # Clean up Bazel cache when done.\n\n# Install OpenMPI/Horovod\nCOPY install_openmpi_horovod.sh .\nRUN if [ \"${ENABLE_HOROVOD}\" = \"yes\" ]; then \\\n        chmod +x install_openmpi_horovod.sh && \\\n        OPENMPI_VERSION=${OPENMPI_VERSION} OPENMPI_DOWNLOAD_URL=${OPENMPI_DOWNLOAD_URL} BUILD_SSH=${BUILD_SSH} \\\n        INSTALL_HOROVOD_FROM_COMMIT=${INSTALL_HOROVOD_FROM_COMMIT} HOROVOD_VERSION=${HOROVOD_VERSION} ./install_openmpi_horovod.sh && \\\n        rm -rf install_openmpi_horovod.sh; \\\n    fi\n\n# Remove crypto python packages for software compliance check.\nRUN if [ \"${RELEASE_CONTAINER}\" = \"yes\" ]; then \\\n    ${PIP} uninstall --yes cryptography && \\\n    rm -rf /usr/lib/python3/dist-packages/pycrypto-2.6.1.egg-info; \\\n    fi\n\n# TensorBoard\nEXPOSE 6006\n# IPython\nEXPOSE 8888\n\nWORKDIR /root\n"
+}

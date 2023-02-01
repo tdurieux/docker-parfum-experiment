@@ -1,0 +1,44 @@
+{
+  "startTime": 1674252979339,
+  "endTime": 1674252980937,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 38,
+        "lineEnd": 38,
+        "columnStart": 4,
+        "columnEnd": 104
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 7,
+        "lineEnd": 7,
+        "columnStart": 4,
+        "columnEnd": 49
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 10,
+        "lineEnd": 10,
+        "columnStart": 4,
+        "columnEnd": 31
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 138,
+        "lineEnd": 138,
+        "columnStart": 22,
+        "columnEnd": 56
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM ubuntu:14.04\n\n##############################################################\n# Ubuntu system setup\n##############################################################\nENV CONDA_ENV_PATH /opt/conda\nRUN apt-get update && \\\n    apt-get install --no-install-recommends software-properties-common -y && \\\n    apt-add-repository ppa:saiarcot895/myppa -y && \\\n    apt-get update && \\\n    apt-get -y --no-install-recommends install apt-fast \\\n    && apt-fast install -y \\\n    build-essential \\\n    exfat-fuse \\\n    exfat-utils \\\n    npm \\\n    curl \\\n    bzip2 \\\n    xvfb \\\n    x11-apps \\\n    git \\\n    gcc-4.8 \\\n        g++-4.8 \\\n        cmake \\\n        libtclap-dev \\\n        libinsighttoolkit4.5 \\\n        libinsighttoolkit4-dev \\\n        libvtk5-dev \\\n        libvtk5-qt4-dev \\\n        libvtk5.8 \\\n        libvtk5.8-qt4 \\\n        tcl-vtk \\\n        libvtk-java \\\n        python-vtk \\\n        python-vtkgdcm \\\n        libncurses5  \\\n        libncurses5-dev \\\n    libann-dev && \\\n    curl -f -sSL https://repo.continuum.io/miniconda/Miniconda3-latest-Linux-x86_64.sh -o /tmp/miniconda.sh && \\\n    bash /tmp/miniconda.sh -bfp \"$CONDA_ENV_PATH\" && \\\n    rm -rf /tmp/miniconda.sh && \\\n    rm -rf /var/lib/apt/lists/*\n\n##############################################################\n# Setup and update miniconda\n##############################################################\nENV PATH \"$CONDA_ENV_PATH/bin:$PATH\"\nRUN conda update conda && \\\n    conda clean --all --yes\n\n##############################################################\n# User/group creation\n##############################################################\nRUN groupadd -r -g 1000 mialsrtk && \\\n    useradd -r -M -u 1000 -g mialsrtk mialsrtk\n\n##############################################################\n# Copy and compile C++ MIALSRTK code\n##############################################################\n# Copy only C++ source code\nRUN mkdir -p /opt/mialsuperresolutiontoolkit/src\nCOPY src/ /opt/mialsuperresolutiontoolkit/src/\n\n# Create the build directory and set the working directory\n# to this directory\nWORKDIR /opt/mialsuperresolutiontoolkit\nRUN mkdir build\nWORKDIR /opt/mialsuperresolutiontoolkit/build\n\n# Configure and compile C++ MIALSRTK tools\n# You can increase the number of cores used by make (\"make -jN\")\n# to speed up local build. However, make sure that it is\n# set back to make -j2 before pushing any change to GitHub.\nRUN cmake -D CMAKE_BUILD_TYPE=Release -D CMAKE_INSTALL_PREFIX=/usr/local -D USE_OMP:BOOL=ON ../src \\\n    && make -j6 && make install\n\n##############################################################\n# Make MIALSRTK happy\n##############################################################\nENV BIN_DIR \"/usr/local/bin\"\nENV PATH \"${BIN_DIR}:$PATH\"\n\n##############################################################\n# Python cache setup and creation of conda environment\n##############################################################\n# Create .cache and set right permissions for generated\n# Python egg cache\nRUN mkdir /.cache && \\\n    chmod -R 777 /.cache\n\n# Set the working directory to /app\nWORKDIR /app\nRUN chmod -R 777 /app\n\n# Store command related variables\nENV MY_CONDA_PY3ENV \"pymialsrtk-env\"\n# This is how you will activate this conda environment\nENV CONDA_ACTIVATE \"source $CONDA_ENV_PATH/bin/activate $MY_CONDA_PY3ENV\"\n\n# Create the conda environment\nCOPY docker/bidsapp/environment.yml /app/environment.yml\nRUN conda env create -f /app/environment.yml\n\n##############################################################\n# Setup for scikit-image\n#\n# Commented for now as it causes issues with Singularity\n# for scikit-image = 0.18.3 with OSError:\n# [Errno 30] Read-only file system: '/app/skimage/0.18.3/data'\n#\n# The creation of the datadir for skimage has been introduced\n# in 0.17 and so prior versions such as 0.16.2 should not\n# perform this process, the version that is now used.\n#\n# See https://github.com/scikit-image/scikit-image/issues/4664\n# for reference.\n#\n# Similar error encountered for:\n#   - fmriprep: https://github.com/nipreps/fmriprep/issues/1777\n#   - mriqc: https://neurostars.org/t/read-only-error-in-mriqc-using-singularity-on-cluster/2022\n#\n##############################################################\n# ENV SKIMAGE_VERSION \"0.18.3\"\n# ENV SKIMAGE_DATADIR \"/app/skimage\"\n# RUN mkdir -p \"${SKIMAGE_DATADIR}/${SKIMAGE_VERSION}\" && \\\n#     chmod -R 777 \"${SKIMAGE_DATADIR}/${SKIMAGE_VERSION}\"\n# RUN . $CONDA_ENV_PATH/bin/activate $MY_CONDA_PY3ENV && \\\n#     python -c \"import skimage\"\n\n##############################################################\n# Setup for tensorflow\n##############################################################\n# Filter out all messages\n# ENV TF_CPP_MIN_LOG_LEVEL \"0\"\n\n# Make tensorflow happy: Use jemalloc instead of malloc.\n# Jemalloc suffers less from fragmentation when allocating\n# and deallocating large objects\nRUN apt-get update && apt-get install --no-install-recommends -y libjemalloc-dev && \\\n    rm -rf /var/lib/apt/lists/*\nENV LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libjemalloc.so\n\n# Use tcmalloc instead of malloc in TensorFLow\n# that suffers less from fragmentation when\n# allocating and deallocating large objects\n# RUN apt-get update && apt-get install -y google-perftools && \\\n#     rm -rf /var/lib/apt/lists/*\n# ENV LD_PRELOAD=/usr/lib/libtcmalloc.so.4\n\n##############################################################\n# Initialize fake DISPLAY\n##############################################################\nENV DISPLAY :0\n\n##############################################################\n# Copy the rest of the files (Pymialsrtk, license, readme and\n# bidsapp entrypoint script) at the end to prevent recompiling\n# again the C++ code even if no change was introduced\n##############################################################\n\n# Copy PyMIALSRTK code\nRUN mkdir -p /opt/mialsuperresolutiontoolkit/pymialsrtk\nCOPY pymialsrtk/ /opt/mialsuperresolutiontoolkit/pymialsrtk/\nCOPY setup.py /opt/mialsuperresolutiontoolkit/setup.py\nCOPY get_version.py /opt/mialsuperresolutiontoolkit/get_version.py\n\n##############################################################\n# Copy LICENSE and README and .zenodo.json contributors files\n##############################################################\nCOPY LICENSE.txt /opt/mialsuperresolutiontoolkit/LICENSE.txt\nCOPY README.md /opt/mialsuperresolutiontoolkit/README.md\nCOPY .zenodo.json /opt/mialsuperresolutiontoolkit/.zenodo.json\n\n##############################################################\n# Arguments passed to the docker build command\n##############################################################\nARG BUILD_DATE\nARG VCS_REF\nARG VERSION\n\n##############################################################\n# Metadata\n##############################################################\nLABEL org.label-schema.build-date=\"$BUILD_DATE\"\nLABEL org.label-schema.name=\"MIAL Super-Resolution ToolKit Ubuntu 14.04\"\nLABEL org.label-schema.description=\"Computing environment of the MIAL Super-Resolution BIDS App based on Ubuntu 14.04.\"\nLABEL org.label-schema.url=\"https://mialsrtk.readthedocs.io\"\nLABEL org.label-schema.vcs-ref=\"$VCS_REF\"\nLABEL org.label-schema.vcs-url=\"https://github.com/Medical-Image-Analysis-Laboratory/mialsuperresolutiontoolkit\"\nLABEL org.label-schema.version=\"$VERSION\"\nLABEL org.label-schema.maintainer=\"Sebastien Tourbier <sebastien.tourbier@alumni.epfl.ch>\"\nLABEL org.label-schema.vendor=\"Centre Hospitalier Universitaire Vaudois (CHUV), Lausanne, Switzerland\"\nLABEL org.label-schema.schema-version=\"1.0\"\nLABEL org.label-schema.docker.cmd=\"docker run --rm -v ~/data/bids_dataset:/tmp -t sebastientourbier/mialsuperresolutiontoolkit-ubuntu16.04:${VERSION}\"\n"
+}

@@ -1,0 +1,53 @@
+{
+  "startTime": 1674254501404,
+  "endTime": 1674254502315,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 14,
+        "lineEnd": 14,
+        "columnStart": 4,
+        "columnEnd": 132
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 15,
+        "lineEnd": 15,
+        "columnStart": 1,
+        "columnEnd": 130
+      }
+    },
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 27,
+        "lineEnd": 27,
+        "columnStart": 1,
+        "columnEnd": 21
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 28,
+        "lineEnd": 28,
+        "columnStart": 1,
+        "columnEnd": 26
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 9,
+        "lineEnd": 9,
+        "columnStart": 1,
+        "columnEnd": 52
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM python:alpine3.14\n\n# Getting things ready\nWORKDIR /usr/src/shynet\n\n# Install dependencies & configure machine\nARG GF_UID=\"500\"\nARG GF_GID=\"500\"\nRUN apk update && \\\n\tapk add --no-cache gettext curl bash npm libffi-dev rust cargo\n\t# libffi-dev and rust are used for the cryptography package,\n\t# which we indirectly rely on. Necessary for aarch64 support.\n\n# Collect GeoIP Database\nRUN curl -f -m 180 \"https://download.maxmind.com/app/geoip_download?edition_id=GeoLite2-ASN&license_key=kKG1ebhL3iWVd0iv&suffix=tar.gz\" | tar -xvz -C /tmp && \\\n\tcurl -f -m 180 \"https://download.maxmind.com/app/geoip_download?edition_id=GeoLite2-City&license_key=kKG1ebhL3iWVd0iv&suffix=tar.gz\" | tar -xvz -C /tmp && \\\n\tmv /tmp/GeoLite2*/*.mmdb /etc && \\\n\tapk del curl\n\n# Move dependency files\nCOPY poetry.lock pyproject.toml ./\nCOPY package.json package-lock.json ../\n# Django expects node_modules to be in its parent directory.\n\n# Install more dependencies\nRUN apk add --no-cache postgresql-libs && \\\n\tapk add --no-cache --virtual .build-deps gcc musl-dev postgresql-dev && \\\n\tnpm i -P --prefix .. && \\\n\tpip install --no-cache-dir poetry==1.1.7 && npm cache clean --force;\n\n# Install Python dependencies\nRUN poetry config virtualenvs.create false && \\\n    poetry install --no-dev --no-interaction --no-ansi\n\n# Cleanup dependencies & setup user group\nRUN apk --purge del .build-deps && \\\n\trm -rf /var/lib/apt/lists/* && \\\n\trm /var/cache/apk/* && \\\n\taddgroup --system -g $GF_GID appgroup && \\\n\tadduser appuser --system --uid $GF_UID -G appgroup && \\\n\tmkdir -p /var/local/shynet/db/ && \\\n\tchown -R appuser:appgroup /var/local/shynet\n\n# Install Shynet\nCOPY shynet .\nRUN python manage.py collectstatic --noinput && \\\n\tpython manage.py compilemessages\n\n# Launch\nUSER appuser\nEXPOSE 8080\nHEALTHCHECK CMD bash -c 'wget -o /dev/null -O /dev/null --header \"Host: ${ALLOWED_HOSTS%%,*}\" \"http://127.0.0.1:$PORT/healthz/?format=json\"'\nCMD [ \"./entrypoint.sh\" ]\n"
+}

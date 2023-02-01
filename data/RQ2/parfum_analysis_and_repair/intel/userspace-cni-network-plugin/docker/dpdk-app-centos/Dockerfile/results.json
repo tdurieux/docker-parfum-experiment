@@ -1,0 +1,53 @@
+{
+  "startTime": 1674247891494,
+  "endTime": 1674247892833,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 14,
+        "lineEnd": 14,
+        "columnStart": 73,
+        "columnEnd": 126
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 35,
+        "lineEnd": 35,
+        "columnStart": 4,
+        "columnEnd": 90
+      }
+    },
+    {
+      "rule": "curlUseHttpsUrl",
+      "position": {
+        "lineStart": 35,
+        "lineEnd": 35,
+        "columnStart": 4,
+        "columnEnd": 90
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 16,
+        "lineEnd": 16,
+        "columnStart": 4,
+        "columnEnd": 54
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 36,
+        "lineEnd": 36,
+        "columnStart": 4,
+        "columnEnd": 37
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# To build:\n#  docker build --rm -t dpdk-app-centos .\n#\n\n\n# -------- Builder stage.\nFROM centos:7\n\n#\n# Install required packages\n#\nSHELL [\"/bin/bash\", \"-o\", \"pipefail\", \"-c\"]\n\n\nRUN rpm --import https://mirror.go-repo.io/centos/RPM-GPG-KEY-GO-REPO && curl -f -s https://mirror.go-repo.io/centos/go-repo.repo | tee /etc/yum.repos.d/go-repo.repo\nRUN yum groupinstall -y \"Development Tools\"\nRUN yum install -y wget numactl-devel git golang make; rm -rf /var/cache/yum yum clean all\n# Debug Tools (if needed):\n#RUN yum install -y pciutils iproute; yum clean all\n\n#\n# Download and Build APP-NetUtil\n#\nWORKDIR /root/go/src/\nRUN go get github.com/openshift/app-netutil  > /tmp/UserspaceDockerBuild.log 2>&1 || echo \"Can ignore no GO files.\"\nWORKDIR /root/go/src/github.com/openshift/app-netutil\nRUN make c_sample\nRUN cp bin/libnetutil_api.so /lib64/libnetutil_api.so; cp bin/libnetutil_api.h /usr/include/libnetutil_api.h\n\n#\n# Download and Build DPDK\n#\nENV DPDK_VER 19.08\nENV DPDK_DIR /usr/src/dpdk-${DPDK_VER}\nWORKDIR /usr/src/\nRUN curl -f --output dpdk-${DPDK_VER}.tar.xz https://fast.dpdk.org/rel/dpdk-${DPDK_VER}.tar.xz\nRUN tar -xpvf dpdk-${DPDK_VER}.tar.xz && rm dpdk-${DPDK_VER}.tar.xz\n\nENV RTE_TARGET=x86_64-native-linuxapp-gcc\nENV RTE_SDK=${DPDK_DIR}\nWORKDIR ${DPDK_DIR}\n# DPDK_VER 19.08\nRUN sed -i -e 's/EAL_IGB_UIO=y/EAL_IGB_UIO=n/' config/common_linux\nRUN sed -i -e 's/KNI_KMOD=y/KNI_KMOD=n/' config/common_linux\nRUN sed -i -e 's/LIBRTE_KNI=y/LIBRTE_KNI=n/' config/common_linux\nRUN sed -i -e 's/LIBRTE_PMD_KNI=y/LIBRTE_PMD_KNI=n/' config/common_linux\n# Additional Debug if Needed\n#RUN sed -i -e 's/CONFIG_RTE_LIBRTE_ETHDEV_DEBUG=n/CONFIG_RTE_LIBRTE_ETHDEV_DEBUG=y/' config/common_base\n\n# DPDK_VER 19.02\n#RUN sed -i -e 's/EAL_IGB_UIO=y/EAL_IGB_UIO=n/' config/common_linuxapp\n#RUN sed -i -e 's/KNI_KMOD=y/KNI_KMOD=n/' config/common_linuxapp\n#RUN sed -i -e 's/LIBRTE_KNI=y/LIBRTE_KNI=n/' config/common_linuxapp\n#RUN sed -i -e 's/LIBRTE_PMD_KNI=y/LIBRTE_PMD_KNI=n/' config/common_linuxapp\nRUN make install T=${RTE_TARGET} DESTDIR=${RTE_SDK}\n\n#\n# Build TestPmd\n#\nWORKDIR ${DPDK_DIR}/app/test-pmd\nCOPY ./dpdk-args.c ./dpdk-args.c\nCOPY ./dpdk-args.h ./dpdk-args.h\nCOPY ./testpmd_eal_init.txt ./testpmd_eal_init.txt\nCOPY ./testpmd_launch_args_parse.txt ./testpmd_launch_args_parse.txt\nCOPY ./testpmd_substitute.sh ./testpmd_substitute.sh\nRUN ./testpmd_substitute.sh\nRUN make\nRUN cp testpmd /usr/bin/testpmd\nRUN cp testpmd /usr/bin/dpdk-app\n\n#\n# Build l3fwd\n#\nWORKDIR ${DPDK_DIR}/examples/l3fwd\nCOPY ./dpdk-args.c ./dpdk-args.c\nCOPY ./dpdk-args.h ./dpdk-args.h\nCOPY ./l3fwd_eal_init.txt ./l3fwd_eal_init.txt\nCOPY ./l3fwd_parse_args.txt ./l3fwd_parse_args.txt\nCOPY ./l3fwd_substitute.sh ./l3fwd_substitute.sh\nRUN ./l3fwd_substitute.sh\nRUN make\nRUN cp build/l3fwd /usr/bin/l3fwd\n#RUN cp build/l3fwd /usr/bin/dpdk-app\n\n# -------- Import stage.\n# Docker 17.05 or higher\n##FROM centos\n\n# Install UserSpace CNI\n##COPY --from=0 /usr/bin/dpdk-app /usr/bin/dpdk-app\n\nCOPY ./docker-entrypoint.sh /\nENTRYPOINT [\"/docker-entrypoint.sh\"]\nCMD [\"dpdk-app\"]\n"
+}

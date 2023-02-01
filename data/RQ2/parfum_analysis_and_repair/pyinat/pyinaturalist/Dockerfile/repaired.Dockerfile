@@ -1,0 +1,1 @@
+# Dockerfile used for running pyinaturalist-notebook with Binder

@@ -1,0 +1,68 @@
+FROM ubuntu:18.04
+
+LABEL author="Kersten Breuer, Cancer Epigenomics, Plass Team, DKFZ 2020" \
+    maintainer="kersten-breuer@outlook.com"
+
+# Package versions/links:
+ENV CWLTOOL_VERSION 1.0.20181012180214
+
+# Install essential dependencies:
+ENV DEBCONF_FRONTEND noninteractive
+RUN apt-get update -qq -y --fix-missing
+RUN apt-get install --no-install-recommends -y build-essential \
+    wget \
+    nodejs \
+    tar \
+	curl \
+	libtool \
+	libz-dev \
+    libssl-dev \
+	libcurl4-openssl-dev && rm -rf /var/lib/apt/lists/*;
+
+
+RUN echo 'debconf debconf/frontend select Noninteractive' | debconf-set-selections
+
+RUN apt-get install --no-install-recommends -y libreadline-gplv2-dev \
+	libncursesw5-dev \
+    libsqlite3-dev \
+	tk-dev \
+	libgdbm-dev \
+	libc6-dev \
+	libbz2-dev \
+	libffi-dev \
+	zlib1g-dev && rm -rf /var/lib/apt/lists/*;
+
+# Install Python 3.7:
+RUN cd /usr/src && \
+	wget https://www.python.org/ftp/python/3.7.9/Python-3.7.9.tgz && \
+	tar xzf Python-3.7.9.tgz && \
+	cd Python-3.7.9 && \
+	./configure --build="$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)" --enable-optimizations && \
+	make altinstall && rm Python-3.7.9.tgz
+
+
+RUN apt-get install --no-install-recommends -qq -y \
+	squashfs-tools \
+	uuid-dev \
+	libgpgme11-dev \
+	libseccomp-dev \
+	pkg-config \
+	git \
+	python3-pip && rm -rf /var/lib/apt/lists/*;
+
+RUN python3.7 -m pip install \
+	pymysql \
+	requests \
+	pydantic \
+	urllib3
+
+# Install workflux:
+COPY . /src/workflux
+RUN python3.7 -m pip install -e /src/workflux
+
+# Configure workflux:
+COPY ./docker/elixir_demo/config.yaml /workflux/config.yaml
+COPY ./docker/elixir_demo/wes_exec_profile.py /workflux/wes_exec_profile.py
+
+# Default command when starting:
+CMD ["python3.7", "-m", "workflux", "up", "-c", "/workflux/config.yaml"]

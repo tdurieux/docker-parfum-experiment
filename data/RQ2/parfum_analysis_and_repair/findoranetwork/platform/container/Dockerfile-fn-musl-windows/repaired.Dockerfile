@@ -1,0 +1,12 @@
+FROM clux/muslrust
+RUN apt update && apt -y --no-install-recommends install gcc-mingw-w64-x86-64-posix g++-mingw-w64-x86-64-posix && rm -rf /var/lib/apt/lists/*;
+ENV WORK_DIR /volume
+COPY . $WORK_DIR
+WORKDIR $WORK_DIR
+RUN rustup target add x86_64-pc-windows-gnu
+RUN echo [target.x86_64-pc-windows-gnu] >> /root/.cargo/config
+RUN echo linker = \"x86_64-w64-mingw32-gcc\" >> /root/.cargo/config
+ENV CC=x86_64-w64-mingw32-gcc
+ENV CXX=x86_64-w64-mingw32-g++
+RUN cargo build -p finutils --release --target x86_64-pc-windows-gnu
+CMD ["sleep", "999999"]

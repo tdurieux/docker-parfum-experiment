@@ -1,0 +1,62 @@
+{
+  "startTime": 1674250459109,
+  "endTime": 1674250460197,
+  "originalSmells": [
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 45,
+        "lineEnd": 45,
+        "columnStart": 4,
+        "columnEnd": 34
+      }
+    },
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 73,
+        "lineEnd": 73,
+        "columnStart": 4,
+        "columnEnd": 56
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 8,
+        "lineEnd": 8,
+        "columnStart": 25,
+        "columnEnd": 107
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 10,
+        "lineEnd": 10,
+        "columnStart": 25,
+        "columnEnd": 47
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 8,
+        "lineEnd": 8,
+        "columnStart": 25,
+        "columnEnd": 107
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 10,
+        "lineEnd": 10,
+        "columnStart": 25,
+        "columnEnd": 47
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# This Dockerfile builds all the dependencies needed by the monorepo, and should\n# be used to build any of the follow-on services\n#\n# ### BASE: Install deps\n# We do not use Alpine because there's a regression causing it to be very slow\n# when used with typescript/hardhat: https://github.com/nomiclabs/hardhat/issues/1219\nFROM node:16-buster-slim as node\nRUN if echo \"\\\"`uname -a`\\\"\" | grep -q \"arm64\" ; then \\\n    apt-get update -y && apt-get install --no-install-recommends -y git python make gcc libudev-dev libusb-1.0-0-dev g++ pkg-config; rm -rf /var/lib/apt/lists/*; \\\n  else \\\n    apt-get update -y && apt-get install --no-install-recommends -y git; rm -rf /var/lib/apt/lists/*; \\\n  fi\n# Pre-download the compilers so that they do not need to be downloaded inside\n# the image when building\nFROM alpine as downloader\nARG SOLC_PREFIX=https://github.com/ethereum/solc-bin/raw/gh-pages/linux-amd64/solc-linux-amd64\n\nADD ${SOLC_PREFIX}-v0.4.11+commit.68ef5810 ./solc-v0.4.11+commit.68ef5810\nADD ${SOLC_PREFIX}-v0.5.17+commit.d19bba13 ./solc-v0.5.17+commit.d19bba13\nADD ${SOLC_PREFIX}-v0.6.6+commit.6c089d02  ./solc-v0.6.6+commit.6c089d02\nADD ${SOLC_PREFIX}-v0.8.9+commit.e5eed63a  ./solc-v0.8.9+commit.e5eed63a\n\nFROM node as builder\n# copy over the needed configs to run the dep installation\n# note: this approach can be a bit unhandy to maintain, but it allows\n# us to cache the installation steps\nWORKDIR /optimism\nCOPY *.json yarn.lock ./\nCOPY packages/core-utils/package.json ./packages/core-utils/package.json\nCOPY packages/common-ts/package.json ./packages/common-ts/package.json\nCOPY packages/contracts/package.json ./packages/contracts/package.json\nCOPY packages/data-transport-layer/package.json ./packages/data-transport-layer/package.json\nCOPY packages/message-relayer/package.json ./packages/message-relayer/package.json\nCOPY packages/replica-healthcheck/package.json ./packages/replica-healthcheck/package.json\nCOPY integration-tests/package.json ./integration-tests/package.json\n\nCOPY packages/boba/contracts/package.json ./packages/boba/contracts/package.json\nCOPY packages/boba/gas-price-oracle/package.json ./packages/boba/gas-price-oracle/package.json\nCOPY packages/boba/message-relayer-fast/package.json ./packages/boba/message-relayer-fast/package.json\nCOPY packages/boba/turing/package.json ./packages/boba/turing/package.json\n\n# copy over the patches, if any...\n# needs to happen before `yarn` otherwise patch-packages does not apply the patches\nCOPY ./patches ./patches\n\nRUN yarn install --frozen-lockfile && yarn cache clean;\n\n### BUILDER: Builds the typescript\nFROM node\n\nWORKDIR /optimism\n\n# cache the node_modules copying step since it's expensive\n# we run this before copying over any source files to avoid re-copying anytime the\n# code changes\nCOPY --from=builder /optimism/node_modules ./node_modules\nCOPY --from=builder /optimism/packages ./packages\nCOPY --from=builder /optimism/integration-tests ./integration-tests\n\n# the following steps are cheap\nCOPY *.json yarn.lock ./\n# copy over the source\nCOPY ./packages ./packages\nCOPY ./integration-tests ./integration-tests\n# copy over solc to save time building (35+ seconds vs not doing this step)\nCOPY --from=downloader solc-v0.4.11+commit.68ef5810 /root/.cache/hardhat-nodejs/compilers/linux-amd64/solc-linux-amd64-v0.4.11+commit.68ef5810\nCOPY --from=downloader solc-v0.5.17+commit.d19bba13 /root/.cache/hardhat-nodejs/compilers/linux-amd64/solc-linux-amd64-v0.5.17+commit.d19bba13\nCOPY --from=downloader solc-v0.6.6+commit.6c089d02  /root/.cache/hardhat-nodejs/compilers/linux-amd64/solc-linux-amd64-v0.6.6+commit.6c089d02\nCOPY --from=downloader solc-v0.8.9+commit.e5eed63a  /root/.cache/hardhat-nodejs/compilers/linux-amd64/solc-linux-amd64-v0.8.9+commit.e5eed63a\n\n# build it!\nRUN yarn build\n# build integration tests' contracts\nRUN yarn workspace @eth-optimism/integration-tests build && yarn cache clean;\n\n# TODO: Consider thinning up the container by trimming non-production\n# dependencies\n# so that it can be used in docker-compose\nCMD [\"true\"]\n"
+}

@@ -1,0 +1,26 @@
+{
+  "startTime": 1674241351862,
+  "endTime": 1674241352386,
+  "originalSmells": [
+    {
+      "rule": "mkdirUsrSrcThenRemove",
+      "position": {
+        "lineStart": 109,
+        "lineEnd": 109,
+        "columnStart": 5,
+        "columnEnd": 33
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 100,
+        "lineEnd": 100,
+        "columnStart": 5,
+        "columnEnd": 31
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM alpine:3.9.4 as base_stage\n\nLABEL maintainer=\"beardedeagle <randy@heroictek.com>\"\n\n# Important!  Update this no-op ENV variable when this Dockerfile\n# is updated with the current date. It will force refresh of all\n# of the base images.\nENV REFRESHED_AT=2019-06-24 \\\n  OTP_VER=22.0.4 \\\n  REBAR3_VER=3.11.1 \\\n  TERM=xterm \\\n  LANG=C.UTF-8\n\nRUN set -xe \\\n  && apk --update --no-cache upgrade \\\n  && apk add --no-cache \\\n    bash \\\n    openssl \\\n    lksctp-tools \\\n  && rm -rf /root/.cache \\\n  && rm -rf /var/cache/apk/*\n\nFROM base_stage as deps_stage\n\nRUN set -xe \\\n  && apk add --no-cache --virtual .build-deps \\\n    autoconf \\\n    bash-dev \\\n    binutils-gold \\\n    ca-certificates \\\n    curl curl-dev \\\n    dpkg dpkg-dev \\\n    g++ \\\n    gcc \\\n    libc-dev \\\n    openssl-dev \\\n    linux-headers \\\n    lksctp-tools-dev \\\n    make \\\n    musl musl-dev \\\n    ncurses ncurses-dev \\\n    rsync \\\n    tar \\\n    unixodbc unixodbc-dev \\\n    zlib zlib-dev \\\n  && update-ca-certificates --fresh\n\nFROM deps_stage as erlang_stage\n\nRUN set -xe \\\n  && OTP_DOWNLOAD_URL=\"https://github.com/erlang/otp/archive/OTP-${OTP_VER}.tar.gz\" \\\n  && OTP_DOWNLOAD_SHA256=\"71b2fe49ed5ac386ebc189dd2e5f4b95b11b4427936be0e3c5695a903ea9ffcd\" \\\n  && curl -fSL -o otp-src.tar.gz \"$OTP_DOWNLOAD_URL\" \\\n  && echo \"$OTP_DOWNLOAD_SHA256  otp-src.tar.gz\" | sha256sum -c - \\\n  && export ERL_TOP=\"/usr/src/otp_src_${OTP_VER%%@*}\" \\\n  && mkdir -vp $ERL_TOP \\\n  && tar -xzf otp-src.tar.gz -C $ERL_TOP --strip-components=1 \\\n  && rm otp-src.tar.gz \\\n  && ( cd $ERL_TOP \\\n    && ./otp_build autoconf \\\n    && gnuArch=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" \\\n    && ./configure --build=\"$gnuArch\" \\\n      --without-javac \\\n      --without-wx \\\n      --without-debugger \\\n      --without-observer \\\n      --without-jinterface \\\n      --without-cosEvent\\\n      --without-cosEventDomain \\\n      --without-cosFileTransfer \\\n      --without-cosNotification \\\n      --without-cosProperty \\\n      --without-cosTime \\\n      --without-cosTransactions \\\n      --without-et \\\n      --without-gs \\\n      --without-ic \\\n      --without-megaco \\\n      --without-orber \\\n      --without-percept \\\n      --without-typer \\\n      --enable-threads \\\n      --enable-shared-zlib \\\n      --enable-ssl=dynamic-ssl-lib \\\n      --enable-kernel-poll \\\n      --enable-hipe \\\n    && make -j$(getconf _NPROCESSORS_ONLN) \\\n    && make install ) \\\n  && rm -rf $ERL_TOP \\\n  && find /usr/local -regex '/usr/local/lib/erlang/\\(lib/\\|erts-\\).*/\\(man\\|doc\\|obj\\|c_src\\|emacs\\|info\\|examples\\)' | xargs rm -rf \\\n  && find /usr/local -name src | xargs -r find | grep -v '\\.hrl$' | xargs rm -v || true \\\n  && find /usr/local -name src | xargs -r find | xargs rmdir -vp || true \\\n  && scanelf --nobanner -E ET_EXEC -BF '%F' --recursive /usr/local | xargs -r strip --strip-all \\\n  && scanelf --nobanner -E ET_DYN -BF '%F' --recursive /usr/local | xargs -r strip --strip-unneeded \\\n  && runDeps=\"$( \\\n    scanelf --needed --nobanner --format '%n#p' --recursive /usr/local \\\n      | tr ',' '\\n' \\\n      | sort -u \\\n      | awk 'system(\"[ -e /usr/local/lib/\" $1 \" ]\") == 0 { next } { print \"so:\" $1 }' \\\n  )\" \\\n  && apk add --no-cache --virtual $runDeps\n\nFROM erlang_stage as rebar3_stage\n\nRUN set -xe \\\n  && REBAR3_DOWNLOAD_URL=\"https://github.com/erlang/rebar3/archive/${REBAR3_VER}.tar.gz\" \\\n  && REBAR3_DOWNLOAD_SHA256=\"a1822db5210b96b5f8ef10e433b22df19c5fc54dfd847bcaab86c65151ce4171\" \\\n  && curl -fSL -o rebar3-src.tar.gz \"$REBAR3_DOWNLOAD_URL\" \\\n  && echo \"$REBAR3_DOWNLOAD_SHA256  rebar3-src.tar.gz\" | sha256sum -c - \\\n  && mkdir -p /usr/src/rebar3-src \\\n  && tar -xzf rebar3-src.tar.gz -C /usr/src/rebar3-src --strip-components=1 \\\n  && rm rebar3-src.tar.gz \\\n  && cd /usr/src/rebar3-src \\\n  && HOME=$PWD ./bootstrap \\\n  && install -v ./rebar3 /usr/local/bin/ && rm -rf /usr/src/rebar3-src\n\nFROM deps_stage as stage\n\nCOPY --from=rebar3_stage /usr/local /opt/rebar3\n\nRUN set -xe \\\n  && rsync -a /opt/rebar3/ /usr/local \\\n  && apk del .build-deps \\\n  && rm -rf /root/.cache \\\n  && rm -rf /var/cache/apk/*\n\nFROM base_stage\n\nCOPY --from=stage /usr/local /usr/local\n"
+}

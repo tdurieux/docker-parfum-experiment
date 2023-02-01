@@ -1,0 +1,59 @@
+ARG UBUNTU_VERSION
+
+# Build Zcash
+FROM ubuntu:${UBUNTU_VERSION} as zcash
+
+ARG VERSION
+
+RUN apt-get update && apt-get upgrade -y
+RUN DEBIAN_FRONTEND=noninteractive apt-get --no-install-recommends -y install \
+  m4 \
+  git \
+  curl \
+  wget \
+  unzip \
+  python3 \
+  libtool \
+  autoconf \
+  automake \
+  libtinfo5 \
+  libc6-dev \
+  pkg-config \
+  zlib1g-dev \
+  ncurses-dev \
+  python3-zmq \
+  bsdmainutils \
+  build-essential && rm -rf /var/lib/apt/lists/*;
+
+RUN wget https://github.com/zcash/zcash/archive/v${VERSION}.tar.gz
+RUN tar -xzf *.tar.gz && rm *.tar.gz
+
+WORKDIR /zcash-${VERSION}
+
+RUN ./zcutil/fetch-params.sh
+RUN ./zcutil/build.sh -j$(nproc)
+
+RUN mkdir bin
+
+RUN strip --strip-all src/zcashd
+RUN strip --strip-all src/zcash-tx
+RUN strip --strip-all src/zcash-cli
+
+RUN cp src/zcashd bin
+RUN cp src/zcash-tx bin
+RUN cp src/zcash-cli bin
+
+# Assemble the final image
+FROM ubuntu:${UBUNTU_VERSION}
+
+ARG VERSION
+
+RUN apt-get update && apt-get upgrade -y
+RUN apt-get -y --no-install-recommends install libgomp1 && rm -rf /var/lib/apt/lists/*;
+
+COPY --from=zcash /zcash-${VERSION}/bin /bin
+COPY --from=zcash /root/.zcash-params/ /root/.zcash-params/
+
+EXPOSE 8232 18232
+
+ENTRYPOINT ["zcashd"]

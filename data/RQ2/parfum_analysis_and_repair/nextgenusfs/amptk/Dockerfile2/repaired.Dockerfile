@@ -1,0 +1,8 @@
+FROM nextgenusfs/base-amptk
+
+# install databases
+RUN amptk install -i ITS 16S LSU COI PR2
+
+# When image is run, run the code with the environment
+SHELL ["/bin/bash", "-c"]
+CMD amptk

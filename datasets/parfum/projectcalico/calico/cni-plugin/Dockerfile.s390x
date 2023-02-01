@@ -1,0 +1,14 @@
+FROM s390x/debian:9.8-slim
+
+LABEL maintainer "LoZ Open Source Ecosystem (https://www.ibm.com/developerworks/community/groups/community/lozopensource)"
+
+RUN mkdir -p /opt/cni/bin
+
+FROM scratch
+
+COPY licenses/ /licenses
+ADD bin/s390x/ /opt/cni/bin/
+
+ENV PATH=$PATH:/opt/cni/bin
+WORKDIR /opt/cni/bin
+CMD ["/opt/cni/bin/install"]

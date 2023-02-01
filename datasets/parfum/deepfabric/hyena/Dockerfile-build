@@ -1,0 +1,13 @@
+FROM infinivision/hyena-build
+
+RUN  git clone https://github.com/infinivision/vectodb.git /opt/app-root/src/go/src/github.com/infinivision/vectodb 
+RUN  cd /opt/app-root/src/go/src/github.com/infinivision/vectodb \
+     && GO111MODULE=on go mod download \
+     && GO111MODULE=on go mod vendor 
+RUN  cd /opt/app-root/src/go/src/github.com/infinivision/vectodb \
+     && scons -c \ 
+     && scons \
+     && GO111MODULE=on go install github.com/infinivision/vectodb 
+RUN  go get github.com/funny/slab \
+     && go get github.com/deepfabric/c-nemo \
+     && go get github.com/deepfabric/go-nemo

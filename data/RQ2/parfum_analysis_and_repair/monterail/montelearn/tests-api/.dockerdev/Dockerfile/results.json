@@ -1,0 +1,35 @@
+{
+  "startTime": 1674254356156,
+  "endTime": 1674254357235,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 21,
+        "lineEnd": 21,
+        "columnStart": 4,
+        "columnEnd": 64
+      }
+    },
+    {
+      "rule": "gemUpdateSystemRmRootGem",
+      "position": {
+        "lineStart": 47,
+        "lineEnd": 47,
+        "columnStart": 4,
+        "columnEnd": 23
+      }
+    },
+    {
+      "rule": "gemUpdateNoDocument",
+      "position": {
+        "lineStart": 47,
+        "lineEnd": 47,
+        "columnStart": 4,
+        "columnEnd": 23
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "ARG RUBY_VERSION='2.7.1'\nFROM ruby:$RUBY_VERSION-slim-buster AS development\n\nARG PG_MAJOR='12'\nARG NODE_MAJOR='12'\nARG BUNDLER_VERSION='2.1.4'\n\n# Common dependencies\nRUN apt-get update -qq \\\n  && DEBIAN_FRONTEND=noninteractive apt-get install -yq --no-install-recommends \\\n    build-essential \\\n    gnupg2 \\\n    curl \\\n    less \\\n    git \\\n  && apt-get clean \\\n  && rm -rf /var/cache/apt/archives/* \\\n  && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/* \\\n  && truncate -s 0 /var/log/*log\n\n# Add PostgreSQL to sources list\nRUN curl -f -sSL https://www.postgresql.org/media/keys/ACCC4CF8.asc | apt-key add - \\\n  && echo 'deb http://apt.postgresql.org/pub/repos/apt/ buster-pgdg main' $PG_MAJOR > /etc/apt/sources.list.d/pgdg.list\n\n# Install dependencies\nCOPY .dockerdev/Aptfile /tmp/Aptfile\nRUN apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get -yq dist-upgrade && \\\n  DEBIAN_FRONTEND=noninteractive apt-get install -yq --no-install-recommends \\\n    libpq-dev \\\n    postgresql-client-$PG_MAJOR \\\n    $(cat /tmp/Aptfile | xargs) && \\\n    apt-get clean && \\\n    rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/* && \\\n    truncate -s 0 /var/log/*log\n\n# Configure bundler\nENV LANG=C.UTF-8 \\\n  BUNDLE_JOBS=4 \\\n  BUNDLE_RETRY=3\n\n# Uncomment this line if you store Bundler settings in the project's root\n# ENV BUNDLE_APP_CONFIG=.bundle\n\n# Run binstubs without prefixing with `bin/` or `bundle exec`\nENV PATH /app/bin:$PATH\n\n# Upgrade RubyGems and install required Bundler version\nRUN mkdir -p /usr/local/etc \\\n  && { \\\n    echo 'install: --no-document'; \\\n    echo 'update: --no-document'; \\\n  } >> /usr/local/etc/gemrc;\nRUN gem update --system && \\\n    gem install bundler:$BUNDLER_VERSION && rm -rf /root/.gem;\n\n# Create a directory for the app code\nRUN mkdir -p /app\n\n# Create a directory for the server.pid file\nRUN mkdir -p /tmp/pids\n\nWORKDIR /app\n\n# Preparation for production release\nFROM development AS builder\nENV BUNDLE_APP_CONFIG=.bundle \\\n  RAILS_ENV=production\nCOPY . /app\nRUN bundle config --local without development:test \\\n  && bundle config --local deployment true \\\n  && bundle config --local path vendor/bundle \\\n  && bundle install\nRUN SECRET_KEY_BASE=secret \\\n  REDIS_URL=redis://fake \\\n  && rm -rf node_modules tmp \\\n  && mkdir -p tmp/pids\n\n# Production image\nFROM development AS production\nENV BUNDLE_APP_CONFIG=.bundle \\\n  RAILS_ENV=production \\\n  RAILS_LOG_TO_STDOUT=true\n\nCOPY --from=builder /app .\nCMD rails db:migrate; puma --config config/puma.rb\n"
+}

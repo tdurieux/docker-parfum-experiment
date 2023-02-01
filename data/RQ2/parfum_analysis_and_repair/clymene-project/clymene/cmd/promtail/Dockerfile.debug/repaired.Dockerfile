@@ -1,0 +1,27 @@
+# Directories in this file are referenced from the root of the project not this folder
+# This file is intended to be called from the root like so:
+# docker build -t grafana/promtail -f clients/cmd/promtail/Dockerfile.debug .
+
+FROM grafana/loki-build-image as build
+ARG GOARCH="amd64"
+COPY . /src/loki
+WORKDIR /src/loki
+RUN make clean && make BUILD_IN_CONTAINER=false promtail-debug
+
+
+FROM       alpine:3.13
+RUN        apk add --update --no-cache ca-certificates tzdata
+COPY       --from=build /src/loki/clients/cmd/promtail/promtail-debug /usr/bin/promtail-debug
+COPY       --from=build /go/bin/dlv /usr/bin/dlv
+COPY       clients/cmd/promtail/promtail-local-config.yaml /etc/promtail/local-config.yaml
+COPY       clients/cmd/promtail/promtail-docker-config.yaml /etc/promtail/config.yml
+
+# Expose 40000 for delve
+EXPOSE 40000
+
+# Allow delve to run on Alpine based containers.
+RUN apk add --no-cache libc6-compat
+
+# Run delve, ending with -- because we pass params via kubernetes, per the docs:
+#   Pass flags to the program you are debugging using --, for example:`
+#   dlv exec ./hello -- server --config conf/config.toml`

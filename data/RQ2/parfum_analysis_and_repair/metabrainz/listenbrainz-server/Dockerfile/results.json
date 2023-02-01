@@ -1,0 +1,72 @@
+{
+  "startTime": 1674253806568,
+  "endTime": 1674253807803,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 36,
+        "lineEnd": 36,
+        "columnStart": 4,
+        "columnEnd": 59
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 76,
+        "lineEnd": 76,
+        "columnStart": 4,
+        "columnEnd": 50
+      }
+    },
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 80,
+        "lineEnd": 80,
+        "columnStart": 4,
+        "columnEnd": 15
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 14,
+        "lineEnd": 14,
+        "columnStart": 7,
+        "columnEnd": 82
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 77,
+        "lineEnd": 77,
+        "columnStart": 4,
+        "columnEnd": 29
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 77,
+        "lineEnd": 77,
+        "columnStart": 4,
+        "columnEnd": 29
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 77,
+        "lineEnd": 77,
+        "columnStart": 4,
+        "columnEnd": 53
+      }
+    }
+  ],
+  "repairedDockerfile": "ARG PYTHON_BASE_IMAGE_VERSION=3.10-20220315\nFROM metabrainz/python:$PYTHON_BASE_IMAGE_VERSION as listenbrainz-base\n\nARG PYTHON_BASE_IMAGE_VERSION\n\nLABEL org.label-schema.vcs-url=\"https://github.com/metabrainz/listenbrainz-server.git\" \\\n      org.label-schema.vcs-ref=\"\" \\\n      org.label-schema.schema-version=\"1.0.0-rc1\" \\\n      org.label-schema.vendor=\"MetaBrainz Foundation\" \\\n      org.label-schema.name=\"ListenBrainz\" \\\n      org.metabrainz.based-on-image=\"metabrainz/python:$PYTHON_BASE_IMAGE_VERSION\"\n\nENV DOCKERIZE_VERSION v0.6.1\nRUN wget https://github.com/jwilder/dockerize/releases/download/$DOCKERIZE_VERSION/dockerize-linux-amd64-$DOCKERIZE_VERSION.tar.gz \\\n    && tar -C /usr/local/bin -xzvf dockerize-linux-amd64-$DOCKERIZE_VERSION.tar.gz && rm dockerize-linux-amd64-$DOCKERIZE_VERSION.tar.gz\n\nENV SENTRY_CLI_VERSION 1.63.1\nRUN wget -O /usr/local/bin/sentry-cli https://downloads.sentry-cdn.com/sentry-cli/$SENTRY_CLI_VERSION/sentry-cli-Linux-x86_64 \\\n    && chmod +x /usr/local/bin/sentry-cli\n\nENV SENTRY_SERVICE_ERROR_ENVIRONMENT listenbrainz\n\nRUN apt-get update \\\n    && apt-get install -y --no-install-recommends \\\n                       build-essential \\\n                       git \\\n                       libffi-dev \\\n                       libpq-dev \\\n                       libssl-dev \\\n                       xz-utils \\\n                       redis-tools \\\n                       rsync \\\n                       uuid \\\n    && rm -rf /var/lib/apt/lists/*\n\n# PostgreSQL client\nRUN curl -f https://www.postgresql.org/media/keys/ACCC4CF8.asc | apt-key add -\nENV PG_MAJOR 12\nRUN echo \"deb http://apt.postgresql.org/pub/repos/apt/ $(lsb_release -cs)-pgdg main\" $PG_MAJOR > /etc/apt/sources.list.d/pgdg.list\nRUN apt-get update \\\n    && apt-get install -y --no-install-recommends postgresql-client-$PG_MAJOR \\\n    && rm -rf /var/lib/apt/lists/*\n\n# While WORKDIR will create a directory if it doesn't already exist, we do it explicitly here\n# so that we know what user it is created as: https://github.com/moby/moby/issues/36677\nRUN mkdir -p /code/listenbrainz /static\n\nWORKDIR /code/listenbrainz\nCOPY requirements.txt /code/listenbrainz/\nRUN pip3 install --no-cache-dir -r requirements.txt\n\n\n############################################\n# NOTE: The development image starts here. #\n############################################\nFROM listenbrainz-base as listenbrainz-dev\nCOPY requirements_development.txt /code/listenbrainz\nRUN pip3 install --no-cache-dir -r requirements_development.txt\nRUN mkdir /code/listenbrainz/docs\nCOPY ./docs/requirements.txt /code/listenbrainz/docs\nRUN pip3 install --no-cache-dir -r ./docs/requirements.txt\nCOPY . /code/listenbrainz\n\n\n###########################################\n# NOTE: The production image starts here. #\n###########################################\nFROM listenbrainz-base as listenbrainz-prod\n\n# Create directories for cron logs and dumps\n# /mnt/dumps: Temporary working space for dumps\n# /mnt/backup: All dumps\n# /mnt/ftp: Subset of all dumps that are uploaded to\nRUN mkdir /logs /mnt/dumps /mnt/backup /mnt/ftp\n\n# Install NodeJS and front-end dependencies\nRUN curl -f -sL https://deb.nodesource.com/setup_16.x | bash - && \\\n    apt-get install --no-install-recommends -y nodejs && rm -rf /var/lib/apt/lists/*\nWORKDIR /static\nCOPY package.json package-lock.json /static/\nRUN npm install && npm cache clean --force;\n\n\nCOPY ./docker/run-lb-command /usr/local/bin\nCOPY ./docker/lb-startup-common.sh /etc\n\n# runit service files\n# All services are created with a `down` file, preventing them from starting\n# rc.local removes the down file for the specific service we want to run in a container\n# http://smarden.org/runit/runsv.8.html\n\n# cron\nCOPY ./docker/services/cron/consul-template-cron-config.conf /etc/consul-template-cron-config.conf\nCOPY ./docker/services/cron/cron-config.service /etc/service/cron-config/run\nRUN touch /etc/service/cron/down\nRUN touch /etc/service/cron-config/down\n\n# API Compat (last.fm) server\nCOPY ./docker/services/api_compat/uwsgi-api-compat.ini /etc/uwsgi/uwsgi-api-compat.ini\nCOPY ./docker/services/api_compat/consul-template-api-compat.conf /etc/consul-template-api-compat.conf\nCOPY ./docker/services/api_compat/api_compat.service /etc/service/api_compat/run\nCOPY ./docker/services/api_compat/api_compat.finish /etc/service/api_compat/finish\nRUN touch /etc/service/api_compat/down\n\n# Websockets server\nCOPY ./docker/services/websockets/consul-template-websockets.conf /etc/consul-template-websockets.conf\nCOPY ./docker/services/websockets/websockets.service /etc/service/websockets/run\nCOPY ./docker/services/websockets/websockets.finish /etc/service/websockets/finish\nRUN touch /etc/service/websockets/down\n\n# Labs API\nCOPY ./docker/services/labs_api/uwsgi-labs-api.ini /etc/uwsgi/uwsgi-labs-api.ini\nCOPY ./docker/services/labs_api/consul-template-labs-api.conf /etc/consul-template-labs-api.conf\nCOPY ./docker/services/labs_api/labs_api.service /etc/service/labs_api/run\nCOPY ./docker/services/labs_api/labs_api.finish /etc/service/labs_api/finish\nRUN touch /etc/service/labs_api/down\n\n# Spark reader\nCOPY ./docker/services/spark_reader/consul-template-spark-reader.conf /etc/consul-template-spark-reader.conf\nCOPY ./docker/services/spark_reader/spark_reader.service /etc/service/spark_reader/run\nCOPY ./docker/services/spark_reader/spark_reader.finish /etc/service/spark_reader/finish\nRUN touch /etc/service/spark_reader/down\n\n# Spotify reader\nCOPY ./docker/services/spotify_reader/consul-template-spotify-reader.conf /etc/consul-template-spotify-reader.conf\nCOPY ./docker/services/spotify_reader/spotify_reader.service /etc/service/spotify_reader/run\nCOPY ./docker/services/spotify_reader/spotify_reader.finish /etc/service/spotify_reader/finish\nRUN touch /etc/service/spotify_reader/down\n\n# Timescale writer\nCOPY ./docker/services/timescale_writer/consul-template-timescale-writer.conf /etc/consul-template-timescale-writer.conf\nCOPY ./docker/services/timescale_writer/timescale_writer.service /etc/service/timescale_writer/run\nCOPY ./docker/services/timescale_writer/timescale_writer.finish /etc/service/timescale_writer/finish\nRUN touch /etc/service/timescale_writer/down\n\n# MBID-mapping writer\nCOPY ./docker/services/mbid_mapping_writer/consul-template-mbid-mapping-writer.conf /etc/consul-template-mbid-mapping-writer.conf\nCOPY ./docker/services/mbid_mapping_writer/mbid_mapping_writer.service /etc/service/mbid_mapping_writer/run\nCOPY ./docker/services/mbid_mapping_writer/mbid_mapping_writer.finish /etc/service/mbid_mapping_writer/finish\nRUN touch /etc/service/mbid_mapping_writer/down\n\n# uwsgi (website)\nCOPY ./docker/services/uwsgi/uwsgi.ini /etc/uwsgi/uwsgi.ini\nCOPY ./docker/services/uwsgi/consul-template-uwsgi.conf /etc/consul-template-uwsgi.conf\nCOPY ./docker/services/uwsgi/uwsgi.service /etc/service/uwsgi/run\nCOPY ./docker/services/uwsgi/uwsgi.finish /etc/service/uwsgi/finish\nRUN touch /etc/service/uwsgi/down\n\nCOPY ./docker/rc.local /etc/rc.local\n\n# crontab\nCOPY ./docker/services/cron/crontab /etc/cron.d/crontab\nRUN chmod 0644 /etc/cron.d/crontab\n\n# Compile front-end (static) files\nCOPY webpack.config.js babel.config.js .eslintrc.js .stylelintrc.js tsconfig.json ./listenbrainz/webserver/static /static/\nRUN npm run build:prod\n\n# Now install our code, which may change frequently\nCOPY . /code/listenbrainz/\n\nWORKDIR /code/listenbrainz\n# Ensure we use the right files and folders by removing duplicates\nRUN rm -rf ./listenbrainz/webserver/static/\nRUN rm -f /code/listenbrainz/listenbrainz/config.py /code/listenbrainz/listenbrainz/config.pyc\n\nARG GIT_COMMIT_SHA\nLABEL org.label-schema.vcs-ref=$GIT_COMMIT_SHA\nENV GIT_SHA ${GIT_COMMIT_SHA}\n"
+}

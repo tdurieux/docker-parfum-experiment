@@ -1,0 +1,31 @@
+# Minimal Docker image for Lithops
+
+FROM python:3.8-slim-buster
+#FROM python:3.9-slim-buster
+#FROM python:3.10-slim-buster
+
+ENV FLASK_PROXY_PORT 8080
+
+RUN pip install --no-cache-dir --upgrade pip setuptools six \
+    && pip install --no-cache-dir \
+        flask \
+        pika \
+        ibm-cos-sdk \
+        redis \
+        gevent \
+        requests \
+        PyYAML \
+        numpy \
+        cloudpickle \
+        ps-mem \
+        tblib
+
+# create action working directory
+RUN mkdir -p /action \
+    && mkdir -p /actionProxy \
+    && mkdir -p /pythonAction
+
+ADD https://raw.githubusercontent.com/apache/openwhisk-runtime-docker/8b2e205c39d84ed5ede6b1b08cccf314a2b13105/core/actionProxy/actionproxy.py /actionProxy/actionproxy.py
+ADD https://raw.githubusercontent.com/apache/openwhisk-runtime-python/3%401.0.3/core/pythonAction/pythonrunner.py /pythonAction/pythonrunner.py
+
+CMD ["/bin/bash", "-c", "cd /pythonAction && python -u pythonrunner.py"]

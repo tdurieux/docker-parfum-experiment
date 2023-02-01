@@ -1,0 +1,37 @@
+FROM chorusone/solido-base
+
+ENV SOLIDOBUILDPATH="/solido-build"
+ENV SOLIDOPATH="/solido"
+
+RUN cargo install cargo-license --version 0.4.1
+
+# Make dirs for build artefacts
+RUN mkdir -p $SOLIDOBUILDPATH
+
+COPY . $SOLIDOBUILDPATH/
+
+# Build packages
+RUN cd $SOLIDOBUILDPATH \
+    && cargo build --release --bin solido
+
+RUN useradd -m -d $SOLIDOPATH solido
+
+# Copy from build container
+RUN cp -rf  /solido-build/target/release/* $SOLIDOPATH
+
+# Include list of dependency licenses, for redistribution.
+COPY LICENSE $SOLIDOPATH
+COPY docker/LICENSE $SOLIDOPATH/LICENSE-DEPENDENCIES
+RUN cd $SOLIDOBUILDPATH \
+    && cargo license --manifest-path cli/maintainer/Cargo.toml --avoid-dev-deps --avoid-build-deps \
+    >> $SOLIDOPATH/LICENSE-DEPENDENCIES
+
+COPY docker/setup.sh $SOLIDOPATH
+
+RUN chown -R solido:solido $SOLIDOPATH
+
+USER solido
+
+WORKDIR $SOLIDOPATH
+
+ENTRYPOINT ["/bin/bash", "/solido/setup.sh"]

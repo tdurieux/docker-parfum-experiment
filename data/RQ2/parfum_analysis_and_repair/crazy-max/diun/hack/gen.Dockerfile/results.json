@@ -1,0 +1,44 @@
+{
+  "startTime": 1674255876914,
+  "endTime": 1674255877506,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 9,
+        "lineEnd": 9,
+        "columnStart": 5,
+        "columnEnd": 102
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 10,
+        "lineEnd": 10,
+        "columnStart": 5,
+        "columnEnd": 138
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 14,
+        "lineEnd": 14,
+        "columnStart": 4,
+        "columnEnd": 154
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 11,
+        "lineEnd": 11,
+        "columnStart": 5,
+        "columnEnd": 22
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "ARG GO_VERSION=\"1.18\"\nARG PROTOC_VERSION=\"3.17.3\"\nARG GLIBC_VERSION=\"2.33-r0\"\n\nFROM golang:${GO_VERSION}-alpine AS base\nARG GLIBC_VERSION\nRUN apk add --no-cache curl file git unzip \\\n  && curl -f -sSL \"https://alpine-pkgs.sgerrand.com/sgerrand.rsa.pub\" -o \"/etc/apk/keys/sgerrand.rsa.pub\" \\\n  && curl -f -sSL \"https://github.com/sgerrand/alpine-pkg-glibc/releases/download/${GLIBC_VERSION}/glibc-${GLIBC_VERSION}.apk\" -o \"glibc.apk\" \\\n  && apk add --no-cache glibc.apk \\\n  && rm /etc/apk/keys/sgerrand.rsa.pub glibc.apk\nARG PROTOC_VERSION\nRUN curl -f -sSL \"https://github.com/protocolbuffers/protobuf/releases/download/v${PROTOC_VERSION}/protoc-${PROTOC_VERSION}-linux-x86_64.zip\" -o \"protoc.zip\" \\\n  && unzip \"protoc.zip\" -d \"/usr/local\" \\\n  && protoc --version \\\n  && rm \"protoc.zip\"\nWORKDIR /src\n\nFROM base AS vendored\nRUN --mount=type=bind,target=.,rw \\\n  --mount=type=cache,target=/go/pkg/mod \\\n  go mod tidy && go mod download\n\nFROM vendored AS tools\nRUN --mount=type=bind,target=.,rw \\\n  --mount=type=cache,target=/go/pkg/mod \\\n  go install -v $(sed -n -e 's|^\\s*_\\s*\"\\(.*\\)\".*$|\\1| p' tools.go)\n\nFROM tools AS generate\nRUN --mount=type=bind,target=.,rw \\\n  --mount=type=cache,target=/go/pkg/mod <<EOT\nset -e\ngo generate ./...\nmkdir /out\ncp -Rf pb /out\nEOT\n\nFROM scratch AS update\nCOPY --from=generate /out /\n\nFROM generate AS validate\nRUN --mount=type=bind,target=.,rw <<EOT\nset -e\ngit add -A\ncp -rf /out/* .\ndiff=$(git status --porcelain -- pb)\nif [ -n \"$diff\" ]; then\n  echo >&2 'ERROR: Vendor result differs. Please vendor your package with \"docker buildx bake gen\"'\n  echo \"$diff\"\n  exit 1\nfi\nEOT\n"
+}

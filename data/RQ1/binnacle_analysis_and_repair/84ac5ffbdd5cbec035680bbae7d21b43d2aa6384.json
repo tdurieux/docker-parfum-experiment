@@ -1,0 +1,17 @@
+{
+  "startTime": 1674242566450,
+  "endTime": 1674242566552,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 32,
+        "lineEnd": 32,
+        "columnStart": 4,
+        "columnEnd": 43
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "########################################\n# Preparation stage: layout and chmods #\n########################################\n\nFROM debian:buster-slim as builder\n\nWORKDIR /output\n\nCOPY datadog-cluster-agent opt/datadog-agent/bin/datadog-cluster-agent\nCOPY ./conf.d etc/datadog-agent/conf.d\nCOPY ./datadog-cluster.yaml etc/datadog-agent/datadog-cluster.yaml\nCOPY ./dist/templates opt/datadog-agent/bin/dist/templates\nCOPY entrypoint.sh .\n\nRUN chmod 755 entrypoint.sh \\\n    && chmod g+r,g+w,g+X -R etc/datadog-agent/ \\\n    && chmod +x opt/datadog-agent/bin/datadog-cluster-agent \\\n    && ln -s /opt/datadog-agent/bin/datadog-cluster-agent opt/datadog-agent/bin/agent\n\n####################################\n# Actual docker image construction #\n####################################\n\nFROM debian:buster-slim\n\nLABEL maintainer \"Datadog <package@datadoghq.com>\"\n\nENV PATH=\"/opt/datadog-agent/bin/:$PATH\"\n\nRUN apt-get update \\\n && apt-get install --no-install-recommends -y ca-certificates curl \\\n # https://security-tracker.debian.org/tracker/CVE-2018-15686 \\\n && apt-get install --no-install-recommends -y libudev1 libsystemd0 \\\n && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*\n\nCOPY --from=builder /output /\n\n# Allow running as an unprivileged user:\n# - General case is the dd-agent user\n# - OpenShift uses a random UID in the root group\n#\n# Containerd does not preserve permissions when mounting a volume on top\n# of an empty folder. Creating .placeholder files as a workaround.\n#\nRUN adduser --system --no-create-home --disabled-password --ingroup root dd-agent \\\n && mkdir -p /var/log/datadog/ /conf.d \\\n && touch /var/log/datadog/.placeholder \\\n && touch /tmp/.placeholder \\\n && chown -R dd-agent:root /etc/datadog-agent/ /var/log/datadog/ /conf.d /tmp/ \\\n && chmod g+r,g+w,g+X -R /etc/datadog-agent/ /var/log/datadog/ /conf.d /tmp/\n\n# Incompatible with the custom metrics API on port 443\n# Set DD_EXTERNAL_METRICS_PROVIDER_PORT to a higher value to run as non-root\n# USER dd-agent\n\n# Leave following directories RW to allow use of readonly rootfs\nVOLUME [\"/etc/datadog-agent\", \"/var/log/datadog\", \"/tmp\"]\n\nENTRYPOINT [\"/entrypoint.sh\"]\n\n# No docker healthcheck, use a HTTP check\n# on port 5005 and/or 443 on Kubernetes\n\nCMD [\"datadog-cluster-agent\", \"start\"]\n"
+}

@@ -1,0 +1,27 @@
+FROM registry.suse.com/bci/golang:1.17-11.51
+
+ARG DAPPER_HOST_ARCH
+ENV ARCH $DAPPER_HOST_ARCH
+ENV HELM_VERSION v3.2.0
+ENV HELM_URL_V3=https://get.helm.sh/helm-${HELM_VERSION}-linux-${ARCH}.tar.gz
+
+RUN zypper -n install git docker vim less file curl wget
+RUN if [ "${ARCH}" == "amd64" ]; then \
+        curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s v1.46.2; \
+    fi
+RUN mkdir /usr/tmp && \
+    curl -f ${HELM_URL_V3} | tar xvzf - --strip-components=1 -C /usr/tmp/ && \
+    mv /usr/tmp/helm /usr/bin/helm
+
+ENV DAPPER_ENV REPO TAG DRONE_TAG
+ENV DAPPER_SOURCE /go/src/github.com/rancher/gitjob/
+ENV DAPPER_OUTPUT ./bin ./dist
+ENV DAPPER_DOCKER_SOCKET true
+ENV DAPPER_RUN_ARGS "-v gitjob-pkg:/go/pkg -v gitjob-cache:/root/.cache/go-build"
+ENV GOPATH /go
+ENV GOCACHE /root/.cache/go-build
+ENV HOME ${DAPPER_SOURCE}
+WORKDIR ${DAPPER_SOURCE}
+
+ENTRYPOINT ["./scripts/entry"]
+CMD ["ci"]

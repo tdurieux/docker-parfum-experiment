@@ -1,0 +1,53 @@
+{
+  "startTime": 1674220632897,
+  "endTime": 1674220633563,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 19,
+        "lineEnd": 19,
+        "columnStart": 22,
+        "columnEnd": 69
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 80,
+        "lineEnd": 80,
+        "columnStart": 22,
+        "columnEnd": 61
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 19,
+        "lineEnd": 19,
+        "columnStart": 22,
+        "columnEnd": 69
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 33,
+        "lineEnd": 33,
+        "columnStart": 25,
+        "columnEnd": 116
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 80,
+        "lineEnd": 80,
+        "columnStart": 22,
+        "columnEnd": 61
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "### Updated base image to golang in order to build with go modules\n### Bazel build cannot work with the Tekton library because the current\n### KFP Bazel does not support go.mod \"replace\" on key dependencies.\n# Copyright 2021 The Kubeflow Authors\n#\n# Licensed under the Apache License, Version 2.0 (the \"License\");\n# you may not use this file except in compliance with the License.\n# You may obtain a copy of the License at\n#\n#      http://www.apache.org/licenses/LICENSE-2.0\n#\n# Unless required by applicable law or agreed to in writing, software\n# distributed under the License is distributed on an \"AS IS\" BASIS,\n# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.\n# See the License for the specific language governing permissions and\n# limitations under the License.\n\n# 1. Build api server application\nFROM golang:1.17.6-stretch as builder\nRUN apt-get update && apt-get install --no-install-recommends -y cmake clang musl-dev openssl && rm -rf /var/lib/apt/lists/*;\nWORKDIR /go/src/github.com/kubeflow/pipelines\nCOPY . .\nRUN GO111MODULE=on go build -o /bin/apiserver backend/src/apiserver/*.go\n# Check licenses and comply with license terms.\nRUN ./hack/install-go-licenses.sh\n# First, make sure there's no forbidden license.\nRUN go-licenses check ./backend/src/apiserver\nRUN go-licenses csv ./backend/src/apiserver > /tmp/licenses.csv && \\\n    diff /tmp/licenses.csv backend/third_party_licenses/apiserver.csv && \\\n    go-licenses save ./backend/src/apiserver --save_path /tmp/NOTICES\n\n# 2. Compile preloaded pipeline samples\nFROM python:3.7 as compiler\nRUN apt-get update -y && apt-get install --no-install-recommends -y -q default-jdk python3-setuptools python3-dev jq && rm -rf /var/lib/apt/lists/*;\nRUN wget https://bootstrap.pypa.io/get-pip.py && python3 get-pip.py\nCOPY sdk/python/requirements.txt .\nRUN python3 -m pip install -r requirements.txt --no-cache-dir\n\nWORKDIR /go/src/github.com/kubeflow/pipelines\nCOPY sdk sdk\nWORKDIR /go/src/github.com/kubeflow/pipelines/sdk/python\nRUN python3 setup.py install\n\nWORKDIR /\nCOPY ./samples /samples\nCOPY backend/src/apiserver/config/sample_config.json /samples/\n\n# Compiling the preloaded samples.\n# The default image is replaced with the GCR-hosted python image.\nRUN set -e; \\\n    < /samples/sample_config.json jq .[].file --raw-output | while read pipeline_yaml; do \\\n        pipeline_py=\"${pipeline_yaml%.yaml}.py\"; \\\n        pipeline_py=\"${pipeline_yaml%.yaml}.py\"; \\\n        mode=`< /samples/sample_config.json jq \".[] | select(.file == \\\"${pipeline_yaml}\\\") | (if .mode == null then \\\"V1\\\" else .mode end)\" --raw-output`; \\\n        mv \"$pipeline_py\" \"${pipeline_py}.tmp\"; \\\n        echo 'import kfp; kfp.components.default_base_image_or_builder=\"gcr.io/google-appengine/python:2020-03-31-141326\"' | cat - \"${pipeline_py}.tmp\" > \"$pipeline_py\"; \\\n        dsl-compile-tekton --py \"$pipeline_py\" --output \"$pipeline_yaml\" || python3 \"$pipeline_py\"; \\\n    done\n\n\n# 3. Start api web server\nFROM debian:stretch\n\nARG COMMIT_SHA=unknown\nENV COMMIT_SHA=${COMMIT_SHA}\nARG TAG_NAME=unknown\nENV TAG_NAME=${TAG_NAME}\n\nWORKDIR /bin\n\nCOPY backend/src/apiserver/config/ /config\nCOPY --from=builder /bin/apiserver /bin/apiserver\n\n# Copy licenses and notices.\nCOPY --from=builder /tmp/licenses.csv /third_party/licenses.csv\nCOPY --from=builder /tmp/NOTICES /third_party/NOTICES\nCOPY --from=compiler /samples/ /samples/\nRUN chmod +x /bin/apiserver\n\n# Adding CA certificate so API server can download pipeline through URL and wget is used for liveness/readiness probe command\nRUN apt-get update && apt-get install --no-install-recommends -y ca-certificates wget && rm -rf /var/lib/apt/lists/*;\n\n# Pin sample doc links to the commit that built the backend image\n# Commented out due to no commit sha for non-release build\n# RUN sed -E \"s#/(blob|tree)/master/#/\\1/${COMMIT_SHA}/#g\" -i /config/sample_config.json && \\\n#     sed -E \"s/%252Fmaster/%252F${COMMIT_SHA}/#g\" -i /config/sample_config.json\n\n# Expose apiserver port\nEXPOSE 8888\n\n# Start the apiserver\nCMD /bin/apiserver --config=/config --sampleconfig=/config/sample_config.json -logtostderr=true\n"
+}

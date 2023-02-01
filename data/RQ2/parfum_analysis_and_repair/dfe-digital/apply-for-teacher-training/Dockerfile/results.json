@@ -1,0 +1,35 @@
+{
+  "startTime": 1674254571565,
+  "endTime": 1674254572092,
+  "originalSmells": [
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 35,
+        "lineEnd": 35,
+        "columnStart": 4,
+        "columnEnd": 30
+      }
+    },
+    {
+      "rule": "gemUpdateSystemRmRootGem",
+      "position": {
+        "lineStart": 26,
+        "lineEnd": 26,
+        "columnStart": 4,
+        "columnEnd": 23
+      }
+    },
+    {
+      "rule": "gemUpdateNoDocument",
+      "position": {
+        "lineStart": 26,
+        "lineEnd": 26,
+        "columnStart": 4,
+        "columnEnd": 23
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# To use or update to a ruby version, change {BASE_RUBY_IMAGE}\nARG BASE_RUBY_IMAGE=ruby:2.7.5-alpine3.15\n\n# Stage 1: gems-node-modules, build gems and node modules.\nFROM ${BASE_RUBY_IMAGE} AS gems-node-modules\n\nRUN apk -U upgrade && \\\n    apk add --update --no-cache git gcc libc-dev make postgresql-dev build-base \\\n    libxml2-dev libxslt-dev ttf-freefont nodejs yarn tzdata libpq libxml2 libxslt graphviz\n\nRUN echo \"Europe/London\" > /etc/timezone && \\\n    cp /usr/share/zoneinfo/Europe/London /etc/localtime\n\nENV WKHTMLTOPDF_GEM=wkhtmltopdf-binary-edge-alpine \\\n    RAILS_ENV=production \\\n    GOVUK_NOTIFY_API_KEY=TestKey \\\n    AUTHORISED_HOSTS=127.0.0.1 \\\n    SECRET_KEY_BASE=TestKey \\\n    BLAZER_DATABASE_URL=testURL \\\n    GOVUK_NOTIFY_CALLBACK_API_KEY=TestKey \\\n    REDIS_CACHE_URL=redis://127.0.0.1:6379\n\nWORKDIR /app\n\nCOPY Gemfile Gemfile.lock ./\nRUN mkdir -p /usr/local/etc \\\n  && { \\\n    echo 'install: --no-document'; \\\n    echo 'update: --no-document'; \\\n  } >> /usr/local/etc/gemrc;\n\nRUN gem update --system && \\\n    bundler -v && \\\n    bundle config set no-cache 'true' && \\\n    bundle config set no-binstubs 'true' && \\\n    bundle --retry=5 --jobs=4 --without=development && \\\n    rm -rf /usr/local/bundle/cache && rm -rf /root/.gem;\n\nCOPY package.json yarn.lock ./\n\nRUN yarn install --check-files && yarn cache clean;\n\nCOPY . .\n\nRUN bundle exec rake assets:precompile && \\\n    rm -rf tmp/* log/* node_modules /tmp/*\n\n# Stage 2: production, copy application code and compiled assets to base ruby image.\n# Depends on assets-precompile stage which can be cached from a pre-built image\n# by specifying a fully qualified image name or will default to packages-prod thereby rebuilding all 3 stages above.\n# If a existing base image name is specified Stage 1 & 2 will not be built and gems and dev packages will be used from the supplied image.\nFROM ${BASE_RUBY_IMAGE} AS production\n\nENV WKHTMLTOPDF_GEM=wkhtmltopdf-binary-edge-alpine \\\n    LANG=en_GB.UTF-8 \\\n    RAILS_ENV=production \\\n    GOVUK_NOTIFY_API_KEY=TestKey \\\n    AUTHORISED_HOSTS=127.0.0.1 \\\n    SECRET_KEY_BASE=TestKey \\\n    GOVUK_NOTIFY_CALLBACK_API_KEY=TestKey \\\n    REDIS_CACHE_URL=redis://127.0.0.1:6379\n\nRUN apk -U upgrade && \\\n    apk add --update --no-cache tzdata libpq libxml2 libxslt graphviz ttf-dejavu ttf-droid ttf-freefont ttf-liberation && \\\n    echo \"Europe/London\" > /etc/timezone && \\\n    cp /usr/share/zoneinfo/Europe/London /etc/localtime\n\nWORKDIR /app\n\nRUN echo export PATH=/usr/local/bin:\\$PATH > /root/.ashrc\nENV ENV=\"/root/.ashrc\"\n\nCOPY --from=gems-node-modules /app /app\nCOPY --from=gems-node-modules /usr/local/bundle/ /usr/local/bundle/\n\nARG SHA\nENV SHA=${SHA}\nRUN echo ${SHA} > public/check\n\n# Use this for development testing\n# CMD bundle exec rails db:migrate && bundle exec rails server -b 0.0.0.0\n\n# We migrate and ignore concurrent_migration_exceptions because we deploy to\n# multiple instances at the same time.\n#\n# Under these conditions each instance will try to run migrations. Rails uses a\n# database lock to prevent them stepping on each another. If they happen to,\n# a ConcurrentMigrationError exception is thrown, the command exits 1, and\n# the server will not start thanks to the shell &&.\n#\n# We swallow the exception and run the server anyway, because we prefer running\n# new code on an old schema (which will be updated a moment later) to running\n# old code on the new schema (which will require another deploy or other manual\n# intervention to correct).\nCMD bundle exec rails db:migrate:ignore_concurrent_migration_exceptions && bundle exec rails server -b 0.0.0.0\n"
+}

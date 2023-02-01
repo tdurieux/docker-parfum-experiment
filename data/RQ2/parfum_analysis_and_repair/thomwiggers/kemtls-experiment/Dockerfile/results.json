@@ -1,0 +1,63 @@
+{
+  "startTime": 1674220079544,
+  "endTime": 1674220081128,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 15,
+        "lineEnd": 15,
+        "columnStart": 4,
+        "columnEnd": 67
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 104,
+        "lineEnd": 104,
+        "columnStart": 4,
+        "columnEnd": 36
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 15,
+        "lineEnd": 15,
+        "columnStart": 4,
+        "columnEnd": 67
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 15,
+        "lineEnd": 15,
+        "columnStart": 4,
+        "columnEnd": 67
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 104,
+        "lineEnd": 104,
+        "columnStart": 4,
+        "columnEnd": 36
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 15,
+        "lineEnd": 15,
+        "columnStart": 4,
+        "columnEnd": 91
+      }
+    }
+  ],
+  "repairedDockerfile": "# Author: Thom Wiggers <thom@thomwiggers.nl>\n# LICENSE: CC0\n#\nFROM rust:1.52-bullseye AS builder\n\nSHELL [\"/bin/bash\", \"-c\"]\n\nEXPOSE 8443 443/tcp\n\nADD https://apt.llvm.org/llvm-snapshot.gpg.key /llvm.key\nRUN apt-key add /llvm.key\n\n# Install requirements\nRUN echo \"deb http://apt.llvm.org/bullseye/ llvm-toolchain-bullseye-12 main\" > /etc/apt/sources.list.d/llvm.list\nRUN apt-get update  -qq\nRUN apt-get install --no-install-recommends -qq -y pipenv libssl-dev cmake clang-12 llvm-12 && rm -rf /var/lib/apt/lists/*;\n\n# Default C compiler\n# XXX: Somehow clang breaks.\nENV CC=gcc\n\n# Rust options\nENV RUSTFLAGS \"-C target-cpu=native -C link-arg=-s\"\nENV RUST_MIN_STACK \"20971520\"\n\n# Copy in the source\nCOPY mk-cert /usr/src/pqtls/mk-cert\n\n# cleanup\nWORKDIR /usr/src/pqtls/mk-cert\nRUN ./clean.sh\n\n# populate cargo build caches\nWORKDIR /usr/src/pqtls/mk-cert/signutil\nRUN echo \"pub use oqs::sig::Algorithm::Dilithium2 as alg;\" > src/lib.rs\nRUN cargo update\nRUN cargo build --release --examples\n\nWORKDIR /usr/src/pqtls/mk-cert/kemutil\nRUN echo \"pub use oqs::kem::Algorithm::Kyber512 as thealgorithm;\" > src/kem.rs\nRUN cargo update\nRUN cargo build --release\n\nWORKDIR /usr/src/pqtls/mk-cert/xmss-rs\nRUN cargo build --release\n\n# Copy remaining sources\nCOPY webpki  /usr/src/pqtls/webpki\nCOPY ring    /usr/src/pqtls/ring\nCOPY rustls  /usr/src/pqtls/rustls\n\n# Generate rustls build cache\nWORKDIR /usr/src/pqtls/rustls/rustls-mio\nRUN cargo build --release --examples\n\n# Set up certificates (will be parameterised by the env vars)\nWORKDIR  /usr/src/pqtls/mk-cert\nRUN pipenv install\n# Precompile kemutil and signutil for build caches\nWORKDIR /usr/src/pqtls/mk-cert/kemutil\nRUN cargo build --release\nWORKDIR /usr/src/pqtls/mk-cert/signutil\nRUN cargo build --release --examples\n\n# pre-Compile tlsserver and tlsclient examples\nWORKDIR /usr/src/pqtls/rustls/rustls-mio/\nRUN cargo build --release --example tlsserver && \\\n    cargo build --release --example tlsclient\n\n# These must exactly match what is listed in the options of mk-cert/encoder.py\n# (and those follow from liboqs)\nARG KEX_ALG=\"Kyber512\"\n# re-export build args as env vars\nENV KEX_ALG     $KEX_ALG\n\n# Update the KEX alg\nRUN sed -i 's@NamedGroup::[[:alnum:]]\\+@NamedGroup::'${KEX_ALG}'@' /usr/src/pqtls/rustls/rustls/src/client/default_group.rs\n\n# Compile tlsserver and tlsclient examples\nRUN cargo build --release --example tlsserver && \\\n    cargo build --release --example tlsclient\n\n# These must exactly match what is listed in the options of mk-cert/encoder.py\n# (and those follow from liboqs)\nARG ROOT_SIGALG=\"Dilithium2\"\nARG INT_SIGALG=\"Dilithium2\"\nARG LEAF_ALG=\"Dilithium2\"\nARG CLIENT_ALG=\"Kyber512\"\nARG CLIENT_CA_ALG=\"Dilithium2\"\nENV ROOT_SIGALG   $ROOT_SIGALG\nENV INT_SIGALG    $INT_SIGALG\nENV LEAF_ALG      $LEAF_ALG\nENV CLIENT_ALG   $CLIENT_ALG\nENV CLIENT_CA_ALG $CLIENT_CA_ALG\n\n# actually generate the certificates\nWORKDIR  /usr/src/pqtls/mk-cert\nRUN      pipenv run python encoder.py\n\n# Set up clean environment\nFROM debian:bullseye\n\n# Install libssl1.1\nRUN apt-get update -qq \\\n && apt-get install --no-install-recommends -qq -y libssl1.1 \\\n && rm -rf /var/cache/apt && rm -rf /var/lib/apt/lists/*;\n\nCOPY --from=builder /usr/src/pqtls/rustls/target/release/examples/tlsserver /usr/local/bin/tlsserver\nCOPY --from=builder /usr/src/pqtls/rustls/target/release/examples/tlsclient /usr/local/bin/tlsclient\nCOPY --from=builder /usr/src/pqtls/mk-cert/*.crt /certs/\nCOPY --from=builder /usr/src/pqtls/mk-cert/*.key /certs/\nCOPY --from=builder /usr/src/pqtls/mk-cert/*.pub /certs/\n\nWORKDIR /certs\nCMD [\"echo\", \"Run tls{server,client} for the rustls-mio server/client with KEX:\", $KEX_ALG]\n"
+}

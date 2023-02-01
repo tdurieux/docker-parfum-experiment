@@ -1,0 +1,10 @@
+ARG OVS_VERSION
+FROM antrea/base-ubuntu:${OVS_VERSION}
+
+LABEL maintainer="Antrea <projectantrea-dev@googlegroups.com>"
+LABEL description="The Docker image to deploy the Antrea CNI."
+
+USER root
+
+COPY build/images/scripts/* /usr/local/bin/
+COPY bin/* /usr/local/bin/

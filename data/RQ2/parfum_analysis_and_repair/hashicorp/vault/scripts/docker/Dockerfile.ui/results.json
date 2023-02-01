@@ -1,0 +1,62 @@
+{
+  "startTime": 1674220535081,
+  "endTime": 1674220536386,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 22,
+        "lineEnd": 22,
+        "columnStart": 4,
+        "columnEnd": 50
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 23,
+        "lineEnd": 23,
+        "columnStart": 4,
+        "columnEnd": 53
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 31,
+        "lineEnd": 31,
+        "columnStart": 4,
+        "columnEnd": 78
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 26,
+        "lineEnd": 26,
+        "columnStart": 25,
+        "columnEnd": 58
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 10,
+        "lineEnd": 20,
+        "columnStart": 25,
+        "columnEnd": 33
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 26,
+        "lineEnd": 26,
+        "columnStart": 25,
+        "columnEnd": 58
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Multi-stage builder to avoid polluting users environment with wrong\n# architecture binaries.  Since this binary is used in an alpine container,\n# we're explicitly compiling for 'linux/amd64'\nFROM debian:buster AS builder\n\nARG VERSION=1.17.11\nARG CGO_ENABLED=0\nARG BUILD_TAGS\nENV JOBS=2\n\nRUN apt-get update -y && apt-get install --no-install-recommends -y -q \\\n                         curl \\\n                         zip \\\n                         build-essential \\\n                         gcc-multilib \\\n                         g++-multilib \\\n                         ca-certificates \\\n                         git mercurial bzr \\\n                         gnupg \\\n                         libltdl-dev \\\n                         libltdl7 && rm -rf /var/lib/apt/lists/*;\n\nRUN curl -f -sL https://deb.nodesource.com/setup_14.x | bash -\nRUN curl -f -sL https://dl.yarnpkg.com/debian/pubkey.gpg | apt-key add -\nRUN echo \"deb https://dl.yarnpkg.com/debian/ stable main\" | tee /etc/apt/sources.list.d/yarn.list\n\nRUN apt-get update -y && apt-get install --no-install-recommends -y -q nodejs yarn && rm -rf /var/lib/apt/lists/*;\n\nRUN rm -rf /var/lib/apt/lists/*\n\nRUN mkdir /goroot && mkdir /go\nRUN curl -f https://storage.googleapis.com/golang/go${VERSION}.linux-amd64.tar.gz \\\n           | tar xvzf - -C /goroot --strip-components=1\nENV GOPATH /go\nENV GOROOT /goroot\nENV PATH $GOROOT/bin:$GOPATH/bin:$PATH\n\nWORKDIR /go/src/github.com/hashicorp/vault\nCOPY . .\nRUN make bootstrap static-dist \\\n  && CGO_ENABLED=$CGO_ENABLED BUILD_TAGS=\"${BUILD_TAGS} ui\" VAULT_DEV_BUILD=1 XC_OSARCH='linux/amd64' sh -c \"'./scripts/build.sh'\"\n\n# Docker Image\n\nFROM alpine:3.13\n\n# Create a vault user and group first so the IDs get set the same way,\n# even as the rest of this may change over time.\nRUN addgroup vault && \\\n    adduser -S -G vault vault\n\n# Set up certificates, our base tools, and Vault.\nRUN set -eux; \\\n    apk add --no-cache ca-certificates libcap su-exec dumb-init tzdata\n\nCOPY --from=builder /go/bin/vault /bin/vault\n\n# /vault/logs is made available to use as a location to store audit logs, if\n# desired; /vault/file is made available to use as a location with the file\n# storage backend, if desired; the server will be started with /vault/config as\n# the configuration directory so you can add additional config files in that\n# location.\nRUN mkdir -p /vault/logs && \\\n    mkdir -p /vault/file && \\\n    mkdir -p /vault/config && \\\n    chown -R vault:vault /vault\n\n# Expose the logs directory as a volume since there's potentially long-running\n# state in there\nVOLUME /vault/logs\n\n# Expose the file directory as a volume since there's potentially long-running\n# state in there\nVOLUME /vault/file\n\n# 8200/tcp is the primary interface that applications use to interact with\n# Vault.\nEXPOSE 8200\n\n# The entry point script uses dumb-init as the top-level process to reap any\n# zombie processes created by Vault sub-processes.\n#\n# For production derivatives of this container, you should add the IPC_LOCK\n# capability so that Vault can mlock memory.\nCOPY ./scripts/docker/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh\nENTRYPOINT [\"docker-entrypoint.sh\"]\n\n# By default you'll get a single-node development server that stores everything\n# in RAM and bootstraps itself. Don't use this configuration for production.\nCMD [\"server\", \"-dev\"]\n"
+}

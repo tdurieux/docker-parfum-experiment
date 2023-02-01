@@ -1,0 +1,63 @@
+{
+  "startTime": 1674248484214,
+  "endTime": 1674248485453,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 27,
+        "lineEnd": 33,
+        "columnStart": 7,
+        "columnEnd": 10
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 37,
+        "lineEnd": 37,
+        "columnStart": 5,
+        "columnEnd": 71
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 37,
+        "lineEnd": 37,
+        "columnStart": 5,
+        "columnEnd": 71
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 27,
+        "lineEnd": 33,
+        "columnStart": 7,
+        "columnEnd": 10
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 37,
+        "lineEnd": 37,
+        "columnStart": 5,
+        "columnEnd": 71
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 37,
+        "lineEnd": 37,
+        "columnStart": 4,
+        "columnEnd": 94
+      }
+    }
+  ],
+  "repairedDockerfile": "FROM debian:bullseye-slim\n\nLABEL maintainer=\"Valentino Lauciani <valentino.lauciani@ingv.it>\"\n\n# Main variables\nENV INITRD No\nENV FAKE_CHROOT 1\nENV DEBIAN_FRONTEND=noninteractive\n\n# Set User and Group variabls\nENV GROUP_NAME=shakeweb\nENV USER_NAME=shakeweb\nENV HOMEDIR_USER=/home/${USER_NAME}\n#ENV HOMEDIR_USER=/var/www\n\n# Set bash as shell\nSHELL [\"/bin/bash\", \"-c\"]\n\n# Start as root\nUSER root\n\n# Set 'root' pwd\nRUN echo root:toor | chpasswd\n\n# Install necessary packages\nRUN apt-get clean \\\n    && apt-get update -yqq \\\n    && apt-get install --no-install-recommends -yqq \\\n      apt-utils \\\n      vim \\\n      git \\\n      cron \\\n      procps \\\n      sudo \\\n    && apt-get clean && rm -rf /var/lib/apt/lists/*;\n\n# Install python\nRUN apt-get -y --no-install-recommends install python3 python3-pip python3-dev build-essential \\\n  && python3 -m pip install --upgrade \"pip < 21.0\" \\\n  && python3 -m pip install --upgrade virtualenv \\\n  && python3 -m pip install python-dateutil && rm -rf /var/lib/apt/lists/*;\n\n# Set Timezone\nARG TZ=UTC\nENV TZ ${TZ}\nRUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone\n\n# Copy and run crontab\nCOPY ./crontab /etc/cron.d\nRUN chmod -R 644 /etc/cron.d\nRUN crontab /etc/cron.d/shakeweb\n\n# Set default User and Group id from arguments\n# If UID and/or GID are equal to zero then new user and/or group are created\nARG ENV_UID=0\nARG ENV_GID=0\n\nRUN echo ENV_UID=${ENV_UID}\nRUN echo ENV_GID=${ENV_GID}\n\nRUN \\\n    if [ ${ENV_UID} -eq 0 ] || [ ${ENV_GID} -eq 0 ]; then \\\n    echo \"\"; \\\n    echo \"WARNING: when passing UID or GID equal to zero, new user and/or group are created.\"; \\\n    echo \"         On Linux, if you run docker image by different UID or GID you could not able to write in docker mount data directory.\"; \\\n    echo \"\"; \\\n    fi\n\n# Check if GID already exists\nRUN cat /etc/group\nRUN \\\n    if [ ${ENV_GID} -eq 0 ]; then \\\n    addgroup --system ${GROUP_NAME}; \\\n    elif grep -q -e \"[^:][^:]*:[^:][^:]*:${ENV_GID}:.*$\" /etc/group; then \\\n    GROUP_NAME_ALREADY_EXISTS=$(grep  -e \"[^:][^:]*:[^:][^:]*:${ENV_GID}:.*$\" /etc/group | cut -f 1 -d':'); \\\n    echo \"GID ${ENV_GID} already exists with group name ${GROUP_NAME_ALREADY_EXISTS}\"; \\\n    groupmod -n ${GROUP_NAME} ${GROUP_NAME_ALREADY_EXISTS}; \\\n    else \\\n    echo \"GID ${ENV_GID} does not exist\"; \\\n    addgroup --gid ${ENV_GID} --system ${GROUP_NAME}; \\\n    fi\n\n# Check if UID already exists\nRUN cat /etc/passwd\nRUN \\\n    if [ ${ENV_UID} -eq 0 ]; then \\\n    useradd --system -d ${HOMEDIR_USER} -g ${GROUP_NAME} -s /bin/bash ${USER_NAME}; \\\n    elif grep -q -e \"[^:][^:]*:[^:][^:]*:${ENV_UID}:.*$\" /etc/passwd; then \\\n    USER_NAME_ALREADY_EXISTS=$(grep  -e \"[^:][^:]*:[^:][^:]*:${ENV_UID}:.*$\" /etc/passwd | cut -f 1 -d':'); \\\n    echo \"UID ${ENV_UID} already exists with user name ${USER_NAME_ALREADY_EXISTS}\"; \\\n    usermod -d ${HOMEDIR_USER} -g ${ENV_GID} -l ${USER_NAME} ${USER_NAME_ALREADY_EXISTS}; \\\n    else \\\n    echo \"UID ${ENV_UID} does not exist\"; \\\n    useradd --system -u ${ENV_UID} -d ${HOMEDIR_USER} -g ${ENV_GID} -G ${GROUP_NAME} -s /bin/bash ${USER_NAME}; \\\n    fi\n# adduser -S -h ${HOMEDIR_USER} -G ${GROUP_NAME} -s /bin/bash ${USER_NAME}; \\\n# adduser --uid ${ENV_UID} --home ${HOMEDIR_USER} --gid ${ENV_GID} --shell /bin/bash ${USER_NAME}; \\\n\n# Create user home dir\nRUN mkdir ${HOMEDIR_USER}\n\n# Copy logrotate\nCOPY logrotate/workspace /etc/logrotate.d/\n\n# Set .bashrc for root user\nRUN echo \"\" >> /root/.bashrc \\\n    && echo \"##################################\" >> /root/.bashrc \\\n    && echo \"alias ll='ls -l --color'\" >> /root/.bashrc \\\n    && echo \"\" >> /root/.bashrc \\\n    && echo \"export LC_ALL=\\\"C\\\"\" >> /root/.bashrc\n\n# Copy .bashrc to user\nRUN cp /root/.bashrc ${HOMEDIR_USER} \\\n    && chown -R ${USER_NAME}:${GROUP_NAME} ${HOMEDIR_USER}/.bashrc\n\n#  Add new user shakeweb to sudo group\nRUN adduser shakeweb sudo\n\n# Ensure sudo group users are not\n# asked for a password when using\n# sudo command by ammending sudoers file\nRUN echo '%sudo ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers\n\n# Copy entrypoint\nCOPY entrypoint.sh /opt/\nRUN chmod 755 /opt/entrypoint.sh\n\n# Change user\nUSER shakeweb\n\n# Set 'crontab'\n#RUN crontab -l | { cat; echo \"* * * * * (cd /var/www && echo \"-----START-----\" && time /usr/bin/flock --verbose -n /tmp/crontabScriptToUpdateEvents.sh.lock /var/www/crontabScriptToUpdateEvents.sh ; echo \"-----END-----\") >> /var/log/workspace/crontabScriptToUpdateEvents.sh.log 2>&1\"; } | crontab -\n\n# Set user log\n#RUN mkdir /var/log/workspace \\\n#    && chown -R shakeweb:shakeweb /var/log/workspace\n\n\n# Set default work directory\nWORKDIR /var/www\n\nENTRYPOINT [ \"/opt/entrypoint.sh\" ]\n"
+}

@@ -1,0 +1,62 @@
+{
+  "startTime": 1674254041047,
+  "endTime": 1674254041870,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 64,
+        "lineEnd": 64,
+        "columnStart": 4,
+        "columnEnd": 221
+      }
+    },
+    {
+      "rule": "sha256sumEchoOneSpaces",
+      "position": {
+        "lineStart": 73,
+        "lineEnd": 73,
+        "columnStart": 22,
+        "columnEnd": 171
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 21,
+        "lineEnd": 21,
+        "columnStart": 4,
+        "columnEnd": 58
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 74,
+        "lineEnd": 74,
+        "columnStart": 20,
+        "columnEnd": 73
+      }
+    },
+    {
+      "rule": "gpgUseBatchFlag",
+      "position": {
+        "lineStart": 71,
+        "lineEnd": 71,
+        "columnStart": 21,
+        "columnEnd": 48
+      }
+    },
+    {
+      "rule": "gpgUseBatchFlag",
+      "position": {
+        "lineStart": 72,
+        "lineEnd": 72,
+        "columnStart": 21,
+        "columnEnd": 135
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "ARG BASE_REGISTRY=registry.access.redhat.com\nARG BASE_IMAGE=ubi8/ubi\nARG BASE_TAG=8.4\nFROM ${BASE_REGISTRY}/${BASE_IMAGE}:${BASE_TAG}\n\n### Required Atomic/OpenShift Labels - https://github.com/projectatomic/ContainerApplicationGenericLabels\nLABEL name=\"Solutions Delivery Platform: Jenkins Master\" \\\r\n      maintainer=\"terrana_steven@bah.com\" \\\r\n      vendor=\"Booz Allen Hamilton\" \\\r\n      version=\"2.289.2\" \\\r\n      release=\"2.289.2\" \\\r\n      summary=\"A Jenkins Master container\" \\\r\n      description=\"The Jenkins Master container image for the Solutions Delivery Platform\"\n\n\n### add licenses to this directory\nCOPY LICENSE /licenses\n\nRUN INSTALL_PKGS=\"java-1.8.0-openjdk git openssh\" && \\\r\n    yum -y update-minimal --setopt=tsflags=nodocs \\\r\n        --security && \\\n    yum -y install --setopt=tsflags=nodocs ${INSTALL_PKGS} && rm -rf /var/cache/yum\n\nARG user=jenkins\nARG group=jenkins\nARG uid=1000\nARG gid=1000\nARG http_port=8080\nARG agent_port=50000\nARG JENKINS_HOME=/var/jenkins_home\nARG REF=/usr/share/jenkins/ref\n\nENV JENKINS_HOME $JENKINS_HOME\nENV JENKINS_SLAVE_AGENT_PORT ${agent_port}\nENV REF $REF\n\n# Use tini as subreaper in Docker container to adopt zombie processes\nARG SDP_BUILD_DEPENDENCY_VERSION=dcar-2.1\nARG TINI_VERSION=v0.19.0\n\n# jenkins version being bundled in this docker image\nARG JENKINS_VERSION\nENV JENKINS_VERSION ${JENKINS_VERSION:-2.289.2}\n\n# Jenkins is run with user `jenkins`, uid = 1000\n# If you bind mount a volume from the host or a data container,\n# ensure you use the same uid\nRUN mkdir -p $JENKINS_HOME \\\r\n  && chown ${uid}:${gid} $JENKINS_HOME \\\r\n  && groupadd -g ${gid} ${group} \\\r\n  && useradd -d \"$JENKINS_HOME\" -u ${uid} -g ${gid} -m -s /bin/bash ${user}\n\n# Jenkins home directory is a volume, so configuration and build history\n# can be persisted and survive image upgrades\nVOLUME $JENKINS_HOME\n\n# $REF (defaults to `/usr/share/jenkins/ref/`) contains all reference configuration we want\n# to set on a fresh new installation. Use it to bundle additional plugins\n# or config file with your custom jenkins Docker image.\nRUN mkdir -p ${REF}/init.groovy.d\n\n## Fetch Dependency bundle and verify signature\n\nRUN mkdir /root/tmp\nRUN curl -f -sSLo /root/tmp/jenkins-dependencies-${JENKINS_VERSION}.tar.gz https://github.com/boozallen/sdp-images/releases/download/${SDP_BUILD_DEPENDENCY_VERSION}/jenkins-dependencies-${SDP_BUILD_DEPENDENCY_VERSION}.tar.gz\n#COPY prebuild/jenkins-dependencies-${SDP_BUILD_DEPENDENCY_VERSION}.tar.gz /root/tmp/jenkins-dependencies-$JENKINS_VERSION.tar.gz\n\nCOPY prebuild/BAH-public.key /root/tmp/.\nCOPY prebuild/jenkins-dependencies-${SDP_BUILD_DEPENDENCY_VERSION}.sig /root/tmp/.\nCOPY prebuild/jenkins-dependencies-${SDP_BUILD_DEPENDENCY_VERSION}.sha256 /root/tmp/.\n\nRUN cd /root/tmp/ && gpg --batch --import BAH-public.key && \\\n    cd /root/tmp/ && gpg --batch --verify jenkins-dependencies-${SDP_BUILD_DEPENDENCY_VERSION}.sig jenkins-dependencies-$JENKINS_VERSION.tar.gz && \\\n    cd /root/tmp/ && echo \"$(cat jenkins-dependencies-${SDP_BUILD_DEPENDENCY_VERSION}.sha256)  jenkins-dependencies-${JENKINS_VERSION}.tar.gz\" | sha256sum --check --status && \\\n    cd /root/tmp && tar -xzf jenkins-dependencies-$JENKINS_VERSION.tar.gz && rm jenkins-dependencies-$JENKINS_VERSION.tar.gz\n\n## Install Tini\nRUN  cp /root/tmp/dependencies/tini/tini-$TINI_VERSION /sbin/tini \\\r\n  && chmod +x /sbin/tini\n\n## Install Jenkins war\nRUN cp /root/tmp/dependencies/jenkins/jenkins-war-$JENKINS_VERSION.war /usr/share/jenkins/jenkins.war\n\n## Place plugins in temp directory\nRUN mkdir /tmp/plugins && cp /root/tmp/dependencies/plugins/* /tmp/plugins && chown -R ${uid}:${gid} /tmp/plugins && rm -rf /root/tmp/*\n\nENV JENKINS_UC https://updates.jenkins.io\nENV JENKINS_UC_EXPERIMENTAL=https://updates.jenkins.io/experimental\nENV JENKINS_INCREMENTALS_REPO_MIRROR=https://repo.jenkins-ci.org/incrementals\nENV COPY_REFERENCE_FILE_LOG $JENKINS_HOME/copy_reference_file.log\n\nRUN chown -R ${user} \"$JENKINS_HOME\" \"$REF\"\n\n# for main web interface:\nEXPOSE ${http_port}\n\n# will be used by attached slave agents:\nEXPOSE ${agent_port}\n\nCOPY resources/jenkins-support /usr/local/bin/jenkins-support\nCOPY resources/scripts/jenkins.sh /usr/local/bin/jenkins.sh\nCOPY resources/scripts/tini-shim.sh /bin/tini\nRUN chmod +x /usr/local/bin/jenkins-support /usr/local/bin/jenkins.sh /bin/tini && \\\r\n    chown ${user} /usr/local/bin/jenkins-support /usr/local/bin/jenkins.sh /bin/tini\n\nUSER ${user}\nHEALTHCHECK --interval=30s --timeout=30s --start-period=10s --retries=3 CMD pgrep -f \"jenkins\"\nENTRYPOINT [\"/sbin/tini\", \"--\", \"/usr/local/bin/jenkins.sh\"]\n"
+}

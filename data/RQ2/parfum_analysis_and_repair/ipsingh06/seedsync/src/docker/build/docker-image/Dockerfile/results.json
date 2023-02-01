@@ -1,0 +1,44 @@
+{
+  "startTime": 1674252898179,
+  "endTime": 1674252899207,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 28,
+        "lineEnd": 28,
+        "columnStart": 4,
+        "columnEnd": 62
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 31,
+        "lineEnd": 31,
+        "columnStart": 4,
+        "columnEnd": 23
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 10,
+        "lineEnd": 21,
+        "columnStart": 4,
+        "columnEnd": 42
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 10,
+        "lineEnd": 21,
+        "columnStart": 4,
+        "columnEnd": 42
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "ARG STAGING_REGISTRY=localhost:5000\nARG STAGING_VERSION=latest\n\n# Creates environment to run Seedsync python code\n# Installs all python dependencies\nFROM python:3.8-slim as seedsync_run_python_env\n\n# Install dependencies\nRUN sed -i -e's/ main/ main contrib non-free/g' /etc/apt/sources.list && \\\n    apt-get update && \\\n    apt-get install --no-install-recommends -y \\\n        gcc \\\n        libssl-dev \\\n        lftp \\\n        openssh-client \\\n        p7zip \\\n        p7zip-full \\\n        p7zip-rar \\\n        bzip2 \\\n        curl \\\n        libnss-wrapper \\\n        libxml2-dev libxslt-dev libffi-dev \\\n    && apt-get clean && rm -rf /var/lib/apt/lists/*;\n# Fix for patoolib\n# See: https://github.com/wummel/patool/issues/90\nRUN ln -s /usr/lib/p7zip/Codecs/Rar.so /usr/lib/p7zip/Codecs/Rar29.so\n\n# Install Poetry\nRUN curl -f -s https://bootstrap.pypa.io/get-pip.py -o get-pip.py && \\\n    python get-pip.py --force-reinstall && \\\n    rm get-pip.py\nRUN pip3 install --no-cache-dir poetry\nRUN poetry config virtualenvs.create false\n\nENV LC_ALL=C.UTF-8\nENV LANG=C.UTF-8\n\n# Install Python dependencies\nRUN mkdir -p /app\nCOPY src/python/pyproject.toml /app/python/\nCOPY src/python/poetry.lock /app/python/\nRUN cd /app/python && poetry install --no-dev\n\n\n# Creates environment for Python dev\nFROM seedsync_run_python_env as seedsync_run_python_devenv\nRUN cd /app/python && poetry install\n\n\n# Installs Seedsync python code\nFROM seedsync_run_python_env as seedsync_run_python\nRUN mkdir -p /app\nCOPY src/python /app/python\n\n\n# Full Seedsync docker image\nFROM ${STAGING_REGISTRY}/seedsync/build/angular/export:${STAGING_VERSION} as seedsync_build_angular_export\nFROM ${STAGING_REGISTRY}/seedsync/build/scanfs/export:${STAGING_VERSION} as seedsync_build_scanfs_export\nFROM seedsync_run_python as seedsync_run\nCOPY --from=seedsync_build_angular_export /html /app/html\nCOPY --from=seedsync_build_scanfs_export /scanfs /app/scanfs\nCOPY src/docker/build/docker-image/setup_default_config.sh /scripts/\n\n# Disable the known hosts prompt\nRUN mkdir -p /root/.ssh && echo \"StrictHostKeyChecking no\\nUserKnownHostsFile /dev/null\" > /root/.ssh/config\n\n# SSH as any user fix\n# https://stackoverflow.com/a/57531352\nCOPY src/docker/build/docker-image/run_as_user /usr/local/bin/\nRUN chmod a+x /usr/local/bin/run_as_user\nCOPY src/docker/build/docker-image/ssh /usr/local/sbin\nRUN chmod a+x /usr/local/sbin/ssh\nCOPY src/docker/build/docker-image/scp /usr/local/sbin\nRUN chmod a+x /usr/local/sbin/scp\n\n\n# Create non-root user and directories under that user\nRUN groupadd -g 1000 seedsync && \\\n    useradd -r -u 1000 -g seedsync seedsync\nRUN mkdir /config && \\\n    mkdir /downloads && \\\n    chown seedsync:seedsync /config && \\\n    chown seedsync:seedsync /downloads\n\n# Switch to non-root user\nUSER seedsync\n\n# First time config setup and replacement\nRUN /scripts/setup_default_config.sh\n\n# Must run app inside shell\n# Otherwise the container crashes as soon as a child process exits\nCMD [ \\\n    \"python\", \\\n    \"/app/python/seedsync.py\", \\\n    \"-c\", \"/config\", \\\n    \"--html\", \"/app/html\", \\\n    \"--scanfs\", \"/app/scanfs\" \\\n]\n\nEXPOSE 8800\n"
+}

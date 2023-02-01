@@ -1,0 +1,1 @@
+FROM boinc/server_mysql:4.1.0-b2d@sha256:6c3dd99488ae86f30cf50482c7506631111e4e673b4ac9f3b3e84ce3fc5baaae

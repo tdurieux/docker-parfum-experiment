@@ -1,0 +1,35 @@
+{
+  "startTime": 1674244273983,
+  "endTime": 1674244274064,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 19,
+        "lineEnd": 19,
+        "columnStart": 4,
+        "columnEnd": 120
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 24,
+        "lineEnd": 24,
+        "columnStart": 4,
+        "columnEnd": 111
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 32,
+        "lineEnd": 32,
+        "columnStart": 4,
+        "columnEnd": 58
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# 1.1 integration-test deps\n# Depends on pybuild because integration tests run Django shell to fiddle\n# with database.\nFROM python:3.7.2-slim-stretch AS deps\n\n# Install Firefox deps (and curl, xvfb, vnc). Debian Stretch has Firefox v52,\n# which is way too old; but we'll install 52's dependencies and hope they\n# satisfy Firefox v63\nRUN apt-get update \\\n    && bash -c 'apt-get install -y --no-install-recommends $(apt-cache depends firefox-esr | awk \"/Depends:/{print\\$2}\")' \\\n    && apt-get install --no-install-recommends -y \\\n        curl \\\n        xauth \\\n        xvfb \\\n        tigervnc-standalone-server \\\n        bzip2 \\\n    && rm -rf /var/lib/apt/lists/*\n\n# Install Firefox. It's a separate step so it's easier to resume docker build.\nRUN curl -f -L https://download-installer.cdn.mozilla.net/pub/firefox/releases/67.0/linux-x86_64/en-US/firefox-67.0.tar.bz2 \\\n        | tar jx -C /opt \\\n        && ln -s /opt/firefox/firefox /usr/bin/firefox\n\n# Install geckodriver. It's a separate step so it's easier to resume docker build.\nRUN curl -f -L https://github.com/mozilla/geckodriver/releases/download/v0.24.0/geckodriver-v0.24.0-linux64.tar.gz \\\n        | tar zx -C /usr/bin/ \\\n        && chmod +x /usr/bin/geckodriver\n\n# Install the Python deps we use for integration tests.\n#\n# Integration tests don't rely on the Django stack, and that makes this\n# Dockerfile compile faster and cache better.\nRUN pip install --no-cache-dir psycopg2-binary capybara-py selenium minio\n\nWORKDIR /app\n\n\nFROM deps AS dev\n# We're a VNC server\nEXPOSE 5901\n# The developer can edit tests and re-run them quickly\n# /app/integrationtests is a volume in dev, a COPY in cloudbuild\nVOLUME /app/integrationtests\nCMD [ \"sh\", \"-c\", \"xvfb-run -a -s '-screen 0 1200x768x24' python -m unittest discover -v integrationtests -f\" ]\n\nFROM deps AS cloudbuild\n# /app/integrationtests is a volume in dev, a COPY in cloudbuild\nCOPY integrationtests/ /app/integrationtests/\nCMD [ \"sh\", \"-c\", \"until curl --output /dev/null http://frontend:8080 --silent --head --fail; do sleep 1; done; xvfb-run -a -s '-screen 0 1200x768x24' python -m unittest discover -v integrationtests -f\" ]\n"
+}

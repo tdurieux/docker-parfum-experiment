@@ -1,0 +1,60 @@
+FROM ubuntu:18.04 as base
+
+COPY ascend /root/ascend
+
+WORKDIR /root
+
+RUN ln -snf /usr/share/zoneinfo/Asia/Shanghai /etc/localtime && echo "Asia/Shanghai" > /etc/timezone && \
+    apt update && \
+    apt install --no-install-recommends -y python3.7-dev python3-pip curl pciutils && \
+    apt clean all && \
+    ln -sf python3.7 /usr/bin/python3 && \
+    rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
+
+RUN mkdir -p /root/.pip && \
+    echo "[global]" > /root/.pip/pip.conf && \
+    echo "index-url = https://pypi.mirrors.ustc.edu.cn/simple" >>/root/.pip/pip.conf && \
+    echo "trusted-host = pypi.mirrors.ustc.edu.cn" >>/root/.pip/pip.conf && \
+    echo "timeout = 120" >>/root/.pip/pip.conf && \
+    python3 -m pip install --upgrade pip && \
+    ls -lh ascend/ && groupadd HwHiAiUser && \
+    useradd -g HwHiAiUser -d /home/HwHiAiUser -m HwHiAiUser
+
+
+FROM base as dev
+
+ARG cann_ver="5.0.4"
+ARG driver_ver="21.0.4"
+
+RUN if [ "$(arch)" = "aarch64" ];then driver_tag=3000;else driver_tag=3010; fi && \
+    bash ascend/A300-${driver_tag}-npu-driver_${driver_ver}_linux-$(arch).run --quiet --docker && \
+    cp -af /usr/local/Ascend/driver/lib64 /root/ && \
+    bash ascend/A300-${driver_tag}-npu-driver_${driver_ver}_linux-$(arch).run --quiet --devel && \
+    cp -af /root/lib64 /usr/local/Ascend/driver/ && \
+    rm -rf /root/lib64 /usr/local/Ascend/develop && \
+    bash ascend/Ascend-cann-toolkit_${cann_ver}_linux-$(arch).run --quiet --full && \
+    ls -lh /usr/local/Ascend/*
+
+
+FROM base as run
+
+ARG cann_ver="5.0.4"
+ARG driver_ver="21.0.4"
+
+RUN if [ "$(arch)" = "aarch64" ];then driver_tag=3000;else driver_tag=3010; fi && \
+    bash ascend/A300-${driver_tag}-npu-driver_${driver_ver}_linux-$(arch).run --quiet --docker && \
+    bash ascend/Ascend-cann-nnae_${cann_ver}_linux-$(arch).run --quiet --install && \
+    ls -lh /usr/local/Ascend/*
+
+
+FROM ubuntu:18.04
+
+RUN ln -snf /usr/share/zoneinfo/Asia/Shanghai /etc/localtime && echo "Asia/Shanghai" > /etc/timezone && \
+    groupadd HwHiAiUser && \
+    useradd -g HwHiAiUser -d /home/HwHiAiUser -m HwHiAiUser
+
+COPY --from=dev /usr/local/Ascend /usr/local/Ascend_dev
+COPY --from=run /usr/local/Ascend /usr/local/Ascend_run
+
+RUN ls -lh /usr/local/Ascend_dev/* && \
+    ls -lh /usr/local/Ascend_run/*

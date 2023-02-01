@@ -1,0 +1,66 @@
+FROM alpine:3.12
+
+LABEL org.opencontainers.image.source https://github.com/clearmatics/zeth
+
+####
+# This Dockerfile builds the base image
+# (installs all the dependencies) for Zeth
+####
+
+# Install necessary packages
+RUN apk --update --no-cache add \
+        build-base \
+        git \
+        boost-dev \
+        # Necessary for static builds
+        boost-static \
+        gmp-dev \
+        procps-dev \
+        g++ \
+        gcc \
+        libxslt-dev \
+        cmake \
+        libressl-dev \
+        pkgconfig \
+        sudo \
+        # Necessary for gRPC
+        automake \
+        autoconf \
+        libtool \
+        # Debug tools
+        vim \
+        curl
+
+RUN git clone -b v1.31.x https://github.com/grpc/grpc /var/local/git/grpc
+RUN cd /var/local/git/grpc && git submodule update --init --recursive
+
+# Build protobuf independently and install libraries in /usr/lib
+# Then use flag `-DgRPC_PROTOBUF_PROVIDER=package` in gRPC build
+RUN cd /var/local/git/grpc/third_party/protobuf \
+    && ./autogen.sh \
+    && ./configure --build="$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)" --prefix=/usr \
+    && make -j"$($(nproc)+1)" \
+    && make check \
+    && make install \
+    && make clean
+
+ENV CMAKE_FLAGS="-DCMAKE_BUILD_TYPE=Release -DgRPC_INSTALL=ON -DgRPC_BUILD_TESTS=OFF -DgRPC_SSL_PROVIDER=package -DgRPC_PROTOBUF_PROVIDER=package -DgRPC_BUILD_GRPC_CSHARP_PLUGIN=OFF -DgRPC_BUILD_GRPC_NODE_PLUGIN=OFF -DgRPC_BUILD_GRPC_OBJECTIVE_C_PLUGIN=OFF -DgRPC_BUILD_GRPC_PHP_PLUGIN=OFF -DgRPC_BUILD_GRPC_RUBY_PLUGIN=OFF"
+
+# Build the static libraries
+RUN cd /var/local/git/grpc \
+    && mkdir -p cmake/build \
+    && cd cmake/build \
+    && cmake ${CMAKE_FLAGS} ../.. \
+    && make -j"$($(nproc)+1)" \
+    && make install
+
+# Build the shared libraries
+RUN cd /var/local/git/grpc \
+    && rm -r cmake/build \
+    && mkdir -p cmake/build \
+    && cd cmake/build \
+    && cmake ${CMAKE_FLAGS} -DBUILD_SHARED_LIBS=ON ../.. \
+    && make -j"$($(nproc)+1)" \
+    && make install
+
+CMD ["/bin/bash"]

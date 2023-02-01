@@ -1,0 +1,23 @@
+FROM node:lts-alpine
+
+WORKDIR /app
+
+RUN chmod -R 755 /app && \
+  chown -R node:node  /app
+
+RUN apk add --no-cache bash
+
+USER node
+
+COPY --chown=node:node ./package*.json ./
+COPY --chown=node:node ./yarn.lock ./
+RUN yarn install && yarn cache clean;
+
+COPY --chown=node:node . .
+RUN yarn build
+
+RUN pwd
+RUN ls
+RUN ls dist
+
+CMD [ "node", "dist/main.js" ]

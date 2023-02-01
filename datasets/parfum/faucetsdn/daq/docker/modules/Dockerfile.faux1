@@ -1,0 +1,90 @@
+# Image name: daqf/faux1
+#
+# Faux device for framework development/testing.
+#
+
+FROM daqf/aardvark:latest as java_build
+
+# Run this separately so it can be shared with other builds.
+RUN $AG update && $AG install openjdk-11-jre
+
+RUN $AG update && $AG install openjdk-11-jdk git
+
+ENV BACHASH=3d4df538935eb461331c156e9e14d2df276e8cea
+
+RUN bin/retry_cmd git clone https://github.com/grafnu/bacnet4j.git --single-branch \
+  && cd bacnet4j && git reset --hard $BACHASH && ../bin/retry_cmd ./gradlew shadow
+
+COPY udmi/pubber/ pubber/
+COPY udmi/gencode/ gencode/
+RUN pubber/bin/build
+
+# Seperate stage to build older version of SSH and SSL
+FROM daqf/aardvark:latest as ssh_build
+
+RUN $AG update && $AG install wget make build-essential gcc libz-dev ca-certificates
+
+# Build SSH, OpenSSL from source and configure
+
+COPY docker/include/security/sshfaux/*.sh ./
+RUN sh ssh_build.sh
+    
+FROM daqf/aardvark:latest
+
+# Run this separately so it can be shared with other builds.
+RUN $AG update && $AG install openjdk-11-jre
+RUN $AG update && $AG install openjdk-11-jdk git
+RUN $AG update && $AG install isc-dhcp-client ethtool network-manager netcat-openbsd curl\
+    python ifupdown openssl nano apache2-utils ntpdate vzctl
+
+# Additional OS dependencies
+RUN $AG update && $AG install -y telnetd && $AG install xinetd nginx
+
+COPY docker/include/network/NTPClient NTPClient
+RUN cd NTPClient && ./gradlew build
+COPY docker/include/network/TransportClient TransportClient
+
+# Prefetch resolvconf to dynamically install at runtime in start_faux.
+RUN $AG update && cd /tmp && ln -s ~/bin bin && $AG download resolvconf && mv resolvconf_*.deb ~
+
+COPY docker/include/bin/start_faux docker/include/bin/failing bin/
+
+COPY --from=java_build /root/bacnet4j/build/libs/*.jar bacnet4j/
+COPY docker/include/bin/bacnet_discover bin/
+
+COPY --from=java_build /root/pubber/build/libs/*.jar pubber/build/libs/
+COPY udmi/pubber/bin/run pubber/bin/
+
+COPY docker/include/pentests/brute_server.py pentests/
+COPY docker/include/security/tlsfaux tlsfaux/
+
+COPY docker/include/bacnet/bacnetFaux/ bacnetFaux
+COPY docker/include/bacnet/bacnetFaux/src/main/resources/Faux*.json tmp/
+COPY --from=java_build /root/bacnet4j/build/libs/*.jar bacnetFaux/libs/
+RUN cd bacnetFaux && ./gradlew build
+
+# HTTP/HTTPS dependency
+COPY docker/include/security/nginxpass.conf /root/nginx/
+COPY docker/include/security/nginxfail.conf /root/nginx/
+COPY docker/include/security/nginx-site /var/www/nginx-site
+
+COPY --from=ssh_build /usr/local/openssl/* /usr/local/openssl/
+COPY --from=ssh_build /usr/local/sbin/* /usr/local/sbin/
+COPY --from=ssh_build /usr/local/bin/* /usr/local/bin/
+COPY --from=ssh_build /usr/local/etc/* /usr/local/etc/
+
+COPY docker/include/security/sshfaux/ssh_privsep.sh ssh_privsep.sh
+RUN sh ssh_privsep.sh
+RUN /usr/local/bin/ssh-keygen -A
+
+# Weird workaround for problem running tcdump in a privlidged container.
+RUN mv /usr/sbin/tcpdump /usr/bin/tcpdump
+
+# wpa_suplicant for dot1x
+
+RUN $AG update && $AG install wpasupplicant vim iproute2
+
+COPY docker/include/etc/wpasupplicant/ /etc/wpasupplicant/
+COPY resources/802.1x/ /etc/wpasupplicant/
+
+ENTRYPOINT ["bin/start_faux"]

@@ -1,0 +1,32 @@
+FROM ubuntu:18.04
+LABEL maintainer="Adrien Béraud <adrien.beraud@savoirfairelinux.com>"
+LABEL org.opencontainers.image.source https://github.com/savoirfairelinux/opendht
+
+RUN echo "APT::Acquire::Retries \"3\";" > /etc/apt/apt.conf.d/80-retries
+RUN apt-get update && apt-get install --no-install-recommends -y \
+        apt-transport-https build-essential pkg-config git wget libncurses5-dev libreadline-dev nettle-dev \
+        libgnutls28-dev libuv1-dev cython3 python3-dev python3-setuptools libcppunit-dev libjsoncpp-dev \
+        libargon2-0-dev \
+        autotools-dev autoconf libfmt-dev libhttp-parser-dev libmsgpack-dev libssl-dev python3-pip \
+    && apt-get clean && rm -rf /var/lib/apt/lists/* /var/cache/apt/*
+
+RUN pip3 install --no-cache-dir --upgrade cmake
+
+# libasio-dev (1.10) is too old
+RUN echo "** Building a recent version of asio ***" \
+    && wget https://github.com/aberaud/asio/archive/a7d66ef4017d8f1b7f2cef1bb4ba8e23b0961571.tar.gz \
+    && tar -xvf a7d66ef4017d8f1b7f2cef1bb4ba8e23b0961571.tar.gz && cd asio-a7d66ef4017d8f1b7f2cef1bb4ba8e23b0961571/asio \
+    && ./autogen.sh && ./configure --build="$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)" --prefix=/usr --without-boost --disable-examples --disable-tests \
+    && make install \
+    && cd ../../ && rm -rf asio* && rm a7d66ef4017d8f1b7f2cef1bb4ba8e23b0961571.tar.gz
+
+RUN echo "*** Downloading RESTinio ***" \
+    && mkdir restinio && cd restinio \
+    && wget https://github.com/aberaud/restinio/archive/8d5d3e8237e0947adb9ba1ffc8281f4ad7cb2a59.tar.gz \
+    && ls -l && tar -xzf 8d5d3e8237e0947adb9ba1ffc8281f4ad7cb2a59.tar.gz \
+    && cd restinio-8d5d3e8237e0947adb9ba1ffc8281f4ad7cb2a59/dev \
+    && cmake -DCMAKE_INSTALL_PREFIX=/usr -DRESTINIO_TEST=OFF -DRESTINIO_SAMPLE=OFF \
+             -DRESTINIO_INSTALL_SAMPLES=OFF -DRESTINIO_BENCH=OFF -DRESTINIO_INSTALL_BENCHES=OFF \
+             -DRESTINIO_FIND_DEPS=ON -DRESTINIO_ALLOW_SOBJECTIZER=Off -DRESTINIO_USE_BOOST_ASIO=none . \
+    && make -j8 && make install \
+    && cd ../../ && rm -rf restinio* && rm 8d5d3e8237e0947adb9ba1ffc8281f4ad7cb2a59.tar.gz

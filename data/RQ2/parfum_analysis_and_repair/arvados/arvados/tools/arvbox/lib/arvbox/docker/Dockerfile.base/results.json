@@ -1,0 +1,53 @@
+{
+  "startTime": 1674249774962,
+  "endTime": 1674249776286,
+  "originalSmells": [
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 28,
+        "lineEnd": 28,
+        "columnStart": 4,
+        "columnEnd": 46
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 56,
+        "lineEnd": 56,
+        "columnStart": 4,
+        "columnEnd": 46
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 19,
+        "lineEnd": 20,
+        "columnStart": 4,
+        "columnEnd": 57
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 48,
+        "lineEnd": 49,
+        "columnStart": 4,
+        "columnEnd": 57
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 83,
+        "lineEnd": 84,
+        "columnStart": 4,
+        "columnEnd": 93
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Copyright (C) The Arvados Authors. All rights reserved.\n#\n# SPDX-License-Identifier: AGPL-3.0\n\nARG BUILDTYPE\n\n# We're using poor man's conditionals (see\n# https://www.docker.com/blog/advanced-dockerfiles-faster-builds-and-smaller-images-using-buildkit-and-multistage-builds/)\n# here to dtrt in the dev/test scenario and the demo scenario. In the dev/test\n# scenario, we use the docker context (i.e. the copy of Arvados checked out on\n# the host) to build arvados-server. In the demo scenario, we check out a new\n# tree, and use the $arvados_version commit (passed in via an argument).\n\n###########################################################################################################\nFROM debian:10-slim as dev\nENV DEBIAN_FRONTEND noninteractive\n\nRUN apt-get update && \\\n    apt-get -yq --no-install-recommends -o Acquire::Retries=6 install \\\n    build-essential ca-certificates git libpam0g-dev wget && rm -rf /var/lib/apt/lists/*;\n\nENV GOPATH /var/lib/gopath\nARG go_version\n\n# Get Go\nRUN cd /usr/src && \\\n    wget https://golang.org/dl/go${go_version}.linux-amd64.tar.gz && \\\n    tar xzf go${go_version}.linux-amd64.tar.gz && \\\n    ln -s /usr/src/go/bin/go /usr/local/bin/go-${go_version} && \\\n    ln -s /usr/src/go/bin/gofmt /usr/local/bin/gofmt-${go_version} && \\\n    ln -s /usr/local/bin/go-${go_version} /usr/local/bin/go && \\\n    ln -s /usr/local/bin/gofmt-${go_version} /usr/local/bin/gofmt && rm go${go_version}.linux-amd64.tar.gz\n\n# the --mount option requires the experimental syntax enabled (enables\n# buildkit) on the first line of this file. This Dockerfile must also be built\n# with the DOCKER_BUILDKIT=1 environment variable set.\nRUN --mount=type=bind,target=/usr/src/arvados \\\n    cd /usr/src/arvados && \\\n    go mod download && \\\n    cd cmd/arvados-server && \\\n    go install\n\n###########################################################################################################\nFROM debian:10-slim as demo\nENV DEBIAN_FRONTEND noninteractive\n\nRUN apt-get update && \\\n    apt-get -yq --no-install-recommends -o Acquire::Retries=6 install \\\n    build-essential ca-certificates git libpam0g-dev wget && rm -rf /var/lib/apt/lists/*;\n\nENV GOPATH /var/lib/gopath\nARG go_version\n\nRUN cd /usr/src && \\\n    wget https://golang.org/dl/go${go_version}.linux-amd64.tar.gz && \\\n    tar xzf go${go_version}.linux-amd64.tar.gz && \\\n    ln -s /usr/src/go/bin/go /usr/local/bin/go-${go_version} && \\\n    ln -s /usr/src/go/bin/gofmt /usr/local/bin/gofmt-${go_version} && \\\n    ln -s /usr/local/bin/go-${go_version} /usr/local/bin/go && \\\n    ln -s /usr/local/bin/gofmt-${go_version} /usr/local/bin/gofmt && rm go${go_version}.linux-amd64.tar.gz\n\nARG arvados_version\nRUN echo arvados_version is git commit $arvados_version\n\nRUN cd /usr/src && \\\n    git clone --no-checkout https://git.arvados.org/arvados.git && \\\n    git -C arvados checkout ${arvados_version} && \\\n    cd /usr/src/arvados && \\\n    go mod download && \\\n    cd cmd/arvados-server && \\\n    go install\n\n###########################################################################################################\nFROM ${BUILDTYPE} as base\n\n###########################################################################################################\nFROM debian:10\nENV DEBIAN_FRONTEND noninteractive\n\n# The arvbox-specific dependencies are\n#  gnupg2 runit python3-pip python3-setuptools python3-yaml shellinabox netcat less\nRUN apt-get update && \\\n    apt-get -yq --no-install-recommends -o Acquire::Retries=6 install \\\n    gnupg2 runit python3-pip python3-setuptools python3-yaml shellinabox netcat less vim-tiny && \\\n    apt-get clean && rm -rf /var/lib/apt/lists/*;\n\nENV GOPATH /var/lib/gopath\nRUN echo buildtype is $BUILDTYPE\n\nRUN mkdir -p $GOPATH/bin/\nCOPY --from=base $GOPATH/bin/arvados-server $GOPATH/bin/arvados-server\nRUN $GOPATH/bin/arvados-server --version\nRUN $GOPATH/bin/arvados-server install -type test\n\nRUN /etc/init.d/postgresql start && \\\n    su postgres -c 'dropuser arvados' && \\\n    su postgres -c 'createuser -s arvbox' && \\\n    /etc/init.d/postgresql stop\n\nVOLUME /var/lib/docker\nVOLUME /var/log/nginx\nVOLUME /etc/ssl/private\n\nARG workdir\n\nADD $workdir/8D81803C0EBFCD88.asc /tmp/\nRUN apt-key add --no-tty /tmp/8D81803C0EBFCD88.asc && \\\n    rm -f /tmp/8D81803C0EBFCD88.asc\n\n# docker is now installed by arvados-server install\n# RUN mkdir -p /etc/apt/sources.list.d && \\\n#     echo deb https://download.docker.com/linux/debian/ buster stable > /etc/apt/sources.list.d/docker.list && \\\n#     apt-get update && \\\n#     apt-get -yq --no-install-recommends install docker-ce=5:20.10.6~3-0~debian-buster && \\\n#     apt-get clean\n\n# Set UTF-8 locale\nRUN echo en_US.UTF-8 UTF-8 > /etc/locale.gen && locale-gen\nENV LANG en_US.UTF-8\nENV LANGUAGE en_US:en\nENV LC_ALL en_US.UTF-8\n\nARG arvados_version\nRUN echo arvados_version is git commit $arvados_version\n\nCOPY $workdir/fuse.conf /etc/\n\nCOPY $workdir/gitolite.rc \\\n    $workdir/keep-setup.sh $workdir/common.sh $workdir/createusers.sh \\\n    $workdir/logger $workdir/runsu.sh $workdir/waitforpostgres.sh \\\n    $workdir/yml_override.py $workdir/api-setup.sh \\\n    $workdir/go-setup.sh $workdir/devenv.sh $workdir/cluster-config.sh $workdir/edit_users.py \\\n    /usr/local/lib/arvbox/\n\nCOPY $workdir/runit /etc/runit\n\n# arvbox mounts a docker volume at $ARVADOS_CONTAINER_PATH, make sure that that\n# doesn't overlap with the directory where `arvados-server install -type test`\n# put everything (/var/lib/arvados)\nENV ARVADOS_CONTAINER_PATH /var/lib/arvados-arvbox\n\nRUN /bin/ln -s /var/lib/arvados/bin/ruby /usr/local/bin/\n\n# Start the supervisor.\nENV SVDIR /etc/service\nSTOPSIGNAL SIGINT\nCMD [\"/etc/runit/2\"]\n"
+}

@@ -1,0 +1,37 @@
+### This Dockerfile not used yet @iutx
+
+# syntax = docker/dockerfile:1.2
+FROM registry.erda.cloud/erda/golang-base:210416 as build
+
+RUN mkdir -p "$GOPATH/src/github.com/erda-project/erda/"
+COPY . "$GOPATH/src/github.com/erda-project/erda/"
+WORKDIR "$GOPATH/src/github.com/erda-project/erda/"
+
+ARG CONFIG_PATH
+ARG MODULE_PATH
+ARG DOCKER_IMAGE
+ARG MAKE_BUILD_CMD
+RUN --mount=type=cache,target=/root/.cache/go-build\
+    --mount=type=cache,target=/go/pkg/mod \
+    make ${MAKE_BUILD_CMD} MODULE_PATH=${MODULE_PATH} DOCKER_IMAGE=${DOCKER_IMAGE} \
+    && ln -s $GOPATH/src/github.com/erda-project/erda /tmp/erda
+
+FROM alpine:3.12
+
+WORKDIR /app
+
+ARG APP_NAME
+ARG CONFIG_PATH
+ENV APP_NAME=${APP_NAME}
+
+RUN echo "http://mirrors.aliyun.com/alpine/v3.9/main/" > /etc/apk/repositories \
+    && echo "http://mirrors.aliyun.com/alpine/v3.9/community/" >> /etc/apk/repositories \
+    && apk add --no-cache jq \
+    && apk add --no-cache util-linux
+
+COPY --from=build "/tmp/erda/bin/${APP_NAME}" "/app/${APP_NAME}"
+COPY --from=build "/tmp/erda/conf/${CONFIG_PATH}" "/app/conf/${CONFIG_PATH}"
+COPY --from=build "/tmp/erda/pkg/erda-configs" "/app/erda-configs"
+
+CMD ["sh", "-c", "/app/${APP_NAME}"]
+

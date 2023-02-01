@@ -1,0 +1,1 @@
+# Purpose : oraclelinux:8-slim + dnf

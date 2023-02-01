@@ -1,0 +1,1 @@
+# Go version is also in .github/workflows/CI&CD.yml.

@@ -1,0 +1,46 @@
+# The recommended base image for templates.
+
+FROM ubuntu:21.10
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install required dependencies
+RUN apt update && \
+    apt upgrade -y && \
+    DEBIAN_FRONTEND=noninteractive apt --no-install-recommends install -yq make gcc g++ curl wget dumb-init python vim git cmake pkg-config libssl-dev git gcc build-essential git clang libclang-dev xsel htop nodejs jq unzip binaryen npm jupyter-notebook && \
+    apt clean && rm -rf /var/lib/apt/lists/*;
+
+# Install rust as required by substrate env
+# Pick up the version from https://rust-lang.github.io/rustup-components-history/index.html (rls is required)
+ARG RUST_VERSION=nightly-2022-06-12
+ARG USER=playground
+ARG HOME=/home/$USER
+ARG WORKSPACE=$HOME/workspace
+
+# Setup main user
+RUN adduser --quiet --disabled-password --shell /bin/bash --home $HOME --gecos '' $USER && \
+    echo "$USER:password" | chpasswd
+
+RUN chmod g+rw /home && \
+    mkdir -p $WORKSPACE && \
+    chown -R $USER:$USER $HOME;
+
+USER $USER
+
+ENV HOME=$HOME \
+    USER=$USER \
+    WORKSPACE=$WORKSPACE \
+    LANG=en_US.UTF-8 \
+    CARGO_HOME=$HOME/.cargo \
+    PATH=$HOME/.cargo/bin:$PATH \
+    SHELL=/bin/bash
+
+# Install rust toolchain
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain none \
+    && . $CARGO_HOME/env \
+    && rustup install $RUST_VERSION \
+    && rustup component add rls rust-analysis rust-src clippy rustfmt llvm-tools-preview \
+    && rustup target add wasm32-unknown-unknown --toolchain $RUST_VERSION
+
+RUN cargo install evcxr_jupyter \
+    && evcxr_jupyter --install

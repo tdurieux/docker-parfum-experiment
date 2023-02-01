@@ -1,0 +1,12 @@
+FROM node:16.10.0-slim
+
+RUN mkdir -p /usr/src/app && rm -rf /usr/src/app
+WORKDIR /usr/src/app
+
+ARG NODE_ENV
+ENV NODE_ENV $NODE_ENV
+COPY package.json /usr/src/app/
+RUN yarn --ignore-engines; yarn cache clean && yarn cache clean;
+COPY . /usr/src/app
+
+CMD [ "yarn", "start" ]

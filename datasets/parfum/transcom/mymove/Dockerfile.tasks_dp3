@@ -1,0 +1,18 @@
+# hadolint ignore=DL3007
+FROM gcr.io/distroless/base:latest
+
+# Demo Environment Certs
+COPY config/tls/api.demo.dp3.us.p7b /config/tls/api.demo.dp3.us.p7b
+
+# Loadtesting Environment Certs
+COPY config/tls/api.loadtest.dp3.us.chain.der.p7b /config/tls/api.loadtest.dp3.us.chain.der.p7b
+
+# Exp Environment Certs
+COPY config/tls/api.exp.dp3.us.chain.der.p7b /config/tls/api.exp.dp3.us.chain.der.p7b
+
+#AWS GovCloud RDS cert
+COPY bin/rds-ca-rsa4096-g1.pem /bin/rds-ca-rsa4096-g1.pem
+
+COPY bin/milmove-tasks /bin/milmove-tasks
+
+WORKDIR /bin

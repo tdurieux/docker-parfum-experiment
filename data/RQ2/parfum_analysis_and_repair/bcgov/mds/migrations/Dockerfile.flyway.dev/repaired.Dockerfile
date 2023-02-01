@@ -1,0 +1,10 @@
+FROM flyway/flyway:7.14-alpine
+
+USER root
+
+RUN apk add --no-cache gettext
+
+COPY sql/* /flyway/sql/
+COPY scripts/* /flyway/scripts/
+
+ENTRYPOINT /flyway/scripts/run_migrations.sh

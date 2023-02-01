@@ -1,0 +1,1 @@
+# Image: introlab3it/rtabmap:android24

@@ -1,0 +1,26 @@
+{
+  "startTime": 1674236999960,
+  "endTime": 1674237000083,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 36,
+        "lineEnd": 36,
+        "columnStart": 22,
+        "columnEnd": 56
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 36,
+        "lineEnd": 36,
+        "columnStart": 22,
+        "columnEnd": 56
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM golang:1.12-stretch\nMAINTAINER Sander Pick <sander@textile.io>\n\n# This is (in large part) copied (with love) from\n# https://hub.docker.com/r/ipfs/go-ipfs/dockerfile\n\n# Get source\nENV SRC_DIR /go-textile\n\n# Download packages first so they can be cached.\nCOPY go.mod go.sum $SRC_DIR/\nRUN cd $SRC_DIR \\\n\t&& go mod download\n\nCOPY . $SRC_DIR\n\n# build source\nRUN cd $SRC_DIR \\\n\t&& go get github.com/ahmetb/govvv \\\n\t&& make build\n\n# Get su-exec, a very minimal tool for dropping privileges,\n# and tini, a very minimal init daemon for containers\nENV SUEXEC_VERSION v0.2\nENV TINI_VERSION v0.16.1\nRUN set -x \\\n\t&& cd /tmp \\\n\t&& git clone https://github.com/ncopa/su-exec.git \\\n\t&& cd su-exec \\\n\t&& git checkout -q $SUEXEC_VERSION \\\n\t&& make \\\n\t&& cd /tmp \\\n\t&& wget -q -O tini https://github.com/krallin/tini/releases/download/$TINI_VERSION/tini \\\n\t&& chmod +x tini\n\n# Get the TLS CA certificates, they're not provided by busybox.\nRUN apt-get update && apt-get install --no-install-recommends -y ca-certificates && rm -rf /var/lib/apt/lists/*;\n\n# Now comes the actual target image, which aims to be as small as possible.\nFROM busybox:1-glibc\nMAINTAINER Sander Pick <sander@textile.io>\n\n# Get the ipfs binary, entrypoint script, and TLS CAs from the build container.\nENV SRC_DIR /go-textile\nCOPY --from=0 $SRC_DIR/dist/textile /usr/local/bin/textile\nCOPY --from=0 $SRC_DIR/bin/container_daemon /usr/local/bin/start_textile\nCOPY --from=0 /tmp/su-exec/su-exec /sbin/su-exec\nCOPY --from=0 /tmp/tini /sbin/tini\nCOPY --from=0 /etc/ssl/certs /etc/ssl/certs\n\n# This shared lib (part of glibc) doesn't seem to be included with busybox.\nCOPY --from=0 /lib/x86_64-linux-gnu/libdl-2.24.so /lib/libdl.so.2\n\n# Swarm TCP; should be exposed to the public\nEXPOSE 4001\n# Swarm Websockets; must be exposed publicly when the node is listening using the websocket transport (/ipX/.../tcp/8081/ws).\nEXPOSE 8081\n# Daemon API; must not be exposed publicly but to client services under you control\nEXPOSE 40600\n# Web Gateway;\nEXPOSE 5050\n# Profiling API;\nEXPOSE 6060\n\n# Create the fs-repo directory\nENV TEXTILE_PATH /data/textile\nRUN mkdir -p $TEXTILE_PATH \\\n\t&& adduser -D -h $TEXTILE_PATH -u 1000 -G users textile \\\n\t&& chown textile:users $TEXTILE_PATH\n\n# Switch to a non-privileged user\nUSER textile\n\n# Expose the fs-repo as a volume.\n# start_textile initializes an fs-repo if none is mounted.\n# Important this happens after the USER directive so permission are correct.\nVOLUME $TEXTILE_PATH\n\n# Init opts\nENV INIT_ARGS \\\n\t--repo=$TEXTILE_PATH \\\n\t--swarm-ports=4001,8081 \\\n\t--api-bind-addr=0.0.0.0:40600 \\\n\t--gateway-bind-addr=0.0.0.0:5050 \\\n\t--profile-bind-addr=0.0.0.0:6060 \\\n\t--debug\n\n# This just makes sure that:\n# 1. There's an fs-repo, and initializes one if there isn't.\n# 2. The API and Gateway are accessible from outside the container.\nENTRYPOINT [\"/sbin/tini\", \"--\", \"/usr/local/bin/start_textile\"]\n\n# Execute the daemon subcommand by default\nCMD [\"daemon\", \"--repo=/data/textile\", \"--debug\"]\n"
+}

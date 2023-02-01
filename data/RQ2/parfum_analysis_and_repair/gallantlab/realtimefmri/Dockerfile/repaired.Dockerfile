@@ -1,0 +1,42 @@
+FROM python:3.7-stretch
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && \
+    apt-get install --no-install-recommends -y wget gnupg libxml2 && \
+    wget -O- https://neuro.debian.net/lists/stretch.us-ca.full | tee /etc/apt/sources.list.d/neurodebian.sources.list && \
+    apt-key adv --recv-keys --no-tty --keyserver hkp://pool.sks-keyservers.net:80 0xA5D32F012649A5A9 && \
+    apt-get update && \
+    apt-get install --no-install-recommends -y afni dcm2niix && \
+    apt-get install --no-install-recommends -y inkscape && \
+    apt-get remove -y wget && \
+    rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
+
+RUN python3 -m pip install --upgrade pip
+RUN python3 -m pip install --upgrade pipenv setuptools
+
+WORKDIR /app/realtimefmri
+
+COPY Makefile /app/realtimefmri
+COPY Pipfile /app/realtimefmri
+COPY Pipfile.lock /app/realtimefmri
+
+ENV PIPENV_DONT_USE_PYENV 1
+ENV PIPENV_SYSTEM 1
+
+RUN make requirements
+
+# install master from pycortex github
+RUN pip3 install --no-cache-dir git+git://github.com/gallantlab/pycortex.git
+RUN mkdir -p /root/.config/pycortex
+RUN python3 -c "import cortex"
+COPY data/pycortex-options.cfg /root/.config/pycortex/options.cfg
+RUN pip3 install --no-cache-dir tornado==4.3
+
+ENV PATH="$PATH:/usr/lib/afni/bin"
+
+EXPOSE 8050
+
+COPY docker-entrypoint.sh /app/realtimefmri
+
+ENTRYPOINT ["/app/realtimefmri/docker-entrypoint.sh"]

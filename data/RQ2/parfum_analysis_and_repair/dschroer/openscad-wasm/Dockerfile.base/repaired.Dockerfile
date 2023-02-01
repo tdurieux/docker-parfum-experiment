@@ -1,0 +1,113 @@
+FROM emscripten/emsdk as boost
+COPY boost .
+RUN ./bootstrap.sh
+RUN ./b2 toolset=emscripten cxxflags="-std=c++11 -stdlib=libc++" linkflags="-stdlib=libc++" release --disable-icu --with-regex --with-filesystem --with-system --with-program_options install link=static runtime-link=static --prefix=/emsdk/upstream/emscripten/cache/sysroot
+
+
+FROM emscripten/emsdk as zlib
+COPY zlib .
+RUN emcmake cmake -B ../build . -DCMAKE_BUILD_TYPE=Release
+RUN cd ../build && make && make install
+
+
+FROM emscripten/emsdk as libzip
+COPY --from=zlib /emsdk/upstream/emscripten/cache/sysroot /emsdk/upstream/emscripten/cache/sysroot
+COPY libzip .
+RUN emcmake cmake -B ../build . -DCMAKE_BUILD_TYPE=Release
+RUN cd ../build && make && make install
+
+
+FROM emscripten/emsdk as glib
+COPY --from=zlib /emsdk/upstream/emscripten/cache/sysroot /emsdk/upstream/emscripten/cache/sysroot
+COPY glib .
+RUN apt-get update \
+  && apt-get install --no-install-recommends -qqy \
+    build-essential \
+    prelink \
+    autoconf \
+    libtool \
+    texinfo \
+    pkgconf \
+    ninja-build \
+    python3-pip \
+  && pip3 install --no-cache-dir meson && rm -rf /var/lib/apt/lists/*;
+ARG MESON_PATCH=https://github.com/kleisauke/wasm-vips/raw/master/build/patches/meson-emscripten.patch
+RUN cd $(dirname `python3 -c "import mesonbuild as _; print(_.__path__[0])"`) \
+  && curl -f -Ls $MESON_PATCH | patch -p1
+RUN chmod +x build.sh; ./build.sh
+
+
+FROM emscripten/emsdk as freetype
+COPY --from=zlib /emsdk/upstream/emscripten/cache/sysroot /emsdk/upstream/emscripten/cache/sysroot
+COPY freetype .
+RUN emcmake cmake -B ../build . -DFT_REQUIRE_ZLIB=TRUE -DCMAKE_BUILD_TYPE=Release
+RUN cd ../build && make && make install
+
+
+FROM emscripten/emsdk as libxml2
+COPY libxml2 .
+RUN emcmake cmake -B ../build . -DLIBXML2_WITH_PYTHON=OFF -DLIBXML2_WITH_LZMA=OFF -DLIBXML2_WITH_ZLIB=OFF -DCMAKE_BUILD_TYPE=Release
+RUN cd ../build && make && make install
+
+
+FROM emscripten/emsdk as fontconfig
+RUN apt-get update && apt-get install --no-install-recommends pkg-config gperf automake libtool gettext autopoint -y && rm -rf /var/lib/apt/lists/*;
+COPY --from=zlib /emsdk/upstream/emscripten/cache/sysroot /emsdk/upstream/emscripten/cache/sysroot
+COPY --from=freetype /emsdk/upstream/emscripten/cache/sysroot /emsdk/upstream/emscripten/cache/sysroot
+COPY --from=libxml2 /emsdk/upstream/emscripten/cache/sysroot /emsdk/upstream/emscripten/cache/sysroot
+COPY fontconfig .
+RUN FREETYPE_CFLAGS="-I/emsdk/upstream/emscripten/cache/sysroot/include/freetype2" FREETYPE_LIBS="-lfreetype -lz" emconfigure ./autogen.sh --host none --disable-docs --disable-shared --enable-static --sysconfdir=/ --localstatedir=/ --with-default-fonts=/fonts --enable-libxml2 --prefix=/emsdk/upstream/emscripten/cache/sysroot
+RUN emmake make
+RUN emmake make install
+
+
+FROM emscripten/emsdk as harfbuzz
+COPY --from=freetype /emsdk/upstream/emscripten/cache/sysroot /emsdk/upstream/emscripten/cache/sysroot
+COPY harfbuzz .
+RUN emcmake cmake -B ../build . -DCMAKE_BUILD_TYPE=Release -DHB_HAVE_FREETYPE=ON
+RUN cd ../build && make && make install
+
+
+FROM emscripten/emsdk as eigen
+COPY eigen .
+RUN emcmake cmake -B ../build . -DCMAKE_BUILD_TYPE=Release
+RUN cd ../build && make && make install
+
+
+FROM emscripten/emsdk as cgal
+COPY cgal .
+RUN emcmake cmake -B ../build . -DCMAKE_BUILD_TYPE=Release
+RUN cd ../build && make && make install
+
+
+FROM emscripten/emsdk as gmp
+COPY gmp-6.1.2 .
+RUN emconfigure ./configure --disable-assembly --host none --enable-cxx --prefix=/emsdk/upstream/emscripten/cache/sysroot
+RUN make && make install
+
+
+FROM emscripten/emsdk as mpfr
+COPY --from=gmp /emsdk/upstream/emscripten/cache/sysroot /emsdk/upstream/emscripten/cache/sysroot
+COPY mpfr-4.1.0 .
+RUN emconfigure ./configure --host none --with-gmp=/emsdk/upstream/emscripten/cache/sysroot --prefix=/emsdk/upstream/emscripten/cache/sysroot
+RUN make && make install
+
+
+FROM emscripten/emsdk as doubleconversion
+COPY doubleconversion .
+RUN emcmake cmake -B ../build . -DCMAKE_BUILD_TYPE=Release
+RUN cd ../build && make && make install
+
+
+FROM emscripten/emsdk as openscad-base
+RUN apt-get update && apt-get install --no-install-recommends pkg-config flex bison gettext python-is-python3 gpg -y && rm -rf /var/lib/apt/lists/*;
+COPY --from=boost /emsdk/upstream/emscripten/cache/sysroot /emsdk/upstream/emscripten/cache/sysroot
+COPY --from=gmp /emsdk/upstream/emscripten/cache/sysroot /emsdk/upstream/emscripten/cache/sysroot
+COPY --from=mpfr /emsdk/upstream/emscripten/cache/sysroot /emsdk/upstream/emscripten/cache/sysroot
+COPY --from=cgal /emsdk/upstream/emscripten/cache/sysroot /emsdk/upstream/emscripten/cache/sysroot
+COPY --from=eigen /emsdk/upstream/emscripten/cache/sysroot /emsdk/upstream/emscripten/cache/sysroot
+COPY --from=harfbuzz /emsdk/upstream/emscripten/cache/sysroot /emsdk/upstream/emscripten/cache/sysroot
+COPY --from=fontconfig /emsdk/upstream/emscripten/cache/sysroot /emsdk/upstream/emscripten/cache/sysroot
+COPY --from=glib /emsdk/upstream/emscripten/cache/sysroot /emsdk/upstream/emscripten/cache/sysroot
+COPY --from=libzip /emsdk/upstream/emscripten/cache/sysroot /emsdk/upstream/emscripten/cache/sysroot
+COPY --from=doubleconversion /emsdk/upstream/emscripten/cache/sysroot /emsdk/upstream/emscripten/cache/sysroot

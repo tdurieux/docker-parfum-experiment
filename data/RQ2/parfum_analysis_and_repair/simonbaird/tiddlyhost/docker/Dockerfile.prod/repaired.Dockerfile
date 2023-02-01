@@ -1,0 +1,24 @@
+#
+# Example usage:
+#  make build-prod
+#  make start-prod
+#
+FROM base
+
+ARG APP_USER=appuser
+ARG APP_PATH=/opt/app
+ARG BUNDLE_PATH=/opt/bundle
+
+USER $APP_USER
+
+ENV RAILS_ENV=production
+ENV RAILS_SERVE_STATIC_FILES=true
+
+# Copy the ruby gems into the container
+COPY --chown=$APP_USER:$APP_USER docker/bundle $BUNDLE_PATH
+
+# Copy the app into the container
+# (Ignores things listed in .dockerignore)
+COPY --chown=$APP_USER:$APP_USER rails $APP_PATH
+
+# Start rails

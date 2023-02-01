@@ -1,0 +1,62 @@
+{
+  "startTime": 1674245798197,
+  "endTime": 1674245798793,
+  "originalSmells": [
+    {
+      "rule": "rmRecursiveAfterMktempD",
+      "position": {
+        "lineStart": 84,
+        "lineEnd": 84,
+        "columnStart": 25,
+        "columnEnd": 34
+      }
+    },
+    {
+      "rule": "curlUseHttpsUrl",
+      "position": {
+        "lineStart": 81,
+        "lineEnd": 81,
+        "columnStart": 5,
+        "columnEnd": 80
+      }
+    },
+    {
+      "rule": "curlUseHttpsUrl",
+      "position": {
+        "lineStart": 83,
+        "lineEnd": 83,
+        "columnStart": 5,
+        "columnEnd": 88
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 105,
+        "lineEnd": 117,
+        "columnStart": 5,
+        "columnEnd": 15
+      }
+    },
+    {
+      "rule": "sha256sumEchoOneSpaces",
+      "position": {
+        "lineStart": 82,
+        "lineEnd": 82,
+        "columnStart": 5,
+        "columnEnd": 52
+      }
+    },
+    {
+      "rule": "gpgUseBatchFlag",
+      "position": {
+        "lineStart": 86,
+        "lineEnd": 86,
+        "columnStart": 4,
+        "columnEnd": 66
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM runnable/base:1.0.0\n\n# persistent / runtime deps\nENV PHPIZE_DEPS \\\n    autoconf \\\n    file \\\n    g++ \\\n    gcc \\\n    libc-dev \\\n    make \\\n    pkg-config \\\n    re2c\nRUN apt-get update && apt-get install -y \\\n    $PHPIZE_DEPS \\\n    ca-certificates \\\n    curl \\\n    libedit2 \\\n    libsqlite3-0 \\\n    libxml2 \\\n    xz-utils \\\n  --no-install-recommends && rm -r /var/lib/apt/lists/*\n\nENV PHP_INI_DIR /usr/local/etc/php\nRUN mkdir -p $PHP_INI_DIR/conf.d\n\nRUN apt-get update && apt-get install -y apache2-bin apache2.2-common --no-install-recommends && rm -rf /var/lib/apt/lists/*\n\nENV APACHE_CONFDIR /etc/apache2\nENV APACHE_ENVVARS $APACHE_CONFDIR/envvars\n\n# setup directories and permissions\nRUN set -ex \\\n  && . \"$APACHE_ENVVARS\" \\\n  && for dir in \\\n    \"$APACHE_LOCK_DIR\" \\\n    \"$APACHE_RUN_DIR\" \\\n    \"$APACHE_LOG_DIR\" \\\n    /var/www/html \\\n  ; do \\\n    rm -rvf \"$dir\" \\\n    && mkdir -p \"$dir\" \\\n    && chown -R \"$APACHE_RUN_USER:$APACHE_RUN_GROUP\" \"$dir\"; \\\n  done\n\n# Apache + PHP requires preforking Apache for best results\nRUN a2dismod mpm_event && a2enmod mpm_prefork\n\n# logs should go to stdout / stderr\nRUN set -ex \\\n  && . \"$APACHE_ENVVARS\" \\\n  && ln -sfT /dev/stderr \"$APACHE_LOG_DIR/error.log\" \\\n  && ln -sfT /dev/stdout \"$APACHE_LOG_DIR/access.log\" \\\n  && ln -sfT /dev/stdout \"$APACHE_LOG_DIR/other_vhosts_access.log\"\n\n# PHP files should be handled by PHP, and should be preferred over any other file type\nRUN { \\\n    echo '<FilesMatch \\.php$>'; \\\n    echo '\\tSetHandler application/x-httpd-php'; \\\n    echo '</FilesMatch>'; \\\n    echo; \\\n    echo 'DirectoryIndex disabled'; \\\n    echo 'DirectoryIndex index.php index.html'; \\\n    echo; \\\n    echo '<Directory /var/www/>'; \\\n    echo '\\tOptions -Indexes'; \\\n    echo '\\tAllowOverride All'; \\\n    echo '</Directory>'; \\\n  } | tee \"$APACHE_CONFDIR/conf-available/docker-php.conf\" \\\n  && a2enconf docker-php\n\nENV PHP_EXTRA_BUILD_DEPS apache2-dev\nENV PHP_EXTRA_CONFIGURE_ARGS --with-apxs2\n\nENV GPG_KEYS 0B96609E270F565C13292B24C13C70B87267B52D 0BD78B5F97500D450838F95DFE857D9A90D90EC1 F38252826ACD957EF380D39F2F7956BC5DA04B5D\n\nENV PHP_VERSION 5.5.37\nENV PHP_FILENAME php-5.5.37.tar.xz\nENV PHP_SHA256 c322444fdf6d3ba26aa67d67ee32d1e815a877f35831351c83763431a80e3612\n\nRUN set -xe \\\n  && cd /usr/src/ \\\n  && curl -fSL \"https://php.net/get/$PHP_FILENAME/from/this/mirror\" -o php.tar.xz \\\n  && echo \"$PHP_SHA256  *php.tar.xz\" | sha256sum -c - \\\n  && curl -fSL \"https://php.net/get/$PHP_FILENAME.asc/from/this/mirror\" -o php.tar.xz.asc \\\n  && export GNUPGHOME=\"$(mktemp -d)\" \\\n  && for key in $GPG_KEYS; do \\\n    gpg --batch --keyserver ha.pool.sks-keyservers.net --recv-keys \"$key\"; \\\n  done \\\n  && gpg --batch --verify php.tar.xz.asc php.tar.xz \\\n  && rm -r \"$GNUPGHOME\" && rm -rf -d\n\nCOPY docker-php-source /usr/local/bin/\n\nRUN set -xe \\\n  && buildDeps=\" \\\n    $PHP_EXTRA_BUILD_DEPS \\\n    libcurl4-openssl-dev \\\n    libedit-dev \\\n    libsqlite3-dev \\\n    libssl-dev \\\n    libxml2-dev \\\n  \" \\\n  && apt-get update && apt-get install -y $buildDeps --no-install-recommends && rm -rf /var/lib/apt/lists/* \\\n  && docker-php-source extract \\\n  && cd /usr/src/php \\\n  && ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" \\\n    --with-config-file-path=\"$PHP_INI_DIR\" \\\n    --with-config-file-scan-dir=\"$PHP_INI_DIR/conf.d\" \\\n    $PHP_EXTRA_CONFIGURE_ARGS \\\n    --disable-cgi \\\n# --enable-mysqlnd is included here because it's harder to compile after the fact than extensions are (since it's a plugin for several extensions, not an extension in itself)\n    --enable-mysqlnd \\\n# --enable-mbstring is included here because otherwise there's no way to get pecl to use it properly (see https://github.com/docker-library/php/issues/195)\n    --enable-mbstring \\\n    --with-curl \\\n    --with-libedit \\\n    --with-openssl \\\n    --with-zlib \\\n  && make -j\"$(nproc)\" \\\n  && make install \\\n  && { find /usr/local/bin /usr/local/sbin -type f -executable -exec strip --strip-all '{}' + || true; } \\\n  && make clean \\\n  && apt-get purge -y --auto-remove -o APT::AutoRemove::RecommendsImportant=false $buildDeps \\\n  && docker-php-source delete\n\nCOPY docker-php-ext-* /usr/local/bin/\n\nCOPY apache2-foreground /usr/local/bin/\nWORKDIR /var/www/html\n\nEXPOSE 80\nCMD [\"apache2-foreground\"]\n"
+}

@@ -1,0 +1,53 @@
+{
+  "startTime": 1674252586247,
+  "endTime": 1674252587414,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 18,
+        "lineEnd": 32,
+        "columnStart": 16,
+        "columnEnd": 7
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 49,
+        "lineEnd": 49,
+        "columnStart": 6,
+        "columnEnd": 68
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 18,
+        "lineEnd": 32,
+        "columnStart": 16,
+        "columnEnd": 7
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 49,
+        "lineEnd": 49,
+        "columnStart": 6,
+        "columnEnd": 68
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 113,
+        "lineEnd": 125,
+        "columnStart": 16,
+        "columnEnd": 8
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM --platform=$BUILDPLATFORM rust:1.60-bullseye as builder\n\n# Declare to make available\nARG BUILDPLATFORM\nARG BUILDOS\nARG BUILDARCH\nARG BUILDVARIANT\nARG TARGETPLATFORM\nARG TARGETOS\nARG TARGETARCH\nARG TARGETVARIANT\n\n# Disable anti-cache\nRUN rm -f /etc/apt/apt.conf.d/docker-clean; echo 'Binary::apt::APT::Keep-Downloaded-Packages \"true\";' > /etc/apt/apt.conf.d/keep-cache\n# https://github.com/moby/buildkit/blob/master/frontend/dockerfile/docs/syntax.md#run---mounttypecache\nRUN --mount=type=cache,id=build-apt-cache-${BUILDOS}-${BUILDARCH}${BUILDVARIANT},sharing=locked,target=/var/cache/apt \\\n    --mount=type=cache,id=build-apt-lib-${BUILDOS}-${BUILDARCH}${BUILDVARIANT},sharing=locked,target=/var/lib/apt \\\n  apt update && apt-get install --no-install-recommends -y \\\n  apt-transport-https \\\n  bash \\\n  ca-certificates \\\n  curl \\\n  gpg \\\n  iputils-ping \\\n  less \\\n  libreadline-dev \\\n  libsqlite3-0 \\\n  openssl \\\n  telnet \\\n  cargo \\\n  clang \\\n  cmake && rm -rf /var/lib/apt/lists/*;\n\nARG ARCH=native\n#ARG FEATURES=avx2\nARG FEATURES=safe\nENV RUSTFLAGS=\"-C target_cpu=$ARCH\"\nENV ROARING_ARCH=$ARCH\nENV CARGO_HTTP_MULTIPLEXING=false\n\nARG APP_NAME=wallet\nARG APP_EXEC=tari_console_wallet\n\n# GNU C compiler for the arm64 architecture and GNU C++ compiler\n#RUN if [[ \"${TARGETPLATFORM}\" == \"linux/arm64\" ]] ; then \\\nRUN if [ \"${TARGETARCH}\" = \"arm64\" ] ; then \\\n      echo \"Setup ARM64\" && \\\n      apt update && \\\n      apt-get install --no-install-recommends -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu && \\\n      rustup target add aarch64-unknown-linux-gnu && \\\n      rustup toolchain install stable-aarch64-unknown-linux-gnu; rm -rf /var/lib/apt/lists/*; \\\n    else \\\n      echo \"Setup x86-64\" ; \\\n    fi\n\nWORKDIR /tari\n\nADD Cargo.toml .\nADD Cargo.lock .\nADD applications applications\nADD base_layer base_layer\nADD clients clients\nADD common common\nADD common_sqlite common_sqlite\nADD comms comms\nADD infrastructure infrastructure\nADD dan_layer dan_layer\nADD meta meta\n\nRUN --mount=type=cache,id=rust-git-${TARGETOS}-${TARGETARCH}${TARGETVARIANT},sharing=locked,target=/home/rust/.cargo/git \\\n    --mount=type=cache,id=rust-home-registry-${TARGETOS}-${TARGETARCH}${TARGETVARIANT},sharing=locked,target=/home/rust/.cargo/registry \\\n    --mount=type=cache,id=rust-local-registry-${TARGETOS}-${TARGETARCH}${TARGETVARIANT},sharing=locked,target=/usr/local/cargo/registry \\\n    --mount=type=cache,id=rust-src-target-${TARGETOS}-${TARGETARCH}${TARGETVARIANT},sharing=locked,target=/home/rust/src/target \\\n    --mount=type=cache,id=rust-target-${TARGETOS}-${TARGETARCH}${TARGETVARIANT},sharing=locked,target=/tari/target \\\n    if [ \"${TARGETARCH}\" = \"arm64\" ] ; then \\\n      export BUILD_TARGET=\"aarch64-unknown-linux-gnu/\" && \\\n      export RUST_TARGET=\"--target=aarch64-unknown-linux-gnu\" && \\\n      export ARCH=generic && \\\n      export FEATURES=safe && \\\n      export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc && \\\n      export CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc && \\\n      export CXX_aarch64_unknown_linux_gnu=aarch64-linux-gnu-g++ && \\\n      export BINDGEN_EXTRA_CLANG_ARGS=\"--sysroot /usr/aarch64-linux-gnu/include/\" && \\\n      export RUSTFLAGS=\"-C target_cpu=generic\" && \\\n      export ROARING_ARCH=generic ; \\\n    fi && \\\n    cargo update && \\\n    cargo build ${RUST_TARGET} \\\n      --bin ${APP_EXEC} --release --features $FEATURES --locked && \\\n    # Copy executable out of the cache so it is available in the runtime image.\n    cp -v /tari/target/${BUILD_TARGET}release/${APP_EXEC} /tari/${APP_EXEC}\n\n# Create runtime base minimal image for the target platform executables\nFROM --platform=$TARGETPLATFORM bitnami/minideb:bullseye as runtime\n\nARG BUILDPLATFORM\nARG TARGETOS\nARG TARGETARCH\nARG TARGETVARIANT\n\nARG VERSION=1.0.1\n\nARG APP_NAME\nARG APP_EXEC\n\n# Disable Prompt During Packages Installation\nARG DEBIAN_FRONTEND=noninteractive\n\n# Disable anti-cache\nRUN rm -f /etc/apt/apt.conf.d/docker-clean; echo 'Binary::apt::APT::Keep-Downloaded-Packages \"true\";' > /etc/apt/apt.conf.d/keep-cache\nRUN --mount=type=cache,id=runtime-apt-cache-${TARGETOS}-${TARGETARCH}${TARGETVARIANT},sharing=locked,target=/var/cache/apt \\\n    --mount=type=cache,id=runtime-apt-lib-${TARGETOS}-${TARGETARCH}${TARGETVARIANT},sharing=locked,target=/var/lib/apt \\\n  apt update && apt-get --no-install-recommends install -y \\\n  apt-transport-https \\\n  bash \\\n  ca-certificates \\\n  curl \\\n  gpg \\\n  iputils-ping \\\n  less \\\n  libreadline8 \\\n  libreadline-dev \\\n  libsqlite3-0 \\\n  openssl \\\n  telnet && rm -rf /var/lib/apt/lists/*;\n\nRUN groupadd -g 1000 tari && useradd -s /bin/bash -u 1000 -g 1000 tari\n\nENV dockerfile_version=$VERSION\nENV dockerfile_build_arch=$BUILDPLATFORM\nENV APP_NAME=${APP_NAME:-wallet}\nENV APP_EXEC=${APP_EXEC:-tari_console_wallet}\n\nRUN mkdir -p \"/var/tari/${APP_NAME}\" && \\\n    chown -R tari.tari \"/var/tari/${APP_NAME}\"\n\n# Setup blockchain path for base_node only\nRUN if [ \"${APP_NAME}\" = \"base_node\" ] ; then \\\n      echo \"Base_node bits\" && \\\n      mkdir /blockchain && \\\n      chown -R tari.tari /blockchain && \\\n      chmod -R 0700 /blockchain ; \\\n    else \\\n      echo \"Not base_node\" ; \\\n    fi\n\nUSER tari\n\nCOPY --from=builder /tari/$APP_EXEC /usr/bin/\nCOPY applications/launchpad/docker_rig/start_tari_app.sh /usr/bin/start_tari_app.sh\n\nENTRYPOINT [ \"start_tari_app.sh\", \"-c\", \"/var/tari/config/config.toml\", \"-b\", \"/var/tari/${APP_NAME}\" ]\n# CMD [ \"--non-interactive-mode\" ]\n"
+}

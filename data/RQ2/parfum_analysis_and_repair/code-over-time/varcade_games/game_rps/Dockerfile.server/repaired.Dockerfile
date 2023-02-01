@@ -1,0 +1,23 @@
+FROM node:lts-alpine
+
+WORKDIR /usr/app
+
+RUN mkdir game_rps
+RUN mkdir game_rps/server
+
+WORKDIR game_rps
+
+ADD game_engine ./game_engine
+
+WORKDIR server
+
+ADD server/package.json .
+ADD server/index.js .
+ADD server/game_server ./game_server
+
+
+RUN npm update
+RUN npm install --quiet && npm cache clean --force;
+RUN npm install supervisor -g && npm cache clean --force;
+
+CMD npm run game_rps_debug

@@ -1,0 +1,17 @@
+{
+  "startTime": 1674255720640,
+  "endTime": 1674255721044,
+  "originalSmells": [
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 10,
+        "lineEnd": 10,
+        "columnStart": 45,
+        "columnEnd": 75
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "ARG RUST_VERSION=1.60\nFROM node:lts-alpine AS yarn-builder\nENV YARN_CACHE_FOLDER=/opt/yarncache\n\nWORKDIR /app/tokio-console-datasource\n\n# Install yarn dependencies.\nCOPY ./package.json ./yarn.lock /app/tokio-console-datasource/\nRUN --mount=type=cache,target=/opt/yarncache yarn install --frozen-lockfile && yarn cache clean;\n\n# Build plugin frontend.\nCOPY ./README.md ./CHANGELOG.md ./LICENSE ./jest.config.js ./.prettierrc.js ./tsconfig.json /app/tokio-console-datasource/\nCOPY src /app/tokio-console-datasource/src\nRUN yarn build\n\nFROM rust:${RUST_VERSION}-alpine AS rust-builder\n\nRUN apk add --no-cache musl-dev protoc && \\\n  rustup component add rustfmt\n\nWORKDIR /usr/src/backend\n\nCOPY ./backend /usr/src/backend\n\nRUN \\\n  --mount=type=cache,id=tokio-console-datasource-target-build-cache,target=/usr/src/backend/target/release/build \\\n  --mount=type=cache,id=tokio-console-datasource-target-build-deps,target=/usr/src/backend/target/release/deps \\\n  --mount=type=cache,id=tokio-console-datasource-target-build-incremental,target=/usr/src/backend/target/release/incremental \\\n  --mount=type=cache,id=tokio-console-datasource-cargo-git-cache,target=/usr/local/cargo/git \\\n  --mount=type=cache,id=tokio-console-datasource-cargo-registry-cache,target=/usr/local/cargo/registry \\\n  RUSTFLAGS=\"--cfg tokio_unstable\" cargo build --release\n\nFROM sd2k/grafana:table-charts\n\n# Used to get the target plugin binary name.\nARG TARGETPLATFORM\n\n# Copy plugin files into custom location, to avoid conflicting with contents of /var/lib/grafana. Point\n# Grafana to this directory as additional plugin path with the GF_PATHS_PLUGINS env var.\nENV CUSTOM_PLUGIN_DIR /home/grafana/plugins\nRUN mkdir -p ${CUSTOM_PLUGIN_DIR}\nCOPY ./provisioning /etc/grafana/provisioning\nCOPY --chown=grafana --from=yarn-builder /app/tokio-console-datasource/dist ${CUSTOM_PLUGIN_DIR}/bsull-console-datasource/dist\nCOPY --chown=grafana --from=rust-builder /usr/src/backend/target/release/grafana-tokio-console-datasource ${CUSTOM_PLUGIN_DIR}/bsull-console-datasource/dist/grafana-tokio-console-datasource\nRUN GOARCH=$(echo ${TARGETPLATFORM} | sed 's|/|_|') \\\n  && mv ${CUSTOM_PLUGIN_DIR}/bsull-console-datasource/dist/grafana-tokio-console-datasource ${CUSTOM_PLUGIN_DIR}/bsull-console-datasource/dist/grafana-tokio-console-datasource_${GOARCH}\n\nENV GF_DEFAULT_APP_MODE development\nENV GF_AUTH_ANONYMOUS_ENABLED true\nENV GF_AUTH_ANONYMOUS_ORG_ROLE Admin\nENV GF_PATHS_PLUGINS ${CUSTOM_PLUGIN_DIR}\n\n"
+}

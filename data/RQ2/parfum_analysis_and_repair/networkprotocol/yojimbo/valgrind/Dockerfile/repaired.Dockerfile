@@ -1,0 +1,37 @@
+FROM phusion/baseimage:0.11
+
+CMD ["/sbin/my_init"]
+
+WORKDIR /app
+
+RUN apt-get -y update && apt-get install --no-install-recommends -y wget make g++ dh-autoreconf pkg-config valgrind cmake && rm -rf /var/lib/apt/lists/*;
+
+RUN wget https://github.com/jedisct1/libsodium/releases/download/1.0.16/libsodium-1.0.16.tar.gz && \
+    tar -zxvf libsodium-*.tar.gz && \
+    cd libsodium-* && \
+    ./configure --build="$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)" && \
+    make -j32 && make check && \
+    make install && \
+    cd .. && \
+    rm -rf libsodium* && \
+    ldconfig && rm libsodium-*.tar.gz
+
+RUN wget https://github.com/premake/premake-core/releases/download/v5.0.0-alpha13/premake-5.0.0-alpha13-linux.tar.gz && \ 
+    tar -zxvf premake-*.tar.gz && \
+    rm premake-*.tar.gz && \
+    mv premake5 /usr/local/bin
+
+RUN wget https://github.com/ARMmbed/mbedtls/archive/mbedtls-2.13.0.tar.gz && \
+    tar -zxvf mbedtls-*.tar.gz && \
+    cd mbedtls-mbedtls-* && \
+    cmake . && \
+    make -j32 && make install && \
+    ldconfig && rm mbedtls-*.tar.gz
+
+ADD yojimbo /app/yojimbo
+
+RUN cd yojimbo && find . -exec touch {} \; && premake5 gmake && make -j32 test && make -j32 soak && cp ./bin/* /app
+
+CMD [ "valgrind", "--tool=memcheck", "--leak-check=yes", "--show-reachable=yes", "--num-callers=20", "--track-fds=yes", "--track-origins=yes", "./test" ]
+
+RUN apt-get clean && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*

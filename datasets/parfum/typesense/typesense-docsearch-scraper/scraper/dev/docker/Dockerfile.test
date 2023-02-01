@@ -1,0 +1,9 @@
+FROM typesense/docsearch-scraper-base
+LABEL maintainer="contact@typesense.org"
+
+WORKDIR /root
+
+# Copy DocSearch files
+COPY . .
+RUN touch .env
+ENTRYPOINT ["pipenv", "run", "./docsearch", "test", "no_browser"]

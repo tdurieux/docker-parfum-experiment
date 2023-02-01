@@ -1,0 +1,62 @@
+{
+  "startTime": 1674235462329,
+  "endTime": 1674235462671,
+  "originalSmells": [
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 88,
+        "lineEnd": 97,
+        "columnStart": 35,
+        "columnEnd": 17
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 22,
+        "lineEnd": 25,
+        "columnStart": 4,
+        "columnEnd": 12
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 29,
+        "lineEnd": 43,
+        "columnStart": 4,
+        "columnEnd": 11
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 84,
+        "lineEnd": 86,
+        "columnStart": 8,
+        "columnEnd": 18
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 108,
+        "lineEnd": 108,
+        "columnStart": 4,
+        "columnEnd": 54
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 110,
+        "lineEnd": 110,
+        "columnStart": 4,
+        "columnEnd": 30
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM ubuntu:16.04\n\nARG http_proxy\nARG https_proxy\nARG no_proxy\nARG socks_proxy\n\nENV TERM=xterm \\\n    http_proxy=${http_proxy}   \\\n    https_proxy=${https_proxy} \\\n    no_proxy=${no_proxy} \\\n    socks_proxy=${socks_proxy}\n\nENV LANG='C.UTF-8'  \\\n    LC_ALL='C.UTF-8'\n\nARG USER\nARG DJANGO_CONFIGURATION\nENV DJANGO_CONFIGURATION=${DJANGO_CONFIGURATION}\n\n# Install necessary apt packages\nRUN apt-get update && \\\n    apt-get install --no-install-recommends -yq \\\n        python-software-properties \\\n        software-properties-common \\\n        wget && \\\n    add-apt-repository ppa:mc3man/xerus-media -y && \\\n    add-apt-repository ppa:mc3man/gstffmpeg-keep -y && \\\n    apt-get update && \\\n    DEBIAN_FRONTEND=noninteractive apt-get --no-install-recommends install -yq \\\n        apache2 \\\n        apache2-dev \\\n        libapache2-mod-xsendfile \\\n        supervisor \\\n        ffmpeg \\\n        gstreamer0.10-ffmpeg \\\n        libldap2-dev \\\n        libsasl2-dev \\\n        python3-dev \\\n        python3-pip \\\n        unzip \\\n        unrar \\\n        p7zip-full \\\n        vim && \\\n    add-apt-repository --remove ppa:mc3man/gstffmpeg-keep -y && \\\n    add-apt-repository --remove ppa:mc3man/xerus-media -y && \\\n    rm -rf /var/lib/apt/lists/*\n\n# Add a non-root user\nENV USER=${USER}\nENV HOME /home/${USER}\nWORKDIR ${HOME}\nRUN adduser --shell /bin/bash --disabled-password --gecos \"\" ${USER}\n\nCOPY components /tmp/components\n\n# OpenVINO toolkit support\nARG OPENVINO_TOOLKIT\nENV OPENVINO_TOOLKIT=${OPENVINO_TOOLKIT}\nRUN if [ \"$OPENVINO_TOOLKIT\" = \"yes\" ]; then \\\n        /tmp/components/openvino/install.sh; \\\n    fi\n\n# CUDA support\nARG CUDA_SUPPORT\nENV CUDA_SUPPORT=${CUDA_SUPPORT}\nRUN if [ \"$CUDA_SUPPORT\" = \"yes\" ]; then \\\n        /tmp/components/cuda/install.sh; \\\n    fi\n\n# Tensorflow annotation support\nARG TF_ANNOTATION\nENV TF_ANNOTATION=${TF_ANNOTATION}\nENV TF_ANNOTATION_MODEL_PATH=${HOME}/rcnn/inference_graph\nRUN if [ \"$TF_ANNOTATION\" = \"yes\" ]; then \\\n        bash -i /tmp/components/tf_annotation/install.sh; \\\n    fi\n\nARG WITH_TESTS\nRUN if [ \"$WITH_TESTS\" = \"yes\" ]; then \\\n        wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | apt-key add - && \\\n        echo 'deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main' | tee /etc/apt/sources.list.d/google-chrome.list && \\\n        wget -qO- https://deb.nodesource.com/setup_9.x | bash - && \\\n        apt-get update && \\\n        DEBIAN_FRONTEND=noninteractive apt-get --no-install-recommends install -yq \\\n            google-chrome-stable \\\n            nodejs && \\\n        rm -rf /var/lib/apt/lists/*; \\\n        mkdir tests && cd tests && npm install \\\n            eslint \\\n            eslint-detailed-reporter \\\n            karma \\\n            karma-chrome-launcher \\\n            karma-coveralls \\\n            karma-coverage \\\n            karma-junit-reporter \\\n            karma-qunit \\\n            qunit; npm cache clean --force; \\\n        echo \"export PATH=~/tests/node_modules/.bin:${PATH}\" >> ~/.bashrc; \\\n    fi\n\n# Install and initialize CVAT, copy all necessary files\nCOPY cvat/requirements/ /tmp/requirements/\nCOPY supervisord.conf mod_wsgi.conf wait-for-it.sh manage.py ${HOME}/\nRUN pip3 install --no-cache-dir -r /tmp/requirements/${DJANGO_CONFIGURATION}.txt\n\n# Install git application dependencies\nRUN apt-get update && \\\n    apt-get install --no-install-recommends -y ssh netcat-openbsd git curl zip && \\\n    wget -qO /dev/stdout https://packagecloud.io/install/repositories/github/git-lfs/script.deb.sh | bash && \\\n    apt-get install --no-install-recommends -y git-lfs && \\\n    git lfs install && \\\n    rm -rf /var/lib/apt/lists/* && \\\n    if [ -z ${socks_proxy} ]; then \\\n        echo export \"GIT_SSH_COMMAND=\\\"ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30\\\"\" >> ${HOME}/.bashrc; \\\n    else \\\n        echo export \"GIT_SSH_COMMAND=\\\"ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 -o ProxyCommand='nc -X 5 -x ${socks_proxy} %h %p'\\\"\" >> ${HOME}/.bashrc; \\\n    fi\n\n# Download model for re-identification app\nENV REID_MODEL_DIR=${HOME}/reid\nRUN if [ \"$OPENVINO_TOOLKIT\" = \"yes\" ]; then \\\n        mkdir ${HOME}/reid && \\\n        wget https://download.01.org/openvinotoolkit/2018_R5/open_model_zoo/person-reidentification-retail-0079/FP32/person-reidentification-retail-0079.xml -O reid/reid.xml && \\\n        wget https://download.01.org/openvinotoolkit/2018_R5/open_model_zoo/person-reidentification-retail-0079/FP32/person-reidentification-retail-0079.bin -O reid/reid.bin; \\\n    fi\n\n# TODO: CHANGE URL\nARG WITH_DEXTR\nENV WITH_DEXTR=${WITH_DEXTR}\nENV DEXTR_MODEL_DIR=${HOME}/dextr\nRUN if [ \"$WITH_DEXTR\" = \"yes\" ]; then \\\n        mkdir ${DEXTR_MODEL_DIR} -p && \\\n        wget https://download.01.org/openvinotoolkit/models_contrib/cvat/dextr_model_v1.zip -O ${DEXTR_MODEL_DIR}/dextr.zip && \\\n        unzip ${DEXTR_MODEL_DIR}/dextr.zip -d ${DEXTR_MODEL_DIR} && rm ${DEXTR_MODEL_DIR}/dextr.zip; \\\n    fi\n\nCOPY ssh ${HOME}/.ssh\nCOPY cvat/ ${HOME}/cvat\nCOPY tests ${HOME}/tests\n# Binary option is necessary to correctly apply the patch on Windows platform.\n# https://unix.stackexchange.com/questions/239364/how-to-fix-hunk-1-failed-at-1-different-line-endings-message\nRUN patch --binary -p1 < ${HOME}/cvat/apps/engine/static/engine/js/3rdparty.patch\nRUN chown -R ${USER}:${USER} .\n\n# RUN all commands below as 'django' user\nUSER ${USER}\n\nRUN mkdir data share media keys logs /tmp/supervisord\nRUN python3 manage.py collectstatic\n\nEXPOSE 8080 8443\nENTRYPOINT [\"/usr/bin/supervisord\"]\n"
+}

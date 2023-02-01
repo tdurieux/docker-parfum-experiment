@@ -1,0 +1,117 @@
+{
+  "startTime": 1674248826660,
+  "endTime": 1674248827564,
+  "originalSmells": [
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 60,
+        "lineEnd": 60,
+        "columnStart": 4,
+        "columnEnd": 29
+      }
+    },
+    {
+      "rule": "gpgUseBatchFlag",
+      "position": {
+        "lineStart": 108,
+        "lineEnd": 108,
+        "columnStart": 4,
+        "columnEnd": 67
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 59,
+        "lineEnd": 59,
+        "columnStart": 4,
+        "columnEnd": 36
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 104,
+        "lineEnd": 105,
+        "columnStart": 22,
+        "columnEnd": 62
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 118,
+        "lineEnd": 119,
+        "columnStart": 4,
+        "columnEnd": 26
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 59,
+        "lineEnd": 59,
+        "columnStart": 4,
+        "columnEnd": 36
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 118,
+        "lineEnd": 119,
+        "columnStart": 4,
+        "columnEnd": 26
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 59,
+        "lineEnd": 59,
+        "columnStart": 4,
+        "columnEnd": 36
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 104,
+        "lineEnd": 105,
+        "columnStart": 22,
+        "columnEnd": 62
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 118,
+        "lineEnd": 119,
+        "columnStart": 4,
+        "columnEnd": 26
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 59,
+        "lineEnd": 59,
+        "columnStart": 4,
+        "columnEnd": 60
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 118,
+        "lineEnd": 119,
+        "columnStart": 4,
+        "columnEnd": 26
+      }
+    }
+  ],
+  "repairedDockerfile": "################################################################################\n# Build Base Image\n################################################################################\n\n# Start from a rust base image\nFROM rust:1.61.0 as base\n\n# Set the current directory\nWORKDIR /app\n\n# Copy everthing that is not dockerignored to the image\nCOPY . .\n\n# Prepare\n\nRUN rustup toolchain install stable\n\n################################################################################\n# Build Frontend - Rust Part\n################################################################################\n\n# Start from base image\nFROM base as frontend-rust-analyzer\n\n# Prepare\n\nRUN rustup toolchain install nightly-2022-05-24\nRUN rustup component add rust-src --toolchain nightly-2022-05-24-x86_64-unknown-linux-gnu\nRUN curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh\n\n# Build\n\nRUN cd crates/rust_analyzer_wasm && wasm-pack build --target web --out-dir ../../packages/ink-editor/pkg\n\n# Start from base image\nFROM base as frontend-bindings\n\n# Build\n\nRUN make generate-bindings\n\n# Start from base image\nFROM base as frontend-change-json\n\n# Build\n\nRUN make generate-change-json\n\n################################################################################\n# Build Frontend - TypeScript Part\n################################################################################\n\n# Start from base image\nFROM base as frontend-builder\n\n# Install Yarn & NPM dependencies\n\nRUN apt-get --yes update\nRUN apt-get --yes upgrade\nRUN apt-get install --no-install-recommends --yes nodejs npm && rm -rf /var/lib/apt/lists/*;\nRUN npm install --global yarn && npm cache clean --force;\nRUN make install\n\n# Copy generated Rust components to Frontend folder\n\nCOPY --from=frontend-bindings /app/packages/_generated/commontypes /app/packages/_generated/commontypes\nCOPY --from=frontend-change-json /app/packages/_generated/change /app/packages/_generated/change\nCOPY --from=frontend-rust-analyzer /app/packages/ink-editor/pkg /app/packages/ink-editor/pkg\n\n# Set ENV vars\n\nARG COMPILE_URL=/compile\nARG TESTING_URL=/test\nARG GIST_LOAD_URL=/gist/load\nARG GIST_CREATE_URL=/gist/create\n\n# Build Frontend\n\nRUN make playground-build\n\n################################################################################\n# Build Backend\n################################################################################\n\n# Start from base image\nFROM base as backend-builder\n\n# Build\n\nRUN rustup default stable\nRUN make backend-build-prod\n\n################################################################################\n# Compose final image\n################################################################################\n\nFROM debian:bullseye-slim\n\nCOPY --from=frontend-builder /app/packages/playground/dist /app/packages/playground/dist\nCOPY --from=backend-builder /app/target/release/backend /app/target/release/backend\n\n# Install Docker\n# see: https://www.how2shout.com/linux/install-docker-ce-on-debian-11-bullseye-linux/\n\nRUN apt-get update && apt-get install --no-install-recommends --yes \\\n    apt-transport-https ca-certificates curl gnupg lsb-release && rm -rf /var/lib/apt/lists/*;\n\nRUN curl -fsSL https://download.docker.com/linux/debian/gpg | \\\n    gpg --batch --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg\n\nRUN echo \\\n    \"deb [arch=amd64 signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] \\\n    https://download.docker.com/linux/debian \\\n    $(lsb_release -cs) stable\" | \\\n    tee /etc/apt/sources.list.d/docker.list >/dev/null\n\nRUN apt-get --yes update\n\nRUN apt-get --yes --no-install-recommends install docker-ce docker-ce-cli \\\n    containerd.io=1.5.11-1 && rm -rf /var/lib/apt/lists/*;\n\n# Provide startup scripts\n\nCOPY sysbox/on-start.sh /usr/bin\nRUN chmod +x /usr/bin/on-start.sh\n\n# Entrypoint\n\nENTRYPOINT [ \"on-start.sh\" ]\n"
+}

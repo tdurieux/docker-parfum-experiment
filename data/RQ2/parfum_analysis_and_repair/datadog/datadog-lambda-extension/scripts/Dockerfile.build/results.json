@@ -1,0 +1,35 @@
+{
+  "startTime": 1674248089115,
+  "endTime": 1674248090105,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 42,
+        "lineEnd": 42,
+        "columnStart": 4,
+        "columnEnd": 35
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 42,
+        "lineEnd": 42,
+        "columnStart": 4,
+        "columnEnd": 35
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 42,
+        "lineEnd": 42,
+        "columnStart": 4,
+        "columnEnd": 35
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM golang:1.17 as builder\nARG EXTENSION_VERSION\nARG AGENT_VERSION\nARG CMD_PATH\nRUN mkdir -p /tmp/dd/datadog-agent\n\n# cache dependencies\nCOPY ./scripts/.cache/go.mod /tmp/dd/datadog-agent\nCOPY ./scripts/.cache/go.sum /tmp/dd/datadog-agent\nWORKDIR /tmp/dd/datadog-agent\n\n# copy source files (/tgz gets unzip automatically by Docker)\nADD ./scripts/.src/datadog-agent.tgz /tmp/dd\n\n# build the extension\nWORKDIR /tmp/dd/datadog-agent/\"${CMD_PATH}\"\n# add the current version number to the tags package before compilation\n\nRUN --mount=type=cache,target=/go/pkg/mod \\\n    --mount=type=cache,target=/root/.cache/go-build \\ \n    if [ -z \"$AGENT_VERSION\" ]; then \\\n        go build -ldflags=\"-w \\\n        -X github.com/DataDog/datadog-agent/pkg/serverless/tags.currentExtensionVersion=$EXTENSION_VERSION\" \\\n        -tags serverless -o datadog-agent; \\\n    else \\\n        go build -ldflags=\"-w \\\n        -X github.com/DataDog/datadog-agent/pkg/serverless/tags.currentExtensionVersion=$EXTENSION_VERSION \\\n        -X github.com/DataDog/datadog-agent/pkg/version.agentVersionDefault=$AGENT_VERSION\" \\\n        -tags serverless -o datadog-agent; \\\n    fi\n\nRUN go tool nm datadog-agent | grep -w 'github.com/DataDog/datadog-agent/pkg/version.agentVersionDefault' || \\\n    (echo \"agentVersionDefault variable doesn't exist\" && exit 1)\n\n# zip the extension\nFROM ubuntu:latest as compresser\nARG CMD_PATH\nARG DATADOG_WRAPPER=datadog_wrapper\n\nRUN apt-get update && apt-get install --no-install-recommends -y zip binutils && rm -rf /var/lib/apt/lists/*;\nRUN mkdir /extensions\nWORKDIR /extensions\nCOPY --from=builder /tmp/dd/datadog-agent/\"${CMD_PATH}\"/datadog-agent /extensions/datadog-agent\nRUN strip /extensions/datadog-agent\n\nCOPY ./scripts/$DATADOG_WRAPPER /$DATADOG_WRAPPER\nRUN chmod +x /$DATADOG_WRAPPER\nRUN  zip -r datadog_extension.zip /extensions /$DATADOG_WRAPPER\n\n# keep the smallest possible docker image\nFROM scratch\nCOPY --from=compresser /extensions/datadog_extension.zip /\nENTRYPOINT [\"/datadog_extension.zip\"]\n"
+}

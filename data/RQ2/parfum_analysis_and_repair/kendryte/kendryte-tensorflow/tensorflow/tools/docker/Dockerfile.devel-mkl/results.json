@@ -1,0 +1,62 @@
+{
+  "startTime": 1674248686673,
+  "endTime": 1674248687550,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 32,
+        "lineEnd": 32,
+        "columnStart": 6,
+        "columnEnd": 92
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 34,
+        "lineEnd": 34,
+        "columnStart": 20,
+        "columnEnd": 31
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 33,
+        "lineEnd": 33,
+        "columnStart": 17,
+        "columnEnd": 38
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 37,
+        "lineEnd": 39,
+        "columnStart": 6,
+        "columnEnd": 23
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 11,
+        "lineEnd": 28,
+        "columnStart": 22,
+        "columnEnd": 30
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 37,
+        "lineEnd": 39,
+        "columnStart": 6,
+        "columnEnd": 23
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM ubuntu:16.04\n\nLABEL maintainer=\"Clayne Robison <clayne.b.robison@intel.com>\"\n\n# These parameters can be overridden by parameterized_docker_build.sh\nARG TF_BUILD_VERSION=r1.12\nARG PYTHON=\"python\"\nARG PYTHON3_DEV=\"\"\nARG WHL_DIR=\"/tmp/pip\"\nARG PIP=\"pip\"\n\nRUN apt-get update && apt-get install -y --no-install-recommends \\\n        build-essential \\\n        curl \\\n        git \\\n        libcurl3-dev \\\n        libfreetype6-dev \\\n        libhdf5-serial-dev \\\n        libpng12-dev \\\n        libzmq3-dev \\\n        libssl-dev \\\n        pkg-config \\\n        rsync \\\n        software-properties-common \\\n        unzip \\\n        zip \\\n        zlib1g-dev \\\n        openjdk-8-jdk \\\n        openjdk-8-jre-headless && rm -rf /var/lib/apt/lists/*;\n\n#install Python 3\nRUN if [ ${PYTHON} = \"python3.6\" ]; then \\\n      curl -f https://www.python.org/ftp/python/3.6.5/Python-3.6.5.tar.xz -o /opt/python.tar.xz && \\\n      cd /opt && tar xvf python.tar.xz && \\\n      cd /opt/*/ && ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" && \\\n      make && make install; rm python.tar.xz \\\n    else \\\n      apt-get install -y --no-install-recommends \\\n        python-dev \\\n        ${PYTHON3_DEV}; rm -rf /var/lib/apt/lists/*; \\\n    fi\n\nRUN    apt-get clean && \\\n    rm -rf /var/lib/apt/lists/*\n\nRUN curl -fSsL -O https://bootstrap.pypa.io/get-pip.py && \\\n    ${PYTHON} get-pip.py && \\\n    rm get-pip.py\n\nRUN ${PIP} --no-cache-dir install \\\n        Pillow \\\n        h5py \\\n        ipykernel \\\n        jupyter \\\n        keras_applications \\\n        keras_preprocessing \\\n        matplotlib \\\n        mock \\\n        numpy \\\n        scipy \\\n        sklearn \\\n        pandas \\\n        && \\\n    ${PYTHON} -m ipykernel.kernelspec\n\nRUN if [ \"${PYTHON}\" = \"python3\" ]; then \\\n      ln -s -f /usr/bin/python3 /usr/bin/python; \\\n  elif [ \"${PYTHON}\" = \"python3.6\" ]; then \\\n      ln -s -f /usr/local/bin/python3.6 /usr/bin/python; \\\n  fi\n\n# Set up our notebook config.\nCOPY jupyter_notebook_config.py /root/.jupyter/\n\n# Jupyter has issues with being run directly:\n#   https://github.com/ipython/ipython/issues/7062\n# We just add a little wrapper script.\nCOPY run_jupyter.sh /\n\n# Set up Bazel.\n\n# Running bazel inside a `docker build` command causes trouble, cf:\n#   https://github.com/bazelbuild/bazel/issues/134\n# The easiest solution is to set up a bazelrc file forcing --batch.\nRUN echo \"startup --batch\" >>/etc/bazel.bazelrc\n# Similarly, we need to workaround sandboxing issues:\n#   https://github.com/bazelbuild/bazel/issues/418\nRUN echo \"build --spawn_strategy=standalone --genrule_strategy=standalone\" \\\n    >>/etc/bazel.bazelrc\n# Install the most recent bazel release.\nENV BAZEL_VERSION 0.15.0\nWORKDIR /\nRUN mkdir /bazel && \\\n    cd /bazel && \\\n    curl -H \"User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/57.0.2987.133 Safari/537.36\" -fSsL -O https://github.com/bazelbuild/bazel/releases/download/$BAZEL_VERSION/bazel-$BAZEL_VERSION-installer-linux-x86_64.sh && \\\n    curl -H \"User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/57.0.2987.133 Safari/537.36\" -fSsL -o /bazel/LICENSE.txt https://raw.githubusercontent.com/bazelbuild/bazel/master/LICENSE && \\\n    chmod +x bazel-*.sh && \\\n    ./bazel-$BAZEL_VERSION-installer-linux-x86_64.sh && \\\n    cd / && \\\n    rm -f /bazel/bazel-$BAZEL_VERSION-installer-linux-x86_64.sh\n\n# Download and build TensorFlow.\nWORKDIR /tensorflow\n\n# Download and build TensorFlow.\n# Enable checking out both tags and branches\nRUN export TAG_PREFIX=\"v\" && \\\n    echo ${TF_BUILD_VERSION} | grep -q ^${TAG_PREFIX}; \\\n    if [ $? -eq 0 ]; then \\\n        git clone --depth=1 https://github.com/tensorflow/tensorflow.git . && \\\n        git fetch --tags && \\\n        git checkout ${TF_BUILD_VERSION}; \\\n   else \\\n        git clone --depth=1 --branch=${TF_BUILD_VERSION} https://github.com/tensorflow/tensorflow.git . ; \\\n    fi\n\nRUN yes \"\" | ${PYTHON} configure.py\nRUN cp .bazelrc /root/.bazelrc\n\nENV CI_BUILD_PYTHON ${PYTHON}\n\n# Set bazel build parameters in .bazelrc in parameterized_docker_build.sh\n# Use --copt=-march values to get optimized builds appropriate for the hardware\n#   platform of your choice.\n# For ivy-bridge or sandy-bridge\n# --copt=-march=\"avx\" \\\n# For haswell, broadwell, or skylake\n# --copt=-march=\"avx2\" \\\nCOPY .bazelrc /root/.mkl.bazelrc\nRUN echo \"import /root/.mkl.bazelrc\" >>/root/.bazelrc\n\nRUN tensorflow/tools/ci_build/builds/configured CPU \\\n    bazel --bazelrc=/root/.bazelrc build -c opt \\\n    tensorflow/tools/pip_package:build_pip_package && \\\n    bazel-bin/tensorflow/tools/pip_package/build_pip_package \"${WHL_DIR}\" && \\\n    ${PIP} --no-cache-dir install --upgrade \"${WHL_DIR}\"/tensorflow-*.whl && \\\n    rm -rf /root/.cache\n# Clean up Bazel cache when done.\n\n# TensorBoard\nEXPOSE 6006\n# IPython\nEXPOSE 8888\n\nWORKDIR /root\n"
+}

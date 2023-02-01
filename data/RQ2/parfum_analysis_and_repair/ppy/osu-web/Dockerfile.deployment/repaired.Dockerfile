@@ -1,0 +1,74 @@
+FROM ubuntu:20.04
+
+RUN apt-get update
+RUN DEBIAN_FRONTEND=noninteractive apt-get --no-install-recommends install -y software-properties-common && rm -rf /var/lib/apt/lists/*;
+
+RUN add-apt-repository ppa:ondrej/php
+
+RUN apt-get update
+RUN DEBIAN_FRONTEND=noninteractive apt-get --no-install-recommends install -y \
+    build-essential \
+    curl \
+    git \
+    jhead \
+    nginx \
+    php8.0-common \
+    php8.0-curl \
+    php8.0-ds \
+    php8.0-gd \
+    php8.0-intl \
+    php8.0-mbstring \
+    php8.0-mysql \
+    php8.0-redis \
+    php8.0-sqlite3 \
+    php8.0-swoole \
+    php8.0-tokenizer \
+    php8.0-xml \
+    php8.0-zip \
+    php8.0 \
+    zip && rm -rf /var/lib/apt/lists/*;
+
+WORKDIR /app
+
+RUN curl -fsSL https://deb.nodesource.com/setup_16.x | bash -
+RUN apt-get update
+RUN DEBIAN_FRONTEND=noninteractive apt-get --no-install-recommends install -y nodejs && rm -rf /var/lib/apt/lists/*;
+RUN npm install -g yarn && npm cache clean --force;
+
+RUN curl -f -L "https://getcomposer.org/download/latest-2.x/composer.phar" > /usr/local/bin/composer && chmod 755 /usr/local/bin/composer
+
+COPY composer.json composer.lock ./
+RUN composer install --no-autoloader --no-dev
+
+COPY package.json yarn.lock ./
+RUN yarn --prod --ignore-optional --frozen-lockfile
+
+RUN rm -f /var/log/nginx/access.log /var/log/nginx/error.log && \
+    ln -s /dev/stdout /var/log/nginx/access.log && \
+    ln -s /dev/stderr /var/log/nginx/error.log
+
+COPY . .
+RUN mkdir -p bootstrap/cache storage/logs storage/framework/cache storage/framework/views storage/framework/sessions public/uploads public/uploads-avatar public/uploads-replay
+RUN composer dump-autoload
+
+ARG APP_URL
+ARG DOCS_URL
+RUN yarn production
+
+RUN php artisan scribe:generate
+
+RUN rm -rf node_modules
+
+ARG GIT_SHA
+RUN printf "%s" "$GIT_SHA" > version
+
+RUN useradd -m osuweb
+RUN chown -R osuweb /var/lib/nginx bootstrap/cache storage
+USER osuweb
+ENV LOG_CHANNEL stderr
+
+EXPOSE 8000
+EXPOSE 8080
+
+ENTRYPOINT ["/app/docker/deployment/entrypoint.sh"]
+CMD ["octane"]

@@ -1,0 +1,26 @@
+{
+  "startTime": 1674253717910,
+  "endTime": 1674253718834,
+  "originalSmells": [
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 75,
+        "lineEnd": 75,
+        "columnStart": 16,
+        "columnEnd": 110
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 27,
+        "lineEnd": 27,
+        "columnStart": 4,
+        "columnEnd": 15
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# =====================================================================================================\n# Base stage used for build and final stages\n# =====================================================================================================\nFROM php:7.4-fpm-alpine AS base_stage\n\nARG PHP_EXT=\"bcmath gd pdo_mysql xml zip opcache\"\nARG PHP_MEMCACHED_VERSION=\"v3.1.5\"\n\nARG COMPOSER_VERSION=\"1.10.0\"\nARG COMPOSER_INSTALLER_URL=\"https://raw.githubusercontent.com/composer/getcomposer.org/d2c7283f9a7df2db2ab64097a047aae780b8f6b7/web/installer\"\nARG COMPOSER_INSTALLER_SHA=\"e0012edf3e80b6978849f5eff0d4b4e4c79ff1609dd1e613307e16318854d24ae64f26d17af3ef0bf7cfb710ca74755a\"\n\n# os packages needed for php extensions\nARG BASE_PACKAGES=\"bash zip libmemcached-dev libxml2-dev zip libzip libzip-dev git freetype libpng libjpeg-turbo\"\nARG BUILD_PACKAGES=\"autoconf build-base cyrus-sasl-dev libpng-dev libjpeg-turbo-dev shadow\"\nARG PURGE_FILES=\"/var/lib/apt/lists/* /usr/src/php /usr/include /usr/local/include /usr/share/doc /usr/share/doc-base /var/www/html/php-memcached\"\n\nRUN apk add --no-cache $BASE_PACKAGES $BUILD_PACKAGES \\\n\t&& usermod -u 1000 www-data && groupmod -g 1000 www-data \\\n\t# ======== PHP XDEBUG\n\t&& pecl install xdebug \\\n\t&& docker-php-ext-enable xdebug \\\n\t&& docker-php-ext-configure gd --with-jpeg=/usr/include \\\n\t&& docker-php-ext-install $PHP_EXT \\\n\t&& git clone -b $PHP_MEMCACHED_VERSION https://github.com/php-memcached-dev/php-memcached.git \\\n\t&& cd php-memcached \\\n\t&& phpize \\\n\t&& ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" \\\n\t&& make \\\n\t&& make install \\\n\t&& docker-php-ext-enable $PHP_EXT_ENABLE memcached \\\n\t&& apk del $BUILD_PACKAGES \\\n\t&& rm -rf $PURGE_FILES\n\n# ======== PHP COMPOSER\nRUN php -r \"copy('$COMPOSER_INSTALLER_URL', 'composer-setup.php');\"\nRUN php -r \"if (hash_file('sha384', 'composer-setup.php') === '$COMPOSER_INSTALLER_SHA') { echo 'COMPOSER VERIFIED'; } else { echo 'COMPOSER INVALID'; exit(1); } echo PHP_EOL;\"\nRUN php composer-setup.php --install-dir=/usr/local/bin --filename=composer --version=$COMPOSER_VERSION\n\n# Use the default production configuration\nRUN mv \"$PHP_INI_DIR/php.ini-production\" \"$PHP_INI_DIR/php.ini\"\n\nWORKDIR /var/www/html\n\n# =====================================================================================================\n# composer stage runs composer install\n# =====================================================================================================\nFROM base_stage as composer_stage\n\nUSER www-data\n\n# ======== COPY APP IN\nCOPY --chown=www-data:www-data ./README.md /var/www/html/README.md\nCOPY --chown=www-data:www-data ./fuel /var/www/html/fuel\nCOPY --chown=www-data:www-data ./public /var/www/html/public\nCOPY --chown=www-data:www-data ./.env /var/www/html/.env\nCOPY --chown=www-data:www-data ./composer.json /var/www/html/composer.json\nCOPY --chown=www-data:www-data ./composer.lock /var/www/html/composer.lock\nCOPY --chown=www-data:www-data ./oil /var/www/html/oil\n\nRUN composer install --no-cache --no-dev --no-progress --no-scripts --prefer-dist --optimize-autoloader\n\n# =====================================================================================================\n# Yarn stage buils js/css assets\n# =====================================================================================================\nFROM node:12.11.1-alpine AS yarn_stage\n\nRUN apk add --no-cache git\n\nCOPY ./public /build/public\nCOPY ./package.json /build/package.json\nCOPY ./process_assets.js /build/process_assets.js\nCOPY ./yarn.lock /build/yarn.lock\n# make sure the directory where asset_hash.json is generated exists\nRUN mkdir -p /build/fuel/app/config/\nRUN cd build && yarn install --frozen-lockfile --non-interactive --production --silent --pure-lockfile --force && yarn cache clean;\n\n\n# =====================================================================================================\n# final stage creates the final deployable image\n# =====================================================================================================\nFROM base_stage as FINAL_STAGE\n\nCOPY docker/config/php/materia.php.ini $PHP_INI_DIR/conf.d/materia.php.ini\n\n\nUSER www-data\n# ======== COPY FINAL APP\nCOPY --from=composer_stage --chown=www-data:www-data /var/www/html /var/www/html\nCOPY --from=yarn_stage --chown=www-data:www-data /build/public /var/www/html/public\nCOPY --from=yarn_stage --chown=www-data:www-data /build/fuel/app/config/asset_hash.json /var/www/html/fuel/app/config/asset_hash.json\n"
+}

@@ -1,0 +1,60 @@
+FROM debian:buster-slim as build
+LABEL maintainer="dro@arrakis.it"
+
+# Install build dependencies
+RUN apt-get update -y \
+    && apt-get install -y automake build-essential pkg-config libffi-dev libgmp-dev libssl-dev libtinfo-dev libsystemd-dev zlib1g-dev make g++ tmux git jq wget libncursesw5 libtool autoconf libsqlite3-dev m4 ca-certificates gcc libc6-dev  curl\
+    && apt-get clean
+
+# Install GHC
+ENV CABAL_VERSION=3.6.0.0 \
+    GHC_VERSION=8.10.7 \
+    PATH="$HOME/.cabal/bin:/root/.ghcup/bin:$PATH"
+RUN curl --proto '=https' --tlsv1.2 -sSf https://get-ghcup.haskell.org | sh \
+    && ghcup install ghc ${GHC_VERSION} \
+    && ghcup install cabal ${CABAL_VERSION} \
+    && ghcup set ghc ${GHC_VERSION} \
+    && ghcup set cabal ${CABAL_VERSION}
+
+# Install libsodium
+ARG LIBSODIUM_VERSION
+RUN git clone https://github.com/input-output-hk/libsodium \
+    && cd libsodium \
+    && git fetch --all --recurse-submodules --tags \
+    && git tag \
+    && git checkout $LIBSODIUM_VERSION \
+    && ./autogen.sh \
+    && ./configure \
+    && make \
+    && make install \
+    && cd .. && rm -rf libsodium
+ENV LD_LIBRARY_PATH="/usr/local/lib:$LD_LIBRARY_PATH" \
+    PKG_CONFIG_PATH="/usr/local/lib/pkgconfig:$PKG_CONFIG_PATH"
+
+# Install cardano-node
+ARG VERSION
+RUN echo "Building tags/$VERSION..." \
+    && echo tags/$VERSION > /CARDANO_BRANCH \
+    && git clone https://github.com/input-output-hk/cardano-node.git \
+    && cd cardano-node \
+    && git fetch --all --recurse-submodules --tags \
+    && git tag \
+    && git checkout tags/$VERSION \
+    && cabal configure --with-compiler=ghc-${GHC_VERSION} \
+    && echo "package cardano-crypto-praos" >>  cabal.project.local \
+    && echo "  flags: -external-libsodium-vrf" >>  cabal.project.local \
+    && cabal build all \
+    && mkdir -p /root/.local/bin/ \
+    && cp -p "$(./scripts/bin-path.sh cardano-node)" /root/.local/bin/ \
+    && cp -p "$(./scripts/bin-path.sh cardano-cli)" /root/.local/bin/
+
+# Run
+FROM debian:stable-slim
+LABEL maintainer="dro@arrakis.it"
+
+COPY --from=build /root/.local/bin/ /bin/
+COPY --from=build /usr/local/lib/ /lib/
+
+SHELL ["/bin/bash", "-c"]
+
+ENTRYPOINT ["cardano-node"]

@@ -1,0 +1,44 @@
+{
+  "startTime": 1674250809106,
+  "endTime": 1674250809934,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 30,
+        "lineEnd": 30,
+        "columnStart": 4,
+        "columnEnd": 101
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 16,
+        "lineEnd": 24,
+        "columnStart": 22,
+        "columnEnd": 5
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 90,
+        "lineEnd": 96,
+        "columnStart": 22,
+        "columnEnd": 6
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 16,
+        "lineEnd": 24,
+        "columnStart": 22,
+        "columnEnd": 5
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# ------------------------------------------------------------------------------\n# Base: for tests, precommit, codegen, etc.\n# ------------------------------------------------------------------------------\nARG PLATFORM=linux/amd64\n\nFROM --platform=$PLATFORM ubuntu:xenial as base\n\nENV GO111MODULE on\nENV GOPATH ${USER}/go\nENV GOBIN /build/bin\nENV PATH ${PATH}:${GOBIN}:${GOPATH}/bin\n\n# Used in Makefiles\nENV MAGMA_ROOT /src/magma\n\n# Apt runtime deps\nRUN apt-get update && apt-get install --no-install-recommends -y \\\n  bzr \\\n  curl \\\n  gcc \\\n  git \\\n  make \\\n  openjdk-8-jre-headless \\\n  unzip \\\n  vim && rm -rf /var/lib/apt/lists/*;\n\n# Golang 1.18\nWORKDIR /usr/local\nARG GOLANG_VERSION=\"1.18.3\"\nRUN GO_TARBALL=\"go${GOLANG_VERSION}.linux-amd64.tar.gz\" \\\n && curl -f https://artifactory.magmacore.org/artifactory/generic/${GO_TARBALL} --remote-name --location \\\n && tar -xzf ${GO_TARBALL} \\\n && ln -s /usr/local/go/bin/go /usr/local/bin/go \\\n && rm ${GO_TARBALL}\n\n# Install goimports\n# RUN go get golang.org/x/tools/cmd/goimports\n\n# Protobuf compiler\n# Apt has 2.x but we need 3.x\n# See: https://grpc.io/docs/protoc-installation/\nRUN curl -Lfs https://github.com/protocolbuffers/protobuf/releases/download/v3.10.0/protoc-3.10.0-linux-x86_64.zip -o protoc3.zip && \\\n    unzip protoc3.zip -d protoc3 && \\\n    mv protoc3/bin/protoc /bin/protoc && \\\n    chmod a+rx /bin/protoc && \\\n    mv protoc3/include/google /usr/include/ && \\\n    chmod -R a+Xr /usr/include/google && \\\n    rm -rf protoc3.zip protoc3\n\n# ------------------------------------------------------------------------------\n# Gocache: cache Go modules\n# ------------------------------------------------------------------------------\nFROM base as gocache\n\nARG MAGMA_MODULES=\"orc8r lte feg cwf dp\"\nRUN echo \"export GOCACHE_MODULES=\\\"$(for m in $MAGMA_MODULES ; do echo -n /gomod/src/magma/$m ; echo -n ' ' ; done)\\\"\" >> /etc/profile.d/env.sh\n\nCOPY gomod /gomod\nRUN cat /etc/profile.d/env.sh\nRUN . /etc/profile.d/env.sh && for m in $GOCACHE_MODULES ; do cd ${m}/cloud/go && echo ${m}/cloud/go && go mod download ; done\n\n# ------------------------------------------------------------------------------\n# Src: different src depending on MAGMA_MODULES\n# ------------------------------------------------------------------------------\nFROM gocache as src\n\nARG MAGMA_MODULES=\"orc8r lte feg cwf dp\"\nRUN echo \"export MAGMA_MODULES=\\\"$(for m in $MAGMA_MODULES ; do echo -n /src/magma/$m ; echo -n ' ' ; done)\\\"\" >> /etc/profile.d/env.sh\n\n# Source code\nCOPY src /src\nWORKDIR /src/magma/orc8r/cloud\nRUN . /etc/profile.d/env.sh && make tools\n\n# Configs\nCOPY configs /etc/magma/configs\n\n# ------------------------------------------------------------------------------\n# Builder: compile src\n# ------------------------------------------------------------------------------\nFROM src as builder\n\nRUN . /etc/profile.d/env.sh && make build\n\n# ------------------------------------------------------------------------------\n# Production\n# ------------------------------------------------------------------------------\nFROM ubuntu:xenial\n\n# Apt runtime deps\nRUN apt-get update && apt-get install --no-install-recommends -y \\\n  daemontools \\\n  netcat \\\n  openssl \\\n  supervisor \\\n  unzip \\\n  wget \\\n&& rm -rf /var/lib/apt/lists/*\n\n# Swagger UI\n# See: https://github.com/swagger-api/swagger-ui\nARG SWAGGER_UI_VERSION=\"3.52.2\"\nRUN cd /tmp && \\\n  wget \"https://github.com/swagger-api/swagger-ui/archive/v$SWAGGER_UI_VERSION.zip\" && \\\n  unzip \"v$SWAGGER_UI_VERSION.zip\" -d swagger-ui && \\\n  mkdir -p /var/opt/magma/static/swagger-ui && \\\n  cp -r \"swagger-ui/swagger-ui-$SWAGGER_UI_VERSION/dist\" /var/opt/magma/static/swagger-ui\n\n# Script to wait for DB to be reachable\nCOPY src/magma/orc8r/cloud/docker/wait-for-it.sh /usr/local/bin\n\n# Empty envdir for overriding in production\nRUN mkdir -p /var/opt/magma/envdir\n\n# Build artifacts\nARG SWAGGER_FILES=src/magma/orc8r/cloud/go/services/obsidian/swagger\nCOPY --from=builder /${SWAGGER_FILES}/v1/index.html /var/opt/magma/static/swagger/v1/ui/index.html\nCOPY --from=builder /${SWAGGER_FILES}/v1/css/sidebar.css /var/opt/magma/static/swagger/v1/static/sidebar.css\nCOPY --from=builder /${SWAGGER_FILES}/v1/swagger.yml /var/opt/magma/static/swagger/v1/spec/swagger.yml\nCOPY --from=builder src/magma/orc8r/cloud/swagger /etc/magma/swagger\nCOPY --from=builder /build/bin /var/opt/magma/bin\n\n# Supervisor configs\nARG CNTLR_FILES=src/magma/orc8r/cloud/docker/controller\nCOPY ${CNTLR_FILES}/supervisord.conf /etc/supervisor/conf.d/supervisord.conf\nCOPY ${CNTLR_FILES}/supervisor_logger.py /usr/local/lib/python2.7/dist-packages/supervisor_logger.py\n\n# Scripts for dev mode\nCOPY ${CNTLR_FILES}/create_test_controller_certs /usr/local/bin/create_test_controller_certs\n\n# Configs\nCOPY configs /etc/magma/configs\n"
+}

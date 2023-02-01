@@ -1,0 +1,13 @@
+FROM sider/devon_rex_npm:2.46.0
+
+<%= render_erb 'images/Dockerfile.base.erb' %>
+
+# Install the default version
+COPY --chown=<%= chown %> images/<%= analyzer %>/package.json ${RUNNERS_DEPS_DIR}/
+RUN cd "${RUNNERS_DEPS_DIR}" && \
+    npm install --strict-peer-deps --ignore-scripts --engine-strict --no-progress --no-save && \
+    rm package*.json && \
+    # We can't use NODE_PATH
+    # See the details here: https://github.com/sider/runners/issues/2636
+    ln -s "${RUNNERS_DEPS_DIR}"/node_modules "${RUNNER_USER_HOME}" && npm cache clean --force;
+ENV PATH ${RUNNERS_DEPS_DIR}/node_modules/.bin:${PATH}

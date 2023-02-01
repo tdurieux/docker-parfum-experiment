@@ -1,0 +1,17 @@
+{
+  "startTime": 1674220435888,
+  "endTime": 1674220436757,
+  "originalSmells": [
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 14,
+        "lineEnd": 14,
+        "columnStart": 7,
+        "columnEnd": 18
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "ARG python_version\nFROM python:${python_version}-alpine as base\nSHELL [\"/bin/sh\", \"-e\", \"-o\", \"pipefail\", \"-u\", \"-x\", \"-c\"]\n# Required since the earlier versions of git assume the location of python to be /usr/bin/python during the build.\nRUN ln -s /usr/local/bin/python /usr/bin/python\n\nARG git_version\nRUN set -x \\\n    && apk add --no-cache --virtual=git-build-deps alpine-sdk autoconf gettext wget zlib-dev \\\n    && wget -q https://github.com/git/git/archive/v$git_version.tar.gz \\\n    && tar xzf v$git_version.tar.gz \\\n    && rm v$git_version.tar.gz \\\n    && cd git-$git_version/ \\\n    && make configure \\\n    && ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" \\\n    && sed -i 's/#warning .*//' /usr/include/sys/poll.h  `# to reduce amount of spam warnings in logs` \\\n    && make \\\n    && make install \\\n    && cd .. \\\n    && rm -r git-$git_version/ \\\n    && git --version \\\n    && apk del git-build-deps \\\n    && rm -rfv /usr/local/bin/git-shell /usr/local/share/git-gui/ \\\n    && cd /usr/local/libexec/git-core/ \\\n    && rm -fv git-credential-* git-daemon git-fast-import git-http-backend git-imap-send git-remote-testsvn git-shell\n\nARG python_version\nENV PYTHON_VERSION=${python_version}\nENV PYTHON=python${python_version}\nRUN apk add --no-cache gcc musl-dev # both packages are required to install mypy\n\nFROM base AS circle_ci\nRUN $PYTHON -m pip install tox\nENV PATH=$PATH:/root/.local/bin/\nCOPY entrypoint.sh /root/\nRUN chmod +x /root/entrypoint.sh\nCMD [\"/root/entrypoint.sh\"]\nWORKDIR /root/git-machete\n\nFROM base AS local\nARG user_id\nARG group_id\nRUN set -x \\\n    && [ ${user_id:-0} -ne 0 ] \\\n    && [ ${group_id:-0} -ne 0 ] \\\n    # sometimes the given `group_id` is already taken and `addgroup` raises an error, so let's check its existence first\n    && (getent group $group_id || addgroup --gid=${group_id} ci-user) \\\n    && adduser --uid=${user_id} --ingroup=$(getent group $group_id | cut -d: -f1) --disabled-password ci-user\nUSER ci-user\nRUN $PYTHON -m pip install --user tox\nENV PATH=$PATH:/home/ci-user/.local/bin/\nCOPY --chown=ci-user:ci-user entrypoint.sh /home/ci-user/\nRUN chmod +x ~/entrypoint.sh\nCMD [\"/home/ci-user/entrypoint.sh\"]\nWORKDIR /home/ci-user/git-machete\n"
+}

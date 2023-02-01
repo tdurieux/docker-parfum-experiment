@@ -1,0 +1,44 @@
+{
+  "startTime": 1674255330848,
+  "endTime": 1674255331949,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 7,
+        "lineEnd": 7,
+        "columnStart": 4,
+        "columnEnd": 18
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 4,
+        "lineEnd": 4,
+        "columnStart": 7,
+        "columnEnd": 34
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 5,
+        "lineEnd": 5,
+        "columnStart": 7,
+        "columnEnd": 53
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 76,
+        "lineEnd": 76,
+        "columnStart": 5,
+        "columnEnd": 45
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM centos:7 as builder\n\n# setup sudo and other tools (for testing only)\nRUN yum update -y \\\n    && yum install epel-release -y \\\n    && yum install gettext python-pip jq yum-utils -y \\\n    && yum clean all && rm -rf /var/cache/yum\nRUN pip install --no-cache-dir yq\n\n# kubernetes rpms\nRUN echo -e '[kubernetes]\\n\\\nname=Kubernetes\\n\\\nbaseurl=https://packages.cloud.google.com/yum/repos/kubernetes-el7-x86_64\\n\\\nenabled=1\\n\\\ngpgcheck=1\\n\\\nrepo_gpgcheck=0'\\\n>> /etc/yum.repos.d/kubernetes.repo\n\nARG K8S_VERSION_OLD=1.10.6\nARG K8S_VERSION_NEW=1.11.2\n\nRUN mkdir /var/tmp/${K8S_VERSION_OLD} \\\n  && yumdownloader --assumeyes --resolve --destdir /var/tmp/${K8S_VERSION_OLD} \\\n    kubectl-${K8S_VERSION_OLD} \\\n    kubeadm-${K8S_VERSION_OLD} \\\n    kubelet-${K8S_VERSION_OLD} \\\n    kubernetes-cni\nRUN mkdir /var/tmp/${K8S_VERSION_NEW} \\\n  && yumdownloader --assumeyes --resolve --destdir /var/tmp/${K8S_VERSION_NEW} \\\n    kubectl-${K8S_VERSION_NEW} \\\n    kubeadm-${K8S_VERSION_NEW} \\\n    kubelet-${K8S_VERSION_NEW} \\\n    kubernetes-cni\n\nWORKDIR /usr/scripts\nCOPY bootstrap_scripts bootstrap_scripts\nCOPY templates templates\nCOPY generate-yaml.sh .\n\n# Run generate to test things out\n# Setup some variables for testing\nENV OS_TYPE=centos\n\nRUN chmod +x /usr/scripts/generate-yaml.sh \\\n  && /usr/scripts/generate-yaml.sh \\\n  && mkdir -p /usr/scripts/master \\\n  && mkdir -p /usr/scripts/node\n\n# get master scripts\nRUN echo '#!/usr/bin/env bash' > /usr/scripts/master/startupScript.sh \\\n  && cat /usr/scripts/out/provider-components.yaml | yq  -s --raw-output '.[]  | select(.metadata.name == \"machine-setup\") | .data.\"machine_setup_configs.yaml\"' | yq '.items[] | select(.machineParams.roles | contains([\"Master\"]))' | jq --raw-output -s .[-1].metadata.startupScript | xargs -0 printf '%b' >> /usr/scripts/master/startupScript.sh \\\n  && chmod +x /usr/scripts/master/startupScript.sh\nRUN echo '#!/usr/bin/env bash' > /usr/scripts/master/shutdownScript.sh \\\n  && cat /usr/scripts/out/provider-components.yaml | yq  -s --raw-output '.[]  | select(.metadata.name == \"machine-setup\") | .data.\"machine_setup_configs.yaml\"' | yq '.items[] | select(.machineParams.roles | contains([\"Master\"]))' | jq --raw-output -s .[-1].metadata.shutdownScript | xargs -0 printf '%b' >> /usr/scripts/master/shutdownScript.sh \\\n  && chmod +x /usr/scripts/master/shutdownScript.sh\nRUN echo '#!/usr/bin/env bash' > /usr/scripts/master/upgradeScript.sh \\\n  && cat /usr/scripts/out/provider-components.yaml | yq  -s --raw-output '.[]  | select(.metadata.name == \"machine-setup\") | .data.\"machine_setup_configs.yaml\"' | yq '.items[] | select(.machineParams.roles | contains([\"Master\"]))' | jq --raw-output -s .[-1].metadata.upgradeScript | xargs -0 printf '%b' >> /usr/scripts/master/upgradeScript.sh \\\n  && chmod +x /usr/scripts/master/upgradeScript.sh\n\n# get node scripts\nRUN echo '#!/usr/bin/env bash' > /usr/scripts/node/startupScript.sh \\\n  && cat /usr/scripts/out/provider-components.yaml | yq  -s --raw-output '.[]  | select(.metadata.name == \"machine-setup\") | .data.\"machine_setup_configs.yaml\"' | yq '.items[] | select(.machineParams.roles | contains([\"Node\"]))' | jq --raw-output -s .[-1].metadata.startupScript | xargs -0 printf '%b' >> /usr/scripts/node/startupScript.sh \\\n  && chmod +x /usr/scripts/node/startupScript.sh\nRUN echo '#!/usr/bin/env bash' > /usr/scripts/node/shutdownScript.sh \\\n  && cat /usr/scripts/out/provider-components.yaml | yq  -s --raw-output '.[]  | select(.metadata.name == \"machine-setup\") | .data.\"machine_setup_configs.yaml\"' | yq '.items[] | select(.machineParams.roles | contains([\"Node\"]))' | jq --raw-output -s .[-1].metadata.shutdownScript | xargs -0 printf '%b' >> /usr/scripts/node/shutdownScript.sh \\\n  && chmod +x /usr/scripts/node/shutdownScript.sh\nRUN echo '#!/usr/bin/env bash' > /usr/scripts/node/upgradeScript.sh \\\n  && cat /usr/scripts/out/provider-components.yaml | yq  -s --raw-output '.[]  | select(.metadata.name == \"machine-setup\") | .data.\"machine_setup_configs.yaml\"' | yq '.items[] | select(.machineParams.roles | contains([\"Node\"]))' | jq --raw-output -s .[-1].metadata.upgradeScript | xargs -0 printf '%b' >> /usr/scripts/node/upgradeScript.sh \\\n  && chmod +x /usr/scripts/node/upgradeScript.sh\n\n\nFROM centos:7.4.1708\n\nWORKDIR /resources\n\nRUN yum update -y \\\n  && yum install -y yum-utils createrepo wget && rm -rf /var/cache/yum\n\nCOPY --from=builder /var/tmp/${K8S_VERSION_OLD} rpms/${K8S_VERSION_OLD}\nCOPY --from=builder /var/tmp/${K8S_VERSION_NEW} rpms/${K8S_VERSION_NEW}\nCOPY --from=builder /usr/scripts ./scripts\n\nRUN mkdir -p /resources/yaml \\\n  && wget --directory-prefix=/resources/yaml https://raw.githubusercontent.com/coreos/flannel/v0.10.0/Documentation/kube-flannel.yml\n\nRUN createrepo /resources/rpms/${K8S_VERSION_OLD}\n\nRUN echo -e \"[local]\\n\\\nname=Local\\n\\\nbaseurl=file:///resources/rpms/${K8S_VERSION_OLD}\\n\\\nenabled=1\\n\\\ngpgcheck=0\\n\\\nrepo_gpgcheck=0\"\\\n>> /etc/yum.repos.d/local.repo\n\n# fake vars for script validatio\nENV MASTER_IP=changeme\nENV CONTROL_PLANE_VERSION=changeme\nENV POD_CIDR=changeme\nENV CLUSTER_DNS_DOMAIN=cluster.local\nENV SERVICE_CIDR=changeme\n\n"
+}

@@ -1,0 +1,35 @@
+{
+  "startTime": 1674251176291,
+  "endTime": 1674251177505,
+  "originalSmells": [
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 58,
+        "lineEnd": 58,
+        "columnStart": 4,
+        "columnEnd": 15
+      }
+    },
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 62,
+        "lineEnd": 62,
+        "columnStart": 4,
+        "columnEnd": 24
+      }
+    },
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 63,
+        "lineEnd": 63,
+        "columnStart": 4,
+        "columnEnd": 28
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# sudo docker build -t l7mp-uko .\n# sudo docker run --cap-add=NET_ADMIN --cap-add=SYS_ADMIN --privileged -i -t l7mp-uko /bin/sh\n\n# BUILDER\n# alpine version >3.11 is required to have tc with elf support\nFROM node:14-alpine3.12 AS builder\n\n# Install kernel-offload dependencies\nRUN apk update && \\\n    apk upgrade && \\\n    apk add --no-cache \\\n      clang \\\n      llvm \\\n      iproute2 \\\n      linux-headers \\\n      musl-dev \\\n      coreutils \\\n      gettext-dev \\\n      python2 \\\n      make \\\n      git \\\n      g++ \\\n      wget \\\n      bison \\\n      flex-dev \\\n      zlib-dev \\\n      bzip2-dev \\\n      xz-dev \\\n      argp-standalone \\\n      bsd-compat-headers \\\n      autoconf \\\n      automake \\\n      libintl \\\n      libtool \\\n      fts-dev \\\n      musl-obstack-dev\n\n# Build bpf object\nCOPY kernel-offload /kernel-offload\nRUN cd /kernel-offload && make build\n\n# Prepare node_bpf npm package\n# get node_bpf source\nRUN git clone --depth 1 https://github.com/mildsunrise/node_bpf.git\n\n# patch node-gyp config to link with installed libintl\nRUN  sed -i \\\n    \"/\\\"dependencies\\\": \\[ \\\"libeu\\\" \\],/i \\\"link_settings\\\": {\\\"libraries\\\": \\[\\\"/usr/lib/libintl.so.8\\\"\\] },\" \\\n    node_bpf/deps/elfutils.gyp\n\n# add missing error.h from alpine repo\nRUN wget -q https://git.alpinelinux.org/aports/plain/main/elfutils/error.h?h=3.12-stable -O error.h \\\n && cp error.h node_bpf/deps/elfutils/lib/error.h \\\n && rm error.h\n\n# Build npm packages\nCOPY package*.json /\nRUN cd node_bpf \\\n && npm install \\\n && npm run-script configure \\\n && npm run-script build \\\n && cd .. \\\n && npm install node_bpf \\\n && npm install --production && npm cache clean --force;\nRUN rm /node_modules/bpf && mv /node_bpf /node_modules/bpf\nRUN rm -rf /node_modules/*/.git/\n\n\n\n# MAIN\n\nFROM node:14-alpine3.12\n\n# Create app directory\nWORKDIR /app\n\n# Install kernel-offload dependencies\nRUN apk update && \\\n    apk upgrade && \\\n    apk add --no-cache \\\n      iproute2 \\\n      libintl\n\n# copy prebuilt node_modules\nCOPY --from=builder /node_modules /app/node_modules\nRUN chmod 755 /app/node_modules/*\n\n# copy bpf object\nRUN mkdir /app/kernel-offload/\nCOPY --from=builder /kernel-offload/*.o /app/kernel-offload/\n\n# copy package.json\nCOPY --from=builder package*.json /app/\n\n# add the minimal config file\nCOPY config/l7mp-minimal.yaml config/\n\n# Bundle app source\nCOPY *.js ./\nCOPY openapi/l7mp-openapi.yaml openapi/\n\n# Expose the control port\nEXPOSE 1234\n\n# test container\n# CMD exec /bin/sh -c \"trap : TERM INT; (while true; do sleep 1000; done) & wait\"\n\n# should work eventually\n# CMD [ \"node\", \"l7mp.js\", \"-c\", \"config/l7mp-minimal.yaml\", \"-s\", \"-l\", \"silly\" ]\n\n# disable validation\n#CMD [ \"node\", \"l7mp.js\", \"-c\", \"config/l7mp-minimal.yaml\", \"-l\", \"silly\" ]\n\n# for testing\nCMD [ \"node\", \"l7mp-proxy.js\", \"-c\", \"config/l7mp-minimal.yaml\", \"-s\", \"-l\", \"info\" ]\n"
+}

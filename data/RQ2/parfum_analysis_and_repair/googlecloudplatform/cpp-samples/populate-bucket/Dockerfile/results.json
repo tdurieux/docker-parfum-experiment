@@ -1,0 +1,99 @@
+{
+  "startTime": 1674254205061,
+  "endTime": 1674254206137,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 25,
+        "lineEnd": 25,
+        "columnStart": 4,
+        "columnEnd": 75
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 23,
+        "lineEnd": 23,
+        "columnStart": 18,
+        "columnEnd": 52
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 31,
+        "lineEnd": 31,
+        "columnStart": 4,
+        "columnEnd": 74
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 32,
+        "lineEnd": 32,
+        "columnStart": 4,
+        "columnEnd": 29
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 32,
+        "lineEnd": 32,
+        "columnStart": 4,
+        "columnEnd": 29
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 23,
+        "lineEnd": 23,
+        "columnStart": 18,
+        "columnEnd": 52
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 31,
+        "lineEnd": 31,
+        "columnStart": 4,
+        "columnEnd": 74
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 32,
+        "lineEnd": 32,
+        "columnStart": 4,
+        "columnEnd": 29
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 65,
+        "lineEnd": 65,
+        "columnStart": 4,
+        "columnEnd": 73
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 32,
+        "lineEnd": 32,
+        "columnStart": 4,
+        "columnEnd": 53
+      }
+    }
+  ],
+  "repairedDockerfile": "# Copyright 2020 Google LLC\n#\n# Licensed under the Apache License, Version 2.0 (the \"License\");\n# you may not use this file except in compliance with the License.\n# You may obtain a copy of the License at\n#\n#     http://www.apache.org/licenses/LICENSE-2.0\n#\n# Unless required by applicable law or agreed to in writing, software\n# distributed under the License is distributed on an \"AS IS\" BASIS,\n# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.\n# See the License for the specific language governing permissions and\n# limitations under the License.\n\n# We chose Ubuntu to build the image because we are familiar with it.\nFROM ubuntu:22.04 AS base\n\n# Create separate targets for each phase, this makes the final deployment stage\n# small as it contains only what is needed.\nFROM base AS devtools\n\n# Install the minimal tools necessary to download vcpkg, and then download it.\nENV DEBIAN_FRONTEND=noninteractive\nRUN apt update && apt install --no-install-recommends -y curl gzip tar unzip && rm -rf /var/lib/apt/lists/*;\nWORKDIR /var/tmp/build/vcpkg\nRUN curl -f -s -L https://github.com/Microsoft/vcpkg/archive/2022.06.15.tar.gz | \\\n    tar -xzf - --strip-components=1\n\n# Install the typical development tools, zip + unzip are used by vcpkg to\n# maintain its cache.\nRUN apt update && \\\n    apt install --no-install-recommends -y build-essential cmake git gcc g++ ninja-build unzip zip && rm -rf /var/lib/apt/lists/*;\nRUN apt install --no-install-recommends -y pkg-config && rm -rf /var/lib/apt/lists/*;\nRUN ./bootstrap-vcpkg.sh\n\n# Create a separate stage where we build all the dependencies.\nFROM devtools AS dependencies\n\nRUN ./vcpkg install openssl\nRUN ./vcpkg install curl\nRUN ./vcpkg install crc32c\nRUN ./vcpkg install protobuf\nRUN ./vcpkg install abseil\nRUN ./vcpkg install grpc\nRUN ./vcpkg install google-cloud-cpp\nRUN ./vcpkg install boost-program-options\n\n# Copy the source code to /v/source and compile it.\nFROM dependencies AS build\nCOPY . /v/source\nWORKDIR /v/source\n\n# Run the CMake configuration step, setting the options to use vcpkg.\nRUN cmake -S/v/source -B/v/binary -GNinja \\\n    -DCMAKE_TOOLCHAIN_FILE=/var/tmp/build/vcpkg/scripts/buildsystems/vcpkg.cmake\n\n# Compile the binary and strip it to reduce its size.\nRUN cmake --build /v/binary\nRUN strip /v/binary/populate_bucket\n\n# Create the final deployment image, we need the CA certificates, as the\n# application needs to verify the Google SSL certificates.\nFROM base AS populate-bucket\nENV DEBIAN_FRONTEND=noninteractive\nRUN apt update && \\\n    apt-get --no-install-recommends install -y libstdc++6 ca-certificates && \\\n    rm -rf /var/cache/apt/* && rm -rf /var/lib/apt/lists/*;\nWORKDIR /r\n\n# Copy the program from the previously created stage and make it the entry point.\nCOPY --from=build /v/binary/populate_bucket /r\n\n# Make the image fail if invoked with an explicit command line.\nCMD \"/bin/false\"\n"
+}

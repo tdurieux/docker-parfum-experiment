@@ -1,0 +1,26 @@
+{
+  "startTime": 1674220472757,
+  "endTime": 1674220473528,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 44,
+        "lineEnd": 44,
+        "columnStart": 18,
+        "columnEnd": 48
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 44,
+        "lineEnd": 44,
+        "columnStart": 18,
+        "columnEnd": 48
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Copyright 2018 Google, Inc. All rights reserved.\n#\n# Licensed under the Apache License, Version 2.0 (the \"License\");\n# you may not use this file except in compliance with the License.\n# You may obtain a copy of the License at\n#\n#     http://www.apache.org/licenses/LICENSE-2.0\n#\n# Unless required by applicable law or agreed to in writing, software\n# distributed under the License is distributed on an \"AS IS\" BASIS,\n# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.\n# See the License for the specific language governing permissions and\n# limitations under the License.\n\nFROM golang:1.17\nWORKDIR /src\n\n# This arg is passed by docker buildx & contains the target CPU architecture (e.g., amd64, arm64, etc.)\nARG TARGETARCH\n\nENV GOARCH=$TARGETARCH\nENV CGO_ENABLED=0\nENV GOBIN=/usr/local/bin\n\n# Get GCR credential helper\nRUN go install github.com/GoogleCloudPlatform/docker-credential-gcr@4cdd60d0f2d8a69bc70933f4d7718f9c4e956ff8\n\n# Get Amazon ECR credential helper\nRUN go install github.com/awslabs/amazon-ecr-credential-helper/ecr-login/cli/docker-credential-ecr-login@69c85dc22db6511932bbf119e1a0cc5c90c69a7f # v0.6.0\n\n# Get ACR docker env credential helper\nRUN go install github.com/chrismellard/docker-credential-acr-env@09e2b5a8ac86c3ec347b2473e42b34367d8fa419\n\n# Add .docker config dir\nRUN mkdir -p /kaniko/.docker\n\nCOPY . .\nRUN \\\n  --mount=type=cache,target=/root/.cache/go-build \\\n  --mount=type=cache,target=/go/pkg \\\n  make GOARCH=$TARGETARCH out/warmer\n\n# Generate latest ca-certificates\nFROM debian:bullseye-slim AS certs\nRUN apt update && apt install --no-install-recommends -y ca-certificates && rm -rf /var/lib/apt/lists/*;\n\nFROM scratch\n# Create kaniko directory with world write permission to allow non root run\n# use musl busybox since it's staticly compiled\nRUN --mount=from=busybox:musl,dst=/usr/ [\"busybox\", \"sh\", \"-c\", \"mkdir -p /kaniko && chmod 777 /kaniko\"]\n\nCOPY --from=0 /src/out/warmer /kaniko/warmer\nCOPY --from=0 /usr/local/bin/docker-credential-gcr /kaniko/docker-credential-gcr\nCOPY --from=0 /usr/local/bin/docker-credential-ecr-login /kaniko/docker-credential-ecr-login\nCOPY --from=0 /usr/local/bin/docker-credential-acr-env /kaniko/docker-credential-acr-env\nCOPY --from=certs /etc/ssl/certs/ca-certificates.crt /kaniko/ssl/certs/\nCOPY --from=0 /kaniko/.docker /kaniko/.docker\nCOPY files/nsswitch.conf /etc/nsswitch.conf\nENV HOME /root\nENV USER /root\nENV PATH /usr/local/bin:/kaniko\nENV SSL_CERT_DIR=/kaniko/ssl/certs\nENV DOCKER_CONFIG /kaniko/.docker/\nENV DOCKER_CREDENTIAL_GCR_CONFIG /kaniko/.config/gcloud/docker_credential_gcr_config.json\nWORKDIR /workspace\nENTRYPOINT [\"/kaniko/warmer\"]\n"
+}

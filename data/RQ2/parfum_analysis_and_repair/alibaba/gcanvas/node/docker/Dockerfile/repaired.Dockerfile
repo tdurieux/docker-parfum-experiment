@@ -1,0 +1,24 @@
+FROM ubuntu:18.04
+
+RUN apt-get update && apt-get install --no-install-recommends -y libglfw3-dev libgles2-mesa-dev libboost-all-dev xvfb wget && rm -rf /var/lib/apt/lists/*;
+
+RUN wget https://github.com/Kitware/CMake/releases/download/v3.15.2/cmake-3.15.2.tar.gz
+
+
+RUN apt-get install --no-install-recommends -y zip && tar -zxvf cmake-3.15.2.tar.gz && rm cmake-3.15.2.tar.gz && rm -rf /var/lib/apt/lists/*;
+
+ENV PATH="/cmake-3.15.2/bin/:${PATH}"
+
+RUN apt-get install --no-install-recommends -y curl && curl -f -sL https://deb.nodesource.com/setup_10.x | bash - && rm -rf /var/lib/apt/lists/*;
+
+RUN apt-get install --no-install-recommends -y nodejs && rm -rf /var/lib/apt/lists/*;
+
+RUN export DISPLAY=':99.0' && Xvfb :99 -screen 0 1024x768x24 > /dev/null 2>&1 &
+
+RUN wget https://launchpadlibrarian.net/364945399/freetype_2.8.1.orig.tar.gz && tar -xvf freetype_2.8.1.orig.tar.gz && rm freetype_2.8.1.orig.tar.gz
+
+RUN cd ./freetype-2.8.1 && ./configure --build="$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)" && make && make install
+
+RUN npm config set registry https://registry.npm.taobao.org && npm install -g cmake-js && npm cache clean --force;
+#install curl-dev lib
+RUN apt-get install -y --no-install-recommends libcurl4-openssl-dev libjpeg-dev && rm -rf /var/lib/apt/lists/*;

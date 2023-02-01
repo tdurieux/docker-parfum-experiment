@@ -1,0 +1,1 @@
+# Dockerfile for Traditional WAS 8.5.5 to add db2 driver and brown compute apps

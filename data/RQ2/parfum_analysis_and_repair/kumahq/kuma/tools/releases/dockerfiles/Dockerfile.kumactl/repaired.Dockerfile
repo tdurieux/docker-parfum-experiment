@@ -1,0 +1,22 @@
+ARG BASE_IMAGE_ARCH=amd64
+FROM --platform=linux/$BASE_IMAGE_ARCH alpine:3.16.0
+
+ARG ARCH
+
+RUN apk add --no-cache curl
+
+ADD /build/artifacts-linux-$ARCH/kumactl/kumactl /usr/bin
+
+COPY /tools/releases/templates/LICENSE \
+    /tools/releases/templates/README \
+    /kuma/
+
+COPY /tools/releases/templates/NOTICE-kumactl /kuma/NOTICE
+
+RUN addgroup -S -g 6789 kumactl \
+ && adduser -S -D -G kumactl -u 6789 kumactl
+
+USER kumactl
+WORKDIR /home/kumactl
+
+CMD ["/bin/sh"]

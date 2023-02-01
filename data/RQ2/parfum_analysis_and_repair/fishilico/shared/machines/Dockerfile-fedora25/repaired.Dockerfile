@@ -1,0 +1,106 @@
+FROM fedora:25
+LABEL Description="Fedora 25 with build dependencies for shared"
+
+# Override the language to force UTF-8 output
+ENV LANG=C.UTF-8
+
+# Fedora<28 does not provide python3-z3 nor python-z3
+# Fedora 25 provides a version of Rust (1.21.0) which is too old
+RUN \
+    dnf update -q -y --setopt=deltarpm=false && \
+    dnf install -q -y --setopt=deltarpm=false \
+        clang \
+        coq \
+        gcc \
+        gdb \
+        glibc-devel.x86_64 \
+        glibc-devel.i686 \
+        gmp-devel.x86_64 \
+        gmp-devel.i686 \
+        gtk3-devel \
+        java-1.8.0-openjdk-devel \
+        kernel \
+        kernel-devel \
+        libmnl-devel.x86_64 \
+        libmnl-devel.i686 \
+        make \
+        mingw32-gcc \
+        mingw64-gcc \
+        numpy \
+        openssh \
+        openssl \
+        perl-Getopt-Long \
+        perl-Term-ANSIColor \
+        pkgconf \
+        pulseaudio-libs-devel \
+        python3 \
+        python3-cffi \
+        python3-crypto \
+        python3-cryptography \
+        python3-devel \
+        python3-gmpy2 \
+        python3-numpy \
+        python3-pillow \
+        python3-pynacl \
+        python-argparse \
+        python-cffi \
+        python-crypto \
+        python-devel \
+        python-gmpy2 \
+        python-pillow \
+        redhat-rpm-config \
+        SDL2-devel \
+        which \
+        wine && \
+    dnf clean all
+
+WORKDIR /shared
+RUN ln -s shared/machines/run_shared_test.sh /run_shared_test.sh
+COPY . /shared/
+
+CMD ["/run_shared_test.sh"]
+
+# make list-nobuild:
+#    Global blacklist: latex% rust%
+#    In sub-directories:
+#       c:
+#       glossaries: check_sort_order.py
+#       java/keystore: parse_jceks.py parse_pkcs12.py util_asn1.py
+#       linux:
+#       python: clang_cfi_typeid.py z3_example.py
+#       python/crypto: bip32_seed_derivation.py chacha20_poly1305_tests.py dhparam_tests.py dsa_tests.py ec_tests.py eth_functions_keccak.py parse_openssl_enc.py rsa_tests.py
+#       python/network:
+#       python/network/dnssec: verify_dnssec.py
+#       python/qrcode:
+#       verification:
+#    With gcc -m32:
+#       Global blacklist: latex% rust%
+#       In sub-directories:
+#          c: gtk_alpha_window
+#          glossaries: check_sort_order.py
+#          java/keystore: parse_jceks.py parse_pkcs12.py util_asn1.py
+#          linux: pulseaudio_echo sdl_v4l_video
+#          python: clang_cfi_typeid.py z3_example.py
+#          python/crypto: bip32_seed_derivation.py chacha20_poly1305_tests.py dhparam_tests.py dsa_tests.py ec_tests.py eth_functions_keccak.py parse_openssl_enc.py rsa_tests.py
+#          python/network:
+#          python/network/dnssec: verify_dnssec.py
+#          python/qrcode:
+#          verification:
+#    Compilers:
+#       gcc -m64: ok
+#       gcc -m32: ok
+#       clang -m64: ok
+#       clang -m32: ok
+#       musl-gcc: not working
+#       x86_64-w64-mingw32-gcc: ok
+#       i686-w64-mingw32-gcc: ok
+#    Versions:
+#       gcc: gcc (GCC) 6.4.1 20170727 (Red Hat 6.4.1-1)
+#       clang: clang version 3.9.1 (tags/RELEASE_391/final)
+#       x86_64-w64-mingw32-gcc: x86_64-w64-mingw32-gcc (GCC) 6.4.0 20170704 (Fedora MinGW 6.4.0-1.fc25)
+#       i686-w64-mingw32-gcc: i686-w64-mingw32-gcc (GCC) 6.4.0 20170704 (Fedora MinGW 6.4.0-1.fc25)
+#       wine: wine-2.19 (Staging)
+#       Linux kernel: 4.13.16-100.fc25.x86_64
+#       python3: Python 3.5.4
+#       coqc: The Coq Proof Assistant, version 8.6 (January 2017) compiled on Jan 13 2017 16:18:22 with OCaml 4.02.3
+#       openssl: OpenSSL 1.0.2m-fips  2 Nov 2017

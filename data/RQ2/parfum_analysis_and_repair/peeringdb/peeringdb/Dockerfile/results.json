@@ -1,0 +1,44 @@
+{
+  "startTime": 1674246643231,
+  "endTime": 1674246646697,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 27,
+        "lineEnd": 27,
+        "columnStart": 4,
+        "columnEnd": 29
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 29,
+        "lineEnd": 29,
+        "columnStart": 38,
+        "columnEnd": 56
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 92,
+        "lineEnd": 92,
+        "columnStart": 4,
+        "columnEnd": 25
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 37,
+        "lineEnd": 37,
+        "columnStart": 4,
+        "columnEnd": 26
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# RUN true is used here to separate problematic COPY statements,\n# per this issue: https://github.com/moby/moby/issues/37965\n\nFROM python:3.9-alpine as base\n\nARG virtual_env=/srv/www.peeringdb.com/venv\n\nENV VIRTUAL_ENV=\"$virtual_env\"\nENV PATH=\"$VIRTUAL_ENV/bin:$PATH\"\n\n\n# build container\nFROM base as builder\n\n# rust and cargo for cryptography package\nRUN apk --update --no-cache add \\\n  g++ \\\n  freetype-dev \\\n  libjpeg-turbo-dev \\\n  linux-headers \\\n  make \\\n  mariadb-dev \\\n  libffi-dev \\\n  curl \\\n  rust \\\n  cargo\n\nRUN pip install --no-cache-dir -U pip poetry\n# create venv and update venv pip\nRUN python3 -m venv \"$VIRTUAL_ENV\" && pip install --no-cache-dir -U pip\n\nWORKDIR /srv/www.peeringdb.com\nCOPY poetry.lock pyproject.toml ./\n# install dev now so we don't need a build env for testing (adds 8M)\nRUN poetry install --no-root\n\n# inetd\nRUN apk add --no-cache busybox-extras\n\n#### final image here\n\nFROM base as final\n\nARG uid=996\n\n# extra settings file if needed\nARG ADD_SETTINGS_FILE=mainsite/settings/dev.py\n\n# add dependencies\nRUN apk add --no-cache freetype ttf-freefont gettext libjpeg-turbo graphviz mariadb-connector-c libgcc\n\nRUN adduser -Du $uid pdb\n\nWORKDIR /srv/www.peeringdb.com\nCOPY --from=builder \"$VIRTUAL_ENV\" \"$VIRTUAL_ENV\"\n\nRUN mkdir -p api-cache etc locale media static var/log\nCOPY manage.py .\n# container exec whois\nCOPY in.whoisd .\nCOPY Ctl/VERSION etc\nCOPY docs/ docs\nCOPY mainsite/ mainsite\nRUN true\nCOPY $ADD_SETTINGS_FILE mainsite/settings/\nRUN true\nCOPY peeringdb_server/ peeringdb_server\nCOPY fixtures/ fixtures\nCOPY .coveragerc .coveragerc\nRUN mkdir coverage\n\nCOPY scripts/manage /usr/bin/\nCOPY Ctl/docker/entrypoint.sh /\n\n# inetd for whois\nCOPY --from=builder /usr/sbin/inetd /usr/sbin/\nRUN true\nCOPY Ctl/docker/inetd.conf /etc/\n\nRUN chown -R pdb:pdb api-cache locale media var/log coverage\n\n#### test image here\nFROM final as tester\n\nWORKDIR /srv/www.peeringdb.com\nCOPY poetry.lock pyproject.toml ./\nRUN true\nCOPY tests/ tests\nRUN chown -R pdb:pdb tests/\nCOPY Ctl/docker/entrypoint.sh .\n\n# install dev deps\nRUN pip install --no-cache-dir -U poetry\nRUN poetry install --no-root\n\nUSER pdb\nENTRYPOINT [\"./entrypoint.sh\"]\nCMD [\"runserver\", \"$RUNSERVER_BIND\"]\n\n#### entry point from final image, not tester\nFROM final\n\nCOPY Ctl/docker/entrypoint.sh .\nRUN true\nCOPY Ctl/docker/django-uwsgi.ini etc/\n\nENV UWSGI_SOCKET=\"127.0.0.1:7002\"\nENV RUNSERVER_BIND=\"127.0.0.1:8080\"\n\nUSER pdb\n\nENTRYPOINT [\"./entrypoint.sh\"]\nCMD [\"runserver\", \"$RUNSERVER_BIND\"]\n"
+}

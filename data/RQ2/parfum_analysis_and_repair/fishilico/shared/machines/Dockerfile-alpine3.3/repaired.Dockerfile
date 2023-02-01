@@ -1,0 +1,67 @@
+FROM alpine:3.3
+LABEL Description="Alpine Linux 3.3 with build dependencies for shared"
+
+# Alpine does not provide: coq, mingw-w64, py3-z3
+# Alpine<3.8 does not provide pulseaudio-dev
+# Alpine<3.6 does not provide cargo
+# Alpine<3.5 does not provide: py-numpy, py2-cffi, py3-cffi, py2-crypto, py3-crypto, py2-pillow, py3-pillow
+# Alpine<3.4 does not provide sdl2-dev
+RUN \
+    apk --no-cache --update add \
+        clang \
+        gcc \
+        gdb \
+        gmp-dev \
+        gtk+3.0-dev \
+        iproute2 \
+        libmnl-dev \
+        linux-grsec-dev \
+        linux-headers \
+        llvm-dev \
+        make \
+        musl-dev \
+        musl-utils \
+        openjdk8 \
+        openssh \
+        python-dev \
+        python3-dev && \
+    rm -rf /var/cache/apk/*
+
+# Add OpenJDK to $PATH
+ENV JAVA_HOME=/usr/lib/jvm/java-1.8-openjdk
+ENV PATH="${JAVA_HOME}/bin:${PATH}"
+
+WORKDIR /shared
+RUN ln -s shared/machines/run_shared_test.sh /run_shared_test.sh
+COPY . /shared/
+
+CMD ["/run_shared_test.sh"]
+
+# make list-nobuild:
+#    Global blacklist: latex% rust% windows%
+#    In sub-directories:
+#       c: x86-read_64b_regs_in_32b_mode
+#       glossaries: check_sort_order.py
+#       java/keystore: parse_jceks.py parse_pkcs12.py util_asn1.py
+#       linux: pulseaudio_echo sdl_v4l_video
+#       python: cffi_example.py cffi_numpy.py clang_cfi_typeid.py z3_example.py
+#       python/crypto: bip32_seed_derivation.py chacha20_poly1305_tests.py dhparam_tests.py dsa_tests.py ec_tests.py eth_functions_keccak.py parse_openssl_enc.py rsa_tests.py
+#       python/network:
+#       python/network/dnssec: verify_dnssec.py
+#       python/qrcode: hello_qr_decode.py
+#       verification: ackermann.vo
+#    Compilers:
+#       gcc -m64: ok
+#       gcc -m32: not working
+#       clang -m64: ok
+#       clang -m32: not working
+#       musl-gcc: not working
+#       x86_64-w64-mingw32-gcc: not working
+#       i686-w64-mingw32-gcc: not working
+#    Versions:
+#       gcc: gcc (Alpine 5.3.0) 5.3.0
+#       clang: clang version 3.6.2 (tags/RELEASE_362/final)
+#       Linux kernel: 4.1.39-0-grsec
+#       /lib/ld-musl-x86_64.so.1: musl libc Version 1.1.12
+#       python3: Python 3.5.1
+#       openssl: OpenSSL 1.0.2q  20 Nov 2018

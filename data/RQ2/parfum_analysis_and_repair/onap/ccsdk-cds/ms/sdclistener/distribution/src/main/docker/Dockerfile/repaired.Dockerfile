@@ -1,0 +1,24 @@
+# Prepare stage for multistage image build
+## START OF STAGE0 ##
+FROM onap/ccsdk-alpine-j11-image:1.1.2 AS stage0
+
+USER root
+
+# add entrypoint
+COPY *.sh /opt/app/onap/sdc-listener/
+
+# add application
+COPY @project.build.finalName@-@assembly.id@.tar.gz /source.tar.gz
+
+RUN tar -xzf /source.tar.gz -C /tmp \
+ && cp -rf /tmp/@project.build.finalName@/opt / \
+ && rm -rf /source.tar.gz \
+ && rm -rf /tmp/@project.build.finalName@ \
+ && mkdir -p /opt/app/onap/cds-sdc-listener \
+ && chown -R onap:onap /opt \
+ && chmod -R 755 /opt
+
+## END OF STAGE0 ##
+
+
+## This will create actual image

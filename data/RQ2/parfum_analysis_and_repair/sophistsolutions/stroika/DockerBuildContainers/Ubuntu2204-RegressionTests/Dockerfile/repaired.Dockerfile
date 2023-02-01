@@ -1,0 +1,30 @@
+FROM sophistsolutionsinc/stroika-buildvm-ubuntu2204-small
+
+# Get latest packages system, so can do installs
+RUN apt-get update
+
+# Just to echo information in regression test output
+RUN apt-get install --no-install-recommends -y lsb-release && rm -rf /var/lib/apt/lists/*;
+
+#install the latest (C++17 compat) g++ compilers
+RUN apt-get install --no-install-recommends -y g++-9 g++-10 g++-11 g++-12 && rm -rf /var/lib/apt/lists/*;
+
+# For reasons which elude me, installing libc++-N removes all the other
+# https://askubuntu.com/questions/1227092/how-can-i-install-multiple-versions-of-llvm-libc-on-the-same-computer-at-the-s
+#
+#install the latest (C++17 compat) clang compilers (and libs)
+#and only install libc++-14-dev since others don't appear to work on this release of ubuntu (at least not instlaling mulitple versions)
+RUN apt-get install --no-install-recommends -y clang++-10 && rm -rf /var/lib/apt/lists/*;
+RUN apt-get install --no-install-recommends -y clang++-11 && rm -rf /var/lib/apt/lists/*;
+RUN apt-get install --no-install-recommends -y clang++-12 && rm -rf /var/lib/apt/lists/*;
+RUN apt-get install --no-install-recommends -y clang++-13 && rm -rf /var/lib/apt/lists/*;
+RUN apt-get install --no-install-recommends -y clang++-14 && apt-get install --no-install-recommends -y libc++-14-dev libc++abi-14-dev && rm -rf /var/lib/apt/lists/*;
+
+# For some reason not installed on ubuntu 21.04, nor 22.04 otherwise
+RUN apt-get install --no-install-recommends -y libz.a && rm -rf /var/lib/apt/lists/*;
+
+#Only needed to run with valgrind regtests
+RUN apt-get install --no-install-recommends -y valgrind && rm -rf /var/lib/apt/lists/*;
+
+# Cross-compile tests for ARM (iputils-ping is how we detect if machine exists to run regtests on)
+RUN apt-get install --no-install-recommends -y g++-9-arm-linux-gnueabihf g++-10-arm-linux-gnueabihf g++-11-arm-linux-gnueabihf g++-12-arm-linux-gnueabihf iputils-ping && rm -rf /var/lib/apt/lists/*;

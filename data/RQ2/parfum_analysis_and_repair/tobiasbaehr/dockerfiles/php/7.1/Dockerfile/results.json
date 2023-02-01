@@ -1,0 +1,54 @@
+{
+  "startTime": 1674219014535,
+  "endTime": 1674219015632,
+  "originalSmells": [
+    {
+      "rule": "mkdirUsrSrcThenRemove",
+      "position": {
+        "lineStart": 62,
+        "lineEnd": 62,
+        "columnStart": 2,
+        "columnEnd": 20
+      }
+    },
+    {
+      "rule": "sha256sumEchoOneSpaces",
+      "position": {
+        "lineStart": 68,
+        "lineEnd": 68,
+        "columnStart": 4,
+        "columnEnd": 52
+      }
+    },
+    {
+      "rule": "gpgUseBatchFlag",
+      "position": {
+        "lineStart": 75,
+        "lineEnd": 75,
+        "columnStart": 6,
+        "columnEnd": 35
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "gpgUseBatchFlag",
+      "position": {
+        "lineStart": 74,
+        "lineEnd": 74,
+        "columnStart": 4,
+        "columnEnd": 51
+      }
+    },
+    {
+      "rule": "gpgUseBatchFlag",
+      "position": {
+        "lineStart": 71,
+        "lineEnd": 71,
+        "columnStart": 6,
+        "columnEnd": 43
+      }
+    }
+  ],
+  "repairedDockerfile": "FROM gzevd/alpine:3.8\n\n# persistent / runtime deps\nENV PHPIZE_DEPS \\\n  autoconf \\\n  dpkg-dev dpkg \\\n  file \\\n  g++ \\\n  gcc \\\n  libc-dev \\\n  make \\\n  pkgconf \\\n  re2c\n\nRUN apk add --no-cache --virtual .persistent-deps \\\n  ca-certificates \\\n  curl \\\n  apache2 \\\n  apache2-utils \\\n  xz \\\n# https://github.com/docker-library/php/issues/494\n  libressl \\\n  openssh-client \\\n  mysql-client\n\nRUN set -xe; \\\n  mkdir -p /run/apache2/ \\\n  && sed -i 's/^#ServerName.*/ServerName localhost/' /etc/apache2/httpd.conf \\\n  && sed -i 's/^#LoadModule rewrite_module/LoadModule rewrite_module/' /etc/apache2/httpd.conf \\\n  && sed -i 's/^Listen 80/Listen 0.0.0.0:80/' /etc/apache2/httpd.conf \\\n  && ln -sf /dev/stdout /var/log/apache2/access.log \\\n  && ln -sf /dev/stderr /var/log/apache2/error.log\n\nENV PHP_INI_DIR /usr/local/etc/php\nRUN mkdir -p $PHP_INI_DIR/conf.d\n\n# Apply stack smash protection to functions using local buffers and alloca()\n# Make PHP's main executable position-independent (improves ASLR security mechanism, and has no performance impact on x86_64)\n# Enable optimization (-O2)\n# Enable linker optimization (this sorts the hash buckets to improve cache locality, and is non-default)\n# Adds GNU HASH segments to generated executables (this is used if present, and is much faster than sysv hash; in this configuration, sysv hash is also generated)\n# https://github.com/docker-library/php/issues/272\nENV PHP_CFLAGS=\"-fstack-protector-strong -fpic -fpie -O2\"\nENV PHP_CPPFLAGS=\"$PHP_CFLAGS\"\nENV PHP_LDFLAGS=\"-Wl,-O1 -Wl,--hash-style=both -pie\"\n\nENV GPG_KEYS 7BD5DCD0 31CBD89E 70D12172\n\nENV PHP_VERSION 7.1.31\nENV PHP_URL=\"https://secure.php.net/get/php-$PHP_VERSION.tar.xz/from/this/mirror\" PHP_ASC_URL=\"https://secure.php.net/get/php-$PHP_VERSION.tar.xz.asc/from/this/mirror\"\nENV PHP_SHA256=\"5cb53b63592ec4361f0ab12c684b10430344821a024881a387ead4299df78fa5\"\n\nCOPY 7BD5DCD0.asc /tmp/\nCOPY 31CBD89E.asc /tmp/\nCOPY 70D12172.asc /tmp/\n\nRUN set -xe; \\\n  apk add --no-cache --virtual .fetch-deps \\\n  gnupg \\\n  wget \\\n  ; \\\n\n  mkdir -p /usr/src; rm -rf /usr/src \\\n  cd /usr/src; \\\n\n  wget -O php.tar.xz \"$PHP_URL\"; \\\n\n  if [ -n \"$PHP_SHA256\" ]; then \\\n    echo \"$PHP_SHA256  *php.tar.xz\" | sha256sum -c -; \\\n  fi; \\\n\n  if [ -n \"$PHP_ASC_URL\" ]; then \\\n    wget -O php.tar.xz.asc \"$PHP_ASC_URL\"; \\\n    export GNUPGHOME=\"$(mktemp -d)\"; \\\n    for key in $GPG_KEYS; do \\\n    \n      gpg --batch --import \"/tmp/$key.asc\"; \\\n     done \\\n    ; \\\n    gpg --batch --verify php.tar.xz.asc php.tar.xz; \\\n    rm -rf \"$GNUPGHOME\"; \\\n  fi; \\\n\n  apk del .fetch-deps\n\nCOPY docker-php-source /usr/local/bin/\n\nRUN set -xe \\\n  && apk add --no-cache --virtual .build-deps \\\n    $PHPIZE_DEPS \\\n    curl-dev \\\n    libedit-dev \\\n    libxml2-dev \\\n    libressl-dev \\\n    apache2-dev \\\n    coreutils \\\n    freetype-dev \\\n    libjpeg-turbo-dev \\\n    libpng-dev \\\n    libmcrypt-dev \\\n    libsodium-dev \\\n  \\\n  && export CFLAGS=\"$PHP_CFLAGS\" \\\n    CPPFLAGS=\"$PHP_CPPFLAGS\" \\\n    LDFLAGS=\"$PHP_LDFLAGS\" \\\n  && docker-php-source extract \\\n  && cd /usr/src/php \\\n  && gnuArch=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" \\\n  && ./configure \\\n    --build=\"$gnuArch\" \\\n    --sysconfdir=\"$PHP_INI_DIR\" \\\n    --with-layout=GNU \\\n    --with-config-file-path=\"$PHP_INI_DIR\" \\\n    --with-config-file-scan-dir=\"$PHP_INI_DIR/conf.d\" \\\n    \\\n# make sure invalid --configure-flags are fatal errors intead of just warnings\n    --enable-option-checking=fatal \\\n    --with-apxs2=/usr/bin/apxs \\\n    \\\n    --disable-rpath \\\n    --disable-debug \\\n    --disable-static \\\n    --disable-embed \\\n    --disable-cgi \\\n    --without-db1 \\\n    --without-db2 \\\n    --without-db3 \\\n    --without-db4 \\\n    --without-qdbm \\\n    --without-pdo_sqlite \\\n    --without-sqlite3 \\\n    \\\n# --enable-ftp is included here because ftp_ssl_connect() needs ftp to be compiled statically (see https://github.com/docker-library/php/issues/236)\n    --enable-ftp \\\n# --enable-mbstring is included here because otherwise there's no way to get pecl to use it properly (see https://github.com/docker-library/php/issues/195)\n  --enable-mbstring \\\n# --enable-mysqlnd is included here because it's harder to compile after the fact than extensions are (since it's a plugin for several extensions, not an extension in itself)\n  --enable-mysqlnd \\\n  --enable-pdo \\\n  --enable-zip \\\n  --enable-opcache \\\n    \\\n    --with-curl \\\n    --with-libedit \\\n    --with-openssl \\\n    --with-zlib \\\n    --with-gd \\\n    --with-mcrypt \\\n    --enable-gd-native-ttf \\\n    --with-freetype-dir=/usr/include/ \\\n    --with-jpeg-dir=/usr/include/ \\\n    --with-png-dir=/usr/include/ \\\n    --with-pdo-mysql=mysqlnd \\\n    \\\n    # bundled pcre does not support JIT on s390x\n    # https://manpages.debian.org/stretch/libpcre3-dev/pcrejit.3.en.html#AVAILABILITY_OF_JIT_SUPPORT\n    $(test \"$gnuArch\" = 's390x-linux-gnu' && echo '--without-pcre-jit') \\\n    \\\n    $PHP_EXTRA_CONFIGURE_ARGS \\\n  && make -j \"$(nproc)\" \\\n  && make install \\\n  # Copy default php.ini and configure it\n  && cp php.ini-production $PHP_INI_DIR/php.ini \\\n  && { find /usr/local/bin /usr/local/sbin -type f -perm +0111 -exec strip --strip-all '{}' + || true; } \\\n  && make clean \\\n  && docker-php-source delete \\\n  \\\n  && runDeps=\"$( \\\n    scanelf --needed --nobanner --recursive /usr/local \\\n      | awk '{ gsub(/,/, \"\\nso:\", $2); print \"so:\" $2 }' \\\n      | sort -u \\\n      | xargs -r apk info --installed \\\n      | sort -u \\\n  )\" \\\n  && apk add --no-cache --virtual .php-rundeps $runDeps \\\n  \\\n  && apk del .build-deps \\\n  \\\n# https://github.com/docker-library/php/issues/443\n&& pecl update-channels \\\n&& rm -rf /tmp/pear ~/.pearrc \\\n&& sed -i 's,lib/apache2/libphp7.so,modules/libphp7.so,' /etc/apache2/httpd.conf\n\nENV MEMCACHED_DEPS zlib-dev libmemcached-dev cyrus-sasl-dev\nRUN set -xe; \\\n  apk add --no-cache --update \\\n  libmemcached-libs \\\n  zlib\nRUN set -xe; \\\n  apk add --no-cache --update --virtual .phpize-deps $PHPIZE_DEPS \\\n  && apk add --no-cache --update --virtual .memcached-deps $MEMCACHED_DEPS \\\n  && pecl install memcached \\\n  && echo \"extension=memcached.so\" > $PHP_INI_DIR/conf.d/20_memcached.ini \\\n  && rm -rf /usr/share/php7 \\\n  && rm -rf /tmp/* \\\n  && apk del .memcached-deps .phpize-deps\n\nCOPY docker-php-ext-* docker-php-entrypoint /usr/local/bin/\n\nRUN docker-php-ext-enable opcache\n\nCOPY override_php.ini $PHP_INI_DIR/conf.d/\n\nCOPY apache2-foreground /usr/local/bin/\nCOPY php-module.conf /etc/apache2/conf.d/\n\nWORKDIR /var/www/localhost/htdocs\n\nEXPOSE 80\nENTRYPOINT [\"docker-php-entrypoint\"]\nCMD [\"apache2-foreground\"]\n"
+}

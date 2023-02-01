@@ -1,0 +1,1 @@
+# NOTE: Keep this in sync with .ci-operator.yaml

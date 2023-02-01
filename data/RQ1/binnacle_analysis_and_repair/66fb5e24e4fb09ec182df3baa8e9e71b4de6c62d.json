@@ -1,0 +1,26 @@
+{
+  "startTime": 1674240054642,
+  "endTime": 1674240054789,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 9,
+        "lineEnd": 9,
+        "columnStart": 22,
+        "columnEnd": 46
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 9,
+        "lineEnd": 9,
+        "columnStart": 22,
+        "columnEnd": 46
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# ======================================================================================\n# Stage 0: build_environment\n#\n# Install library dependencies before actually building source.\n# This caches libraries into an image layer that can be reused when only source code has changed.\n\nFROM openjdk:8-jdk as build_environment\nLABEL maintainer=\"Forrest Collman <forrestc@alleninstitute.org>, Eric Trautman <trautmane@janelia.hhmi.org>\"\n\nRUN apt-get update && apt-get install --no-install-recommends -y maven && rm -rf /var/lib/apt/lists/*;\n\nWORKDIR /var/www/render/\nCOPY pom.xml .\nCOPY docs/pom.xml render-app/pom.xml\nCOPY render-app/pom.xml render-app/pom.xml\nCOPY render-ws/pom.xml render-ws/pom.xml\nCOPY render-ws-java-client/pom.xml render-ws-java-client/pom.xml\nCOPY render-ws-spark-client/pom.xml render-ws-spark-client/pom.xml\nCOPY trakem2-scripts/pom.xml trakem2-scripts/pom.xml\nCOPY docs/pom.xml docs/pom.xml\n\n# use -T 1C option to multi-thread maven, using 1 thread per available core\nRUN mvn -T 1C verify clean --fail-never\n\n# ======================================================================================\n# Stage 1: builder\n#\n# Build the source code, save resulting jar and war files, and remove everything else\n\nFROM build_environment as builder\n\nCOPY . /var/www/render/\nRUN mvn clean\n\n# use -T 1C option to multi-thread maven, using 1 thread per available core\nRUN mvn -T 1C -Dproject.build.sourceEncoding=UTF-8 package && \\\n    mkdir -p /root/render-lib && \\\n    mv */target/*.*ar /root/render-lib && \\\n    printf \"\\nsaved the following build artifacts:\\n\\n\" && \\\n    ls -alh /root/render-lib/* && \\\n    printf \"\\nremoving everything else ...\\n\\n\" && \\\n    rm -rf /var/www/render/* && \\\n    rm -rf /root/.m2 && \\\n    rm -rf /root/.embedmongo\n\n# ======================================================================================\n# Stage 2: render-ws\n#\n# Once web service application is built, set up jetty server and deploy application to it.\n\n# NOTE: jetty version should be kept in sync with values in render/render-ws/pom.xml and render/render-ws/src/main/scripts/install.sh\nFROM jetty:9.4.9-jre8-alpine as render-ws\n\n# add packages not included in alpine:\n#   curl and coreutils for gnu readlink\n#   fontconfig and ttf-dejavu for bounding box renderer ( see https://github.com/docker-library/openjdk/pull/202 )\nUSER root\nRUN apk add --no-cache curl coreutils fontconfig ttf-dejavu\n\nWORKDIR $JETTY_BASE\n\nCOPY render-ws/src/main/scripts/jetty/ .\n# NOTE: sync call added to workaround 'text file busy' error ( see https://github.com/moby/moby/issues/9547 )\nRUN ls -al $JETTY_BASE/* && \\\n    chmod 755 ./configure_web_server.sh && \\\n    sync && \\\n    ./configure_web_server.sh\n\nCOPY --from=builder /root/render-lib/render-ws-*.war webapps/render-ws.war\nCOPY render-ws/src/main/scripts/docker /render-docker\nRUN chown -R jetty:jetty $JETTY_BASE\n\nEXPOSE 8080\n\nENV JAVA_OPTIONS=\"-Xms3g -Xmx3g -server -Djava.awt.headless=true\" \\\n    JETTY_THREADPOOL_MIN_THREADS=\"10\" \\\n    JETTY_THREADPOOL_MAX_THREADS=\"200\" \\\n    LOG_ACCESS_ROOT_APPENDER=\"STDOUT\" \\\n    LOG_JETTY_ROOT_APPENDER=\"STDOUT\" \\\n    LOG_JETTY_ROOT_LEVEL=\"WARN\" \\\n    LOG_JETTY_JANELIA_LEVEL=\"WARN\" \\\n    MONGO_HOST=\"\" \\\n    MONGO_PORT=\"\" \\\n    MONGO_USERNAME=\"\" \\\n    MONGO_PASSWORD=\"\" \\\n    MONGO_AUTH_DB=\"\" \\\n    MONGO_CONNECTION_STRING=\"\" \\\n    MONGO_CONNECTION_STRING_USES_AUTH=\"\" \\\n    NDVIZHOST=\"\" \\\n    NDVIZPORT=\"\" \\\n    NDVIZ_URL=\"\" \\\n    VIEW_CATMAID_HOST_AND_PORT=\"\" \\\n    VIEW_DYNAMIC_RENDER_HOST_AND_PORT=\"\" \\\n    VIEW_RENDER_STACK_OWNER=\"\" \\\n    VIEW_RENDER_STACK_PROJECT=\"\" \\\n    VIEW_RENDER_STACK=\"\" \\\n    VIEW_MATCH_OWNER=\"\" \\\n    VIEW_MATCH_COLLECTION=\"\" \\\n    WEB_SERVICE_MAX_TILE_SPECS_TO_RENDER=\"20\" \\\n    WEB_SERVICE_MAX_IMAGE_PROCESSOR_GB=\"\"\n\nUSER jetty\nENTRYPOINT [\"/render-docker/render-run-jetty-entrypoint.sh\"]\n"
+}

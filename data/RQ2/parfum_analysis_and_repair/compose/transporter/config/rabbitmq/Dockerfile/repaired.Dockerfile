@@ -1,0 +1,1 @@
+# Image used to run an haproxy in front of rabbitmq to provide TLS support.

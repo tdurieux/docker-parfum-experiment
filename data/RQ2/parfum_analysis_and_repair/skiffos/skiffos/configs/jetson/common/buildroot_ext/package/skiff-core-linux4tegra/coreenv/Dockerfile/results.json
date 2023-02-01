@@ -1,0 +1,99 @@
+{
+  "startTime": 1674218560348,
+  "endTime": 1674218561525,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 9,
+        "lineEnd": 16,
+        "columnStart": 2,
+        "columnEnd": 23
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 57,
+        "lineEnd": 74,
+        "columnStart": 2,
+        "columnEnd": 6
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 121,
+        "lineEnd": 124,
+        "columnStart": 2,
+        "columnEnd": 62
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 125,
+        "lineEnd": 128,
+        "columnStart": 2,
+        "columnEnd": 33
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 153,
+        "lineEnd": 186,
+        "columnStart": 4,
+        "columnEnd": 8
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 121,
+        "lineEnd": 124,
+        "columnStart": 2,
+        "columnEnd": 62
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 125,
+        "lineEnd": 128,
+        "columnStart": 2,
+        "columnEnd": 33
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 57,
+        "lineEnd": 74,
+        "columnStart": 2,
+        "columnEnd": 6
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 121,
+        "lineEnd": 124,
+        "columnStart": 2,
+        "columnEnd": 62
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 125,
+        "lineEnd": 128,
+        "columnStart": 2,
+        "columnEnd": 33
+      }
+    }
+  ],
+  "repairedDockerfile": "# Download the linux4tegra sources including nvidia packages.\n# Subject to the NVIDIA Customer License.\nFROM ubuntu:18.04 AS nvsources\n\n# install wget + make data dir\nRUN mkdir -p /data /sources && \\\n  export DEBIAN_FRONTEND=noninteractive; \\\n  apt-get update && \\\n  apt-get dist-upgrade -y && \\\n  apt-get install --no-install-recommends -y \\\n  -o \"Dpkg::Options::=--force-confdef\" \\\n  -o \"Dpkg::Options::=--force-confold\" \\\n  build-essential \\\n  rsync \\\n  lsb-release \\\n  wget curl git unzip \\\n  autotools-dev locales \\\n  && apt-get autoremove -y && \\\n  rm -rf /var/lib/apt/lists/*\n\n# download sources\nENV L4T_URL https://developer.nvidia.com/embedded/L4T/r32_Release_v7.1/t210/jetson-210_linux_r32.7.1_aarch64.tbz2\nENV L4T_TAR linux4tegra-aarch64.tbz2\nRUN wget -q \"${L4T_URL}\" -O /data/${L4T_TAR}\n\n# extract sources\n# move kernel debs into nv debs dir\nRUN mkdir -p /sources/linux4tegra && \\\n  tar --strip-components=1 -xf /data/${L4T_TAR} \\\n  -C /sources/linux4tegra && \\\n  mv /sources/linux4tegra/kernel/*.deb \\\n  /sources/linux4tegra/nv_tegra/l4t_deb_packages/ && \\\n  mv /sources/linux4tegra/tools/*.deb \\\n  /sources/linux4tegra/nv_tegra/l4t_deb_packages/\n\n# configure debian packages to point to mock paths\nCOPY ./patch-debs.bash /sources/patch-debs.bash\nRUN mkdir -p /sources/l4t_debs_workdir /sources/l4t_debs_patched && \\\n  cd /sources/l4t_debs_workdir && \\\n  bash /sources/patch-debs.bash && \\\n  cd ../ && rm -rf /sources/l4t_debs_workdir\n\n# Ubuntu upstream\nFROM ubuntu:18.04 as stage2\n\n# setup environment\nENV LANG=C.UTF-8 \\\n    LC_ALL=C.UTF-8 \\\n    container=docker \\\n    L4T_VERSION=32.6.1 \\\n    L4T_SOC=t186\n\n# All packages, including requisite packages for nvidia.\n# Also installs l4t_deb_packages.\nRUN export DEBIAN_FRONTEND=noninteractive; \\\n  apt-get update && \\\n  apt-get dist-upgrade -y && \\\n  apt-get install --no-install-recommends -y \\\n  -o \"Dpkg::Options::=--force-confdef\" \\\n  -o \"Dpkg::Options::=--force-confnew\" \\\n  autotools-dev \\\n  build-essential \\\n  curl \\\n  git \\\n  locales \\\n  software-properties-common \\\n  sudo \\\n  systemd \\\n  unzip \\\n  usbutils \\\n  vim \\\n  libunwind8 \\\n  sed \\\n  locales \\\n  wget && \\\n  apt-get autoremove -y && rm -rf /var/lib/apt/lists/*;\n\n# copy l4t_deb_packages\nCOPY --from=nvsources /sources/l4t_debs_patched \\\n  /usr/src/l4t_deb_packages\n\n# copy nv_boot_control\nCOPY --from=nvsources /sources/linux4tegra/bootloader/nv_boot_control.conf \\\n  /etc/nv_boot_control.conf\n\n# setup nv-boot-control.conf\n# Set board spec: BOARD_ID-FAB-BOARDSKU-BOARDREV-NV_PRODUCTION-CHIP_REV-BOARD_NAME-ROOTFS_DEV\n#\n#  BOARDID  BOARDSKU  FAB  BOARDREV\n#  --------------------------------+--------+---------+----+---------\n#  jetson-tx1                       2180     0000      400  N/A\n#  jetson-tx2                       3310     1000      B02  N/A\n#  jetson-xavier                    2888     0001      400  H.0\n#  jetson-nano-emmc                 3448     0002      200  N/A\n#  jetson-xavier-nx-devkit-emmc     3668     0001      100  N/A\n#  --------------------------------+--------+---------+----+---------\nRUN rootfs_dir=/; \\\n  BOARDID=2180; BOARDSKU=1000; CHIPID=\"0x18\"; FAB=B02; FUSELEVEL=fuselevel_production; \\\n  hwchiprev=\"0\"; ext_target_board=\"jetson_tx2_devkit\"; target_rootdev=\"mmcblk0p1\"; \\\n  ota_boot_dev=\"/dev/mmcblk0boot0\"; ota_gpt_dev=\"/dev/mmcblk0boot1\"; \\\n  spec=\"${BOARDID}-${FAB}-${BOARDSKU}-${BOARDREV}-1-${hwchiprev}-${ext_target_board}-${target_rootdev}\"; \\\n  sed -i '/TNSPEC/d' \"${rootfs_dir}/etc/nv_boot_control.conf\"; \\\n  sed -i \"$ a TNSPEC ${spec}\" \"${rootfs_dir}/etc/nv_boot_control.conf\"; \\\n  sed -i '/TEGRA_CHIPID/d' \"${rootfs_dir}/etc/nv_boot_control.conf\"; \\\n  sed -i \"$ a TEGRA_CHIPID ${CHIPID}\" \"${rootfs_dir}/etc/nv_boot_control.conf\"; \\\n  sed -i '/TEGRA_OTA_BOOT_DEVICE/d' \"${rootfs_dir}/etc/nv_boot_control.conf\"; \\\n  sed -i \"$ a TEGRA_OTA_BOOT_DEVICE ${ota_boot_dev}\" \"${rootfs_dir}/etc/nv_boot_control.conf\"; \\\n  sed -i '/TEGRA_OTA_GPT_DEVICE/d' \"${rootfs_dir}/etc/nv_boot_control.conf\"; \\\n  sed -i \"$ a TEGRA_OTA_GPT_DEVICE ${ota_gpt_dev}\" \"${rootfs_dir}/etc/nv_boot_control.conf\"\n\n# setup device-tree path for reference for debs\nRUN mkdir -p /etc/tegra-soc/device-tree && \\\n  echo \"nvidia,quillnvidia,p2597-0000+p3310-1000nvidia,tegra186\" >\\\n    /etc/tegra-soc/device-tree/compatible && \\\n  mkdir -p /opt/nvidia/l4t-packages && \\\n  touch /opt/nvidia/l4t-packages/.nv-l4t-disable-boot-fw-update-in-preinstall\n\n# linux4tegra\nRUN export DEBIAN_FRONTEND=noninteractive; \\\n  apt-get autoremove -y && \\\n  apt-get dist-upgrade -y && \\\n  apt-get install --no-install-recommends -y \\\n  -o \"Dpkg::Options::=--force-confdef\" \\\n  -o \"Dpkg::Options::=--force-confnew\" \\\n  mesa-utils libgles2-mesa-dev libsdl2-dev libblas3 liblapack3 && \\\n  apt-get install --no-install-recommends -y \\\n  -o \"Dpkg::Options::=--force-confdef\" \\\n  -o \"Dpkg::Options::=--force-confnew\" \\\n  /usr/src/l4t_deb_packages/*.deb && \\\n  apt-get autoremove -y && \\\n  apt-mark hold nvidia-l4t-kernel nvidia-l4t-initrd nvidia-l4t-kernel-dtbs && \\\n  rm -rf /var/lib/apt/lists/* && \\\n  rm -rf /usr/src/l4t_deb_packages\n\n# re-pack base image for performance\nFROM scratch\n\nCOPY --from=stage2 / /\n\nENV LANG=C.UTF-8 \\\n    LC_ALL=C.UTF-8 \\\n    container=docker \\\n    L4T_VERSION=32.6.1 \\\n    L4T_SOC=t186\n\n# adjust the installed lists\nRUN sed -i -e \"s/<SOC>/${L4T_SOC}/g\" /etc/apt/sources.list.d/nvidia-l4t-apt-source.list\n\n# additional desktop packages\n# chromium-browser\nRUN export DEBIAN_FRONTEND=noninteractive; \\\n    apt-get update && \\\n    apt-get dist-upgrade -y && \\\n    apt-get install --no-install-recommends -y \\\n    -o \"Dpkg::Options::=--force-confdef\" \\\n    -o \"Dpkg::Options::=--force-confold\" \\\n    ark \\\n    cups \\\n    desktop-base \\\n    firefox \\\n    fonts-ubuntu \\\n    gwenview \\\n    htop \\\n    kate \\\n    kcalc \\\n    kde-spectacle \\\n    lightdm \\\n    lightdm-gtk-greeter \\\n    locales \\\n    lsb-release \\\n    lxde \\\n    mplayer \\\n    nano \\\n    ncurses-term \\\n    net-tools \\\n    okular \\\n    openssh-client \\\n    rsync \\\n    unzip \\\n    usbutils \\\n    vim \\\n    vlc \\\n    x11-apps \\\n    x11vnc \\\n    xorg \\\n    xserver-xorg-input-all \\\n    wget && \\\n    apt-get autoremove -y && \\\n    rm -rf /var/lib/apt/lists/*\n\nRUN \\\n  adduser nvidia \\\n  --no-create-home \\\n  --gecos \"NVIDIA User\" \\\n  --shell /bin/bash \\\n  --disabled-password && \\\n  adduser nvidia sudo && \\\n  adduser nvidia root && \\\n  adduser nvidia systemd-journal && \\\n  adduser nvidia dialout && \\\n  adduser nvidia video && \\\n  adduser nvidia plugdev && \\\n  echo \"nvidia:nvidia\" | chpasswd && \\\n  mkdir -p /home/nvidia/.cache/ && \\\n  chown -R nvidia:nvidia /home/nvidia\n\nRUN systemctl set-default graphical.target && \\\n    systemctl mask tmp.mount && \\\n    (systemctl mask NetworkManager wpa_supplicant || true) && \\\n    (systemctl mask dhcpd || true) && \\\n    rm /etc/systemd/system/nvwifibt.service && \\\n    echo \"nvidia\tALL=(ALL) NOPASSWD: ALL\" >> /etc/sudoers\n\nWORKDIR /\nENTRYPOINT [\"/lib/systemd/systemd\"]\n"
+}

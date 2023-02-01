@@ -1,0 +1,81 @@
+{
+  "startTime": 1674251766608,
+  "endTime": 1674251767318,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 33,
+        "lineEnd": 33,
+        "columnStart": 1,
+        "columnEnd": 25
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 42,
+        "lineEnd": 42,
+        "columnStart": 4,
+        "columnEnd": 27
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 42,
+        "lineEnd": 42,
+        "columnStart": 4,
+        "columnEnd": 27
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 33,
+        "lineEnd": 33,
+        "columnStart": 1,
+        "columnEnd": 25
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 35,
+        "lineEnd": 35,
+        "columnStart": 1,
+        "columnEnd": 70
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 39,
+        "lineEnd": 39,
+        "columnStart": 1,
+        "columnEnd": 55
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 42,
+        "lineEnd": 42,
+        "columnStart": 4,
+        "columnEnd": 27
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 42,
+        "lineEnd": 42,
+        "columnStart": 4,
+        "columnEnd": 51
+      }
+    }
+  ],
+  "repairedDockerfile": "# STAGE 1 (base-image: rust)\n# ==================================================\n# ----------\n\t#FROM rust:1.58 as cargo-build\n\t# rather than use a mutable \"version\", lock the source image to a specific digest (so ~nightly \"rust:XXX\" image changes doesn't cause complete rebuilds of our build-chain)\n\t#FROM rust@sha256:fe410a9711ba354e2a27da5db5c1bcf2df50e63b8746b0f40fbb85878d60eb95 as cargo-build\n\t# temp, to be (closer to) matching with cargo 1.60.0-beta.3 on dev-machine\n\tFROM rustlang/rust:nightly-bullseye@sha256:80046c08dad9ac3941941be072ea5db5c105a6208cff73ca36496f761c2f5c9c\n\tARG env_ENV\n\tARG debug_vs_release\n\tARG debug_vs_release_flag\n# ----------\n\n# initial arg processing\nENV ENV=$env_ENV\nRUN echo \"Env:$ENV DebugVSRelease:$debug_vs_release\"\n\n# generic env-var for code to know if its running as part of a Dockerfile\nENV IN_DOCKER=1\n\n# install mold linker [works:181s]\n# RUN apt-get update \\\n# \t&& apt-get install -y build-essential git clang cmake libstdc++-10-dev libssl-dev libxxhash-dev zlib1g-dev pkg-config \\\n# \t&& git clone https://github.com/rui314/mold.git \\\n# \t&& cd mold \\\n# \t&& git checkout v1.0.1 \\\n# \t&& make -j$(nproc) CXX=clang++ \\\n# \t&& make install\n\n# install mold linker, from debian's v12 \"sid/unstable\" repository (mold is not in debian [10/11]'s repository atm) [works:72s]\nRUN apt-get update && \\\n\t# install some things needed by mold (at mold run-time)\n\t#apt-get -y install build-essential git clang cmake libstdc++-10-dev libssl-dev libxxhash-dev zlib1g-dev pkg-config && \\\n\tapt-get -y --no-install-recommends install clang && \\\n\t# install mold\n\tapt-get -y --no-install-recommends install software-properties-common && \\\n\t#apt-get -y install software-properties-common && \\\n\tadd-apt-repository \"deb http://httpredir.debian.org/debian sid main\" && \\\n\tapt-get update && \\\n\tapt-get -t sid install -y --no-install-recommends mold && rm -rf /var/lib/apt/lists/*;\n\t#apt-get -t sid install -y mold\n# also install various other commands (eg. for inspecting folder-structure during build)\nRUN apt-get install --no-install-recommends -y tree && rm -rf /var/lib/apt/lists/*;\n\n# ensure mold is installed\nRUN mold --version\n\nWORKDIR /dm_repo\n\n# this makes-so cargo-build and such uses mold as its linker\nCOPY .cargo/config.toml .cargo/config.toml\n# this makes-so the cargo-build commands ignore warnings in their output (warnings in own code should be noticed/resolved through VSCode squigglies, not clutter in build-output)\n#ENV RUSTFLAGS=-Awarnings # moved to config.toml (we cannot set RUSTFLAGS from multiple places, so chose config.toml as the location for now)\n# this sets the debugging-info granularity to \"per line\", rather than the default \"2\" which is more detailed; this speeds up builds a bit\nENV CARGO_PROFILE_DEV_DEBUG=1\n\n# cargo's \"update crates.io index\" step is slow; cache that step in its own layer\n#RUN cd ~/.cargo/registry/index/github.com-1ecc6299db9ec823 && git fetch\nRUN USER=root cargo new --bin update-index-helper\nWORKDIR /dm_repo/update-index-helper\n# add one tiny dependency (with no subdeps), so cargo-build updates the index\nRUN echo \"void = \\\"1\\\"\" >> Cargo.toml\n#RUN RUSTC_BOOTSTRAP=1 cargo build ${debug_vs_release_flag}\nRUN RUSTC_BOOTSTRAP=1 cargo rustc ${debug_vs_release_flag}\n\nWORKDIR /dm_repo\nCOPY Cargo.toml Cargo.toml\nCOPY Cargo.lock Cargo.lock\n\n# when building app-server-rs, we don't care about the other Rust pod codebases; replace their entries in the root Cargo.toml (sed syntax: https://askubuntu.com/a/20416)\n#RUN sed -i 's~\"Packages/monitor-backend\",~~g' Cargo.toml\n\nCOPY Packages/rust-macros/Cargo.toml Packages/rust-macros/Cargo.toml\nCOPY Packages/rust-shared/Cargo.toml Packages/rust-shared/Cargo.toml\nCOPY Packages/app-server-rs/Cargo.toml Packages/app-server-rs/Cargo.toml\nCOPY Packages/monitor-backend/Cargo.toml Packages/monitor-backend/Cargo.toml\n\n# attempt 1, part 1: rust-macros is a proc-macro crate, which has special handling during compilation; disable that special handling (at this placeholder-stage), by stripping that field (sed syntax: https://askubuntu.com/a/20416)\n#RUN sed -i 's~proc-macro = true~~g' Cargo.toml\n\n# copy \"dummy content\" for each of the packages (needed for Rust to build the dependencies, without having to rope in the changing own-code of each package)\nRUN mkdir Packages/rust-macros/src/\nRUN mkdir Packages/rust-shared/src/\nRUN mkdir Packages/app-server-rs/src/\nRUN mkdir Packages/monitor-backend/src/\nRUN echo \"fn main() { println!(\\\"if you see this, the build broke\\\"); }\" > Packages/rust-macros/src/lib.rs\nRUN echo \"fn main() { println!(\\\"if you see this, the build broke\\\"); }\" > Packages/rust-shared/src/lib.rs\nRUN echo \"fn main() { println!(\\\"if you see this, the build broke\\\"); }\" > Packages/app-server-rs/src/main.rs\nRUN echo \"fn main() { println!(\\\"if you see this, the build broke\\\"); }\" > Packages/monitor-backend/src/main.rs\n\n# attempt 2: just copy rust-macros verbatim for now; this means everything will need a rebuild, but I haven't been able to find an alternative atm\nCOPY Packages/rust-macros/ Packages/rust-macros/\n\n# build the dependencies\nRUN RUSTC_BOOTSTRAP=1 cargo build --timings ${debug_vs_release_flag}\n#RUN RUSTC_BOOTSTRAP=1 cargo rustc -Z timings ${debug_vs_release_flag}\n#RUN RUSTC_BOOTSTRAP=1 cargo rustc -- -Z self-profile -Z self-profile-events=default,args\n\n# list all paths under \"target\" that contain \"macros\" or \"shared\"\nRUN cd /dm_repo/target && tree -fa | grep -E '(macros|shared)'\n#RUN echo rerun_flag_0 && ls /dm_repo/Packages/app-server-rs\n#RUN echo rerun_flag_1 && ls /dm_repo/target/${debug_vs_release}\n#RUN echo rerun_flag_1 && ls /dm_repo/target/${debug_vs_release}/build\n#RUN echo rerun_flag_1 && ls /dm_repo/target/${debug_vs_release}/deps\n#RUN echo rerun_flag_1 && ls /dm_repo/target/${debug_vs_release}/incremental\n\n# remove the build output of the \"dummy versions\" of packages (needed for subsequent compile)\n#RUN rm -f /dm_repo/Packages/app-server-rs/target/${debug_vs_release}/deps/app_server_rs*\nRUN echo clearing_placeholder_build_data_1 && \\\n\trm -f /dm_repo/target/${debug_vs_release}/deps/rust_shared* && \\\n\trm -f /dm_repo/target/${debug_vs_release}/deps/librust_shared* && \\\n\t#rm -f /dm_repo/target/${debug_vs_release}/deps/rust_macros* && \\\n\t#rm -f /dm_repo/target/${debug_vs_release}/deps/librust_macros* && \\\n\trm -f /dm_repo/target/${debug_vs_release}/deps/app_server_rs* && \\\n\trm -f /dm_repo/target/${debug_vs_release}/deps/monitor_backend*\n\n# also delete this stuff\nRUN rm -f /dm_repo/target/${debug_vs_release}/rust-shared* && \\\n\trm -f /dm_repo/target/${debug_vs_release}/rust_shared* && \\\n\trm -f /dm_repo/target/${debug_vs_release}/librust-shared* && \\\n\trm -f /dm_repo/target/${debug_vs_release}/librust_shared* && \\\n\trm -f /dm_repo/target/${debug_vs_release}/app-server-rs* && \\\n\trm -f /dm_repo/target/${debug_vs_release}/app_server_rs* && \\\n\trm -f /dm_repo/target/${debug_vs_release}/monitor-backend* && \\\n\trm -f /dm_repo/target/${debug_vs_release}/monitor_backend*\n\t#rm -rf /dm_repo/target/${debug_vs_release}/incremental && \\\n\t#rm -rf /dm_repo/target/${debug_vs_release}/deps && \\\n\t#rm -rf /dm_repo/target/${debug_vs_release}/build && \\\n\n# this special pass is only needed for rust-macros (since it's a proc-macro crate, with special handling)\n# RUN rm -f /dm_repo/target/${debug_vs_release}/rust_macros* && \\\n# \trm -f /dm_repo/target/${debug_vs_release}/rust-macros* && \\\n# \trm -f /dm_repo/target/${debug_vs_release}/librust_macros* && \\\n# \trm -f /dm_repo/target/${debug_vs_release}/librust-macros* && \\\n# \trm -fr /dm_repo/target/${debug_vs_release}/incremental/rust_macros* && \\\n# \trm -fr /dm_repo/target/${debug_vs_release}/.fingerprint/rust-macros*\n\n# relist all paths under \"target\" that contain \"macros\" or \"shared\", to confirm none are left\nRUN cd /dm_repo/target && tree -fa | grep -E '(macros|shared)'\n\n# attempt 1, part 2: now copy actual rust-macros Cargo.toml file, for real build\n#COPY Packages/rust-macros/Cargo.toml Packages/rust-macros/Cargo.toml"
+}

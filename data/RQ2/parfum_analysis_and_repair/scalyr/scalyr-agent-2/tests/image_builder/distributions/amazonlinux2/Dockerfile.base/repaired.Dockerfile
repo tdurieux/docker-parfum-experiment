@@ -1,0 +1,12 @@
+FROM amazonlinux:2
+RUN yum install -y initscripts python2 python3 gcc && rm -rf /var/cache/yum
+RUN yum install -y python2-pip python2-devel python3-pip python3-devel && rm -rf /var/cache/yum
+
+COPY dev-requirements.txt dev-requirements.txt
+ADD agent_build/requirement-files agent_build/requirement-files
+
+RUN python -m pip install -r dev-requirements.txt
+# We need newer version of pip since old version don't support manylinux wheels
+RUN python3 -m pip install --upgrade "pip==21.0"
+RUN python3 -m pip --version
+RUN python3 -m pip install -r dev-requirements.txt

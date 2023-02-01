@@ -1,0 +1,26 @@
+{
+  "startTime": 1674215366412,
+  "endTime": 1674215367395,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 34,
+        "lineEnd": 34,
+        "columnStart": 4,
+        "columnEnd": 23
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 37,
+        "lineEnd": 37,
+        "columnStart": 4,
+        "columnEnd": 31
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM alpine/git:latest as builder\n\nRUN mkdir -p /opt\n\n# Copy in source code.\nRUN git clone git://github.com/yikangshen/Ordered-Neurons /opt/Ordered-Neurons \\\n        && cd /opt/Ordered-Neurons \\\n        && git checkout 46d63cd\n\n# Build arguments provide SSH keys for accessing private CPL data.\nARG CPL_SSH_PRV_KEY\nRUN mkdir /root/.ssh && echo \"StrictHostKeyChecking no\" >> /root/.ssh/config \\\n      && echo \"$CPL_SSH_PRV_KEY\" > /root/.ssh/id_rsa \\\n      && chmod 600 /root/.ssh/id_rsa\n\n# Copy in model parameters.\nARG CHECKPOINT_NAME=fredashi-20190919\nARG CHECKPOINT_SOURCE=cpl@45.79.223.150:/home/cpl/ordered-neurons/models/$CHECKPOINT_NAME\nRUN mkdir -p /opt/Ordered-Neurons/checkpoint && \\\n          scp -o \"StrictHostKeyChecking=no\" \\\n            \"${CHECKPOINT_SOURCE}/{model.pt,corpus.data}\" \\\n            /opt/Ordered-Neurons/checkpoint\n# Remove SSH information.\nRUN rm -rf /root/.ssh\n\n\n\nFROM pytorch/pytorch:0.4.1-cuda9-cudnn7-runtime\n\n# Root of model directory relative to build context.\nARG MODEL_ROOT=models/ordered-neurons\n\nCOPY --from=builder /opt/Ordered-Neurons /opt/Ordered-Neurons\n\nRUN pip install --no-cache-dir -q nltk\n\n# Add test dependencies.\nRUN pip install --no-cache-dir nose jsonschema\n\n# Copy in custom file for surprisal evaluation\nCOPY ${MODEL_ROOT}/get_surprisals.py /opt/Ordered-Neurons/get_surprisals.py\n\n# Copy in shared tests.\nCOPY test.py /opt/test.py\n\n# Copy external-facing scripts\nCOPY ${MODEL_ROOT}/bin /opt/bin\nCOPY shared/unkify /opt/bin/unkify\nCOPY shared/spec /opt/bin/spec\nCOPY shared/unsupported /opt/bin/get_predictions.hdf5\n\nENV PATH \"/opt/bin:${PATH}\"\n\nENV LMZOO_CHECKPOINT_PATH /opt/Ordered-Neurons/checkpoint\nENV LMZOO_VOCABULARY_PATH vocab\n\n# Cache vocab list for easy access from `spec`, etc.\nRUN PYTHONPATH=\"/opt/Ordered-Neurons:$PYTHONPATH\" python \\\n                -c 'import os; import torch; corpus = torch.load(os.environ[\"LMZOO_CHECKPOINT_PATH\"] + \"/corpus.data\"); \\\n                    f = open(os.path.join(os.environ[\"LMZOO_CHECKPOINT_PATH\"], os.environ[\"LMZOO_VOCABULARY_PATH\"]), \"w\"); f.write(\"\\n\".join(corpus.dictionary.word2idx.keys()));'\n\n# Current git commit of build repository\nARG COMMIT\n# sha1 checksum of build directory\nARG FILES_SHA1\n\n# Prepare spec.\nCOPY ${MODEL_ROOT}/spec.template.json /tmp/spec.template.json\nRUN export BUILD_DATETIME=\"$(date)\"\nRUN cat /tmp/spec.template.json | \\\n            sed \"s/<image\\.sha1>/$COMMIT/g; s/<image\\.files_sha1>/${FILES_SHA1}/g; s/<image\\.datetime>/${BUILD_DATETIME}/g\" \\\n            > /opt/spec.template.json\n\nWORKDIR /opt/bin\n"
+}

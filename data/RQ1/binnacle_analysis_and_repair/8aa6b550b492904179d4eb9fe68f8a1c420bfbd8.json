@@ -1,0 +1,44 @@
+{
+  "startTime": 1674234181532,
+  "endTime": 1674234181724,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 38,
+        "lineEnd": 38,
+        "columnStart": 4,
+        "columnEnd": 156
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 53,
+        "lineEnd": 53,
+        "columnStart": 4,
+        "columnEnd": 143
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 7,
+        "lineEnd": 12,
+        "columnStart": 22,
+        "columnEnd": 7
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 51,
+        "lineEnd": 51,
+        "columnStart": 4,
+        "columnEnd": 58
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "####################################################################################################\n# Builder image\n# Initial stage which pulls prepares build dependencies and CLI tooling we need for our final image\n# Also used as the image in CI jobs so needs all dependencies\n####################################################################################################\nFROM golang:1.11.5 as builder\n\nRUN apt-get update && apt-get install --no-install-recommends -y \\\n    git \\\n    make \\\n    wget \\\n    gcc \\\n    zip && \\\n    apt-get clean && \\\n    rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*\n\nWORKDIR /tmp\n\n# Install docker\nENV DOCKER_CHANNEL stable\nENV DOCKER_VERSION 18.09.1\nRUN wget -O docker.tgz \"https://download.docker.com/linux/static/${DOCKER_CHANNEL}/x86_64/docker-${DOCKER_VERSION}.tgz\" && \\\n    tar --extract --file docker.tgz --strip-components 1 --directory /usr/local/bin/ && \\\n    rm docker.tgz\n\n# Install dep\nENV DEP_VERSION=0.5.0\nRUN wget https://github.com/golang/dep/releases/download/v${DEP_VERSION}/dep-linux-amd64 -O /usr/local/bin/dep && \\\n    chmod +x /usr/local/bin/dep\n\n# Install golangci-lint\nENV GOLANGCI_LINT_VERSION=1.16.0\nRUN curl -sfL https://raw.githubusercontent.com/golangci/golangci-lint/v$GOLANGCI_LINT_VERSION/install.sh| sh -s -- -b $(go env GOPATH)/bin v$GOLANGCI_LINT_VERSION\n\n# Install gometalinter\n# Keep gometalinter to avoid CI failures during the linter migration.\n# We can remove it after enough time has passed.\nENV GOMETALINTER_VERSION=2.0.12\nRUN curl -f -sLo- https://github.com/alecthomas/gometalinter/releases/download/v${GOMETALINTER_VERSION}/gometalinter-${GOMETALINTER_VERSION}-linux-amd64.tar.gz | \\\n    tar -xzC \"$GOPATH/bin\" --exclude COPYING --exclude README.md --strip-components 1 -f- && \\\n    ln -s $GOPATH/bin/gometalinter $GOPATH/bin/gometalinter.v2\n\n\n####################################################################################################\n# argoexec-base\n# Used as the base for both the release and development version of argoexec\n####################################################################################################\nFROM debian:9.6-slim as argoexec-base\n# NOTE: keep the version synced with https://storage.googleapis.com/kubernetes-release/release/stable.txt\nENV KUBECTL_VERSION=1.13.4\nRUN apt-get update && \\\n    apt-get install --no-install-recommends -y curl jq procps git tar mime-support && \\\n    rm -rf /var/lib/apt/lists/* && \\\n    curl -f -L -o /usr/local/bin/kubectl -LO https://storage.googleapis.com/kubernetes-release/release/v${KUBECTL_VERSION}/bin/linux/amd64/kubectl && \\\n    chmod +x /usr/local/bin/kubectl\nCOPY hack/ssh_known_hosts /etc/ssh/ssh_known_hosts\nCOPY --from=builder /usr/local/bin/docker /usr/local/bin/\n\n\n####################################################################################################\n# Argo Build stage which performs the actual build of Argo binaries\n####################################################################################################\nFROM builder as argo-build\n\n# A dummy directory is created under $GOPATH/src/dummy so we are able to use dep\n# to install all the packages of our dep lock file\nCOPY Gopkg.toml ${GOPATH}/src/dummy/Gopkg.toml\nCOPY Gopkg.lock ${GOPATH}/src/dummy/Gopkg.lock\n\nRUN cd ${GOPATH}/src/dummy && \\\n    dep ensure -vendor-only && \\\n    mv vendor/* ${GOPATH}/src/ && \\\n    rmdir vendor\n\n# Perform the build\nWORKDIR /go/src/github.com/argoproj/argo\nCOPY . .\nARG MAKE_TARGET=\"controller executor cli-linux-amd64\"\nRUN make $MAKE_TARGET\n\n\n####################################################################################################\n# argoexec\n####################################################################################################\nFROM argoexec-base as argoexec\nCOPY --from=argo-build /go/src/github.com/argoproj/argo/dist/argoexec /usr/local/bin/\n\n\n####################################################################################################\n# workflow-controller\n####################################################################################################\nFROM scratch as workflow-controller\nCOPY --from=argo-build /go/src/github.com/argoproj/argo/dist/workflow-controller /bin/\nENTRYPOINT [ \"workflow-controller\" ]\n\n\n####################################################################################################\n# argocli\n####################################################################################################\nFROM scratch as argocli\nCOPY --from=argo-build /go/src/github.com/argoproj/argo/dist/argo-linux-amd64 /bin/argo\nENTRYPOINT [ \"argo\" ]\n"
+}

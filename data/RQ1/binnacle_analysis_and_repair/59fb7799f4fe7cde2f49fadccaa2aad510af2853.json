@@ -1,0 +1,44 @@
+{
+  "startTime": 1674251981720,
+  "endTime": 1674251981810,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 3,
+        "lineEnd": 3,
+        "columnStart": 2,
+        "columnEnd": 49
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 47,
+        "lineEnd": 47,
+        "columnStart": 22,
+        "columnEnd": 56
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 3,
+        "lineEnd": 3,
+        "columnStart": 2,
+        "columnEnd": 49
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 47,
+        "lineEnd": 47,
+        "columnStart": 22,
+        "columnEnd": 56
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM l.gcr.io/google/bazel:0.24.0 as builder\n\nRUN apt-get update && \\\n  apt-get install --no-install-recommends -y cmake clang musl-dev openssl && rm -rf /var/lib/apt/lists/*;\nWORKDIR /go/src/github.com/kubeflow/pipelines\n\nCOPY WORKSPACE WORKSPACE\nCOPY backend/src backend/src\nCOPY backend/api backend/api\n\nRUN bazel build -c opt --action_env=PATH --define=grpc_no_ares=true backend/src/apiserver:apiserver\n\n\n# Compile\nFROM python:3.5 as compiler\n\nWORKDIR /go/src/github.com/kubeflow/pipelines\nCOPY sdk sdk\nWORKDIR /go/src/github.com/kubeflow/pipelines/sdk/python\nRUN python3 setup.py install\n\nWORKDIR /samples\nCOPY ./samples .\n\n#We need to check that all samples have been compiled without error.\n#For find program, the -exec argument is a filter predicate just like -name. It only affects whether the file is \"found\", not the find's exit code.\n#One way to solve this problem is to check whether we have any python pipelines that cannot compile. Here the exit code is the number of such files:\n#RUN  bash -e -c 'exit $(find . -maxdepth 2 -name \"*.py\" ! -exec dsl-compile --py {} --output {}.tar.gz \\; -print | wc -l)'\n#I think it's better to just use a shell loop though.\n#RUN  for pipeline in $(find . -maxdepth 2 -name '*.py' -type f); do dsl-compile --py \"$pipeline\" --output \"$pipeline.tar.gz\"; done\n#The \"for\" loop breaks on all whitespace, so we either need to override IFS or use the \"read\" command instead.\nRUN  find . -maxdepth 2 -name '*.py' -type f | while read pipeline; do dsl-compile --py \"$pipeline\" --output \"$pipeline.tar.gz\"; done\n\nFROM debian:stretch\n\nARG COMMIT_SHA=unknown\nENV COMMIT_SHA=${COMMIT_SHA}\n\nWORKDIR /bin\n\nCOPY third_party/license.txt /bin/license.txt\nCOPY --from=builder /go/src/github.com/kubeflow/pipelines/bazel-bin/backend/src/apiserver/linux_amd64_stripped/apiserver  /bin/apiserver\nCOPY backend/src/apiserver/config/ /config\n\nCOPY --from=compiler /samples/ /samples/\n\n# Adding CA certificate so API server can download pipeline through URL\nRUN apt-get update && apt-get install --no-install-recommends -y ca-certificates && rm -rf /var/lib/apt/lists/*;\n\n# Expose apiserver port\nEXPOSE 8888\n\n# Start the apiserver\nCMD apiserver --config=/config --sampleconfig=/config/sample_config.json -alsologtostderr=true\n"
+}

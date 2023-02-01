@@ -1,0 +1,216 @@
+{{
+	def is_slim:
+		env.variant
+		| startswith("slim-")
+	;
+	def is_3:
+		env.version
+		| startswith("3")
+	;
+	def minor:
+		env.version
+		| split(".")[1]
+		| tonumber
+	;
+	def lib_pypy:
+		if is_3 and minor >= 8 then
+			"/opt/pypy/lib/pypy" + env.version
+		else
+			"/opt/pypy/lib_pypy"
+		end
+	;
+	def cmd:
+		if is_3 then
+			"pypy3"
+		else
+			"pypy"
+		end
+-}}
+{{ if is_slim then ( -}}
+FROM debian:{{ env.variant | ltrimstr("slim-") }}-slim
+
+RUN set -eux; \
+	apt-get update; \
+	apt-get install -y --no-install-recommends ca-certificates; \
+	rm -rf /var/lib/apt/lists/*
+{{ ) else ( -}}
+FROM buildpack-deps:{{ env.variant }}
+
+# runtime dependencies
+RUN set -eux; \
+	apt-get update; \
+	apt-get install -y --no-install-recommends \
+		tcl \
+		tk \
+	; \
+	rm -rf /var/lib/apt/lists/*
+{{ ) end -}}
+
+# http://bugs.python.org/issue19846
+# > At the moment, setting "LANG=C" on a Linux system *fundamentally breaks Python 3*, and that's not OK.
+ENV LANG C.UTF-8
+
+# ensure local {{ cmd }} is preferred over distribution {{ cmd }}
+ENV PATH /opt/pypy/bin:$PATH
+
+# Python {{ .python.version }}
+ENV PYPY_VERSION {{ .version }}
+
+RUN set -eux; \
+	\
+	dpkgArch="$(dpkg --print-architecture)"; \
+	case "${dpkgArch##*-}" in \
+{{
+	[
+		.arches | to_entries[]
+		| select(.key | index("-") | not)
+		| .key as $bashbrewArch
+		| (
+			{
+				arm32v5: "armel",
+				arm32v7: "armhf",
+				arm64v8: "arm64",
+				mips64le: "mips64el",
+				ppc64le: "ppc64el",
+			}
+			| .[$bashbrewArch] // $bashbrewArch
+		) as $dpkgArch
+		| .value
+		| (
+-}}
+		{{ $dpkgArch | @sh }}) \
+			url={{ .url | @sh }}; \
+			sha256={{ .sha256 | @sh }}; \
+			;; \
+{{
+		)
+	] | add
+-}}
+		*) echo >&2 "error: current architecture ($dpkgArch) does not have a corresponding PyPy $PYPY_VERSION binary release"; exit 1 ;; \
+	esac; \
+	\
+	savedAptMark="$(apt-mark showmanual)"; \
+	apt-get update; \
+	apt-get install -y --no-install-recommends \
+{{ if is_slim then ( -}}
+		bzip2 \
+		wget \
+{{ ) else "" end -}}
+# sometimes "{{ cmd }}" itself is linked against libexpat1 / libncurses5, sometimes they're ".so" files in "{{ lib_pypy }}"
+		libexpat1 \
+		libncurses5 \
+		libncursesw6 \
+		libsqlite3-0 \
+# (so we'll add them temporarily, then use "ldd" later to determine which to keep based on usage per architecture)
+	; \
+	\
+	wget -O pypy.tar.bz2 "$url" --progress=dot:giga; \
+	echo "$sha256 *pypy.tar.bz2" | sha256sum --check --strict -; \
+	mkdir /opt/pypy; \
+	tar -xjC /opt/pypy --strip-components=1 -f pypy.tar.bz2; \
+	find /opt/pypy/lib* -depth -type d -a \( -name test -o -name tests \) -exec rm -rf '{}' +; \
+	rm pypy.tar.bz2; \
+	\
+	ln -sv {{ "/opt/pypy/bin/" + cmd | @sh }} /usr/local/bin/; \
+	\
+# smoke test
+	{{ cmd }} --version; \
+	\
+{{ if is_3 then ( -}}
+	cd {{ lib_pypy }}; \
+{{
+	[
+		{
+			comment: "on pypy3, rebuild gdbm ffi bits for compatibility with Debian Stretch+",
+			file: "_gdbm_build.py",
+			deps: "libgdbm-dev",
+		},
+		{
+			comment: "https://github.com/docker-library/pypy/issues/24#issuecomment-409408657",
+			file: "_ssl_build.py",
+			deps: "libssl-dev",
+		},
+		{
+			comment: "https://github.com/docker-library/pypy/issues/42",
+			file: "_lzma_build.py",
+			deps: "liblzma-dev",
+		},
+		{
+			comment: "https://github.com/docker-library/pypy/issues/68",
+			file: "_sqlite3_build.py",
+			deps: "libsqlite3-dev",
+		},
+		empty # trailing comma hack
+	] | map(
+-}}
+# {{ .comment }}
+	if [ -f {{ .file }} ]; then \
+{{ if is_slim then ( -}}
+		apt-get install -y --no-install-recommends gcc libc6-dev {{ .deps }}; \
+{{ ) else "" end -}}
+		{{ cmd }} {{ .file }}; \
+	fi; \
+{{ ) | join("") -}}
+# TODO rebuild other cffi modules here too? (other _*_build.py files)
+	\
+{{ ) else "" end -}}
+	apt-mark auto '.*' > /dev/null; \
+	[ -z "$savedAptMark" ] || apt-mark manual $savedAptMark > /dev/null; \
+	find /opt/pypy -type f -executable -exec ldd '{}' ';' \
+		| awk '/=>/ { print $(NF-1) }' \
+		| sort -u \
+		| xargs -r dpkg-query --search \
+		| cut -d: -f1 \
+		| sort -u \
+		| xargs -r apt-mark manual \
+	; \
+	apt-get purge -y --auto-remove -o APT::AutoRemove::RecommendsImportant=false; \
+	rm -rf /var/lib/apt/lists/*; \
+# smoke test again, to be sure
+	{{ cmd }} --version; \
+	\
+	find /opt/pypy -depth \
+		\( \
+			\( -type d -a \( -name test -o -name tests \) \) \
+			-o \
+			\( -type f -a \( -name '*.pyc' -o -name '*.pyo' \) \) \
+		\) -exec rm -rf '{}' +
+
+# https://github.com/pypa/get-pip
+ENV PYTHON_GET_PIP_URL {{ ."get-pip".url }}
+ENV PYTHON_GET_PIP_SHA256 {{ ."get-pip".sha256 }}
+
+RUN set -ex; \
+{{ if is_slim then ( -}}
+	apt-get update; \
+	apt-get install -y --no-install-recommends wget; \
+	rm -rf /var/lib/apt/lists/*; \
+{{ ) else "" end -}}
+	\
+	wget -O get-pip.py "$PYTHON_GET_PIP_URL"; \
+	echo "$PYTHON_GET_PIP_SHA256 *get-pip.py" | sha256sum --check --strict -; \
+	\
+	pipVersion="$({{ cmd }} -c 'import ensurepip; print(ensurepip._PIP_VERSION)')"; \
+	setuptoolsVersion="$({{ cmd }} -c 'import ensurepip; print(ensurepip._SETUPTOOLS_VERSION)')"; \
+	\
+	{{ cmd }} get-pip.py \
+		--disable-pip-version-check \
+		--no-cache-dir \
+		"pip == $pipVersion" \
+		"setuptools == $setuptoolsVersion" \
+	; \
+{{ if is_slim then ( -}}
+	apt-get purge -y --auto-remove wget; \
+{{ ) else "" end -}}
+# smoke test
+	pip --version; \
+	\
+	find /opt/pypy -depth \
+		\( \
+			\( -type d -a \( -name test -o -name tests \) \) \
+			-o \
+			\( -type f -a \( -name '*.pyc' -o -name '*.pyo' \) \) \
+		\) -exec rm -rf '{}' +; \
+	rm -f get-pip.py
+
+CMD {{ [ cmd ] | @json }}

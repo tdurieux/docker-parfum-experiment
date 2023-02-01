@@ -1,0 +1,46 @@
+dnl Coerce CentOS Stream image tags (streamN) to CentOS tags (N)
+define(`cosrelease', patsubst(__RELEASE__, `stream', `'))dnl
+FROM __IMAGE__
+
+MAINTAINER Stephen Gallagher <sgallagh@redhat.com>
+
+RUN yum -y install epel-release \
+ifelse(eval(cosrelease >= 8), 1, `dnl
+    && yum -y install dnf-plugins-core \
+    && yum config-manager --enable powertools \
+')dnl
+    && yum -y --setopt=tsflags='' install \
+        clang \
+        createrepo_c \
+        elinks \
+        file-devel \
+        gcc \
+        gcc-c++ \
+        git-core \
+        glib2-devel \
+        glib2-doc \
+        gobject-introspection-devel \
+        gtk-doc \
+        jq \
+        libyaml-devel \
+        meson \
+        ninja-build \
+        pkgconfig \
+        python2-devel \
+        python2-six \
+ifelse(eval(cosrelease < 8), 1, `dnl
+        python-gobject-base \
+        python36-gobject-base \
+',`dnl
+        python3-gobject-base \
+')dnl
+        python36-devel \
+        python3-rpm-macros \
+        redhat-rpm-config \
+        rpm-build \
+        rpm-devel \
+        rpmdevtools \
+        sudo \
+        && yum -y clean all
+
+RUN ln -sf /builddir/bindings/python/gi/overrides/Modulemd.py $(python3 -c "import gi; print(gi._overridesdir)")/Modulemd.py

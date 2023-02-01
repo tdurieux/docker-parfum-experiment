@@ -1,0 +1,71 @@
+{
+  "startTime": 1674252349000,
+  "endTime": 1674252349738,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 57,
+        "lineEnd": 57,
+        "columnStart": 4,
+        "columnEnd": 22
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 58,
+        "lineEnd": 58,
+        "columnStart": 4,
+        "columnEnd": 36
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 59,
+        "lineEnd": 59,
+        "columnStart": 4,
+        "columnEnd": 33
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 60,
+        "lineEnd": 60,
+        "columnStart": 4,
+        "columnEnd": 25
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 20,
+        "lineEnd": 20,
+        "columnStart": 22,
+        "columnEnd": 46
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 20,
+        "lineEnd": 20,
+        "columnStart": 22,
+        "columnEnd": 46
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 37,
+        "lineEnd": 51,
+        "columnStart": 22,
+        "columnEnd": 31
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Copyright 2016 Google Inc.\n#\n# Licensed under the Apache License, Version 2.0 (the \"License\");\n# you may not use this file except in compliance with the License.\n# You may obtain a copy of the License at\n#\n#      http://www.apache.org/licenses/LICENSE-2.0\n#\n# Unless required by applicable law or agreed to in writing, software\n# distributed under the License is distributed on an \"AS IS\" BASIS,\n# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.\n# See the License for the specific language governing permissions and\n# limitations under the License.\n#\n################################################################################\n\n# Build rust stuff in its own image. We only need the resulting binaries.\n# Keeping the rust toolchain in the image wastes 1 GB.\nFROM gcr.io/oss-fuzz-base/base-image as temp-runner-binary-builder\n\nRUN apt-get update && apt-get install --no-install-recommends -y cargo && rm -rf /var/lib/apt/lists/*;\nRUN cargo install rustfilt\n\n# Using multi-stage build to copy some LLVM binaries needed in the runner image.\nFROM gcr.io/oss-fuzz-base/base-clang AS base-clang\n\n# Real image that will be used later.\nFROM gcr.io/oss-fuzz-base/base-image\n\nCOPY --from=temp-runner-binary-builder /root/.cargo/bin/rustfilt /usr/local/bin\n\n# Copy the binaries needed for code coverage and crash symbolization.\nCOPY --from=base-clang /usr/local/bin/llvm-cov \\\n     /usr/local/bin/llvm-profdata \\\n     /usr/local/bin/llvm-symbolizer \\\n     /usr/local/bin/\n\nRUN apt-get update && apt-get install -y \\\n    binutils \\\n    file \\\n    fonts-dejavu \\\n    git \\\n    lib32gcc1 \\\n    libc6-i386 \\\n    libcap2 \\\n    python3 \\\n    python3-pip \\\n    python3-setuptools \\\n    rsync \\\n    unzip \\\n    wget \\\n    zip --no-install-recommends && rm -rf /var/lib/apt/lists/*;\n\nENV CODE_COVERAGE_SRC=/opt/code_coverage\nRUN git clone https://chromium.googlesource.com/chromium/src/tools/code_coverage $CODE_COVERAGE_SRC && \\\n    cd /opt/code_coverage && \\\n    git checkout edba4873b5e8a390e977a64c522db2df18a8b27d && \\\n    pip3 install --no-cache-dir wheel && \\\n    pip3 install --no-cache-dir -r requirements.txt && \\\n    pip3 install --no-cache-dir MarkupSafe==0.23 && \\\n    pip3 install --no-cache-dir coverage\n\n# Default environment options for various sanitizers.\n# Note that these match the settings used in ClusterFuzz and\n# shouldn't be changed unless a corresponding change is made on\n# ClusterFuzz side as well.\nENV ASAN_OPTIONS=\"alloc_dealloc_mismatch=0:allocator_may_return_null=1:allocator_release_to_os_interval_ms=500:check_malloc_usable_size=0:detect_container_overflow=1:detect_odr_violation=0:detect_leaks=1:detect_stack_use_after_return=1:fast_unwind_on_fatal=0:handle_abort=1:handle_segv=1:handle_sigill=1:max_uar_stack_size_log=16:print_scariness=1:quarantine_size_mb=10:strict_memcmp=1:strip_path_prefix=/workspace/:symbolize=1:use_sigaltstack=1:dedup_token_length=3\"\nENV MSAN_OPTIONS=\"print_stats=1:strip_path_prefix=/workspace/:symbolize=1:dedup_token_length=3\"\nENV UBSAN_OPTIONS=\"print_stacktrace=1:print_summary=1:silence_unsigned_overflow=1:strip_path_prefix=/workspace/:symbolize=1:dedup_token_length=3\"\nENV FUZZER_ARGS=\"-rss_limit_mb=2560 -timeout=25\"\nENV AFL_FUZZER_ARGS=\"-m none\"\n\n# Download and install the latest stable Go.\nADD https://storage.googleapis.com/golang/getgo/installer_linux $SRC/\nRUN chmod +x $SRC/installer_linux && \\\n    SHELL=\"bash\" $SRC/installer_linux -version 1.18beta2 && \\\n    rm $SRC/installer_linux\n\n# Set up Golang environment variables (copied from /root/.bash_profile).\nENV GOPATH /root/go\n\n# /root/.go/bin is for the standard Go binaries (i.e. go, gofmt, etc).\n# $GOPATH/bin is for the binaries from the dependencies installed via \"go get\".\nENV PATH $PATH:/root/.go/bin:$GOPATH/bin\n\n# Set up Golang coverage modules.\nCOPY gocoverage $GOPATH/gocoverage\nRUN cd $GOPATH/gocoverage && go install ./...\n\n# Install OpenJDK 15 and trim its size by removing unused components.\nENV JAVA_HOME=/usr/lib/jvm/java-15-openjdk-amd64\nENV JVM_LD_LIBRARY_PATH=$JAVA_HOME/lib/server\nENV PATH=$PATH:$JAVA_HOME/bin\n\nRUN wget https://download.java.net/java/GA/jdk15.0.2/0d1cfde4252546c6931946de8db48ee2/7/GPL/openjdk-15.0.2_linux-x64_bin.tar.gz -O /tmp/openjdk-15.0.2_linux-x64_bin.tar.gz && \\\n    cd /tmp && \\\n    mkdir -p $JAVA_HOME && \\\n    tar -xzv --strip-components=1 -f openjdk-15.0.2_linux-x64_bin.tar.gz --directory $JAVA_HOME && \\\n    rm -f openjdk-15.0.2_linux-x64_bin.tar.gz && \\\n    rm -rf $JAVA_HOME/jmods $JAVA_HOME/lib/src.zip\n\n# Install JaCoCo for JVM coverage.\nRUN wget https://repo1.maven.org/maven2/org/jacoco/org.jacoco.cli/0.8.7/org.jacoco.cli-0.8.7-nodeps.jar -O /opt/jacoco-cli.jar && \\\n    wget https://repo1.maven.org/maven2/org/jacoco/org.jacoco.agent/0.8.7/org.jacoco.agent-0.8.7-runtime.jar -O /opt/jacoco-agent.jar && \\\n    echo \"37df187b76888101ecd745282e9cd1ad4ea508d6  /opt/jacoco-agent.jar\" | shasum --check && \\\n    echo \"c1814e7bba5fd8786224b09b43c84fd6156db690  /opt/jacoco-cli.jar\" | shasum --check\n\n# Do this last to make developing these files easier/faster due to caching.\nCOPY bad_build_check \\\n    coverage \\\n    coverage_helper \\\n    download_corpus \\\n    jacoco_report_converter.py \\\n    rcfilt \\\n    reproduce \\\n    run_fuzzer \\\n    parse_options.py \\\n    profraw_update.py \\\n    targets_list \\\n    test_all.py \\\n    test_one.py \\\n    python_coverage_runner_help.py \\\n    /usr/local/bin/\n"
+}

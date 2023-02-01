@@ -1,0 +1,62 @@
+{
+  "startTime": 1674246350815,
+  "endTime": 1674246351076,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 70,
+        "lineEnd": 70,
+        "columnStart": 4,
+        "columnEnd": 70
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 86,
+        "lineEnd": 86,
+        "columnStart": 4,
+        "columnEnd": 117
+      }
+    },
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 80,
+        "lineEnd": 80,
+        "columnStart": 4,
+        "columnEnd": 29
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 53,
+        "lineEnd": 54,
+        "columnStart": 4,
+        "columnEnd": 20
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 55,
+        "lineEnd": 66,
+        "columnStart": 4,
+        "columnEnd": 29
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 74,
+        "lineEnd": 75,
+        "columnStart": 4,
+        "columnEnd": 10
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM centos:7.6.1810\n\nARG user=jenkins\nARG group=jenkins\nARG uid=1000\nARG gid=1000\nARG http_port=8080\nARG agent_port=50000\n\nENV EVERGREEN_ENDPOINT=https://evergreen.jenkins.io/\nENV EVERGREEN_HOME /evergreen\nENV EVERGREEN_DATA /evergreen/data\n\nENV JENKINS_HOME ${EVERGREEN_DATA}/jenkins/home\nENV JENKINS_WAR ${JENKINS_HOME}/jenkins.war\nENV JENKINS_VAR ${EVERGREEN_DATA}/jenkins/var\nENV JENKINS_AGENT_PORT ${agent_port}\nENV COPY_REFERENCE_FILE_LOG $JENKINS_HOME/copy_reference_file.log\nENV JENKINS_UC https://updates.jenkins.io\nENV JENKINS_UC_EXPERIMENTAL=https://updates.jenkins.io/experimental\n\nENV JAVA_OPTS=\\\n\"-Djava.awt.headless=true \"\\\n\"-Djenkins.model.Jenkins.workspacesDir=${JENKINS_VAR}/jobs/\\${ITEM_FULL_NAME}/workspace \"\\\n\"-Djenkins.model.Jenkins.buildsDir=${JENKINS_VAR}/jobs/\\${ITEM_FULL_NAME}/builds \"\\\n\"-Dhudson.triggers.SafeTimerTask.logsTargetDir=$JENKINS_VAR/logs \"\\\n\"-Djava.util.logging.config.file=$EVERGREEN_HOME/config/logging.properties \"\\\n\"-Dhudson.udp=-1 \"\\\n\"-Dhudson.DNSMultiCast.disabled=true \"\\\n\"-Djenkins.install.runSetupWizard=false \"\n\nENV JENKINS_OPTS=\\\n\"--webroot=${JENKINS_VAR}/war \"\\\n\"--pluginroot=${JENKINS_VAR}/plugins\"\n\nRUN mkdir -p /usr/share/jenkins/ref/ && \\\n    mkdir -p ${EVERGREEN_HOME} && \\\n    mkdir -p ${EVERGREEN_DATA}/jenkins/ && \\\n    mkdir -p ${JENKINS_HOME} && \\\n    mkdir -p ${JENKINS_VAR} && \\\n    mkdir -p ${JENKINS_VAR}/logs\n\n# for main web interface:\nEXPOSE 80\n# will be used by attached agents:\nEXPOSE ${agent_port}\n\n# Add the system dependencies for running Jenkins effectively\n#\n# The only dependencies for Jenkins Evergreen are:\n#   * supervisor\n#   * nodejs\nRUN yum update -y\nRUN yum install -y --setopt=skip_missing_names_on_install=False \\\n        epel-release && rm -rf /var/cache/yum\nRUN yum install -y --setopt=skip_missing_names_on_install=False \\\n                        git \\\n                        ca-certificates \\\n                        openssh-clients \\\n                        unzip \\\n                        bash \\\n                        java-1.8.0-openjdk \\\n                        supervisor \\\n                        dejavu-sans-mono-fonts \\\n                        curl \\\n                        socat \\\n                        nginx && rm -rf /var/cache/yum\n\n# Use the auto-install script, but prevent any unnoticed change\n# https://linuxize.com/post/how-to-install-node-js-on-centos-7/\nRUN curl -f -sL https://rpm.nodesource.com/setup_10.x > /tmp/install-node && \\\n    echo \"2050d9584f54fd1da7dfc54f52eac24d  /tmp/install-node\" | md5sum --check && \\\n    cat /tmp/install-node| bash - && \\\n    rm /tmp/install-node\nRUN yum install -y --setopt=skip_missing_names_on_install=False \\\n    nodejs && rm -rf /var/cache/yum\nRUN node --version | grep '^v10.' > /dev/null && \\\n    npm --version | grep '^6.' > /dev/null\n\n# Ensure the latest npm is available\nRUN npm install npm@latest -g && npm cache clean --force;\n\n## the nginx alpine package doesn't make this directory properly\nRUN mkdir -p /run/nginx\n\nRUN cd /tmp && \\\n    curl -f -sL https://download.docker.com/linux/static/stable/x86_64/docker-17.12.1-ce.tgz --output /tmp/docker.tar.gz && \\\n    echo \"9dd0d19312640460671352930eb44b1692441d95  docker.tar.gz\" | sha1sum -c && \\\n    tar xzf docker.tar.gz && \\\n    mv docker/* /usr/local/bin && \\\n    rmdir docker && \\\n    rm docker.tar.gz\n\n# Jenkins is run with user `jenkins`, uid = 1000\n# If you bind mount a volume from the host or a data container,\n# ensure you use the same uid\nRUN groupadd -g ${gid} ${group}\nRUN adduser --home-dir \"$JENKINS_HOME\" --uid ${uid} --gid ${group} --shell /bin/bash ${user}\n\nCOPY commit.txt /\n\n#######################\n## Construct the image\n#######################\nENV CASC_JENKINS_CONFIG=$EVERGREEN_HOME/config/as-code/\n\nWORKDIR $EVERGREEN_HOME\n\nRUN time chown -R $user:$group $EVERGREEN_HOME\nUSER $user\n\n# Even if empty, the file needs to exist as we use at least for now https://github.com/lucagrulla/node-tail\n# which immediately crashes if the file is missing, even if we use the `follow` switch\nRUN touch ${JENKINS_VAR}/logs/evergreen.log.0\n\nUSER root\n# The externally sourced jenkins.sh expects jenkins-support to be in\n# /usr/local/bin\nRUN ln -s /evergreen/scripts/jenkins-support /usr/local/bin\n\n# This is just a place holder entrypoint and is expected to be overridden by\n# the flavor specific images\nCMD nginx -g \"daemon off;\"\n"
+}

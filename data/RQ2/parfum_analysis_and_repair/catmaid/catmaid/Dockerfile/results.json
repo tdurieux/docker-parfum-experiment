@@ -1,0 +1,80 @@
+{
+  "startTime": 1674252656248,
+  "endTime": 1674252656984,
+  "originalSmells": [
+    {
+      "rule": "gpgUseBatchFlag",
+      "position": {
+        "lineStart": 14,
+        "lineEnd": 14,
+        "columnStart": 117,
+        "columnEnd": 130
+      }
+    },
+    {
+      "rule": "gpgUseBatchFlag",
+      "position": {
+        "lineStart": 15,
+        "lineEnd": 15,
+        "columnStart": 102,
+        "columnEnd": 115
+      }
+    },
+    {
+      "rule": "gpgUseBatchFlag",
+      "position": {
+        "lineStart": 16,
+        "lineEnd": 16,
+        "columnStart": 85,
+        "columnEnd": 98
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 11,
+        "lineEnd": 11,
+        "columnStart": 7,
+        "columnEnd": 77
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 12,
+        "lineEnd": 12,
+        "columnStart": 7,
+        "columnEnd": 62
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 24,
+        "lineEnd": 24,
+        "columnStart": 7,
+        "columnEnd": 65
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 25,
+        "lineEnd": 25,
+        "columnStart": 7,
+        "columnEnd": 42
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 26,
+        "lineEnd": 26,
+        "columnStart": 7,
+        "columnEnd": 41
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM ubuntu:20.04\nLABEL maintainer=\"Andrew Champion <andrew.champion@gmail.com>, Tom Kazimiers <tom@voodoo-arts.net>\"\n\n# For building the image, let dpkg/apt know that we install and configure\n# non-interactively.\nARG DEBIAN_FRONTEND=noninteractive\n\n# Install dependencies. Even though this image doesn't run its own Postgres\n# instance, make sure we install the upstream version to match the manual (and\n# make building images on top of this one easier).\nRUN apt-get update -y \\\n    && apt-get install --no-install-recommends -y apt-utils apt-transport-https ca-certificates gnupg \\\n    && apt-get install --no-install-recommends -y gawk wget software-properties-common \\\n    && apt-get update -y \\\n    && wget --quiet -O - \"https://keys.openpgp.org/vks/v1/by-fingerprint/0A9AF2115F4687BD29803A206B73A36E6026DFCA\" | gpg --batch --dearmor | tee /usr/share/keyrings/com.rabbitmq.team.gpg > /dev/null \\\n    && wget --quiet -O - \"https://keyserver.ubuntu.com/pks/lookup?op=get&search=0xf77f1eda57ebb1cc\" | gpg --batch --dearmor | tee /usr/share/keyrings/net.launchpad.ppa.rabbitmq.erlang.gpg > /dev/null \\\n    && wget --quiet -O - \"https://packagecloud.io/rabbitmq/rabbitmq-server/gpgkey\" | gpg --batch --dearmor | tee /usr/share/keyrings/io.packagecloud.rabbitmq.gpg > /dev/null \\\n    && echo \"deb [signed-by=/usr/share/keyrings/net.launchpad.ppa.rabbitmq.erlang.gpg] http://ppa.launchpad.net/rabbitmq/rabbitmq-erlang/ubuntu focal main\" > /etc/apt/sources.list.d/rabbitmq.list \\\n    && echo \"deb [signed-by=/usr/share/keyrings/io.packagecloud.rabbitmq.gpg] https://packagecloud.io/rabbitmq/rabbitmq-server/ubuntu focal main\" >> /etc/apt/sources.list.d/rabbitmq.list \\\n    && wget --quiet -O - https://postgresql.org/media/keys/ACCC4CF8.asc | apt-key add - > /dev/null \\\n    && add-apt-repository \"deb https://apt.postgresql.org/pub/repos/apt/ focal-pgdg main\" \\\n    && add-apt-repository ppa:deadsnakes/ppa \\\n    && add-apt-repository -y ppa:nginx/stable \\\n    && apt-get update -y \\\n    && apt-get install --no-install-recommends -y python3.8 python3.8-dev git python3-pip \\\n    && apt-get install --no-install-recommends -y nginx supervisor \\\n    && apt-get install --no-install-recommends -y rabbitmq-server \\\n    && rm -rf /var/lib/apt/lists/*\nCOPY packagelist-ubuntu-apt.txt /home/\nRUN apt-get update -y  \\\n    && xargs apt-get install -y < /home/packagelist-ubuntu-apt.txt \\\n    && rm -rf /var/lib/apt/lists/*\nCOPY django/requirements.txt django/requirements-async.txt django/requirements-production.txt /home/django/\nENV WORKON_HOME /opt/virtualenvs\nRUN mkdir -p /opt/virtualenvs \\\n    && /bin/bash -c \"source /usr/share/virtualenvwrapper/virtualenvwrapper.sh \\\n    && mkvirtualenv catmaid -p /usr/bin/python3.8 \\\n    && workon catmaid \\\n    && pip install -U pip setuptools \\\n    && pip install -r /home/django/requirements.txt \\\n    && pip install -r /home/django/requirements-async.txt \\\n    && pip install -r /home/django/requirements-production.txt \\\n    \"\n\nCOPY . /home/\n\n# Add Git commit build information to container by copying the Git repo (.git\n# folder) into the container to run \"git describe\" and pipe its result in the\n# file /home/git-version. After this is done, the repo is removed again from the\n# container. We expect the environment to have a full git history, including\n# tags. For DockerHub this is ensured with a post_checkout hook.\nCOPY .git /home/.git\nRUN cd /home/ && git describe > /home/git-version && rm -r /home/.git\n\n# uWSGI setup\nRUN /bin/bash -c \"source /usr/share/virtualenvwrapper/virtualenvwrapper.sh \\\n    && workon catmaid \\\n    && pip install uwsgi\" \\\n    && ln -s /home/scripts/docker/supervisor-catmaid.conf /etc/supervisor/conf.d/ \\\n    && mkdir -p /var/run/catmaid \\\n    && chown www-data /var/run/catmaid \\\n    && chmod +x /home/scripts/docker/start-catmaid.sh \\\n    && chmod +x /home/scripts/docker/start-celery.sh \\\n    && chmod +x /home/scripts/docker/catmaid-entry.sh\n\n# Fix AUFS bug that breaks PostgreSQL\n# See: https://github.com/docker/docker/issues/783\nRUN mkdir /etc/ssl/private-copy; \\\n    mv /etc/ssl/private/* /etc/ssl/private-copy/; \\\n    rm -r /etc/ssl/private; \\\n    mv /etc/ssl/private-copy /etc/ssl/private; \\\n    chmod -R 0700 /etc/ssl/private; \\\n    chown -R postgres /etc/ssl/private\n\nENTRYPOINT [\"/home/scripts/docker/catmaid-entry.sh\"]\n\nEXPOSE 8000\nWORKDIR /home/django/projects/\nCMD [\"platform\"]\n"
+}

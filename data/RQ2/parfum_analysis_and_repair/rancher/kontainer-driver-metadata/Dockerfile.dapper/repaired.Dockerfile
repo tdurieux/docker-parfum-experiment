@@ -1,0 +1,20 @@
+FROM golang:1.16.6-alpine3.14
+
+ARG DAPPER_HOST_ARCH
+ENV ARCH $DAPPER_HOST_ARCH
+
+RUN apk -U --no-cache add bash git gcc musl-dev docker vim less file curl wget ca-certificates python3 py3-requests py3-yaml
+RUN go get golang.org/x/tools/cmd/goimports
+RUN if [ "${ARCH}" == "amd64" ]; then \
+        curl -f -sL https://install.goreleaser.com/github.com/golangci/golangci-lint.sh | sh -s v1.41.1; \
+        curl -f -sL https://github.com/rancher/wharfie/releases/download/v0.5.2/wharfie-amd64 -o /bin/wharfie && chmod +x /bin/wharfie; \
+    fi
+
+ENV DAPPER_ENV REPO TAG DRONE_TAG
+ENV DAPPER_SOURCE /go/src/github.com/rancher/kontainer-driver-metadata
+ENV DAPPER_DOCKER_SOCKET true
+ENV HOME ${DAPPER_SOURCE}
+WORKDIR ${DAPPER_SOURCE}
+
+ENTRYPOINT ["./scripts/entry"]
+CMD ["ci"]

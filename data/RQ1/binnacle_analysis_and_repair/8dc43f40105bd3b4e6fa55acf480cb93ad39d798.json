@@ -1,0 +1,63 @@
+{
+  "startTime": 1674240773121,
+  "endTime": 1674240773314,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 91,
+        "lineEnd": 97,
+        "columnStart": 4,
+        "columnEnd": 32
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 99,
+        "lineEnd": 109,
+        "columnStart": 4,
+        "columnEnd": 18
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 14,
+        "lineEnd": 36,
+        "columnStart": 4,
+        "columnEnd": 32
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 91,
+        "lineEnd": 97,
+        "columnStart": 4,
+        "columnEnd": 32
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 99,
+        "lineEnd": 109,
+        "columnStart": 4,
+        "columnEnd": 18
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 99,
+        "lineEnd": 109,
+        "columnStart": 4,
+        "columnEnd": 18
+      }
+    }
+  ],
+  "repairedDockerfile": "#===- libcxx/utils/docker/debian9/Dockerfile -------------------------===//\n#\n#                     The LLVM Compiler Infrastructure\n#\n# This file is distributed under the University of Illinois Open Source\n# License. See LICENSE.TXT for details.\n#\n#===----------------------------------------------------------------------===//\n\n# Setup the base builder image with the packages we'll need to build GCC and Clang from source.\nFROM launcher.gcr.io/google/debian9:latest as builder-base\nLABEL maintainer \"libc++ Developers\"\n\nRUN apt-get update && \\\n    apt-get install -y --no-install-recommends \\\n      ca-certificates \\\n      gnupg \\\n      build-essential \\\n      wget \\\n      subversion \\\n      unzip \\\n      automake \\\n      python \\\n      cmake \\\n      ninja-build \\\n      curl \\\n      git \\\n      gcc-multilib \\\n      g++-multilib \\\n      libc6-dev \\\n      bison \\\n      flex \\\n      libtool \\\n      autoconf \\\n      binutils-dev \\\n      binutils-gold \\\n      software-properties-common && \\\n  update-alternatives --install \"/usr/bin/ld\" \"ld\" \"/usr/bin/ld.gold\" 20 && \\\n  update-alternatives --install \"/usr/bin/ld\" \"ld\" \"/usr/bin/ld.bfd\" 10 && rm -rf /var/lib/apt/lists/*;\n\n# Build GCC 4.9 for testing our C++11 against\nFROM builder-base as gcc-49-builder\nLABEL maintainer \"libc++ Developers\"\n\nADD scripts/build_gcc.sh /tmp/build_gcc.sh\n\nRUN git clone --depth=1 --branch gcc-4_9_4-release git://gcc.gnu.org/git/gcc.git /tmp/gcc-4.9.4\nRUN cd /tmp/gcc-4.9.4/ && ./contrib/download_prerequisites\nRUN /tmp/build_gcc.sh --source /tmp/gcc-4.9.4 --to /opt/gcc-4.9.4\n\n# Build GCC ToT for testing in all dialects.\nFROM builder-base as gcc-tot-builder\nLABEL maintainer \"libc++ Developers\"\n\nADD scripts/build_gcc.sh /tmp/build_gcc.sh\n\nRUN git clone --depth=1 git://gcc.gnu.org/git/gcc.git /tmp/gcc-tot\nRUN cd /tmp/gcc-tot && ./contrib/download_prerequisites\nRUN /tmp/build_gcc.sh --source /tmp/gcc-tot --to /opt/gcc-tot\n\n# Build LLVM 4.0 which is used to test against a \"legacy\" compiler.\nFROM builder-base as llvm-4-builder\nLABEL maintainer \"libc++ Developers\"\n\nADD scripts/checkout_git.sh /tmp/checkout_git.sh\nADD scripts/build_install_llvm.sh /tmp/build_install_llvm.sh\n\nRUN /tmp/checkout_git.sh --to /tmp/llvm-4.0 -p clang -p compiler-rt --branch release_40\nRUN /tmp/build_install_llvm.sh \\\n    --install /opt/llvm-4.0 \\\n    --source /tmp/llvm-4.0 \\\n    --build /tmp/build-llvm-4.0 \\\n    -i install-clang -i install-clang-headers \\\n    -i install-compiler-rt \\\n    -- \\\n    -DCMAKE_BUILD_TYPE=RELEASE \\\n    -DLLVM_ENABLE_ASSERTIONS=ON\n\n# Stage 2. Produce a minimal release image with build results.\nFROM launcher.gcr.io/google/debian9:latest\nLABEL maintainer \"libc++ Developers\"\n\n# Copy over the GCC and Clang installations\nCOPY --from=gcc-49-builder /opt/gcc-4.9.4 /opt/gcc-4.9.4\nCOPY --from=gcc-tot-builder /opt/gcc-tot /opt/gcc-tot\nCOPY --from=llvm-4-builder /opt/llvm-4.0 /opt/llvm-4.0\n\nRUN ln -s /opt/gcc-4.9.4/bin/gcc /usr/local/bin/gcc-4.9 && \\\n    ln -s /opt/gcc-4.9.4/bin/g++ /usr/local/bin/g++-4.9\n\nRUN apt-get update && \\\n    apt-get install --no-install-recommends -y \\\n      ca-certificates \\\n      gnupg \\\n      build-essential \\\n      apt-transport-https \\\n      curl \\\n      software-properties-common && rm -rf /var/lib/apt/lists/*;\n\nRUN apt-get install -y --no-install-recommends \\\n    systemd \\\n    sysvinit-utils \\\n    cmake \\\n    subversion \\\n    git \\\n    ninja-build \\\n    gcc-multilib \\\n    g++-multilib \\\n    python \\\n    buildbot-slave && rm -rf /var/lib/apt/lists/*;\n\nADD scripts/install_clang_packages.sh /tmp/install_clang_packages.sh\nRUN /tmp/install_clang_packages.sh && rm /tmp/install_clang_packages.sh\n\nRUN git clone https://git.llvm.org/git/libcxx.git /libcxx\n"
+}

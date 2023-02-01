@@ -1,0 +1,8 @@
+FROM python:3.8.11-alpine3.14
+COPY requirements.txt /opt/app/requirements.txt
+WORKDIR /opt/app
+RUN pip install --no-cache-dir -r requirements.txt
+COPY dagda /opt/app
+COPY ./dockerfiles/run.sh /
+RUN chmod +x /run.sh
+ENTRYPOINT ["/bin/sh","/run.sh"]

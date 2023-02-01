@@ -1,0 +1,26 @@
+{
+  "startTime": 1674252658699,
+  "endTime": 1674252660900,
+  "originalSmells": [
+    {
+      "rule": "sha256sumEchoOneSpaces",
+      "position": {
+        "lineStart": 65,
+        "lineEnd": 65,
+        "columnStart": 4,
+        "columnEnd": 61
+      }
+    },
+    {
+      "rule": "gpgUseBatchFlag",
+      "position": {
+        "lineStart": 37,
+        "lineEnd": 37,
+        "columnStart": 8,
+        "columnEnd": 62
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM {{ .From }}\n\n# Get the list of packages from the base image.\n{{- $gosu := index .Packages \"gosu\" }}\n{{- $redis := index .Packages \"redis\" }}\n\n# add our user and group first to make sure their IDs get assigned consistently, regardless of whatever dependencies get added\nRUN groupadd -r redis && useradd -r -g redis redis\n\nRUN set -ex; \\\n\tif ! command -v gpg > /dev/null; then \\\n\t\tapt-get update; \\\n\t\tapt-get install -y --no-install-recommends \\\n\t\t\tgnupg \\\n\t\t\tdirmngr \\\n\t\t; \\\n\t\trm -rf /var/lib/apt/lists/*; \\\n\tfi\n\nRUN apt-get update && apt-get install -y --no-install-recommends \\\n\t\tca-certificates \\\n\t\tdirmngr \\\n\t\tdirmngr \\\n\t\twget \\\n\t&& rm -rf /var/lib/apt/lists/*\n\n# add gosu for easy step-down from root\nENV GOSU_VERSION {{ $gosu.Version }}\nENV GOSU_GPG {{ $gosu.Gpg }}\n\nRUN set -x \\\n\t&& wget -q -O /usr/local/bin/gosu \"https://github.com/tianon/gosu/releases/download/$GOSU_VERSION/gosu-$(dpkg --print-architecture)\" \\\n\t&& wget -q -O /usr/local/bin/gosu.asc \"https://github.com/tianon/gosu/releases/download/$GOSU_VERSION/gosu-$(dpkg --print-architecture).asc\" \\\n\t# copy source code\n\t&& wget -q -O /usr/local/src/gosu.tar.gz \"https://github.com/tianon/gosu/archive/$GOSU_VERSION.tar.gz\" \\\n\t# extract gosu binary and check signature\n\t&& export GNUPGHOME=\"$(mktemp -d)\" \\\n\t&& {{ $( gpg --batch --no-tty --keyserver $server --recv-keys $GOSU_GPG) | KeyServersRetryLoop \"\\t\" }} \\\n\t&& gpg --no-tty --batch --verify /usr/local/bin/gosu.asc /usr/local/bin/gosu \\\n\t&& rm -rf \"$GNUPGHOME\" /usr/local/bin/gosu.asc \\\n\t&& chmod +x /usr/local/bin/gosu \\\n\t&& gosu nobody true\n\n# Install Redis Search\nENV REDIS_VERSION {{ $redis.Version }}\nENV REDIS_DOWNLOAD_URL http://download.redis.io/releases/redis-{{ $redis.Version }}.tar.gz\nENV REDIS_DOWNLOAD_SHA {{ $redis.Sha256 }}\n\nENV C2D_RELEASE=${REDIS_VERSION}\n\n# for redis-sentinel see: http://redis.io/topics/sentinel\nRUN set -ex \\\n\t\\\n\t&& buildDeps=' \\\n\t\tgcc \\\n\t\tlibc6-dev \\\n\t\tlibssl-dev \\\n\t\tdpkg-dev \\\n\t\tmake \\\n\t' \\\n\t&& apt-get update \\\n\t&& apt-get install -y $buildDeps --no-install-recommends \\\n\t&& rm -rf /var/lib/apt/lists/* \\\n\t\\\n\t&& wget -q -O redis.tar.gz \"$REDIS_DOWNLOAD_URL\" \\\n\t&& echo \"$REDIS_DOWNLOAD_SHA  *redis.tar.gz\" | sha256sum -c - \\\n\t&& mkdir -p /usr/local/src/redis \\\n\t&& tar -xzf redis.tar.gz -C /usr/local/src/redis --strip-components=1 \\\n\t&& rm redis.tar.gz \\\n\n\t&& make -C /usr/local/src/redis \\\n\t&& make -C /usr/local/src/redis install \\\n\n\t&& rm -r /usr/local/src/redis \\\n\n\t&& apt-get purge -y --auto-remove $buildDeps\n\nRUN mkdir /data && chown redis:redis /data\nVOLUME /data\nWORKDIR /data\n\n# Copy BSD License\nRUN mkdir -p /usr/share/redis\nCOPY LICENSE /usr/share/redis/\n\nCOPY docker-entrypoint.sh /usr/local/bin/\nENTRYPOINT [\"docker-entrypoint.sh\"]\n\nEXPOSE 6379\nCMD [ \"redis-server\" ]\n"
+}

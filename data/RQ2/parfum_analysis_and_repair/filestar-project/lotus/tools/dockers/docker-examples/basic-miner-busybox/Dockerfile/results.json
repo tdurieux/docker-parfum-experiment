@@ -1,0 +1,26 @@
+{
+  "startTime": 1674250553933,
+  "endTime": 1674250555597,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 5,
+        "lineEnd": 5,
+        "columnStart": 22,
+        "columnEnd": 105
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 5,
+        "lineEnd": 5,
+        "columnStart": 22,
+        "columnEnd": 105
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM golang:1.14.1-buster\nMAINTAINER ldoublewood <ldoublewood@gmail.com>\n\nENV SRC_DIR /lotus\n\nRUN apt-get update && apt-get install --no-install-recommends -y ca-certificates llvm clang mesa-opencl-icd ocl-icd-opencl-dev jq && rm -rf /var/lib/apt/lists/*;\n\nRUN curl -sSf https://sh.rustup.rs | sh -s -- -y\n\n\n# Get su-exec, a very minimal tool for dropping privileges,\n# and tini, a very minimal init daemon for containers\nENV SUEXEC_VERSION v0.2\nENV TINI_VERSION v0.18.0\nRUN set -x \\\n  && cd /tmp \\\n  && git clone https://github.com/ncopa/su-exec.git \\\n  && cd su-exec \\\n  && git checkout -q $SUEXEC_VERSION \\\n  && make \\\n  && cd /tmp \\\n  && wget -q -O tini https://github.com/krallin/tini/releases/download/$TINI_VERSION/tini \\\n  && chmod +x tini\n\n# Download packages first so they can be cached.\nCOPY go.mod go.sum $SRC_DIR/\nCOPY extern/ $SRC_DIR/extern/\nRUN cd $SRC_DIR \\\n  && go mod download\n\nCOPY Makefile $SRC_DIR\n\n# Because extern/filecoin-ffi building script need to get version number from git\nCOPY .git/ $SRC_DIR/.git/\nCOPY .gitmodules $SRC_DIR/\n\n# Download dependence first\nRUN cd $SRC_DIR \\\n  && mkdir $SRC_DIR/build \\\n  && . $HOME/.cargo/env \\\n  && make clean \\\n  && make deps\n\n\nCOPY . $SRC_DIR\n\nARG MAKE_TARGET=all\n\n# Build the thing.\nRUN cd $SRC_DIR \\\n  && . $HOME/.cargo/env \\\n  && make $MAKE_TARGET\n\n# Now comes the actual target image, which aims to be as small as possible.\nFROM busybox:1-glibc\nMAINTAINER ldoublewood <ldoublewood@gmail.com>\n\n# Get the executable binary and TLS CAs from the build container.\nENV SRC_DIR /lotus\nCOPY --from=0 $SRC_DIR/lotus /usr/local/bin/lotus\nCOPY --from=0 $SRC_DIR/lotus-* /usr/local/bin/\nCOPY --from=0 /tmp/su-exec/su-exec /sbin/su-exec\nCOPY --from=0 /tmp/tini /sbin/tini\nCOPY --from=0 /etc/ssl/certs /etc/ssl/certs\n\n\n# This shared lib (part of glibc) doesn't seem to be included with busybox.\nCOPY --from=0 /lib/x86_64-linux-gnu/libdl-2.28.so /lib/libdl.so.2\nCOPY --from=0 /lib/x86_64-linux-gnu/libutil-2.28.so /lib/libutil.so.1\nCOPY --from=0 /usr/lib/x86_64-linux-gnu/libOpenCL.so.1.0.0 /lib/libOpenCL.so.1\nCOPY --from=0 /lib/x86_64-linux-gnu/librt-2.28.so /lib/librt.so.1\nCOPY --from=0 /lib/x86_64-linux-gnu/libgcc_s.so.1 /lib/libgcc_s.so.1\n\n# WS port\nEXPOSE 1234\n# P2P port\nEXPOSE 5678\n\n\n# Create the home directory and switch to a non-privileged user.\nENV HOME_PATH /data\nENV PARAMCACHE_PATH /var/tmp/filecoin-proof-parameters\n\nRUN mkdir -p $HOME_PATH $PARAMCACHE_PATH \\\n  && adduser -D -h $HOME_PATH -u 1000 -G users lotus \\\n  && chown lotus:users $HOME_PATH $PARAMCACHE_PATH\n\n\nVOLUME $HOME_PATH\nVOLUME $PARAMCACHE_PATH\n\nUSER lotus\n\n# Execute the daemon subcommand by default\nCMD [\"/sbin/tini\", \"--\", \"lotus\", \"daemon\"]\n"
+}

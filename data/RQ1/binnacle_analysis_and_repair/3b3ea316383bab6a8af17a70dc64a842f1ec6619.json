@@ -1,0 +1,44 @@
+{
+  "startTime": 1674243152593,
+  "endTime": 1674243152917,
+  "originalSmells": [
+    {
+      "rule": "wgetUseHttpsUrl",
+      "position": {
+        "lineStart": 38,
+        "lineEnd": 38,
+        "columnStart": 4,
+        "columnEnd": 66
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 33,
+        "lineEnd": 33,
+        "columnStart": 16,
+        "columnEnd": 48
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 13,
+        "lineEnd": 16,
+        "columnStart": 0,
+        "columnEnd": 50
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 13,
+        "lineEnd": 16,
+        "columnStart": 0,
+        "columnEnd": 50
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM ubuntu:xenial\n\nMAINTAINER vventirozos@omniti.com\n\n### CHANGE THE FOLLOWING 3 PARAMETERS IF YOU WANNA CHANGE USER, POSTGRES INSTALL AND PGDATA DIRECTORIES ###\n\nENV PGUSER=postgres\nENV PGBINDIR=/home/$PGUSER/pgsql\nENV PGDATADIR=/home/$PGUSER/pgdata\n\n#Installing packages and creating a OS user\n\nRUN apt-get update && \\\n apt-get install --no-install-recommends -y \\\n\tsudo wget apt-transport-https joe less build-essential \\\n\tlibreadline-dev zlib1g-dev flex bison libxml2-dev \\\n\tlibxslt-dev libssl-dev screen git unzip cpanminus && \\\n\tuseradd -c /home/$PGUSER -ms /bin/bash $PGUSER && rm -rf /var/lib/apt/lists/*;\n\n#add user postgres to sudoers - SECURITY WARNING\n\nrun echo \"$PGUSER ALL=(ALL) NOPASSWD:ALL\" >> /etc/sudoers\n\nrun cpanm TAP::Parser::SourceHandler::pgTAP\n\n# The next steps will run as postgres\n\nUSER $PGUSER\nWORKDIR /home/$PGUSER\n#getting the -latest- (ALWAYS) postgres version compile world and install\n\nRUN wget https://www.postgresql.org/ftp/latest/ -q -O - |grep \"tar.gz\" |grep -v md5 |grep -v sha256 |awk -F \"\\\"\" '{print $2}' |xargs wget && \\\n\tls -1 *.tar.gz |xargs tar zxfv && \\\n\tcd postgres* ; ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" --prefix=$PGBINDIR; make world ; make install-world\n\n### Downloading pg_jobmon\nRUN git clone https://github.com/omniti-labs/pg_jobmon/\nRUN export PATH=$PATH:$PGBINDIR/bin && cd /home/$PGUSER/pg_jobmon/ && make && make install\nRUN wget -c https://api.pgxn.org/dist/pgtap/0.98.0/pgtap-0.98.0.zip\nRUN unzip pgtap-*\nRUN export PATH=$PATH:$PGBINDIR/bin && cd pgtap-0.98.0 && make && make install\n\n# PGDATA creation and initdb -WITH- data checksums\n\nRUN mkdir $PGDATADIR && \\\n\t$PGBINDIR/bin/initdb -k -D $PGDATADIR\n\n# setting some postgres configurables\n\nRUN echo \"listen_addresses = '*'\" >> $PGDATADIR/postgresql.conf && \\\n\techo \"port = 5432\" >> $PGDATADIR/postgresql.conf\n\n## Setting pg_hba.conf for passwordless access for all users and replication -- SECURITY WARNING\n\n#install some extensions , create a replication user and a monkey database\n\nRUN $PGBINDIR/bin/pg_ctl -D $PGDATADIR/ start ; sleep 10 && \\\n\t$PGBINDIR/bin/psql -c \"create extension dblink;\" template1 && \\\n\t$PGBINDIR/bin/psql -c \"create extension pgtap;\" template1 && \\\n\t$PGBINDIR/bin/psql -c \"create extension postgres_fdw;\" template1 && \\\n\t$PGBINDIR/bin/createdb monkey && \\\n\t$PGBINDIR/bin/psql -c \"CREATE SCHEMA jobmon;\" monkey && \\\n\t$PGBINDIR/bin/psql -c \"CREATE extension pg_jobmon schema jobmon;\" monkey && \\\n\t$PGBINDIR/bin/psql -c \"insert into jobmon.dblink_mapping_jobmon (username,port) values ('postgres','5432');\" monkey && \\\n\t$PGBINDIR/bin/pg_ctl -D $PGDATADIR/ -m fast stop\n\nRUN echo \"#!/bin/bash\" > /home/$PGUSER/test_jobmon.sh && \\\n\techo \"/home/$PGUSER/pgsql/bin/pg_ctl -D $PGDATADIR start\" >>/home/$PGUSER/test_jobmon.sh && \\\n\techo \"sleep 3\" >>/home/$PGUSER/test_jobmon.sh && \\\n\techo \"/usr/local/bin/pg_prove -b /home/$PGUSER/pgsql/bin/psql -f -v /home/postgres/pg_jobmon/test/test0* -d monkey\" >>/home/$PGUSER/test_jobmon.sh && \\\n\tchmod +x /home/$PGUSER/test_jobmon.sh\n\n#USER root\nCMD sudo service ssh restart && $PGBINDIR/bin/pg_ctl -D $PGDATADIR start && sleep 1  && tail -f /home/$PGUSER/pgdata/log/*.log\n#Tadah !\n"
+}

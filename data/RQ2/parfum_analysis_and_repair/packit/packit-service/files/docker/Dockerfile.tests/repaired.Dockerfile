@@ -1,0 +1,37 @@
+# For running tests locally, see check_in_container target in Makefile
+
+FROM quay.io/packit/base
+
+ARG SOURCE_BRANCH
+RUN  if [[ -z $SOURCE_BRANCH ]]; then \
+echo -e "\nMissing SOURCE_BRANCH build argument! Please add \
+\"--build-arg SOURCE_BRANCH=<val>\" to the build command to specify it!\n\
+This is the branch used when installing other Packit projects (e.g. ogr, packit).\n" && exit 1;\
+fi
+
+ENV USER=packit \
+    HOME=/home/packit
+
+RUN set -ex; \
+    mkdir -m 0777 /tmp/sandcastle && \
+    mkdir -m 0776 -p ${HOME} && \
+    mkdir -p ${HOME}/.config
+
+WORKDIR /src
+
+COPY files/ ./files/
+
+RUN ln -s $(pwd)/files/packit-service.yaml ${HOME}/.config/packit-service.yaml
+
+# Install worker & service & tests deps
+RUN ansible-playbook -vv -c local -i localhost, files/install-deps-worker.yaml && \
+    ansible-playbook -vv -c local -i localhost, files/install-deps.yaml && \
+    ansible-playbook -vv -c local -i localhost, files/recipe-tests.yaml && \
+    dnf clean all
+
+# setuptools-scm
+COPY .git/ .git/
+COPY packit_service/ packit_service/
+COPY setup.* ./
+
+RUN pip3 install --no-cache-dir -e . && pip3 check && rm -rf ~/.cache/*

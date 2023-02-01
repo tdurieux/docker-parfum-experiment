@@ -1,0 +1,45 @@
+{
+  "startTime": 1674253529585,
+  "endTime": 1674253530654,
+  "originalSmells": [
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 168,
+        "lineEnd": 168,
+        "columnStart": 4,
+        "columnEnd": 24
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 167,
+        "lineEnd": 167,
+        "columnStart": 4,
+        "columnEnd": 30
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 167,
+        "lineEnd": 167,
+        "columnStart": 4,
+        "columnEnd": 30
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 167,
+        "lineEnd": 167,
+        "columnStart": 4,
+        "columnEnd": 54
+      }
+    }
+  ],
+  "repairedDockerfile": "###\n### ~ Monica dev Dockerfile\n###\n### This file is used for dev purpose.\n### The standard monica image definition will be found here: https://github.com/monicahq/docker\n### This file is based off of the `apache` variant in the above mentioned repo\n###\n\nFROM php:8.0-apache\n\n# opencontainers annotations https://github.com/opencontainers/image-spec/blob/master/annotations.md\nLABEL org.opencontainers.image.authors=\"Alexis Saettler <alexis@saettler.org>\" \\\n      org.opencontainers.image.title=\"MonicaHQ, the Personal Relationship Manager\" \\\n      org.opencontainers.image.description=\"This is MonicaHQ, your personal memory! MonicaHQ is like a CRM but for the friends, family, and acquaintances around you.\" \\\n      org.opencontainers.image.url=\"https://monicahq.com\" \\\n      org.opencontainers.image.vendor=\"Monica\"\n\n# entrypoint.sh dependencies\nRUN set -ex; \\\n    \\\n    apt-get update; \\\n    apt-get install -y --no-install-recommends \\\n        bash \\\n        busybox-static \\\n    ; \\\n    rm -rf /var/lib/apt/lists/*\n\n# Install required PHP extensions\nRUN set -ex; \\\n    \\\n    savedAptMark=\"$(apt-mark showmanual)\"; \\\n    \\\n    apt-get update; \\\n    apt-get install -y --no-install-recommends \\\n        libicu-dev \\\n        zlib1g-dev \\\n        libzip-dev \\\n        libpng-dev \\\n        libxml2-dev \\\n        libfreetype6-dev \\\n        libjpeg62-turbo-dev \\\n        libgmp-dev \\\n        libmemcached-dev \\\n        libmagickwand-dev \\\n        libwebp-dev \\\n    ; \\\n    \\\n    debMultiarch=\"$(dpkg-architecture --query DEB_BUILD_MULTIARCH)\"; \\\n    if [ ! -e /usr/include/gmp.h ]; then ln -s /usr/include/$debMultiarch/gmp.h /usr/include/gmp.h; fi;\\\n    docker-php-ext-configure intl; \\\n    docker-php-ext-configure gd --with-jpeg --with-freetype --with-webp; \\\n    docker-php-ext-configure gmp; \\\n    docker-php-ext-install -j$(nproc) \\\n        intl \\\n        zip \\\n        bcmath \\\n        gd \\\n        gmp \\\n        pdo_mysql \\\n        mysqli \\\n        soap \\\n    ; \\\n    \\\n# pecl will claim success even if one install fails, so we need to perform each install separately\n    pecl install APCu; \\\n    pecl install memcached; \\\n    pecl install redis; \\\n    \\\n    docker-php-ext-enable \\\n        apcu \\\n        memcached \\\n        redis \\\n    ; \\\n    \\\n# reset apt-mark's \"manual\" list so that \"purge --auto-remove\" will remove all build dependencies\n    apt-mark auto '.*' > /dev/null; \\\n    apt-mark manual $savedAptMark; \\\n        ldd \"$(php -r 'echo ini_get(\"extension_dir\");')\"/*.so \\\n        | awk '/=>/ { print $3 }' \\\n        | sort -u \\\n        | xargs -r dpkg-query -S \\\n        | cut -d: -f1 \\\n        | sort -u \\\n        | xargs -rt apt-mark manual; \\\n        \\\n    apt-get purge -y --auto-remove -o APT::AutoRemove::RecommendsImportant=false; \\\n    rm -rf /var/lib/apt/lists/*\n\n# Set crontab for schedules\nRUN set -ex; \\\n    \\\n    mkdir -p /var/spool/cron/crontabs; \\\n    rm -f /var/spool/cron/crontabs/root; \\\n    echo '*/5 * * * * php /var/www/html/artisan schedule:run -v' > /var/spool/cron/crontabs/www-data\n\n# Opcache\nENV PHP_OPCACHE_VALIDATE_TIMESTAMPS=\"0\" \\\n    PHP_OPCACHE_MAX_ACCELERATED_FILES=\"20000\" \\\n    PHP_OPCACHE_MEMORY_CONSUMPTION=\"192\" \\\n    PHP_OPCACHE_MAX_WASTED_PERCENTAGE=\"10\"\nRUN set -ex; \\\n    \\\n    docker-php-ext-enable opcache; \\\n    { \\\n        echo '[opcache]'; \\\n        echo 'opcache.enable=1'; \\\n        echo 'opcache.revalidate_freq=0'; \\\n        echo 'opcache.validate_timestamps=${PHP_OPCACHE_VALIDATE_TIMESTAMPS}'; \\\n        echo 'opcache.max_accelerated_files=${PHP_OPCACHE_MAX_ACCELERATED_FILES}'; \\\n        echo 'opcache.memory_consumption=${PHP_OPCACHE_MEMORY_CONSUMPTION}'; \\\n        echo 'opcache.max_wasted_percentage=${PHP_OPCACHE_MAX_WASTED_PERCENTAGE}'; \\\n        echo 'opcache.interned_strings_buffer=16'; \\\n        echo 'opcache.fast_shutdown=1'; \\\n    } > $PHP_INI_DIR/conf.d/opcache-recommended.ini; \\\n    \\\n    echo 'apc.enable_cli=1' >> $PHP_INI_DIR/conf.d/docker-php-ext-apcu.ini; \\\n    \\\n    echo 'memory_limit=512M' > $PHP_INI_DIR/conf.d/memory-limit.ini\n\nRUN set -ex; \\\n    \\\n    a2enmod headers rewrite remoteip; \\\n    { \\\n        echo RemoteIPHeader X-Real-IP; \\\n        echo RemoteIPTrustedProxy 10.0.0.0/8; \\\n        echo RemoteIPTrustedProxy 172.16.0.0/12; \\\n        echo RemoteIPTrustedProxy 192.168.0.0/16; \\\n    } > $APACHE_CONFDIR/conf-available/remoteip.conf; \\\n    a2enconf remoteip\n\nRUN set -ex; \\\n    APACHE_DOCUMENT_ROOT=/var/www/html/public; \\\n    sed -ri -e \"s!/var/www/html!${APACHE_DOCUMENT_ROOT}!g\" $APACHE_CONFDIR/sites-available/*.conf; \\\n    sed -ri -e \"s!/var/www/!${APACHE_DOCUMENT_ROOT}!g\" $APACHE_CONFDIR/apache2.conf $APACHE_CONFDIR/conf-available/*.conf\n\nWORKDIR /var/www/html\n\n\n# Copy the local (outside Docker) source into the working directory,\n# copy system files into their proper homes, and set file ownership\n# correctly\nCOPY --chown=www-data:www-data . ./\n\nRUN set -ex; \\\n    \\\n    mkdir -p bootstrap/cache; \\\n    mkdir -p storage; \\\n    chown -R www-data:www-data bootstrap/cache storage; \\\n    chmod -R g+w bootstrap/cache storage\nCOPY --chown=www-data:www-data .env.example .env\n\n# Composer installation\nCOPY scripts/docker/install-composer.sh /usr/local/sbin/\nRUN install-composer.sh\n\n# Install composer dependencies\nRUN set -ex; \\\n    \\\n    mkdir -p storage/framework/views; \\\n    composer install --no-interaction --no-progress --no-dev; \\\n    composer clear-cache; \\\n    rm -rf .composer\n\n# Install node dependencies\nRUN set -ex; \\\n\n    curl -fsSL https://deb.nodesource.com/setup_16.x | bash -; \\\n    apt-get install --no-install-recommends -y nodejs; \\\n    npm install -g yarn; npm cache clean --force; \\\n    yarn run inst; \\\n    yarn run dev; \\\n\n    rm -rf /var/lib/apt/lists/*\n\nCOPY scripts/docker/entrypoint.sh \\\n    scripts/docker/cron.sh \\\n    scripts/docker/queue.sh \\\n    /usr/local/bin/\n\nENTRYPOINT [\"entrypoint.sh\"]\nCMD [\"apache2-foreground\"]\n"
+}

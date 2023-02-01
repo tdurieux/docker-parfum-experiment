@@ -1,0 +1,54 @@
+FROM registry.access.redhat.com/ubi8
+
+ARG GIT_COMMIT
+
+ENV LANG=en_US.UTF-8 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=off \
+    PULP_SETTINGS=/etc/pulp/settings.py \
+    DJANGO_SETTINGS_MODULE=pulpcore.app.settings \
+    PATH="/venv/bin:${PATH}" \
+    GIT_COMMIT=${GIT_COMMIT:-} \
+    VIRTUAL_ENV="/venv"
+
+RUN adduser --uid 1000 --gid 0 --home-dir /app --no-create-home galaxy
+
+# https://access.redhat.com/security/cve/CVE-2021-3872
+RUN rpm -qa | egrep ^vim | xargs rpm -e --nodeps
+
+COPY requirements/requirements.insights.txt /tmp/requirements.txt
+
+# Installing dependencies
+# NOTE: en_US.UTF-8 locale is provided by glibc-langpack-en
+RUN set -ex; \
+    DNF="dnf -y --disableplugin=subscription-manager" && \
+    INSTALL_PKGS="glibc-langpack-en git-core libpq python38" && \
+    INSTALL_PKGS_BUILD="gcc libpq-devel python38-devel openldap-devel" && \
+    LANG=C ${DNF} install ${INSTALL_PKGS} ${INSTALL_PKGS_BUILD} && \
+    python3 -m venv "${VIRTUAL_ENV}" && \
+    PYTHON="${VIRTUAL_ENV}/bin/python3" && \
+    ${PYTHON} -m pip install -U pip wheel && \
+    ${PYTHON} -m pip install -r /tmp/requirements.txt && \
+    ${DNF} autoremove ${INSTALL_PKGS_BUILD} && \
+    ${DNF} clean all --enablerepo='*'
+
+COPY . /app
+
+RUN set -ex; \
+    install -dm 0775 -o galaxy /var/lib/pulp/artifact \
+                               /var/lib/pulp/tmp \
+                               /etc/pulp/certs \
+                               /tmp/ansible && \
+    pip install --no-cache-dir --no-deps --editable /app && \
+    PULP_CONTENT_ORIGIN=x django-admin collectstatic && \
+    install -Dm 0644 /app/ansible.cfg /etc/ansible/ansible.cfg && \
+    install -Dm 0644 /app/docker/etc/settings.py /etc/pulp/settings.py && \
+    install -Dm 0755 /app/docker/entrypoint.sh /entrypoint.sh && \
+    install -Dm 0755 /app/docker/bin/* /usr/local/bin/
+
+USER galaxy
+WORKDIR /app
+VOLUME [ "/var/lib/pulp/artifact", \
+         "/var/lib/pulp/tmp", \
+         "/tmp/ansible" ]
+ENTRYPOINT [ "/entrypoint.sh" ]

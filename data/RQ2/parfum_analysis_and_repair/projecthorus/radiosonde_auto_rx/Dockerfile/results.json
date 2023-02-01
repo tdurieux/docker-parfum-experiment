@@ -1,0 +1,17 @@
+{
+  "startTime": 1674216790817,
+  "endTime": 1674216792262,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 36,
+        "lineEnd": 38,
+        "columnStart": 47,
+        "columnEnd": 54
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# -------------------\n# The build container\n# -------------------\nFROM debian:buster-slim AS build\n\n# Upgrade base packages.\nRUN apt-get update && \\\n  apt-get upgrade -y && \\\n  apt-get install -y --no-install-recommends \\\n    build-essential \\\n    cmake \\\n    git \\\n    libatlas-base-dev \\\n    libusb-1.0-0-dev \\\n    pkg-config \\\n    python3 \\\n    python3-dev \\\n    python3-pip \\\n    python3-setuptools \\\n    python3-wheel && \\\n  rm -rf /var/lib/apt/lists/*\n\n# Compile rtl-sdr from source.\nRUN git clone https://github.com/steve-m/librtlsdr.git /root/librtlsdr && \\\n  mkdir -p /root/librtlsdr/build && \\\n  cd /root/librtlsdr/build && \\\n  cmake -DCMAKE_INSTALL_PREFIX=/root/target/usr/local -Wno-dev ../ && \\\n  make && \\\n  make install && \\\n  rm -rf /root/librtlsdr\n\n# Copy in requirements.txt.\nCOPY auto_rx/requirements.txt \\\n  /root/radiosonde_auto_rx/auto_rx/requirements.txt\n\n# Install Python packages.\nRUN --mount=type=cache,target=/root/.cache/pip pip3 install --no-cache-dir \\\n  --user --no-warn-script-location --ignore-installed --no-binary numpy \\\n  -r /root/radiosonde_auto_rx/auto_rx/requirements.txt\n\n# Copy in radiosonde_auto_rx.\nCOPY . /root/radiosonde_auto_rx\n\n# Build the binaries.\nWORKDIR /root/radiosonde_auto_rx/auto_rx\nRUN /bin/sh build.sh\n\n# -------------------------\n# The application container\n# -------------------------\nFROM debian:buster-slim\n\nEXPOSE 5000/tcp\n\n# Upgrade base packages and install application dependencies.\nRUN apt-get update && \\\n  apt-get upgrade -y && \\\n  apt-get install -y --no-install-recommends \\\n  libatlas3-base \\\n  libatomic1 \\\n  python3 \\\n  rng-tools \\\n  sox \\\n  tini \\\n  usbutils && \\\n  rm -rf /var/lib/apt/lists/*\n\n# Copy rtl-sdr from the build container.\nCOPY --from=build /root/target /\nRUN ldconfig\n\n# Copy any additional Python packages from the build container.\nCOPY --from=build /root/.local /root/.local\n\n# Copy auto_rx from the build container to /opt.\nCOPY --from=build /root/radiosonde_auto_rx/LICENSE /opt/auto_rx/\nCOPY --from=build /root/radiosonde_auto_rx/auto_rx/ /opt/auto_rx/\n\n# Set the working directory.\nWORKDIR /opt/auto_rx\n\n# Ensure scripts from Python packages are in PATH.\nENV PATH=/root/.local/bin:$PATH\n\n# Use tini as init.\nENTRYPOINT [\"/usr/bin/tini\", \"--\"]\n\n# Run auto_rx.py.\nCMD [\"python3\", \"/opt/auto_rx/auto_rx.py\"]\n"
+}

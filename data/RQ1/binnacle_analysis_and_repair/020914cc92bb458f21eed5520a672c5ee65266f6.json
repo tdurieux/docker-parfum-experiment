@@ -1,0 +1,53 @@
+{
+  "startTime": 1674235337950,
+  "endTime": 1674235338398,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 44,
+        "lineEnd": 44,
+        "columnStart": 4,
+        "columnEnd": 92
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 45,
+        "lineEnd": 45,
+        "columnStart": 3,
+        "columnEnd": 159
+      }
+    },
+    {
+      "rule": "curlUseHttpsUrl",
+      "position": {
+        "lineStart": 7,
+        "lineEnd": 7,
+        "columnStart": 4,
+        "columnEnd": 124
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 24,
+        "lineEnd": 24,
+        "columnStart": 5,
+        "columnEnd": 68
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 62,
+        "lineEnd": 62,
+        "columnStart": 5,
+        "columnEnd": 68
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# --- Stage1: Get Maven ---\nFROM buildpack-deps:jessie as ntr-base\nENV MAVEN_VERSION 3.5.2\nENV MAVEN_HOME /usr/share/maven\n\n# install maven\nSHELL [\"/bin/bash\", \"-o\", \"pipefail\", \"-c\"]\nRUN curl -fsSL \"https://archive.apache.org/dist/maven/maven-3/$MAVEN_VERSION/binaries/apache-maven-$MAVEN_VERSION-bin.tar.gz\" | tar xzf - -C /usr/share \\\n  && mv \"/usr/share/apache-maven-${MAVEN_VERSION}\" /usr/share/maven\n# -> used artifacts: /usr/share/maven\n\n# --- Stage2: Install Clouseau\nFROM erlang:18-slim as ntr-clouseau-build\nENV MAVEN_HOME /usr/share/maven\nENV CLOUSEAU_PATH /opt/clouseau\nENV INDEX_DIR /index\n\n# setup maven\nCOPY --from=ntr-base /usr/share/maven $MAVEN_HOME\nRUN ln -s /usr/share/maven/bin/mvn /usr/bin/mvn && ls -l /usr/bin/mvn\n\n# finish clouseau\nRUN groupadd -r clouseau && useradd -d \"$CLOUSEAU_PATH\" -g clouseau clouseau\nRUN apt-get -qq update -y \\\n  && DEBIAN_FRONTEND=noninteractive apt-get --no-install-recommends -qq install -y apt-utils \\\n  && DEBIAN_FRONTEND=noninteractive apt-get -qq install -y --no-install-recommends \\\n  build-essential \\\n  apt-transport-https \\\n  libnspr4 libnspr4-0d \\\n  openssl \\\n  curl \\\n  ca-certificates \\\n  git \\\n  pkg-config \\\n  openjdk-7-jdk \\\n  && rm -rf /var/lib/apt/lists/*\n\n# Install project dependencies and keep sources\n# make source folder\nRUN mkdir /clouseau_deps \"$CLOUSEAU_PATH\"\n\nWORKDIR /clouseau_deps\n\n# install maven dependency packages (keep in image)\nRUN curl -f https://raw.githubusercontent.com/neutrinity/clouseau/ntr_master/pom.xml -o pom.xml \\\n&& curl -f https://raw.githubusercontent.com/neutrinity/clouseau/ntr_master/src/main/assembly/distribution.xml --create-dirs -o src/main/assembly/distribution.xml \\\n&& mvn -T 1C install -Dmaven.test.skip=true\n\nWORKDIR $CLOUSEAU_PATH\n# now we can add all source code and start compiling\nRUN git clone -b ntr_master https://github.com/neutrinity/clouseau . \\\n  && cp -RT /clouseau_deps/ \"${CLOUSEAU_PATH}/\" && rm -r /clouseau_deps\n\n# TODO tests need to get unskipped\nRUN mvn verify -Dmaven.test.skip=true\n\n# --- Stage3: Finalize Clouseau\nFROM erlang:18-slim as ntr-clouseau\nENV CLOUSEAU_PATH /opt/clouseau\nENV INDEX_DIR /index\n\nRUN apt-get -qq update -y \\\n  && DEBIAN_FRONTEND=noninteractive apt-get --no-install-recommends -qq install -y apt-utils \\\n  && DEBIAN_FRONTEND=noninteractive apt-get -qq install -y --no-install-recommends \\\n  libnspr4 libnspr4-0d \\\n  curl \\\n  unzip \\\n  openjdk-7-jre-headless \\\n  && rm -rf /var/lib/apt/lists/*\n\n# this is a hack to clean everything up\nRUN mkdir -p \"${CLOUSEAU_PATH}/lib\" \\\n  && groupadd -r clouseau && useradd -d \"$CLOUSEAU_PATH\" -g clouseau clouseau\n\nWORKDIR $CLOUSEAU_PATH\n\nCOPY --from=ntr-clouseau-build \"${CLOUSEAU_PATH}/target/clouseau-2.10.0-SNAPSHOT.zip\" .\nRUN unzip -j \"${CLOUSEAU_PATH}/clouseau-2.10.0-SNAPSHOT.zip\" -d \"${CLOUSEAU_PATH}/lib\" \\\n  && rm \"${CLOUSEAU_PATH}/clouseau-2.10.0-SNAPSHOT.zip\"\n\nCOPY ./docker-entrypoint.sh $CLOUSEAU_PATH\n\n# Setup directories and permissions\nRUN mkdir -p \"${CLOUSEAU_PATH}/etc\" \\\n  && touch \"${CLOUSEAU_PATH}/etc/clouseau.ini\" \\\n  && chmod +x docker-entrypoint.sh \\\n  && chown -R clouseau:clouseau \"$CLOUSEAU_PATH\"\n\nCOPY ./clouseau/log4j.properties \"${CLOUSEAU_PATH}/etc\"\n\nRUN mkdir -p \"$INDEX_DIR\" && chown -R clouseau:clouseau \"$INDEX_DIR\"\nVOLUME [\"$INDEX_DIR\"]\n\nUSER clouseau\nENTRYPOINT [\"./docker-entrypoint.sh\"]\nCMD [\"clouseau\"]\n"
+}

@@ -1,0 +1,35 @@
+{
+  "startTime": 1674251261115,
+  "endTime": 1674251261973,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 12,
+        "lineEnd": 12,
+        "columnStart": 4,
+        "columnEnd": 28
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 12,
+        "lineEnd": 12,
+        "columnStart": 4,
+        "columnEnd": 28
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 48,
+        "lineEnd": 48,
+        "columnStart": 4,
+        "columnEnd": 27
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# SPDX-FileCopyrightText: 2020 SAP SE or an SAP affiliate company and Gardener contributors\n#\n# SPDX-License-Identifier: Apache-2.0\n\n############# golang-base\nFROM golang:1.16.3 AS golang-base\n\n############# terraform-base\nFROM golang-base AS terraform-base\n\n# install unzip (needed for unzipping terraform provider plugins)\nRUN apt-get update && \\\n    apt-get install --no-install-recommends -y unzip && rm -rf /var/lib/apt/lists/*;\n\nWORKDIR /tmp/terraformer\nCOPY ./build/fetch-providers.sh .\n\n# overwrite to build provider-specific image\nARG PROVIDER=all\n\n# copy provider-specifc TF_VERSION\nCOPY ./build/$PROVIDER/TF_VERSION .\n\nRUN export TF_VERSION=$(cat ./TF_VERSION) && \\\n    # install terraform and needed provider plugins\n    mkdir -p /go/src/github.com/hashicorp && \\\n    git clone --single-branch --depth 1 --branch v${TF_VERSION} https://github.com/hashicorp/terraform.git /go/src/github.com/hashicorp/terraform && \\\n    cd /go/src/github.com/hashicorp/terraform && \\\n    go install ./tools/terraform-bundle\n\n# copy provider-specific terraform-bundle.hcl\nCOPY ./build/$PROVIDER/terraform-bundle.hcl .\nRUN ./fetch-providers.sh\n\n############# builder\nFROM golang-base AS builder\n\nWORKDIR /go/src/github.com/gardener/terraformer\nCOPY . .\n\nARG PROVIDER=all\n\nRUN make install PROVIDER=$PROVIDER\n\n############# terraformer\nFROM alpine:3.15.4 AS terraformer\n\n# add additional packages that are required by provider plugins\nRUN apk add --no-cache --update tzdata\n\nWORKDIR /\n\nENV TF_DEV=true\nENV TF_RELEASE=true\n\nCOPY --from=terraform-base /tmp/terraformer/terraform /bin/terraform\nCOPY --from=terraform-base /tmp/terraformer/tfproviders/ /terraform-providers/\nCOPY --from=builder /go/bin/terraformer /\n\nENTRYPOINT [\"/terraformer\"]\n\n############# dev\nFROM golang-base AS dev\n\nWORKDIR /go/src/github.com/gardener/terraformer\nVOLUME /go/src/github.com/gardener/terraformer\n\nCOPY --from=terraform-base /tmp/terraformer/terraform /bin/terraform\nCOPY --from=terraform-base /tmp/terraformer/tfproviders/ /terraform-providers/\n\nCOPY vendor vendor\nCOPY Makefile VERSION go.mod go.sum ./\n\nRUN make install-requirements\n"
+}

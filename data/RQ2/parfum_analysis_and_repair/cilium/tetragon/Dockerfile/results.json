@@ -1,0 +1,81 @@
+{
+  "startTime": 1674251946559,
+  "endTime": 1674251947440,
+  "originalSmells": [
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 35,
+        "lineEnd": 35,
+        "columnStart": 4,
+        "columnEnd": 40
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 3,
+        "lineEnd": 3,
+        "columnStart": 4,
+        "columnEnd": 37
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 13,
+        "lineEnd": 13,
+        "columnStart": 22,
+        "columnEnd": 62
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 3,
+        "lineEnd": 3,
+        "columnStart": 4,
+        "columnEnd": 37
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 3,
+        "lineEnd": 3,
+        "columnStart": 4,
+        "columnEnd": 37
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 13,
+        "lineEnd": 13,
+        "columnStart": 22,
+        "columnEnd": 62
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 42,
+        "lineEnd": 42,
+        "columnStart": 4,
+        "columnEnd": 20
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 3,
+        "lineEnd": 3,
+        "columnStart": 4,
+        "columnEnd": 61
+      }
+    }
+  ],
+  "repairedDockerfile": "FROM quay.io/isovalent/hubble-llvm:2022-01-03-a6dfdaf as bpf-builder\nWORKDIR /go/src/github.com/cilium/tetragon\nRUN apt-get update\nRUN apt-get install --no-install-recommends -y linux-libc-dev && rm -rf /var/lib/apt/lists/*;\nCOPY . ./\nRUN make tetragon-bpf LOCAL_CLANG=1\n\nFROM quay.io/isovalent/hubble-libbpf:v0.2.3 as hubble-libbpf\nWORKDIR /go/src/github.com/cilium/tetragon\nCOPY . ./\n\nFROM quay.io/cilium/cilium-builder:b7a9dcdcadd77d38db87bbd06b9bc238e9dab5a0@sha256:eecc017a6ccf0c7884f1ffcf10e58462a272f5e41c0ece09adb351e8839e3157 as hubble-builder\nWORKDIR /go/src/github.com/cilium/tetragon\nRUN apt-get update && apt-get install --no-install-recommends -y libelf-dev zlib1g-dev && rm -rf /var/lib/apt/lists/*;\nCOPY --from=hubble-libbpf /go/src/github.com/covalentio/hubble-fgs/src/libbpf.so.0.2.0 /usr/local/lib/\nCOPY --from=hubble-libbpf /go/src/github.com/covalentio/hubble-fgs/src/libbpf.so.0 /usr/local/lib/\nCOPY --from=hubble-libbpf /go/src/github.com/covalentio/hubble-fgs/src/libbpf.so /usr/local/lib/\nCOPY --from=hubble-libbpf /go/src/github.com/covalentio/hubble-fgs/src/libbpf.a /usr/local/lib/\nRUN ldconfig /usr/local/\nCOPY . ./\nRUN make tetragon-image LOCAL_CLANG=1\n\nFROM docker.io/library/golang:1.17.8-alpine3.15@sha256:b35984144ec2c2dfd6200e112a9b8ecec4a8fd9eff0babaff330f1f82f14cb2a as gops\nRUN apk add --no-cache binutils git \\\n && git clone https://github.com/google/gops /go/src/github.com/google/gops \\\n && cd /go/src/github.com/google/gops \\\n && git checkout -b v0.3.22 v0.3.22 \\\n && go install \\\n && strip /go/bin/gops\n\n# Mostly copied from https://github.com/cilium/image-tools/blob/master/images/bpftool\nFROM quay.io/cilium/image-compilers:c1ba0665b6f9f012d014a642d9882f7c38bdf365@sha256:01c7c957e9b0fc200644996c6bedac297c98b81dea502a3bc3047837e67a7fcb as bpftool-builder\nENV REV \"5e22dd18626726028a93ff1350a8a71a00fd843d\"\nRUN curl --fail --show-error --silent --location \"https://kernel.googlesource.com/pub/scm/linux/kernel/git/bpf/bpf-next/+archive/${REV}.tar.gz\" --output /tmp/linux.tgz\nRUN mkdir -p /src/linux\nRUN tar -xf /tmp/linux.tgz -C /src/linux && rm /tmp/linux.tgz\nRUN rm -f /tmp/linux.tgz\nWORKDIR /src/linux/tools/bpf/bpftool\nRUN make -j $(nproc) LDFLAGS=-static\nRUN strip bpftool\n\nFROM docker.io/library/alpine:3.15.4@sha256:a777c9c66ba177ccfea23f2a216ff6721e78a662cd17019488c417135299cd89\nRUN apk add --no-cache iproute2\nRUN addgroup hubble\t     && \\\n    mkdir /var/lib/tetragon/ && \\\n    apk add --no-cache --update bash\nCOPY --from=bpftool-builder /src/linux/tools/bpf/bpftool/bpftool /usr/bin/bpftool\nCOPY --from=hubble-builder /go/src/github.com/cilium/tetragon/tetragon /usr/bin/\nCOPY --from=hubble-builder /go/src/github.com/cilium/tetragon/tetra /usr/bin/\nCOPY --from=gops /go/bin/gops /bin /usr/bin/\nCOPY --from=bpf-builder /go/src/github.com/cilium/tetragon/bpf/objs/*.o /var/lib/tetragon/\nCOPY --from=hubble-libbpf /go/src/github.com/covalentio/hubble-fgs/src/libbpf.so.0.2.0 /usr/local/lib/\nCOPY --from=hubble-libbpf /go/src/github.com/covalentio/hubble-fgs/src/libbpf.so.0 /usr/local/lib/\nCOPY --from=hubble-libbpf /go/src/github.com/covalentio/hubble-fgs/src/libbpf.so /usr/local/lib/\nCOPY --from=hubble-libbpf /go/src/github.com/covalentio/hubble-fgs/src/libbpf.a /usr/local/lib/\n"
+}

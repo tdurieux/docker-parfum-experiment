@@ -1,0 +1,89 @@
+{
+  "startTime": 1674253644374,
+  "endTime": 1674253645633,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 64,
+        "lineEnd": 64,
+        "columnStart": 4,
+        "columnEnd": 31
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 66,
+        "lineEnd": 66,
+        "columnStart": 4,
+        "columnEnd": 74
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 137,
+        "lineEnd": 137,
+        "columnStart": 4,
+        "columnEnd": 64
+      }
+    },
+    {
+      "rule": "gpgUseBatchFlag",
+      "position": {
+        "lineStart": 91,
+        "lineEnd": 91,
+        "columnStart": 62,
+        "columnEnd": 125
+      }
+    },
+    {
+      "rule": "gpgUseBatchFlag",
+      "position": {
+        "lineStart": 123,
+        "lineEnd": 123,
+        "columnStart": 79,
+        "columnEnd": 148
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 42,
+        "lineEnd": 62,
+        "columnStart": 27,
+        "columnEnd": 15
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 128,
+        "lineEnd": 128,
+        "columnStart": 4,
+        "columnEnd": 61
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 42,
+        "lineEnd": 62,
+        "columnStart": 27,
+        "columnEnd": 15
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 103,
+        "lineEnd": 103,
+        "columnStart": 4,
+        "columnEnd": 78
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Copyright 2019 The Knative Authors\n#\n# Licensed under the Apache License, Version 2.0 (the \"License\");\n# you may not use this file except in compliance with the License.\n# You may obtain a copy of the License at\n#\n#     http://www.apache.org/licenses/LICENSE-2.0\n#\n# Unless required by applicable law or agreed to in writing, software\n# distributed under the License is distributed on an \"AS IS\" BASIS,\n# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.\n# See the License for the specific language governing permissions and\n# limitations under the License.\n\nFROM debian:bullseye-20220509-slim AS base\n\n# Pinned versions of stuff we pull in\nARG CLOUD_SDK_VERSION=387.0.0\nARG KUBECTL_VERSION=v1.21.4\nARG DOCKER_VERSION=5:20.10.9~3-0~debian-bullseye\nARG MAVEN_VERSION=3.8.4\nARG JAVA_VERSION=16\nARG PROTOC_VERSION=3.17.0\nARG TFENV_VERSION=v2.2.3\nARG COMMIT_HASH\n\nRUN echo \"${COMMIT_HASH}\" > /commit_hash\n\nWORKDIR /workspace\nRUN mkdir -p /workspace\nENV WORKSPACE=/workspace \\\n    TERM=xterm\nENV DEBIAN_FRONTEND noninteractive\n\n#\n# BEGIN: GCLOUD SETUP\n#\n\nENV PATH=/google-cloud-sdk/bin:/workspace:${PATH} \\\n    CLOUDSDK_CORE_DISABLE_PROMPTS=1\n\n# net-tools is used by serving tests\nRUN apt-get update -qqy && apt-get install --no-install-recommends -qqy \\\n        curl \\\n        gcc \\\n        python3-dev \\\n        python3-pip \\\n        apt-transport-https \\\n        lsb-release \\\n        openssh-client \\\n        ca-certificates \\\n        git \\\n        software-properties-common \\\n        bison \\\n        uuid-runtime \\\n        shellcheck \\\n        unzip \\\n        wget \\\n        gnupg \\\n        jq \\\n        procps \\\n        net-tools \\\n        gnuplot && rm -rf /var/lib/apt/lists/*;\n\nRUN pip3 install --no-cache-dir -U crcmod==1.7\nRUN curl -fsSLO https://dl.google.com/dl/cloudsdk/channels/rapid/downloads/google-cloud-sdk-${CLOUD_SDK_VERSION}-linux-x86_64.tar.gz\nRUN tar xzf google-cloud-sdk-${CLOUD_SDK_VERSION}-linux-x86_64.tar.gz -C / && rm google-cloud-sdk-${CLOUD_SDK_VERSION}-linux-x86_64.tar.gz\nRUN rm google-cloud-sdk-${CLOUD_SDK_VERSION}-linux-x86_64.tar.gz\nRUN gcloud config set core/disable_usage_reporting true && \\\n    gcloud config set component_manager/disable_update_check true && \\\n    gcloud config set metrics/environment github_docker_image && \\\n    gcloud components install alpha beta && \\\n    gcloud --version\n\n#\n# END: GCLOUD SETUP\n#\n\n# kubectl\nRUN curl -fsSL \"https://storage.googleapis.com/kubernetes-release/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl\" -o /usr/local/bin/kubectl && \\\n    chmod +x /usr/local/bin/kubectl\n\n# tfenv\nRUN git clone -b ${TFENV_VERSION} https://github.com/tfutils/tfenv.git ~/.tfenv && \\\n    ln -s ~/.tfenv/bin/* /usr/local/bin\n\n#\n# BEGIN: DOCKER IN DOCKER SETUP\n#\n\n# Add the Docker apt-repository\nRUN curl -fsSL https://download.docker.com/linux/debian/gpg | gpg --batch --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg && \\\n    echo \\\n    \"deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/debian \\\n    $(lsb_release -cs) stable\" | tee /etc/apt/sources.list.d/docker.list > /dev/null\n\n# Install Docker\n# TODO: the `sed` is a bit of a hack, look into alternatives.\n# Why this exists: `docker service start` on debian runs a `cgroupfs_mount` method,\n# We're already inside docker though so we can be sure these are already mounted.\n# Trying to remount these makes for a very noisy error block in the beginning of\n# the pod logs, so we just comment out the call to it... :shrug:\nRUN apt-get update -qqy && \\\n    apt-get install -qqy --no-install-recommends docker-ce=\"${DOCKER_VERSION}\" && \\\n    sed -i 's/cgroupfs_mount$/#cgroupfs_mount\\n/' /etc/init.d/docker \\\n    && update-alternatives --set iptables /usr/sbin/iptables-legacy \\\n    && update-alternatives --set ip6tables /usr/sbin/ip6tables-legacy && rm -rf /var/lib/apt/lists/*;\n\n# Move Docker's storage location\nRUN echo 'DOCKER_OPTS=\"${DOCKER_OPTS} --data-root=/docker-graph\"' | \\\n    tee --append /etc/default/docker\n# NOTE this should be mounted and persisted as a volume ideally (!)\n# We will make a fallback one now just in case\nRUN mkdir /docker-graph\n\n#\n# END: DOCKER IN DOCKER SETUP\n#\n\n#\n# BEGIN: JAVA SETUP\n#\n\nRUN curl -fsSL https://adoptopenjdk.jfrog.io/adoptopenjdk/api/gpg/key/public | gpg --batch --dearmor -o /usr/share/keyrings/adoptopenjdk-archive-keyring.gpg && \\\n    echo \\\n    \"deb [signed-by=/usr/share/keyrings/adoptopenjdk-archive-keyring.gpg] https://adoptopenjdk.jfrog.io/adoptopenjdk/deb \\\n    $(lsb_release -cs) main\" | tee /etc/apt/sources.list.d/adoptopenjdk.list\nRUN apt-get update -qqy && \\\n    apt-get install --no-install-recommends -qqy adoptopenjdk-${JAVA_VERSION}-hotspot && \\\n    rm -rf /var/lib/apt/lists/*\nENV JAVA_HOME=/usr/lib/jvm/adoptopenjdk-${JAVA_VERSION}-hotspot-amd64\n\nENV MAVEN_HOME=/usr/local/maven\nENV M2_HOME=$MAVEN_HOME\nENV PATH=${M2_HOME}/bin:${PATH}\n\nRUN curl -fsSL https://archive.apache.org/dist/maven/maven-3/${MAVEN_VERSION}/binaries/apache-maven-${MAVEN_VERSION}-bin.tar.gz -o /tmp/apache-maven-${MAVEN_VERSION}-bin.tar.gz && \\\n    tar xf /tmp/apache-maven-${MAVEN_VERSION}-bin.tar.gz -C /tmp && \\\n    mv /tmp/apache-maven-${MAVEN_VERSION} $MAVEN_HOME && rm /tmp/apache-maven-${MAVEN_VERSION}-bin.tar.gz\n\nRUN java -version && \\\n    mvn -v\n\n#\n# END: JAVA SETUP\n#\n\n# Install go 1.15, 1.16, and 1.17 using https://github.com/moovweb/gvm\n# GVM_NO_UPDATE_PROFILE=true means do not alter /root/.bashrc to automatically source gvm config, so when not using runner.sh, image works normally\n# Install the tool:\nRUN curl -fsSL https://raw.githubusercontent.com/moovweb/gvm/master/binscripts/gvm-installer | GVM_NO_UPDATE_PROFILE=true bash\n# gvm requires one to \"source /root/.gvm/scripts/gvm\" after installing\n#  but in Dockerfile, each RUN is its own shell, so source'd in-RUN env vars are not propagated\n# So have created \"source-gvm-and-run.sh\" to source the above then run gvm\nCOPY images/prow-tests/source-gvm-and-run.sh /usr/local/bin\n# Install our versions of Go.\n# We only install the latest 3 versions of Go which should be enough for\n# all Knative repositories.\nRUN source-gvm-and-run.sh install go1.16.15 --prefer-binary\nRUN source-gvm-and-run.sh install go1.17.11 --prefer-binary\nRUN source-gvm-and-run.sh install go1.18.3 --prefer-binary\nRUN source-gvm-and-run.sh use go1.18 --default\n\n# protoc and required golang tooling\nRUN curl -fsSL \"https://github.com/protocolbuffers/protobuf/releases/download/v${PROTOC_VERSION}/protoc-${PROTOC_VERSION}-linux-x86_64.zip\" -o protoc.zip \\\n    && unzip -p protoc.zip bin/protoc > /usr/local/bin/protoc \\\n    && chmod +x /usr/local/bin/protoc \\\n    && rm protoc.zip\n# protoc-gen-gogofaster is installed in below section\n\n# Note, it's pointless to run `source-gvm-and-run.sh use go1.13` in this Dockerfile because the PATH changes it makes won't stay in effect\n# We wrap the runner with our own which will run `gvm use $GO_VERSION` for us.\nCOPY images/prow-tests/runner.sh /usr/local/bin\n\n# Used if you want to install different programs for different versions of Go\nCOPY images/prow-tests/in-gvm-env.sh /usr/local/bin\n# If you needed to compile and install different tools for different version of Go,\n#  you could do it like:\n#  RUN GO_VERSION=go1.13 in-gvm-env.sh go install knative.dev/test-infra/tools/cleanup\n#  RUN GO_VERSION=go1.14 in-gvm-env.sh go install knative.dev/test-infra/tools/cleanup\n# But it must be done in base or the last FROM, because it does not install to /go/bin\n\n############################################################\nFROM golang:1.18 AS external-go-gets\n\nARG KUBETEST2_VERSION=5e5d3e9eebc6a609aa428bd3e2a1c0c3566d5baf\nARG KIND_VERSION=v0.14.0\nARG KO_VERSION=v0.11.2\nARG PROTOC_GEN_GO_VERSION=v1.28.0\nARG PROTOC_GEN_GOGOFASTER_VERSION=v1.3.2\nARG GOTESTSUM_VERSION=v1.8.1\nARG KAIL_VERSION=v0.15.0\nARG LICHE_VERSION=v0.0.0-20200229003944-f57a5d1c5be4\nARG GO_LICENSES_VERSION=v1.2.1\nARG DOCKER_CREDENTIAL_GCR_VERSION=v2.0.5\nARG JSONNET_VERSION=v0.18.0\nARG GOJSONTOYAML_VERSION=v0.1.0\nARG COSIGN_VERSION=v1.9.0\n\n# Extra tools through go install\n# These run using the golang image version of Go, not any defined by `gvm`\nRUN go install github.com/google/ko@${KO_VERSION}\nRUN go install github.com/boz/kail/cmd/kail@${KAIL_VERSION}\nRUN go install gotest.tools/gotestsum@${GOTESTSUM_VERSION}\nRUN go install github.com/raviqqe/liche@${LICHE_VERSION}  # stable liche version for checking md links\nRUN go install sigs.k8s.io/kind@${KIND_VERSION}\nRUN go install sigs.k8s.io/kubetest2@${KUBETEST2_VERSION}\nRUN go install sigs.k8s.io/kubetest2/kubetest2-gke@${KUBETEST2_VERSION}\nRUN go install sigs.k8s.io/kubetest2/kubetest2-kind@${KUBETEST2_VERSION}\nRUN go install sigs.k8s.io/kubetest2/kubetest2-tester-exec@${KUBETEST2_VERSION}\nRUN go install google.golang.org/protobuf/cmd/protoc-gen-go@${PROTOC_GEN_GO_VERSION}\nRUN go install github.com/google/go-licenses@${GO_LICENSES_VERSION}\nRUN go install sigs.k8s.io/kind@${KIND_VERSION}\nRUN go install github.com/google/go-jsonnet/cmd/jsonnet@${JSONNET_VERSION}\nRUN go install github.com/brancz/gojsontoyaml@${GOJSONTOYAML_VERSION}\nRUN go install github.com/sigstore/cosign/cmd/cosign@${COSIGN_VERSION}\n\n# According to https://github.com/knative/test-infra/pull/2762 protoc-gen-gogofaster is unsupported (and shouldn't be used?)\n# Not sure when it can be removed, maybe knative-0.26?\nRUN go install github.com/gogo/protobuf/protoc-gen-gogofaster@${PROTOC_GEN_GOGOFASTER_VERSION}\n\n# Docker\nRUN go install github.com/GoogleCloudPlatform/docker-credential-gcr@${DOCKER_CREDENTIAL_GCR_VERSION}\n\n# We do this instead of `go get` so the tools are locked to the Dockerfile's commit\nCOPY . /go/src/knative.dev/test-infra\n\n# Build custom tools in the container\nRUN cd /go/src/knative.dev/test-infra && go install ./tools/kntest/cmd/kntest\n\n# TODO(chizhg): maybe also move perf-tests tool to be part of kntest?\nRUN cd /go/src/knative.dev/test-infra && go install ./pkg/clustermanager/perf-tests\n\n############################################################\nFROM base\n\nCOPY --from=external-go-gets /go/bin/* /go/bin/\n\n# Only needed in this Dockerfile\nRUN rm -f /usr/local/bin/source-gvm-and-run.sh\n\nENV PATH /go/bin:$PATH\n\n# Extract versions\nRUN ko version > /ko_version\n\n# Ensure docker config is in the final image\nRUN docker-credential-gcr configure-docker --registries=gcr.io,us-docker.pkg.dev\n"
+}

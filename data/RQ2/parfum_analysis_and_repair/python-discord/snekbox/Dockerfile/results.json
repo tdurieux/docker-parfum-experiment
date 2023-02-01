@@ -1,0 +1,71 @@
+{
+  "startTime": 1674253205169,
+  "endTime": 1674253205912,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 49,
+        "lineEnd": 49,
+        "columnStart": 4,
+        "columnEnd": 51
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 59,
+        "lineEnd": 59,
+        "columnStart": 8,
+        "columnEnd": 51
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 60,
+        "lineEnd": 60,
+        "columnStart": 11,
+        "columnEnd": 68
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 77,
+        "lineEnd": 77,
+        "columnStart": 4,
+        "columnEnd": 45
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 6,
+        "lineEnd": 16,
+        "columnStart": 7,
+        "columnEnd": 31
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 32,
+        "lineEnd": 36,
+        "columnStart": 7,
+        "columnEnd": 27
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 6,
+        "lineEnd": 16,
+        "columnStart": 7,
+        "columnEnd": 31
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM python:3.10-slim-buster as builder\n\nWORKDIR /nsjail\n\nRUN apt-get -y update \\\n    && apt-get install --no-install-recommends -y \\\n        bison=2:3.3.* \\\n        flex=2.6.* \\\n        g++=4:8.3.* \\\n        gcc=4:8.3.* \\\n        git=1:2.20.* \\\n        libprotobuf-dev=3.6.* \\\n        libnl-route-3-dev=3.4.* \\\n        make=4.2.* \\\n        pkg-config=0.29-6 \\\n        protobuf-compiler=3.6.* && rm -rf /var/lib/apt/lists/*;\nRUN git clone -b master --single-branch https://github.com/google/nsjail.git . \\\n    && git checkout dccf911fd2659e7b08ce9507c25b2b38ec2c5800\nRUN make\n\n# ------------------------------------------------------------------------------\nFROM python:3.10-slim-buster as base\n\n# Everything will be a user install to allow snekbox's dependencies to be kept\n# separate from the packages exposed during eval.\nENV PATH=/root/.local/bin:$PATH \\\n    PIP_DISABLE_PIP_VERSION_CHECK=1 \\\n    PIP_NO_CACHE_DIR=false \\\n    PIP_USER=1\n\nRUN apt-get -y update \\\n    && apt-get install --no-install-recommends -y \\\n        gcc=4:8.3.* \\\n        git=1:2.20.* \\\n        libnl-route-3-200=3.4.* \\\n        libprotobuf17=3.6.* \\\n    && rm -rf /var/lib/apt/lists/*\n\nCOPY --from=builder /nsjail/nsjail /usr/sbin/\nRUN chmod +x /usr/sbin/nsjail\n\n# ------------------------------------------------------------------------------\nFROM base as venv\n\nCOPY requirements/ /snekbox/requirements/\nWORKDIR /snekbox\n\n# pip installs to the default user site since PIP_USER is set.\nRUN pip install --no-cache-dir -U -r requirements/requirements.pip\n\n# This must come after the first pip command! From the docs:\n# All RUN instructions following an ARG instruction use the ARG variable\n# implicitly (as an environment variable), thus can cause a cache miss.\nARG DEV\n\n# Install numpy when in dev mode; one of the unit tests needs it.\nRUN if [ -n \"${DEV}\" ]; \\\n    then \\\n        pip install --no-cache-dir -U -r requirements/coverage.pip \\\n        && PYTHONUSERBASE=/snekbox/user_base pip --no-cache-dir install numpy~=1.19; \\\n    fi\n\n# At the end to avoid re-installing dependencies when only a config changes.\nCOPY config/ /snekbox/config/\n\nENTRYPOINT [\"gunicorn\"]\nCMD [\"-c\", \"config/gunicorn.conf.py\"]\n\n# ------------------------------------------------------------------------------\nFROM venv\n\n# Use a separate directory to avoid importing the source over the installed pkg.\n# The venv already installed dependencies, so nothing besides snekbox itself\n# will be installed. Note requirements.pip cannot be used as a constraint file\n# because it contains extras, which pip disallows.\nRUN --mount=source=.,target=/snekbox_src,rw \\\n    pip install --no-cache-dir /snekbox_src[gunicorn,sentry]"
+}

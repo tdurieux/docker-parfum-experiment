@@ -1,0 +1,99 @@
+{
+  "startTime": 1674254555300,
+  "endTime": 1674254556351,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 58,
+        "lineEnd": 58,
+        "columnStart": 4,
+        "columnEnd": 122
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 45,
+        "lineEnd": 45,
+        "columnStart": 4,
+        "columnEnd": 50
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 43,
+        "lineEnd": 43,
+        "columnStart": 4,
+        "columnEnd": 32
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 25,
+        "lineEnd": 25,
+        "columnStart": 4,
+        "columnEnd": 26
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 92,
+        "lineEnd": 92,
+        "columnStart": 4,
+        "columnEnd": 49
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 92,
+        "lineEnd": 92,
+        "columnStart": 4,
+        "columnEnd": 49
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 13,
+        "lineEnd": 18,
+        "columnStart": 4,
+        "columnEnd": 36
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 25,
+        "lineEnd": 25,
+        "columnStart": 4,
+        "columnEnd": 26
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 92,
+        "lineEnd": 92,
+        "columnStart": 4,
+        "columnEnd": 49
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 92,
+        "lineEnd": 92,
+        "columnStart": 4,
+        "columnEnd": 73
+      }
+    }
+  ],
+  "repairedDockerfile": "FROM pytorch/pytorch:1.9.0-cuda11.1-cudnn8-devel\n\n##############################################################################\n# Temporary Installation Directory\n##############################################################################\nENV STAGE_DIR=/tmp\nRUN mkdir -p ${STAGE_DIR}\n\n\n##############################################################################\n# Installation/Basic Utilities\n##############################################################################\nRUN apt-get update && \\\n    apt-get install -y --allow-change-held-packages --no-install-recommends \\\n    software-properties-common \\\n    build-essential autotools-dev cmake g++ gcc \\\n    openssh-client openssh-server \\\n    nfs-common pdsh curl sudo net-tools \\\n    vim iputils-ping wget perl unzip && rm -rf /var/lib/apt/lists/*;\n\n##############################################################################\n# Installation Latest Git\n##############################################################################\nRUN add-apt-repository ppa:git-core/ppa -y && \\\n    apt-get update && \\\n    apt-get install --no-install-recommends -y git && \\\n    git --version && rm -rf /var/lib/apt/lists/*;\n\n##############################################################################\n# Pip\n##############################################################################\n# pip version <= 20.1.1 is needed for the ruamel.yaml installation conflict\n# between conda and pip. ruamel.yaml is needed by azureml.\n# https://github.com/Azure/MachineLearningNotebooks/issues/1110 for more info.\nENV PIP_VERSION=20.1.1\nRUN conda install -y pip=${PIP_VERSION} && \\\n    # Print python an pip version\n    python -V && pip -V\n\n##############################################################################\n# MPI\n##############################################################################\nRUN cd ${STAGE_DIR} && mkdir openmpi/ && cd openmpi && wget https://www.open-mpi.org/software/ompi/v4.0/downloads/openmpi-4.0.1.tar.gz && \\\n    tar zxf openmpi-4.0.1.tar.gz && \\\n    cd openmpi-4.0.1 && \\\n    ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" --enable-orterun-prefix-by-default && \\\n    make -j $(nproc) all && \\\n    make install && \\\n    ldconfig && \\\n    rm -rf ${STAGE_DIR}/openmpi/ && rm openmpi-4.0.1.tar.gz\n\n##############################################################################\n# MSCCL\n##############################################################################\n\n# update NCCL in pytorch, install MSCCL interpreter\nRUN pip uninstall torch -y\n\nRUN pip install --no-cache-dir numpy ninja pyyaml mkl mkl-include setuptools cmake cffi typing_extensions future six requests dataclasses\n\nRUN conda install -c pytorch magma-cuda111 -y\n\nENV CMAKE_PREFIX_PATH=/opt/conda\n\n# Change NCCL to MSCCL Runtime\nRUN cd ${STAGE_DIR} && \\\n    git clone https://github.com/pytorch/pytorch.git && \\\n    cd pytorch && \\\n    git checkout tags/v1.9.0 -b v1.9.0_msccl && \\\n    perl -p -i -e  's/url = https:\\/\\/github\\.com\\/NVIDIA\\/nccl/url = https:\\/\\/github\\.com\\/microsoft\\/msccl/g' .gitmodules && \\\n    git submodule sync third_party/nccl  && \\\n    git submodule update --init --recursive  && \\\n    git submodule update --init --recursive --remote third_party/nccl && \\\n    cd third_party/nccl/nccl/ && \\\n    git checkout master && \\\n    cd ../../../ && \\\n    git apply third_party/nccl/nccl/patches/nccl.cpp.patch && \\\n    python setup.py install && \\\n    cd ${STAGE_DIR} && \\\n    rm -rf ${STAGE_DIR}/pytorch\n\n# Install MSCCL\nRUN cd ${STAGE_DIR}/ && \\\n    git clone https://github.com/microsoft/msccl.git && \\\n    cd msccl/ && python setup.py install && \\\n    cd ${STAGE_DIR} && \\\n    rm -rf ${STAGE_DIR}/msccl/\n\n##############################################################################\n# inspector-topo\n##############################################################################\n\nRUN apt-get install --no-install-recommends libibverbs-dev libnuma-dev -y && rm -rf /var/lib/apt/lists/*;\nRUN cd ${STAGE_DIR}/ && git clone https://github.com/microsoft/inspector-topo.git && \\\n    cd inspector-topo/ && make && make install\n\n"
+}

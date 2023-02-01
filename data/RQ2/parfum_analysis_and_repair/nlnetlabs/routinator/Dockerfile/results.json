@@ -1,0 +1,17 @@
+{
+  "startTime": 1674249637656,
+  "endTime": 1674249639078,
+  "originalSmells": [
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 6,
+        "lineEnd": 6,
+        "columnStart": 4,
+        "columnEnd": 22
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# -- stage 0: some configuration\nARG BASE_IMG=alpine:3.15\n\n# -- stage 1: build static routinator with musl libc for alpine\nFROM ${BASE_IMG} as build\n\nRUN apk add --no-cache rust cargo\n\nWORKDIR /tmp/routinator\nCOPY . .\n\n# Force Cargo to use HTTP/1.1 without pipelining instead of HTTP/2 with\n# multiplexing. This seems to help with various \"spurious network error\"\n# warnings when Cargo attempts to fetch from crates.io when building this\n# image on Docker Hub and GitHub Actions build machines.\nRUN CARGO_HTTP_MULTIPLEXING=false cargo build \\\n    --target x86_64-alpine-linux-musl \\\n    --release \\\n    --locked\n\n# -- stage 2: create alpine-based container with the static routinator\n#             executable\nFROM ${BASE_IMG}\nCOPY --from=build /tmp/routinator/target/x86_64-alpine-linux-musl/release/routinator /usr/local/bin/\n\n# Build variables for uid and guid of user to run container\nARG RUN_USER=routinator\nARG RUN_USER_UID=1012\nARG RUN_USER_GID=1012\n\n# Install rsync as routinator depends on it\nRUN apk add --no-cache rsync libgcc\n\n# Use Tini to ensure that Routinator responds to CTRL-C when run in the\n# foreground without the Docker argument \"--init\" (which is actually another\n# way of activating Tini, but cannot be enabled from inside the Docker image).\nRUN apk add --no-cache tini\n# Tini is now available at /sbin/tini\n\nRUN addgroup -g ${RUN_USER_GID} ${RUN_USER} && \\\n    adduser -D -u ${RUN_USER_UID} -G ${RUN_USER} ${RUN_USER}\n\n# Create the repository and TAL directories\nRUN mkdir -p /home/${RUN_USER}/.rpki-cache/repository /home/${RUN_USER}/.rpki-cache/tals && \\\n    chown -R ${RUN_USER_UID}:${RUN_USER_GID} /usr/local/bin/routinator /home/${RUN_USER}/.rpki-cache\n\n# Due to ARIN TAL distribution terms, we can't do this here.\n# An individual user, however, might want to anyway - after reviewing\n# https://www.arin.net/resources/rpki/tal.html.\n#\n#COPY --from=build /tmp/routinator/tals/*.tal /home/${RUN_USER}/.rpki-cache/tals/\n\nUSER $RUN_USER_UID\n\nEXPOSE 3323/tcp\nEXPOSE 9556/tcp\n\nENTRYPOINT [\"/sbin/tini\", \"--\", \"routinator\"]\nCMD [\"server\", \"--rtr\", \"0.0.0.0:3323\", \"--http\", \"0.0.0.0:9556\"]\n"
+}

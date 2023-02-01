@@ -1,0 +1,80 @@
+{
+  "startTime": 1674216133471,
+  "endTime": 1674216134430,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 57,
+        "lineEnd": 57,
+        "columnStart": 7,
+        "columnEnd": 46
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 58,
+        "lineEnd": 58,
+        "columnStart": 7,
+        "columnEnd": 63
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 68,
+        "lineEnd": 68,
+        "columnStart": 7,
+        "columnEnd": 34
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 35,
+        "lineEnd": 43,
+        "columnStart": 7,
+        "columnEnd": 20
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 48,
+        "lineEnd": 48,
+        "columnStart": 7,
+        "columnEnd": 32
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 51,
+        "lineEnd": 51,
+        "columnStart": 7,
+        "columnEnd": 32
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 48,
+        "lineEnd": 48,
+        "columnStart": 7,
+        "columnEnd": 32
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 51,
+        "lineEnd": 51,
+        "columnStart": 7,
+        "columnEnd": 32
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "#\n# Licensed to the Apache Software Foundation (ASF) under one or more\n# contributor license agreements.  See the NOTICE file distributed with\n# this work for additional information regarding copyright ownership.\n# The ASF licenses this file to You under the Apache License, Version 2.0\n# (the \"License\"); you may not use this file except in compliance with\n# the License.  You may obtain a copy of the License at\n#\n#    http://www.apache.org/licenses/LICENSE-2.0\n#\n# Unless required by applicable law or agreed to in writing, software\n# distributed under the License is distributed on an \"AS IS\" BASIS,\n# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.\n# See the License for the specific language governing permissions and\n# limitations under the License.\n#\n# Create snapshot builds with:\n# docker build -t spark:git-`git rev-parse --short HEAD` .\n\n#ubuntu:18.04 - linux; amd64\n#https://github.com/docker-library/repo-info/blob/master/repos/ubuntu/tag-details.md#ubuntu1804---linux-amd64\nFROM ubuntu@sha256:6b9eb699512656fc6ef936ddeb45ab25edcd17ab94901790989f89dbf782344a\n\n# Set environment variables.\nENV DEBIAN_FRONTEND \"noninteractive\"\nENV DEBCONF_NONINTERACTIVE_SEEN \"true\"\n\nARG LIBMESOS_BUNDLE_DOWNLOAD_URL=\"https://downloads.mesosphere.io/libmesos-bundle/libmesos-bundle-1.14-beta.tar.gz\"\nARG BOOTSTRAP_DOWNLOAD_URL=\"https://downloads.mesosphere.com/dcos-commons/artifacts/0.57.0/bootstrap.zip\"\n\nARG JAVA_VERSION=\"8u212b03\"\nARG JRE_DOWNLOAD_URL=\"https://downloads.mesosphere.com/java/openjdk-jre-${JAVA_VERSION}-hotspot-linux-x64.tar.gz\"\n\n# Upgrade package index and install basic commands.\nRUN apt-get update \\\n    && apt-get install --no-install-recommends -y \\\n               curl \\\n               krb5-user \\\n               net-tools \\\n               nginx \\\n               python \\\n               runit \\\n               software-properties-common \\\n               unzip \\\n    && rm -rf /var/lib/apt/lists/* /usr/share/doc\n\n# Install R 4.x\nRUN apt update \\\n    && apt-get install --no-install-recommends -y gnupg2 \\\n    && apt-key adv --keyserver keyserver.ubuntu.com --recv-keys E298A3A825C0D65DFD57CBB651716619E084DAB9 \\\n    && add-apt-repository 'deb https://cloud.r-project.org/bin/linux/ubuntu bionic-cran40/' \\\n    && apt-get install --no-install-recommends -y r-base && rm -rf /var/lib/apt/lists/*;\n\n# lib mesos\nENV MESOSPHERE_HOME=\"/opt/mesosphere\"\nARG BOOTSTRAP_BINARY=\"${MESOSPHERE_HOME}/bootstrap.zip\"\nRUN mkdir -p ${MESOSPHERE_HOME} \\\n    && curl -f -L ${LIBMESOS_BUNDLE_DOWNLOAD_URL} | tar -C ${MESOSPHERE_HOME} -zx \\\n    && curl -f -L -o ${BOOTSTRAP_BINARY} ${BOOTSTRAP_DOWNLOAD_URL} \\\n    && unzip ${BOOTSTRAP_BINARY} -d ${MESOSPHERE_HOME} \\\n    && rm ${BOOTSTRAP_BINARY}\n\nENV BOOTSTRAP ${MESOSPHERE_HOME}/bootstrap\nENV MESOS_NATIVE_JAVA_LIBRARY ${MESOSPHERE_HOME}/libmesos-bundle/lib/libmesos.so\n\n# JVM\nENV JAVA_HOME /usr/lib/jvm/${JAVA_VERSION}\nRUN mkdir -p ${JAVA_HOME} \\\n    && curl -f -L ${JRE_DOWNLOAD_URL} | tar -C ${JAVA_HOME} --strip-components=1 -zx\n\nENV HADOOP_CONF_DIR /etc/hadoop\nRUN mkdir ${HADOOP_CONF_DIR}\n\nADD runit/service /var/lib/runit/service\nADD runit/init.sh /sbin/init.sh\nADD nginx /etc/nginx\n\n# The following symlinks are hacks to make spark-class work under the\n# restricted PATH (/usr/bin) set by the DCOS\n# --executor-environment-variables option\nRUN ln -s /bin/bash /usr/bin/bash \\\n    && ln -s /bin/ls /usr/bin/ls \\\n    && ln -s /bin/grep /usr/bin/grep \\\n    && ln -s /var/lib/runit/service/spark /etc/service/spark \\\n    && ln -s /var/lib/runit/service/nginx /etc/service/nginx\n\nENV SPARK_HOME=\"/opt/spark\"\nADD dist ${SPARK_HOME}\nADD krb5.conf.mustache /etc/\nADD spark-statsd-reporter.jar ${SPARK_HOME}/jars/mesosphere-statsd-reporter.jar\n\n# required to run as nobody\nRUN addgroup --gid 99 nobody \\\n    && echo \"nobody:x:99:99:nobody:/nonexistent:/usr/sbin/nologin\" >> /etc/passwd \\\n    && usermod -a -G users nobody \\\n    && chmod -R ugo+rw /etc/nginx \\\n    && chmod -R ugo+rw /etc/krb5.conf \\\n    && chmod -R ugo+rw /etc/hadoop \\\n    && chmod -R ugo+rw /etc/service \\\n    && chmod -R ugo+rw /var/lib/ \\\n    && chmod -R ugo+rw /var/run/ \\\n    && chmod -R ugo+rw /var/log/ \\\n    && chmod -R ugo+rw ${SPARK_HOME}\n\nWORKDIR ${SPARK_HOME}"
+}

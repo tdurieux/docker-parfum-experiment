@@ -1,0 +1,22 @@
+FROM golang:alpine as build
+RUN apk --no-cache add ca-certificates
+
+WORKDIR /build
+
+COPY go.mod go.sum ./
+COPY api/go.mod api/go.sum ./api/
+
+RUN CGO_ENABLED=0 go mod download
+RUN cd api && CGO_ENABLED=0 go mod download
+
+COPY . .
+RUN CGO_ENABLED=0 go build -o /flyctl -ldflags="-X 'github.com/superfly/flyctl/internal/buildinfo.buildDate=NOW_RFC3339'" . 
+
+RUN mkdir /newtmp && chown 1777 /newtmp
+
+FROM scratch
+COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
+COPY --from=build /newtmp /tmp
+COPY --from=build /flyctl /
+
+ENTRYPOINT ["/flyctl"]

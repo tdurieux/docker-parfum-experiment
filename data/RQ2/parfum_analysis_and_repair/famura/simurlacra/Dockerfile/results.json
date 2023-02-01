@@ -1,0 +1,53 @@
+{
+  "startTime": 1674248023715,
+  "endTime": 1674248024795,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 73,
+        "lineEnd": 73,
+        "columnStart": 4,
+        "columnEnd": 36
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 94,
+        "lineEnd": 94,
+        "columnStart": 4,
+        "columnEnd": 28
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 97,
+        "lineEnd": 97,
+        "columnStart": 4,
+        "columnEnd": 28
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 40,
+        "lineEnd": 46,
+        "columnStart": 22,
+        "columnEnd": 40
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 40,
+        "lineEnd": 46,
+        "columnStart": 22,
+        "columnEnd": 40
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Copyright (c) 2020, Fabio Muratore, Honda Research Institute Europe GmbH, and\n# Technical University of Darmstadt.\n# All rights reserved.\n#\n# Redistribution and use in source and binary forms, with or without\n# modification, are permitted provided that the following conditions are met:\n# 1. Redistributions of source code must retain the above copyright\n#    notice, this list of conditions and the following disclaimer.\n# 2. Redistributions in binary form must reproduce the above copyright\n#    notice, this list of conditions and the following disclaimer in the\n#    documentation and/or other materials provided with the distribution.\n# 3. Neither the name of the Fabio Muratore, Honda Research Institute Europe GmbH,\n#    or Technical University of Darmstadt. nor the names of its contributors may\n#    be used to endorse or promote products derived from this software without\n#    specific prior written permission.\n#\n# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS \"AS IS\" AND\n# ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED\n# WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE\n# DISCLAIMED. IN NO EVENT SHALL FABIO MURATORE, HONDA RESEARCH INSTITUTE EUROPE GMBH,\n# OR TECHNICAL UNIVERSITY DAMRSTADT BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,\n# SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,\n# PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS;\n# OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER\n# IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)\n# ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE\n# POSSIBILITY OF SUCH DAMAGE.\n\n# Build from base image\nFROM nvidia/cuda:11.1.1-base-ubuntu18.04\n\n# Set the locales\nENV LC_ALL=C.UTF-8\nENV LANG=C.UTF-8\nARG CI=TRUE\n\n# Prevent expecting user inputs\nARG DEBIAN_FRONTEND=noninteractive\n\n# Install ubuntu packages\nRUN apt-get update && apt-get install --no-install-recommends -y \\\n    curl ca-certificates sudo git bzip2 libx11-6 \\\n    gcc g++ make cmake zlib1g-dev swig libsm6 libxext6 \\\n    build-essential libssl-dev zlib1g-dev libbz2-dev libreadline-dev \\\n    wget llvm libncurses5-dev xz-utils tk-dev libxrender1 \\\n    libxml2-dev libxmlsec1-dev libffi-dev libcairo2-dev libjpeg-dev libgif-dev \\\n    doxygen texlive graphviz ghostscript; rm -rf /var/lib/apt/lists/*; \\\n    adduser --disabled-password --gecos '' --shell /bin/bash user && chown -R user:user /home/user; \\\n    mkdir /home/user/SimuRLacra && chown user:user /home/user/SimuRLacra; \\\n    echo 'user ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers.d/90-pyrado\nUSER user\nWORKDIR /home/user\n\n# Setup conda\nRUN echo \"export PATH=/home/user/miniconda3/bin:$PATH\" >> ~/.bashrc \\\n    && wget --quiet https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh \\\n    && bash Miniconda3-latest-Linux-x86_64.sh -b \\\n    && rm Miniconda3-latest-Linux-x86_64.sh\n\nENV PATH /home/user/miniconda3/bin:$PATH\n\nRUN conda update conda \\\n    && conda update --all\n\nWORKDIR /home/user/SimuRLacra\n\n# Create conda env\nRUN conda create -n pyrado python=3.7 blas cmake lapack libgcc-ng mkl mkl-include patchelf pip setuptools -c conda-forge -q -y; conda clean -a; rm -fr /home/user/.cache\n\nSHELL [\"conda\", \"run\", \"-n\", \"pyrado\", \"/bin/bash\", \"-c\"]\n\n# Copy the file and install the required python packages\nCOPY --chown=user:user requirements.txt requirements.txt\nRUN pip install --no-cache-dir -r requirements.txt; \\\n    conda init bash ; rm -fr /home/user/.cache\n\n# Add env variables\nENV PATH /home/user/miniconda3/envs/pyrado/bin:$PATH\nENV PYTHONPATH /home/user/SimuRLacra/RcsPySim/build/lib:/home/user/SimuRLacra/Pyrado/:$PYTHONPATH\nENV RCSVIEWER_SIMPLEGRAPHICS 1\n\n# Copy Rcs and thirdparty to build in further build process\nCOPY --chown=user:user Rcs Rcs\nCOPY --chown=user:user thirdParty thirdParty\nCOPY --chown=user:user setup_deps.py ./\n\nRUN python setup_deps.py dep_libraries -j8\n\nARG OPTION=sacher\nARG J=8\n\nRUN if [ $OPTION == 'blackforest' ];then\\\n    python setup_deps.py w_rcs_w_pytorch -j$J; \\\n    elif [ $OPTION == 'sacher' ]; then \\\n    pip install --no-cache-dir torch==1.8.1 \\\n    && python setup_deps.py w_rcs_wo_pytorch -j$J; \\\n    elif [ $OPTION == 'redvelvet' ]; then \\\n    pip install --no-cache-dir torch==1.8.1 && \\\n    python setup_deps.py wo_rcs_wo_pytorch -j$J && \\\n    rm -fr Rcs RcsPySim; \\\n    elif [ $OPTION == 'malakoff' ]; then\\\n    python setup_deps.py wo_rcs_w_pytorch -j$J &&\\\n    rm -fr Rcs RcsPySim;\\\n    fi; \\\n    rm -fr ~/.cache\n\nCOPY --chown=user:user RcsPySim RcsPySim\n\n# Setup rcspysim if needed or delete related folders from the image\nRUN mkdir -p Pyrado; touch Pyrado/CMakeLists.txt; \\\n    if [ $OPTION == 'blackforest' ]; then\\\n    python setup_deps.py rcspysim  -j$J;\\\n    elif [ $OPTION == 'sacher' ]; then\\\n    python setup_deps.py rcspysim --no_local_torch -j$J; \\\n    else \\\n    rm -fr Rcs RcsPySim; \\\n    fi; \\\n    conda clean -a; \\\n    rm -fr /home/user/.cache\n\n# Copy and setup Pyrado\nCOPY --chown=user:user Pyrado Pyrado\nRUN python setup_deps.py pyrado\n\nCOPY logo.png build_docs.sh ./\n\nRUN rm -fr .git .gitmodules && echo \"conda activate pyrado\" >> ~/.bashrc\n"
+}

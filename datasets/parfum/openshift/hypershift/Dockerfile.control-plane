@@ -1,0 +1,20 @@
+FROM registry.ci.openshift.org/ocp/builder:rhel-8-golang-1.18-openshift-4.12 AS builder
+
+WORKDIR /hypershift
+
+COPY . .
+
+RUN make control-plane-operator
+
+FROM registry.ci.openshift.org/ocp/4.12:base
+COPY --from=builder /hypershift/bin/control-plane-operator /usr/bin/control-plane-operator
+
+ENTRYPOINT /usr/bin/control-plane-operator
+
+LABEL io.openshift.release.operator=true
+LABEL io.openshift.hypershift.control-plane-operator-subcommands=true
+LABEL io.openshift.hypershift.control-plane-operator-skips-haproxy=true
+LABEL io.openshift.hypershift.ignition-server-healthz-handler=true
+LABEL io.openshift.hypershift.control-plane-operator-manages-ignition-server=true
+LABEL io.openshift.hypershift.control-plane-operator-manages.cluster-machine-approver=true
+LABEL io.openshift.hypershift.control-plane-operator-manages.cluster-autoscaler=true

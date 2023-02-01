@@ -1,0 +1,36 @@
+FROM nvidia/opencl
+
+#########################################
+### Python                                                              
+RUN apt-get update && apt-get -y --no-install-recommends install git wget build-essential && rm -rf /var/lib/apt/lists/*;
+RUN apt-get install --no-install-recommends -y python3 python3-pip && rm -rf /var/lib/apt/lists/*;
+RUN ln -s python3 /usr/bin/python
+RUN ln -s pip3 /usr/bin/pip
+RUN DEBIAN_FRONTEND=noninteractive apt-get --no-install-recommends install -y python3-tk && rm -rf /var/lib/apt/lists/*;
+
+#########################################
+### Numpy
+RUN pip install --no-cache-dir numpy
+
+#########################################
+### Make sure we have python3 and a working locale
+RUN rm /usr/bin/python && ln -s python3 /usr/bin/python && rm /usr/bin/pip && ln -s pip3 /usr/bin/pip
+ENV LANG='en_US.UTF-8' LANGUAGE='en_US:en' LC_ALL='en_US.UTF-8'
+RUN apt-get install --no-install-recommends -y locales && locale-gen en_US.UTF-8 && rm -rf /var/lib/apt/lists/*;
+
+#########################################
+### Tridesclous
+RUN apt-get update && apt-get install --no-install-recommends -y libgl1-mesa-glx && rm -rf /var/lib/apt/lists/*;
+RUN pip install --no-cache-dir Cython
+RUN pip install --no-cache-dir scipy numpy pandas scikit-learn matplotlib seaborn tqdm openpyxl PyQt5==5.14.0 pyqtgraph==0.10 quantities neo numba hdbscan
+RUN pip install --no-cache-dir tridesclous==1.6.0
+
+#########################################
+## OpenCL/NVIDIA
+RUN apt-get update && apt-get install --no-install-recommends -y opencl-headers ocl-icd-opencl-dev libclc-dev ocl-icd-libopencl1 clinfo && rm -rf /var/lib/apt/lists/*;
+RUN pip install --no-cache-dir pyopencl
+
+#########################################
+# python packages
+RUN pip install --no-cache-dir spikeextractors==0.8.3 spiketoolkit==0.6.2 spikesorters==0.3.1
+RUN pip install --no-cache-dir kachery==0.4.13

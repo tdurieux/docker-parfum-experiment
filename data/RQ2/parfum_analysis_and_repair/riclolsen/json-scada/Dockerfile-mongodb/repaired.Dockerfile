@@ -1,0 +1,1 @@
+# {json:scada} Mongodb docker container - (c) 2021 - Ricardo L. Olsen 

@@ -1,0 +1,30 @@
+########################################################################################################################
+# Collector Image
+########################################################################################################################
+
+
+########
+FROM golang:1.18-bullseye as backendbuild
+
+WORKDIR /go/src/github.com/analogj/scrutiny
+
+COPY . /go/src/github.com/analogj/scrutiny
+
+RUN make binary-clean binary-collector
+
+########
+FROM debian:bullseye-slim as runtime
+WORKDIR /scrutiny
+ENV PATH="/opt/scrutiny/bin:${PATH}"
+
+RUN apt-get update && apt-get install --no-install-recommends -y cron smartmontools ca-certificates tzdata && update-ca-certificates && rm -rf /var/lib/apt/lists/*;
+
+COPY /docker/entrypoint-collector.sh /entrypoint-collector.sh
+COPY /rootfs/etc/cron.d/scrutiny /etc/cron.d/scrutiny
+COPY --from=backendbuild /go/src/github.com/analogj/scrutiny/scrutiny-collector-metrics /opt/scrutiny/bin/
+RUN chmod +x /opt/scrutiny/bin/scrutiny-collector-metrics && \
+    chmod +x /entrypoint-collector.sh && \
+    chmod 0644 /etc/cron.d/scrutiny && \
+    rm -f /etc/cron.daily/apt /etc/cron.daily/dpkg /etc/cron.daily/passwd
+
+CMD ["/entrypoint-collector.sh"]

@@ -1,0 +1,17 @@
+{
+  "startTime": 1674220173418,
+  "endTime": 1674220174920,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 48,
+        "lineEnd": 48,
+        "columnStart": 4,
+        "columnEnd": 92
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "################################\n# STEP 1 build executable binary\n################################\n\nFROM golang:1.17-alpine AS build-stage\n\nENV VENDOR windefender\n\n# Install git + SSL ca certificates.\n# Git is required for fetching the dependencies.\n# Ca-certificates is required to call HTTPS endpoints.\nRUN apk update && apk add --no-cache git ca-certificates tzdata \\\n\t&& update-ca-certificates 2>/dev/null || true\n\n# Set the Current Working Directory inside the container.\nWORKDIR $GOPATH/src/saferwall/$VENDOR/\n\n# Copy go mod and sum files.\nCOPY go.mod go.sum ./\n\n# Download all dependencies. Dependencies will be cached if the go.mod\n# and go.sum files are not changed.\nRUN go mod download\n\n# Copy our go files.\nCOPY . .\n\n# Build the binary.\nRUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \\\n\tgo build -a -installsuffix cgo -ldflags '-extldflags \"-static\"' \\\n\t-o /go/bin/$VENDOR-svc cmd/services/multiav/$VENDOR/main.go\n\n############################\n# STEP 2 build a small image\n############################\n\nFROM saferwall/windefender:0.0.3\nLABEL maintainer=\"https://github.com/saferwall\"\nLABEL version=\"0.0.3\"\nLABEL description=\"windows defender port into linux with nsq consumer\"\n\n# Environment variables.\nENV WINDOWS_DEFENDER_DB_UPDATE_DATE\t/av_db_update_date.txt\n\n# Set the Current Working Directory inside the container.\nWORKDIR /saferwall\n\n# Update virus definition file.\nRUN curl -f -sS -o $WINDOWS_DEFENDER_INSTALL_DIR/engine/mpam-fe.exe -L $WINDOWS_DEFENDER_UPDATE \\\n\t&& cd $WINDOWS_DEFENDER_INSTALL_DIR/engine \\\n\t# && cabextract mpam-fe.exe \\\n\t&& rm mpam-fe.exe \\\n\t&& echo -n \"$(date +%s)\" >> $WINDOWS_DEFENDER_DB_UPDATE_DATE\n\n# Create an app user so our program doesn't run as root.\nRUN groupadd -r saferwall \\\n\t&& useradd --no-log-init -r -g saferwall saferwall\n\n# Copy our static executable.\nCOPY --from=build-stage /go/bin/windefender-svc .\n\n# Copy the config files.\nCOPY configs/services/multiav/windefender conf/\n\n# Update permissions.\nRUN usermod -u 101 saferwall \\\n\t&& groupmod -g 102 saferwall \\\n\t&& chown -R saferwall:saferwall . \\\n\t&& chown -R saferwall:saferwall $WINDOWS_DEFENDER_INSTALL_DIR\n\n# Switch to our user.\nUSER saferwall\n\nENTRYPOINT [\"/saferwall/windefender-svc\", \"-config\", \"/saferwall/conf\"]\n"
+}

@@ -1,0 +1,27 @@
+#creates a base image from condo
+FROM continuumio/miniconda3
+SHELL ["/bin/bash", "-c"]
+RUN apt-get update
+RUN apt-get install --no-install-recommends -y build-essential && rm -rf /var/lib/apt/lists/*;
+RUN apt-get install --no-install-recommends -y parallel time make zlib1g zlib1g-dev && rm -rf /var/lib/apt/lists/*;
+RUN mkdir /tools/
+WORKDIR /tools/
+RUN git clone https://github.com/cschin/Peregrine.git
+COPY install_peregrin.sh /tools/Peregrine/
+RUN cd Peregrine && \
+bash install_peregrin.sh
+COPY environment.yml .
+COPY install_whdenovo.sh /tools/
+RUN bash /tools/install_whdenovo.sh
+
+RUN apt-get install --no-install-recommends -y vim tree && rm -rf /var/lib/apt/lists/*;
+RUN apt-get install --no-install-recommends -y docker.io && rm -rf /var/lib/apt/lists/*;
+RUN wget --no-check-certificate https://github.com/broadinstitute/picard/releases/download/2.20.2/picard.jar
+RUN git clone https://github.com/shilpagarg/HapCUT2.git
+RUN wget --no-check-certificate https://github.com/gt1/biobambam2/releases/download/2.0.87-release-20180301132713/biobambam2-2.0.87-release-20180301132713-x86_64-etch-linux-gnu.tar.gz
+RUN tar -xvzf biobambam2-2.0.87-release-20180301132713-x86_64-etch-linux-gnu.tar.gz && rm biobambam2-2.0.87-release-20180301132713-x86_64-etch-linux-gnu.tar.gz
+RUN apt-get install --no-install-recommends -y libbz2-dev liblzma-dev libcurl4-gnutls-dev && rm -rf /var/lib/apt/lists/*;
+RUN mkdir -p /root/.parallel
+RUN touch /root/.parallel/will-cite
+#run INSTALLATION.sh to install dependencies in Docker
+#RUN chmod +x /INSTALLATION.sh && /INSTALLATION.sh

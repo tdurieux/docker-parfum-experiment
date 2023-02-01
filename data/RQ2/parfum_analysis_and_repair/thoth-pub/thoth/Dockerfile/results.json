@@ -1,0 +1,53 @@
+{
+  "startTime": 1674219849036,
+  "endTime": 1674219852737,
+  "originalSmells": [
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 14,
+        "lineEnd": 14,
+        "columnStart": 4,
+        "columnEnd": 29
+      }
+    },
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 15,
+        "lineEnd": 15,
+        "columnStart": 4,
+        "columnEnd": 26
+      }
+    },
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 17,
+        "lineEnd": 17,
+        "columnStart": 4,
+        "columnEnd": 32
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 13,
+        "lineEnd": 13,
+        "columnStart": 22,
+        "columnEnd": 55
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 13,
+        "lineEnd": 13,
+        "columnStart": 22,
+        "columnEnd": 55
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "ARG RUST_IMAGE=rust:1.59.0\nARG MUSL_IMAGE=ekidd/rust-musl-builder:1.57.0\n\nFROM ${RUST_IMAGE} as wasm\n\nARG THOTH_GRAPHQL_API=https://api.thoth.pub\nARG THOTH_EXPORT_API=https://export.thoth.pub\nENV THOTH_GRAPHQL_API=${THOTH_GRAPHQL_API}\nENV THOTH_EXPORT_API=${THOTH_EXPORT_API}\n\nWORKDIR /wasm\n\n# Install build dependencies\nRUN apt-get update && apt-get -y --no-install-recommends install pkg-config npm && rm -rf /var/lib/apt/lists/*;\nRUN npm install -g npm@6.14.8 && npm cache clean --force;\nRUN npm install -g n@6.7.0 && npm cache clean --force;\nRUN n 12.19.0\nRUN npm install -g rollup@2.28.2 && npm cache clean --force;\nRUN cargo install wasm-pack --version 0.9.1\n\n# Get source\nCOPY . .\n\n# Compile WASM for release\nRUN wasm-pack build thoth-app/ \\\n  --target web \\\n  --release\nRUN rollup thoth-app/main.js \\\n  --format iife \\\n  --file thoth-app/pkg/thoth_app.js\n\n# Switch to musl for static compiling\nFROM ${MUSL_IMAGE} as build\n\n# \"An ARG instruction goes out of scope at the end of the build stage where it was defined.\n# To use an arg in multiple stages, each stage must include the ARG instruction.\"\n# https://docs.docker.com/engine/reference/builder/#scope\nARG THOTH_GRAPHQL_API=https://api.thoth.pub\nARG THOTH_EXPORT_API=https://export.thoth.pub\nENV THOTH_GRAPHQL_API=${THOTH_GRAPHQL_API}\nENV THOTH_EXPORT_API=${THOTH_EXPORT_API}\n\nCOPY --from=wasm --chown=rust:rust /wasm/ /home/rust/src/\n# Build Thoth for release\nRUN cargo build --release\n\n# Switch to minimal image for run time\nFROM scratch\n\n# Get thoth and diesel binaries\nCOPY --from=build \\\n    /home/rust/src/target/x86_64-unknown-linux-musl/release/thoth /\n\n# Get CA certificates\nCOPY --from=build \\\n    /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt\n\n# Expose thoth's default ports\nEXPOSE 8080\nEXPOSE 8000\nEXPOSE 8181\n\n# Make thoth our default binary\nENTRYPOINT [\"/thoth\"]\n\n# By default run `thoth init` (runs migrations and starts the server on port 8080)\nCMD [\"init\"]\n"
+}

@@ -1,0 +1,25 @@
+FROM golang:1.18
+
+RUN apt-get update && apt-get install --no-install-recommends -y curl unzip gcc-multilib gcc-mingw-w64 && rm -rf /var/lib/apt/lists/*;
+
+WORKDIR /tmp
+
+RUN curl -f -so /tmp/sdl2.tar.gz https://www.libsdl.org/release/SDL2-devel-2.0.14-mingw.tar.gz && \
+    tar -xzf /tmp/sdl2.tar.gz && rm /tmp/sdl2.tar.gz
+RUN mv /tmp/SDL2-2.0.14/i686-w64-mingw32/include/* /usr/i686-w64-mingw32/include/ && \
+    mv /tmp/SDL2-2.0.14/i686-w64-mingw32/lib/* /usr/i686-w64-mingw32/lib/
+RUN curl -f -so /tmp/openal.zip https://openal-soft.org/openal-binaries/openal-soft-1.21.1-bin.zip && \
+    unzip /tmp/openal.zip && \
+    mv /tmp/openal-soft-1.21.1-bin/include/* /usr/i686-w64-mingw32/include/ && \
+    mv /tmp/openal-soft-1.21.1-bin/libs/Win32/* /usr/i686-w64-mingw32/lib/ && \
+    rm -r /tmp/openal*
+
+WORKDIR /app
+
+ADD go.* ./
+
+RUN go mod download
+
+ADD . .
+
+RUN ./build_go_win.sh

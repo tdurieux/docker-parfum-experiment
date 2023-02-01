@@ -1,0 +1,99 @@
+{
+  "startTime": 1674219754260,
+  "endTime": 1674219755680,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 14,
+        "lineEnd": 14,
+        "columnStart": 7,
+        "columnEnd": 25
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 73,
+        "lineEnd": 73,
+        "columnStart": 4,
+        "columnEnd": 64
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 74,
+        "lineEnd": 74,
+        "columnStart": 4,
+        "columnEnd": 46
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 94,
+        "lineEnd": 94,
+        "columnStart": 4,
+        "columnEnd": 64
+      }
+    },
+    {
+      "rule": "aptGetInstallUseY",
+      "position": {
+        "lineStart": 63,
+        "lineEnd": 63,
+        "columnStart": 4,
+        "columnEnd": 36
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 29,
+        "lineEnd": 29,
+        "columnStart": 4,
+        "columnEnd": 50
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 63,
+        "lineEnd": 63,
+        "columnStart": 4,
+        "columnEnd": 36
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 29,
+        "lineEnd": 29,
+        "columnStart": 4,
+        "columnEnd": 50
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 29,
+        "lineEnd": 29,
+        "columnStart": 4,
+        "columnEnd": 50
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 29,
+        "lineEnd": 29,
+        "columnStart": 4,
+        "columnEnd": 74
+      }
+    }
+  ],
+  "repairedDockerfile": "### Multi-stage Docker images. See https://docs.docker.com/develop/develop-images/multistage-build/\n### Run \"docker build\" at the root directory of neo-ai-dlr\n\n### Stage 0: Base image\nFROM public.ecr.aws/ubuntu/ubuntu:18.04 AS base\n\nENV DEBIAN_FRONTEND noninteractive\n\nRUN apt-get update && \\\n    apt-get install -y --no-install-recommends \\\n    python3 \\\n    python3-pip \\\n    python3-setuptools \\\n    && rm -rf /var/lib/apt/lists/* \\\n    && pip3 install --no-cache-dir wheel \\\n    && rm -rf /root/.cache/pip\n\n### Stage 1: Build\nFROM base AS builder\nWORKDIR /workspace\n\nENV DEBIAN_FRONTEND noninteractive\n\nRUN apt-get update && \\\n    apt-get install -y --no-install-recommends \\\n    build-essential \\\n    git \\\n    && rm -rf /var/lib/apt/lists/*\n\nRUN apt-get install --no-install-recommends -y --reinstall build-essential && rm -rf /var/lib/apt/lists/*;\n\nCOPY container/sagemaker-pytorch-inferentia-serving/ /workspace/sagemaker-pytorch-inferentia-serving\n\nRUN \\\n    cd /workspace/sagemaker-pytorch-inferentia-serving && \\\n    python3 setup.py bdist_wheel\n\n### Stage 2: Run\n### Stage 2-1: Runner base (everything except the APP-specific handler)\nFROM base AS runner_base\n\nENV DEBIAN_FRONTEND noninteractive\nENV USE_INF 1\n\n# python3-dev and gcc are required by multi-model-server\n# neuron-cc[tensorflow] needs g++ and python3-venv\nRUN apt-get update && \\\n    apt-get install -y --no-install-recommends \\\n    openjdk-8-jdk-headless \\\n    python3-dev \\\n    python3-venv \\\n    gcc \\\n    g++ \\\n    pciutils \\\n    gnupg \\\n    zlib1g-dev \\\n    libjpeg-dev \\\n    libpng-dev \\\n    jq \\\n    wget && \\\n    echo \"deb https://apt.repos.neuron.amazonaws.com bionic main\" | tee /etc/apt/sources.list.d/neuron.list && \\\n    wget -qO - https://apt.repos.neuron.amazonaws.com/GPG-PUB-KEY-AMAZON-AWS-NEURON.PUB | apt-key add - && \\\n    apt-get update && \\\n    apt-get install -y --no-install-recommends aws-neuron-tools && \\\n    rm -rf /var/lib/apt/lists/*\n\nCOPY --from=builder /workspace/sagemaker-pytorch-inferentia-serving/dist/*.whl /home/model-server/\n\nRUN pip3 install --pre --no-cache-dir multi-model-server==1.1.8 \\\n    && pip3 install --no-cache-dir Pillow \\\n    && pip3 install --no-cache-dir numpy scipy xlrd boto3 six requests \\\n    && rm -rf /root/.cache/pip\n#COPY sagemaker_inference-1.5.2.dev0.tar.gz /home/model-server\nRUN pip3 install --no-cache-dir --upgrade --force-reinstall sagemaker-inference\nRUN pip3 install --no-cache-dir torchvision==0.10.0 --no-deps\nRUN pip3 install --extra-index-url=https://pip.repos.neuron.amazonaws.com --no-cache-dir torch-neuron==1.9.1.2.3.0.0\n\n### Stage 2-2: Runner (APP-specific handler)\nFROM runner_base AS runner\n\nENV PYTHONUNBUFFERED TRUE\nENV PATH=\"/opt/aws/neuron/bin:${PATH}\"\n\n# Disable thread pinning in TVM and Treelite\nENV TVM_BIND_THREADS 0\nENV TREELITE_BIND_THREADS 0\n\nRUN useradd -m model-server \\\n    && mkdir -p /home/model-server/tmp \\\n    && mkdir -p /home/model-server/model\n\nCOPY container/config-inf1.properties /home/model-server/config.properties\nCOPY container/inf1_pyt_entry.py /usr/local/bin/dockerd-entrypoint.py\n\nRUN pip3 install --no-cache-dir /home/model-server/sagemaker_*_inferentia_*.whl\n\nRUN chmod +x /usr/local/bin/dockerd-entrypoint.py \\\n    && chown -R model-server /home/model-server\n\nEXPOSE 8080 8081\n\nWORKDIR /home/model-server\nENV TEMP=/home/model-server/tmp\n\nENTRYPOINT [\"python3\", \"/usr/local/bin/dockerd-entrypoint.py\"]\nCMD [\"mxnet-model-server\", \"--start\", \"--mms-config\", \"/home/model-server/config.properties\"]\nLABEL maintainer=\"guas@amazon.com\"\n"
+}

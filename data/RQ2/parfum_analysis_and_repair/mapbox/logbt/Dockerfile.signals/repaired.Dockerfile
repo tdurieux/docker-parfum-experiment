@@ -1,0 +1,26 @@
+FROM ubuntu:18.04
+
+# docker build -t logbt-signals -f Dockerfile.signals .
+# docker run --detach --privileged -it --rm --name="logbt-signals" logbt-signals
+# docker logs logbt-signals --tail all
+# docker kill --signal="SIGUSR1" logbt-signals
+# docker rm logbt-signals
+
+ENV WORKINGDIR /usr/local/src
+WORKDIR ${WORKINGDIR}
+COPY bin/logbt bin/logbt
+COPY test test
+ADD .nvmrc ./
+RUN apt-get update -y && \
+ apt-get install -y bash curl gdb git-core g++ ca-certificates --no-install-recommends && rm -rf /var/lib/apt/lists/*;
+
+RUN NODE_SLUG=node-v$(cat .nvmrc)-linux-x64 && \
+ curl -f -sL --retry 3 -O https://nodejs.org/dist/v$(cat .nvmrc)/$NODE_SLUG.tar.gz && \
+ tar xzf $NODE_SLUG.tar.gz --strip-components=1 -C /usr/local && \
+ rm $NODE_SLUG.tar.gz
+
+RUN cat /proc/sys/kernel/core_pattern
+
+ENTRYPOINT ["./bin/logbt", "--setup", "--" ]
+
+CMD ["node","test/wait.js","1000"]

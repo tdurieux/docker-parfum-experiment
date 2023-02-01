@@ -1,0 +1,93 @@
+ARG PHP_VERSION
+
+FROM php:${PHP_VERSION}-fpm
+
+ARG DEFAULT_TIMEZONE
+ARG PHP_MEMORY_LIMIT
+ARG PHP_MAX_EXECUTION_TIME
+ARG PHP_UPLOAD_MAX_FILESIZE
+
+ARG NODE_JS_VERSION
+
+ARG USER_ID
+ARG GROUP_ID
+
+ARG XDEBUG_CLIENT_PORT
+ARG XDEBUG_START_WITH_REQUEST
+ARG XDEBUG_REMOTE_HOST
+ARG XDEBUG_REMOTE_CONNECT_BACK
+ARG XDEBUG_FILE_LINK_FORMAT
+ARG XDEBUG_IDE_KEY
+
+ARG COMPOSER_VERSION
+
+ARG WKHTMLTOPDF_VERSION
+
+MAINTAINER Vasilij Dusko <support@d4d.lt>
+
+RUN __SYMFONY_CLI__
+    apt-get update && \
+    apt-get install --no-install-recommends --no-install-suggests -y \
+    __PACKAGE_LIST__ \
+    __CLEANUP__
+
+# Install PHP extensions. Type docker-php-ext-install to see available extensions
+RUN docker-php-ext-configure zip --with-libzip && docker-php-ext-configure gd --with-freetype-dir=/usr/include/ --with-jpeg-dir=/usr/include/ && docker-php-ext-configure intl && docker-php-ext-configure imap --with-kerberos --with-imap-ssl && docker-php-ext-install -j$(nproc) __PHP_EXT_INSTALL__ \
+    && pecl install __PECL_INSTALL__ && docker-php-ext-enable __PHP_EXT_ENABLE__ \
+    && ln -snf /usr/share/zoneinfo/${DEFAULT_TIMEZONE} /etc/localtime && echo ${DEFAULT_TIMEZONE} > /etc/timezone \
+    && printf '[PHP]\ndate.timezone = "%s"\n' ${DEFAULT_TIMEZONE} > $PHP_INI_DIR/conf.d/tzone.ini \
+    && printf '[CUSTOM]\nmemory_limit = "%s"\n' ${PHP_MEMORY_LIMIT} >> $PHP_INI_DIR/conf.d/custom.ini \
+    && printf '\npost_max_size = %s\n' ${PHP_UPLOAD_MAX_FILESIZE} >> $PHP_INI_DIR/conf.d/custom.ini \
+    && printf '\nupload_max_filesize = %s\n' ${PHP_UPLOAD_MAX_FILESIZE} >> $PHP_INI_DIR/conf.d/custom.ini \
+    && printf '\nmax_execution_time = %s\n' ${PHP_MAX_EXECUTION_TIME} >> $PHP_INI_DIR/conf.d/custom.ini \
+    && printf '\nxdebug.file_link_format = "%s"\n' ${XDEBUG_FILE_LINK_FORMAT} >> $PHP_INI_DIR/conf.d/custom.ini \
+    && printf '\nxdebug.idekey = "%s"\n' ${XDEBUG_IDE_KEY} >> $PHP_INI_DIR/conf.d/custom.ini \
+    && echo 'extension=apc.so' >> $PHP_INI_DIR/conf.d/docker-php-ext-apcu.ini \
+    __IMAGICK__ \
+    __RABBIT_MQ__ \
+    __MONGODB__ \
+    # Install composer
+    && php -r "copy('https://getcomposer.org/installer', 'composer-setup.php');" \
+    && php composer-setup.php --version=${COMPOSER_VERSION} \
+    && php -r "unlink('composer-setup.php');" \
+    && mv composer.phar /usr/local/bin/composer \
+    && mkdir -p /var/www/.composer \
+    && printf '{\n  "config": {\n    "cache-dir": "/var/www/.composer/cache"\n  }\n}' >> /var/www/.composer/config.json \
+    && chown -R ${USER_ID}:${GROUP_ID} /var/www/.composer \
+    && chown ${USER_ID}:${GROUP_ID} /var/www \
+    # npm & node
+    && mkdir -p /var/www/.npm \
+    && mkdir -p /var/www/html \
+    && printf '{"name": "d4d", "version": "1.0.0"}' > /var/www/html/package.json \
+    && chown -R ${USER_ID}:${GROUP_ID} /var/www/.npm \
+    && chown -R ${USER_ID}:${GROUP_ID} /var/www/html \
+    && printf 'Package: *\nPin: origin deb.nodesource.com\nPin-Priority: 600' > /etc/apt/preferences.d/nodejs \
+    && curl -f -sL https://deb.nodesource.com/setup_${NODE_JS_VERSION} | bash \
+    && apt-get install --no-install-recommends -y nodejs \
+    && npm install --location=global __NPM_INSTALL_GLOBAL__ \
+    # Yarn package manager
+    # bugfix: remove cmdtest to install yarn correctly.
+    __YARN__ \
+    # Install wkhtmltopdf
+    __WKHTMLTOPDF__ \
+    __PHP_IONCUBE__ \
+    __BLACKFIRE__ \
+    && curl -f -L __CURL_INSECURE__ https://cs.symfony.com/download/php-cs-fixer-v3.phar -o /usr/bin/php-cs-fixer && chmod a+x /usr/bin/php-cs-fixer \
+    && curl -f -L __CURL_INSECURE__ https://github.com/fabpot/local-php-security-checker/releases/download/v2.0.3/local-php-security-checker_2.0.3_linux_amd64 -o /usr/bin/local-php-security-checker && chmod a+x /usr/bin/local-php-security-checker \
+    && curl -f -L __CURL_INSECURE__ https://github.com/phpstan/phpstan/raw/1.7.15/phpstan.phar -o /usr/local/bin/phpstan && chmod a+x /usr/local/bin/phpstan \
+    && curl -f -L __CURL_INSECURE__ https://deployer.org/deployer.phar -o /usr/local/bin/dep && chmod a+x /usr/local/bin/dep \
+
+    && apt-get remove --purge -y gnupg1 \
+    && apt-get -y --purge autoremove \
+    __CLEANUP__ && npm cache clean --force; && rm -rf /var/lib/apt/lists/*;
+
+# Copy xdebug and php config.
+COPY conf.d/* /usr/local/etc/php/conf.d/
+
+# Map user id from host user when it's provided
+RUN if [ ! -z ${USER_ID} ] && [ ${USER_ID} -ne 0 ]; then usermod -u ${USER_ID} www-data; fi \
+    && if [ ! -z ${GROUP_ID} ] && [ ${GROUP_ID} -ne 0 ]; then groupmod -g ${GROUP_ID} www-data; fi
+
+# set default user and working directory
+USER ${USER_ID}
+WORKDIR /var/www/project

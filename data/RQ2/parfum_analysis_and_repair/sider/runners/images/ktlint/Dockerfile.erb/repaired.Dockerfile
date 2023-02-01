@@ -1,0 +1,5 @@
+<%= render_erb 'images/Dockerfile.java.erb' %>
+
+COPY --chown=<%= chown %> images/<%= analyzer %>/ktlint ${RUNNER_USER_BIN}/
+
+<%= render_erb 'images/Dockerfile.end.erb' %>

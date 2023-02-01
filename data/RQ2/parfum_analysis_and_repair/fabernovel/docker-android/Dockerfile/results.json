@@ -1,0 +1,44 @@
+{
+  "startTime": 1674255108065,
+  "endTime": 1674255109020,
+  "originalSmells": [
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 88,
+        "lineEnd": 88,
+        "columnStart": 4,
+        "columnEnd": 53
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 9,
+        "lineEnd": 9,
+        "columnStart": 22,
+        "columnEnd": 48
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 9,
+        "lineEnd": 9,
+        "columnStart": 22,
+        "columnEnd": 48
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 14,
+        "lineEnd": 31,
+        "columnStart": 22,
+        "columnEnd": 6
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM ubuntu:20.04\n\n# Required for Jenv\nSHELL [\"/bin/bash\", \"-c\"]\n\n## Set timezone to UTC by default\nRUN ln -sf /usr/share/zoneinfo/Etc/UTC /etc/localtime\n\n## Use unicode\nRUN apt-get update && apt-get -y --no-install-recommends install locales && \\\n    locale-gen en_US.UTF-8 || true && rm -rf /var/lib/apt/lists/*;\nENV LANG=en_US.UTF-8\n\n## Install dependencies\nRUN apt-get update && apt-get install --no-install-recommends -y \\\n  openjdk-11-jdk \\\n  openjdk-8-jdk \\\n  git \\\n  wget \\\n  build-essential \\\n  zlib1g-dev \\\n  libssl-dev \\\n  libreadline-dev \\\n  unzip \\\n  ssh \\\n  # Fastlane plugins dependencies\n  # - fastlane-plugin-badge (curb)\n  libcurl4 libcurl4-openssl-dev \\\n  # ruby-setup dependencies\n  libyaml-0-2 \\\n  libgmp-dev \\\n  file && rm -rf /var/lib/apt/lists/*;\n\n## Clean dependencies\nRUN apt-get clean\nRUN rm -rf /var/lib/apt/lists/*\n\n## Install rbenv\nENV RBENV_ROOT \"/root/.rbenv\"\nRUN git clone https://github.com/rbenv/rbenv.git $RBENV_ROOT\nENV PATH \"$PATH:$RBENV_ROOT/bin\"\nENV PATH \"$PATH:$RBENV_ROOT/shims\"\n\n## Install jenv\nENV JENV_ROOT \"$HOME/.jenv\"\nRUN git clone https://github.com/jenv/jenv.git $JENV_ROOT\nENV PATH \"$PATH:$JENV_ROOT/bin\"\nRUN mkdir $JENV_ROOT/versions\nENV JDK_ROOT \"/usr/lib/jvm/\"\nRUN jenv add ${JDK_ROOT}/java-8-openjdk-amd64\nRUN jenv add ${JDK_ROOT}/java-11-openjdk-amd64\nRUN echo 'export PATH=\"$JENV_ROOT/bin:$PATH\"' >> ~/.bashrc\nRUN echo 'eval \"$(jenv init -)\"' >> ~/.bashrc\n\n# Install ruby-build (rbenv plugin)\nRUN mkdir -p \"$RBENV_ROOT\"/plugins\nRUN git clone https://github.com/rbenv/ruby-build.git \"$RBENV_ROOT\"/plugins/ruby-build\n\n# Install ruby envs\nRUN echo “install: --no-document” > ~/.gemrc\nENV RUBY_CONFIGURE_OPTS=--disable-install-doc\nRUN rbenv install 3.1.1\nRUN rbenv install 2.7.1\nRUN rbenv install 2.6.6\n\n# Setup default ruby env\nRUN rbenv global 3.1.1\nRUN gem install bundler:2.3.7\n\n# Install Google Cloud CLI\nARG gcloud=false\nARG gcloud_url=https://dl.google.com/dl/cloudsdk/release/google-cloud-sdk.tar.gz\nARG gcloud_home=/usr/local/gcloud\nARG gcloud_install_script=${gcloud_home}/google-cloud-sdk/install.sh\nARG gcloud_bin=${gcloud_home}/google-cloud-sdk/bin\nENV PATH=${gcloud_bin}:${PATH}\nRUN if [ \"$gcloud\" = true ] ; \\\n  then \\\n    echo \"Installing GCloud SDK\"; \\\n    apt-get update && apt-get install --no-install-recommends -y \\\n      gcc \\\n      python3 \\\n      python3-dev \\\n      python3-setuptools \\\n      python3-pip && \\\n    apt-get clean && rm -rf /var/lib/apt/lists/* && \\\n    mkdir -p ${gcloud_home} && \\\n    wget --quiet --output-document=/tmp/gcloud-sdk.tar.gz ${gcloud_url} && \\\n    tar -C ${gcloud_home} -xvf /tmp/gcloud-sdk.tar.gz && \\\n    ${gcloud_install_script} && \\\n    pip3 uninstall crcmod && \\\n    pip3 install --no-cache-dir -U crcmod; rm /tmp/gcloud-sdk.tar.gz \\\n  else \\\n    echo \"Skipping GCloud SDK installation\"; \\\n  fi\n\n## Install Android SDK\nARG sdk_version=commandlinetools-linux-6200805_latest.zip\nARG android_home=/opt/android/sdk\nARG android_api=android-32\nARG android_build_tools=32.0.0\nARG android_ndk=false\nARG ndk_version=23.1.7779620\nARG cmake=3.18.1\nRUN mkdir -p ${android_home} && \\\n    wget --quiet --output-document=/tmp/${sdk_version} https://dl.google.com/android/repository/${sdk_version} && \\\n    unzip -q /tmp/${sdk_version} -d ${android_home} && \\\n    rm /tmp/${sdk_version}\n\n# Set environmental variables\nENV ANDROID_HOME ${android_home}\nENV PATH=${ANDROID_HOME}/emulator:${ANDROID_HOME}/tools:${ANDROID_HOME}/tools/bin:${ANDROID_HOME}/platform-tools:${PATH}\n\nRUN mkdir ~/.android && echo '### User Sources for Android SDK Manager' > ~/.android/repositories.cfg\n\nRUN yes | sdkmanager --sdk_root=$ANDROID_HOME --licenses\nRUN sdkmanager --sdk_root=$ANDROID_HOME --install \\\n  \"platform-tools\" \\\n  \"build-tools;${android_build_tools}\" \\\n  \"platforms;${android_api}\"\nRUN if [ \"$android_ndk\" = true ] ; \\\n  then \\\n    echo \"Installing Android NDK ($ndk_version, cmake: $cmake)\"; \\\n    sdkmanager --sdk_root=\"$ANDROID_HOME\" --install \\\n    \"ndk;${ndk_version}\" \\\n    \"cmake;${cmake}\" ; \\\n  else \\\n    echo \"Skipping NDK installation\"; \\\n  fi\n"
+}

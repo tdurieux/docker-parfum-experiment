@@ -1,0 +1,71 @@
+{
+  "startTime": 1674246624217,
+  "endTime": 1674246625565,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 79,
+        "lineEnd": 79,
+        "columnStart": 4,
+        "columnEnd": 101
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 83,
+        "lineEnd": 83,
+        "columnStart": 4,
+        "columnEnd": 62
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 85,
+        "lineEnd": 85,
+        "columnStart": 15,
+        "columnEnd": 50
+      }
+    },
+    {
+      "rule": "gpgVerifyAscRmAsc",
+      "position": {
+        "lineStart": 42,
+        "lineEnd": 42,
+        "columnStart": 4,
+        "columnEnd": 52
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 38,
+        "lineEnd": 38,
+        "columnStart": 4,
+        "columnEnd": 23
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 80,
+        "lineEnd": 80,
+        "columnStart": 4,
+        "columnEnd": 63
+      }
+    },
+    {
+      "rule": "gpgUseBatchFlag",
+      "position": {
+        "lineStart": 41,
+        "lineEnd": 41,
+        "columnStart": 72,
+        "columnEnd": 84
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM alpine:3.15.4 as alpine\n\nFROM ghcr.io/graalvm/graalvm-ce:ol8-java17-22.1.0 AS graal\n\nFROM graal as maven-cache\nENV MAVEN_OPTS=-Dmaven.repo.local=/mvn\nWORKDIR /app\nCOPY .mvn/ /app/.mvn/\nCOPY mvnw /app/\nCOPY pom.xml /app/\nRUN ./mvnw dependency:go-offline\n\nFROM alpine as downloader\n# When updating,\n# * also update the checksum found at https://dl.k8s.io/release/v${K8S_VERSION}/bin/linux/amd64/kubectl.sha256\n# * also update k8s-related versions in vars.tf, init-cluster.sh and apply.sh\nARG K8S_VERSION=1.21.2\nARG KUBECTL_CHECKSUM=55b982527d76934c2f119e70bf0d69831d3af4985f72bb87cd4924b1c7d528da\n# When updating, also update the checksum found at https://github.com/helm/helm/releases\nARG HELM_VERSION=3.8.2\nARG HELM_CHECKSUM=6cb9a48f72ab9ddfecab88d264c2f6508ab3cd42d9c09666be16a7bf006bed7b\n# bash curl unzip required for Jenkins downloader\nRUN apk add --no-cache \\\n      gnupg \\\n      outils-sha256 \\\n      git \\\n      bash curl unzip\n\nRUN mkdir -p /dist/usr/local/bin\nENV HOME=/dist/home\nRUN mkdir -p /dist/home\nRUN chmod a=rwx -R ${HOME}\n\nWORKDIR /tmp\n\n# Helm\nRUN wget -q -O helm.tar.gz https://get.helm.sh/helm-v${HELM_VERSION}-linux-amd64.tar.gz\nRUN wget -q -O helm.tar.gz.asc https://github.com/helm/helm/releases/download/v${HELM_VERSION}/helm-v${HELM_VERSION}-linux-amd64.tar.gz.asc\nRUN tar -xf helm.tar.gz && rm helm.tar.gz\n# Without the two spaces the check fails!\nRUN echo \"${HELM_CHECKSUM}  helm.tar.gz\" | sha256sum -c\nRUN wget -q https://raw.githubusercontent.com/helm/helm/main/KEYS -O- | gpg --batch --import\nRUN gpg --batch --verify helm.tar.gz.asc helm.tar.gz && rm helm.tar.gz.asc\nRUN mv linux-amd64/helm /dist/usr/local/bin\n\n# Kubectl\nRUN wget -q -O kubectl.sha256 https://dl.k8s.io/release/v${K8S_VERSION}/bin/linux/amd64/kubectl.sha256\nRUN wget -q -O kubectl https://dl.k8s.io/release/v${K8S_VERSION}/bin/linux/amd64/kubectl\n# kubectl binary download does not seem to offer signatures\nRUN echo \"${KUBECTL_CHECKSUM}  kubectl\" | sha256sum -c\nRUN chmod +x /tmp/kubectl\nRUN mv /tmp/kubectl /dist/usr/local/bin/kubectl\n\n# External Repos used in GOP\nWORKDIR /dist/gop/repos\nRUN git clone --bare https://github.com/cloudogu/spring-petclinic.git\nRUN git clone --bare https://github.com/cloudogu/spring-boot-helm-chart.git\nRUN git clone --bare https://github.com/cloudogu/gitops-build-lib.git\nRUN git clone --bare https://github.com/cloudogu/ces-build-lib.git\n\n# Creates /dist/home/.gitconfig\nRUN git config --global user.email \"hello@cloudogu.com\" && \\\n    git config --global user.name \"Cloudogu\"\n\n# Download Jenkins Plugin\nCOPY scripts/jenkins/plugins /jenkins\nRUN /jenkins/download-plugins.sh /dist/gop/jenkins-plugins\n\n\nFROM graal as native-image\nENV MAVEN_OPTS=-Dmaven.repo.local=/mvn\nRUN gu install native-image\n\n# Set up musl, in order to produce a static image compatible to alpine\n# See\n# https://github.com/oracle/graal/issues/2824 and\n# https://github.com/oracle/graal/blob/vm-ce-22.0.0.2/docs/reference-manual/native-image/StaticImages.md\nARG RESULT_LIB=\"/musl\"\nRUN mkdir ${RESULT_LIB} && \\\n    curl -f -L -o musl.tar.gz https://more.musl.cc/10.2.1/x86_64-linux-musl/x86_64-linux-musl-native.tgz && \\\n    tar -xvzf musl.tar.gz -C ${RESULT_LIB} --strip-components 1 && \\\n    cp /usr/lib/gcc/x86_64-redhat-linux/8/libstdc++.a ${RESULT_LIB}/lib/ && rm musl.tar.gz\nENV CC=/musl/bin/gcc\nRUN curl -f -L -o zlib.tar.gz https://zlib.net/zlib-1.2.12.tar.gz && \\\n    mkdir zlib && tar -xvzf zlib.tar.gz -C zlib --strip-components 1 && \\\n    cd zlib && ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" --static --prefix=/musl && \\\n    make && make install && \\\n    cd / && rm -rf /zlib && rm -f /zlib.tar.gz\nENV PATH=\"$PATH:/musl/bin\"\n\n# Provide binaries used by apply-ng, so our runs with native-image-agent dont fail\n# with \"java.io.IOException: Cannot run program \"kubectl\"...\" etc.\nRUN microdnf install iproute\n# Copy only binaries, not jenkins plugins. Avoids having to rebuild native image only plugin changes\nCOPY --from=downloader /dist/usr/ /usr/\n\nCOPY --from=maven-cache /mvn/ /mvn/\nCOPY --from=maven-cache /app/ /app\n\n# copy only resources that we need to compile the binary\nCOPY src /app/src/\nCOPY compiler.groovy /app\n\nWORKDIR /app\n\n# Build native image without micronaut\nRUN ./mvnw package -DskipTests\n\n# Create Graal native image config for largest jar file\nRUN java -agentlib:native-image-agent=config-output-dir=conf/ -jar $(ls -S target/*.jar | head -n 1) || true\n# Run again with different params in order to avoid further ClassNotFoundExceptions\nRUN java -agentlib:native-image-agent=config-merge-dir=conf/ -jar $(ls -S target/*.jar | head -n 1) \\\n      --yes --jenkins-url=a --scmm-url=a \\\n      --jenkins-username=a --jenkins-password=a --scmm-username=a--scmm-password=a --password=a \\\n      --registry-url=a --registry-path=a --remote --argocd --debug --trace \\\n    || true\n\nRUN native-image -Dgroovy.grape.enable=false \\\n    -H:+ReportExceptionStackTraces \\\n    -H:ConfigurationFileDirectories=conf/ \\\n    --static \\\n    --allow-incomplete-classpath \\\n    --report-unsupported-elements-at-runtime \\\n    --diagnostics-mode \\\n    --initialize-at-run-time=org.codehaus.groovy.control.XStreamUtils,groovy.grape.GrapeIvy,org.codehaus.groovy.vmplugin.v8.Java8\\$LookupHolder \\\n    --initialize-at-build-time \\\n    --no-fallback \\\n    --libc=musl \\\n    -jar $(ls -S target/*.jar | head -n 1) \\\n    apply-ng\n\nFROM alpine\n\nENV HOME=/home \\\n    HELM_CACHE_HOME=/home/.cache/helm \\\n    HELM_CONFIG_HOME=/home/.config/helm \\\n    HELM_DATA_HOME=/home/.local/share/helm \\\n    HELM_PLUGINS=/home/.local/share/helm/plugins \\\n    HELM_REGISTRY_CONFIG=/home/.config/helm/registry.json \\\n    HELM_REPOSITORY_CACHE=/home/.cache/helm/repository \\\n    HELM_REPOSITORY_CONFIG=/home/.config/helm/repositories.yaml \\\n    SPRING_BOOT_HELM_CHART_REPO=/gop/repos/spring-boot-helm-chart.git \\\n    SPRING_PETCLINIC_REPO=/gop/repos/spring-petclinic.git \\\n    GITOPS_BUILD_LIB_REPO=/gop/repos/gitops-build-lib.git \\\n    CES_BUILD_LIB_REPO=/gop/repos/ces-build-lib.git \\\n    JENKINS_PLUGIN_FOLDER=/gop/jenkins-plugins/\n\nWORKDIR /app\n\n# copy groovy cli binary from native-image stage\nCOPY --from=native-image /app/apply-ng ./apply-ng\n\nENTRYPOINT [\"scripts/apply.sh\"]\n\n# Unzip is needed for downloading docker plugins (install-plugins.sh)\nRUN apk update && apk upgrade && \\\n    apk add --no-cache \\\n     bash \\\n     curl \\\n     apache2-utils \\\n     gettext \\\n     jq \\\n     git \\\n    unzip\n\nUSER 1000\n\nCOPY --from=downloader /dist /\n\n# specify exactly what to copy\nCOPY applications /app/applications/\nCOPY argocd /app/argocd/\nCOPY docker-registry /app/docker-registry/\nCOPY exercises /app/exercises/\nCOPY fluxv1 /app/fluxv1/\nCOPY fluxv2 /app/fluxv2/\nCOPY jenkins /app/jenkins/\nCOPY k8s-namespaces /app/k8s-namespaces/\nCOPY metrics /app/metrics/\nCOPY scm-manager /app/scm-manager/\nCOPY scripts /app/scripts/\nCOPY .curlrc /app\nCOPY LICENSE /app\n\nARG VCS_REF\nARG BUILD_DATE\nLABEL org.opencontainers.image.title=\"gitops-playground\" \\\n      org.opencontainers.image.source=\"https://github.com/cloudogu/gitops-playground\" \\\n      org.opencontainers.image.url=\"https://github.com/cloudogu/gitops-playground\" \\\n      org.opencontainers.image.documentation=\"https://github.com/cloudogu/gitops-playground\" \\\n      org.opencontainers.image.vendor=\"cloudogu\" \\\n      org.opencontainers.image.licenses=\"MIT\" \\\n      org.opencontainers.image.description=\"Reproducible infrastructure to showcase GitOps workflows and evaluate different GitOps Operators\" \\ \n      org.opencontainers.image.version=\"${VCS_REF}\" \\\n      org.opencontainers.image.created=\"${BUILD_DATE}\" \\\n      org.opencontainers.image.ref.name=\"${VCS_REF}\" \\\n      org.opencontainers.image.revision=\"${VCS_REF}\""
+}

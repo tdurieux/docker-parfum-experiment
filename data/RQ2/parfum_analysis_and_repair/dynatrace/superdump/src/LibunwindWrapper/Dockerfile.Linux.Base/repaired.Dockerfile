@@ -1,0 +1,18 @@
+FROM ubuntu
+
+COPY . /libunwind
+
+RUN apt-get update && \
+	apt-get install --no-install-recommends -y apt-transport-https && \
+	echo "deb [arch=amd64] https://apt-mo.trafficmanager.net/repos/dotnet-release/ xenial main" > /etc/apt/sources.list.d/dotnetdev.list && \
+	apt-key adv --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys 417A0893 && \
+	apt-get update && \
+	apt-get upgrade -y && \
+	apt-get install --no-install-recommends -y build-essential gdb dotnet-dev-1.0.4 rsync openssh-server && \
+	apt-get clean && rm -rf /var/lib/apt/lists/*;
+
+RUN cd /libunwind && \
+	./configure --build="$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)" CFLAGS="-fPIC" && \
+	make && \
+	make install && \
+	rm -R /libunwind

@@ -1,0 +1,53 @@
+{
+  "startTime": 1674243962084,
+  "endTime": 1674243962346,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 41,
+        "lineEnd": 41,
+        "columnStart": 4,
+        "columnEnd": 65
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 43,
+        "lineEnd": 43,
+        "columnStart": 4,
+        "columnEnd": 53
+      }
+    },
+    {
+      "rule": "aptGetInstallUseY",
+      "position": {
+        "lineStart": 39,
+        "lineEnd": 39,
+        "columnStart": 22,
+        "columnEnd": 57
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 39,
+        "lineEnd": 39,
+        "columnStart": 22,
+        "columnEnd": 57
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 75,
+        "lineEnd": 75,
+        "columnStart": 4,
+        "columnEnd": 55
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "################################\n# Python dependencies builder\n#\nFROM python:2-stretch AS base\n\nWORKDIR /app\nEXPOSE 8000\n\nENV LANG=C.UTF-8\nENV PYTHONDONTWRITEBYTECODE=1\nENV PYTHONUNBUFFERED=1\nENV PATH=\"/venv/bin:$PATH\"\n\nRUN virtualenv /venv\nRUN useradd -d /app -M --uid 1000 --shell /usr/sbin/nologin kitsune\n\nRUN apt-get update && \\\n    apt-get install -y --no-install-recommends \\\n            gettext build-essential \\\n            libxml2-dev libxslt1-dev zlib1g-dev git \\\n            libjpeg-dev libffi-dev libssl-dev libxslt1.1 \\\n            libmariadbclient-dev mariadb-client && \\\n    rm -rf /var/lib/apt/lists/*\n\nCOPY ./requirements/*.txt /app/requirements/\n\nRUN pip install --no-cache-dir --require-hashes -r requirements/default.txt && \\\n    pip install --no-cache-dir --require-hashes -r requirements/dev.txt && \\\n    pip install --no-cache-dir --require-hashes -r requirements/test.txt\n\nARG GIT_SHA=head\nENV GIT_SHA=${GIT_SHA}\n\n\n################################\n# Developer image\n#\nFROM base AS base-dev\n\nRUN apt-get update && apt-get install -y --no-install-recommends apt-transport-https && \\\n    echo \"deb https://deb.nodesource.com/node_6.x stretch main\" >> /etc/apt/sources.list && \\\n    curl -f -sS https://deb.nodesource.com/gpgkey/nodesource.gpg.key | apt-key add - && \\\n    echo \"deb https://dl.yarnpkg.com/debian/ stable main\" >> /etc/apt/sources.list && \\\n    curl -f -sS https://dl.yarnpkg.com/debian/pubkey.gpg | apt-key add - && \\\n    apt-get update && \\\n    apt-get install -y --no-install-recommends nodejs yarn optipng && \\\n    rm -rf /var/lib/apt/lists/*\n\n\n################################\n# Staticfiles builder\n#\nFROM base-dev AS staticfiles\n\nCOPY package.json bower.json yarn.lock /app/\n\nRUN yarn install --frozen-lockfile && yarn cache clean\nRUN ./node_modules/.bin/bower install --allow-root\n\nCOPY . .\n\nRUN cp .env-build .env && \\\n    ./manage.py nunjucks_precompile && \\\n    ./manage.py compilejsi18n && \\\n    ./manage.py collectstatic --noinput\n\n\n################################\n# Fetch locales\n#\nFROM python:2-stretch AS locales\n\nWORKDIR /app\n\nRUN apt-get update && \\\n    apt-get install -y --no-install-recommends  gettext && rm -rf /var/lib/apt/lists/*;\n\nENV PATH=\"/venv/bin:$PATH\"\n\nCOPY --from=base /venv /venv\n\nCOPY . .\n\nARG LOCALE_ENV=master\nENV LOCALE_ENV=${LOCALE_ENV}\nRUN ./docker/bin/fetch-l10n-files.sh\nRUN ./scripts/compile-linted-mo.sh && \\\n    find ./locale ! -name '*.mo' -type f -delete\n\nARG GIT_SHA=head\nENV GIT_SHA ${GIT_SHA}\n\n\n################################\n# Full prod image sans locales\n#\nFROM python:2-slim-stretch AS full-no-locales\n\nWORKDIR /app\n\nEXPOSE 8000\n\nENV PATH=\"/venv/bin:$PATH\"\nENV LANG=C.UTF-8\nENV PYTHONDONTWRITEBYTECODE=1\nENV PYTHONUNBUFFERED=1\n\nRUN apt-get update && \\\n    apt-get install -y --no-install-recommends \\\n    libmariadbclient18 optipng mariadb-client \\\n    libxslt1.1 && \\\n    rm -rf /var/lib/apt/lists/*\n\nRUN groupadd --gid 1000 kitsune && useradd -g kitsune --uid 1000 --shell /usr/sbin/nologin kitsune\n\nCOPY --from=base --chown=kitsune:kitsune /venv /venv\nCOPY --from=staticfiles --chown=kitsune:kitsune /app/static /app/static\nCOPY --from=staticfiles --chown=kitsune:kitsune /app/jsi18n /app/jsi18n\nCOPY --from=staticfiles --chown=kitsune:kitsune /app/bower_components /app/bower_components\n\nCOPY --chown=kitsune:kitsune . .\n\nRUN mkdir /app/media && chown kitsune:kitsune /app/media\n\nUSER kitsune\n\nARG GIT_SHA=head\nENV GIT_SHA ${GIT_SHA}\n\n\n################################\n# Full final prod image\n#\nFROM full-no-locales AS full\n\nUSER root\nCOPY --from=locales --chown=kitsune:kitsune /app/locale /app/locale\nUSER kitsune\n"
+}

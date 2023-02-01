@@ -1,0 +1,63 @@
+{
+  "startTime": 1674255104410,
+  "endTime": 1674255105598,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 25,
+        "lineEnd": 25,
+        "columnStart": 4,
+        "columnEnd": 50
+      }
+    },
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 75,
+        "lineEnd": 75,
+        "columnStart": 18,
+        "columnEnd": 29
+      }
+    },
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 75,
+        "lineEnd": 75,
+        "columnStart": 33,
+        "columnEnd": 49
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 26,
+        "lineEnd": 26,
+        "columnStart": 5,
+        "columnEnd": 94
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 14,
+        "lineEnd": 17,
+        "columnStart": 5,
+        "columnEnd": 58
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 26,
+        "lineEnd": 26,
+        "columnStart": 5,
+        "columnEnd": 94
+      }
+    }
+  ],
+  "repairedDockerfile": "FROM ubuntu:20.04\n\nLABEL maintainer=\"tech@appsmith.com\"\n\n# Set workdir to /opt/appsmith\nWORKDIR /opt/appsmith\n\n# The env variables are needed for Appsmith server to correctly handle non-roman scripts like Arabic.\nENV LANG C.UTF-8\nENV LC_ALL C.UTF-8\n\n# Update APT packages - Base Layer\nRUN apt-get update \\\n  && apt-get upgrade --yes \\\n  && DEBIAN_FRONTEND=noninteractive apt-get install --no-install-recommends -y \\\n    supervisor curl cron certbot nginx gnupg wget netcat openssh-client \\\n    software-properties-common gettext openjdk-11-jre \\\n    python3-pip python-setuptools git ca-certificates-java \\\n  && pip install --no-cache-dir git+https://github.com/coderanger/supervisor-stdout@973ba19967cdaf46d9c1634d1675fc65b9574f6e \\\n  && apt-get remove -y git python3-pip && rm -rf /var/lib/apt/lists/*;\n\n# Install MongoDB v4.0.5, Redis, NodeJS - Service Layer\nRUN wget -qO - https://www.mongodb.org/static/pgp/server-4.4.asc | apt-key add -\nRUN echo \"deb [ arch=amd64,arm64 ]http://repo.mongodb.org/apt/ubuntu focal/mongodb-org/4.4 multiverse\" | tee /etc/apt/sources.list.d/mongodb-org-4.4.list \\\n  && apt-get remove wget -y\nRUN curl -f -sL https://deb.nodesource.com/setup_14.x | bash - \\\n  && apt-get install --no-install-recommends -y mongodb-org=4.4.6 nodejs redis build-essential \\\n  && apt-get clean \\\n  && rm -rf /var/lib/apt/lists/*\n\n# Clean up cache file - Service layer\nRUN rm -rf \\\n  /root/.cache \\\n  /root/.npm \\\n  /root/.pip \\\n  /usr/local/share/doc \\\n  /usr/share/doc \\\n  /usr/share/man \\\n  /var/lib/apt/lists/* \\\n  /tmp/*\n\n# Define volumes - Service Layer\nVOLUME [ \"/appsmith-stacks\" ]\n\n# ------------------------------------------------------------------------\n# Add backend server - Application Layer\nARG JAR_FILE=./app/server/dist/server-*.jar\nARG PLUGIN_JARS=./app/server/dist/plugins/*.jar\nARG APPSMITH_SEGMENT_CE_KEY\nENV APPSMITH_SEGMENT_CE_KEY=${APPSMITH_SEGMENT_CE_KEY}\n#Create the plugins directory\nRUN mkdir -p ./backend ./editor ./rts ./backend/plugins ./templates ./utils\n\n#Add the jar to the container\nCOPY ${JAR_FILE} backend/server.jar\nCOPY ${PLUGIN_JARS} backend/plugins/\n\n# Add client UI - Application Layer\nCOPY ./app/client/build editor/\n\n# Add RTS - Application Layer\nCOPY ./app/rts/package.json ./app/rts/dist/* rts/\nCOPY ./app/rts/node_modules rts/node_modules\n\n# Nginx & MongoDB config template - Configuration layer\nCOPY ./deploy/docker/templates/nginx/* \\\n  ./deploy/docker/templates/mongo-init.js.sh\\\n  ./deploy/docker/templates/docker.env.sh \\\n  templates/\n\n# Add bootstrapfile\nCOPY ./deploy/docker/entrypoint.sh ./deploy/docker/scripts/* ./\n\n# Add uitl tools\nCOPY ./deploy/docker/utils ./utils\nRUN cd ./utils && npm install && npm install -g . && npm cache clean --force;\n\n# Add process config to be run by supervisord\nCOPY ./deploy/docker/templates/supervisord.conf /etc/supervisor/supervisord.conf\nCOPY ./deploy/docker/templates/supervisord/ templates/supervisord/\n\n# Add defined cron job\nCOPY ./deploy/docker/templates/cron.d /etc/cron.d/\nRUN chmod 0644 /etc/cron.d/*\n\nRUN chmod +x entrypoint.sh renew-certificate.sh healthcheck.sh\n\n# Disable setuid/setgid bits for the files inside container.\nRUN find / \\( -path /proc -prune \\) -o \\( \\( -perm -2000 -o -perm -4000 \\) -print -exec chmod -s '{}' + \\) || true\n\n# Update path to load appsmith utils tool as default\nENV PATH /opt/appsmith/utils/node_modules/.bin:$PATH\n\nEXPOSE 80\nEXPOSE 443\nENTRYPOINT [ \"/opt/appsmith/entrypoint.sh\" ]\nHEALTHCHECK --interval=15s --timeout=15s --start-period=45s CMD \"/opt/appsmith/healthcheck.sh\"\nCMD [\"/usr/bin/supervisord\", \"-n\"]\n"
+}

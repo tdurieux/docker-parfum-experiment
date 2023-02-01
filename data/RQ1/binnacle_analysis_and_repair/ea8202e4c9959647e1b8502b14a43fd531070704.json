@@ -1,0 +1,44 @@
+{
+  "startTime": 1674242760087,
+  "endTime": 1674242760887,
+  "originalSmells": [
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 107,
+        "lineEnd": 107,
+        "columnStart": 5,
+        "columnEnd": 50
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 16,
+        "lineEnd": 19,
+        "columnStart": 5,
+        "columnEnd": 31
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 28,
+        "lineEnd": 40,
+        "columnStart": 5,
+        "columnEnd": 21
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 56,
+        "lineEnd": 56,
+        "columnStart": 5,
+        "columnEnd": 89
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "ARG NGINX_LABEL=latest\n\nFROM nginx:${NGINX_LABEL}\n\nARG OPENTRACING_CPP_VERSION=v1.5.1\nARG ZIPKIN_CPP_VERSION=v0.5.2\nARG LIGHTSTEP_VERSION=v0.8.1\nARG JAEGER_CPP_VERSION=v0.4.2\nARG GRPC_VERSION=v1.10.x\nARG DATADOG_VERSION=v0.3.0\n\nCOPY . /src\n\nRUN set -x \\\n# install nginx-opentracing package dependencies\n  && apt-get update \\\n  && apt-get install --no-install-recommends --no-install-suggests -y \\\n              libcurl4-openssl-dev \\\n              libprotobuf-dev \\\n              protobuf-compiler \\\n# save list of currently-installed packages so build dependencies can be cleanly removed later\n\t&& savedAptMark=\"$(apt-mark showmanual)\" \\\n# new directory for storing sources and .deb files\n\t&& tempDir=\"$(mktemp -d)\" \\\n\t&& chmod 777 \"$tempDir\" \\\n\t\t\t\\\n# (777 to ensure APT's \"_apt\" user can access it too)\n## Build OpenTracing package and tracers\n  && apt-get install --no-install-recommends --no-install-suggests -y \\\n              build-essential \\\n              cmake \\\n              git \\\n              ca-certificates \\\n              pkg-config \\\n              wget \\\n              golang \\\n              libz-dev \\\n              automake \\\n              autogen \\\n              autoconf \\\n              libtool \\\n# reset apt-mark's \"manual\" list so that \"purge --auto-remove\" will remove all build dependencies\n# (which is done after we install the built packages so we don't have to redownload any overlapping dependencies)\n\t&& apt-mark showmanual | xargs apt-mark auto > /dev/null \\\n\t&& { [ -z \"$savedAptMark\" ] || apt-mark manual $savedAptMark; } \\\n\t\\\n  && cd \"$tempDir\" \\\n### Build opentracing-cpp\n  && git clone -b $OPENTRACING_CPP_VERSION https://github.com/opentracing/opentracing-cpp.git \\\n  && cd opentracing-cpp \\\n  && mkdir .build && cd .build \\\n  && cmake -DCMAKE_BUILD_TYPE=Release \\\n           -DBUILD_TESTING=OFF .. \\\n  && make && make install \\\n  && cd \"$tempDir\" \\\n### Build zipkin-cpp-opentracing\n  && apt-get --no-install-recommends --no-install-suggests -y install libcurl4-gnutls-dev \\\n  && git clone -b $ZIPKIN_CPP_VERSION https://github.com/rnburn/zipkin-cpp-opentracing.git \\\n  && cd zipkin-cpp-opentracing \\\n  && mkdir .build && cd .build \\\n  && cmake -DBUILD_SHARED_LIBS=1 -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF .. \\\n  && make && make install \\\n  && cd \"$tempDir\" \\\n  && ln -s /usr/local/lib/libzipkin_opentracing.so /usr/local/lib/libzipkin_opentracing_plugin.so \\\n### Build Jaeger cpp-client\n  && git clone -b $JAEGER_CPP_VERSION https://github.com/jaegertracing/cpp-client.git jaeger-cpp-client \\\n  && cd jaeger-cpp-client \\\n  && mkdir .build && cd .build \\\n  && cmake -DCMAKE_BUILD_TYPE=Release \\\n           -DBUILD_TESTING=OFF \\\n           -DJAEGERTRACING_WITH_YAML_CPP=ON .. \\\n  && make && make install \\\n  && export HUNTER_INSTALL_DIR=$(cat _3rdParty/Hunter/install-root-dir) \\\n  && cd \"$tempDir\" \\\n  && ln -s /usr/local/lib/libjaegertracing.so /usr/local/lib/libjaegertracing_plugin.so \\\n### Build dd-opentracing-cpp\n  && git clone -b $DATADOG_VERSION https://github.com/DataDog/dd-opentracing-cpp.git \\\n  && cd dd-opentracing-cpp \\\n  && scripts/install_dependencies.sh not-opentracing not-curl not-zlib \\\n  && mkdir .build && cd .build \\\n  && cmake -DBUILD_SHARED_LIBS=1 -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF .. \\\n  && make && make install \\\n  && cd \"$tempDir\" \\\n  && ln -s /usr/local/lib/libdd_opentracing.so /usr/local/lib/libdd_opentracing_plugin.so \\\n### Build gRPC\n  && git clone -b $GRPC_VERSION https://github.com/grpc/grpc \\\n  && cd grpc \\\n  && git submodule update --init \\\n  && make HAS_SYSTEM_PROTOBUF=false && make install \\\n  && make && make install \\\n  && cd third_party/protobuf \\\n  && make install \\\n  && cd \"$tempDir\" \\\n### Build lightstep-tracer-cpp\n  && git clone -b $LIGHTSTEP_VERSION https://github.com/lightstep/lightstep-tracer-cpp.git \\\n  && cd lightstep-tracer-cpp \\\n  && mkdir .build && cd .build \\\n  && cmake -DBUILD_SHARED_LIBS=1 -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF .. \\\n  && make && make install \\\n  && cd \"$tempDir\" \\\n  && ln -s /usr/local/lib/liblightstep_tracer.so /usr/local/lib/liblightstep_tracer_plugin.so \\\n### Build nginx-opentracing modules\n  && NGINX_VERSION=`nginx -v 2>&1` && NGINX_VERSION=${NGINX_VERSION#*nginx/} \\\n  && echo \"deb-src http://nginx.org/packages/mainline/debian/ stretch nginx\" >> /etc/apt/sources.list \\\n  && apt-get update \\\n  && apt-get build-dep -y nginx=${NGINX_VERSION} \\\n  && wget -O nginx-release-${NGINX_VERSION}.tar.gz https://github.com/nginx/nginx/archive/release-${NGINX_VERSION}.tar.gz \\\n  && tar zxf nginx-release-${NGINX_VERSION}.tar.gz \\\n  && cd nginx-release-${NGINX_VERSION} \\\n  && NGINX_MODULES_PATH=$(nginx -V 2>&1 | grep -oP \"modules-path=\\K[^\\s]*\") \\\n  && auto/configure \\\n        --with-compat \\\n        --add-dynamic-module=/src/opentracing \\\n        --with-cc-opt=\"-I$HUNTER_INSTALL_DIR/include\" \\\n        --with-ld-opt=\"-L$HUNTER_INSTALL_DIR/lib\" \\\n        --with-debug \\\n  && make modules \\\n  && cp objs/ngx_http_opentracing_module.so $NGINX_MODULES_PATH/ \\\n\t# if we have leftovers from building, let's purge them (including extra, unnecessary build deps)\n  && rm -rf /src \\\n  && rm -rf $HOME/.hunter \\\n  && if [ -n \"$tempDir\" ]; then \\\n  \tapt-get purge -y --auto-remove \\\n  \t&& rm -rf \"$tempDir\" /etc/apt/sources.list.d/temp.list; \\\n  fi && rm nginx-release-${NGINX_VERSION}.tar.gz && rm -rf /var/lib/apt/lists/*;\n\n# forward request and error logs to docker log collector\nRUN ln -sf /dev/stdout /var/log/nginx/access.log \\\n\t&& ln -sf /dev/stderr /var/log/nginx/error.log\n\nEXPOSE 80\n\nSTOPSIGNAL SIGTERM\n\nCMD [\"nginx\", \"-g\", \"daemon off;\"]\n"
+}

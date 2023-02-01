@@ -1,0 +1,26 @@
+{
+  "startTime": 1674251768671,
+  "endTime": 1674251769753,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 25,
+        "lineEnd": 25,
+        "columnStart": 4,
+        "columnEnd": 78
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 25,
+        "lineEnd": 25,
+        "columnStart": 4,
+        "columnEnd": 78
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "### Builder Container\nFROM sasnouskikh/livy-builder:0.3 as build\n\nRUN cd / && \\\n    git clone https://github.com/apache/spark.git --branch v3.0.1 --single-branch && \\\n    cd /spark && \\\n    dev/make-distribution.sh \\\n        --name hadoop-3.2.0-cloud-scala-2.12 --pip --tgz -DskipTests \\\n        -Phadoop-3.2 \\\n        -Phadoop-cloud \\\n        -Pkubernetes \\\n        -Phive && \\\n    cp spark-3.0.1-bin-hadoop-3.2.0-cloud-scala-2.12.tgz /\n\n### Final Container\nFROM openjdk:8-jre-slim\n\nLABEL maintainer=\"Aliaksandr Sasnouskikh <jaahstreetlove@gmail.com>\"\n\nENV BASE_IMAGE      openjdk:8-jre-slim\n\nRUN set -ex && \\\n    sed -i 's/http:/https:/g' /etc/apt/sources.list && \\\n    apt-get update && \\\n    ln -s /lib /lib64 && \\\n    apt install --no-install-recommends -y bash tini libc6 libpam-modules krb5-user libnss3 wget bzip2 && \\\n    rm /bin/sh && \\\n    ln -sv /bin/bash /bin/sh && \\\n    echo \"auth required pam_wheel.so use_uid\" >> /etc/pam.d/su && \\\n    chgrp root /etc/passwd && chmod ug+rw /etc/passwd && \\\n    rm -rf /var/cache/apt/* && rm -rf /var/lib/apt/lists/*;\n\nENV SPARK_VERSION   3.0.1\nENV HADOOP_VERSION  hadoop-3.2.0-cloud\nENV SCALA_VERSION   2.12\n\nENV SPARK_HOME      /opt/spark\nENV SPARK_CONF_DIR  $SPARK_HOME/conf\nENV SPARK_CLASSPATH $SPARK_HOME/cluster-conf\n\nENV PYTHONHASHSEED  0\nENV CONDA_DIR       /opt/conda\nENV SHELL           /bin/bash\n\nENV PATH            $PATH:$SPARK_HOME/bin:$CONDA_DIR/bin\n\nARG MINICONDA_VERSION=4.8.3\nARG MINICONDA_MD5=d63adf39f2c220950a063e0529d4ff74\nARG CONDA_VERSION=4.8.3\nARG PYTHON_VERSION=3.7.8\n\nARG spark_uid=185\n\n### install spark\nCOPY --from=build /spark-${SPARK_VERSION}-bin-${HADOOP_VERSION}-scala-${SCALA_VERSION}.tgz /\nRUN tar -xzf /spark-${SPARK_VERSION}-bin-${HADOOP_VERSION}-scala-${SCALA_VERSION}.tgz -C /opt/ && \\\n    ln -s /opt/spark-${SPARK_VERSION}-bin-${HADOOP_VERSION}-scala-${SCALA_VERSION} $SPARK_HOME && \\\n    rm -f /spark-${SPARK_VERSION}-bin-${HADOOP_VERSION}-scala-${SCALA_VERSION}.tgz && \\\n    mkdir -p $SPARK_HOME/work-dir && \\\n    mkdir -p $SPARK_HOME/spark-warehouse && \\\n    mkdir -p $SPARK_HOME/cluster-conf\n\n# install Conda (https://github.com/jupyter/docker-stacks/blob/6d42503c684f3de9b17ce92a6b0c952ef2d1ecd8/base-notebook/Dockerfile#L78-L101)\nRUN mkdir -p $CONDA_DIR && \\\n    cd /tmp && \\\n    wget --quiet https://repo.continuum.io/miniconda/Miniconda3-py38_${MINICONDA_VERSION}-Linux-x86_64.sh && \\\n    echo \"${MINICONDA_MD5} *Miniconda3-py38_${MINICONDA_VERSION}-Linux-x86_64.sh\" | md5sum -c - && \\\n    /bin/bash Miniconda3-py38_${MINICONDA_VERSION}-Linux-x86_64.sh -f -b -p $CONDA_DIR && \\\n    rm Miniconda3-py38_${MINICONDA_VERSION}-Linux-x86_64.sh && \\\n    echo \"conda ${CONDA_VERSION}\" >> $CONDA_DIR/conda-meta/pinned && \\\n    conda config --system --prepend channels conda-forge && \\\n    conda config --system --set auto_update_conda false && \\\n    conda config --system --set show_channel_urls true && \\\n    conda config --system --set channel_priority strict && \\\n    if [ ! $PYTHON_VERSION = 'default' ]; then conda install --yes python=$PYTHON_VERSION; fi && \\\n    conda list python | grep '^python ' | tr -s ' ' | cut -d '.' -f 1,2 | sed 's/$/.*/' >> $CONDA_DIR/conda-meta/pinned && \\\n    conda install --quiet --yes conda && \\\n    conda install --quiet --yes pip && \\\n    conda install --quiet --yes numpy scipy pandas scikit-learn && \\\n    conda install --quiet --yes -c conda-forge pyarrow && \\\n    conda update --all --quiet --yes && \\\n    conda clean --all -f -y\n\nCOPY conf/* $SPARK_CONF_DIR/\n# $SPARK_HOME/conf gets cleaned by Spark on Kubernetes internals, create and add to classpath another directory for logging and other configs\nCOPY conf/* $SPARK_HOME/cluster-conf/\nCOPY entrypoint.sh /opt/\nCOPY Dockerfile /my_docker/\n\nWORKDIR $SPARK_HOME/work-dir\nRUN chmod g+w /opt/spark/work-dir\n\nENTRYPOINT [ \"/opt/entrypoint.sh\" ]\n\n# Specify the User that the actual main process will run as\nUSER ${spark_uid}\n"
+}

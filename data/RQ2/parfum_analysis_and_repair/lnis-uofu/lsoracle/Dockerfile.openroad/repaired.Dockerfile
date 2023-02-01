@@ -1,0 +1,1 @@
+#Build context must include both yosys and lsoracle directories; move this dockerfile or supply an appropriate context using -f during the build

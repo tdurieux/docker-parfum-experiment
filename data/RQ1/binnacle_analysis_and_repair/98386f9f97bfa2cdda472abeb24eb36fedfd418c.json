@@ -1,0 +1,17 @@
+{
+  "startTime": 1674246917782,
+  "endTime": 1674246918266,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 19,
+        "lineEnd": 24,
+        "columnStart": 2,
+        "columnEnd": 31
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# stage: builder\nFROM concourse/golang-builder AS builder\n\nCOPY . /go/src/github.com/concourse/docker-image-resource\nENV CGO_ENABLED 0\nCOPY assets/ /assets\nRUN go build -o /assets/check github.com/concourse/docker-image-resource/cmd/check\nRUN go build -o /assets/print-metadata github.com/concourse/docker-image-resource/cmd/print-metadata\nRUN go build -o /assets/ecr-login github.com/concourse/docker-image-resource/vendor/github.com/awslabs/amazon-ecr-credential-helper/ecr-login/cmd\nRUN set -e; \\\n    for pkg in $(go list ./...); do \\\n      go test -o \"/tests/$(basename $pkg).test\" -c $pkg; \\\n    done\n\n# stage: resource\nFROM ubuntu:bionic AS resource\n\n# docker hosts their own packages, this steps sets up the repo for apt-get\nRUN apt-get update; \\\n  apt-get install -y --no-install-recommends \\\n    apt-transport-https \\\n    ca-certificates \\\n    curl \\\n    gnupg-agent \\\n    software-properties-common; rm -rf /var/lib/apt/lists/*; \\\n  curl -fsSL https://download.docker.com/linux/ubuntu/gpg | apt-key add - ; \\\n  add-apt-repository \\\n   \"deb [arch=amd64] https://download.docker.com/linux/ubuntu \\\n   $(lsb_release -cs) \\\n   stable\";\n\nRUN apt-get update && apt-get install -y --no-install-recommends \\\n    docker-ce \\\n    jq \\\n    ca-certificates \\\n    xz-utils \\\n    iproute2 \\\n  && rm -rf /var/lib/apt/lists/*\n\nCOPY --from=builder /assets /opt/resource\nRUN ln -s /opt/resource/ecr-login /usr/local/bin/docker-credential-ecr-login\n\n# stage: tests\nFROM resource AS tests\nCOPY --from=builder /tests /tests\nADD . /docker-image-resource\nRUN set -e; \\\n    for test in /tests/*.test; do \\\n      $test -ginkgo.v; \\\n    done\n\n# final output stage\nFROM resource\n"
+}

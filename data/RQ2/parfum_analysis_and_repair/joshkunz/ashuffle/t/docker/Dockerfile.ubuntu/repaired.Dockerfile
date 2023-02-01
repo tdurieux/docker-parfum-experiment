@@ -1,0 +1,40 @@
+FROM ghcr.io/joshkunz/ashuffle-integration-root:v2.2.5
+
+COPY /tools/meta/ /opt/meta
+RUN cd /opt/meta && go build
+
+# Install libmpdclient
+
+ARG LIBMPDCLIENT_VERSION
+ENV LIBMPDCLIENT_VERSION ${LIBMPDCLIENT_VERSION:-latest}
+RUN /opt/meta/meta install libmpdclient \
+    --version=${LIBMPDCLIENT_VERSION} --prefix=/usr
+
+# Install MPD
+
+ARG MPD_VERSION
+ENV MPD_VERSION ${MPD_VERSION:-latest}
+COPY /t/docker/patches/ /patches/
+RUN /opt/meta/meta install mpd \
+    --version=${MPD_VERSION} --patch_root=/patches --prefix=/usr
+
+# Install our static test helpers
+
+COPY /t/static/mpd.conf /conf
+
+# Copy in the integration test runner
+
+COPY /t/docker/run_integration.sh /exec/
+
+# The directory that contains the staged ashuffle source. If unset the
+# build directory (presumably the ashuffle root) is used. This has some
+# drawbacks, like potentially including a build directory that would conflict
+# with the container's build directory.
+ARG STAGE_DIR
+ENV STAGE_DIR ${STAGE_DIR:-./}
+
+# This archive is created automatically by the build script. Note, this archive
+# is automatically extracted by this rule.
+ADD ${STAGE_DIR}/ashuffle-archive.tar /ashuffle/
+
+ENTRYPOINT ["/exec/run_integration.sh"]

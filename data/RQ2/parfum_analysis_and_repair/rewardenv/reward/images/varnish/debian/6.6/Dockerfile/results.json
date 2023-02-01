@@ -1,0 +1,44 @@
+{
+  "startTime": 1674220288868,
+  "endTime": 1674220290049,
+  "originalSmells": [
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 40,
+        "lineEnd": 40,
+        "columnStart": 7,
+        "columnEnd": 32
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 46,
+        "lineEnd": 46,
+        "columnStart": 7,
+        "columnEnd": 18
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 16,
+        "lineEnd": 18,
+        "columnStart": 7,
+        "columnEnd": 8
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 20,
+        "lineEnd": 34,
+        "columnStart": 7,
+        "columnEnd": 34
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "ARG VARNISH_VERSION=\"6.6.2-1~buster\"\nARG VARNISH_REPO_VERSION=\"66\"\nARG VARNISH_MODULES_BRANCH=\"6.6\"\nARG DEB_SCRIPT=\"https://packagecloud.io/install/repositories/varnishcache/varnish${VARNISH_REPO_VERSION}/script.deb.sh\"\n\nFROM debian:buster-slim AS builder\n\nARG VARNISH_VERSION\nARG VARNISH_REPO_VERSION\nARG VARNISH_MODULES_BRANCH\nARG DEB_SCRIPT\nENV PKG_CONFIG_PATH /usr/local/lib/pkgconfig\nENV ACLOCAL_PATH /usr/local/share/aclocal\n\nRUN set -eux \\\n    && apt-get update && apt-get upgrade -y \\\n    && apt-get install -y --no-install-recommends --allow-downgrades \\\n    ca-certificates \\\n    curl \\\n    && curl -fsSL \"${DEB_SCRIPT}\" | bash \\\n    && apt-get install -y --no-install-recommends --allow-downgrades \\\n    build-essential \\\n    autoconf \\\n    automake \\\n    git \\\n    libtool \\\n    make \\\n    pkgconf \\\n    python3 \\\n    python3-docutils \\\n    wget \\\n    unzip \\\n    libgetdns-dev \\\n    varnish=${VARNISH_VERSION} \\\n    varnish-dev=${VARNISH_VERSION} \\\n    && VARNISH_VERSION_SHORT=\"$(echo ${VARNISH_VERSION} | cut -f1,2 -d'.')\" \\\n    && git clone --single-branch --branch \"${VARNISH_VERSION_SHORT}\" https://github.com/nigoroll/libvmod-dynamic.git /tmp/libvmod-dynamic \\\n    && cd /tmp/libvmod-dynamic \\\n    && chmod +x ./autogen.sh \\\n    && ./autogen.sh \\\n    && ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" --prefix=/usr \\\n    && make -j \"$(nproc)\" \\\n    && make install \\\n    && git clone --single-branch --branch \"${VARNISH_MODULES_BRANCH}\" https://github.com/varnish/varnish-modules.git /tmp/varnish-modules \\\n    && cd /tmp/varnish-modules \\\n    && ./bootstrap \\\n    && ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" \\\n    && make install && rm -rf /var/lib/apt/lists/*;\n\nFROM debian:buster-slim\n\nCOPY --from=builder /usr/lib/varnish/vmods/ /usr/lib/varnish/vmods/\n\nARG VARNISH_VERSION\nARG VARNISH_REPO_VERSION\nARG VARNISH_MODULES_BRANCH\nARG DEB_SCRIPT\nENV VCL_CONFIG      /etc/varnish/default.vcl\nENV CACHE_SIZE      256m\nENV VARNISHD_PARAMS -p default_ttl=3600 -p default_grace=3600 \\\n    -p feature=+esi_ignore_https -p feature=+esi_disable_xml_check \\\n    -p http_req_size=65536 -p http_req_hdr_len=32768 \\\n    -p http_resp_size=98304 -p http_resp_hdr_len=65536 \\\n    -p workspace_backend=131072 -p workspace_client=131072\nENV PROBE_DISABLED        true\nENV PROBE_URL             healthcheck.php\nENV BACKEND_HOST          nginx\nENV BACKEND_PORT          80\nENV VMOD_DYNAMIC_ENABLED  true\nENV ACL_PURGE_HOST        0.0.0.0/0\nARG SUPERVISORD_VERSION=0.7.3\nENV SUPERVISORD_VERSION=$SUPERVISORD_VERSION\n\nCOPY rootfs/. /\n\nRUN set -eux \\\n    && apt-get update && apt-get upgrade -y \\\n    && apt-get install -y --no-install-recommends --allow-downgrades \\\n    ca-certificates \\\n    curl \\\n    && curl -fsSL \"${DEB_SCRIPT}\" | bash \\\n    && BUILD_ARCH=\"$(dpkg --print-architecture)\" \\\n    && if [ \"${BUILD_ARCH}\" = \"arm64\" ]; \\\n        then SUPERVISORD_ARCH=\"Linux_ARMv7\"; \\\n        else SUPERVISORD_ARCH=\"Linux_64-bit\"; \\\n    fi \\\n    && curl -fsSL \"https://github.com/ochinchina/supervisord/releases/download/v${SUPERVISORD_VERSION}/supervisord_${SUPERVISORD_VERSION}_${SUPERVISORD_ARCH}.tar.gz\" | tar zxv -C /tmp \\\n    && mv /tmp/supervisor*/supervisord /usr/bin/ \\\n    && rm -fr /tmp/supervisor* \\\n    && BUILD_ARCH=\"$(dpkg --print-architecture)\" \\\n    && if [ \"${BUILD_ARCH}\" = \"arm64\" ]; \\\n        then GOMPLATE_ARCH=\"arm64\"; \\\n        else GOMPLATE_ARCH=\"amd64\"; \\\n    fi \\\n    && curl -fsSLo /usr/local/bin/gomplate \\\n      \"https://github.com/hairyhenderson/gomplate/releases/latest/download/gomplate_linux-${GOMPLATE_ARCH}\" \\\n    && chmod +x /usr/local/bin/gomplate \\\n    && apt-get install -y --no-install-recommends --allow-downgrades \\\n    libgetdns10 \\\n    varnish=${VARNISH_VERSION} \\\n    && rm -rf /var/lib/apt/lists/* /var/log/apt \\\n    && PATH=\"/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/sbin\" ldconfig -n /usr/lib/varnish/vmods \\\n    && chmod +x /usr/local/bin/stop-supervisor.sh\n\nEXPOSE \t80\n\nWORKDIR /etc/varnish\n\nCMD [\"supervisord\", \"-c\", \"/etc/supervisor/supervisord.conf\"]\n"
+}

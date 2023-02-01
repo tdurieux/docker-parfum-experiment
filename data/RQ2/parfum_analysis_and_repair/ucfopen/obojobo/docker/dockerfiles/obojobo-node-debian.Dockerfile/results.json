@@ -1,0 +1,26 @@
+{
+  "startTime": 1674254836920,
+  "endTime": 1674254838575,
+  "originalSmells": [
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 19,
+        "lineEnd": 19,
+        "columnStart": 4,
+        "columnEnd": 35
+      }
+    },
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 34,
+        "lineEnd": 34,
+        "columnStart": 4,
+        "columnEnd": 16
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# =====================================================================================================\n# Base stage used for  build and final stages\n# =====================================================================================================\nFROM node:14.16.0-alpine AS base_stage\n\n# ======== PUT NEW NODE BIN DIR IN PATH\nRUN npm config set prefix '/home/node/.npm-global'\nENV PATH=/home/node/.npm-global/bin:${PATH}\n\n# =====================================================================================================\n# build stage adds files that we dont want in the final stage\n# =====================================================================================================\nFROM base_stage as build_stage\n\n# build-base needed for node building binaries\n# pkgconfig pixman-dev cairo-dev pango-dev jpeg-dev giflib-dev needed for npm trianglify\nRUN apk add --no-cache build-base git pkgconfig pixman-dev cairo-dev pango-dev jpeg-dev giflib-dev python3\n\n# ======== INSTALL PM2 Globally\nRUN npm install --global pm2@^4.5.1 && npm cache clean --force;\n\n# ======== CREATE A PLACE TO STORE OUR LOCAL OBO MONOREPO NPM PACKAGES\nRUN mkdir /tmp/packed\n\n# ======== COPY MONOREPO IN\nCOPY --chown=node:node / /tmp/monorepo-src/\n\n# ======== COPY PM2 SERVER WRAPPER INTO HOME DIR\nCOPY --chown=node:node docker/obojobo-pm2-server-src /home/node/obojobo/\n\n#========= INSTALL & BUILD ASSETS\n# set this env so that all optional nodes are built\nENV OBO_OPTIONAL_NODES=*\nWORKDIR /tmp/monorepo-src/\nRUN yarn install && yarn cache clean;\nRUN yarn build\n\n#========= CREATE LOCAL OBO MONOREPO NPM PACKAGES\n# These act like npm packages, but sourced from a local directory instead of npmjs.com\n# This is done so we don't have to npm publish to create a working docker image\nRUN yarn lerna exec \"yarn pack --filename /tmp/packed/\\$LERNA_PACKAGE_NAME.tgz\"\n\n# ======== PM2 SERVER WRAPPER INSTALL, ADDS LOCAL OBO MONOREPO NPM PACKAGES\nWORKDIR /home/node/obojobo/\nRUN yarn add /tmp/packed/*.tgz\nRUN yarn --production=true\n\n# =====================================================================================================\n# final stage creates the final deployable image\n# =====================================================================================================\nFROM base_stage as final_stage\n\n# cairo pango jpeg giflib are needed for npm trianglify\nRUN apk add --no-cache cairo pango jpeg giflib\n\n# ======== COPY GLOBAL NODE STUFF\nCOPY --chown=node:node --from=build_stage /home/node/.npm-global /home/node/.npm-global\n\n# ======== COPY FINAL APP\nCOPY --chown=node:node --from=build_stage /home/node/obojobo/ /home/node/obojobo/\n\nWORKDIR /home/node/obojobo/\nUSER node\n\n# ======== Run via PM2 for memory restarts\nCMD [\"pm2-runtime\", \"start\", \"ecosystem.config.js\"]\n"
+}

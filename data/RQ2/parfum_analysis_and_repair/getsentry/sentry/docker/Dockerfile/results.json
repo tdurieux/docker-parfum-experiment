@@ -1,0 +1,44 @@
+{
+  "startTime": 1674255254486,
+  "endTime": 1674255255213,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 69,
+        "lineEnd": 69,
+        "columnStart": 5,
+        "columnEnd": 48
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 106,
+        "lineEnd": 106,
+        "columnStart": 4,
+        "columnEnd": 41
+      }
+    },
+    {
+      "rule": "sha256sumEchoOneSpaces",
+      "position": {
+        "lineStart": 27,
+        "lineEnd": 27,
+        "columnStart": 5,
+        "columnEnd": 73
+      }
+    },
+    {
+      "rule": "sha256sumEchoOneSpaces",
+      "position": {
+        "lineStart": 31,
+        "lineEnd": 31,
+        "columnStart": 5,
+        "columnEnd": 73
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM python:3.8.12-slim-bullseye\n\nLABEL maintainer=\"oss@sentry.io\"\nLABEL org.opencontainers.image.title=\"Sentry\"\nLABEL org.opencontainers.image.description=\"Sentry runtime image\"\nLABEL org.opencontainers.image.url=\"https://sentry.io/\"\nLABEL org.opencontainers.image.documentation=\"https://develop.sentry.dev/self-hosted/\"\nLABEL org.opencontainers.image.vendor=\"Functional Software, Inc.\"\nLABEL org.opencontainers.image.authors=\"oss@sentry.io\"\n\n# add our user and group first to make sure their IDs get assigned consistently\nRUN groupadd -r sentry && useradd -r -m -g sentry sentry\n\nENV GOSU_VERSION=1.12 \\\n  GOSU_SHA256=0f25a21cf64e58078057adc78f38705163c1d564a959ff30a891c31917011a54 \\\n  TINI_VERSION=0.19.0 \\\n  TINI_SHA256=93dcc18adc78c65a028a84799ecf8ad40c936fdfc5f2a57b1acda5a8117fa82c\n\n\nRUN set -x \\\n  && buildDeps=\" \\\n  wget \\\n  \" \\\n  && apt-get update && apt-get install -y --no-install-recommends $buildDeps \\\n  && rm -rf /var/lib/apt/lists/* \\\n  # grab gosu for easy step-down from root\n  && wget -O /usr/local/bin/gosu \"https://github.com/tianon/gosu/releases/download/$GOSU_VERSION/gosu-amd64\" \\\n  && echo \"$GOSU_SHA256  /usr/local/bin/gosu\" | sha256sum --check --status \\\n  && chmod +x /usr/local/bin/gosu \\\n  # grab tini for signal processing and zombie killing\n  && wget -O /usr/local/bin/tini \"https://github.com/krallin/tini/releases/download/v$TINI_VERSION/tini-amd64\" \\\n  && echo \"$TINI_SHA256  /usr/local/bin/tini\" | sha256sum --check --status \\\n  && chmod +x /usr/local/bin/tini \\\n  && apt-get purge -y --auto-remove $buildDeps\n\n# Sane defaults for pip\nENV \\\n  PIP_NO_CACHE_DIR=1 \\\n  PIP_DISABLE_PIP_VERSION_CHECK=1 \\\n  # Sentry config params\n  SENTRY_CONF=/etc/sentry \\\n  # Disable some unused uWSGI features, saving dependencies\n  # Thank to https://stackoverflow.com/a/25260588/90297\n  UWSGI_PROFILE_OVERRIDE=ssl=false;xml=false;routing=false \\\n  # UWSGI dogstatsd plugin\n  UWSGI_NEED_PLUGIN=/var/lib/uwsgi/dogstatsd \\\n  # grpcio>1.30.0 requires this, see requirements.txt for more detail.\n  GRPC_POLL_STRATEGY=epoll1\n\n# Install dependencies first to leverage Docker layer caching.\nCOPY /dist/requirements-frozen.txt /tmp/requirements-frozen.txt\nRUN set -x \\\n  && buildDeps=\"\" \\\n  # uwsgi\n  && buildDeps=\"$buildDeps \\\n  gcc \\\n  wget \\\n  \" \\\n  # maxminddb\n  && buildDeps=\"$buildDeps \\\n  libmaxminddb-dev \\\n  \"\\\n  # xmlsec\n  && buildDeps=\"$buildDeps \\\n  libxmlsec1-dev \\\n  pkg-config \\\n  \" \\\n  && apt-get update \\\n  && apt-get install -y --no-install-recommends $buildDeps \\\n  && pip install --no-cache-dir -r /tmp/requirements-frozen.txt \\\n  && mkdir /tmp/uwsgi-dogstatsd \\\n  && wget -O - https://github.com/eventbrite/uwsgi-dogstatsd/archive/filters-and-tags.tar.gz | \\\n  tar -xzf - -C /tmp/uwsgi-dogstatsd --strip-components=1 \\\n  && UWSGI_NEED_PLUGIN=\"\" uwsgi --build-plugin /tmp/uwsgi-dogstatsd \\\n  && mkdir -p /var/lib/uwsgi \\\n  && mv dogstatsd_plugin.so /var/lib/uwsgi/ \\\n  && rm -rf /tmp/requirements-frozen.txt /tmp/uwsgi-dogstatsd .uwsgi_plugins_builder \\\n  && apt-get purge -y --auto-remove $buildDeps \\\n  # We install run-time dependencies strictly after\n  # build dependencies to prevent accidental collusion.\n  # These are also installed last as they are needed\n  # during container run and can have the same deps w/\n  # build deps such as maxminddb.\n  && apt-get install -y --no-install-recommends \\\n  # pillow\n  libjpeg-dev \\\n  # rust bindings\n  libffi-dev \\\n  # maxminddb bindings\n  libmaxminddb-dev \\\n  # SAML needs these run-time\n  libxmlsec1-dev \\\n  libxslt-dev \\\n  # pyyaml needs this run-time\n  libyaml-dev \\\n  # other\n  pkg-config \\\n\n  && apt-get clean \\\n  && rm -rf /var/lib/apt/lists/* \\\n  # Fully verify that the C extension is correctly installed, it unfortunately\n  # requires a full check into maxminddb.extension.Reader\n  && python -c 'import maxminddb.extension; maxminddb.extension.Reader' \\\n  && mkdir -p $SENTRY_CONF\n\nCOPY /dist/*.whl /tmp/dist/\nRUN pip install --no-cache-dir /tmp/dist/*.whl --no-deps && pip check && rm -rf /tmp/dist\nRUN sentry help | sed '1,/Commands:/d' | awk '{print $1}' >  /sentry-commands.txt\n\nCOPY ./docker/sentry.conf.py ./docker/config.yml $SENTRY_CONF/\nCOPY ./docker/docker-entrypoint.sh /\n\nEXPOSE 9000\nVOLUME /data\n\nENTRYPOINT exec /docker-entrypoint.sh \"$0\" \"$@\"\nCMD [\"run\", \"web\"]\n\nARG SOURCE_COMMIT\nENV SENTRY_BUILD=${SOURCE_COMMIT:-unknown}\nLABEL org.opencontainers.image.revision=$SOURCE_COMMIT\nLABEL org.opencontainers.image.source=\"https://github.com/getsentry/sentry/tree/${SOURCE_COMMIT:-master}/\"\nLABEL org.opencontainers.image.licenses=\"https://github.com/getsentry/sentry/blob/${SOURCE_COMMIT:-master}/LICENSE\"\n"
+}

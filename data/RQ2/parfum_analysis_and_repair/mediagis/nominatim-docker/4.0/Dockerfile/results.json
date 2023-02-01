@@ -1,0 +1,71 @@
+{
+  "startTime": 1674253300522,
+  "endTime": 1674253301436,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 74,
+        "lineEnd": 74,
+        "columnStart": 7,
+        "columnEnd": 99
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 68,
+        "lineEnd": 68,
+        "columnStart": 4,
+        "columnEnd": 23
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 75,
+        "lineEnd": 75,
+        "columnStart": 7,
+        "columnEnd": 31
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 13,
+        "lineEnd": 14,
+        "columnStart": 7,
+        "columnEnd": 15
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 17,
+        "lineEnd": 59,
+        "columnStart": 7,
+        "columnEnd": 12
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 13,
+        "lineEnd": 14,
+        "columnStart": 7,
+        "columnEnd": 15
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 17,
+        "lineEnd": 59,
+        "columnStart": 7,
+        "columnEnd": 12
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM ubuntu:focal AS build\n\nENV DEBIAN_FRONTEND noninteractive\nENV LANG C.UTF-8\n\nWORKDIR /app\n\nRUN true \\\n    # Do not start daemons after installation.\n    && echo '#!/bin/sh\\nexit 101' > /usr/sbin/policy-rc.d \\\n    && chmod +x /usr/sbin/policy-rc.d \\\n    # Install all required packages.\n    && apt-get -y update -qq \\\n    && apt-get -y --no-install-recommends install \\\n        locales \\\n    && locale-gen en_US.UTF-8 \\\n    && update-locale LANG=en_US.UTF-8 \\\n    && apt-get -y --no-install-recommends install \\\n        -o APT::Install-Recommends=\"false\" \\\n        -o APT::Install-Suggests=\"false\" \\\n\n        build-essential \\\n        g++ \\\n        cmake \\\n        libpq-dev \\\n        zlib1g-dev \\\n        libbz2-dev \\\n        libproj-dev \\\n        libexpat1-dev \\\n        libboost-dev \\\n        libboost-system-dev \\\n        libboost-filesystem-dev \\\n\n        postgresql-contrib \\\n        postgresql-server-dev-12 \\\n        postgresql-12-postgis-3 \\\n        postgresql-12-postgis-3-scripts \\\n\n        php \\\n        php-intl \\\n        php-pgsql \\\n        php-cgi \\\n        apache2 \\\n        libapache2-mod-php \\\n\n        python3-dev \\\n        python3-pip \\\n        python3-tidylib \\\n        python3-psycopg2 \\\n        python3-setuptools \\\n        python3-dotenv \\\n        python3-psutil \\\n        python3-jinja2 \\\n        python3-datrie \\\n        python3-icu git \\\n        python3-argparse-manpage \\\n\n        git \\\n        curl \\\n        sudo && rm -rf /var/lib/apt/lists/*;\n\n\n# Configure postgres.\nRUN true \\\n    && echo \"host all all 0.0.0.0/0 md5\" >> /etc/postgresql/12/main/pg_hba.conf \\\n    && echo \"listen_addresses='*'\" >> /etc/postgresql/12/main/postgresql.conf\n\n# Osmium install to run continuous updates.\nRUN pip3 install --no-cache-dir osmium\n\n# Nominatim install.\nENV NOMINATIM_VERSION 4.0.1\n\nRUN true \\\n    && curl -f https://nominatim.org/release/Nominatim-$NOMINATIM_VERSION.tar.bz2 -o nominatim.tar.bz2 \\\n    && tar xf nominatim.tar.bz2 \\\n    && mkdir build \\\n    && cd build \\\n    && cmake ../Nominatim-$NOMINATIM_VERSION \\\n    && make -j`nproc` \\\n    && make install && rm nominatim.tar.bz2\n\nRUN true \\\n    # Remove development and unused packages.\n    && apt-get -y remove --purge \\\n        cpp-9 \\\n        gcc-9* \\\n        g++ \\\n        git \\\n        make \\\n        cmake* \\\n        llvm-10* \\\n        libc6-dev \\\n        linux-libc-dev \\\n        libclang-*-dev \\\n        build-essential \\\n        postgresql-server-dev-12 \\\n    && apt-get clean \\\n    # Clear temporary files and directories.\n    && rm -rf \\\n        /tmp/* \\\n        /var/tmp/* \\\n        /root/.cache \\\n        /app/src/.git \\\n        /var/lib/apt/lists/* \\\n    # Remove nominatim source and build directories\n    && rm /app/*.tar.bz2 \\\n    && rm -rf /app/build \\\n    && rm -rf /app/Nominatim-$NOMINATIM_VERSION\n\n# Apache configuration\nCOPY conf.d/apache.conf /etc/apache2/sites-enabled/000-default.conf\n\n# Postgres config overrides to improve import performance (but reduce crash recovery safety)\nCOPY conf.d/postgres-import.conf /etc/postgresql/12/main/conf.d/\nCOPY conf.d/postgres-tuning.conf /etc/postgresql/12/main/conf.d/\n\nCOPY config.sh /app/config.sh\nCOPY init.sh /app/init.sh\nCOPY start.sh /app/start.sh\nCOPY startapache.sh /app/startapache.sh\nCOPY startpostgres.sh /app/startpostgres.sh\n\n# Collapse image to single layer.\nFROM scratch\n\nCOPY --from=build / /\n\n# Please override this\nENV NOMINATIM_PASSWORD qaIACxO6wMR3\n# how many threads should be use for importing\nENV THREADS=16\n\nENV PROJECT_DIR /nominatim\n\nWORKDIR /app\n\nEXPOSE 5432\nEXPOSE 8080\n\nCOPY conf.d/env $PROJECT_DIR/.env\n\nCMD /app/start.sh\n"
+}

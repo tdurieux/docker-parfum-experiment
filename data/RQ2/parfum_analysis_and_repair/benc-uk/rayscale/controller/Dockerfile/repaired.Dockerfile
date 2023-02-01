@@ -1,0 +1,53 @@
+#
+# ** CONTROLLER ** Dockerfile
+#
+
+FROM node:12-alpine AS build
+
+WORKDIR /build
+
+# NPM install packages
+COPY controller/package*.json ./controller/
+WORKDIR /build/controller
+RUN npm install --silent && npm cache clean --force;
+
+# Now we need source, for both components
+COPY controller/src/ /build/controller/src
+COPY tracer/src/ /build/tracer/src
+COPY controller/tsconfig.json /build/controller/tsconfig.json
+
+# Compile TypeScript
+WORKDIR /build/controller
+RUN node node_modules/typescript/bin/tsc
+
+##############################################################
+
+FROM node:12-alpine
+LABEL org.label-schema.name="RayScale: Controller" \
+      org.label-schema.description="Controller microservice for RayScale app" \    
+      org.label-schema.version="2.0.1" \
+      org.label-schema.vcs-url=https://github.com/benc-uk/rayscale
+
+WORKDIR /app/controller
+ENV PORT 9000
+ENV HEALTH_CHECK_INTERVAL 90
+ENV JOB_OUTPUT /app/controller/jobs
+ENV NODE_ENV production
+
+# NPM install packages
+COPY controller/package*.json ./
+RUN npm install --production --silent && npm cache clean --force;
+
+# NPM is done, copy in transpiled JS from dist
+COPY --from=build /build/controller/dist/ ./dist
+
+# Also need the WebUI, assets and jobs directories
+COPY controller/webui/ ./webui
+COPY controller/assets/ ./assets
+RUN mkdir jobs
+
+# Install bash inside for debugging, ffmeg also needed now
+RUN apk update && apk add --no-cache bash && apk add --no-cache ffmpeg
+
+EXPOSE 9000
+CMD npm start

@@ -1,0 +1,16 @@
+FROM alpine:3.12
+
+# Need to grab terraform binary
+
+RUN apk add --no-cache curl git openssh unzip
+RUN curl -sLf https://releases.hashicorp.com/terraform/0.14.2/terraform_0.14.2_linux_amd64.zip -o terraform_0.14.2_linux_amd64.zip && \
+    unzip terraform_0.14.2_linux_amd64.zip -d /usr/bin && \
+    chmod +x /usr/bin/terraform && \
+    rm terraform_0.14.2_linux_amd64.zip
+
+COPY terraform-executor /usr/bin/
+
+RUN mkdir -p /root/module
+WORKDIR /root/module
+
+CMD ["terraform-executor"]

@@ -1,0 +1,14 @@
+FROM aztec/setup-tools-build
+FROM ubuntu:latest
+WORKDIR /usr/src/setup-tools
+COPY --from=0 \
+  /usr/src/setup-tools/build/setup \
+  /usr/src/setup-tools/build/setup-fast \
+  /usr/src/setup-tools/build/seal \
+  /usr/src/setup-tools/build/verify \
+  /usr/src/setup-tools/build/compute_generator_polynomial \
+  /usr/src/setup-tools/build/prep_range_data \
+  /usr/src/setup-tools/build/compute_range_polynomial \
+  /usr/src/setup-tools/build/print_point \
+  /usr/src/setup-tools/build/generate_h \
+  ./

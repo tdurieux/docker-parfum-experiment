@@ -1,0 +1,8 @@
+FROM %%%ARCH_PREFIX%%%debian:testing
+%%%OS%%%
+ENV CI_NETWORK true
+RUN echo fubar > /etc/machine-id
+%%%ARCH_SPECIFIC_COMMAND%%%
+%%%INSTALL_DEPENDENCIES_COMMAND%%%
+WORKDIR /github/workspace
+CMD ["./contrib/ci/debian.sh"]

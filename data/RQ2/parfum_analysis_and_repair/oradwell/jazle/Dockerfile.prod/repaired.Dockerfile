@@ -1,0 +1,4 @@
+FROM nginx:1.22.0
+
+COPY build /usr/share/nginx/html
+COPY config/nginx.conf /etc/nginx/conf.d/default.conf

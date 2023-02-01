@@ -1,0 +1,1 @@
+# ignore .git and .cache folders

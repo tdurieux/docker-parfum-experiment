@@ -1,0 +1,68 @@
+FROM IMAGE_URL_DEB
+ARG git_repo
+ENV git_repo=${git_repo:-GIT_REPO}
+ARG git_branch
+ENV git_branch=${git_branch:-GIT_BRANCH}
+
+RUN apt-get update
+RUN DEBIAN_FRONTEND="noninteractive" apt-get --no-install-recommends -y install tzdata && rm -rf /var/lib/apt/lists/*;
+
+# Install a few useful packages
+
+RUN apt-get install --no-install-recommends -y net-tools \
+    apt-utils \
+    iproute2 \
+    git \
+    python3 \
+    python3-pip \
+    network-manager \
+    network-manager-openvpn \
+    sudo \
+    vim \
+    pkg-config \
+    iputils-ping \
+    openvpn \
+    libsecret-tools \
+    dbus-x11 \
+    gnome-keyring \
+    libgirepository1.0-dev \
+    gir1.2-nm-1.0 \
+    libcairo2-dev && rm -rf /var/lib/apt/lists/*;
+
+RUN apt-get install --no-install-recommends -y \
+    python3-xdg \
+    python3-keyring \
+    python3-distro \
+    python3-jinja2 \
+    python3-dbus \
+    python3-systemd && rm -rf /var/lib/apt/lists/*;
+
+RUN apt-get install --no-install-recommends -y \
+    python3-pytest \
+    python3-pytest-cov && rm -rf /var/lib/apt/lists/*;
+
+RUN apt-get install --no-install-recommends -y \
+    python3-bcrypt \
+    python3-gnupg \
+    python3-openssl \
+    python3-requests >= 2.16.0 && rm -rf /var/lib/apt/lists/*;
+
+RUN python3 -m pip install --upgrade sentry-sdk==0.10.2
+
+RUN git clone --single-branch --branch $git_branch $git_repo
+RUN cd proton-python-client && pip3 install --no-cache-dir -e .
+RUN cd ..
+
+RUN useradd -ms /bin/bash user
+RUN usermod -a -G sudo user
+RUN echo '%sudo ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers
+
+COPY docker_entry_deb.sh /usr/local/bin
+COPY . /home/user/protonvpn-nm-lib
+
+RUN chown -R user:user /home/user/protonvpn-nm-lib
+WORKDIR /home/user/protonvpn-nm-lib
+
+USER user
+
+ENTRYPOINT ["/usr/local/bin/docker_entry_deb.sh"]

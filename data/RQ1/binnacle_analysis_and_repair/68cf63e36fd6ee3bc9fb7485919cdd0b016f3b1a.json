@@ -1,0 +1,26 @@
+{
+  "startTime": 1674244238374,
+  "endTime": 1674244238562,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 62,
+        "lineEnd": 62,
+        "columnStart": 4,
+        "columnEnd": 40
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 3,
+        "lineEnd": 5,
+        "columnStart": 4,
+        "columnEnd": 17
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM ubuntu:16.04 as builder\n\nRUN apt-get update && \\\n    apt-get install -y --no-install-recommends \\\n        gcc \\\n        libc6-dev && rm -rf /var/lib/apt/lists/*;\n\nCOPY /docker/common/src /src\n\nRUN gcc -Wall -DCOMMAND='\"/bootstrap/start-systemd.sh\"' -o /systemd-wrapper /src/start-setuid.c\n\n#####\n\nFROM ubuntu:16.04\n\nARG SALT_VERSION\nARG SALT_PATH\nARG PYZMQ_VERSION\nARG PYTHON_APT_VERSION\nARG TRACE\nARG OS\nARG OS_TYPE\n\nLABEL maintainer=Hortonworks\n\nARG SYSTEMCTL=https://raw.githubusercontent.com/hortonworks/docker-systemctl-replacement/3a885817b377f0307bd03d82323fa5749136de8f/files/docker/systemctl.py\n\nENV DEBIAN_FRONTEND noninteractive\nENV TERM linux\nENV PS1 \"[\\u@cloudbreak \\W]\\$ \"\n\n# Set default shell to bash\nSHELL [\"/bin/bash\", \"-c\"]\n\n# Install packages\nRUN apt-get update && \\\n    apt-get install -y --no-install-recommends \\\n        apt-transport-https \\\n        ca-certificates \\\n        cron \\\n        curl \\\n        gnupg2 \\\n        initscripts \\\n        iproute2 \\\n        python-minimal \\\n        ssh \\\n        sudo \\\n        systemd && \\\n    rm -rf /var/lib/apt/lists/*\n\n# Unneeded systemd services\nRUN (cd /lib/systemd/system/sysinit.target.wants && \\\n    ls | grep -v systemd-tmpfiles-setup.service | xargs rm) && \\\n    rm -f /lib/systemd/system/multi-user.target.wants/* && \\\n    rm -f /lib/systemd/system/local-fs.target.wants/* && \\\n    rm -f /lib/systemd/system/sockets.target.wants/*udev* && \\\n    rm -f /lib/systemd/system/sockets.target.wants/*initctl* && \\\n    rm -f /lib/systemd/system/basic.target.wants/* && \\\n    rm -f /etc/systemd/system/*.wants/*\n\n# Replace systemctl during SaltStack provisioning\nRUN dpkg-divert --add --rename /bin/systemctl && \\\n    curl -f -s -o /bin/systemctl $SYSTEMCTL && \\\n    chmod 755 /bin/systemctl\n\n# SaltStack provisioning\nCOPY /saltstack/ /tmp/saltstack/\nCOPY /repos/     /tmp/repos/\nCOPY /scripts/   /tmp/scripts/\nCOPY /scripts/salt_requirements.txt /tmp/salt_requirements.txt\nCOPY docker/common/_grains/ /tmp/saltstack/base/salt/_grains/\nCOPY docker/common/_grains/ /tmp/saltstack/hortonworks/salt/_grains/\nRUN printf '\\n\\nproviders:\\n  service: systemd\\n' >>/tmp/saltstack/config/minion\nRUN /tmp/scripts/salt-install.sh ubuntu\nRUN /tmp/scripts/salt-setup.sh hortonworks\n\n# Fix SaltStack init autodiscovery\nRUN printf '\\n\\nproviders:\\n  service: systemd\\n' >>/etc/salt/minion\nCOPY docker/common/_grains/ /srv/salt/_grains/\n\n# Fix startup problems for Type=notify systemd services\nCOPY docker/common/systemd-fix.service /etc/systemd/system/\nRUN systemctl enable systemd-fix\n\n# Undo systemctl replacement\nRUN rm /bin/systemctl && \\\n    dpkg-divert --remove --rename /bin/systemctl\n\n# Fix ssh login and salt-api auth problems\nRUN rm /lib/systemd/system/rmnologin.service && \\\n    sed -i 's/#\\?DELAYLOGIN=.*/DELAYLOGIN=yes/' /etc/default/rcS\n\n# Ycloud integration\nRUN groupmod -g 99 nogroup && \\\n    usermod -u 99 -g nogroup nobody\n\n# CloudBreak expects /bootstrap/start-systemd as an entrypoint\nCOPY docker/common/start-systemd.sh /bootstrap/start-systemd.sh\nCOPY --from=builder /systemd-wrapper /bootstrap/start-systemd\nRUN chown root:nogroup /bootstrap/start-systemd && \\\n    chmod 4750 /bootstrap/start-systemd\n\nRUN systemctl enable ssh cron\n\nEXPOSE 22\n\nCMD [\"/bootstrap/start-systemd\"]\n"
+}

@@ -1,0 +1,33 @@
+FROM centos:centos7
+
+# Note this image uses gawk
+
+# Update and install required software
+RUN yum -y update
+RUN yum -y install epel-release && rm -rf /var/cache/yum
+RUN yum -y install git curl bind-utils ldns wget which nginx jq && rm -rf /var/cache/yum
+
+# Set locale
+ENV LANG en_US.UTF-8
+ENV LANGUAGE en_US:en
+ENV LC_ALL en_US.UTF-8
+
+ENV staging "true"
+ENV dynamic_dns "duckdns"
+
+WORKDIR /root
+RUN mkdir -p /etc/nginx/pki
+RUN mkdir -p /etc/nginx/pki/private
+COPY ./test/test-config/nginx-ubuntu-no-ssl /etc/nginx/conf.d/default.conf
+COPY ./test/test-config/nginx-centos7.conf /etc/nginx/nginx.conf
+
+# BATS (Bash Automated Testings)
+RUN git clone https://github.com/bats-core/bats-core.git /bats-core
+RUN git clone https://github.com/bats-core/bats-support /bats-support
+RUN git clone https://github.com/bats-core/bats-assert /bats-assert
+RUN /bats-core/install.sh /usr/local
+
+EXPOSE 80 443
+
+# Run eternal loop - for testing
+CMD tail -f /dev/null

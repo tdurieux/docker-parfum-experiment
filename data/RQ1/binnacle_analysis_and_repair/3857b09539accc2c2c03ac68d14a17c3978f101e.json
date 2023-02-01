@@ -1,0 +1,62 @@
+{
+  "startTime": 1674249537904,
+  "endTime": 1674249538371,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 28,
+        "lineEnd": 28,
+        "columnStart": 7,
+        "columnEnd": 124
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 29,
+        "lineEnd": 29,
+        "columnStart": 7,
+        "columnEnd": 136
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 66,
+        "lineEnd": 66,
+        "columnStart": 7,
+        "columnEnd": 91
+      }
+    },
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 167,
+        "lineEnd": 167,
+        "columnStart": 4,
+        "columnEnd": 15
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 31,
+        "lineEnd": 31,
+        "columnStart": 4,
+        "columnEnd": 34
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 78,
+        "lineEnd": 78,
+        "columnStart": 7,
+        "columnEnd": 32
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# 0. The barest Python: used in dev and prod\nFROM python:3.7.2-slim-stretch AS pybase\n\n# We probably don't want these, long-term.\n# nano: because we edit files on production\n# postgresql-client: because we poll the DB:\n# * on prod before ./manage.py migrate\n# * on unittest before ./manage.py test\n# git: used for importmodulefromgithub\n# curl: handy for testing, NLTK download, Watchman download; not worth uninstalling each time\n# unzip: to build Watchman ... and [adamhooper, 2019-02-21] I'm afraid\n#        to uninstall it after build, in case one of our Python deps shells to it\nRUN mkdir -p /usr/share/man/man1 /usr/share/man/man7 \\\n    && apt-get update \\\n    && apt-get install --no-install-recommends -y \\\n        git \\\n        nano \\\n        postgresql-client \\\n        unzip \\\n        curl \\\n    && rm -rf /var/lib/apt/lists/*\n\n# Download NLTK stuff\n#\n# NLTK expects its data to stay zipped\nRUN mkdir -p /usr/share/nltk_data \\\n    && cd /usr/share/nltk_data \\\n    && mkdir -p sentiment corpora \\\n    && curl -f https://raw.githubusercontent.com/nltk/nltk_data/gh-pages/packages/corpora/stopwords.zip > corpora/stopwords.zip \\\n    && curl -f https://raw.githubusercontent.com/nltk/nltk_data/gh-pages/packages/sentiment/vader_lexicon.zip > sentiment/vader_lexicon.zip\n\nRUN pip install --no-cache-dir pipenv==2018.11.26\n\n# Set up /app\nRUN mkdir /app\nWORKDIR /app\n\n# 0.1 Pydev: just for the development environment\nFROM pybase AS pydev\n\n# Need build-essential for:\n# * regex (TODO nix the dep or make it support manylinux .whl)\n# * Twisted - https://twistedmatrix.com/trac/ticket/7945\n# * fastparquet\n# * python-snappy\n# * yajl-py\n# * fb-re2\n# * watchman (until someone packages binaries)\n# * pysycopg2 (binaries are evil because psycopg2 links SSL -- as does Python)\n#\n# Also:\n# * socat: for our dev environment: fetcher uses http://localhost:8000 for in-lesson files\nRUN mkdir -p /root/.local/share/virtualenvs \\\n    && apt-get update \\\n    && apt-get install --no-install-recommends -y \\\n      build-essential \\\n      libsnappy-dev \\\n      libre2-dev \\\n      libpq-dev \\\n      libyajl-dev \\\n      socat \\\n    && rm -rf /var/lib/apt/lists/*\n\n# build watchman. Someday let's hope someone publishes binaries\n# https://facebook.github.io/watchman/docs/install.html\nRUN cd /tmp \\\n    && curl -f -L https://github.com/facebook/watchman/archive/v4.9.0.zip > watchman-4.9.0.zip \\\n    && unzip watchman-4.9.0.zip \\\n    && cd watchman-4.9.0 \\\n    && apt-get update \\\n    && apt-get install --no-install-recommends -y \\\n      libssl-dev \\\n      autoconf \\\n      automake \\\n      libtool \\\n      libpcre3-dev \\\n      pkg-config \\\n    && ./autogen.sh \\\n    && ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" --prefix=/usr \\\n    && make -j4 \\\n    && make install \\\n    && cd /tmp \\\n    && rm -rf /tmp/watchman-4.9.0* \\\n    && apt-get remove --purge -y \\\n      libssl-dev \\\n      autoconf \\\n      automake \\\n      libtool \\\n      libpcre3-dev \\\n      pkg-config \\\n    && apt-get autoremove --purge -y \\\n    && rm -rf /var/lib/apt/lists/*\n\n# Add a Python wrapper that will help PyCharm cooperate with pipenv\n# See https://blog.jetbrains.com/pycharm/2015/12/using-docker-in-pycharm/ for\n# PyCharm's expectations. Just set \"Python interpreter path\" to\n# \"pipenv-run-python\" to ensure:\n#\n# * `cd /app`: PyCharm mounts the source tree to `/opt/project` and overwrites\n#              the current working directory. We force `cd /app` to restore\n#              what the Dockerfile already specifies. That's important because\n#              `pipenv` looks for packages in a virtualenv named after the\n#              current working directory.\n#\n# * `exec pipenv run python \"$@\"`: PyCharm does not let us specify a command\n#                                  for Docker to run. It only lets us specify\n#                                  \"Python interpreter path.\" This wrapper will\n#                                  provide the interface PyCharm expects, with\n#                                  the environment variables Python needs to\n#                                  find our virtualenv.\n#\n# Why do we create the file with RUN instead of COPY? Because even in 2018,\n# COPY does not copy the executable bit on Windows, so we need a RUN anyway\n# to make it executable.\nRUN true \\\n    && echo '#!/bin/sh\\ncd /app\\nexec pipenv run python \"$@\"' >/usr/bin/pipenv-run-python \\\n    && chmod +x /usr/bin/pipenv-run-python\n\n# 1. Python deps -- which rarely change, so this part of the Dockerfile will be\n# cached (when building locally)\nFROM pybase AS pybuild\n\n# Install Python dependencies. They rarely change.\n# For Docker images we install them to the local system, not to a virtualenv.\n# Containers don't use pipenv.\nCOPY Pipfile Pipfile.lock /app/\n\n# Need build-essential for:\n# * regex (TODO nix the dep or make it support manylinux .whl)\n# * Twisted - https://twistedmatrix.com/trac/ticket/7945\n# * fastparquet\n# * python-snappy\n# * yajl-py\n# * pysycopg2 (binaries are evil because psycopg2 links SSL -- as does Python)\n# ... and we want to keep libsnappy and yajl around after the fact, too\nRUN true \\\n    && apt-get update \\\n    && apt-get install --no-install-recommends -y \\\n      build-essential \\\n      libsnappy1v5 \\\n      libsnappy-dev \\\n      libre2-3 \\\n      libre2-dev \\\n      libpq-dev \\\n      libyajl2 \\\n      libyajl-dev \\\n    && pipenv install --dev --system --deploy \\\n    && apt-get remove --purge -y \\\n      build-essential \\\n      libsnappy-dev \\\n      libre2-dev \\\n      libpq-dev \\\n    && apt-get autoremove --purge -y \\\n    && rm -rf /var/lib/apt/lists/*\n\n\n# 2. Node deps -- completely independent\n# 2.1 jsbase: what we use in dev-in-docker\nFROM node:11.14.0-slim as jsbase\n\nRUN mkdir /app\nWORKDIR /app\n\n# 2.2 jsbuild: where we build JavaScript assets\nFROM jsbase AS jsbuild\n\nCOPY package.json package-lock.json /app/\nRUN npm install && npm cache clean --force;\n\nCOPY webpack.config.js setupJest.js /app/\nCOPY __mocks__/ /app/__mocks__/\nCOPY assets/ /app/assets/\n# Inject unit tests into our continuous integration\n# This catches mistakes that would otherwise foil us in bin/integration-test;\n# and currently we rely on this line in our CI scripts (cloudbuild.yaml).\nRUN npm test\nRUN node_modules/.bin/webpack -p\n\n\n# 3. Three prod servers will all be based on the same stuff:\nFROM pybuild AS base\n\nCOPY cjworkbench/ /app/cjworkbench/\n# TODO make server/ frontend-specific\nCOPY server/ /app/server/\n# cron/, fetcher/ and renderer/ are referenced in settings.py, so they must be\n# in all Django apps. TODO make them _not_ Django apps. (change ORM)\nCOPY cron/ /app/cron/\nCOPY fetcher/ /app/fetcher/\nCOPY renderer/ /app/renderer/\nCOPY bin/ /app/bin/\nCOPY manage.py /app/\n# templates are used in renderer for notifications emails and in frontend for\n# views. TODO move renderer templates elsewhere.\nCOPY templates/ /app/templates/\n\n# 3.1. migrate: runs ./manage.py migrate\nFROM base AS migrate\n# assets/ is static files. migrate will upload them to minio.\nCOPY assets/ /app/assets/\nCOPY --from=jsbuild /app/assets/bundles/ /app/assets/bundles/\nCMD [ \"bin/migrate-prod\" ]\n\n# 3.2. fetcher: runs fetch\nFROM base AS fetcher\nCMD [ \"./manage.py\", \"fetcher\" ]\n\n# 3.3. fetcher: runs fetch\nFROM base AS renderer\nCMD [ \"./manage.py\", \"renderer\" ]\n\n# 3.4. cron: schedules fetches and runs cleanup SQL\nFROM base AS cron\nCMD [ \"./manage.py\", \"cron\" ]\n\n# 3.5. frontend: serves website\nFROM base AS frontend\nCOPY --from=jsbuild /app/webpack-stats.json /app/\n# 8080 is Kubernetes' conventional web-server port\nEXPOSE 8080\n# TODO serve static files elsewhere\n# Beware: our daphne does not serve static files! Use migrate-prod to push them\n# to GCS and publish them there.\n#\n# We set application-close-timeout to something enormous. Otherwise, Daphne will\n# call `task.cancel()` on a long-running, closed connection. That's\n# catastrophic: if the Websocket connection is subscribed to a group, then the\n# group's messages will queue up until they fill our channel layer -- causing\n# back-pressure, meaning _all Websocket connections stop working_. (At the same\n# time, if the application never dies at all we have another error. So keep\n# --application-close-timeout small enough that we'll get a warning when there's\n# a bug in our code.)\nCMD [ \"daphne\", \"-b\", \"0.0.0.0\", \"-p\", \"8080\", \"--application-close-timeout\", \"180\", \"cjworkbench.asgi:application\" ]\n"
+}

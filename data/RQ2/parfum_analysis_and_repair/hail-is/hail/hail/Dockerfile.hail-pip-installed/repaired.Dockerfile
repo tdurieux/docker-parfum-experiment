@@ -1,0 +1,12 @@
+FROM {{ service_base_image.image }}
+
+ENV PYTHONPATH ""
+RUN hail-apt-get-install liblz4-dev
+
+COPY python/dev/pinned-requirements.txt dev-requirements.txt
+RUN hail-pip-install -r dev-requirements.txt
+
+RUN --mount=src=wheel-container.tar,target=/wheel-container.tar \
+    tar -xf wheel-container.tar && \
+    pip3 install --no-cache-dir -U hail-*-py3-none-any.whl && \
+    rm -rf hail-*-py3-none-any.whl && rm wheel-container.tar

@@ -1,0 +1,35 @@
+{
+  "startTime": 1674248324330,
+  "endTime": 1674248324447,
+  "originalSmells": [
+    {
+      "rule": "gpgUseBatchFlag",
+      "position": {
+        "lineStart": 67,
+        "lineEnd": 67,
+        "columnStart": 7,
+        "columnEnd": 72
+      }
+    },
+    {
+      "rule": "gpgUseBatchFlag",
+      "position": {
+        "lineStart": 68,
+        "lineEnd": 68,
+        "columnStart": 11,
+        "columnEnd": 43
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 78,
+        "lineEnd": 80,
+        "columnStart": 11,
+        "columnEnd": 27
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM cassandra:3.11\n\n# install wget, for the custom metrics-graphite reporter\n#RUN set -x \\\n#    && apt-get update \\\n#        && apt-get install -y --no-install-recommends \\\n#            wget \\\n#        && rm -rf /var/lib/apt/lists/*\n\n# install the custom metrics-graphite reporter, to allow measurement filtering\n#RUN echo \"JVM_OPTS=\\\"\\$JVM_OPTS -Dcassandra.metricsReporterConfigFile=graphite.yaml\\\"\" >> /etc/cassandra/cassandra-env.sh\n#RUN wget -P /usr/share/cassandra/lib/ \\\n#        http://central.maven.org/maven2/net/java/dev/jna/jna/4.0.0/jna-4.0.0.jar\n#RUN rm /usr/share/cassandra/lib/metrics-core-3.1.0.jar \\\n#    /usr/share/cassandra/lib/reporter-config-base-3.0.0.jar \\\n#    /usr/share/cassandra/lib/reporter-config3-3.0.0.jar\n#COPY lib/metrics-core-3.1.2.jar \\\n#    lib/metrics-graphite-3.1.2.jar \\\n#    lib/reporter-config-base-3.0.3.jar \\\n#    lib/reporter-config3-3.0.3.jar \\\n#    /usr/share/cassandra/lib/\n\n# install Java 8, which is required for the custom metrics reporter used above\n#RUN set -x \\\n#    && echo \"deb http://ppa.launchpad.net/webupd8team/java/ubuntu xenial main\" \\\n#        | tee /etc/apt/sources.list.d/webupd8team-java.list \\\n#    && echo \"deb-src http://ppa.launchpad.net/webupd8team/java/ubuntu xenial main\" \\\n#        | tee -a /etc/apt/sources.list.d/webupd8team-java.list \\\n#    && apt-key adv --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys EEA14886 \\\n#    && apt-get update \\\n#    && echo oracle-java8-installer shared/accepted-oracle-license-v1-1 select true \\\n#        | /usr/bin/debconf-set-selections \\\n#    && apt-get install -y \\\n#        oracle-java8-installer \\\n#        oracle-java8-set-default\n\n# install filebeat for Logstash ingestion\n#ENV ELK_VERSION 5.3.0\n#ENV DOWNLOAD_URL https://artifacts.elastic.co/downloads/beats/filebeat/filebeat-${ELK_VERSION}-amd64.deb\n#RUN set -x \\\n#    && apt-get update \\\n#        && apt-get install -y --no-install-recommends \\\n#            curl \\\n#        && rm -rf /var/lib/apt/lists/* \\\n#    && curl -L -O ${DOWNLOAD_URL} \\\n#        && dpkg -i filebeat-${ELK_VERSION}-amd64.deb \\\n#        && rm filebeat-${ELK_VERSION}-amd64.deb \\\n#    && update-rc.d filebeat defaults 95 10 \\\n#    && echo \"/etc/init.d/filebeat start\" \\\n#        >> /etc/cassandra/cassandra-env.sh \\\n#\t&& apt-get purge -y --auto-remove \\\n#\t    curl\n#RUN mkdir \\\n#        /var/lib/filebeat \\\n#        /var/log/filebeat \\\n#    && touch /var/run/filebeat.pid \\\n#    && chown cassandra:cassandra \\\n#        /var/lib/filebeat \\\n#        /var/log/filebeat \\\n#        /var/run/filebeat.pid\n\n# install collectd\n# NOTE: jessie packages are now being included since librrd4 and\n# libmicrohttpd10 were missing from the stretch repos\nRUN set -x \\\n    && echo \"deb http://pkg.ci.collectd.org/deb jessie collectd-5.7\" \\\n        > /etc/apt/sources.list.d/pkg.ci.collectd.org.list \\\n    && gpg --batch --keyserver hkp://pgp.mit.edu:80 --recv-keys 3994D24FB8543576 \\\n        && gpg --batch --export -a 3994D24FB8543576 | apt-key add - \\\n    && apt-get update \\\n        && apt-get install -y --no-install-recommends \\\n            collectd=5.7.1-1.1 \\\n            collectd-utils \\\n            libprotobuf-c-dev \\\n            libmicrohttpd-dev \\\n    && echo \"deb http://deb.debian.org/debian jessie main\" \\\n        >> /etc/apt/sources.list.d/pkg.ci.collectd.org.list \\\n    && apt-get update \\\n        && apt-get install --no-install-recommends -y \\\n            librrd4 \\\n            libmicrohttpd10 \\\n        && rm -rf /var/lib/apt/lists/*\nRUN touch /var/log/collectd.log \\\n    && chown cassandra:cassandra /var/log/collectd.log\n\n# install Prometheus JMX exporter\n# NOTE: 0.10 will not work until this issue is resolved:\n#       https://github.com/prometheus/jmx_exporter/issues/170\nENV JMX_EXPORTER_VERSION 0.9\nCOPY lib/jmx_prometheus_javaagent-${JMX_EXPORTER_VERSION}.jar \\\n         /prometheus/\nRUN echo 'JVM_OPTS=\"$JVM_OPTS -javaagent:'/prometheus/jmx_prometheus_javaagent-${JMX_EXPORTER_VERSION}.jar=7070:/prometheus/prometheus.yml'\"' \\\n    | tee -a /etc/cassandra/cassandra-env.sh\n\n# add JMX authentication files for Reaper access\nCOPY config/jmxremote.access /usr/lib/jvm/java-8-openjdk-amd64/jre/lib/management/jmxremote.access\nCOPY config/jmxremote.password /etc/cassandra/jmxremote.password\nRUN chown cassandra:cassandra \\\n        /usr/lib/jvm/java-8-openjdk-amd64/jre/lib/management/jmxremote.access \\\n        /etc/cassandra/jmxremote.password \\\n    && chmod 600 \\\n        /usr/lib/jvm/java-8-openjdk-amd64/jre/lib/management/jmxremote.access \\\n        /etc/cassandra/jmxremote.password\n\n# overwrite the base docker-entrypoint.sh with modified one, for filebeat perms\nCOPY docker-entrypoint.sh /docker-entrypoint.sh\n\n# does not work for some reason\n#RUN echo \"exec service collectd start &\" \\\n#    >> /etc/cassandra/cassandra-env.sh\n"
+}

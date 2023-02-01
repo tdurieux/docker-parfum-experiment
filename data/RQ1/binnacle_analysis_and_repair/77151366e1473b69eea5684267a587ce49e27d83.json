@@ -1,0 +1,26 @@
+{
+  "startTime": 1674239623471,
+  "endTime": 1674239623626,
+  "originalSmells": [
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 14,
+        "lineEnd": 14,
+        "columnStart": 4,
+        "columnEnd": 29
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 5,
+        "lineEnd": 5,
+        "columnStart": 4,
+        "columnEnd": 61
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM arm64v8/golang:1.11.5-alpine3.8 as builder\n\n# we want a static binary\nENV CGO_ENABLED=0\n\nRUN apk add --no-cache --update wget git make gcc linux-headers libc-dev\n\nCOPY . /go/src/github.com/contiv/vpp\n\n# we need the loopback binary from CNI\n# this binary can be obtained from the cni tarball\nRUN export CNI_VERSION=0.5.1 \\\n && wget https://github.com/containernetworking/cni/releases/download/v$CNI_VERSION/cni-arm64-v$CNI_VERSION.tgz -O /cni.tgz \\\n && mkdir /cni \\\n && tar -xvf /cni.tgz -C /cni && rm /cni.tgz\n\n# Build a custom version of the portmap plugin, modified for VPP-based networking.\nRUN export CNI_PLUGIN_VERSION=0.7 \\\n && mkdir -p /go/src/github.com/containernetworking \\\n && cd /go/src/github.com/containernetworking \\\n && git clone https://github.com/containernetworking/plugins.git -b v$CNI_PLUGIN_VERSION \\\n && cd plugins/plugins/meta/portmap/ \\\n && git apply /go/src/github.com/contiv/vpp/docker/vpp-cni/portmap.diff \\\n && go build -ldflags '-s -w' -o /portmap\n\nWORKDIR /go/src/github.com/contiv/vpp\n\n# build contiv-cni\nRUN make contiv-cni\n\n# we collect & store all files in one folder to make the resulting\n# image smaller when we copy them all in one single operation\nRUN mkdir -p /output/cni/bin && mkdir -p /output/cni/cfg \\\n && cp cmd/contiv-cni/contiv-cni /output/cni/bin/ \\\n && cp /cni/loopback /output/cni/bin/ \\\n && cp /portmap /output/cni/bin/ \\\n && cp /go/src/github.com/contiv/vpp/docker/vpp-cni/install.sh /output/cni/ \\\n && cp /go/src/github.com/contiv/vpp/docker/vpp-cni/10-contiv-vpp.conflist /output/cni/cfg/\n\nFROM arm64v8/alpine:3.8\n\nCOPY --from=builder /output/cni /cni\n\n# run install script by default\nCMD [\"/cni/install.sh\"]\n"
+}

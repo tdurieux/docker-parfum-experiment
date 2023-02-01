@@ -1,0 +1,71 @@
+{
+  "startTime": 1674248252009,
+  "endTime": 1674248252188,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 18,
+        "lineEnd": 18,
+        "columnStart": 4,
+        "columnEnd": 113
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 26,
+        "lineEnd": 26,
+        "columnStart": 4,
+        "columnEnd": 50
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 19,
+        "lineEnd": 19,
+        "columnStart": 7,
+        "columnEnd": 50
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 21,
+        "lineEnd": 21,
+        "columnStart": 7,
+        "columnEnd": 31
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 6,
+        "lineEnd": 8,
+        "columnStart": 4,
+        "columnEnd": 62
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 51,
+        "lineEnd": 51,
+        "columnStart": 4,
+        "columnEnd": 84
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 54,
+        "lineEnd": 54,
+        "columnStart": 4,
+        "columnEnd": 26
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM alpine:latest AS sqitch-build\nMAINTAINER David E. Wheeler <david@justatheory.com>\nENV BUILDROOT /work\n\n# Install system dependencies.\nWORKDIR $BUILDROOT\nRUN apk add --no-cache --update build-base curl perl perl-dev gettext tzdata \\\n    libressl libressl-dev zlib-dev \\\n    sqlite postgresql-dev mariadb-connector-c-dev unixodbc-dev\n\n# MySQL not supported on Alpine yet, so relying on Maria:\n# https://github.com/docker-library/mysql/issues/179\n# Alas, that means that MySQL 8 may not be supported.\n\n# Set up time zone. https://wiki.alpinelinux.org/wiki/Setting_the_timezone\nRUN cp /usr/share/zoneinfo/UTC /etc/localtime && echo UTC > /etc/timezone\n\n# Download and move Firebird files in place.\nRUN curl -f -LO https://github.com/FirebirdSQL/firebird/releases/download/R3_0_3/Firebird-3.0.3.32900-0.amd64.tar.gz \\\n    && tar zxf Firebird-3.0.3.32900-0.amd64.tar.gz \\\n    && cd Firebird-3.0.3.32900-0.amd64 \\\n    && tar zxf buildroot.tar.gz \\\n    && mkdir -p /usr/include && mv usr/include/* /usr/include \\\n    && mkdir -p /opt && mv opt/firebird /opt/ && rm Firebird-3.0.3.32900-0.amd64.tar.gz\n\n# Install cpan and build dependencies.\nRUN curl -f -sL --compressed https://git.io/cpm > cpm && chmod +x cpm\nRUN ./cpm install -L local --verbose --no-test Module::Build Menlo::CLI::Compat Dist::Zilla\n\n# Copy source, install author dependencies, build src.\nCOPY . .\nENV PERL5LIB $BUILDROOT/local/lib/perl5\nRUN ./local/bin/dzil authordeps --missing | xargs ./cpm install -L local --verbose --no-test\nRUN ./local/bin/dzil build --in src\n\n# Install dependencies. Required for ./Build test below.\nRUN ./cpm install -L local --verbose --no-test --with-recommends --cpanfile src/dist/cpanfile\n\n# XXX Sadly can't use this in the previous command:\n#    --feature sqlite --feature postgres --feature mysql \\\n# Because the cpanfile does not have the features. Issue:\n# https://github.com/karenetheridge/Dist-Zilla-Plugin-OptionalFeature/issues/3\n\n# Build, test, bundle.\nWORKDIR $BUILDROOT/src\nRUN perl Build.PL --quiet --install_base /app --etcdir /etc \\\n    --with sqlite --with postgres --with firebird \\\n    && ./Build test && ./Build bundle\n\n# Copy to the final image without all the build stuff.\nFROM alpine:latest\nRUN apk add --no-cache --udpate perl tzdata less sqlite postgresql-client mysql-client unixodbc\n\n# XXX Workaround to avoid https://github.com/perl5-dbi/DBD-mysql/issues/262.\nRUN apk add --no-cache perl-dbd-mysql\n\n# Set the time zone, clear the cache, and install the bundle.\nRUN cp /usr/share/zoneinfo/UTC /etc/localtime && echo UTC > /etc/timezone\nRUN rm -rf /var/cache/*\nCOPY --from=sqitch-build /app .\nCOPY --from=sqitch-build /etc /etc/\n\n# Set up environment, entrypoint, and default command.\nENV LESS -R\nENV HOME /home\nWORKDIR /repo\nENTRYPOINT [\"/bin/sqitch\"]\nCMD [\"help\"]\n"
+}

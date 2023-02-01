@@ -1,0 +1,53 @@
+{
+  "startTime": 1674249308065,
+  "endTime": 1674249308828,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 110,
+        "lineEnd": 110,
+        "columnStart": 11,
+        "columnEnd": 66
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 155,
+        "lineEnd": 155,
+        "columnStart": 8,
+        "columnEnd": 156
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 97,
+        "lineEnd": 97,
+        "columnStart": 65,
+        "columnEnd": 151
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 114,
+        "lineEnd": 114,
+        "columnStart": 8,
+        "columnEnd": 72
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 115,
+        "lineEnd": 115,
+        "columnStart": 42,
+        "columnEnd": 99
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Copyright (C) 2015-2020 Regents of the University of California\n#\n# Licensed under the Apache License, Version 2.0 (the \"License\");\n# you may not use this file except in compliance with the License.\n# You may obtain a copy of the License at\n#\n#     http://www.apache.org/licenses/LICENSE-2.0\n#\n# Unless required by applicable law or agreed to in writing, software\n# distributed under the License is distributed on an \"AS IS\" BASIS,\n# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.\n# See the License for the specific language governing permissions and\n# limitations under the License.\n\nimport os\nimport sys\nimport textwrap\n\napplianceSelf = os.environ['TOIL_APPLIANCE_SELF']\nsdistName = os.environ['_TOIL_SDIST_NAME']\n\n# Make sure to install packages into the pip for the version of Python we are\n# building for.\npython = f'python{sys.version_info[0]}.{sys.version_info[1]}'\npip = f'{python} -m pip'\n\n\ndependencies = ' '.join(['libffi-dev',  # For client side encryption for extras with PyNACL\n                         python,\n                         f'{python}-dev',\n                         'python3.7-distutils' if python == 'python3.7' else '',\n                         'python3.8-distutils' if python == 'python3.8' else '',\n                         'python3.9-distutils' if python == 'python3.9' else '',\n                         # 'python3.9-venv' if python == 'python3.9' else '',\n                         'python3-pip',\n                         'libssl-dev',\n                         'wget',\n                         'curl',\n                         'openssh-server',\n                         \"nodejs\",  # CWL support for javascript expressions\n                         'rsync',\n                         'screen',\n                         'libarchive13',\n                         'libc6',\n                         'libseccomp2',\n                         'e2fsprogs',\n                         'uuid-dev',\n                         'libgpgme11-dev',\n                         'libseccomp-dev',\n                         'pkg-config',\n                         'squashfs-tools',\n                         'cryptsetup',\n                         'less',\n                         'vim',\n                         'git',\n                         # Dependencies for Mesos which the deb doesn't actually list\n                         'libsvn1',\n                         'libcurl4-nss-dev',\n                         'libapr1',\n                         # Dependencies for singularity\n                         'containernetworking-plugins'])\n\n\ndef heredoc(s):\n    s = textwrap.dedent(s).format(**globals())\n    return s[1:] if s.startswith('\\n') else s\n\n\nmotd = heredoc('''\n\n    This is the Toil appliance. You can run your Toil script directly on the appliance.\n    Run toil <workflow>.py --help to see all options for running your workflow.\n    For more information see http://toil.readthedocs.io/en/latest/\n\n    Copyright (C) 2015-2022 Regents of the University of California\n\n    Version: {applianceSelf}\n\n''')\n\n# Prepare motd to be echoed in the Dockerfile using a RUN statement that uses bash's print\nmotd = ''.join(l + '\\\\n\\\\\\n' for l in motd.splitlines())\n\nprint(heredoc('''\n    FROM ubuntu:20.04\n\n    ARG TARGETARCH\n\n    RUN if [ -z \"$TARGETARCH\" ] ; then echo \"Specify a TARGETARCH argument to build this container\"; exit 1; fi\n\n    # make sure we don't use too new a version of setuptools (which can get out of sync with poetry and break things)\n    ENV SETUPTOOLS_USE_DISTUTILS=stdlib\n\n    # Try to avoid \"Failed to fetch ...  Undetermined Error\" from apt\n    # See <https://stackoverflow.com/a/66523384>\n    RUN printf 'Acquire::http::Pipeline-Depth \"0\";\\\\nAcquire::http::No-Cache=True;\\\\nAcquire::BrokenProxy=true;\\\\n' >/etc/apt/apt.conf.d/99fixbadproxy\n\n    RUN apt-get -y update --fix-missing && apt-get -y upgrade && apt-get -y --no-install-recommends install apt-transport-https ca-certificates software-properties-common curl && apt-get clean && rm -rf /var/lib/apt/lists/*\n\n    RUN add-apt-repository -y ppa:deadsnakes/ppa\n\n    # Find a repo with a Mesos build.\n    # See https://rpm.aventer.biz/README.txt\n    # A working snapshot is https://ipfs.io/ipfs/QmfTy9sXhHsgyWwosCJDfYR4fChTosA8HhoaMgmeJ5LSmS/\n    # As archived with:\n    # mkdir mesos-repo && cd mesos-repo\n    # wget --recursive --restrict-file-names=windows -k --convert-links --no-parent --page-requisites https://rpm.aventer.biz/Ubuntu/ https://www.aventer.biz/assets/support_aventer.asc https://rpm.aventer.biz/README.txt\n    # ipfs add -r .\n    RUN echo \"deb https://rpm.aventer.biz/Ubuntu focal main\" \\\n        > /etc/apt/sources.list.d/mesos.list \\\n        && curl -f https://www.aventer.biz/assets/support_aventer.asc | apt-key add -\n\n    RUN apt-get -y update --fix-missing && \\\n        DEBIAN_FRONTEND=noninteractive apt-get -y upgrade && \\\n        DEBIAN_FRONTEND=noninteractive apt-get --no-install-recommends -y install {dependencies} && \\\n        if [ $TARGETARCH = amd64 ] ; then \\\n        DEBIAN_FRONTEND=noninteractive apt-get --no-install-recommends -y install mesos; mesos-agent --help >/dev/null ;fi && \\\n        apt-get clean && \\\n        rm -rf /var/lib/apt/lists/*\n\n    # Install a particular old Debian Sid Singularity from somewhere.\n    ADD singularity-sources.tsv /etc/singularity/singularity-sources.tsv\n    RUN wget -q \"$(cat /etc/singularity/singularity-sources.tsv | grep \"^$TARGETARCH\" | cut -f3)\" && \\\n        dpkg -i singularity-container_3*.deb && \\\n        rm singularity-container_3*.deb && \\\n        sed -i 's!bind path = /etc/localtime!#bind path = /etc/localtime!g' /etc/singularity/singularity.conf && \\\n        mkdir -p /usr/local/libexec/toil && \\\n        mv /usr/bin/singularity /usr/local/libexec/toil/singularity-real \\\n        && /usr/local/libexec/toil/singularity-real version\n\n    RUN mkdir /root/.ssh && \\\n        chmod 700 /root/.ssh\n\n    ADD waitForKey.sh /usr/bin/waitForKey.sh\n\n    ADD customDockerInit.sh /usr/bin/customDockerInit.sh\n\n    ADD singularity-wrapper.sh /usr/local/bin/singularity\n\n    RUN chmod 777 /usr/bin/waitForKey.sh && chmod 777 /usr/bin/customDockerInit.sh && chmod 777 /usr/local/bin/singularity\n\n    # The stock pip is too old and can't install from sdist with extras\n    RUN {pip} install --upgrade pip==21.3.1\n\n    # Default setuptools is too old\n    RUN {pip} install --upgrade setuptools==59.7.0\n\n    # Include virtualenv, as it is still the recommended way to deploy pipelines\n    RUN {pip} install --upgrade virtualenv==20.0.17\n\n    # Install s3am (--never-download prevents silent upgrades to pip, wheel and setuptools)\n    RUN virtualenv --python {python} --never-download /home/s3am \\\n        && /home/s3am/bin/pip install s3am==2.0 \\\n        && ln -s /home/s3am/bin/s3am /usr/local/bin/\n\n    # Install statically linked version of docker client\n    RUN curl -f https://download.docker.com/linux/static/stable/$(if [ $TARGETARCH = amd64 ] ; then echo x86_64 ; else echo aarch64 ; fi)/docker-18.06.1-ce.tgz \\\n        | tar -xvzf - --transform='s,[^/]*/,,g' -C /usr/local/bin/ \\\n        && chmod u+x /usr/local/bin/docker \\\n        && /usr/local/bin/docker -v\n\n    # Fix for https://issues.apache.org/jira/browse/MESOS-3793\n    ENV MESOS_LAUNCHER=posix\n\n    # Fix for `screen` (https://github.com/BD2KGenomics/toil/pull/1386#issuecomment-267424561)\n    ENV TERM linux\n\n    # Run bash instead of sh inside of screen\n    ENV SHELL /bin/bash\n    RUN echo \"defshell -bash\" > ~/.screenrc\n\n    # An appliance may need to start more appliances, e.g. when the leader appliance launches the\n    # worker appliance on a worker node. To support this, we embed a self-reference into the image:\n    ENV TOIL_APPLIANCE_SELF {applianceSelf}\n\n    RUN mkdir /var/lib/toil\n    ENV TOIL_WORKDIR /var/lib/toil\n\n    # We want to get binaries mounted in from the environemnt on Toil-managed Kubernetes\n    env PATH /opt/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin\n\n    # We want to pick the right Python when the user runs it\n    RUN rm -f /usr/bin/python3 && rm -f /usr/bin/python && \\\n        ln -s /usr/bin/{python} /usr/bin/python3 && \\\n        ln -s /usr/bin/python3 /usr/bin/python\n\n    # This component changes most frequently and keeping it last maximizes Docker cache hits.\n    COPY {sdistName} .\n    RUN {pip} install {sdistName}[all]\n    RUN rm {sdistName}\n\n    # We intentionally inherit the default ENTRYPOINT and CMD from the base image, to the effect\n    # that the running appliance just gives you a shell. To start the Mesos daemons, the user\n    # should override the entrypoint via --entrypoint.\n\n    RUN echo '[ ! -z \"$TERM\" -a -r /etc/motd ] && cat /etc/motd' >> /etc/bash.bashrc \\\n        && printf '{motd}' > /etc/motd\n'''))\n"
+}

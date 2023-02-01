@@ -1,0 +1,32 @@
+FROM node:12
+
+RUN apt-get update && apt-get install --no-install-recommends -y libusb-1.0-0-dev && rm -rf /var/lib/apt/lists/*;
+
+WORKDIR /celo-oracle
+
+# ensure yarn.lock is evaluated by kaniko cache diff
+COPY package.json yarn.lock ./
+
+RUN yarn install --frozen-lockfile --network-timeout 100000 && yarn cache clean
+
+COPY tsconfig.json ./
+
+# copy contents
+COPY src src
+COPY test test
+COPY __mocks__ __mocks__
+
+# build contents
+RUN yarn build
+
+# lint check
+COPY tslint.json ./
+RUN yarn lint
+COPY .prettierignore ./
+COPY .prettierrc.js ./
+RUN yarn run prettify:diff
+RUN yarn run lint:tests
+
+# run tests
+COPY jest.config.js jest.config.js
+RUN yarn test && yarn cache clean;

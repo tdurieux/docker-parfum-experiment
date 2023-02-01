@@ -1,0 +1,17 @@
+{
+  "startTime": 1674254516389,
+  "endTime": 1674254517106,
+  "originalSmells": [
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 15,
+        "lineEnd": 16,
+        "columnStart": 4,
+        "columnEnd": 87
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# -----------------------------------------------------------------------------\n# Dockerfile for Debian package of Larynx (https://github.com/rhasspy/larynx)\n#\n# Requires Docker buildx: https://docs.docker.com/buildx/working-with-buildx/\n# See scripts/build-docker.sh\n# -----------------------------------------------------------------------------\nFROM debian:bullseye as build\nARG TARGETARCH\nARG TARGETVARIANT\n\nRUN echo \"Dir::Cache var/cache/apt/${TARGETARCH}${TARGETVARIANT};\" > /etc/apt/apt.conf.d/01cache\n\nRUN --mount=type=cache,id=apt-build,target=/var/cache/apt \\\n    mkdir -p /var/cache/apt/${TARGETARCH}${TARGETVARIANT}/archives/partial && \\\n    apt-get update && \\\n    apt-get install --yes --no-install-recommends \\\n        build-essential libssl1.1 dpkg-dev python3 python3-pip python3-venv python3-dev && rm -rf /var/lib/apt/lists/*;\n\nENV APP_DIR=/usr/lib/larynx-tts\n\nRUN python3 -m venv ${APP_DIR}\nENV PYTHON ${APP_DIR}/bin/python3\nRUN --mount=type=cache,id=pip-build,target=/root/.cache/pip \\\n    ${PYTHON} -m pip install --upgrade pip && \\\n    ${PYTHON} -m pip install --upgrade wheel setuptools\n\nCOPY download/ /download/\nCOPY requirements.txt ${APP_DIR}/\n\nRUN --mount=type=cache,id=pip-build,target=/root/.cache/pip \\\n    cat ${APP_DIR}/requirements.txt | \\\n    grep -v '^torch' | \\\n    xargs ${PYTHON} -m pip install \\\n        -f /download/ \\\n        -f 'https://synesthesiam.github.io/prebuilt-apps/'\n\n# Create Debian package\nENV BUILD_DIR=/build\nENV BUILD_APP_DIR=${BUILD_DIR}/larynx-tts/${APP_DIR}\n\nRUN mkdir -p ${BUILD_DIR}/larynx-tts/usr/lib && \\\n    cp -R ${APP_DIR} ${BUILD_DIR}/larynx-tts/usr/lib/\n\n# Copy default voices/vocoders\nCOPY local/ ${BUILD_DIR}/larynx-tts/${APP_DIR}/local/\n\n# Copy Larynx source\nCOPY licenses/ ${BUILD_APP_DIR}/licenses/\nCOPY larynx/ ${BUILD_APP_DIR}/larynx/\nCOPY README.md LICENSE ${BUILD_APP_DIR}/\n\nCOPY debian/control.in /\n\nENV DEBIAN_ARCH=${TARGETARCH}${TARGETVARIANT}\nRUN export VERSION=\"$(cat ${BUILD_DIR}/larynx-tts/${APP_DIR}/larynx/VERSION)\" && \\\n    if [ \"${DEBIAN_ARCH}\" = 'armv7' ]; then \\\n        export DEBIAN_ARCH='armhf'&& \\\n        sed -i 's/^Depends: /Depends: libatlas3-base,libgfortran5,/' /control.in ; \\\n    fi && \\\n    mkdir -p ${BUILD_DIR}/larynx-tts/DEBIAN && \\\n    sed -e s\"/@VERSION@/${VERSION}/\" -e \"s/@DEBIAN_ARCH@/${DEBIAN_ARCH}/\" < /control.in > ${BUILD_DIR}/larynx-tts/DEBIAN/control\n\nCOPY debian/larynx debian/larynx-server ${BUILD_DIR}/larynx-tts/usr/bin/\nRUN chmod +x ${BUILD_DIR}/larynx-tts/usr/bin/*\n\nRUN cd ${BUILD_DIR} && \\\n    dpkg --build larynx-tts\n\nRUN cd ${BUILD_DIR} && \\\n    dpkg-name *.deb\n\n# -----------------------------------------------------------------------------\n\nFROM scratch\n\nCOPY --from=build /build/*.deb /\n"
+}

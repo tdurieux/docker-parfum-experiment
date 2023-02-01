@@ -1,0 +1,18 @@
+FROM {{ "ci-buster" | image_tag }}
+
+ENV DNSDIR='/srv/workspace/dnslint'
+
+{% set pkgs_to_install = """gdnsd=3.8.0-1~wmf1 python3 tox""" %}
+# Install packages
+RUN {{ pkgs_to_install | apt_install }} \
+    && install --owner=nobody --group=nogroup --directory /srv/workspace
+
+USER nobody
+
+# now clone the dns repository to $DNSDIR
+RUN git clone --depth 1 https://gerrit.wikimedia.org/r/operations/dns "${DNSDIR}"
+
+WORKDIR /srv/workspace
+ENTRYPOINT ["/run.sh"]
+
+COPY run.sh /run.sh

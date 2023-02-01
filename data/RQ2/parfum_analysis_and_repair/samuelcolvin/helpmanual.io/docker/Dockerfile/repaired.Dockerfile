@@ -1,0 +1,33 @@
+FROM ubuntu:17.10
+
+LABEL maintainer "s@muelcolvin.com"
+
+RUN apt-get update
+
+RUN apt-get install --no-install-recommends -y apt-utils software-properties-common python-software-properties && rm -rf /var/lib/apt/lists/*;
+
+RUN apt-add-repository ppa:git-core/ppa -y \
+ && apt-get update
+
+RUN apt-get upgrade -y
+
+ENV DEBIAN_FRONTEND noninteractive
+ADD ./keyboard /etc/default/keyboard
+
+RUN apt-get install --no-install-recommends -y ubuntu-desktop && rm -rf /var/lib/apt/lists/*;
+
+RUN apt-get install --no-install-recommends -y g++ gcc build-essential libbz2-dev libssl-dev libreadline-dev libsqlite3-dev tk-dev && rm -rf /var/lib/apt/lists/*;
+RUN apt-get install --no-install-recommends -y libpng-dev libfreetype6-dev && rm -rf /var/lib/apt/lists/*;
+RUN apt-get install --no-install-recommends -y python3.6 python3.6-dev python3.7 python3.7-dev && rm -rf /var/lib/apt/lists/*;
+RUN apt-get install --no-install-recommends -y python3-pip libpython3-dev && rm -rf /var/lib/apt/lists/*;
+RUN apt-get install --no-install-recommends -y vim chromium-browser unzip gparted synaptic landscape-common gdebi curl whois && rm -rf /var/lib/apt/lists/*;
+RUN apt-get install --no-install-recommends -y postgresql-client postgresql postgresql-contrib postgresql-server-dev-all && rm -rf /var/lib/apt/lists/*;
+RUN apt-get install --no-install-recommends -y redis-server && rm -rf /var/lib/apt/lists/*;
+RUN apt-get install --no-install-recommends -y libjpeg-dev libfreetype6-dev libffi-dev libsqlite3-dev && rm -rf /var/lib/apt/lists/*;
+RUN apt-get install --no-install-recommends -y llvm libncurses5-dev libncursesw5-dev && rm -rf /var/lib/apt/lists/*;
+RUN apt-get install --no-install-recommends -y git && rm -rf /var/lib/apt/lists/*;
+RUN apt-get upgrade -y
+
+RUN python3.6 -m pip install -U pip setuptools virtualenv ipython requests tqdm click
+
+WORKDIR /home/root

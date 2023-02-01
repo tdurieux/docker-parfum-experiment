@@ -1,0 +1,71 @@
+{
+  "startTime": 1674220663286,
+  "endTime": 1674220664517,
+  "originalSmells": [
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 39,
+        "lineEnd": 40,
+        "columnStart": 4,
+        "columnEnd": 106
+      }
+    },
+    {
+      "rule": "sha256sumEchoOneSpaces",
+      "position": {
+        "lineStart": 71,
+        "lineEnd": 71,
+        "columnStart": 4,
+        "columnEnd": 93
+      }
+    },
+    {
+      "rule": "sha256sumEchoOneSpaces",
+      "position": {
+        "lineStart": 75,
+        "lineEnd": 75,
+        "columnStart": 4,
+        "columnEnd": 101
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 13,
+        "lineEnd": 13,
+        "columnStart": 22,
+        "columnEnd": 61
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 86,
+        "lineEnd": 86,
+        "columnStart": 22,
+        "columnEnd": 46
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 13,
+        "lineEnd": 13,
+        "columnStart": 22,
+        "columnEnd": 61
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 86,
+        "lineEnd": 86,
+        "columnStart": 22,
+        "columnEnd": 46
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "#\n# The docker image is built in two stages.  First stage builds the\n# oasis-node and oasis-rosetta-gateway binaries.\n# Second stage prepares the execution environment and copies the\n# two binaries over.\n#\n\n#\n# Build stage\n#\nFROM golang:1.17-bullseye AS build\n\n# Install prerequisites.\nRUN apt-get update && apt-get install --no-install-recommends -y bzip2 libseccomp-dev && rm -rf /var/lib/apt/lists/*;\n\nARG CORE_BRANCH=v22.1.7\nARG CORE_GITHUB=https://github.com/oasisprotocol/oasis-core\n\nARG GATEWAY_BRANCH=master\nARG GATEWAY_GITHUB=https://github.com/oasisprotocol/oasis-rosetta-gateway\n\nARG JEMALLOC_VERSION=5.2.1\nARG JEMALLOC_CHECKSUM=34330e5ce276099e2e8950d9335db5a875689a4c6a56751ef3b1d8c537f887f6\n\nARG GENESIS_MAINNET_URL=https://github.com/oasisprotocol/mainnet-artifacts/releases/download/2022-04-11/genesis.json\nARG GENESIS_MAINNET_FILE_CHECKSUM=bb379c0202cf82404d75a3ebc6466b0c3b98f32fac62111ee4736a59d2d3f266\n\nARG GENESIS_TESTNET_URL=https://github.com/oasisprotocol/testnet-artifacts/releases/download/2022-03-03/genesis.json\nARG GENESIS_TESTNET_FILE_CHECKSUM=4c3d271253d2a324816de3b9a048261b674471e7d4f9a02995a769489bd41984\n\n# Fetch and build jemalloc (used by BadgerDB).\nRUN wget -O jemalloc.tar.bz2 \\\n    https://github.com/jemalloc/jemalloc/releases/download/${JEMALLOC_VERSION}/jemalloc-${JEMALLOC_VERSION}.tar.bz2 && \\\n    # Ensure checksum matches.\n    echo \"${JEMALLOC_CHECKSUM}  jemalloc.tar.bz2\" | sha256sum -c && \\\n    tar -xf jemalloc.tar.bz2 && \\\n    cd jemalloc-${JEMALLOC_VERSION} && \\\n    # Ensure reproducible jemalloc build.\n    # https://reproducible-builds.org/docs/build-path/\n    EXTRA_CXXFLAGS=-ffile-prefix-map=$(pwd -L)=. EXTRA_CFLAGS=-ffile-prefix-map=$(pwd -L)=. \\\n    ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" \\\n    --with-jemalloc-prefix='je_' --with-malloc-conf='background_thread:true,metadata_thp:auto' && \\\n    make && \\\n    make install && \\\n    cd .. && rm jemalloc.tar.bz2 && rm -rf jemalloc-${JEMALLOC_VERSION}\n\n# Fetch and build Oasis Core.\nRUN git clone --single-branch --branch $CORE_BRANCH ${CORE_GITHUB} /usr/local/build-core && \\\n    cd /usr/local/build-core/go && \\\n    make oasis-node && \\\n    cp oasis-node/oasis-node /usr/bin/ && \\\n    make clean && go clean -cache -testcache -modcache && \\\n    cd / && rm -rf /usr/local/build-core\n\n# Fetch and build Oasis Rosetta Gateway.\nRUN git clone --single-branch --branch $GATEWAY_BRANCH ${GATEWAY_GITHUB} /usr/local/build-gateway && \\\n    cd /usr/local/build-gateway && \\\n    make && \\\n    cp oasis-rosetta-gateway /usr/bin/ && \\\n    mkdir -p /usr/local/misc-gateway && \\\n    cp -r \\\n        docker/service \\\n        docker/config.yml \\\n        docker/config-testnet.yml \\\n        /usr/local/misc-gateway/ && \\\n    make nuke && \\\n    cd / && rm -rf /usr/local/build-gateway\n\n# Fetch Oasis genesis documents.\nRUN wget -O /usr/local/misc-gateway/genesis.json \\\n    \"$GENESIS_MAINNET_URL\" && \\\n    # Ensure checksum matches.\n    echo \"$GENESIS_MAINNET_FILE_CHECKSUM  /usr/local/misc-gateway/genesis.json\" | sha256sum -c && \\\n    wget -O /usr/local/misc-gateway/genesis-testnet.json \\\n    \"$GENESIS_TESTNET_URL\" && \\\n    # Ensure checksum matches.\n    echo \"$GENESIS_TESTNET_FILE_CHECKSUM  /usr/local/misc-gateway/genesis-testnet.json\" | sha256sum -c\n\n\n#\n# Execution stage\n#\nFROM ubuntu:focal\nCOPY --from=build /usr/bin/oasis-node /usr/bin/\nCOPY --from=build /usr/bin/oasis-rosetta-gateway /usr/bin/\nRUN mkdir -m700 /data /data/etc /data/data && \\\n    mkdir -p /etc/service && \\\n    apt-get update && apt-get install --no-install-recommends -y runit && rm -rf /var/lib/apt/lists/*;\nCOPY --from=build /usr/local/misc-gateway/genesis.json /data/etc/\nCOPY --from=build /usr/local/misc-gateway/genesis-testnet.json /data/etc/\nCOPY --from=build /usr/local/misc-gateway/config.yml /data/etc/\nCOPY --from=build /usr/local/misc-gateway/config-testnet.yml /data/etc/\nCOPY --from=build /usr/local/misc-gateway/service /etc/service/\n\n# Prepare for non-root oasis-node.\nRUN chown -R www-data:www-data /data\n\nVOLUME /data\nWORKDIR /data\nENV OASIS_NODE_GRPC_ADDR=\"unix:/data/internal.sock\"\nENV OASIS_NODE_CONFIG=\"/data/etc/config.yml\"\n\n# Start the node and the rosetta-gateway.\nCMD runsvdir /etc/service\n\n# Expose gateway and node ports.\nEXPOSE 8080/tcp\nEXPOSE 26656/tcp\n"
+}

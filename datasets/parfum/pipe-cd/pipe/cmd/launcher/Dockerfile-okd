@@ -1,0 +1,6 @@
+# https://github.com/pipe-cd/pipecd/pkgs/container/piped-base-okd/22991579?tag=v0.31.0-30-g13f4bf9
+FROM ghcr.io/pipe-cd/piped-base-okd@sha256:83fb7657c558414b2abc34a2309e507b250ac2ae8bc66277b885eb9f57d7892a
+
+ADD .artifacts/launcher /usr/local/bin/launcher
+
+ENTRYPOINT ["launcher"]

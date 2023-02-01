@@ -1,0 +1,1 @@
+# dockerize `walk-c`, with .so files extracted from CentOS 5.11

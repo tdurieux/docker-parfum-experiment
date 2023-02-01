@@ -1,0 +1,11 @@
+FROM debian:buster-slim
+
+LABEL maintainer="SoftInstigate <info@softinstigate.com>"
+
+WORKDIR /opt/restheart
+COPY target/restheart .
+RUN mkdir etc plugins
+
+ENV RHO='/mongo-uri->"mongodb://host.docker.internal";/http-host->"0.0.0.0"'
+ENTRYPOINT [ "./restheart" ]
+EXPOSE 8009 8080 4443

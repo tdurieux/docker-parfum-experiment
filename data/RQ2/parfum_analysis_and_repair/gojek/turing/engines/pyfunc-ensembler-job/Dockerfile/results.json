@@ -1,0 +1,26 @@
+{
+  "startTime": 1674218027266,
+  "endTime": 1674218028135,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 34,
+        "lineEnd": 42,
+        "columnStart": 4,
+        "columnEnd": 8
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 34,
+        "lineEnd": 42,
+        "columnStart": 4,
+        "columnEnd": 8
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "ARG SPARK_VERSION=v3.0.0\n\nFROM gcr.io/spark-operator/spark-py:$SPARK_VERSION\n\nARG SPARK_OPERATOR_VERSION=v1beta2-1.2.2-3.0.0\nARG SPARK_BQ_CONNECTOR_VERSION=0.19.1\n\n# Reset to root to include spark dependencies\nUSER 0\n# Setup dependencies for Google Cloud Storage access.\nRUN rm $SPARK_HOME/jars/guava-14.0.1.jar\nADD https://repo1.maven.org/maven2/com/google/guava/guava/23.0/guava-23.0.jar \\\n    $SPARK_HOME/jars\n# Add the connector jar needed to access Google Cloud Storage using the Hadoop FileSystem API.\nADD https://storage.googleapis.com/hadoop-lib/gcs/gcs-connector-hadoop2-2.0.1.jar \\\n    $SPARK_HOME/jars\nADD https://repo1.maven.org/maven2/com/google/cloud/spark/spark-bigquery-with-dependencies_2.12/${SPARK_BQ_CONNECTOR_VERSION}/spark-bigquery-with-dependencies_2.12-${SPARK_BQ_CONNECTOR_VERSION}.jar \\\n    $SPARK_HOME/jars\nRUN chmod 644 -R $SPARK_HOME/jars/*\n\n# Setup for the Prometheus JMX exporter.\nRUN mkdir -p /etc/metrics/conf\n# Add the Prometheus JMX exporter Java agent jar for exposing metrics sent to the JmxSink to Prometheus.\nADD https://repo1.maven.org/maven2/io/prometheus/jmx/jmx_prometheus_javaagent/0.11.0/jmx_prometheus_javaagent-0.11.0.jar /prometheus/\nRUN chmod 644 /prometheus/jmx_prometheus_javaagent-0.11.0.jar\n\nADD https://raw.githubusercontent.com/GoogleCloudPlatform/spark-on-k8s-operator/$SPARK_OPERATOR_VERSION/spark-docker/conf/metrics.properties /etc/metrics/conf\nADD https://raw.githubusercontent.com/GoogleCloudPlatform/spark-on-k8s-operator/$SPARK_OPERATOR_VERSION/spark-docker/conf/prometheus.yaml /etc/metrics/conf\nRUN chmod 644 -R /etc/metrics/conf/*\n\nENV LANG=C.UTF-8 LC_ALL=C.UTF-8\n\n# Install wget and other libraries required by Miniconda3\nRUN apt-get update --allow-releaseinfo-change-suite -q && \\\n    apt-get install --no-install-recommends -q -y \\\n    bzip2 \\\n    ca-certificates \\\n    git \\\n    libglib2.0-0 \\\n    libsm6 \\\n    libxext6 \\\n    libxrender1 \\\n    wget \\\n    && apt-get clean && rm -rf /var/lib/apt/lists/*;\n\n# Install gcloud SDK\nENV PATH=$PATH:/google-cloud-sdk/bin\nARG GCLOUD_VERSION=332.0.0\n\nRUN wget -qO- \\\n    https://dl.google.com/dl/cloudsdk/channels/rapid/downloads/google-cloud-sdk-${GCLOUD_VERSION}-linux-x86_64.tar.gz | \\\n    tar xzf - -C /\n\nCOPY ./entrypoint.sh /opt/entrypoint.sh\n\n# Configure non-root user\nARG username=spark\nARG spark_uid=185\nARG spark_gid=100\nENV USER $username\nENV UID $spark_uid\nENV GID $spark_gid\nENV HOME /home/$USER\nRUN adduser --disabled-password --uid $UID --gid $GID --home $HOME $USER\n\n# Switch to Spark user\nUSER ${USER}\nWORKDIR $HOME\n\n# Install miniconda\nARG CONDA_VERSION=py38_4.9.2\nARG CONDA_MD5=122c8c9beb51e124ab32a0fa6426c656\nENV CONDA_DIR $HOME/miniconda3\nENV PATH $CONDA_DIR/bin:$PATH\n\nRUN wget --quiet https://repo.anaconda.com/miniconda/Miniconda3-${CONDA_VERSION}-Linux-x86_64.sh -O miniconda.sh && \\\n    echo \"$CONDA_MD5  miniconda.sh\" > miniconda.md5 && \\\n    if ! md5sum --status -c miniconda.md5; then exit 1; fi && \\\n    sh miniconda.sh -b -p $CONDA_DIR && \\\n    rm miniconda.sh miniconda.md5 && \\\n    echo \"source $CONDA_DIR/etc/profile.d/conda.sh\" >> $HOME/.bashrc && \\\n    $CONDA_DIR/bin/conda clean -afy\n\n# Copy PySpark application\nENV PROJECT_DIR $HOME/batch-ensembler\nRUN mkdir -p $PROJECT_DIR\nCOPY --chown=$UID:$GID . $PROJECT_DIR/\n# Hack to ensure that it's compatible with the ../../sdk stated in requirements.txt\nCOPY ./temp-deps/sdk $PROJECT_DIR/../../sdk\n\n# Setup base conda environment\nARG PYTHON_VERSION\nENV CONDA_ENVIRONMENT turing-batch-ensembler\nRUN conda env create -f $PROJECT_DIR/env-${PYTHON_VERSION}.yaml -n $CONDA_ENVIRONMENT && \\\n    rm -rf $HOME/.cache\n\nRUN echo \"conda activate $CONDA_ENVIRONMENT\" >> $HOME/.bashrc\n\nENV PATH $CONDA_DIR/envs/$CONDA_ENVIRONMENT/bin:$PATH\n\nENTRYPOINT [\"/opt/entrypoint.sh\"]\n"
+}

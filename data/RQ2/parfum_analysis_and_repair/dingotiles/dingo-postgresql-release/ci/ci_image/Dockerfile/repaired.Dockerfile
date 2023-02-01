@@ -1,0 +1,58 @@
+FROM ubuntu:15.10
+
+RUN apt-get update && \
+    apt-get -y --no-install-recommends install git zip unzip \
+        libxml2-dev libxslt-dev libcurl4-openssl-dev \
+        build-essential zlib1g-dev libssl-dev libreadline6-dev libyaml-dev \
+    && apt-get install --no-install-recommends file curl wget bzr jq postgresql postgresql-contrib -y \
+    && apt-get install -y --no-install-recommends tree \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*;
+
+# install ruby
+RUN cd \
+      && wget https://ftp.ruby-lang.org/pub/ruby/2.2/ruby-2.2.5.tar.gz \
+      && tar -xzvf ruby-2.2.5.tar.gz \
+      && cd ruby-2.2.5/ \
+      && ./configure --build="$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)" \
+      && make \
+      && make install \
+      && ruby -v && rm ruby-2.2.5.tar.gz
+
+# install required gems
+RUN gem install bundler --no-rdoc --no-ri \
+      && gem install bosh_cli --no-rdoc --no-ri \
+      && gem install license_finder --no-ri --no-rdoc
+
+# Install Go
+RUN \
+  mkdir -p /goroot && \
+  curl -f https://storage.googleapis.com/golang/go1.8.linux-amd64.tar.gz | tar xvzf - -C /goroot --strip-components=1
+
+# Set environment variables.
+ENV GOROOT /goroot
+ENV GOPATH /gopath
+ENV PATH $GOROOT/bin:$GOPATH/bin:$PATH
+
+ADD https://github.com/geofffranks/spruce/releases/download/v1.8.13/spruce-linux-amd64 /usr/bin/spruce
+RUN chmod 755 /usr/bin/spruce
+
+ADD https://cli.run.pivotal.io/stable?release=linux64-binary&version=6.25.0 /tmp/cf.tgz
+RUN tar xzf /tmp/cf.tgz -C /usr/bin && rm /tmp/cf.tgz
+
+ENV VAULT_VERSION 0.6.5
+RUN wget -qO /tmp/vault.zip https://releases.hashicorp.com/vault/${VAULT_VERSION}/vault_${VAULT_VERSION}_linux_amd64.zip && \
+      unzip -d /bin /tmp/vault.zip && rm /tmp/vault.zip && chmod 755 /bin/vault
+
+RUN wget https://s3.amazonaws.com/bosh-cli-artifacts/bosh-cli-0.0.147-linux-amd64 -O /bin/bosh2 && \
+      echo "533342d7663c3e5dc731769e157608c74dd9eccb  /bin/bosh2" | sha1sum -c - && \
+      chmod +x /bin/bosh2
+
+RUN go get -d github.com/cloudfoundry/bosh-cli &&
+    cd $GOPATH/src/github.com/cloudfoundry/bosh-cli && \
+    bin/build-linux-amd64 &&
+    mv out/bosh $GOPATH/bin/bosh2
+
+RUN go get -d github.com/cppforlife && \
+    cd $GOPATH/src/github.com/cppforlife/bosh-lint && \
+    bin/build && \
+    mv out/bosh-lint $GOPATH/bin

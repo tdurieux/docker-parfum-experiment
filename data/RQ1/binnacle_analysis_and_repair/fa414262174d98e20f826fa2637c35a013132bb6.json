@@ -1,0 +1,17 @@
+{
+  "startTime": 1674252040155,
+  "endTime": 1674252040322,
+  "originalSmells": [
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 28,
+        "lineEnd": 28,
+        "columnStart": 2,
+        "columnEnd": 21
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM node:10.14-alpine as base\nARG GOLANG_VERSION=1.12.1\nARG GOLANG_SRC_URL=https://dl.google.com/go/go${GOLANG_VERSION}.src.tar.gz\nARG GOLANG_SRC_SHA256=0be127684df4b842a64e58093154f9d15422f1405f1fcff4b2c36ffc6a15818a\nENV GOPATH /go\nENV PATH $GOPATH/bin:/usr/local/go/bin:$PATH\n\nRUN set -ex \\\n  && apk add --no-cache --virtual .build-deps \\\n    bash \\\n    gcc \\\n    musl-dev \\\n    openssl \\\n    go \\\n  \\\n  && export GOROOT_BOOTSTRAP=\"$(go env GOROOT)\" \\\n  \\\n  && wget -q \"$GOLANG_SRC_URL\" -O golang.tar.gz \\\n  && echo \"$GOLANG_SRC_SHA256  golang.tar.gz\" | sha256sum -c - \\\n  && tar -C /usr/local -xzf golang.tar.gz \\\n  && rm golang.tar.gz \\\n  && cd /usr/local/go/src \\\n  && ./make.bash \\\n  \\\n  && apk del .build-deps\n\nRUN apk --no-cache add curl git bash\nRUN mkdir -p \"$GOPATH/src\" \"$GOPATH/bin\" && chmod -R 777 \"$GOPATH\" && \\\n  npm install -g yarn && npm cache clean --force;\n\n\nFROM base AS builder\nARG CLI_VERSION=\"undefined\"\nARG CORE_VERSION=\"undefined\"\nENV GO111MODULE on\nENV FLOGO_LIB_VERSION ${CORE_VERSION}\nENV BUILD_DIR /tmp/build\nENV FLOGO_WEB_LOCALDIR ${BUILD_DIR}/dist/local\nRUN go get -u github.com/project-flogo/cli/cmd/flogo@${CLI_VERSION} \\\n    && mkdir -p $GOPATH/src/github.com/project-flogo \\\n    && cd $GOPATH/src/github.com/project-flogo \\\n    && git clone https://github.com/project-flogo/cli.git \\\n    && flogo --version\n\nCOPY / ${BUILD_DIR}/\nWORKDIR ${BUILD_DIR}\nRUN yarn --pure-lockfile && yarn release && \\\n  cd dist/apps/server && \\\n  yarn --pure-lockfile --production=true && \\\n  npx modclean -Pr -n default:safe,default:caution\n\n\nFROM base AS statebuilder\nENV FLOGO_TAG_NAME ${CORE_VERSION}\nENV BUILD_DIR /tmp/build\nWORKDIR ${BUILD_DIR}\n\nCOPY /tools/docker/build-state.sh ${BUILD_DIR}/build-state.sh\nRUN chmod 755 build-state.sh && \\\n    ${BUILD_DIR}/build-state.sh\n\n\nFROM base as release\nENV NODE_ENV production\nENV FLOGO_WEB_LOCALDIR /flogo-web/local\nENV FLOGO_WEB_PUBLICDIR /flogo-web/apps/client\n#RUN build_packages=\"build-base linux-headers\" \\\n#  && apk --update add ${build_packages} \\\n#  && cd /tmp \\\n#  && wget http://download.redis.io/releases/redis-3.2.4.tar.gz \\\n#  && tar xzf redis-3.2.4.tar.gz \\\n#  && cd /tmp/redis-3.2.4 \\\n#  && make \\\n#  && make install \\\n#  && cp redis.conf /etc/redis.conf \\\n#  && sed -i -e 's/bind 127.0.0.1/bind 0.0.0.0/' /etc/redis.conf \\\n#  && adduser -D redis \\\n#  && rm -rf /tmp/* \\\n#  && apk del ${build_packages} \\\n#  && rm -rf /var/cache/apk/*\n\nCOPY --from=builder /tmp/build/dist/ /flogo-web/\nCOPY --from=builder $GOPATH/ $GOPATH/\nCOPY --from=statebuilder $GOPATH/bin /flogo-web/flogo-services/\n\nCOPY ./tools/docker/flogo-eula /flogo-web/flogo-eula\nCOPY ./tools/docker/docker-start.sh /flogo-web/docker-start.sh\n\nWORKDIR /flogo-web/\nRUN cd local/engines/flogo-web && flogo build\nENTRYPOINT [\"/flogo-web/docker-start.sh\"]\n"
+}

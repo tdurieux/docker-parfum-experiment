@@ -1,0 +1,17 @@
+{
+  "startTime": 1674256133012,
+  "endTime": 1674256133845,
+  "originalSmells": [
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 40,
+        "lineEnd": 40,
+        "columnStart": 7,
+        "columnEnd": 56
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "## pkg with clang toolchain and cmake (pkg may use cc/cxx compiler and cmake tool).\n\n# docker build --rm=true  -t genshen/pkg:0.4.1 .\n\nFROM golang:1.14.6-alpine3.12 AS builder\n\nMAINTAINER genshen genshenchu@gmail.com\n\nARG PROJECT_PATH=\"/go/src/github.com/genshen/pkg\"\nARG PACKAFE_NAME=\"github.com/genshen/pkg/pkg\"\nARG BINARY_NAME=\"pkg\"\n\nRUN apk add --no-cache git\n\n# Add all from your project inside workdir of docker image\nADD . ${PROJECT_PATH}\n\n# Then run your script to install dependencies and build application\nRUN cd ${PROJECT_PATH} \\\n    && go mod download \\\n    && CGO_ENABLED=0 GOOS=linux go build -o ${GOPATH}/bin/${BINARY_NAME} ${PACKAFE_NAME}\n\n\n## build cmake from source\nFROM genshen/clang-toolchain:10.0.0 AS cmake_builder\n\nARG OPENSSL_DOOWNLOOAD_URL=\"https://cdn.openbsd.org/pub/OpenBSD/LibreSSL/libressl-3.2.0.tar.gz\"\n\n# we need remove cmake help\nARG CMAKE_DOWNLOAD_URL=\"https://cmake.org/files/v3.18/cmake-3.18.0.tar.gz\"\nARG CMAKE_INSATLL_PATH=/usr/local/cmake\nARG CMAKE_HELP_PATH=share/cmake-3.18/Help\n\n# build libressl\n# wget is already install in alpine\nRUN apk add --no-cache make wget \\\n    && wget ${OPENSSL_DOOWNLOOAD_URL} -O /tmp/libressl.tar.gz \\\n    && mkdir -p /tmp/libressl-src \\\n    && tar zxf /tmp/libressl.tar.gz -C /tmp/libressl-src  --strip-components=1 \\\n    && cd /tmp/libressl-src \\\n    && ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" --prefix=/usr/local/libressl CC=clang \\\n    && make -j$(nproc) \\\n    && make install \\\n    && rm -rf /tmp/libressl-src /tmp/libressl.tar.gz \\\n    # remove static lib files\n    && rm -rf /usr/local/libressl/lib/*.a /usr/local/libressl/lib/*.la \\\n    && ln -s /usr/local/libressl/bin/* /usr/local/bin/ \\\n    && ln -s /usr/local/libressl/lib/* /usr/local/lib/ \\\n    && ln -s /usr/local/libressl/include/* /usr/local/include/\n\nRUN wget ${CMAKE_DOWNLOAD_URL} -O /tmp/cmake.tar.gz \\\n    && mkdir -p /tmp/cmake-src \\\n    && tar zxf /tmp/cmake.tar.gz -C /tmp/cmake-src  --strip-components=1 \\\n    && cd /tmp/cmake-src \\\n    && ./bootstrap --parallel=$(nproc) --prefix=${CMAKE_INSATLL_PATH} -- -DCMAKE_BUILD_TYPE:STRING=Release \\\n    && make -j$(nproc) \\\n    && make install \\\n    && rm -rf ${CMAKE_INSATLL_PATH}/${CMAKE_HELP_PATH} \\\n    && rm -rf /tmp/cmake-src /tmp/cmake.tar.gz\n\n# build ninja\n#todo add ninja\n\n\n# next start another building context\nFROM genshen/clang-toolchain:10.0.0\n# Copy only build result from previous step to new lightweight image\nCOPY --from=cmake_builder /usr/local/cmake /usr/local/cmake\nCOPY --from=cmake_builder /usr/local/libressl/lib/ /usr/local/libressl/\nCOPY --from=builder /go/bin/pkg /usr/local/bin/pkg\n\nRUN mkdir -p /usr/local/bin /usr/local/lib \\\n    && ln -s /usr/local/cmake/bin/* /usr/local/bin/ \\\n    && ln -s /usr/local/libressl/* /usr/local/lib/ \\\n    && apk add --no-cache make\n\nENTRYPOINT [\"/usr/local/bin/pkg\"]\nCMD [\"--help\"]\n"
+}

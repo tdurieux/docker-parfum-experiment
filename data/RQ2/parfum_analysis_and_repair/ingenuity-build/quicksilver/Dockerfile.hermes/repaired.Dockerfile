@@ -1,0 +1,18 @@
+FROM rust:1.58-slim as build
+
+RUN apt update && apt install --no-install-recommends git -y && rm -rf /var/lib/apt/lists/*;
+
+WORKDIR /app/src
+
+RUN git clone https://github.com/informalsystems/ibc-rs --branch v0.12.0
+
+WORKDIR ibc-rs
+
+RUN cargo build --release
+
+FROM debian:bullseye-slim
+
+COPY --from=build /app/src/ibc-rs/target/release/hermes /usr/local/bin/hermes
+RUN adduser --system --home /hermes --disabled-password --disabled-login hermes -u 1000
+USER hermes
+

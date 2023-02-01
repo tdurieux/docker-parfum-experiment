@@ -1,0 +1,87 @@
+FROM alpine:3.12
+LABEL Description="Alpine Linux 3.12 with build dependencies for shared"
+
+# Alpine does not provide coq
+RUN \
+    apk --no-cache --update add \
+        cargo \
+        clang \
+        clang-dev \
+        gcc \
+        gdb \
+        gmp-dev \
+        gtk+3.0-dev \
+        iproute2 \
+        libmnl-dev \
+        libressl \
+        linux-lts-dev \
+        linux-headers \
+        llvm-dev \
+        make \
+        mingw-w64-gcc \
+        musl-dev \
+        musl-utils \
+        nss \
+        openjdk11 \
+        openssh \
+        openssl \
+        openssl-dev \
+        pulseaudio-dev \
+        py3-cffi \
+        py3-crypto \
+        py3-cryptography \
+        py3-numpy \
+        py3-pillow \
+        py3-setuptools \
+        py3-pynacl \
+        py3-z3 \
+        python2-dev \
+        python3-dev \
+        sdl2-dev \
+        z3-dev && \
+    rm -rf /var/cache/apk/*
+
+# Add OpenJDK to $PATH
+ENV JAVA_HOME=/usr/lib/jvm/java-11-openjdk
+ENV PATH="${JAVA_HOME}/bin:${PATH}"
+
+WORKDIR /shared
+RUN ln -s shared/machines/run_shared_test.sh /run_shared_test.sh
+COPY . /shared/
+
+CMD ["/run_shared_test.sh"]
+
+# make list-nobuild:
+#    Global blacklist: latex% rust/asymkeyfind% rust/check_linux_pass% rust/download_web%
+#    In sub-directories:
+#       c: x86-read_64b_regs_in_32b_mode
+#       glossaries:
+#       java/keystore: parse_jceks.py parse_pkcs12.py util_asn1.py
+#       linux:
+#       python:
+#       python/crypto: bip32_seed_derivation.py chacha20_poly1305_tests.py dhparam_tests.py dsa_tests.py ec_tests.py parse_openssl_enc.py rsa_tests.py
+#       python/network:
+#       python/network/dnssec: verify_dnssec.py
+#       python/qrcode:
+#       rust:
+#       verification: ackermann.vo
+#    Compilers:
+#       gcc -m64: ok
+#       gcc -m32: not working
+#       clang -m64: ok
+#       clang -m32: not working
+#       musl-gcc: not working
+#       x86_64-w64-mingw32-gcc: only compiling
+#       i686-w64-mingw32-gcc: not working
+#    Versions:
+#       gcc: gcc (Alpine 9.3.0) 9.3.0
+#       clang: Alpine clang version 10.0.0 (https://gitlab.alpinelinux.org/alpine/aports.git 7445adce501f8473efdb93b17b5eaf2f1445ed4c)
+#       x86_64-w64-mingw32-gcc: x86_64-w64-mingw32-gcc (GCC) 9.3.0
+#       Linux kernel: 5.4.192-0-lts
+#       /lib/ld-musl-x86_64.so.1: musl libc (x86_64) Version 1.1.24
+#       python3: Python 3.8.10
+#       javac: javac 11.0.9
+#       java: openjdk 11.0.9 2020-10-20
+#       rustc: rustc 1.44.0
+#       cargo: cargo 1.44.0
+#       openssl: OpenSSL 1.1.1o  3 May 2022

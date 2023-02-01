@@ -1,0 +1,35 @@
+{
+  "startTime": 1674240778134,
+  "endTime": 1674240778318,
+  "originalSmells": [
+    {
+      "rule": "wgetUseHttpsUrl",
+      "position": {
+        "lineStart": 47,
+        "lineEnd": 47,
+        "columnStart": 4,
+        "columnEnd": 89
+      }
+    },
+    {
+      "rule": "wgetUseHttpsUrl",
+      "position": {
+        "lineStart": 67,
+        "lineEnd": 67,
+        "columnStart": 4,
+        "columnEnd": 106
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 48,
+        "lineEnd": 48,
+        "columnStart": 4,
+        "columnEnd": 40
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM sequenceiq/spark:1.6.0\nRUN /bin/bash -c 'yum -y install wget java-1.8.0-openjdk-headless.x86_64; exit 0'\nCOPY conf/MariaDB.repo /etc/yum.repos.d/\nCOPY scripts/setup_mysql.sh .\nRUN chmod +x setup_mysql.sh && ./setup_mysql.sh\n\n# RUN /bin/bash -c 'useradd -r -m -s /bin/bash nifi; \\\n# useradd -r -m -s /bin/bash kylo; \\\n# useradd -r -m -s /bin/bash activemq'\n\nRUN /bin/bash -c 'echo \\\"Downloading the RPM\\\";\\\nwget http://bit.ly/2oVaQJE -O kylo-0.8.0.1.rpm;\\\nrpm -ivh kylo-0.8.0.1.rpm;\\\nrm kylo-0.8.0.1.rpm'\n\nRUN service mysql start && echo \"Setup database in MySQL\" && /opt/kylo/setup/sql/mysql/setup-mysql.sh localhost root hadoop\n\nRUN echo \"Install Elasticsearch\" && /opt/kylo/setup/elasticsearch/install-elasticsearch.sh\n\nRUN echo \"Install activemq\" && /opt/kylo/setup/activemq/install-activemq.sh\n\n# RUN echo \"Install NiFi\" && /opt/kylo/setup/nifi/install-nifi.sh\n\n# RUN echo \"Install Kylo\" && service mysql start && /opt/kylo/setup/nifi/install-kylo-components.sh\n\nRUN rm -f /opt/nifi/nifi-1.0.0-bin.tar.gz\n\n# RUN echo \"Creating the dropzone folder\" && mkdir -p /var/dropzone\n# RUN chown nifi:nifi /var/dropzone\n# RUN chmod 774 /var/dropzone/\n\n# RUN echo \"Creating the sample data folder\" && mkdir -p /var/sampledata\n\n# COPY sample_data/* /var/sampledata/\n\n# RUN chown -R kylo:kylo /var/sampledata\n\n# ENV KYLO_HOME=/opt/kylo\n# ENV PATH $PATH:$KYLO_HOME\n# COPY conf/application.properties /opt/kylo/kylo-services/conf/\n\n# RUN echo \"Kylo Installation complete\"\n\n# add spark and hadoop path to PATH env variable for kylo user\nRUN echo \"export PATH=$PATH:/usr/java/default/bin:/usr/local/spark/bin:/usr/local/hadoop/bin\" >> /etc/profile\n\n# Install hive\nRUN wget https://apache.mirrors.spacedump.net/hive/hive-2.1.1/apache-hive-2.1.1-bin.tar.gz\nRUN tar xvf apache-hive-2.1.1-bin.tar.gz && rm apache-hive-2.1.1-bin.tar.gz\nRUN rm ./apache-hive-2.1.1-bin.tar.gz\nRUN mv ./apache-hive-2.1.1-bin /usr/local/\nRUN ln -s /usr/local/apache-hive-2.1.1-bin /usr/local/hive\nCOPY conf/hive-site.xml /usr/local/hive/conf\nRUN echo \"export HIVE_HOME=/usr/local/hive\" >> /etc/profile\nRUN echo \"export PATH=$PATH:/usr/local/hive/bin\">> /etc/profile\nENV HIVE_HOME /usr/local/hive\nENV PATH $PATH:$HIVE_HOME/bin\n# Create directory for hive logs\nRUN mkdir -p /var/log/hive\n# Increase PermGen space for hiveserver2 to fix OOM pb.\nCOPY conf/hive-env.sh /usr/local/hive/conf/\n# Add kylo and nifi user to supergroup otherwise kylo-spark-shell service which runs as kylo user will not be able to create database in hive.\nRUN groupadd supergroup\nRUN usermod -a -G supergroup kylo\nRUN usermod -a -G supergroup nifi\nRUN echo \"HADOOP_HOME=/usr/local/hadoop\" >> /usr/local/hive/bin/hive-config.sh\n# Download mysql jdbc driver and prepare hive metastore.\nRUN wget https://central.maven.org/maven2/mysql/mysql-connector-java/5.1.41/mysql-connector-java-5.1.41.jar && mv mysql-connector-java-5.1.41.jar /usr/local/apache-hive-2.1.1-bin/lib/\nRUN service mysql start && cd /usr/local/hive/scripts/metastore/upgrade/mysql/ && mysql -uroot -phadoop -e \"CREATE DATABASE hive;\" && mysql -uroot -phadoop hive < ./hive-schema-2.1.0.mysql.sql\n# create hiveserver2 service\nCOPY conf/hive-server2 /etc/init.d/\nRUN chmod +x /etc/init.d/hive-server2\nRUN chkconfig --add /etc/init.d/hive-server2\n# ---- Hive installation finished -------\n\n\n# Prepare spark-hive integration, so spark sql will use hive tables defined in hive metastore, see https://spark.apache.org/docs/1.6.0/sql-programming-guide.html#hive-tables\nRUN cp /usr/local/hadoop/etc/hadoop/hdfs-site.xml /usr/local/spark/conf\nRUN cp /usr/local/hive/conf/hive-site.xml /usr/local/spark/conf\nRUN cp /usr/local/hive/lib/mysql-connector-java-5.1.41.jar /usr/local/spark/lib\n# Make mysql driver available to kylo-spark-shell\n# RUN cp /usr/local/apache-hive-2.1.1-bin/lib/mysql-connector-java-5.1.41.jar /opt/nifi/mysql/\n# ----- Spark-Hive integration finished ---------\n\nRUN mkdir -p /var/share\nVOLUME /var/share\n\nCOPY conf/core-site.xml.template2 /usr/local/hadoop/etc/hadoop/\n\nCOPY scripts/bootstrap_base.sh /etc/bootstrap.sh\nRUN chown root.root /etc/bootstrap.sh\nRUN chmod 700 /etc/bootstrap.sh\n\nENTRYPOINT [\"/etc/bootstrap.sh\"]\n\nEXPOSE 10000"
+}

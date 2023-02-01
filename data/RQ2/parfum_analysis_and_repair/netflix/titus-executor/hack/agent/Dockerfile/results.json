@@ -1,0 +1,62 @@
+{
+  "startTime": 1674250671900,
+  "endTime": 1674250672651,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 8,
+        "lineEnd": 8,
+        "columnStart": 63,
+        "columnEnd": 117
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 10,
+        "lineEnd": 10,
+        "columnStart": 4,
+        "columnEnd": 80
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 16,
+        "lineEnd": 16,
+        "columnStart": 4,
+        "columnEnd": 60
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 8,
+        "lineEnd": 8,
+        "columnStart": 63,
+        "columnEnd": 117
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 10,
+        "lineEnd": 10,
+        "columnStart": 4,
+        "columnEnd": 80
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 16,
+        "lineEnd": 16,
+        "columnStart": 4,
+        "columnEnd": 60
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "## This produces a docker container with everything required on a titus-agent instance,\n#  including systemd, dbus and docker itself (docker-in-docker).\n#  Its purpose is to provide a titus-agent environment with a docker daemon, that standalone (integration)\n#  tests can run against.\n\n# systemd pieces were inspired by solita/docker-systemd (MIT License)\nFROM ubuntu:bionic\n\nRUN export DEBIAN_FRONTEND=noninteractive && apt-get update && apt-get install --no-install-recommends -y apt-transport-https ca-certificates && rm -rf /var/lib/apt/lists/*;\nRUN export DEBIAN_FRONTEND=noninteractive && apt-get update && \\\n    apt-get install --no-install-recommends -y build-essential curl make cmake libattr1-dev dbus systemd && rm -rf /var/lib/apt/lists/*;\n\nRUN curl -fsSL https://download.docker.com/linux/ubuntu/gpg | apt-key add -\nRUN echo \"deb [arch=amd64] https://download.docker.com/linux/ubuntu bionic stable\" > /etc/apt/sources.list.d/docker.list\n\nRUN export DEBIAN_FRONTEND=noninteractive && apt-get update && \\\n    apt-get install --no-install-recommends -y docker-ce=5:18.09.7~3-0~ubuntu-bionic && rm -rf /var/lib/apt/lists/*;\n\n### systemd\nENV container docker\n\n# Don't start any optional services except for the few we need.\nRUN find /etc/systemd/system \\\n         /lib/systemd/system \\\n         -path '*.wants/*' \\\n         -not -name '*journald*' \\\n         -not -name '*systemd-tmpfiles*' \\\n         -not -name '*systemd-user-sessions*' \\\n         -exec rm \\{} \\;\n\nRUN systemctl set-default multi-user.target\nSTOPSIGNAL SIGRTMIN+3\n### systemd end\n\nCOPY --from=golang:1.16-stretch /usr/local/go /usr/local/go\nENV GOPATH /go\nENV PATH $GOPATH/bin:/usr/local/go/bin:$PATH\nRUN go version\n\nRUN mkdir -p \"$GOPATH/src\" \"$GOPATH/bin\" && chmod -R 777 \"$GOPATH\"\n###\n\nRUN systemctl enable dbus.service\nRUN systemctl enable docker.service\n\n# TODO(fabio): detect what storage-driver to use at runtime\nRUN mkdir -p /etc/docker /run/metatron/certificates\nCOPY hack/agent/fake-gpu-runtime /usr/local/bin/fake-gpu-runtime\nRUN chmod 755 /usr/local/bin/fake-gpu-runtime\nCOPY hack/agent/daemon.json /etc/docker/daemon.json\nCOPY hack/agent/titus-shared.env /etc/titus-shared.env\n\n# Directories that the executor needs access to, which will be available with --volumes-from\nVOLUME /run\nVOLUME /var/lib/docker\nVOLUME /var/lib/titus-container-logs\nVOLUME /var/lib/titus-inits\nVOLUME /var/lib/titus-environments\nVOLUME /var/tmp\n\n# This is for the in-container SSHd configuration\nRUN mkdir -p /etc/ssh && touch /etc/ssh/titus_user_ssh_key_cas.pub\n\n# this assumes there is a deb file (or symlink) with the _latest suffix\n# build scripts are expected to produce it\nCOPY build/distributions/titus-executor*.deb /var/cache/apt/archives/\nRUN dpkg -i /var/cache/apt/archives/titus-executor_latest.deb\n\n# Test Metatron certificates - these are needed for running standalone tests that\n# test the metadata server's task identity endpoint:\nCOPY hack/agent/certs/* /metatron/certificates/\n\n# Workaround for docker/docker#27202, technique based on comments from docker/docker#9212\nCMD [\"/bin/bash\", \"-c\", \"exec /sbin/init --log-target=journal 3>&1\"]\n"
+}

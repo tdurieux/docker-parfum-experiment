@@ -1,0 +1,26 @@
+{
+  "startTime": 1674253251645,
+  "endTime": 1674253252159,
+  "originalSmells": [
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 17,
+        "lineEnd": 19,
+        "columnStart": 4,
+        "columnEnd": 40
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 26,
+        "lineEnd": 30,
+        "columnStart": 4,
+        "columnEnd": 12
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# This stage builds a dist tarball from the source\nFROM alpine:edge as source-builder\n\nRUN mkdir -p /src/alpine\nCOPY alpine/APKBUILD.in /src/alpine\nRUN source /src/alpine/APKBUILD.in \\\n\t&& echo 'http://dl-cdn.alpinelinux.org/alpine/edge/testing' >> /etc/apk/repositories \\\n\t&& apk add \\\n\t\t--no-cache \\\n\t\t--update-cache \\\n\t\t$makedepends \\\n\t\tgzip\n\nCOPY . /src\nARG PKGVER\nRUN cd /src \\\n\t&& ./bootstrap.sh \\\n\t&& ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" \\\n\t\t--enable-numeric-version \\\n\t\t--with-pkg-extra-version=\"_git$PKGVER\" \\\n\t&& make dist\n\n# This stage builds an apk from the dist tarball\nFROM alpine:edge as alpine-builder\n# Don't use nocache here so that abuild can use the cache\nRUN echo 'http://dl-cdn.alpinelinux.org/alpine/edge/testing' >> /etc/apk/repositories \\\n\t&& apk add --no-cache \\\n\t\t--update-cache \\\n\t\tabuild \\\n\t\talpine-conf \\\n\t\talpine-sdk \\\n\t&& setup-apkcache /var/cache/apk \\\n\t&& mkdir -p /pkgs/apk \\\n\t&& echo 'builder ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers\n\nCOPY --from=source-builder /src/frr-*.tar.gz /src/alpine/* /dist/\nRUN adduser -D -G abuild builder && chown -R builder /dist /pkgs\nUSER builder\nRUN cd /dist \\\n\t&& abuild-keygen -a -n \\\n\t&& abuild checksum \\\n\t&& abuild -r -P /pkgs/apk\n\n# This stage installs frr from the apk\nFROM alpine:edge\nRUN mkdir -p /pkgs/apk\nCOPY --from=alpine-builder /pkgs/apk/ /pkgs/apk/\nRUN echo 'http://dl-cdn.alpinelinux.org/alpine/edge/testing' >> /etc/apk/repositories \\\n\t&& apk add \\\n\t\t--no-cache \\\n\t\t--update-cache \\\n\t\ttini \\\n\t&& apk add \\\n\t\t--no-cache \\\n\t\t--allow-untrusted /pkgs/apk/*/*.apk \\\n\t&& rm -rf /pkgs\nCOPY docker/alpine/docker-start /usr/lib/frr/docker-start\nENTRYPOINT [ \"/sbin/tini\", \"--\", \"/usr/lib/frr/docker-start\" ]\n"
+}

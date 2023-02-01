@@ -1,0 +1,71 @@
+{
+  "startTime": 1674252009260,
+  "endTime": 1674252010031,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 31,
+        "lineEnd": 31,
+        "columnStart": 4,
+        "columnEnd": 97
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 32,
+        "lineEnd": 32,
+        "columnStart": 4,
+        "columnEnd": 111
+      }
+    },
+    {
+      "rule": "sha256sumEchoOneSpaces",
+      "position": {
+        "lineStart": 33,
+        "lineEnd": 33,
+        "columnStart": 4,
+        "columnEnd": 71
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 35,
+        "lineEnd": 35,
+        "columnStart": 4,
+        "columnEnd": 59
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 20,
+        "lineEnd": 20,
+        "columnStart": 22,
+        "columnEnd": 78
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 52,
+        "lineEnd": 52,
+        "columnStart": 22,
+        "columnEnd": 84
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 72,
+        "lineEnd": 72,
+        "columnStart": 22,
+        "columnEnd": 84
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Copyright 2017 The Go Authors. All rights reserved.\n# Use of this source code is governed by a BSD-style\n# license that can be found in the LICENSE file.\n\n# The playground builds Go from a bootstrap version for two reasons:\n# - The playground deployment is triggered before the artifacts are\n#   published for the latest version of Go.\n# - The sandbox builds the Go standard library with a custom build\n#   flag called faketime.\n\n# GO_VERSION is provided by Cloud Build, and is set to the latest\n# version of Go. See the configuration in the deploy directory.\nARG GO_VERSION=go1.18\n\n############################################################################\n# Build Go at GO_VERSION, and build faketime standard library.\nFROM debian:buster AS build-go\nLABEL maintainer=\"golang-dev@googlegroups.com\"\n\nENV BUILD_DEPS 'curl git gcc patch libc6-dev ca-certificates'\nRUN apt-get update && apt-get install -y ${BUILD_DEPS} --no-install-recommends && rm -rf /var/lib/apt/lists/*;\n\nENV GOPATH /go\nENV GOROOT_BOOTSTRAP=/usr/local/go-bootstrap\nENV GO_BOOTSTRAP_VERSION go1.18\nARG GO_VERSION\nENV GO_VERSION ${GO_VERSION}\n\n# Get a bootstrap version of Go for building GO_VERSION. At the time\n# of this Dockerfile being built, GO_VERSION's artifacts may not yet\n# be published.\nRUN curl -f -sSL https://dl.google.com/go/$GO_BOOTSTRAP_VERSION.linux-amd64.tar.gz -o /tmp/go.tar.gz\nRUN curl -f -sSL https://dl.google.com/go/$GO_BOOTSTRAP_VERSION.linux-amd64.tar.gz.sha256 -o /tmp/go.tar.gz.sha256\nRUN echo \"$(cat /tmp/go.tar.gz.sha256)  /tmp/go.tar.gz\" | sha256sum -c -\nRUN mkdir -p $GOROOT_BOOTSTRAP\nRUN tar --strip=1 -C $GOROOT_BOOTSTRAP -vxzf /tmp/go.tar.gz && rm /tmp/go.tar.gz\n\nRUN mkdir /gocache\nENV GOCACHE /gocache\nENV GO111MODULE on\nENV GOPROXY=https://proxy.golang.org\n\n# Compile Go at target version in /usr/local/go.\nWORKDIR /usr/local\nRUN git clone https://go.googlesource.com/go go && cd go && git reset --hard $GO_VERSION\nWORKDIR /usr/local/go/src\nRUN ./make.bash\n\n############################################################################\n# Build playground web server.\nFROM debian:buster as build-playground\n\nRUN apt-get update && apt-get install -y ca-certificates git --no-install-recommends && rm -rf /var/lib/apt/lists/*;\n# Build playground from Go built at GO_VERSION.\nCOPY --from=build-go /usr/local/go /usr/local/go\nENV GOROOT /usr/local/go\nENV GOPATH /go\nENV PATH=\"/go/bin:/usr/local/go/bin:${PATH}\"\n# Cache dependencies for efficient Dockerfile building.\nCOPY go.mod /go/src/playground/go.mod\nCOPY go.sum /go/src/playground/go.sum\nWORKDIR /go/src/playground\nRUN go mod download\n\n# Add and compile playground daemon.\nCOPY . /go/src/playground/\nRUN go install\n\n############################################################################\n# Final stage.\nFROM debian:buster\n\nRUN apt-get update && apt-get install -y git ca-certificates --no-install-recommends && rm -rf /var/lib/apt/lists/*;\n\n# Make a copy in /usr/local/go-faketime where the standard library\n# is installed with -tags=faketime.\nCOPY --from=build-go /usr/local/go /usr/local/go-faketime\n\nENV CGO_ENABLED 0\nENV GOPATH /go\nENV GOROOT /usr/local/go-faketime\nARG GO_VERSION\nENV GO_VERSION ${GO_VERSION}\nENV PATH=\"/go/bin:/usr/local/go-faketime/bin:${PATH}\"\n\nWORKDIR /usr/local/go-faketime\nRUN ./bin/go install --tags=faketime std\n# Ignore the exit code. go vet std does not pass vet with the faketime\n# patches, but it successfully caches results for when we vet user\n# snippets.\nRUN ./bin/go vet --tags=faketime std || true\n\nRUN mkdir /app\nCOPY --from=build-playground /go/bin/playground /app\nCOPY edit.html /app\nCOPY static /app/static\nCOPY examples /app/examples\nWORKDIR /app\n\nEXPOSE 8080\nENTRYPOINT [\"/app/playground\"]\n"
+}

@@ -1,0 +1,35 @@
+{
+  "startTime": 1674253180274,
+  "endTime": 1674253181179,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 42,
+        "lineEnd": 42,
+        "columnStart": 2,
+        "columnEnd": 99
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 83,
+        "lineEnd": 83,
+        "columnStart": 31,
+        "columnEnd": 143
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 93,
+        "lineEnd": 93,
+        "columnStart": 4,
+        "columnEnd": 138
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM calico/bpftool:v5.3-s390x as bpftool\n\nFROM s390x/golang:1.13.7-buster\n\nARG QEMU_VERSION=4.2.0-6\n\n# we need these two distinct lists. The first one is the names used by the qemu distributions\n# these second is the names used by golang see https://github.com/golang/go/blob/master/src/go/build/syslist.go\n# the primary difference as of this writing is that qemu uses aarch64 and golang uses arm64\nARG QEMU_ARCHS=\"aarch64 ppc64le s390x\"\nARG CROSS_ARCHS=\"arm64 ppc64le s390x\"\n\nARG MANIFEST_TOOL_VERSION=v1.0.2\n\n# Install su-exec for use in the entrypoint.sh (so processes run as the right user)\n# Install bash for the entry script (and because it's generally useful)\n# Install curl to download glide\n# Install git for fetching Go dependencies\n# Install ssh for fetching Go dependencies\n# Install mercurial for fetching go dependencies\n# Install wget since it's useful for fetching\n# Install make for building things\n# Install util-linux for column command (used for output formatting).\n# Install grep and sed for use in some Makefiles (e.g. pulling versions out of glide.yaml)\n# Install gcc for cgo.\n# Install clang, libbpf and newer kernel headers for building BPF binaries.\nRUN echo 'APT::Default-Release \"stable\";' > /etc/apt/apt.conf.d/99defaultrelease && \\\n  echo 'deb     http://ftp.de.debian.org/debian/    buster-backports main contrib non-free' > /etc/apt/sources.list.d/buster-backports.list && \\\n  apt-get -y update &&  \\\n  apt-get -y upgrade && \\\n  apt-get install --no-install-recommends -y -t buster-backports \\\n  libbpf-dev linux-headers-s390x  && \\\n  apt-get install --no-install-recommends -y \\\n  curl bash git openssh-client mercurial make wget util-linux file grep sed \\\n  llvm clang binutils file iproute2 \\\n  ca-certificates gcc libc-dev bsdmainutils strace && \\\n  rm -rf /var/lib/apt/lists/*\n\n# su-exec is used by the entrypoint script to execute the user's command with the right UID/GID.\n# (sudo doesn't work easily in a container.)  The version was current master at the time of writing.\nARG SU_EXEC_VER=212b75144bbc06722fbd7661f651390dc47a43d1\nRUN set -ex; \\\n  curl -f -o /sbin/su-exec.c https://raw.githubusercontent.com/ncopa/su-exec/${SU_EXEC_VER}/su-exec.c; \\\n  gcc -Wall /sbin/su-exec.c -o/sbin/su-exec; \\\n  chown root:root /sbin/su-exec; \\\n  chmod 0755 /sbin/su-exec; \\\n  rm /sbin/su-exec.c\n\n# Disable ssh host key checking\nRUN echo 'Host *' >> /etc/ssh/ssh_config \\\n  && echo '    StrictHostKeyChecking no' >> /etc/ssh/ssh_config\n\n# We want to be able to do both cgo and non-cgo builds.  That's awkward because toggling cgo\n# results in parts of the stdlib getting rebuilt (which fails due to the container's read-only\n# filesystem).  As a workaround: take a copy of the go root for cgo builds and have the\n# entrypoint script swap it into the path if it detects CGO_ENABLED=1.\nENV GOROOT=/usr/local/go\nENV GOCGO=/usr/local/go-cgo\n\n# Disable cgo by default so that binaries we build will be fully static by default.\nENV CGO_ENABLED=0\n\nRUN cp -a $GOROOT $GOCGO && \\\n  go install -v std && \\\n  rm -rf /go/src/* /root/.cache\n\n# Install go programs that we rely on\nENV GLIDE_HOME /home/user/.glide\nRUN go get github.com/Masterminds/glide && \\\n  go get github.com/golang/dep/cmd/dep && \\\n  go get github.com/onsi/ginkgo/ginkgo && \\\n  go get golang.org/x/tools/cmd/goimports && \\\n  wget -O - -q https://install.goreleaser.com/github.com/golangci/golangci-lint.sh | sh -s v1.20.0 && \\\n  golangci-lint --version && \\\n  go get github.com/pmezard/licenses && \\\n  go get github.com/wadey/gocovmerge && \\\n  go get github.com/mikefarah/yaml && \\\n  go get -u golang.org/x/vgo && \\\n  go get -u github.com/jstemmer/go-junit-report && \\\n  go get -u golang.org/x/tools/cmd/stringer && \\\n  rm -rf /go/src/* /root/.cache\n\n# Enable non-native runs on amd64 architecture hosts\nRUN for i in ${QEMU_ARCHS}; do curl -f -L https://github.com/multiarch/qemu-user-static/releases/download/v${QEMU_VERSION}/qemu-${i}-static.tar.gz | tar zxvf - -C /usr/bin; done\nRUN chmod +x /usr/bin/qemu-*\n\n# When running cross built binaries run-times will be auto-installed,\n# ensure the install directory is writable by everyone.\nRUN for arch in ${CROSS_ARCHS}; do mkdir -m +w -p /usr/local/go/pkg/linux_${arch}; GOARCH=${arch} go install -v std; done\n\n# Ensure that everything under the GOPATH is writable by everyone\nRUN chmod -R 777 $GOPATH\n\nRUN curl -f -sSL https://github.com/estesp/manifest-tool/releases/download/${MANIFEST_TOOL_VERSION}/manifest-tool-linux-amd64 > manifest-tool && \\\n  chmod +x manifest-tool && \\\n  mv manifest-tool /usr/bin/\n\n# Add bpftool for Felix UT/FV.\nCOPY --from=bpftool /bpftool /usr/bin\n\nCOPY entrypoint.sh /usr/local/bin/entrypoint.sh\nENTRYPOINT [\"/usr/local/bin/entrypoint.sh\"]\n"
+}

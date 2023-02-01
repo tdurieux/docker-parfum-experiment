@@ -1,0 +1,9 @@
+# Image build must be run from repository root directory
+FROM registry.ci.openshift.org/openshift/release:golang-1.18 as builder
+RUN mkdir -p /go/src/github.com/openshift/ibm-roks-toolkit
+WORKDIR /go/src/github.com/openshift/ibm-roks-toolkit
+COPY . .
+RUN go build -mod=vendor -o ./bin/control-plane-operator ./cmd/control-plane-operator/main.go
+
+# Base image on release is pulled from https://github.com/openshift/release/blob/master/ci-operator/config/openshift/ibm-roks-toolkit/openshift-ibm-roks-toolkit-release-4.*.yaml
+# roks-toolkit-base image stream is located here https://github.com/openshift/release/blob/master/clusters/app.ci/supplemental-ci-images/ibm-roks-toolkit-base/ibm-roks-toolkit-base.yaml

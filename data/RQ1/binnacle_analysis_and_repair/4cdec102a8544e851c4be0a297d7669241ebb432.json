@@ -1,0 +1,81 @@
+{
+  "startTime": 1674241737446,
+  "endTime": 1674241737636,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 11,
+        "lineEnd": 11,
+        "columnStart": 4,
+        "columnEnd": 42
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 26,
+        "lineEnd": 27,
+        "columnStart": 4,
+        "columnEnd": 22
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 30,
+        "lineEnd": 30,
+        "columnStart": 4,
+        "columnEnd": 61
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 30,
+        "lineEnd": 30,
+        "columnStart": 4,
+        "columnEnd": 61
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 11,
+        "lineEnd": 11,
+        "columnStart": 4,
+        "columnEnd": 42
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 26,
+        "lineEnd": 27,
+        "columnStart": 4,
+        "columnEnd": 22
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 30,
+        "lineEnd": 30,
+        "columnStart": 4,
+        "columnEnd": 61
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 30,
+        "lineEnd": 30,
+        "columnStart": 4,
+        "columnEnd": 85
+      }
+    }
+  ],
+  "repairedDockerfile": "FROM buildpack-deps:trusty\n\n# Enable remote pubkey access\nRUN mkdir /root/.ssh && chmod 700 /root/.ssh && \\\n    echo \"ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQCdCmmPjsOBWRXc+PKdgDRrsciNjp25zTacyz8Gdkln2ma046brOYXAphhp/85DKgHtANBBt3cl4+HnpDbmAfyq2qZT7hWzAbMxtq0Sj+yyFyUdreXoe4gEKyxpV6o8p/R/XzEcawvqX/vFc5EIFmvTdamxZs9DQmOE5AZMzUB18Kerkrb0/arUcZ8iMi9Ng9a18avow+7oUFZ6Oub7ISz/dkIRojaKO/2paJZ4p+v7ZLn7Hq8TUeBkgAlx872oh8J8linhIq17zK6x4MGL8qiurp2hnfe0cuCxwcsYGy+4DfK51+E2vks6FprCIfF5hIdz26euPn67/YpM0F0b5nXF busybee@drone\" >> /root/.ssh/authorized_keys\n\n# Create busybee credentials and make busybee pkey available for root\nCOPY busybee*  /root/.ssh/\nRUN chmod 600 /root/.ssh/busybee\n\nRUN DEBIAN_FRONTEND=noninteractive && apt-get -y update && \\\n    apt-get install --no-install-recommends -y openssh-server sudo && \\\n    mkdir /var/run/sshd && rm -rf /var/lib/apt/lists/*;\n\n# 1. small fix for SSH in ubuntu 13.10 (that's harmless everywhere else)\n# 2. permit root logins and set simple password password and pubkey\n# 3. change requiretty to !requiretty in /etc/sudoers\nRUN sed -ri 's/^session\\s+required\\s+pam_loginuid.so$/session optional pam_loginuid.so/' /etc/pam.d/sshd && \\\n        sed -ri 's/^#?PermitRootLogin\\s+.*/PermitRootLogin yes/' /etc/ssh/sshd_config && \\\n        sed -ri 's/^#?PubkeyAuthentication\\s+.*/PubkeyAuthentication yes/' /etc/ssh/sshd_config && \\\n        sed -ri 's/requiretty/!requiretty/' /etc/sudoers && \\\n        echo 'root:docker.io' | chpasswd\n\n# install core software for packaging and ssh communication\nRUN echo -e \"#!/bin/sh\\nexit 101\\n\" > /usr/sbin/policy-rc.d && \\\n    DEBIAN_FRONTEND=noninteractive && apt-get -y update && \\\n    apt-get -y --no-install-recommends install gdebi-core sshpass cron \\\n      netcat net-tools && rm -rf /var/lib/apt/lists/*;\n\n# install netbase package (includes /etc/protocols and other files we rely on)\nRUN DEBIAN_FRONTEND=noninteractive apt-get --no-install-recommends -y install netbase && rm -rf /var/lib/apt/lists/*;\n\nCOPY init-fake.conf /etc/init/fake-container-events.conf\n\n# undo some leet hax of the base image\nRUN echo -e \"#!/bin/sh\\nexit 101\\n\" > /usr/sbin/policy-rc.d && \\\n  rm /sbin/initctl; dpkg-divert --rename --remove /sbin/initctl\n\n# generate a nice UTF-8 locale for our use\nRUN locale-gen en_US.UTF-8 && update-locale LANG=en_US.UTF-8\n\n# remove some pointless services\nRUN /usr/sbin/update-rc.d -f ondemand remove; \\\n  for f in \\\n    /etc/init/u*.conf \\\n    /etc/init/mounted-dev.conf \\\n    /etc/init/mounted-proc.conf \\\n    /etc/init/mounted-run.conf \\\n    /etc/init/mounted-tmp.conf \\\n    /etc/init/mounted-var.conf \\\n    /etc/init/hostname.conf \\\n    /etc/init/networking.conf \\\n    /etc/init/tty*.conf \\\n    /etc/init/plymouth*.conf \\\n    /etc/init/hwclock*.conf \\\n    /etc/init/module*.conf\\\n  ; do \\\n    dpkg-divert --local --rename --add \"$f\"; \\\n  done; \\\n  echo '# /lib/init/fstab: cleared out for bare-bones Docker' > /lib/init/fstab\n\n\n# let Upstart know it's in a container\nENV container docker\n\n# we can have SSH\nEXPOSE 22\n\n# pepare for takeoff\nCMD [\"/sbin/init\"]\n"
+}

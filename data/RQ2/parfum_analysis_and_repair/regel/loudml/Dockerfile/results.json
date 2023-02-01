@@ -1,0 +1,17 @@
+{
+  "startTime": 1674254800656,
+  "endTime": 1674254801638,
+  "originalSmells": [
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 8,
+        "lineEnd": 13,
+        "columnStart": 2,
+        "columnEnd": 9
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "ARG extras_require=cpu\nARG base_image=python:3.7-slim\nARG gpu=false\n\nFROM $base_image AS builder\nARG extras_require\n\nRUN apt-get update -qq && \\\n  apt-get install -y --no-install-recommends \\\n  build-essential \\\n  python3-venv \\\n  pkg-config \\\n  git-core \\\n  openssl && rm -rf /var/lib/apt/lists/*;\n\n# copy files\nCOPY . /build/\n\n# change working directory\nWORKDIR /build\n\n# install dependencies\nRUN python -m venv /opt/venv && \\\n  . /opt/venv/bin/activate && \\\n  pip install --no-cache-dir -U 'pip<20' && \\\n  pip install --no-cache-dir -r requirements.txt && \\\n  pip install --no-cache-dir .[$extras_require] && \\\n  rm -rf dist *.egg-info\n\n# start a new build stage\nFROM $base_image AS runner\nARG gpu\n\n# copy everything from /opt\nCOPY --from=builder /opt/venv /opt/venv\n\nRUN mkdir /var/lib/loudml && \\\n\tchgrp -R 0 /var/lib/loudml && \\\n\tchmod -R g=u /var/lib/loudml && \\\n\tmkdir /etc/loudml && \\\n{ if [ \"x$gpu\" = \"xtrue\" ] ; then /bin/echo -e '\\\n---\\n\\\nbuckets: []\\n\\\nserver:\\n\\\n  listen: 0.0.0.0:8077\\n\\\ninference:\\n\\\n  num_cpus: 1\\n\\\n  num_gpus: 0\\n\\\ntraining:\\n\\\n  num_cpus: 1\\n\\\n  num_gpus: 1\\n\\\n  batch_size: 256\\n\\\n' \\\n>> /etc/loudml/config.yml ; \\\nelse /bin/echo -e '\\\n---\\n\\\nbuckets: []\\n\\\nserver:\\n\\\n  listen: 0.0.0.0:8077\\n\\\n' \\\n>> /etc/loudml/config.yml ; \\\nfi ; }\n\n# make sure we use the virtualenv\nENV PATH=\"/opt/venv/bin:$PATH\"\n\n# update permissions & change user to not run as root\nWORKDIR /app\nRUN chgrp -R 0 /app && chmod -R g=u /app\nUSER 1001\n\n# create a volume for temporary data\nVOLUME /tmp\n\n# change shell\nSHELL [\"/bin/bash\", \"-o\", \"pipefail\", \"-c\"]\n\n# the entry point\nEXPOSE 8077\nLABEL maintainer=\"packaging@loudml.io\"\nENTRYPOINT [\"loudmld\"]\n"
+}

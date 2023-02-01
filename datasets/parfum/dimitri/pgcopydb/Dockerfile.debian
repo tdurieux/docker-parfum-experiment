@@ -1,0 +1,47 @@
+FROM debian:sid
+
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends \
+        build-essential \
+        devscripts \
+        debhelper \
+        autotools-dev \
+        libedit-dev \
+        libpam0g-dev \
+        libreadline-dev \
+        libselinux1-dev \
+        libxslt1-dev \
+        libssl-dev \
+        libkrb5-dev \
+        zlib1g-dev \
+        liblz4-dev \
+    	libpq5 \
+        libpq-dev \
+        postgresql-server-dev-all \
+        postgresql-common \
+        postgresql \
+        python3-sphinx \
+        lintian \
+        curl \
+  && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /usr/src/pgcopydb
+
+COPY ./Makefile ./
+COPY ./README.md ./
+COPY ./CHANGELOG.md ./
+COPY ./LICENSE ./
+COPY ./src ./src/
+COPY ./docs ./docs/
+
+WORKDIR /usr/src
+RUN tar czf pgcopydb_0.7.orig.tar.gz pgcopydb
+
+WORKDIR /usr/src/pgcopydb
+
+COPY ./debian/ ./debian/
+RUN dpkg-buildpackage --no-sign
+
+WORKDIR /usr/src
+
+#RUN lintian --suppress-tags bad-whatis-entry *.changes

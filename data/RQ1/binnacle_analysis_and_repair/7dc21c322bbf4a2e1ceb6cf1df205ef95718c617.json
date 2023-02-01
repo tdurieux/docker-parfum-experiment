@@ -1,0 +1,35 @@
+{
+  "startTime": 1674234019303,
+  "endTime": 1674234019501,
+  "originalSmells": [
+    {
+      "rule": "sha256sumEchoOneSpaces",
+      "position": {
+        "lineStart": 16,
+        "lineEnd": 16,
+        "columnStart": 1,
+        "columnEnd": 46
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 9,
+        "lineEnd": 9,
+        "columnStart": 22,
+        "columnEnd": 73
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 46,
+        "lineEnd": 46,
+        "columnStart": 22,
+        "columnEnd": 74
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM nvidia/cuda:10.0-devel-ubuntu18.04 as build_stage\n\nENV GO_VERSION 1.12\nENV GO_ARCH 'linux-amd64'\nENV GO_BIN_SHA '750a07fef8579ae4839458701f4df690e0b20b8bcce33b437e4df89c451b6f13'\n\n\n#  Install required dev tools to compile cyberd\n###############################################################################\nRUN apt-get update && apt-get install -y --no-install-recommends wget git && rm -rf /var/lib/apt/lists/*;\n\n\n#  Install golang\n###############################################################################\nRUN url=\"https://golang.org/dl/go${GO_VERSION}.${GO_ARCH}.tar.gz\" && \\\n\twget -O go.tgz \"$url\" && \\\n\techo \"${GO_BIN_SHA}  *go.tgz\" | sha256sum -c - && \\\n\ttar -C /usr/local -xzf go.tgz && \\\n\trm go.tgz\n\nENV PATH=\"/usr/local/go/bin:$PATH\"\nRUN go version && nvcc --version\n\n\n# Compile cuda kernel\n###############################################################################\nCOPY . /sources\nWORKDIR /sources/x/rank/cuda\nRUN nvcc -fmad=false -shared -o libcbdrank.so rank.cu --compiler-options '-fPIC -frounding-math -fsignaling-nans' && \\\n    cp libcbdrank.so /usr/lib/ && cp cbdrank.h /usr/lib/\n\n\n# Compile cyberd\n###############################################################################\nWORKDIR /sources\nRUN go build -tags cuda -o cyberd ./daemon\nRUN go build -o cyberdcli ./cli\n\n\n###############################################################################\n# Create base image\n###############################################################################\nFROM nvidia/cuda:10.0-runtime-ubuntu18.04\n\n#  Install useful dev tools\n###############################################################################\nRUN apt-get update && apt-get install -y --no-install-recommends wget curl && rm -rf /var/lib/apt/lists/*;\n\n#  Download genesis file and links file from IPFS\n###############################################################################\n# To slow using ipget, currently we use gateway\nRUN wget -O /genesis.json https://ipfs.io/ipfs/Qmd6vJaBMkQryo9e4QvY6pHMSPin3PHAwjNqmnYE1E2qPn\nRUN wget -O /links https://ipfs.io/ipfs/QmYXsdxeHRA12jZh9tmDuff4rth4hergzMxhMAX7niGhAs\nRUN wget -O /config.toml https://ipfs.io/ipfs/Qmc8shUKgXREq45bYFezK5iNUVmRYGVdkiYijC9pmRisHc\n\nWORKDIR /\n\n#  Copy compiled kernel and binaries\n###############################################################################\nCOPY --from=build_stage /sources/cyberd /usr/bin/cyberd\nCOPY --from=build_stage /sources/cyberdcli /usr/bin/cyberdcli\n\nCOPY --from=build_stage /usr/lib/cbdrank.h /usr/lib/cbdrank.h\nCOPY --from=build_stage /usr/lib/libcbdrank.so /usr/lib/libcbdrank.so\n\n#  Copy startup scripts\n###############################################################################\n\nCOPY start_script.sh start_script.sh\nCOPY entrypoint.sh /entrypoint.sh\nRUN chmod +x start_script.sh\nRUN chmod +x /entrypoint.sh\n\n\n#  Start\n###############################################################################\nEXPOSE 26656 26657\nENTRYPOINT [\"/entrypoint.sh\"]\nCMD [\"./start_script.sh\"]\n"
+}

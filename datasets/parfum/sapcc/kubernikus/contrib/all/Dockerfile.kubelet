@@ -1,0 +1,55 @@
+ARG BASE_IMAGE
+
+FROM alpine as builder
+
+WORKDIR /tmp
+
+ARG KUBERNETES_VERSION
+ARG CNI_PLUGINS_RELEASE
+ARG ARCH
+
+RUN wget https://storage.googleapis.com/kubernetes-release/release/$KUBERNETES_VERSION/bin/linux/amd64/kubelet && \
+    chmod +x kubelet && \
+    wget https://storage.googleapis.com/kubernetes-release/release/$KUBERNETES_VERSION/bin/linux/amd64/kubectl && \
+    chmod +x kubectl
+RUN mkdir -p cni-bin && \
+    wget -O- https://github.com/containernetworking/plugins/releases/download/${CNI_PLUGINS_RELEASE}/cni-plugins-linux-${ARCH}-${CNI_PLUGINS_RELEASE}.tgz | tar -xz -C cni-bin
+
+FROM $BASE_IMAGE
+
+LABEL source_repository="https://github.com/sapcc/kubernikus"
+
+COPY --from=builder /tmp/kubelet /usr/local/bin/kubelet
+COPY --from=builder /tmp/kubectl /usr/local/bin/kubectl
+COPY --from=builder /tmp/cni-bin /opt/cni/bin
+
+RUN clean-install \
+    bash
+
+RUN echo "dash dash/sh boolean false" | debconf-set-selections
+RUN DEBIAN_FRONTEND=noninteractive dpkg-reconfigure dash
+RUN ln -fs /usr/share/zoneinfo/Etc/UTC /etc/localtime
+
+RUN clean-install --allow-change-held-packages \
+    ca-certificates \
+    ceph-common \
+    cifs-utils \
+    conntrack \
+    e2fsprogs \
+    xfsprogs \
+    ebtables \
+    ethtool \
+    git \
+    glusterfs-client \
+    iptables \
+    ipset \
+    jq \
+    kmod \
+    openssh-client \
+    netbase \
+    nfs-common \
+    socat \
+    udev \
+    util-linux \
+    libcap2 \
+    iproute2

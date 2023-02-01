@@ -1,0 +1,17 @@
+{
+  "startTime": 1674246904815,
+  "endTime": 1674246908584,
+  "originalSmells": [
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 28,
+        "lineEnd": 28,
+        "columnStart": 9,
+        "columnEnd": 93
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Temporarily use the GoCardless stolon fork to install the keeper. This enables\n# us to verify the metrics we're adding to the binaries.\nFROM golang:1.17.8 AS stolon-fork\nRUN set -x \\\n      && git clone https://github.com/gocardless/stolon.git \\\n      && cd stolon \\\n      && git checkout dba0fe05a317ca9d485b8d15f27ecae1bb39b180 \\\n      && make all\n\n# GoCardless runs this fork for PgBouncer metrics. We'll likely change this in\n# future but include it for now so the dashboards in this repo can match what we\n# have deployed internally.\n# TODO: update our fork\nFROM golang:1.17.8 AS pgbouncer-exporter\nRUN set -x \\\n      && git clone https://github.com/prometheus-community/pgbouncer_exporter.git \\\n      && cd pgbouncer_exporter \\\n      && git checkout 6f7e6de674d3b7d412a5960b7d2e849e40c1d76b \\\n      && make build\n\n# In addition to our base install of pgbouncer and postgresql-client, configure\n# all the dependencies we'll need across our docker-compose setup along with\n# convenience env vars to make stolon tooling function correctly.\nFROM gocardless/stolon-pgbouncer-base:2022042601\nENV DEBIAN_FRONTEND noninteractive\n\nRUN set -x \\\n      && apt-get update -y \\\n      && apt-get install --no-install-recommends -y curl etcd-client supervisor postgresql-14 && rm -rf /var/lib/apt/lists/*;\n\nCOPY --from=stolon-fork \\\n  /go/stolon/bin/stolon-keeper  \\\n  /go/stolon/bin/stolon-proxy \\\n  /go/stolon/bin/stolon-sentinel \\\n  /go/stolon/bin/stolonctl \\\n  /usr/local/bin/\n\nCOPY --from=pgbouncer-exporter /go/pgbouncer_exporter/pgbouncer_exporter /usr/local/bin/pgbouncer_exporter\n\nENV ETCDCTL_API=3 \\\n    CLUSTER_NAME=main \\\n    STOLONCTL_CLUSTER_NAME=main \\\n    STORE_BACKEND=etcdv3 \\\n    STOLONCTL_STORE_BACKEND=etcdv3 \\\n    STORE_ENDPOINTS=etcd-store:2379 \\\n    STOLONCTL_STORE_ENDPOINTS=etcd-store:2379 \\\n    STBOUNCER_FAILOVER_TOKEN=failover-token\n\n# Cluster data is placed here, and required to be Postgres writeable\nRUN mkdir /data && chown -R postgres:postgres /data\n\n# Cluster WAL data may be placed here, and required to be Postgres writeable\nRUN mkdir /wal && chown -R postgres:postgres /wal\n\n# 5432 => Postgres\n# 6432 => PgBouncer\n# 7432 => stolon-proxy\n# 8080 => stolon-pgbouncer (pauser)\n# 9127 => pgbouncer_exporter (metrics)\n# 9459 => stolon-keeper (metrics)\n# 9446 => stolon-pgbouncer (metrics)\nEXPOSE 5432 6432 7432 8080 9127 9459 9446\nENTRYPOINT [\"supervisord\", \"-n\", \"-c\"]\n"
+}

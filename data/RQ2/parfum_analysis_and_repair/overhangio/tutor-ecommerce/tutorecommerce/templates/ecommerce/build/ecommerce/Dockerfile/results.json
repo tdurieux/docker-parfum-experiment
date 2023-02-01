@@ -1,0 +1,80 @@
+{
+  "startTime": 1674254869583,
+  "endTime": 1674254870616,
+  "originalSmells": [
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 32,
+        "lineEnd": 32,
+        "columnStart": 4,
+        "columnEnd": 50
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 12,
+        "lineEnd": 12,
+        "columnStart": 4,
+        "columnEnd": 60
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 15,
+        "lineEnd": 15,
+        "columnStart": 4,
+        "columnEnd": 23
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 36,
+        "lineEnd": 36,
+        "columnStart": 4,
+        "columnEnd": 35
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 37,
+        "lineEnd": 37,
+        "columnStart": 4,
+        "columnEnd": 29
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 43,
+        "lineEnd": 43,
+        "columnStart": 5,
+        "columnEnd": 33
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 3,
+        "lineEnd": 3,
+        "columnStart": 2,
+        "columnEnd": 110
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 3,
+        "lineEnd": 3,
+        "columnStart": 2,
+        "columnEnd": 110
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM docker.io/ubuntu:20.04\n\nRUN apt update && \\\n  apt install --no-install-recommends -y curl git-core language-pack-en libmysqlclient-dev libssl-dev python3 python3-pip python3-venv && rm -rf /var/lib/apt/lists/*;\n\nARG APP_USER_ID=1000\nRUN useradd --home-dir /openedx --create-home --shell /bin/bash --uid ${APP_USER_ID} app\nUSER ${APP_USER_ID}\n\n# Create python venv\nRUN python3 -m venv /openedx/venv/\nENV PATH \"/openedx/venv/bin:$PATH\"\nRUN pip install --no-cache-dir setuptools==62.1.0 pip==22.0.4 wheel==0.37.1\n\n# Install a recent version of nodejs\nRUN pip install --no-cache-dir nodeenv\nRUN nodeenv /openedx/nodeenv --node=16.14.2 --prebuilt\nENV PATH /openedx/nodeenv/bin:${PATH}\n\n# Install ecommerce\nARG ECOMMERCE_REPOSITORY=https://github.com/edx/ecommerce.git\nARG ECOMMERCE_VERSION={{ OPENEDX_COMMON_VERSION }}\nRUN mkdir -p /openedx/ecommerce && \\\n    git clone $ECOMMERCE_REPOSITORY --branch $ECOMMERCE_VERSION --depth 1 /openedx/ecommerce\nWORKDIR /openedx/ecommerce\n\n# Identify tutor user to cherry-pick commits\nRUN git config --global user.email \"tutor@overhang.io\" \\\n  && git config --global user.name \"Tutor\"\n\n# nodejs requirements (aka: \"make requirements.js\")\nARG NPM_REGISTRY=https://registry.npmjs.org/\nRUN npm install --verbose --registry=$NPM_REGISTRY && npm cache clean --force;\nRUN ./node_modules/.bin/bower install --allow-root\n\n# python requirements\nRUN pip install --no-cache-dir -r requirements.txt\nRUN pip install --no-cache-dir uwsgi==2.0.20\n\n# Install private requirements: this is useful for installing custom payment processors.\nCOPY --chown=app:app ./requirements/ /openedx/requirements\nRUN cd /openedx/requirements/ \\\n  && touch ./private.txt \\\n  && pip install --no-cache-dir -r ./private.txt\n\n{% for extra_requirement in ECOMMERCE_EXTRA_PIP_REQUIREMENTS %}RUN pip install {{ extra_requirement }}\n{% endfor %}\n\n# Collect static assets (aka: \"make static\")\nCOPY --chown=app:app assets.py ./ecommerce/settings/assets.py\nENV DJANGO_SETTINGS_MODULE ecommerce.settings.assets\nRUN python3 manage.py update_assets --skip-collect\nRUN ./node_modules/.bin/r.js -o build.js\nRUN python3 manage.py collectstatic --noinput\nRUN python3 manage.py compress --force\n\n# Setup minimal yml config file, which is required by production settings\nRUN echo \"{}\" > /openedx/config.yml\nENV ECOMMERCE_CFG /openedx/config.yml\n\nEXPOSE 8000\nCMD uwsgi \\\n    --static-map /static=/openedx/ecommerce/assets \\\n    --static-map /media=/openedx/ecommerce/course_ecommerce/media \\\n    --http 0.0.0.0:8000 \\\n    --thunder-lock \\\n    --single-interpreter \\\n    --enable-threads \\\n    --processes=2 \\\n    --buffer-size=8192 \\\n    --wsgi-file ecommerce/wsgi.py\n"
+}

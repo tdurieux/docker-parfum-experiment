@@ -1,0 +1,45 @@
+# This file is licensed under GPLv3, see https://www.gnu.org/licenses/
+
+FROM archlinux:base-devel
+WORKDIR /opt/app-build/
+
+RUN echo 'Server = https://mirrors.xtom.nl/archlinux/$repo/os/$arch' >> /etc/pacman.d/mirrorlist ; \
+	echo 'Server = https://archlinux.mirror.pcextreme.nl/$repo/os/$arch' >> /etc/pacman.d/mirrorlist ; \
+	echo 'Server = https://archlinux.mirror.wearetriple.com/$repo/os/$arch' >> /etc/pacman.d/mirrorlist ; \
+	echo 'Server = https://mirror.mijn.host/archlinux/$repo/os/$arch' >> /etc/pacman.d/mirrorlist ; \
+	\
+	echo '[multilib]' >> /etc/pacman.conf ; \
+	echo 'Include = /etc/pacman.d/mirrorlist' >> /etc/pacman.conf
+RUN pacman -Syu --noconfirm --needed sudo base-devel git && \
+	useradd -m user && \
+	echo "root ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers && \
+	echo "user ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers && \
+	echo "en_US.UTF-8 UTF-8" > /etc/locale.gen && \
+	echo "LANG=en_US.UTF-8" > /etc/locale.conf && \
+	locale-gen
+ENV LANG=en_US.utf8 \
+	LANGUAGE=en_US.UTF-8 \
+	LC_ALL=en_US.UTF-8
+
+RUN echo ">>>> Installing opt deps:" && \
+	pacman -Sy asp python-pysocks --noconfirm --needed && \
+	echo ">>>> Installing test deps:" && \
+	pacman -S --noconfirm --needed --color=always iputils python-virtualenv \
+		python-pylint flake8 shellcheck && \
+	echo ">>>> Preparing build directory:" && \
+	chown -R user /opt/app-build/
+
+ADD "https://api.github.com/repos/actionless/pikaur/commits?per_page=1" /home/user/latest_commit
+RUN git clone https://github.com/actionless/pikaur.git /opt/app-build/
+
+RUN	echo ">>>> Starting the build:" && \
+	sudo -u user makepkg -fsi --noconfirm && \
+	rm -fr ./src/ ./pkg/ && \
+	sleep 0.1 && \
+	echo ">>>> Installing test deps using Pikaur itself:" && \
+	sudo -u user pikaur -S --noconfirm --color=always vulture mypy # python-coveralls
+# Workaround for broken coveralls:
+ADD ./maintenance_scripts/coveralls_PKGBUILD ./coveralls_PKGBUILD
+RUN sudo -u user pikaur -Pi --noconfirm --color=always coveralls_PKGBUILD
+
+# vim: set ft=dockerfile :

@@ -1,0 +1,35 @@
+{
+  "startTime": 1674253012921,
+  "endTime": 1674253013937,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 14,
+        "lineEnd": 16,
+        "columnStart": 22,
+        "columnEnd": 14
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 31,
+        "lineEnd": 62,
+        "columnStart": 25,
+        "columnEnd": 24
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 63,
+        "lineEnd": 64,
+        "columnStart": 7,
+        "columnEnd": 19
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM python:3.9-slim-buster\n\nENV PYTHONDONTWRITEBYTECODE=1\n\nARG GROUP_ID=1000\nARG USER_ID=1000\n\n# Run all initial setup with root user. This is the default but mentioned here\n# for documentation.\n# We won't switch to the `olympia` user inside the dockerfile\n# but rather use the `user` option in docker-compose.yml instead\nUSER root\n\n# Add support for https apt repos and gpg signed repos\nRUN apt-get update && apt-get install --no-install-recommends -y \\\n        apt-transport-https \\\n        gnupg2 \\\n    && rm -rf /var/lib/apt/lists/*\n# Add keys and repos for node and mysql\nCOPY docker/*.gpg.key /etc/pki/gpg/\nRUN APT_KEY_DONT_WARN_ON_DANGEROUS_USAGE=DontWarn \\\n    apt-key add /etc/pki/gpg/nodesource.gpg.key \\\n    && APT_KEY_DONT_WARN_ON_DANGEROUS_USAGE=DontWarn \\\n    apt-key add /etc/pki/gpg/mysql.gpg.key\nCOPY docker/*.list /etc/apt/sources.list.d/\n\n# IMPORTANT: When editing this list below, make sure to also update\n# `Dockerfile.deploy`.\n# Allow scripts to detect we're running in our own container and install\n# packages.\nRUN touch /addons-server-docker-container \\\n    && apt-get update && apt-get -t buster --no-install-recommends install -y \\\n        # General (dev-) dependencies\n        bash-completion \\\n        build-essential \\\n        curl \\\n        libcap-dev \\\n        libgit2-dev \\\n        libjpeg-dev \\\n        libpcre3-dev \\\n        libsasl2-dev \\\n        libxml2-dev \\\n        libxslt-dev \\\n        locales \\\n        zlib1g-dev \\\n        libffi-dev \\\n        libssl-dev \\\n        libpcre3-dev \\\n        nodejs \\\n        # Git, because we're using git-checkout dependencies\n        git \\\n        # Dependencies for mysql-python (from mysql apt repo, not debian)\n        mysql-client \\\n        libmysqlclient-dev \\\n        swig \\\n        gettext \\\n        # Use rsvg-convert to render our static theme previews\n        librsvg2-bin \\\n        # Use pngcrush to optimize the PNGs uploaded by developers\n        pngcrush \\\n        # Use libmaxmind for speedy geoip lookups\n        libmaxminddb0 \\\n        libmaxminddb-dev \\\n    && apt-get -t buster-backports --no-install-recommends install -y \\\n        libgit2-dev \\\n    && rm -rf /var/lib/apt/lists/*\n\n# IMPORTANT: When editing one of these lists below, make sure to also update\n# `Dockerfile.deploy`.\nADD docker/etc/mime.types /etc/mime.types\n\n# Compile required locale\nRUN localedef -i en_US -f UTF-8 en_US.UTF-8\n\n# Set the locale. This is mainly so that tests can write non-ascii files to\n# disk.\nENV LANG en_US.UTF-8\nENV LC_ALL en_US.UTF-8\n\nCOPY . /code\nWORKDIR /code\n\nRUN groupadd -g ${GROUP_ID} olympia\nRUN useradd -g ${GROUP_ID} -u ${USER_ID} -Md /deps/ olympia\n\n# Create /deps/ and move ownership over to `olympia` user so that\n# we can install things there\n# Also run `chown` on `/code/` which technically doesn't change permissions\n# on the host but ensures that the image knows about correct permissions.\nRUN mkdir /deps/ && chown -R olympia:olympia /deps/ /code/\n\nENV PIP_BUILD=/deps/build/\nENV PIP_CACHE_DIR=/deps/cache/\nENV PIP_SRC=/deps/src/\n\n# Allow us to install all dependencies to the `olympia` users\n# home directory (which is `/deps/`)\nENV PIP_USER=true\nENV PYTHONUSERBASE=/deps\n\n# Make sure that installed binaries are accessible\nENV PATH $PYTHONUSERBASE/bin:$PATH\n\nENV NPM_CONFIG_PREFIX=/deps/\nENV SWIG_FEATURES=\"-D__x86_64__\"\n\n# From now on run everything with the `olympia` user by default.\nUSER olympia\n\nRUN ln -s /code/package.json /deps/package.json && \\\n    ln -s /code/package-lock.json /deps/package-lock.json && \\\n    make update_deps && \\\n    rm -rf /deps/build/ /deps/cache/\n\n# Preserve bash history across image updates.\n# This works best when you link your local source code\n# as a volume.\nENV HISTFILE /code/docker/artifacts/bash_history\n\n# Configure bash history.\nENV HISTSIZE 50000\nENV HISTIGNORE ls:exit:\"cd ..\"\n\n# This prevents dupes but only in memory for the current session.\nENV HISTCONTROL erasedups\n\nENV CLEANCSS_BIN /deps/node_modules/.bin/cleancss\nENV LESS_BIN /deps/node_modules/.bin/lessc\nENV JS_MINIFIER_BIN /deps/node_modules/.bin/terser\nENV ADDONS_LINTER_BIN /deps/node_modules/.bin/addons-linter\n"
+}

@@ -1,0 +1,30 @@
+# ---
+# Stage 1: Install certs, build binary, create default config file
+# ---
+FROM ghcr.io/project-zot/golang:1.18 AS builder
+ARG COMMIT
+RUN apt-get update && apt-get install --no-install-recommends -y git make ca-certificates && rm -rf /var/lib/apt/lists/*;
+RUN mkdir -p /go/src/github.com/project-zot/zot
+WORKDIR /go/src/github.com/project-zot/zot
+COPY . .
+RUN make COMMIT=$COMMIT clean binary
+RUN echo '# Default config file for zot server\n\
+http:\n\
+  address: 0.0.0.0\n\
+  port: 5000\n\
+storage:\n\
+  rootDirectory: /var/lib/registry\n\
+  gc: false\n\
+  dedupe: false' > config.yml && cat config.yml
+
+# ---
+# Stage 2: Final image with nothing but certs, binary, and default config file
+# ---
+FROM gcr.io/distroless/base AS final
+COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
+COPY --from=builder /go/src/github.com/project-zot/zot/bin/zot-linux-amd64 /usr/bin/zot
+COPY --from=builder /go/src/github.com/project-zot/zot/config.yml /etc/zot/config.yml
+ENTRYPOINT ["/usr/bin/zot"]
+EXPOSE 5000
+VOLUME ["/var/lib/registry"]
+CMD ["serve", "/etc/zot/config.yml"]

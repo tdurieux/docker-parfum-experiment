@@ -1,0 +1,1 @@
+# FROM memsql/quickstart:minimal-6.0.14

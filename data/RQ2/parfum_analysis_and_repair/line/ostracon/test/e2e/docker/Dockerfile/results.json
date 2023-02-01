@@ -1,0 +1,54 @@
+{
+  "startTime": 1674218335720,
+  "endTime": 1674218336583,
+  "originalSmells": [
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 31,
+        "lineEnd": 31,
+        "columnStart": 4,
+        "columnEnd": 59
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 6,
+        "lineEnd": 6,
+        "columnStart": 4,
+        "columnEnd": 74
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 6,
+        "lineEnd": 6,
+        "columnStart": 4,
+        "columnEnd": 74
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 6,
+        "lineEnd": 6,
+        "columnStart": 4,
+        "columnEnd": 74
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 6,
+        "lineEnd": 6,
+        "columnStart": 4,
+        "columnEnd": 98
+      }
+    }
+  ],
+  "repairedDockerfile": "# We need to build in a Linux environment to support C libraries, e.g. RocksDB.\n# We use Debian instead of Alpine, so that we can use binary database packages\n# instead of spending time compiling them.\nFROM golang:1.15\n\nRUN apt-get -qq update -y && apt-get -qq upgrade -y >/dev/null\nRUN apt-get -qq --no-install-recommends install -y libleveldb-dev make libc-dev libtool >/dev/null && rm -rf /var/lib/apt/lists/*;\n\nARG SRCDIR=/src/ostracon\n\n# There is currently no librocksdb-dev v6.17.3 or higher that is necessary by line/gorocksdb.\n# So we download rocksdb and build it.\n# See:\n#    - line/gorocksdb: https://github.com/line/gorocksdb/pull/3\n#    - line/tm-db: https://github.com/line/tm-db/blob/main/tools/Dockerfile\nARG ROCKSDB_VERSION=6.20.3\nARG ROCKSDB_FILE=rocksdb-v${ROCKSDB_VERSION}.tar.gz\nARG ROCKSDB_DIR=rocksdb-${ROCKSDB_VERSION}\nRUN wget -O ${ROCKSDB_FILE} https://github.com/facebook/rocksdb/archive/v${ROCKSDB_VERSION}.tar.gz\nRUN tar -zxvf ${ROCKSDB_FILE}\nRUN cd ${ROCKSDB_DIR} && make -j2 shared_lib && make install-shared\nRUN cp /usr/local/lib/librocksdb.so* /usr/lib\nRUN rm -rf ${ROCKSDB_FILE} ${ROCKSDB_DIR}\n\n# Build/Install libsodium separately (for layer caching)\nARG VRF_ROOT=crypto/vrf/internal/vrf\nARG LIBSODIUM_ROOT=${VRF_ROOT}/libsodium\nARG LIBSODIUM_OS=${SRCDIR}/${VRF_ROOT}/sodium/linux_amd64\nCOPY ${LIBSODIUM_ROOT} ${LIBSODIUM_ROOT}\nRUN cd ${LIBSODIUM_ROOT} && \\\n    ./autogen.sh && \\\n    ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" --disable-shared --prefix=\"${LIBSODIUM_OS}\" && \\\n    make && \\\n    make install\nRUN rm -rf ${LIBSODIUM_ROOT}\n\nENV OSTRACON_BUILD_OPTIONS badgerdb,boltdb,cleveldb,rocksdb\nENV CGO_LDFLAGS -lrocksdb\nENV LIBSODIUM 1\n\n# Fetch dependencies separately (for layer caching)\nCOPY go.mod go.sum ${SRCDIR}\nRUN cd ${SRCDIR} && go mod download\n\n# Build Ostracon and install into /usr/bin/ostracon\nCOPY . ${SRCDIR}\nCOPY test/e2e/docker/entrypoint* /usr/bin/\nRUN cd ${SRCDIR} && make build && cp build/ostracon /usr/bin/ostracon\nRUN cd ${SRCDIR}/test/e2e && make maverick && cp build/maverick /usr/bin/maverick\nRUN cd ${SRCDIR}/test/e2e && make node && cp build/node /usr/bin/app\n\n# Set up runtime directory. We don't use a separate runtime image since we need\n# e.g. leveldb and rocksdb which are already installed in the build image.\nWORKDIR /ostracon\nVOLUME /ostracon\nENV OCHOME=/ostracon\n\nEXPOSE 26656 26657 26660 6060\nENTRYPOINT [\"/usr/bin/entrypoint\"]\nCMD [\"node\"]\nSTOPSIGNAL SIGTERM\n"
+}

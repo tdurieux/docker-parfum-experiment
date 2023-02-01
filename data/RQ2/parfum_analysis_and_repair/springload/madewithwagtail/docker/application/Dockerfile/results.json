@@ -1,0 +1,98 @@
+{
+  "startTime": 1674253204595,
+  "endTime": 1674253205266,
+  "originalSmells": [
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 14,
+        "lineEnd": 14,
+        "columnStart": 7,
+        "columnEnd": 55
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 50,
+        "lineEnd": 50,
+        "columnStart": 4,
+        "columnEnd": 43
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 51,
+        "lineEnd": 51,
+        "columnStart": 4,
+        "columnEnd": 48
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 87,
+        "lineEnd": 87,
+        "columnStart": 4,
+        "columnEnd": 48
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 97,
+        "lineEnd": 97,
+        "columnStart": 4,
+        "columnEnd": 47
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 9,
+        "lineEnd": 13,
+        "columnStart": 18,
+        "columnEnd": 11
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 28,
+        "lineEnd": 28,
+        "columnStart": 18,
+        "columnEnd": 109
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 35,
+        "lineEnd": 35,
+        "columnStart": 18,
+        "columnEnd": 68
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 36,
+        "lineEnd": 48,
+        "columnStart": 2,
+        "columnEnd": 10
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 85,
+        "lineEnd": 85,
+        "columnStart": 4,
+        "columnEnd": 50
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Frontend assets\nFROM node:erbium-alpine as frontend\n\nENV APPLICATION madewithwagtail\n\nCOPY package.json yarn.lock /madewithwagtail/\n\nWORKDIR /madewithwagtail\n\nRUN apk update && apk add --no-cache --virtual make \\\n    gcc \\\n    g++ \\\n    musl-dev \\\n    python3 \\\n    && yarn install --frozen-lockfile --production=true \\\n    && apk del gcc g++ musl-dev python3 && yarn cache clean;\n\nCOPY . /madewithwagtail/\nRUN yarn dist\n\nCMD [\"yarn\", \"start\", \"--prefix\", \"/madewithwagtail\"]\n\n# Base backend\nFROM python:3.6-alpine as base\nARG REQUIREMENTS=production.txt\n\nENV PYCURL_SSL_LIBRARY openssl\n\nRUN apk update && apk add --no-cache postgresql-libs libevent libjpeg openjpeg tiff zlib freetype tk libcurl su-exec git\n\nWORKDIR /madewithwagtail\n\nCOPY requirements /madewithwagtail/requirements\nCOPY docker/requirements.txt /madewithwagtail/docker/requirements.txt\n\nRUN apk update && apk add --no-cache --virtual build-deps make gcc g++ musl-dev && \\\n  apk add --no-cache --virtual build-headers postgresql-dev \\\n  jpeg-dev \\\n  zlib-dev \\\n  freetype-dev \\\n  lcms2-dev \\\n  openjpeg-dev \\\n  tiff-dev \\\n  tk-dev \\\n  tcl-dev \\\n  harfbuzz-dev \\\n  fribidi-dev \\\n  libevent-dev \\\n  curl-dev && \\\n  cd /madewithwagtail && \\\n    pip3 install --no-cache-dir -r docker/requirements.txt && \\\n    pip3 install --no-cache-dir -r requirements/${REQUIREMENTS} && \\\n    apk del build-deps build-headers\n\nCOPY --from=frontend /madewithwagtail/ /madewithwagtail/\n\nRUN adduser -S www -u 1000 && chown -R www /madewithwagtail\n\nARG VERSION=dev\nENV APPLICATION_VERSION=${VERSION}\nENV DJANGO_SETTINGS_MODULE madewithwagtail.settings.hosting\nENV VERSION=${VERSION}\nENV ENVIRONMENT unknown\nENV PROJECT madewithwagtail\n\n# base app stage\nFROM base as base-app\n\n# production stage\nFROM base-app as app\nADD https://github.com/springload/ssm-parent/releases/download/v1.1.2/ssm-parent_1.1.2_linux_amd64.tar.gz /tmp/ssm-parent.tar.gz\nRUN tar xvf /tmp/ssm-parent.tar.gz && mv ssm-parent /sbin/ssm-parent && rm /tmp/ssm-parent.tar.gz\n\nENV DJANGO_SERVER_ENV=Production\nENTRYPOINT [\"/sbin/ssm-parent\", \"run\", \"-e\", \"-p\", \"/$PROJECT/common/\", \"-p\", \"/$PROJECT/$ENVIRONMENT/\", \"-r\",  \"--\", \"su-exec\", \"www\"]\nCMD [\"/usr/local/bin/gunicorn\", \"--config\", \"/madewithwagtail/docker/gunicorn.py\", \"madewithwagtail.wsgi\" ]\n\n# development stage\nFROM base-app as app-dev\nARG REQUIREMENTS=dev.txt\nENV DJANGO_SETTINGS_MODULE madewithwagtail.settings.dev\n\nADD https://raw.githubusercontent.com/mrako/wait-for/d9699cb9fe8a4622f05c4ee32adf2fd93239d005/wait-for /usr/local/bin/\nRUN chmod +rx /usr/local/bin/wait-for\n\nRUN apk add --no-cache --virtual build-deps make g++ musl-dev && \\\n    cd /madewithwagtail && \\\n    pip3 install --no-cache-dir -r requirements/${REQUIREMENTS} && \\\n    apk del build-deps\n\nENTRYPOINT [\"/usr/local/bin/wait-for\", \"database:5432\", \"--\"]\nCMD [\"/usr/local/bin/gunicorn\", \"--config\", \"/madewithwagtail/docker/gunicorn.py\", \"--reload\", \"madewithwagtail.wsgi\" ]\n\nFROM app-dev as app-test\nARG REQUIREMENTS=test.txt\nENV DJANGO_SETTINGS_MODULE madewithwagtail.settings.test\nRUN cd /madewithwagtail && \\\n    pip install --no-cache-dir -r requirements/${REQUIREMENTS}\nCMD [\"/bin/sh\", \"/madewithwagtail/test.sh\"]\n"
+}

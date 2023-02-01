@@ -1,0 +1,13 @@
+FROM preprod-sklearn:1.0-1-cpu-py3
+
+RUN pip freeze | grep -q 'scikit-learn==1.0.2'; \
+	if [ $? -eq 0 ]; \
+		then echo 'scikit-learn version 1.0.2 requirement met'; \
+		else echo 'ERROR: Expected scikit-learn version is 1.0.2, check base images for scikit-learn version' && \
+			 exit 1; fi
+
+RUN pip install --no-cache-dir --upgrade --no-cache --no-deps sagemaker-scikit-learn-extension==2.5.0
+RUN python -m pip install statsmodels==0.9.0
+RUN python -m pip install matrixprofile==1.1.10
+RUN python -m pip install stumpy==1.7.2
+RUN python -m pip install --no-deps tsfresh==0.17.0

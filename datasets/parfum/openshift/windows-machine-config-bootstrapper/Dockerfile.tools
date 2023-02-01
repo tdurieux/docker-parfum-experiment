@@ -1,0 +1,71 @@
+FROM registry.ci.openshift.org/openshift/release:golang-1.17 as build
+LABEL stage=build
+
+# dos2unix is needed to build CNI plugins
+RUN yum install -y dos2unix
+
+# Clone WMCO repo and initialize submodules for building of windows binaries payload for e2e testing 
+WORKDIR /build/
+RUN git clone --branch release-4.11 --single-branch https://github.com/openshift/windows-machine-config-operator.git
+WORKDIR /build/windows-machine-config-operator/
+RUN git submodule update --init containernetworking-plugins kubelet ovn-kubernetes containerd hcsshim
+
+# Build kubelet.exe
+WORKDIR /build/windows-machine-config-operator/kubelet/
+RUN KUBE_BUILD_PLATFORMS=windows/amd64 make WHAT=cmd/kubelet
+
+# Build hybrid-overlay-node.exe
+WORKDIR /build/windows-machine-config-operator/ovn-kubernetes/go-controller/
+RUN make windows
+
+# Build CNI plugins
+WORKDIR /build/windows-machine-config-operator/containernetworking-plugins/
+ENV CGO_ENABLED=0
+RUN ./build_windows.sh
+
+# Build containerd.exe
+WORKDIR /build/windows-machine-config-operator/containerd/
+RUN GOOS=windows make
+
+# Build containerd shim
+WORKDIR /build/windows-machine-config-operator/hcsshim
+RUN GOOS=windows go build ./cmd/containerd-shim-runhcs-v1
+
+WORKDIR /build/
+COPY . .
+
+# Build WMCB unit and e2e tests
+RUN make build-wmcb-unit-test
+RUN make build-wmcb-e2e-test
+
+# Build TestWMCB binary to run the tests on the Windows VM created
+WORKDIR /build/internal/test/wmcb/
+RUN CGO_ENABLED=0 GO111MODULE=on go test -c -run=TestWMCB -timeout=30m . -o test-wmcb
+
+FROM registry.ci.openshift.org/openshift/release:golang-1.17 as testing
+LABEL stage=testing
+
+WORKDIR /payload/cni
+COPY --from=build /build/windows-machine-config-operator/containernetworking-plugins/bin/host-local.exe .
+COPY --from=build /build/windows-machine-config-operator/containernetworking-plugins/bin/win-bridge.exe .
+COPY --from=build /build/windows-machine-config-operator/containernetworking-plugins/bin/win-overlay.exe .
+
+WORKDIR /payload
+COPY internal/test/wmcb/powershell/ .
+COPY --from=build /build/windows-machine-config-operator/ovn-kubernetes/go-controller/_output/go/bin/windows/hybrid-overlay-node.exe .
+COPY --from=build /build/windows-machine-config-operator/kubelet/_output/local/bin/windows/amd64/kubelet.exe .
+COPY --from=build /build/wmcb_unit_test.exe .
+COPY --from=build /build/wmcb_e2e_test.exe .
+
+WORKDIR /payload/containerd
+COPY --from=build /build/windows-machine-config-operator/containerd/bin/containerd.exe .
+COPY --from=build /build/windows-machine-config-operator/hcsshim/containerd-shim-runhcs-v1.exe .
+COPY pkg/internal/containerd_conf.toml .
+
+WORKDIR /test
+COPY internal/test/wmcb/templates templates
+COPY --from=build /build/internal/test/wmcb/test-wmcb .
+
+ENV PATH="${PATH}:/test"
+
+ENTRYPOINT ["/bin/bash"]

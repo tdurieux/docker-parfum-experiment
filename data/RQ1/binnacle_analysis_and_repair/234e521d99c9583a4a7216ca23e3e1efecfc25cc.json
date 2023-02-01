@@ -1,0 +1,80 @@
+{
+  "startTime": 1674249719616,
+  "endTime": 1674249719855,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 8,
+        "lineEnd": 8,
+        "columnStart": 4,
+        "columnEnd": 79
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 9,
+        "lineEnd": 9,
+        "columnStart": 4,
+        "columnEnd": 83
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 10,
+        "lineEnd": 10,
+        "columnStart": 4,
+        "columnEnd": 51
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 31,
+        "lineEnd": 31,
+        "columnStart": 4,
+        "columnEnd": 175
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 61,
+        "lineEnd": 61,
+        "columnStart": 4,
+        "columnEnd": 94
+      }
+    },
+    {
+      "rule": "gpgUseBatchFlag",
+      "position": {
+        "lineStart": 10,
+        "lineEnd": 10,
+        "columnStart": 54,
+        "columnEnd": 66
+      }
+    },
+    {
+      "rule": "gpgUseBatchFlag",
+      "position": {
+        "lineStart": 10,
+        "lineEnd": 10,
+        "columnStart": 70,
+        "columnEnd": 93
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 49,
+        "lineEnd": 50,
+        "columnStart": 22,
+        "columnEnd": 8
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "#########################################################################\n# ktlint\n#########################################################################\n\nFROM openjdk:8-alpine as ktlint\n\n# install ktlint\nRUN apk add --no-cache curl gnupg\nRUN curl -f -sSLO https://github.com/shyiko/ktlint/releases/download/0.29.0/ktlint && \\\n    curl -f -sSLO https://github.com/shyiko/ktlint/releases/download/0.29.0/ktlint.asc && \\\n    curl -f -sS https://keybase.io/shyiko/pgp_keys.asc | gpg --batch --import && gpg --batch --verify ktlint.asc && \\\n    chmod a+x ktlint && \\\n    rm ktlint.asc && \\\n    mv ktlint /usr/local/bin/\n\n# mount point\nRUN mkdir /src\nVOLUME [\"/src\"]\n\nCMD [\"--color\", \"--android\", \"-F\", \"/src/**/*.kt\"]\nENTRYPOINT [\"/usr/local/bin/ktlint\"]\n\n#########################################################################\n# google-java-format\n#########################################################################\n\nFROM openjdk:8-alpine as javaformatter\n\n# install google-java-format\nRUN apk add --no-cache curl\nRUN mkdir -p /usr/google-java-format && \\\n    curl -f -sSL https://github.com/google/google-java-format/releases/download/google-java-format-1.7/google-java-format-1.7-all-deps.jar > /usr/google-java-format/formatter.jar\n\n# mount point\nRUN mkdir /src\nVOLUME [\"/src\"]\n\nENTRYPOINT exec java -jar /usr/google-java-format/formatter.jar --replace $(find /src -type f -name \"*.java\")\n\n#########################################################################\n# generator\n#########################################################################\n\nFROM openjdk:8 as generator\n\n# copy formatters\nCOPY --from=ktlint /usr/local/bin/ktlint /usr/local/bin/ktlint\nCOPY --from=javaformatter /usr/google-java-format/formatter.jar /usr/google-java-format/formatter.jar\n\nRUN apt-get update && apt-get install --no-install-recommends -y \\\n    tree \\\n    && rm -rf /var/lib/apt/lists/*\n\n# copy distribution\nRUN mkdir -p                 /usr/local/kgax/repository/com/google/api\nCOPY build/kgax-core         /usr/local/kgax/repository/com/google/api/kgax-core\nCOPY build/kgax-grpc         /usr/local/kgax/repository/com/google/api/kgax-grpc\nCOPY build/kgax-grpc-android /usr/local/kgax/repository/com/google/api/kgax-grpc-android\nCOPY build/kgax-grpc-base    /usr/local/kgax/repository/com/google/api/kgax-grpc-base\nCOPY build/gapic-generator-kotlin/*/gapic-generator-kotlin-*.tar /tmp/generator/\nRUN mkdir -p /usr/generator && \\\n    tar xvf /tmp/generator/gapic-generator-kotlin-*.tar --strip-components=1 -C /usr/generator && \\\n    rm -rf /tmp/generator && rm /tmp/generator/gapic-generator-kotlin-*.tar\n\n# move into the gradle project used to run generator\nCOPY generator-docker-runner /usr/src/generator/runner\nWORKDIR /usr/src/generator/runner\n\n# disable gradle daemon\nRUN mkdir -p /root/.gradle && \\\n    echo \"org.gradle.daemon=false\" > /root/.gradle/gradle.properties && \\\n    echo \"org.gradle.jvmargs=-Xmx4096m -XX:MaxPermSize=4096m\" >> /root/.gradle/gradle.properties\n\n# update gax version in build scripts\nRUN GAX_VERSION=$(basename /usr/local/kgax/repository/com/google/api/kgax-grpc/*/*.jar) && \\\n    GAX_VERSION=${GAX_VERSION#\"kgax-grpc-\"} && \\\n    GAX_VERSION=${GAX_VERSION%\".jar\"} && \\\n    sed -i \"s/__KGAX__VERSION/${GAX_VERSION}/g\" build.server.gradle\nRUN GAX_ANDROID_VERSION=$(basename /usr/local/kgax/repository/com/google/api/kgax-grpc-android/*/*.jar) && \\\n    GAX_ANDROID_VERSION=${GAX_ANDROID_VERSION#\"kgax-grpc-android-\"} && \\\n    GAX_ANDROID_VERSION=${GAX_ANDROID_VERSION%\".jar\"} && \\\n    sed -i \"s/__KGAX__VERSION/${GAX_ANDROID_VERSION}/g\" build.android.gradle\n\n# run a build to cache the build artifacts\nRUN cp build.android.gradle build.gradle && \\\n    ./gradlew build clean\nRUN cp build.server.gradle build.gradle && \\\n    ./gradlew build clean\nRUN rm build.gradle\n\n# create input directories\nRUN  rm -rf src/main/proto && \\\n     mkdir /proto && \\\n     ln -s /proto src/main/proto\n\n# create output directories\nRUN mkdir -p /generated\n\n# generator script\nENTRYPOINT [\"./generate.sh\"]\n"
+}

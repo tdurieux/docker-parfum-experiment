@@ -1,0 +1,8 @@
+FROM alpine:3.15.4
+ENV ENV="/root/.ashrc"
+WORKDIR /root
+RUN apk --no-cache add ca-certificates
+COPY ddosify /bin/
+
+COPY assets/ddosify.profile /tmp/profile
+RUN cat /tmp/profile >> "$ENV"

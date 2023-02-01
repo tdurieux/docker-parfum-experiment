@@ -1,0 +1,25 @@
+ARG CLI_IMAGE
+ARG LAGOON_IMAGE_VERSION
+FROM ${CLI_IMAGE} as cli
+
+FROM uselagoon/nginx-drupal:${LAGOON_IMAGE_VERSION}
+
+# nginx config.
+COPY .docker/images/nginx/no-robots.sh /lagoon/entrypoints/20-no-robots.sh
+
+COPY .docker/images/nginx/helpers/ /etc/nginx/helpers/
+COPY .docker/images/nginx/drupal /etc/nginx/conf.d/drupal
+
+COPY .docker/images/nginx/conf/ /etc/nginx/conf.d/
+COPY .docker/images/nginx/govcms-redirects-map.conf /etc/nginx/govcms-redirects-map.conf
+
+RUN fix-permissions /etc/nginx
+
+COPY --from=cli /app /app
+COPY .docker/sanitize.sh /app/sanitize.sh
+
+RUN /app/sanitize.sh \
+  && rm -rf /app/sanitize.sh
+
+# Define where the Drupal Root is located
+ENV WEBROOT=web

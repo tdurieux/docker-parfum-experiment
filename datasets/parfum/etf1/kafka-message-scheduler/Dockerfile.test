@@ -1,0 +1,10 @@
+FROM golang:alpine
+
+RUN apk update && apk add --no-cache gcc libc-dev git bash curl make
+RUN curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s v1.46.2
+RUN golangci-lint --version
+
+RUN mkdir -p /build
+WORKDIR /build
+
+COPY . .

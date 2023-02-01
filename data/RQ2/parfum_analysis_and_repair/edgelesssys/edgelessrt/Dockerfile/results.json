@@ -1,0 +1,44 @@
+{
+  "startTime": 1674249683914,
+  "endTime": 1674249685042,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 34,
+        "lineEnd": 48,
+        "columnStart": 22,
+        "columnEnd": 14
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 6,
+        "lineEnd": 6,
+        "columnStart": 22,
+        "columnEnd": 91
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 11,
+        "lineEnd": 24,
+        "columnStart": 25,
+        "columnEnd": 28
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 34,
+        "lineEnd": 48,
+        "columnStart": 22,
+        "columnEnd": 14
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "ARG PSW_VERSION=2.17.100.3-focal1\nARG DCAP_VERSION=1.14.100.3-focal1\n\nFROM ubuntu:20.04 AS sgx\nARG PSW_VERSION\nARG DCAP_VERSION\nRUN apt-get update && apt-get install -y --no-install-recommends ca-certificates gnupg wget \\\n    && wget -qO- https://download.01.org/intel-sgx/sgx_repo/ubuntu/intel-sgx-deb.key | apt-key add \\\n    && echo 'deb [arch=amd64] https://download.01.org/intel-sgx/sgx_repo/ubuntu focal main' >> /etc/apt/sources.list \\\n    && wget -qO- https://packages.microsoft.com/keys/microsoft.asc | apt-key add \\\n    && echo 'deb [arch=amd64] https://packages.microsoft.com/ubuntu/20.04/prod focal main' >> /etc/apt/sources.list \\\n    && apt-get update && apt-get install -y --no-install-recommends \\\n    az-dcap-client \\\n    libsgx-ae-id-enclave=$DCAP_VERSION \\\n    libsgx-ae-pce=$PSW_VERSION \\\n    libsgx-ae-qe3=$DCAP_VERSION \\\n    libsgx-dcap-default-qpl=$DCAP_VERSION \\\n    libsgx-dcap-ql=$DCAP_VERSION \\\n    libsgx-dcap-ql-dev=$DCAP_VERSION \\\n    libsgx-enclave-common=$PSW_VERSION \\\n    libsgx-headers=$PSW_VERSION \\\n    libsgx-launch=$PSW_VERSION \\\n    libsgx-pce-logic=$DCAP_VERSION \\\n    libsgx-qe3-logic=$DCAP_VERSION \\\n    libsgx-urts=$PSW_VERSION && rm -rf /var/lib/apt/lists/*;\n# move the shared libraries installed by libsgx-dcap-default-qpl and remove the package\n# recreating the link /usr/lib/x86_64-linux-gnu/dcap/libdcap_quoteprov.so.1 to /usr/lib/x86_64-linux-gnu/dcap/libdcap_quoteprov.so.intel restores functionality of the original library\nRUN mkdir /usr/lib/x86_64-linux-gnu/dcap && \\\n    cp /usr/lib/x86_64-linux-gnu/libsgx_default_qcnl_wrapper.so.1 /usr/lib/x86_64-linux-gnu/libdcap_quoteprov.so.1 /usr/lib/x86_64-linux-gnu/dcap && \\\n    apt remove -y libsgx-dcap-default-qpl && \\\n    ln -s /usr/lib/x86_64-linux-gnu/dcap/libsgx_default_qcnl_wrapper.so.1 /usr/lib/x86_64-linux-gnu/libsgx_default_qcnl_wrapper.so.1 && \\\n    ln -s /usr/lib/x86_64-linux-gnu/dcap/libdcap_quoteprov.so.1 /usr/lib/x86_64-linux-gnu/dcap/libdcap_quoteprov.so.intel\n\nFROM sgx AS base-dev\nRUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get --no-install-recommends install -y \\\n    build-essential \\\n    cmake \\\n    clang-10 \\\n    clang-tidy-10 \\\n    curl \\\n    doxygen \\\n    gdb \\\n    git \\\n    libssl-dev \\\n    nano \\\n    ninja-build \\\n    pkg-config \\\n    vim \\\n    zlib1g-dev && rm -rf /var/lib/apt/lists/*;\n# use same Go version as ertgo\nRUN wget -qO- https://go.dev/dl/go1.18.1.linux-amd64.tar.gz | tar -C /usr/local -xz\n\nFROM alpine/git:latest AS pull\nRUN git clone --depth=1 https://github.com/edgelesssys/edgelessrt /edgelessrt\nWORKDIR /edgelessrt\nRUN git submodule update --init --depth=1 3rdparty/openenclave/openenclave 3rdparty/go 3rdparty/mystikos/mystikos 3rdparty/ttls\nWORKDIR /edgelessrt/3rdparty/openenclave/openenclave\nRUN git submodule update --init tools/oeedger8r-cpp 3rdparty/mbedtls/mbedtls 3rdparty/musl/musl 3rdparty/musl/libc-test\n\nFROM base-dev AS build\nCOPY --from=pull /edgelessrt /edgelessrt\nWORKDIR /edgelessrt/build\nRUN cmake -GNinja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DBUILD_TESTS=OFF .. && ninja install\n\nFROM base-dev as release_develop\nLABEL description=\"EdgelessRT is an SDK to build Trusted Execution Environment applications\"\nENV PKG_CONFIG_PATH=${PKG_CONFIG_PATH}:/opt/edgelessrt/share/pkgconfig\nENV CMAKE_PREFIX_PATH=/opt/edgelessrt/lib/openenclave/cmake\nENV PATH=${PATH}:/opt/edgelessrt/bin:/usr/local/go/bin\nENV CGO_CFLAGS=\"$CGO_CFLAGS -I/opt/edgelessrt/include\"\nENV CGO_LDFLAGS=\"$CGO_LDFLAGS -L/opt/edgelessrt/lib/openenclave/host\"\nCOPY --from=build /opt/edgelessrt /opt/edgelessrt\nENTRYPOINT [\"bash\"]\n\nFROM sgx AS release_deploy\nLABEL description=\"Containerized SGX for release\"\nENV PATH=${PATH}:/opt/edgelessrt/bin/\nCOPY --from=build /opt/edgelessrt/bin/erthost /opt/edgelessrt/bin/erthost\nENTRYPOINT [\"bash\"]\n"
+}

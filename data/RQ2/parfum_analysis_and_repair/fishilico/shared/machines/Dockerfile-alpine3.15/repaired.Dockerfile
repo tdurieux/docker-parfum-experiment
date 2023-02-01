@@ -1,0 +1,86 @@
+FROM alpine:3.15
+LABEL Description="Alpine Linux 3.15 with build dependencies for shared"
+
+# Alpine does not provide coq
+RUN \
+    apk --no-cache --update add \
+        cargo \
+        clang \
+        clang-dev \
+        gcc \
+        gdb \
+        gmp-dev \
+        gtk+3.0-dev \
+        iproute2 \
+        libmnl-dev \
+        linux-headers \
+        linux-lts-dev \
+        llvm-dev \
+        make \
+        mingw-w64-gcc \
+        musl-dev \
+        musl-utils \
+        nss \
+        openjdk11 \
+        openssh \
+        openssl \
+        openssl-dev \
+        pulseaudio-dev \
+        py3-cffi \
+        py3-cryptography \
+        py3-numpy \
+        py3-pillow \
+        py3-setuptools \
+        py3-pycryptodomex \
+        py3-pynacl \
+        py3-z3 \
+        python2-dev \
+        python3-dev \
+        sdl2-dev \
+        z3-dev && \
+    rm -rf /var/cache/apk/*
+
+# Add OpenJDK to $PATH
+ENV JAVA_HOME=/usr/lib/jvm/java-11-openjdk
+ENV PATH="${JAVA_HOME}/bin:${PATH}"
+
+WORKDIR /shared
+RUN ln -s shared/machines/run_shared_test.sh /run_shared_test.sh
+COPY . /shared/
+
+CMD ["/run_shared_test.sh"]
+
+# make list-nobuild:
+#    Global blacklist: latex%
+#    In sub-directories:
+#       c: x86-read_64b_regs_in_32b_mode
+#       glossaries:
+#       java/keystore:
+#       linux:
+#       python:
+#       python/crypto:
+#       python/network:
+#       python/network/dnssec:
+#       python/qrcode:
+#       rust:
+#       verification: ackermann.vo
+#    Compilers:
+#       gcc -m64: ok
+#       gcc -m32: not working
+#       clang -m64: ok
+#       clang -m32: not working
+#       musl-gcc: not working
+#       x86_64-w64-mingw32-gcc: only compiling
+#       i686-w64-mingw32-gcc: not working
+#    Versions:
+#       gcc: gcc (Alpine 10.3.1_git20211027) 10.3.1 20211027
+#       clang: Alpine clang version 12.0.1
+#       x86_64-w64-mingw32-gcc: x86_64-w64-mingw32-gcc (GCC) 11.2.0
+#       Linux kernel: 5.15.40-0-lts
+#       /lib/ld-musl-x86_64.so.1: musl libc (x86_64) Version 1.2.2
+#       python3: Python 3.9.7
+#       javac: javac 11.0.15
+#       java: openjdk 11.0.15 2022-04-19
+#       rustc: rustc 1.56.1
+#       cargo: cargo 1.56.0
+#       openssl: OpenSSL 1.1.1o  3 May 2022

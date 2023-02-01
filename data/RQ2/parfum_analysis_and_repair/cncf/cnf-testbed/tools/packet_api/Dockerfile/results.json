@@ -1,0 +1,17 @@
+{
+  "startTime": 1674255573019,
+  "endTime": 1674255573709,
+  "originalSmells": [
+    {
+      "rule": "sha256sumEchoOneSpaces",
+      "position": {
+        "lineStart": 32,
+        "lineEnd": 32,
+        "columnStart": 4,
+        "columnEnd": 62
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM buildpack-deps:bionic\n\n# skip installing gem documentation\nRUN mkdir -p /usr/local/etc \\\n\t&& { \\\n\t\techo 'install: --no-document'; \\\n\t\techo 'update: --no-document'; \\\n\t} >> /usr/local/etc/gemrc\n\nENV RUBY_MAJOR 2.2\nENV RUBY_VERSION 2.2.3\nENV RUBY_DOWNLOAD_SHA256 c6ec90e9ed018e6d9a578fc93755d8565839908d5796809e1aecd1798c7ea8a7\nENV RUBYGEMS_VERSION 2.7.8\nENV BUNDLER_VERSION 1.17.1\n\n# some of ruby's build scripts are written in ruby\n#   we purge system ruby later to make sure our final image uses what we just built\nRUN set -ex \\\n\t\\\n\t&& buildDeps=' \\\n\t\tbison \\\n\t\tdpkg-dev \\\n\t\tlibgdbm-dev \\\n\t\t# ruby 2.3 on stretch can only support libssl1.0-dev (libssl dev from buildpack-deps is 1.1.x)\n\t\tlibssl1.0-dev \\\n\t\truby \\\n\t' \\\n\t&& apt-get update \\\n\t&& apt-get --no-install-recommends install -y apt-utils ca-certificates $buildDeps \\\n\t&& rm -rf /var/lib/apt/lists/* \\\n\t\\\n\t&& wget -O ruby.tar.xz \"https://cache.ruby-lang.org/pub/ruby/${RUBY_MAJOR%-rc}/ruby-$RUBY_VERSION.tar.xz\" \\\n\t&& echo \"$RUBY_DOWNLOAD_SHA256  *ruby.tar.xz\" | sha256sum -c - \\\n\n\t&& mkdir -p /usr/src/ruby \\\n\t&& tar -xJf ruby.tar.xz -C /usr/src/ruby --strip-components=1 \\\n\t&& rm ruby.tar.xz \\\n\n\t&& cd /usr/src/ruby \\\n\n# hack in \"ENABLE_PATH_CHECK\" disabling to suppress:\n#   warning: Insecure world writable dir\n\t&& { \\\n\t\techo '#define ENABLE_PATH_CHECK 0'; \\\n\t\techo; \\\n\t\tcat file.c; \\\n\t} > file.c.new \\\n\t&& mv file.c.new file.c \\\n\n\t&& autoconf \\\n\t&& gnuArch=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" \\\n\t&& ./configure \\\n\t\t--build=\"$gnuArch\" \\\n\t\t--disable-install-doc \\\n\t\t--enable-shared \\\n\t&& make -j \"$(nproc)\" \\\n\t&& make install \\\n\n\t&& apt-get purge -y --auto-remove $buildDeps \\\n\t&& cd / \\\n\t&& rm -r /usr/src/ruby \\\n\n\t&& gem update --system \"$RUBYGEMS_VERSION\" \\\n\t&& gem install bundler --version \"$BUNDLER_VERSION\" --force \\\n\t&& rm -r /root/.gem/\n\n# install things globally, for great justice\n# and don't create \".bundle\" in all our apps\nENV GEM_HOME /usr/local/bundle\nENV BUNDLE_PATH=\"$GEM_HOME\" \\\n\tBUNDLE_SILENCE_ROOT_WARNING=1 \\\n\tBUNDLE_APP_CONFIG=\"$GEM_HOME\"\n# path recommendation: https://github.com/bundler/bundler/pull/6469#issuecomment-383235438\nENV PATH $GEM_HOME/bin:$BUNDLE_PATH/gems/bin:$PATH\n# adjust permissions of a few directories for running \"gem install\" as an arbitrary user\nRUN mkdir -p \"$GEM_HOME\" && chmod 777 \"$GEM_HOME\"\n# (BUNDLE_PATH = GEM_HOME, no need to mkdir/chown both)\n\nCOPY . /packet_api\n\nRUN cd /packet_api && \\\n    bundle install\n\nCMD [ \"irb\" ]\n"
+}

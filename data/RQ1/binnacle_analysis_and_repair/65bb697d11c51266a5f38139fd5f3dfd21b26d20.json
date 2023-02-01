@@ -1,0 +1,17 @@
+{
+  "startTime": 1674241744493,
+  "endTime": 1674241744620,
+  "originalSmells": [
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 12,
+        "lineEnd": 12,
+        "columnStart": 4,
+        "columnEnd": 32
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "########\n# assets builder and dev server\n#\nFROM node:8-slim AS assets\n\nENV PATH=/app/node_modules/.bin:$PATH\nWORKDIR /app\n\n# copy dependency definitions\nCOPY package.json yarn.lock ./\n\n# install dependencies\nRUN yarn install --pure-lockfile && yarn cache clean;\nRUN yarn global add gulp-cli@2.0.1\n\n# copy supporting files and media\nCOPY .eslintrc.js .stylelintrc gulpfile.js ./\nCOPY ./media ./media\n\nRUN gulp build --production\n\n\n########\n# Python dependencies builder\n#\nFROM python:2-stretch AS python-builder\n\nWORKDIR /app\nENV LANG=C.UTF-8\nENV PYTHONDONTWRITEBYTECODE=1\nENV PYTHONUNBUFFERED=1\nENV PATH=\"/venv/bin:$PATH\"\n\nCOPY docker/bin/apt-install /usr/local/bin/\nRUN apt-install gettext build-essential libxml2-dev libxslt1-dev libxslt1.1\n\nRUN virtualenv /venv\n\nCOPY requirements/base.txt requirements/prod.txt ./requirements/\n\n# Install Python deps\nRUN pip install --no-cache-dir -r requirements/prod.txt\n\n\n########\n# django app container\n#\nFROM python:2-slim-stretch AS app-base\n\n# Extra python env\nENV PYTHONDONTWRITEBYTECODE=1\nENV PYTHONUNBUFFERED=1\nENV PIP_DISABLE_PIP_VERSION_CHECK=1\nENV PATH=\"/venv/bin:$PATH\"\n\n# add non-priviledged user\nRUN adduser --uid 1000 --disabled-password --gecos '' --no-create-home webdev\n\nWORKDIR /app\nEXPOSE 8000\nCMD [\"./bin/run.sh\"]\n\nCOPY docker/bin/apt-install /usr/local/bin/\nRUN apt-install gettext libxslt1.1 git\n\n# copy in Python environment\nCOPY --from=python-builder /venv /venv\n\n# changes infrequently\nCOPY ./bin ./bin\nCOPY ./etc ./etc\nCOPY ./lib ./lib\nCOPY ./root_files ./root_files\nCOPY ./scripts ./scripts\nCOPY ./wsgi ./wsgi\nCOPY manage.py LICENSE newrelic.ini contribute.json ./\n\n# changes more frequently\nCOPY ./docker ./docker\nCOPY ./vendor-local ./vendor-local\nCOPY ./bedrock ./bedrock\nCOPY ./media ./media\n\n\n########\n# expanded webapp image for testing and dev\n#\nFROM app-base AS devapp\n\nCMD [\"./bin/run-tests.sh\"]\n\nRUN apt-install make\nCOPY requirements/base.txt requirements/dev.txt requirements/docs.txt ./requirements/\nRUN pip install --no-cache-dir -r requirements/dev.txt\nRUN pip install --no-cache-dir -r requirements/docs.txt\nCOPY ./setup.cfg ./\nCOPY ./tests ./tests\n\n# build args\nARG GIT_SHA=latest\nARG BRANCH_NAME=master\nENV GIT_SHA=${GIT_SHA}\nENV BRANCH_NAME=${BRANCH_NAME}\n\n# get fresh database\nRUN ./bin/run-db-download.py --force\n\n# rely on build args\nRUN bin/run-sync-all.sh\n\n# get fresh l10n files\nRUN ./manage.py l10n_update\n\nRUN chown webdev.webdev -R .\nUSER webdev\n\n\n########\n# final image for deployment\n#\nFROM app-base AS release\n\nCOPY --from=assets /app/static_final /app/static_final\nRUN honcho run --env docker/envfiles/prod.env docker/bin/build_staticfiles.sh\n\n# build args\nARG GIT_SHA=latest\nARG BRANCH_NAME=master\nENV GIT_SHA=${GIT_SHA}\nENV BRANCH_NAME=${BRANCH_NAME}\n\n# rely on build args\nRUN bin/run-sync-all.sh\n\nRUN echo \"${GIT_SHA}\" > ./root_files/revision.txt\n\n# Change User\nRUN chown webdev.webdev -R .\nUSER webdev\n"
+}

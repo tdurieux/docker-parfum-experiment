@@ -1,0 +1,26 @@
+{
+  "startTime": 1674251356057,
+  "endTime": 1674251357117,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 64,
+        "lineEnd": 64,
+        "columnStart": 2,
+        "columnEnd": 125
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 12,
+        "lineEnd": 12,
+        "columnStart": 22,
+        "columnEnd": 97
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "ARG RUBY_VERSION\nARG NODE_VERSION\n\n### dev\n\nFROM ruby:${RUBY_VERSION}-slim as dev\nARG NODE_VERSION\n\nUSER root\nRUN useradd www\nWORKDIR /usr/src/intercode\n\nRUN apt-get update && apt-get install --no-install-recommends -y libvips42 git build-essential shared-mime-info libpq-dev && rm -rf /var/lib/apt/lists/*\n\nCOPY --chown=www:www Gemfile Gemfile.lock .ruby-version /usr/src/intercode/\nRUN bundle config set without 'development test intercode1_import skylight' \\\n  && bundle install -j4 \\\n  && echo 'Running bundle clean --force' \\\n  && bundle clean --force \\\n  && echo 'Copying /usr/local/bundle to /usr/local/bundle-tmp' \\\n  && cp -R /usr/local/bundle /usr/local/bundle-tmp \\\n  && echo 'Cleaning cached gems and intermediate build files from /usr/local/bundle-tmp' \\\n  && rm -rf /usr/local/bundle-tmp/cache/*.gem \\\n  && find /usr/local/bundle-tmp/gems -name '*.c' -delete \\\n  && find /usr/local/bundle-tmp/gems -name '*.o' -delete \\\n  && echo 'Switching the bundle directory for the cleaned one, Raiders of the Lost Ark-style' \\\n  && rm -rf /usr/local/bundle \\\n  && mv /usr/local/bundle-tmp /usr/local/bundle\n\nCOPY --chown=www:www . /usr/src/intercode\n\n### build\n\nFROM dev AS build\n\nENV RAILS_ENV production\nENV NODE_ENV production\nENV AWS_ACCESS_KEY_ID dummy\nENV AWS_SECRET_ACCESS_KEY dummy\n\nRUN DATABASE_URL=postgresql://fakehost/not_a_real_database AWS_S3_BUCKET=fakebucket bundle exec rails assets:precompile\nRUN rm -r doc-site\n\n### ld_preload trickery\n\nFROM ruby:${RUBY_VERSION}-slim as amd64_jemalloc\nENV LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libjemalloc.so.2\n\nFROM ruby:${RUBY_VERSION}-slim as arm64_jemalloc\nENV LD_PRELOAD=/usr/lib/aarch64-linux-gnu/libjemalloc.so.2\n\n### production\n\nFROM ${TARGETARCH}_jemalloc as production\nARG NODE_VERSION\nARG TARGETARCH\n\nENV RAILS_ENV production\nENV NODE_ENV production\n\nUSER root\nRUN useradd -ms /bin/bash www\nRUN apt-get update && apt-get install -y --no-install-recommends libvips42 poppler-utils curl xz-utils libjemalloc2 shared-mime-info libpq5 && rm -rf /var/lib/apt/lists/*\nRUN mkdir /opt/node && \\\n  curl -f https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-$(echo ${TARGETARCH} | sed 's/amd64/x64/').tar.xz | tar xJ --strip-components=1\n\nCOPY --from=build /usr/local/bundle /usr/local/bundle\nCOPY --from=build --chown=www /usr/src/intercode /usr/src/intercode\nWORKDIR /usr/src/intercode\n\nUSER www\nENV PATH=/opt/node/bin:$PATH\nCMD bundle exec bin/rails server -p $PORT -b 0.0.0.0\n"
+}

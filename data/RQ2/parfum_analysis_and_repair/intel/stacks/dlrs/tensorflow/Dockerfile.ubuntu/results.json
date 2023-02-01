@@ -1,0 +1,117 @@
+{
+  "startTime": 1674220865295,
+  "endTime": 1674220866658,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 112,
+        "lineEnd": 112,
+        "columnStart": 7,
+        "columnEnd": 79
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 18,
+        "lineEnd": 18,
+        "columnStart": 4,
+        "columnEnd": 54
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 25,
+        "lineEnd": 25,
+        "columnStart": 4,
+        "columnEnd": 54
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 122,
+        "lineEnd": 122,
+        "columnStart": 4,
+        "columnEnd": 26
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 18,
+        "lineEnd": 18,
+        "columnStart": 4,
+        "columnEnd": 54
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 43,
+        "lineEnd": 46,
+        "columnStart": 4,
+        "columnEnd": 13
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 10,
+        "lineEnd": 11,
+        "columnStart": 7,
+        "columnEnd": 63
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 18,
+        "lineEnd": 18,
+        "columnStart": 4,
+        "columnEnd": 54
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 25,
+        "lineEnd": 25,
+        "columnStart": 4,
+        "columnEnd": 54
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 43,
+        "lineEnd": 46,
+        "columnStart": 4,
+        "columnEnd": 13
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 18,
+        "lineEnd": 18,
+        "columnStart": 4,
+        "columnEnd": 78
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 43,
+        "lineEnd": 46,
+        "columnStart": 4,
+        "columnEnd": 13
+      }
+    }
+  ],
+  "repairedDockerfile": "#--------------------------------------------------------------------\n# [ARGS] Arguments for FROM statements\n#--------------------------------------------------------------------\nARG ubuntu_ver=20.04\n#--------------------------------------------------------------------\n# [BUILD-COMMON] Common build tools\n#--------------------------------------------------------------------\nFROM ubuntu:$ubuntu_ver as common_build_tools\nARG DEBIAN_FRONTEND=noninteractive\nRUN apt-get update \\\n    && apt-get install -y --no-install-recommends --no-install-suggests \\\n    python3-pip python3-dev wget git build-essential cmake curl && rm -rf /var/lib/apt/lists/*;\n\nRUN ln -s /usr/bin/python3.8 /usr/bin/python \\\n    && ln -s /usr/bin/pip3 /usr/bin/pip\n\n#install dpc++ compiler\nRUN unset DEBIAN_FRONTEND && \\\n    apt-get install --no-install-recommends -y curl software-properties-common && \\\n    curl -fsSL https://apt.repos.intel.com/intel-gpg-keys/GPG-PUB-KEY-INTEL-SW-PRODUCTS-2023.PUB \\\n    | apt-key add - && \\\n    echo \"deb https://apt.repos.intel.com/oneapi all main\" \\\n    | tee /etc/apt/sources.list.d/oneAPI.list && \\\n    add-apt-repository -y \"deb https://apt.repos.intel.com/oneapi all main\" && \\\n    apt-get update && \\\n    apt-get install --no-install-recommends -y intel-oneapi-dpcpp-cpp-compiler && rm -rf /var/lib/apt/lists/*;\n\n#export compiler paths\nENV COMPILER_DIR=/opt/intel/oneapi/compiler/2021.1.1/linux\nENV LD_LIBRARY_PATH=$COMPILER_DIR/lib:$COMPILER_DIR/compiler/lib/intel64_lin:$LD_LIBRARY_PATH\nWORKDIR /buildir\nCOPY scripts/ patches/ .\n\n#--------------------------------------------------------------------\n# [TF BUILDER] Builder Stage - Tensorflow on Ubuntu\n#--------------------------------------------------------------------\nFROM common_build_tools as tf_builder\nLABEL maintainer=otc-swstacks@intel.com\nARG tf_ver\nARG platform\n\n# Install SW packages\nARG DEBIAN_FRONTEND=noninteractive\nRUN apt-get -y install --no-install-recommends --no-install-suggests \\\n    bc libjemalloc-dev \\\n    pkg-config zip zlib1g-dev unzip \\\n    golang-go && rm -rf /var/lib/apt/lists/*;\n\n\n\nRUN pip install --no-cache-dir enum34\n\n# Install Bazel\nRUN go get github.com/bazelbuild/bazelisk \\\n    && export PATH=$PATH:~/go/bin/ \\\n    && ln -s ~/go/bin/bazelisk /usr/bin/bazel\n\nRUN ./install_${tf_ver}_ubuntu.sh ${platform}\n\n\n#--------------------------------------------------------------\n# [TF CORE] DLRS Ubuntu TF Core\n#--------------------------------------------------------------\nFROM ubuntu:$ubuntu_ver as tf_core\n\nRUN apt-get update \\\n    && apt-get -y install --no-install-recommends --no-install-suggests \\\n    python3-pip python3 libgoogle-perftools4 libjemalloc2 libjemalloc-dev \\\n    && ln -s /usr/bin/python3.8 /usr/bin/python \\\n    && ln -s /usr/bin/pip3 /usr/bin/pip \\\n    && rm -rf /var/lib/apt/lists/* \\\n    && apt-get autoclean -y\n\nCOPY --from=tf_builder /tmp/tf/ /tmp/tf/\n\n# install tensorflow\nRUN pip --no-cache-dir install /tmp/tf/avx512/tensorflow*.whl \\\n    && rm -rf /tmp/tf\n\nWORKDIR /workspace\nCOPY ./licenses/ /workspace/licenses\nHEALTHCHECK --interval=5m --timeout=3s \\\n  CMD python -c \"import sys\" || exit 1\nSHELL [\"/bin/bash\",  \"-c\"]\n\n#--------------------------------------------------------------\n# [FULL] Base DLRS Ubuntu TF\n#--------------------------------------------------------------\nFROM tf_core as tf_full_base\nLABEL maintainer=otc-swstacks@intel.com\nARG tf_ver\n\n# Install SW packages\nARG DEBIAN_FRONTEND=noninteractive\nRUN apt-get update \\\n    && apt-get -y install --no-install-recommends --no-install-suggests \\\n    libomp5 openmpi-bin libopenmpi-dev openssh-server \\\n    numactl zlib1g-dev libjpeg-dev && rm -rf /var/lib/apt/lists/*\n\n# Create missing links\nRUN ln -s /usr/lib/llvm-10/lib/libomp.so.5 /usr/lib/libiomp5.so \\\n    && ln -s /usr/lib/x86_64-linux-gnu/libtcmalloc.so.4 /usr/lib/libtcmalloc.so\n\nCOPY common/ scripts/ .\n\n\n\n# Install runtime deps, python pkgs and addons\nWORKDIR /workspace\nRUN apt-get update \\\n    && apt-get -y install --no-install-recommends --no-install-suggests \\\n    gcc g++ git python3-dev make curl cmake \\\n    && HOROVOD_WITH_TENSORFLOW=1 HOROVOD_WITH_MPI=1 pip --no-cache-dir install horovod==0.21.* \\\n    && ./install_py_packages.sh ${tf_ver} \\\n    && find /usr/lib/ -follow -type f -name '*.pyc' -delete \\\n    && find /usr/lib/ -follow -type f -name '*.js.map' -delete \\\n    && ./cleanup.sh \\\n    && rm -rf /workspace/* \\\n    && rm -rf /var/lib/apt/lists/*\n\n# speech to text using deepspeech\nRUN apt-get update && \\\n    apt-get install --no-install-recommends -y sox && \\\n    pip install --no-cache-dir deepspeech==0.9.3 && \\\n    rm -rf /var/lib/apt/lists/*\n\n\n# copy license\nCOPY ./licenses /workspace/licenses\n#--------------------------------------------------------------\n# [FULL] DLRS Ubuntu TF\n#--------------------------------------------------------------\nFROM ubuntu:$ubuntu_ver as tf_full\nLABEL maintainer=otc-swstacks@intel.com\n\nCOPY --from=tf_full_base / /\nSHELL [\"/bin/bash\",  \"-c\"]\n"
+}

@@ -1,0 +1,44 @@
+{
+  "startTime": 1674255028050,
+  "endTime": 1674255029483,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 46,
+        "lineEnd": 46,
+        "columnStart": 4,
+        "columnEnd": 95
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 47,
+        "lineEnd": 47,
+        "columnStart": 4,
+        "columnEnd": 63
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 49,
+        "lineEnd": 49,
+        "columnStart": 4,
+        "columnEnd": 27
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 26,
+        "lineEnd": 26,
+        "columnStart": 37,
+        "columnEnd": 83
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "ARG CUDA=10.2\nARG CUDNN=7\n\n# see https://gitlab.com/nvidia/container-images/cuda/blob/master/doc/supported-tags.md\nFROM nvidia/cuda:${CUDA}-cudnn${CUDNN}-devel-ubuntu18.04\n\nARG PYTHON_VERSION=3.8\nARG PYTORCH_VERSION=1.10\nARG OPENMPI=v4.0\nARG OPENMPI_VERSION=4.0.5\n\nLABEL description=\"Dockerfile for APS toolkit\"\nLABEL tag=\"pt${PYTORCH_VERSION}-py${PYTHON_VERSION}-cuda${CUDA}-ubuntu18.04\"\nLABEL creator=\"funcwj\"\nLABEL time=\"2021/04/08\"\n\n# install tools\nRUN apt-get update && apt-get install -y --no-install-recommends --allow-downgrades \\\n    --allow-change-held-packages vim git curl locales htop wget zip unzip sox libsndfile1 \\\n    cmake g++ gcc make openssh-server ca-certificates libnccl2 libnccl-dev && \\\n    locale-gen en_US.UTF-8 && rm -rf /var/lib/apt/lists/*\n\n# https://download.open-mpi.org/release/open-mpi/v4.0/openmpi-4.0.5.tar.gz\n# install openmpi (for horovod, optional)\nRUN wget https://download.open-mpi.org/release/open-mpi/${OPENMPI}/openmpi-${OPENMPI_VERSION}.tar.gz && \\\n    tar -zxf openmpi-${OPENMPI_VERSION}.tar.gz && rm openmpi-${OPENMPI_VERSION}.tar.gz && \\\n    cd openmpi-${OPENMPI_VERSION} && ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" --enable-orterun-prefix-by-default && make -j $(nproc) all && \\\n    make install && ldconfig && cd ../ && rm -rf openmpi-${OPENMPI_VERSION}\n\nENV PATH=/usr/local/mpi/bin:$PATH\nENV LD_LIBRARY_PATH=/usr/local/mpi/lib:/usr/local/mpi/lib64:$LD_LIBRARY_PATH\n\n# install miniconda\nRUN wget -O ~/miniconda.sh https://repo.continuum.io/miniconda/Miniconda3-latest-Linux-x86_64.sh && \\\n    bash ~/miniconda.sh -b -p /opt/conda && rm ~/miniconda.sh\n\nENV CUDA_HOME=/usr/local/cuda\nENV PATH=$CUDA_HOME/bin:/opt/conda/bin:$PATH\nENV LD_LIBRARY_PATH=$CUDA_HOME/lib64:/usr/local/lib:$LD_LIBRARY_PATH\n\n# install python dependency\nRUN conda install -y python=${PYTHON_VERSION}\n# see https://pytorch.org/get-started/previous-versions/\nRUN conda install -y pytorch==${PYTORCH_VERSION} torchaudio cudatoolkit=${CUDA_TOOLKIT} -c pytorch\nRUN conda install -y pyyaml matplotlib tqdm scipy h5py pybind11 yapf\nRUN conda install -y -c conda-forge tensorboard pysoundfile librosa pre-commit && conda clean -ya\nRUN pip install --no-cache-dir kaldi_python_io edit-distance museval sentencepiece pystoi pypesq pytest flake8\nRUN pip install --no-cache-dir https://github.com/kpu/kenlm/archive/master.zip\n# patch\nRUN pip install --no-cache-dir numba==0.52\n\n# install hovorod (optional)\nRUN ldconfig /usr/local/cuda/targets/x86_64-linux/lib/stubs && \\\n    HOROVOD_GPU_ALLREDUCE=NCCL HOROVOD_WITH_PYTORCH=1 pip install --no-cache-dir horovod && \\\n    ldconfig && horovodrun --check-build\n\n# one RNNT implementation (or pip install warp_rnnt)\nENV CFLAGS=\"-I $CUDA_HOME/include $CFLAGS\"\n# for CUDA11\nRUN git clone https://github.com/ncilfone/warp-transducer.git && cd warp-transducer && \\\n    mkdir build && cd build && cmake .. && make -j $(nproc) && make install && ldconfig -v && \\\n    cd ../pytorch_binding && python setup.py install && cd ../../ && rm -rf warp-transducer\n\n# install apex (may abort, optional)\nRUN git clone https://github.com/NVIDIA/apex && cd apex && \\\n    pip install -v --no-cache-dir --global-option=\"--cpp_ext\" --global-option=\"--cuda_ext\" ./ && \\\n    cd .. && rm -rf apex\n\n# install sentencepiece\nRUN git clone https://github.com/google/sentencepiece.git && cd sentencepiece && mkdir build && cd build && \\\n    cmake .. && make -j $(nproc) && make install && ldconfig -v && cd ../../ && rm -rf sentencepiece\n\n# test\n# RUN python -m warp_rnnt.test\nRUN python -c \"from warprnnt_pytorch import rnnt_loss\"\n"
+}

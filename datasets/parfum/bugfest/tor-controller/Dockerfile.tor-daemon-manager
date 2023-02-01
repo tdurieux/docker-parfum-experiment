@@ -1,0 +1,24 @@
+ARG TOR_VERSION="0.4.6.10"
+ARG TOR_IMAGE="quay.io/bugfest/tor"
+
+FROM --platform=$BUILDPLATFORM golang:1.17 as builder
+
+WORKDIR /src
+
+# Build
+ARG TARGETOS TARGETARCH
+RUN --mount=target=. \
+    --mount=type=cache,target=/root/.cache/go-build \
+    --mount=type=cache,target=/go/pkg \
+    CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -a -o /out/tor-local-manager ./agents/tor/main.go
+
+FROM ${TOR_IMAGE}:${TOR_VERSION} as tor
+
+WORKDIR /root/
+
+# install tor-local-manager
+RUN mkdir -p /run/tor/service
+
+COPY --from=builder /out/tor-local-manager .
+
+ENTRYPOINT ["./tor-local-manager"]

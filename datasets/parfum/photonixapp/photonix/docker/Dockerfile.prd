@@ -1,0 +1,150 @@
+ARG ARCH=
+FROM ${ARCH}python:3.8.12-slim-bullseye as builder
+
+# Install system dependencies - note that some of these are only used on non-amd64 where Python packages have to be compiled from source
+RUN apt-get update && \
+    apt-get install -y \
+        build-essential \
+        cmake \
+        curl \
+        gfortran \
+        gnupg \
+        libatlas-base-dev \
+        libblas-dev \
+        libblas3 \
+        libfreetype6 \
+        libfreetype6-dev \
+        libjpeg-dev \
+        liblapack-dev \
+        liblapack3 \
+        libpq-dev \
+        libssl-dev \
+        libtiff5-dev \
+    && \
+        apt-get clean && \
+            rm -rf /var/lib/apt/lists/* \
+                   /tmp/* \
+                   /var/tmp/*
+
+# Install Node & Yarn
+RUN curl -sL https://deb.nodesource.com/setup_14.x | bash - && \
+    apt-get update && \
+    apt-get install -y nodejs && \
+         apt-get clean && \
+            rm -rf /var/lib/apt/lists/* \
+                   /tmp/* \
+                   /var/tmp/*
+RUN npm install --global --unsafe-perm yarn
+
+# Install Python dependencies
+WORKDIR /srv
+COPY docker/pip.conf /etc/pip.conf
+COPY docker/.pypirc /root/.pypirc
+RUN pip install --upgrade pip
+RUN pip install --no-cache-dir pypi-uploader==1.1.0
+
+COPY requirements.txt /srv/requirements.txt
+COPY docker/install_and_upload_python_packages.py /root/install_and_upload_python_packages.py
+ENV PYTHONUNBUFFERED=1
+ARG PYPI_UPLOAD_USERNAME
+ARG PYPI_UPLOAD_PASSWORD
+RUN if [ "${PYPI_UPLOAD_USERNAME}" = "" ] ; \
+     then python /root/install_and_upload_python_packages.py ; \
+     else python /root/install_and_upload_python_packages.py -u ${PYPI_UPLOAD_USERNAME} -p ${PYPI_UPLOAD_PASSWORD} ; \
+    fi
+
+# Install NPM dependencies
+COPY ui/package.json /srv/ui/package.json
+COPY ui/yarn.lock /srv/ui/yarn.lock
+WORKDIR /srv/ui
+ENV NODE_ENV=production
+RUN yarn install --no-cache --network-timeout 1000000
+
+# Copy over the frontend code
+COPY ui/public /srv/ui/public
+COPY ui/src /srv/ui/src
+
+# Build frontend app
+# Node option here solves heap out-of-memory issue when building Webpack bundle on machines that only have 1GB RAM
+RUN NODE_OPTIONS=--max-old-space-size=768 yarn build
+
+# Remove large unused files in Python site-packages
+RUN find /usr/local/lib/python3.8 -type d -name  "__pycache__" -exec rm -r {} + && \
+    find /usr/local/lib/python3.8/site-packages -type d -name  "tests" -exec rm -r {} +
+RUN rm -rf \
+    /usr/local/lib/python3.8/site-packages/tensorflow/include \
+    /usr/local/lib/python3.8/site-packages/scipy \
+    /usr/local/lib/python3.8/site-packages/django/contrib/gis \
+    /usr/local/lib/python3.8/site-packages/django/contrib/humanize \
+    /usr/local/lib/python3.8/site-packages/django/contrib/admindocs \
+    /usr/local/lib/python3.8/site-packages/django/contrib/redirects \
+    /usr/local/lib/python3.8/site-packages/django/contrib/flatpages \
+    /usr/local/lib/python3.8/site-packages/django/contrib/sitemaps \
+    /usr/local/lib/python3.8/site-packages/django/contrib/syndication \
+    /usr/local/lib/python3.8/site-packages/matplotlib/backends \
+    /usr/local/lib/python3.8/site-packages/matplotlib/tests \
+    /usr/local/lib/python3.8/site-packages/matplotlib/mpl-data/fonts \
+    /usr/local/lib/python3.8/site-packages/matplotlib/mpl-data/sample_data \
+    /usr/local/lib/python3.8/site-packages/matplotlib/mpl-data/images \
+    /usr/local/lib/python3.8/site-packages/matplotlib/mpl-data/stylelib \
+    /usr/local/lib/python3.8/site-packages/tensorboard \
+    /usr/local/lib/python3.8/site-packages/tensorboard_plugin_wit
+
+
+FROM ${ARCH}python:3.8.12-slim-bullseye
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        cron \
+        dcraw \
+        file \
+        libatlas3-base \
+        libfreetype6 \
+        libfreetype6-dev \
+        libgl1 \
+        libglib2.0-dev \
+        libhdf5-dev \
+        libheif-examples \
+        libimage-exiftool-perl \
+        libpq-dev \
+        libtiff5-dev \
+        netcat \
+        nginx-light \
+        supervisor \
+        xz-utils \
+    && \
+        apt-get clean && \
+            rm -rf /var/lib/apt/lists/* \
+                   /tmp/* \
+                   /var/tmp/*
+
+# Copy over installed Python packages and built JS bundle
+COPY --from=builder /usr/local/lib/python3.8/site-packages /usr/local/lib/python3.8/site-packages
+COPY --from=builder /usr/local/bin /usr/local/bin
+COPY --from=builder /srv/ui/build /srv/ui/build
+
+WORKDIR /srv
+
+# Copy over the code
+COPY photonix /srv/photonix
+COPY manage.py /srv/manage.py
+COPY test.py /srv/test.py
+COPY tests /srv/tests
+COPY ui/public /srv/ui/public
+
+# Copy system config and init scripts
+COPY system /srv/system
+COPY system/supervisord.conf /etc/supervisord.conf
+
+# Copy crontab
+COPY system/cron.d /etc/cron.d/
+RUN chmod 0644 /etc/cron.d/*
+
+ENV PYTHONPATH /srv
+ENV TF_CPP_MIN_LOG_LEVEL 3
+
+RUN DJANGO_SECRET_KEY=test python photonix/manage.py collectstatic --noinput --link
+
+CMD ./system/run.sh
+
+EXPOSE 80

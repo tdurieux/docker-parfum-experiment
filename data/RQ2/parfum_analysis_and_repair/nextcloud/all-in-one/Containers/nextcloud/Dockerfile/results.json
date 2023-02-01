@@ -1,0 +1,53 @@
+{
+  "startTime": 1674248461706,
+  "endTime": 1674248463462,
+  "originalSmells": [
+    {
+      "rule": "mkdirUsrSrcThenRemove",
+      "position": {
+        "lineStart": 127,
+        "lineEnd": 127,
+        "columnStart": 4,
+        "columnEnd": 37
+      }
+    },
+    {
+      "rule": "mkdirUsrSrcThenRemove",
+      "position": {
+        "lineStart": 128,
+        "lineEnd": 128,
+        "columnStart": 4,
+        "columnEnd": 44
+      }
+    },
+    {
+      "rule": "mkdirUsrSrcThenRemove",
+      "position": {
+        "lineStart": 216,
+        "lineEnd": 216,
+        "columnStart": 4,
+        "columnEnd": 51
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 81,
+        "lineEnd": 81,
+        "columnStart": 4,
+        "columnEnd": 57
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 176,
+        "lineEnd": 176,
+        "columnStart": 4,
+        "columnEnd": 57
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# From https://github.com/nextcloud/docker/blob/master/23/fpm-alpine/Dockerfile\nFROM php:8.0.21-fpm-alpine3.15\n\n# Custom: change id of www-data user as it needs to be the same like on old installations\nRUN set -ex; \\\n    apk add --no-cache shadow; \\\n    deluser www-data; \\\n    groupmod -g 333 xfs; \\\n    usermod -u 333 -g 333 xfs; \\\n    addgroup -g 33 -S www-data; \\\n    adduser -u 33 -D -S -G www-data www-data\n\n# entrypoint.sh and cron.sh dependencies\nRUN set -ex; \\\n    \\\n    apk add --no-cache \\\n        rsync \\\n    ;\n\n# install the PHP extensions we need\n# see https://docs.nextcloud.com/server/stable/admin_manual/installation/source_installation.html\nENV PHP_MEMORY_LIMIT 512M\nENV PHP_UPLOAD_LIMIT 10G\nRUN set -ex; \\\n\n    apk add --no-cache --virtual .build-deps \\\n        $PHPIZE_DEPS \\\n        autoconf \\\n        freetype-dev \\\n        icu-dev \\\n        libevent-dev \\\n        libjpeg-turbo-dev \\\n        libmcrypt-dev \\\n        libpng-dev \\\n        libmemcached-dev \\\n        libxml2-dev \\\n        libzip-dev \\\n        openldap-dev \\\n        pcre-dev \\\n        postgresql-dev \\\n        imagemagick-dev \\\n        libwebp-dev \\\n        gmp-dev \\\n    ; \\\n\n    docker-php-ext-configure gd --with-freetype --with-jpeg --with-webp; \\\n    docker-php-ext-configure ldap; \\\n    docker-php-ext-install -j \"$(nproc)\" \\\n        bcmath \\\n        exif \\\n        gd \\\n        intl \\\n        ldap \\\n        opcache \\\n        pcntl \\\n        pdo_mysql \\\n        pdo_pgsql \\\n        zip \\\n        gmp \\\n    ; \\\n\n# pecl will claim success even if one install fails, so we need to perform each install separately\n    pecl install APCu-5.1.21; \\\n    pecl install memcached-3.2.0; \\\n    pecl install redis-5.3.7; \\\n    pecl install imagick-3.7.0; \\\n\n    docker-php-ext-enable \\\n        apcu \\\n        memcached \\\n        redis \\\n        imagick \\\n    ; \\\n    rm -r /tmp/pear; \\\n\n    runDeps=\"$( \\\n        scanelf --needed --nobanner --format '%n#p' --recursive /usr/local/lib/php/extensions \\\n            | tr ',' '\\n' \\\n            | sort -u \\\n            | awk 'system(\"[ -e /usr/local/lib/\" $1 \" ]\") == 0 { next } { print \"so:\" $1 }' \\\n    )\"; \\\n    apk add --no-cache --virtual .nextcloud-phpext-rundeps $runDeps; \\\n    apk del .build-deps\n\n# set recommended PHP.ini settings\n# see https://docs.nextcloud.com/server/stable/admin_manual/configuration_server/server_tuning.html#enable-php-opcache\nRUN { \\\n        echo 'opcache.interned_strings_buffer=32'; \\\n        echo 'opcache.save_comments=1'; \\\n        echo 'opcache.revalidate_freq=60'; \\\n    } > /usr/local/etc/php/conf.d/opcache-recommended.ini; \\\n    \\\n    echo 'apc.enable_cli=1' >> /usr/local/etc/php/conf.d/docker-php-ext-apcu.ini; \\\n    \\\n    { \\\n        echo 'memory_limit=${PHP_MEMORY_LIMIT}'; \\\n        echo 'upload_max_filesize=${PHP_UPLOAD_LIMIT}'; \\\n        echo 'post_max_size=${PHP_UPLOAD_LIMIT}'; \\\n    } > /usr/local/etc/php/conf.d/nextcloud.ini; \\\n    \\\n    mkdir /var/www/data; \\\n    chown -R www-data:root /var/www; \\\n    chmod -R g=u /var/www\n\nVOLUME /var/www/html\n\n\nENV NEXTCLOUD_VERSION 23.0.6\n\nRUN set -ex; \\\n    apk add --no-cache --virtual .fetch-deps \\\n        bzip2 \\\n        gnupg \\\n    ; \\\n\n    curl -fsSL -o nextcloud.tar.bz2 \\\n        \"https://download.nextcloud.com/server/releases/nextcloud-${NEXTCLOUD_VERSION}.tar.bz2\"; \\\n    curl -fsSL -o nextcloud.tar.bz2.asc \\\n        \"https://download.nextcloud.com/server/releases/nextcloud-${NEXTCLOUD_VERSION}.tar.bz2.asc\"; \\\n    export GNUPGHOME=\"$(mktemp -d)\"; \\\n# gpg key from https://nextcloud.com/nextcloud.asc\n    gpg --batch --keyserver keyserver.ubuntu.com  --recv-keys 28806A878AE423A28372792ED75899B9A724937A; \\\n    gpg --batch --verify nextcloud.tar.bz2.asc nextcloud.tar.bz2; \\\n    tar -xjf nextcloud.tar.bz2 -C /usr/src/; \\\n    gpgconf --kill all; \\\n    rm nextcloud.tar.bz2.asc nextcloud.tar.bz2; \\\n    rm -rf \"$GNUPGHOME\" /usr/src/nextcloud/updater; \\\n    mkdir -p /usr/src/nextcloud/data; rm -rf /usr/src/nextcloud/data \\\n    mkdir -p /usr/src/nextcloud/custom_apps; \\\n    chmod +x /usr/src/nextcloud/occ; \\\n    apk del .fetch-deps\n\nCOPY *.sh upgrade.exclude /\nCOPY config/* /usr/src/nextcloud/config/\n\nENTRYPOINT [\"/entrypoint.sh\"]\nCMD [\"php-fpm\"]\n\n# Template from https://github.com/nextcloud/docker/blob/master/.examples/dockerfiles/full/fpm-alpine/Dockerfile\n\nRUN set -ex; \\\n    \\\n    apk add --no-cache \\\n        ffmpeg \\\n        imagemagick \\\n        procps \\\n        samba-client \\\n        supervisor \\\n#       libreoffice \\\n    ;\n\nRUN set -ex; \\\n\n    apk add --no-cache --virtual .build-deps \\\n        $PHPIZE_DEPS \\\n        imap-dev \\\n        krb5-dev \\\n        openssl-dev \\\n        samba-dev \\\n        bzip2-dev \\\n    ; \\\n\n    docker-php-ext-configure imap --with-kerberos --with-imap-ssl; \\\n    docker-php-ext-install \\\n        bz2 \\\n        imap \\\n    ; \\\n    pecl install smbclient; \\\n    docker-php-ext-enable smbclient; \\\n\n    runDeps=\"$( \\\n        scanelf --needed --nobanner --format '%n#p' --recursive /usr/local/lib/php/extensions \\\n            | tr ',' '\\n' \\\n            | sort -u \\\n            | awk 'system(\"[ -e /usr/local/lib/\" $1 \" ]\") == 0 { next } { print \"so:\" $1 }' \\\n    )\"; \\\n    apk add --no-cache --virtual .nextcloud-phpext-rundeps $runDeps; \\\n    apk del .build-deps\n\nRUN mkdir -p \\\n    /var/log/supervisord \\\n    /var/run/supervisord \\\n;\n\nCOPY supervisord.conf /\n\nENV NEXTCLOUD_UPDATE=1\n\nCMD [\"/usr/bin/supervisord\", \"-c\", \"/supervisord.conf\"]\n\n# Custom:\nRUN set -ex; \\\n    \\\n    apk add --no-cache \\\n        bash \\\n        netcat-openbsd \\\n        openssl \\\n        gnupg \\\n        git \\\n        postgresql-client \\\n        tzdata \\\n    ; \\\n    rm -rf /var/lib/apt/lists/*\n\nRUN set -ex; \\\n    grep -q '^pm = dynamic' /usr/local/etc/php-fpm.d/www.conf; \\\n    sed -i 's/^pm.max_children =.*/pm.max_children = 100/' /usr/local/etc/php-fpm.d/www.conf; \\\n    sed -i 's/^pm.start_servers =.*/pm.start_servers = 25/' /usr/local/etc/php-fpm.d/www.conf; \\\n    sed -i 's/^pm.min_spare_servers =.*/pm.min_spare_servers = 25/' /usr/local/etc/php-fpm.d/www.conf; \\\n    sed -i 's/^pm.max_spare_servers =.*/pm.max_spare_servers = 75/' /usr/local/etc/php-fpm.d/www.conf\n\nRUN set -ex; \\\n    rm -rf /tmp/nextcloud-aio && \\\n    mkdir -p /tmp/nextcloud-aio && \\\n    cd /tmp/nextcloud-aio && \\\n    git clone https://github.com/nextcloud-releases/all-in-one.git --depth 1 .; \\\n    mkdir -p /usr/src/nextcloud/apps/nextcloud-aio; rm -rf /usr/src/nextcloud/apps/nextcloud-aio \\\n    cp -r ./app/* /usr/src/nextcloud/apps/nextcloud-aio/\n\nRUN set -ex; \\\n    chown www-data:root -R /usr/src && \\\n    chown www-data:root -R /usr/local/etc/php/conf.d && \\\n    chown www-data:root -R /var/log/supervisord/ && \\\n    chown www-data:root -R /var/run/supervisord/ && \\\n    rm -r /usr/src/nextcloud/apps/updatenotification\n\nCOPY start.sh /\nCOPY notify.sh /\nRUN set -ex; \\\n    chmod +x /start.sh && \\\n    chmod +r /supervisord.conf && \\\n    chmod +x /entrypoint.sh && \\\n    chmod +r /upgrade.exclude && \\\n    chmod +x /cron.sh && \\\n    chmod +x /notify.sh && \\\n    chmod +x /activate-collabora.sh\n\nRUN set -ex; \\\n    mkdir /mnt/ncdata; \\\n    chown www-data:www-data /mnt/ncdata;\n\nVOLUME /mnt/ncdata\n\n# Give root a random password\nRUN echo \"root:$(openssl rand -base64 12)\" | chpasswd\n\nUSER www-data\nENTRYPOINT [\"/start.sh\"]\n"
+}

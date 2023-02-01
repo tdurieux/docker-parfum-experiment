@@ -1,0 +1,22 @@
+# First do the source builds
+@INCLUDE Dockerfile.target.sdist
+
+# This defines the distribution base layer
+# Put only the bare minimum of common commands here, without dev tools
+@IF [ ${BUILDER_TARGET} = centos-7 -o ${BUILDER_TARGET} = el-7 ]
+FROM centos:7 as dist-base
+@ENDIF
+@IF [ ${BUILDER_TARGET} = centos-7-amd64 -o ${BUILDER_TARGET} = el-7-amd64]
+FROM amd64/centos:7 as dist-base
+@ENDIF
+
+ARG BUILDER_CACHE_BUSTER=
+RUN touch /var/lib/rpm/* && yum install -y epel-release centos-release-scl-rh && rm -rf /var/cache/yum
+RUN touch /var/lib/rpm/* && yum install -y --nogpgcheck devtoolset-8-gcc-c++ && rm -rf /var/cache/yum
+
+# Do the actual rpm build
+@INCLUDE Dockerfile.rpmbuild
+
+# Do a test install and verify
+# Can be skipped with skiptests=1 in the environment
+# @EXEC [ "$skiptests" = "" ] && include Dockerfile.rpmtest

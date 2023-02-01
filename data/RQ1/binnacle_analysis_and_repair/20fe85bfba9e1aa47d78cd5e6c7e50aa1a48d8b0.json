@@ -1,0 +1,62 @@
+{
+  "startTime": 1674234113453,
+  "endTime": 1674234113697,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 21,
+        "lineEnd": 21,
+        "columnStart": 4,
+        "columnEnd": 131
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 69,
+        "lineEnd": 69,
+        "columnStart": 4,
+        "columnEnd": 86
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 11,
+        "lineEnd": 11,
+        "columnStart": 4,
+        "columnEnd": 102
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 46,
+        "lineEnd": 48,
+        "columnStart": 4,
+        "columnEnd": 28
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 15,
+        "lineEnd": 15,
+        "columnStart": 4,
+        "columnEnd": 31
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 71,
+        "lineEnd": 71,
+        "columnStart": 29,
+        "columnEnd": 47
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "############################################\n### Container to build BinExport plugins ###\n############################################\n\nFROM centos:7.3.1611 as pluginbuilder\nMAINTAINER Jonas Zaddach <jzaddach@cisco.com>\n\nARG IDA_WEB_PASSWORD\nENV PREFIX /home\n\nRUN yum -y update && yum clean all\nRUN yum -y install gcc-c++ autoconf automake libtool curl unzip git make wget zlib-devel libcurl-devel && rm -rf /var/cache/yum\n\n# Install cmake 3.7.1\nRUN wget https://cmake.org/files/v3.7/cmake-3.7.1.tar.gz\nRUN tar xvfz cmake-3.7.1.tar.gz && rm cmake-3.7.1.tar.gz\nWORKDIR cmake-3.7.1\nRUN ./bootstrap --system-curl && make && make install\nWORKDIR ${PREFIX}\n\n# Download IDA Pro 7.0 SDK. Needed for building BinExport plugin\nRUN curl -f -L --user \"idauser:${IDA_WEB_PASSWORD}\" -o /tmp/ida-sdk.zip https://www.hex-rays.com/products/ida/support/ida/idasdk70.zip\nWORKDIR ${PREFIX}\nRUN unzip /tmp/ida-sdk.zip\n\n# Download, build and install BinExport plugin\nWORKDIR ${PREFIX}\nRUN git clone https://github.com/google/binexport\nWORKDIR ${PREFIX}/binexport\nRUN mkdir -p build_linux\nWORKDIR build_linux\nRUN cmake -DCMAKE_BUILD_TYPE=Release -DIdaSdk_ROOT_DIR=${PREFIX}/idasdk70 ../cmake\nRUN cmake --build .\n\n#################################################\n### Actual container with IDA Pro and service ###\n#################################################\n\nFROM centos:7.3.1611\nMAINTAINER Jonas Zaddach <jzaddach@cisco.com>\n\nARG IDA_INSTALLATION_FILE=ida.run\nARG IDA_PASSWORD\nENV PREFIX /home\n\nRUN yum -y update && yum clean all\nRUN yum -y install python python-flask python-gunicorn \\\n    glib2 libXext libXi dbus-libs fontconfig \\\n    libSM libxcb python-libs && rm -rf /var/cache/yum\n\nCOPY $IDA_INSTALLATION_FILE /installation/\n\n# Install IDA\nRUN mkdir /ida\n# ida.run is the IDA installation executable file\nRUN chmod +x \\\n    /installation/$IDA_INSTALLATION_FILE\n\n# Run IDA installation - echo keyboard input including installation password and \"yes\" commands\nRUN printf \"\\n\\n\\n\\n\\n\\ny\\n$IDA_PASSWORD\\n/ida\\ny\\ny\\n\" | /installation/ida.run\n\n# Create a special file in order to prevent IDA to ask for license acceptance before executing IDA\nRUN touch /ida/license.displayed\n\n# Copy Binexport plugins\nCOPY --from=pluginbuilder /home/binexport/build_linux/binexport-prefix/binexport.so /ida/plugins\nCOPY --from=pluginbuilder /home/binexport/build_linux/binexport-prefix/binexport64.so /ida/plugins\n\n# Install BinDiff\nRUN curl -f -o /tmp/bindiff.deb https://dl.google.com/dl/zynamics/bindiff_4.3.0_amd64.deb\nWORKDIR /tmp/bindiff\nRUN ar x /tmp/bindiff.deb && tar xf data.tar.xz && rm data.tar.xz\nRUN cp opt/zynamics/BinDiff/bin/differ ${PREFIX}\nWORKDIR ${PREFIX}\nRUN rm -Rf /tmp/bindiff /tmp/bindiff.deb\n\n# Install BinExport and pickle service\nWORKDIR ${PREFIX}\nCOPY files/service/ida_service.py .\nCOPY files/service/ida_service.sh /usr/local/bin\nRUN chmod +x /usr/local/bin/ida_service.sh\nCOPY files/ida/export_binexport_pickle.py .\n\nRUN mkdir /shared\nWORKDIR /shared\n\nRUN mkdir /logs\n\nENV PATH /ida:$PATH\nENV TERM xterm\nENV PYTHONPATH /usr/local/lib/python2.7/dist-packages:/usr/local/lib/python2.7/site-packages:/usr/lib/python2.7/:$PYTHONPATH\nENV BINDIFF_DIFFER ${PREFIX}/differ\n\nVOLUME /logs\n\nENTRYPOINT [\"/usr/local/bin/ida_service.sh\"]\n"
+}

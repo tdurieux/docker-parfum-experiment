@@ -1,0 +1,61 @@
+# stage to build the dependency manager
+FROM rust:1.52 AS messctl_build
+# FROM elixir:1.12-alpine AS messctl_build
+
+ARG FLAVOUR
+ARG FLAVOUR_PATH
+
+ENV FORKS=./forks
+
+# build deps
+# RUN apk update && apk add git rust cargo
+
+# fetch messctl
+RUN git clone https://github.com/bonfire-networks/messctl $FORKS/messctl/origin 2> /dev/null || (cd $FORKS/messctl/origin && git pull)
+RUN cd $FORKS/messctl/origin && git checkout 8f53c86687ba2bd262471c6e8d9490ed00bf1306
+# FIXME: try using latest version of messctl
+
+# compile messctl
+RUN cd $FORKS/messctl && cp -r origin/* . && cargo build --release && cargo install --path . --verbose
+
+
+FROM elixir:1.13-alpine
+
+ENV HOME=/opt/app/ TERM=xterm USER=docker FORKS=./forks
+WORKDIR $HOME
+
+# dev tools
+RUN apk update && \
+    apk add --no-cache bash curl inotify-tools
+
+# various dependencies of dependencies
+RUN apk add --no-cache file \
+    npm yarn \
+    git \
+    mailcap \
+    ca-certificates openssh-client openssl-dev \
+    tzdata \
+    gettext
+
+# deps to compile NIF deps (eg. tree_magic)
+RUN apk add --no-cache git rust cargo
+
+# dependencies for comeonin (not needed for dev)
+#RUN apk add cmake make gcc libc-dev
+
+# dependencies for encryption (experimental)
+# RUN apk add olm
+
+# dependencies for image processing
+RUN apk add --no-cache imagemagick vips-tools
+
+# install the dependency manager
+COPY --from=messctl_build $FORKS/messctl/target/release/messctl /bin/
+
+# JS package manager & builders
+# RUN npm install -g pnpm esbuild postcss
+
+EXPOSE 4000/tcp
+EXPOSE 4004/tcp
+
+CMD ["sh","-c","iex -S mix phx.server"]

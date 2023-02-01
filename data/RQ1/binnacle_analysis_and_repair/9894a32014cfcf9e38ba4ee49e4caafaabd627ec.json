@@ -1,0 +1,35 @@
+{
+  "startTime": 1674245859539,
+  "endTime": 1674245859728,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 38,
+        "lineEnd": 38,
+        "columnStart": 4,
+        "columnEnd": 36
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 39,
+        "lineEnd": 39,
+        "columnStart": 4,
+        "columnEnd": 23
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 9,
+        "lineEnd": 27,
+        "columnStart": 4,
+        "columnEnd": 9
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Base image with Tomcat and KPM\nFROM ubuntu:16.04\nMAINTAINER Kill Bill core team <killbilling-users@googlegroups.com>\n\nUSER root\n\n# Install Kill Bill dependencies and useful tools\nENV DEBIAN_FRONTEND noninteractive\nRUN apt-get update && \\\n    apt-get install --no-install-recommends -y \\\n      apt-utils \\\n      curl \\\n      dpkg-dev \\\n      gcc \\\n      git \\\n      less \\\n      libapr1 \\\n      libapr1-dev \\\n      libssl-dev \\\n      make \\\n      mysql-client \\\n      net-tools \\\n      openjdk-8-jdk \\\n      python-pip \\\n      sudo \\\n      telnet \\\n      unzip \\\n      vim && \\\n    rm -rf /var/lib/apt/lists/*\nENV DEBIAN_FRONTEND teletype\n\n# Configure default JAVA_HOME path\nRUN ln -s java-8-openjdk-amd64 /usr/lib/jvm/default-java\nENV JAVA_HOME /usr/lib/jvm/default-java\nENV JSSE_HOME $JAVA_HOME/jre/\n\n# Install latest Ansible version (deb package is too old)\nRUN python -m pip install --upgrade pip && \\\n    pip install --no-cache-dir setuptools --upgrade && \\\n    pip install --no-cache-dir ansible\n\n# Add tomcat user\nENV TOMCAT_OWNER tomcat\nENV TOMCAT_GROUP tomcat\nENV TOMCAT_HOME /var/lib/tomcat\nRUN adduser $TOMCAT_OWNER \\\n            --home $TOMCAT_HOME \\\n            --disabled-password \\\n            --gecos ''\n\n# Add tomcat user into sudo group and reinitialize the password\nRUN usermod -aG sudo $TOMCAT_GROUP && \\\n    echo \"$TOMCAT_OWNER:$TOMCAT_OWNER\" | chpasswd && \\\n    echo '%sudo ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers\n\nUSER $TOMCAT_OWNER\nWORKDIR $TOMCAT_HOME\n\n# Install roles dependencies\nRUN mkdir -p $TOMCAT_HOME/.ansible && \\\n    touch $TOMCAT_HOME/.ansible_galaxy && \\\n    chown tomcat $TOMCAT_HOME/.ansible && \\\n    chown tomcat $TOMCAT_HOME/.ansible_galaxy\nARG KILLBILL_CLOUD_VERSION\nRUN ansible-galaxy install git+https://github.com/killbill/killbill-cloud.git,$KILLBILL_CLOUD_VERSION\n\nENV KILLBILL_CLOUD_ANSIBLE_ROLES $TOMCAT_HOME/.ansible/roles/killbill-cloud/ansible\n\nENV ENV_HOST_IP localhost\n\nENV ANSIBLE_OPTS -i localhost, \\\n                 -e ansible_connection=local \\\n                 -e ansible_python_interpreter=/usr/bin/python \\\n                 -e java_home=$JAVA_HOME \\\n                 -vv\n\n# Install KPM\nENV NEXUS_URL https://oss.sonatype.org\nENV NEXUS_REPOSITORY releases\nENV KPM_INSTALL_DIR /opt\nENV KPM_VERSION 0.7.2\nRUN ansible-playbook $ANSIBLE_OPTS \\\n                     -e kpm_install_dir=$KPM_INSTALL_DIR \\\n                     -e nexus_url=$NEXUS_URL \\\n                     -e nexus_repository=$NEXUS_REPOSITORY \\\n                     -e kpm_version=$KPM_VERSION \\\n                     $KILLBILL_CLOUD_ANSIBLE_ROLES/kpm.yml\nENV PATH \"/opt/kpm-${KPM_VERSION}-linux-x86_64:${PATH}\"\n\n# Install Tomcat\nENV CATALINA_BASE $TOMCAT_HOME\nENV CATALINA_HOME /usr/share/tomcat\nENV CATALINA_PID $CATALINA_BASE/tomcat.pid\nENV CATALINA_TMPDIR /var/tmp\nENV TOMCAT_INSTALL_DIR /opt\nENV TOMCAT_VERSION 8.5.16\nENV TOMCAT_NATIVE_LIBDIR $CATALINA_HOME/native-jni-lib\nENV LD_LIBRARY_PATH ${LD_LIBRARY_PATH:+$LD_LIBRARY_PATH:}$TOMCAT_NATIVE_LIBDIR\nRUN ansible-playbook $ANSIBLE_OPTS \\\n                     -e tomcat_version=$TOMCAT_VERSION \\\n                     -e tomcat_install_dir=$TOMCAT_INSTALL_DIR \\\n                     -e tomcat_native_libdir=$TOMCAT_NATIVE_LIBDIR \\\n                     -e tomcat_owner=$TOMCAT_OWNER \\\n                     -e tomcat_group=$TOMCAT_GROUP \\\n                     -e tomcat_home=$TOMCAT_HOME \\\n                     -e catalina_home=$CATALINA_HOME \\\n                     -e catalina_base=$CATALINA_BASE \\\n                     -e apr_config_path=\"$(which apr-1-config)\" \\\n                     -e gnu_arch=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" \\\n                     $KILLBILL_CLOUD_ANSIBLE_ROLES/tomcat.yml\n\n# Start Tomcat\nEXPOSE 8080\nCMD [\"/usr/share/tomcat/bin/catalina.sh\", \"run\"]\n"
+}

@@ -1,0 +1,26 @@
+{
+  "startTime": 1674251439881,
+  "endTime": 1674251440709,
+  "originalSmells": [
+    {
+      "rule": "gemUpdateSystemRmRootGem",
+      "position": {
+        "lineStart": 27,
+        "lineEnd": 27,
+        "columnStart": 4,
+        "columnEnd": 23
+      }
+    },
+    {
+      "rule": "gemUpdateNoDocument",
+      "position": {
+        "lineStart": 27,
+        "lineEnd": 27,
+        "columnStart": 4,
+        "columnEnd": 23
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM ruby:3.1-alpine AS base\n\nLABEL maintainer=\"Aaron Collier <aaron.collier@stanford.edu>\"\n\n# Rails environment is production by default; log to stdout as best practice\nENV RAILS_ENV=production\nENV RAILS_LOG_TO_STDOUT=true\n\n# Add system dependencies\nRUN apk add --update --no-cache \\\n  curl \\\n  imagemagick \\\n  git \\\n  gmp-dev \\\n  libxml2-dev \\\n  libxslt-dev \\\n  nodejs \\\n  postgresql-dev \\\n  sqlite-dev \\\n  tzdata \\\n  yarn \\\n  zip\n\n# Create and set the working directory as /opt\nWORKDIR /opt\n\n# Update rubygems, install bundler and use system nokogiri\nRUN mkdir -p /usr/local/etc \\\n  && { \\\n    echo 'install: --no-document'; \\\n    echo 'update: --no-document'; \\\n  } >> /usr/local/etc/gemrc;\nRUN gem update --system && \\\n  gem install bundler && \\\n  bundle config set without \"development test\" \\\n  bundle config build.nokogiri --use-system-libraries && rm -rf /root/.gem;\n\n# Copy the Gemfile and Gemfile.lock, and run bundle install prior to copying all\n# source files. This is an optimization that will prevent the need to re-run\n# bundle install when only source code is changed and not dependencies.\nCOPY Gemfile /opt\nCOPY Gemfile.lock /opt\nRUN apk --no-cache add --virtual build-dependencies \\\n  build-base \\\n  && bundle install \\\n  && apk del build-dependencies\nCOPY . .\n\n# Pass in git info so that okcomputer can show what version is running\nARG GIT_INFO\nENV GIT_INFO=$GIT_INFO\nLABEL git_info=$GIT_INFO\n\nFROM base as webapp\n\n# Make commands execute using `bundle exec` by default; base command is to\n# start the rails server using puma\nENTRYPOINT [\"bundle\", \"exec\"]\nCMD [\"puma\", \"-C\", \"config/puma.rb\"]\n\nFROM webapp as webapp-prod\n\n# Tell rails to serve static files & precompile them\nENV RAILS_SERVE_STATIC_FILES=true\nRUN bin/yarn\nRUN NO_DATABASE=true SECRET_KEY_BASE=sekret bundle exec rake assets:precompile\n\nFROM webapp as webapp-dev\n\n# Set rails env to development and install dev/test dependencies\nENV RAILS_ENV=development\nRUN bundle config unset without\nRUN apk --no-cache add --virtual build-dependencies \\\n  build-base \\\n  && bundle install \\\n  && apk del build-dependencies\n\n# Add the entrypoint script used in development; use the regular rails dev\n# server instead of our puma config for prod\nCOPY docker/dev-entrypoint.sh /usr/local/bin/dev-entrypoint.sh\nRUN chmod +x /usr/local/bin/dev-entrypoint.sh\nENTRYPOINT [ \"dev-entrypoint.sh\" ]\nCMD [\"rails\", \"server\", \"-b\", \"0.0.0.0\"]\n\nFROM base as worker-prod\n\n# Run sidekiq by default\nCMD [\"sidekiq\", \"-C\", \"config/sidekiq.yml.erb\"]\n\nFROM worker-prod as worker-dev\n\n# Install dev dependencies\nENV RAILS_ENV=development\nRUN bundle config unset without\nRUN apk --no-cache add --virtual build-dependencies \\\n  build-base \\\n  && bundle install \\\n  && apk del build-dependencies\n"
+}

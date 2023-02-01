@@ -1,0 +1,213 @@
+FROM ubuntu:focal
+
+# environment variables
+ENV \
+	APP_USER=xiph \
+	APP_DIR=/opt/app \
+	LC_ALL=C.UTF-8 \
+	LANG=C.UTF-8 \
+	LANGUAGE=C.UTF-8 \
+	DEBIAN_FRONTEND=noninteractive
+
+# add runtime user
+RUN \
+	groupadd --gid 1000 ${APP_USER} && \
+	useradd --uid 1000 --gid ${APP_USER} --shell /bin/bash --create-home ${APP_USER}
+
+# install common/useful packages
+RUN \
+	ARCH=`uname -m` && \
+	if [ "$ARCH" = "x86_64" ]; then \
+		echo "deb http://archive.ubuntu.com/ubuntu/ focal main restricted universe multiverse"           >/etc/apt/sources.list && \
+		echo "deb http://security.ubuntu.com/ubuntu focal-security main restricted universe multiverse" >>/etc/apt/sources.list && \
+		echo "deb http://archive.ubuntu.com/ubuntu/ focal-updates main restricted universe multiverse"  >>/etc/apt/sources.list; \
+	else \
+		echo "deb http://ports.ubuntu.com/ubuntu-ports/ focal main restricted universe multiverse"           >/etc/apt/sources.list && \
+		echo "deb http://ports.ubuntu.com/ubuntu-ports focal-security main restricted universe multiverse" >>/etc/apt/sources.list && \
+		echo "deb http://ports.ubuntu.com/ubuntu-ports/ focal-updates main restricted universe multiverse"  >>/etc/apt/sources.list; \
+	fi
+
+RUN \
+	apt-get update && \
+	apt-get install -y --no-install-recommends \
+		autoconf \
+		automake \
+		build-essential \
+		bzip2 \
+		ca-certificates \
+		check \
+		ctags \
+		curl \
+		file \
+		gettext-base \
+		git-core \
+		iproute2 \
+		iputils-ping \
+		jq \
+		less \
+		libjpeg-dev \
+		libogg-dev \
+		libpng-dev \
+		libtool \
+		locales \
+		netcat-openbsd \
+		net-tools \
+		openssl \
+		pkg-config \
+		procps \
+		psmisc \
+		rsync \
+		strace \
+		tcpdump \
+		tzdata \
+		unzip \
+		uuid \
+		vim \
+		wget \
+		xz-utils && \
+	apt-get clean && \
+	rm -rf /var/lib/apt/lists && rm -rf /var/lib/apt/lists/*;
+
+# install nasm
+RUN \
+	ARCH=`uname -m` && \
+	if [ "$ARCH" = "x86_64" ]; then \
+		DIR=/tmp/nasm && \
+		NASM_URL=http://debian-archive.trafficmanager.net/debian/pool/main/n/nasm && \
+		NASM_VERSION=2.15.05-1 && \
+		NASM_DEB=nasm_${NASM_VERSION}_amd64.deb && \
+		NASM_SUM=c860caec653b865d5b83359452d97b11f1b3ba5b18b07cac554cf72550b3bfc9 && \
+		mkdir -p ${DIR} && \
+		cd ${DIR} && \
+		curl -f -O ${NASM_URL}/${NASM_DEB} && \
+		echo ${NASM_SUM} ${NASM_DEB} | sha256sum --check && \
+		dpkg -i ${NASM_DEB} && \
+		rm -rf ${DIR}; \
+	fi
+
+# prepare rust installation
+ENV \
+	RUSTUP_HOME=/usr/local/rustup \
+	CARGO_HOME=/usr/local/cargo \
+	PATH=/usr/local/cargo/bin:${PATH}
+
+# install rust
+RUN \
+	ARCH=`uname -m` && \
+	RUST_VERSION=1.59.0 && \
+	if [ "$ARCH" = "x86_64" ]; then \
+		curl -sSf --output /tmp/rustup-init  https://static.rust-lang.org/rustup/archive/1.14.0/x86_64-unknown-linux-gnu/rustup-init; \
+	else \
+		curl -sSf --output /tmp/rustup-init  https://static.rust-lang.org/rustup/archive/1.14.0/aarch64-unknown-linux-gnu/rustup-init; \
+	fi && \
+	chmod +x /tmp/rustup-init && \
+	/tmp/rustup-init -y --no-modify-path --default-toolchain ${RUST_VERSION} && \
+	rm -vf /tmp/rustup-init
+
+# install daalatool
+ENV \
+	DAALATOOL_DIR=/opt/daalatool
+
+RUN \
+	mkdir -p $(dirname ${DAALATOOL_DIR}) && \
+	git clone https://gitlab.xiph.org/xiph/daala.git ${DAALATOOL_DIR} && \
+	cd ${DAALATOOL_DIR} && \
+	./autogen.sh && \
+	./configure --build="$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)" --disable-player && \
+	make tools -j4
+
+# install ciede2000
+ENV \
+	CIEDE2000_DIR=/opt/dump_ciede2000
+
+RUN \
+	mkdir -p $(dirname ${CIEDE2000_DIR}) && \
+	git clone https://github.com/KyleSiefring/dump_ciede2000.git ${CIEDE2000_DIR} && \
+	cd ${CIEDE2000_DIR} && \
+	cargo build --release
+
+# install hdrtools
+ENV \
+	HDRTOOLS_DIR=/opt/hdrtools \
+	HDRTOOLS_VERSION=0.21
+
+RUN \
+	ARCH=`uname -m` && \
+	mkdir -p ${HDRTOOLS_DIR} && \
+	curl -sSfL --output HDRTools.tar.bz2 https://gitlab.com/standards/HDRTools/-/archive/v${HDRTOOLS_VERSION}/HDRTools-v${HDRTOOLS_VERSION}.tar.bz2 && \
+	tar -xvf HDRTools.tar.bz2 --strip-components=1 -C ${HDRTOOLS_DIR} && \
+	cd ${HDRTOOLS_DIR} && \
+	sed -i 's/std::modff/modff/g' common/src/OutputY4M.cpp && \
+	sed -i 's/using ::hdrtoolslib::Y_COMP;//g' projects/HDRConvScaler/src/HDRConvScalerYUV.cpp && \
+	sed -i 's/\[Y_COMP\]/\[hdrtoolslib::Y_COMP\]/g' projects/HDRConvScaler/src/HDRConvScalerYUV.cpp && \
+	if [ "$ARCH" = "aarch64" ]; then \
+		# temporary patches until ARM support is upstream
+		sed -i 's/-msse2//g' common/Makefile projects/*/Makefile; \
+		sed -i 's/-mfpmath=sse//g' common/Makefile projects/*/Makefile; \
+		sed -i 's/#include <x86intrin.h>//g' common/src/ResizeBiCubic.cpp common/src/DistortionMetricVQM.cpp; \
+		sed -i 's/#include <mmintrin.h>//g' common/src/DistortionMetricVQM.cpp; \
+		sed -i 's/#if defined(ENABLE_SSE_OPT)/#if ENABLE_SSE_OPT/g' common/src/ResizeBiCubic.cpp; \
+	fi && \
+	make && rm HDRTools.tar.bz2# -j is broken
+
+# install rd_tool dependencies
+RUN \
+	apt-get update && \
+	apt-get install -y --no-install-recommends \
+		bc \
+		python3-numpy \
+		python3-scipy \
+		ssh \
+		time \
+		&& \
+	rm -vf /etc/ssh/ssh_host_* && rm -rf /var/lib/apt/lists/*;
+
+# install dav1d and dependencies
+ENV \
+	DAV1D_DIR=/opt/dav1d
+
+RUN \
+	apt-get install --no-install-recommends -y meson && \
+	git clone https://code.videolan.org/videolan/dav1d.git ${DAV1D_DIR} && \
+	cd ${DAV1D_DIR} && \
+	mkdir build && cd build && \
+	meson .. && \
+	ninja && rm -rf /var/lib/apt/lists/*;
+
+# install VMAF
+ENV \
+	VMAF_DIR=/opt/vmaf \
+	VMAF_VERSION=v2.2.1
+
+RUN \
+	mkdir -p ${VMAF_DIR} && \
+	curl -f -sSL https://github.com/Netflix/vmaf/archive/refs/tags/${VMAF_VERSION}.tar.gz | tar zxf - -C ${VMAF_DIR} --strip-components=1 && \
+	cd ${VMAF_DIR}/libvmaf && \
+	meson build --buildtype release && \
+	ninja -C build && \
+	ninja -C build install
+
+# clear package manager cache
+RUN \
+	apt-get clean && \
+	rm -rf /var/lib/apt/lists
+
+# set working directory
+WORKDIR /home/${APP_USER}
+
+# environment variables
+ENV \
+	WORK_DIR=/data/work
+
+# create symbolic links
+RUN \
+    mkdir /home/${APP_USER}/awcy_temp && \
+    chown -R ${APP_USER}:${APP_USER} /home/${APP_USER}/awcy_temp && \
+    ln -s /opt/daalatool /home/${APP_USER}/awcy_temp/daalatool && \
+    ln -s /opt/vmaf /home/${APP_USER}/awcy_temp/vmaf && \
+    ln -s /opt/dump_ciede2000 /home/${APP_USER}/awcy_temp/dump_ciede2000 && \
+    ln -s /opt/dav1d /home/${APP_USER}/awcy_temp/dav1d
+
+# set entrypoint
+ADD etc/entrypoint.worker /etc/entrypoint.worker
+ENTRYPOINT [ "/etc/entrypoint.worker" ]

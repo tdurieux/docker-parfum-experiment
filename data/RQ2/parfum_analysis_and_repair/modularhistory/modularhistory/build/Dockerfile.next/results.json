@@ -1,0 +1,17 @@
+{
+  "startTime": 1674251083290,
+  "endTime": 1674251083924,
+  "originalSmells": [
+    {
+      "rule": "npmCacheCleanUseForce",
+      "position": {
+        "lineStart": 20,
+        "lineEnd": 20,
+        "columnStart": 35,
+        "columnEnd": 53
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "##################################\n# Stage 1\n##################################\n\n# https://hub.docker.com/_/node/\nFROM node:lts-buster AS builder\n\n# https://docs.docker.com/engine/reference/builder/#arg\nARG ENVIRONMENT=dev\n\n# TODO: set NODE_ENV environment var\n\n# Create required directories.\nRUN mkdir -p -- \\\n  /modularhistory/modularhistory \\\n  /modularhistory/frontend\n\n# Install project dependencies.\nWORKDIR /modularhistory/frontend\nCOPY frontend/package*.json /modularhistory/frontend/\nRUN npm set cache .npm; npm ci || ( npm cache clean --force -f && npm ci)\n\n# Add source code required for compiling JS.\nCOPY .env /modularhistory/.env\nCOPY core/static /modularhistory/core/static\nCOPY frontend /modularhistory/frontend\n\n# Compile JavaScript.\nRUN npm run build\n\n##################################\n# Stage 2\n##################################\n\nFROM node:lts-buster AS deployable\n\nLABEL org.opencontainers.image.source https://github.com/ModularHistory/modularhistory\n\n# Copy the ENVIRONMENT arg from the previous stage.\nARG ENVIRONMENT\n\n# Create required directories.\nRUN mkdir -p -- \\\n  /modularhistory/modularhistory \\\n  /modularhistory/frontend \\\n  /modularhistory/_volumes/static \\\n  /modularhistory/_volumes/redirects\n\nWORKDIR /modularhistory/frontend\n\n# Copy compiled JavaScript from the builder stage.\nCOPY --from=builder /modularhistory/frontend/.next /modularhistory/frontend/.next\n\n# Install required dependencies.\nCOPY frontend/package*.json /modularhistory/frontend/\nRUN if [ \"$ENVIRONMENT\" = \"dev\" ]; then npm ci --cache .npm; else npm ci --cache .npm --production; fi\n\n# Copy necessary files.\nCOPY config/scripts/wait-for-it.sh /usr/local/bin/wait-for-it.sh\nCOPY .env /modularhistory/.env\n# TODO: Move these static files into frontend?\nCOPY core/static /modularhistory/core/static\n\n# Grant necessary permissions to non-root user.\nRUN chown -R www-data:www-data /modularhistory && \\\n  chmod g+w /usr/local/bin/wait-for-it.sh && \\\n  chmod g+w -R /modularhistory/_volumes/static\n\n# Make .next directory writable in dev environment.\nRUN if [ \"$ENVIRONMENT\" = \"dev\" ]; then chmod g+w -R /modularhistory/frontend/.next/; fi\n\n# Expose port 3000.\nEXPOSE 3000\n\nHEALTHCHECK --interval=30s --timeout=7s --start-period=60s --retries=3 \\\n  CMD curl --fail http://localhost:3000/ || exit 1\n\n# Switch from root to non-root user.\nUSER www-data\n\nCMD npm run start\n"
+}

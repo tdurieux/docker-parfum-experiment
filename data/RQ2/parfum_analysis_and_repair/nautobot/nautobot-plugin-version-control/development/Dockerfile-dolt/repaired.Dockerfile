@@ -1,0 +1,27 @@
+FROM ubuntu:20.04
+
+RUN apt update && apt install --no-install-recommends -y curl mariadb-client && \
+    apt-get autoremove -y && \
+    apt-get clean all && \
+    rm -rf /var/lib/apt/lists/*
+
+RUN mkdir -p /var/lib/nautobot
+
+ARG DOLT_RELEASE="v0.35.5"
+RUN curl -f -L https://github.com/dolthub/dolt/releases/download/${DOLT_RELEASE}/install.sh | bash
+
+RUN dolt config --global --add user.name nautobot
+RUN dolt config --global --add user.email opensource@networktocode.COM
+RUN dolt config --global --add init.defaultbranch main
+
+WORKDIR /var/lib/nautobot
+
+COPY ./development/dolt-config.yaml /dolt-config.yaml
+
+EXPOSE 3306
+
+ENV DOLT_ENABLE_DB_REVISIONS=true
+
+RUN dolt init
+
+CMD dolt sql-server --config /dolt-config.yaml

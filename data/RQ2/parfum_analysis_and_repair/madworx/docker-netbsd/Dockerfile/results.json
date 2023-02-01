@@ -1,0 +1,17 @@
+{
+  "startTime": 1674252055390,
+  "endTime": 1674252055932,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 37,
+        "lineEnd": 37,
+        "columnStart": 7,
+        "columnEnd": 63
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM madworx/qemu:5\n\nMAINTAINER Martin Kjellstrand [https://github.com/madworx]\n\nENV SYSTEM_MEMORY=512M \\\n    SYSTEM_CPUS=1 \\\n    SSH_PUBKEY=\"\" \\\n    SSH_PORT=22 \\\n    USER_ID=\"\" \\\n    USER_NAME=\"\"\n\nARG NETBSD_MIRROR=http://ftp.fi.netbsd.org/pub/NetBSD\nARG NETBSD_VERSION=9.0\nARG NETBSD_ARCH=amd64\nARG NETBSD_SETS=\"base etc man misc modules text kern-GENERIC\"\nARG NETBSD_PKGSRC_PACKAGES=\"bash\"\n\nENV NETBSD_ARCH=$NETBSD_ARCH \\\n    NETBSD_VERSION=$NETBSD_VERSION \\\n    PKG_PATH=http://ftp.netbsd.org/pub/pkgsrc/packages/NetBSD/${NETBSD_ARCH}/${NETBSD_VERSION}/All/\n\nEXPOSE ${SSH_PORT}\nEXPOSE 4444\n\nRUN apk add --no-cache curl\n\n#\n# Download sets:\n#\nRUN cd /tmp \\\n    && echo -n \"Downloading sets from [${NETBSD_MIRROR}]:\" \\\n    && ext=$([[ \"${NETBSD_VERSION/[^0-9]*/}\" -gt \"8\" ]] && echo tar.xz || echo tgz) \\\n    && for set in ${NETBSD_SETS} ; do \\\n        echo -n \" ${set}\" ; \\\n        urls=\"${urls} -fLO ${NETBSD_MIRROR}/NetBSD-${NETBSD_VERSION}/amd64/binary/sets/${set}.${ext}\" ; \\\n       done \\\n    && echo \".\" \\\n    && curl -f --fail-early --retry-connrefused --retry 20 ${urls}\n\n#\n# Download checksum file:\n#\nRUN cd /tmp \\\n    && curl --fail-early --retry-connrefused --retry 20 -fLO \"${NETBSD_MIRROR}/NetBSD-${NETBSD_VERSION}/amd64/binary/sets/SHA512\"\n\n#\n# Verify checksum, unpack (and remove) sets:\n#\nRUN mkdir /bsd \\\n    && cd /bsd \\\n    && ext=$([[ \"${NETBSD_VERSION/[^0-9]*/}\" -gt \"8\" ]] && echo tar.xz || echo tgz) \\\n    && tarop=$([[ \"${NETBSD_VERSION/[^0-9]*/}\" -gt \"8\" ]] && echo J || echo z) \\\n    && for set in ${NETBSD_SETS} ; do \\\n           sed -n -e \"s#^SHA512 (${set}.${ext}) = \\\\(.*\\\\)#\\\\1  /tmp/${set}.${ext}#p\" /tmp/SHA512 \\\n               | sha512sum -cw - || exit 1 ; \\\n           tar ${tarop}xpf /tmp/${set}.${ext} || exit 1 ; \\\n           rm /tmp/${set}.${ext} ; \\\n       done && rm /tmp/SHA512\n\nRUN ssh-keygen -f /root/.ssh/id_rsa -N ''\n\n#\n# Copy required files:\n#\nCOPY scripts/ /scripts/\nCOPY docker-entrypoint.sh /\nCOPY pxeboot_ia32_com0.bin /bsd/\nCOPY add-ssh-key.sh /usr/bin/add-ssh-key\nCOPY bsd.sh /usr/bin/bsd\n\n#\n# Run the pre-first-boot setup script:\n#\nRUN /scripts/system-setup.pre.netbsd\n\n#\n# Make one run of /docker-entrypoint.sh, to allow the NetBSD system to\n# configure itself:\n#\nRUN mv /bsd/etc/rc.conf /bsd/etc/rc.conf.orig \\\n    && cp /scripts/configure-system.netbsd /bsd/etc/rc.conf \\\n    && /docker-entrypoint.sh \\\n    && mv /bsd/etc/rc.conf.orig /bsd/etc/rc.conf \\\n    && test -f /bsd/all-ok \\\n    && rm /bsd/all-ok\n\n#\n# Run the post-first-boot setup script:\n#\nRUN /scripts/system-setup.post.netbsd\n\nENTRYPOINT [ \"/docker-entrypoint.sh\" ]\n\nHEALTHCHECK --timeout=10s --interval=15s \\\n            --retries=20 --start-period=30s \\\n            CMD ssh root@localhost -p 22 \\\n                -oConnectTimeout=5 \\\n                /bin/echo ok > /dev/null 2>&1\n"
+}

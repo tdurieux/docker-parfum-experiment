@@ -1,0 +1,1 @@
+# For docker hub automated build only

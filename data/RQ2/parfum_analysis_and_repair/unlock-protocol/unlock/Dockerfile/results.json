@@ -1,0 +1,44 @@
+{
+  "startTime": 1674250729605,
+  "endTime": 1674250730200,
+  "originalSmells": [
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 82,
+        "lineEnd": 82,
+        "columnStart": 72,
+        "columnEnd": 84
+      }
+    },
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 113,
+        "lineEnd": 113,
+        "columnStart": 4,
+        "columnEnd": 65
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 15,
+        "lineEnd": 15,
+        "columnStart": 4,
+        "columnEnd": 24
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 87,
+        "lineEnd": 87,
+        "columnStart": 7,
+        "columnEnd": 19
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# default LISTEN port to 3000\nARG PORT=3000\n\n##\n## 1. get only needed packages\n##\nFROM alpine:3.15 as manifests\n\n# args need to be mentioned at each stage\nARG BUILD_DIR\nARG PORT\n\n# install deps\nRUN apk add --no-cache coreutils jq\n\n# copy\nWORKDIR /tmp\nCOPY package.json .\nCOPY yarn.lock .\n\n# only needed workspaces in manifest\nRUN  mkdir /opt/manifests /opt/manifests/packages\n\n# scope workspaces and prevent package hoisting\nRUN jq  -r '.workspaces |= [\"packages/**\", \"'${BUILD_DIR}'\"]' /tmp/package.json > /opt/manifests/package.json \\\n    && cp yarn.lock /opt/manifests\n\n# add shared folder\nWORKDIR /opt/manifests\nCOPY packages  /opt/manifests/packages\n\n##\n## 2. fetch all deps\n##\nFROM node:16-alpine as dev\nLABEL Unlock <ops@unlock-protocol.com>\n\n# args need to be mentioned at each stage\nARG BUILD_DIR\nARG PORT\n\n# setup home dir\nRUN mkdir -p /home/unlock\nRUN chown -R node /home/unlock\nWORKDIR /home/unlock\n\n# copy packages info\nCOPY --chown=node --from=manifests /opt/manifests .\nCOPY --chown=node .prettierrc /home/unlock/.\n\n# yarn config\nCOPY --chown=node .yarn/ /home/unlock/.yarn/\nCOPY --chown=node .yarnrc.yml /home/unlock/.yarnrc.yml\n\n# add yarn cache folder to be used by docker buildkit\nRUN echo \"cacheFolder: /home/unlock/yarn-cache\" >> .yarnrc.yml\n\n# Setting user as root to handle apk install\nUSER root\n\n# apk steps merged to leverage virtual install of package\n# allowing for removal after yarn dependencies install\nRUN apk add --no-cache --virtual .build-deps \\\n    bash \\\n    git \\\n    openssh \\\n    python3 \\\n    python3-dev \\\n    py3-pip \\\n    build-base \\\n    && pip3 install --no-cache-dir virtualenv\n\n\n# install deps\nUSER node\n\n# attempt to create dir only for non-packages\nRUN if echo ${BUILD_DIR} | grep -q \"packages\" ; then echo \"skipping\"; else mkdir /home/unlock/${BUILD_DIR}; fi\n\nCOPY --chown=node ${BUILD_DIR}/package.json /home/unlock/${BUILD_DIR}/package.json\nRUN --mount=type=cache,target=/home/unlock/yarn-cache,uid=1000,gid=1000 yarn install && yarn cache clean;\n\n# delete deps once packages are built\nUSER root\nRUN apk del .build-deps \\\n    && apk add --no-cache bash\n\n# make sure of cache folder perms\nRUN chown -R node:node /home/unlock/yarn-cache\n\nUSER node\n\n# build all packages in packages/**\nRUN yarn build\n\n# copy scripts\nRUN mkdir /home/unlock/scripts\nCOPY --chown=node scripts /home/unlock/scripts\n\n# copy app code\nCOPY --chown=node ${BUILD_DIR}/ /home/unlock/${BUILD_DIR}/.\n\n##\n## 3. build the app\n##\nFROM dev as build\n\nARG BUILD_DIR\nARG PORT\n\n# additional build step (nb: strip \"packages/\" to get worspace name)\nRUN yarn workspace @unlock-protocol/${BUILD_DIR/packages\\/} build && yarn cache clean;\n\n# package everything for prod\nRUN cd $BUILD_DIR && yarn prod-install --pack /home/node/app\n\n##\n## 4. export a minimal image w only the prod app\n##\nFROM node:16-alpine as prod\n\nARG BUILD_DIR\nARG PORT\nARG COMMAND=\"yarn prod\"\nENV COMMAND=${COMMAND}\n\nUSER root\nRUN mkdir /app\nRUN chown node:node /app\n\nWORKDIR /app\n\n# copy package info\nCOPY --from=build --chown=node /home/node/app .\n\n# start command\nEXPOSE $PORT\n\nCMD $COMMAND"
+}

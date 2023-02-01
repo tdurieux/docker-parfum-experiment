@@ -1,0 +1,1 @@
+# From https://github.com/ONLYOFFICE/Docker-DocumentServer/blob/master/Dockerfile

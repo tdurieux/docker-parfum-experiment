@@ -1,0 +1,26 @@
+{
+  "startTime": 1674252263538,
+  "endTime": 1674252264045,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 53,
+        "lineEnd": 53,
+        "columnStart": 4,
+        "columnEnd": 52
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 56,
+        "lineEnd": 56,
+        "columnStart": 4,
+        "columnEnd": 43
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "#\n# Copyright SecureKey Technologies Inc. All Rights Reserved.\n#\n# SPDX-License-Identifier: Apache-2.0\n#\n\nARG GO_VER=1.16\nARG ALPINE_VER=3.12\n\n################\n# build afgo\n\nFROM golang:${GO_VER}-alpine${ALPINE_VER} as go-build\n\nRUN apk add --no-cache make git bash\nENV EXECUTABLES go git\n\nRUN mkdir -p /go/src/github.com/hyperledger\nWORKDIR /go/src/github.com/hyperledger\n\nARG REPO_URL\nRUN git clone ${REPO_URL}\nWORKDIR /go/src/github.com/hyperledger/aries-framework-go\nARG REPO_COMMIT\nRUN git fetch origin && git checkout ${REPO_COMMIT}\n\nARG GO_TAGS=\nARG GOPROXY=\nRUN GO_TAGS=${GO_TAGS} GOPROXY=${GOPROXY} make agent-rest\n\n################\n# python base image\n\nFROM alpine:${ALPINE_VER} as python-base\n\nENV PYTHONUNBUFFERED=1\nRUN apk add --update --no-cache python3\nRUN ln -sf python3 /usr/bin/python\n\nRUN mkdir -p /root/.local/bin\nENV PATH=/root/.local/bin:$PATH\n\nRUN mkdir -p /agent-home\nWORKDIR /agent-home\n\n################\n# build python deps\n\nFROM python-base as python-build\n\nRUN apk add --update --no-cache python3-dev git gcc make libtool musl-dev bash\n\nRUN python3 -m ensurepip\nRUN pip3 install --no-cache-dir --no-cache --upgrade pip setuptools\n\nCOPY python/requirements.txt .\nRUN pip3 install --no-cache-dir --user -r requirements.txt\n\n################\n# build final image\n\nFROM python-base as run-stage\n\nENV RUNMODE=docker PYTHONPATH=/agent-home\nRUN mkdir -p ./bin\n\n# Copy the necessary files from the AATH Backchannel sub-folders\nCOPY python python\nCOPY afgo afgo\nCOPY data ./\n\n# use python dependencies built in build stage\nCOPY --from=python-build /root/.local /root/.local\n\n# The Backchannel is looking for aries-agent-rest in ./bin, copy it from the go-build stage\nCOPY --from=go-build /go/src/github.com/hyperledger/aries-framework-go/build/bin/aries-agent-rest ./bin/aries-agent-rest\n\nENTRYPOINT [\"python\", \"afgo/afgo_backchannel.py\"]\n"
+}

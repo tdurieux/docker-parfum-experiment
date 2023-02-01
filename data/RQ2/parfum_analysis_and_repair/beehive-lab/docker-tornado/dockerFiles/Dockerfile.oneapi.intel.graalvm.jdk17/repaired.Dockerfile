@@ -1,0 +1,53 @@
+FROM intel/oneapi-basekit
+
+LABEL MAINTAINER Juan Fumero <juan.fumero@manchester.ac.uk>
+
+RUN apt-get update -q && apt-get install --no-install-recommends -qy \
+        python3 build-essential vim git cmake maven openjdk-17-jdk \
+        wget && rm -rf /var/lib/apt/lists/*
+
+RUN ln -s /usr/bin/python3 /usr/bin/python
+
+## OpenCL configuration
+RUN apt-get update && apt-get install --no-install-recommends -y opencl-headers && rm -rf /var/lib/apt/lists/*;
+RUN ln -s /usr/lib/x86_64-linux-gnu/libOpenCL.so.1 /usr/lib/x86_64-linux-gnu/libOpenCL.so
+ENV OpenCL_LIBRARY /usr/lib/x86_64-linux-gnu/libOpenCL.so.1
+
+COPY settings/settings_intel.xml /root/.m2/settings.xml
+
+RUN java -version
+RUN javac -version
+
+ENV PATH /usr/lib/jvm/java-17-openjdk-amd64/bin:$PATH
+ENV JAVA_HOME /usr/lib/jvm/java-17-openjdk-amd64
+
+## Download Maven
+WORKDIR /tornado/
+RUN wget https://dlcdn.apache.org/maven/maven-3/3.8.6/binaries/apache-maven-3.8.6-bin.tar.gz
+RUN tar xvzf apache-maven-3.8.6-bin.tar.gz && rm apache-maven-3.8.6-bin.tar.gz
+ENV PATH=/tornado/apache-maven-3.8.6/bin:$PATH
+ENV CLASSPATH=/tornado/apache-maven-3.8.6/lib:$CLASSPATH
+
+COPY settings/settings.xml /root/.m2/settings.xml
+WORKDIR /tornado/
+RUN git clone https://github.com/beehive-lab/TornadoVM.git tornado
+WORKDIR /tornado/tornado
+ENV CMAKE_ROOT=/usr
+RUN ./scripts/tornadoVMInstaller.sh --graal-jdk-17 --opencl --spirv
+SHELL ["/bin/bash", "-c", "source /tornado/tornado/source.sh"]
+
+## ENV-Variables Taken from the SOURCE.sh
+ENV JAVA_HOME=/tornado/tornado/etc/dependencies/TornadoVM-GraalJDK17/graalvm-ce-java17-22.1.0
+ENV PATH=/tornado/tornado/bin/bin:$PATH
+ENV TORNADO_SDK=/tornado/tornado/bin/sdk
+ENV CMAKE_ROOT=/tornado/tornado/etc/dependencies/TornadoVM-OpenJDK17/cmake-3.22.1-linux-x86_64/
+ENV TORNADO_ROOT=/tornado/tornado
+ENV DOCKER_FPGA_EMULATION=1
+
+## Download NodeJS NPM packages
+RUN $JAVA_HOME/bin/gu install nodejs
+RUN $JAVA_HOME/bin/npm install express && npm cache clean --force;
+RUN $JAVA_HOME/bin/npm install jimp && npm cache clean --force;
+
+WORKDIR /data
+VOLUME ["/data"]

@@ -1,0 +1,26 @@
+{
+  "startTime": 1674240096743,
+  "endTime": 1674240096903,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 46,
+        "lineEnd": 46,
+        "columnStart": 4,
+        "columnEnd": 64
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 50,
+        "lineEnd": 60,
+        "columnStart": 22,
+        "columnEnd": 37
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "ARG docker_repo=zokradonh\nFROM ${docker_repo}/kopano_base\n\nARG VCS_REF\nARG ADDITIONAL_KOPANO_PACKAGES=\"\"\nARG DOWNLOAD_COMMUNITY_PACKAGES=1\nARG KOPANO_REPOSITORY_FLAGS=\"trusted=yes\"\nARG RELEASE_KEY_DOWNLOAD=0\nARG DEBIAN_FRONTEND=noninteractive\nARG KOPANO_CORE_REPOSITORY_URL=\"file:/kopano/repo/core\"\nARG KOPANO_CORE_VERSION=newest\nARG KOPANO_ZPUSH_REPOSITORY_URL=\"http://repo.z-hub.io/z-push:/final/Debian_9.0/\"\nARG KOPANO_ZPUSH_VERSION=newest\n\nENV \\\n    ADDITIONAL_KOPANO_PACKAGES=$ADDITIONAL_KOPANO_PACKAGES \\\n    DOWNLOAD_COMMUNITY_PACKAGES=$DOWNLOAD_COMMUNITY_PACKAGES \\\n    KOPANO_CORE_REPOSITORY_URL=$KOPANO_CORE_REPOSITORY_URL \\\n    KOPANO_CORE_VERSION=$KOPANO_CORE_VERSION \\\n    KOPANO_REPOSITORY_FLAGS=$KOPANO_REPOSITORY_FLAGS \\\n    RELEASE_KEY_DOWNLOAD=$RELEASE_KEY_DOWNLOAD \\\n    KOPANO_ZPUSH_REPOSITORY_URL=$KOPANO_ZPUSH_REPOSITORY_URL \\\n    KOPANO_ZPUSH_VERSION=$KOPANO_ZPUSH_VERSION\n\nLABEL maintainer=az@zok.xyz \\\n    org.label-schema.name=\"Kopano Z-Push container\" \\\n    org.label-schema.description=\"Container for running Z-Push with Kopano Groupware Core\" \\\n    org.label-schema.url=\"https://kopano.io\" \\\n    org.label-schema.vcs-ref=$VCS_REF \\\n    org.label-schema.vcs-url=\"https://github.com/zokradonh/kopano-docker\" \\\n    org.label-schema.version=$KOPANO_ZPUSH_VERSION \\\n    org.label-schema.schema-version=\"1.0\"\n\nSHELL [\"/bin/bash\", \"-o\", \"pipefail\", \"-c\"]\n\n# install Kopano WebApp and refresh ca-certificates\nRUN \\\n\n    . /kopano/helper/create-kopano-repo.sh && \\\n    if [ ${DOWNLOAD_COMMUNITY_PACKAGES} -eq 1 ]; then \\\n        dl_and_package_community \"core\"; \\\n    fi; \\\n    echo \"deb [${KOPANO_REPOSITORY_FLAGS}] ${KOPANO_CORE_REPOSITORY_URL} ./\" > /etc/apt/sources.list.d/kopano.list; \\\n    # prepare z-push installation\n    echo \"deb ${KOPANO_ZPUSH_REPOSITORY_URL} /\" > /etc/apt/sources.list.d/zpush.list && \\\n    # this is the same key as for the rest of the Kopano stack, making a separate download anyways as this may not be the case in the future\n    curl -f -s -S -o - \"${KOPANO_ZPUSH_REPOSITORY_URL}/Release.key\" | apt-key add - && \\\n    # install\n    set -x && \\\n    # TODO set IGNORE_FIXSTATES_ON_UPGRADE https://jira.z-hub.io/browse/ZP-1164?jql=text%20~%20%22IGNORE_FIXSTATES_ON_UPGRADE%22\n    apt-get update && apt-get install -y --no-install-recommends \\\n        apache2 \\\n        libapache2-mod-php7.0 \\\n        crudini \\\n        z-push-kopano \\\n        z-push-config-apache \\\n        z-push-kopano-gabsync \\\n        z-push-autodiscover \\\n        z-push-config-apache-autodiscover \\\n        ca-certificates \\\n        ${ADDITIONAL_KOPANO_PACKAGES} \\\n    && rm -rf /var/cache/apt /var/lib/apt/lists && rm -rf /var/lib/apt/lists/*;\n\nCOPY apache2-kopano.conf /etc/apache2/sites-available/kopano.conf\n\n# configure basics\nRUN \\\n    # configure apache\n    rm /etc/apache2/sites-enabled/* && \\\n    sed -e 's,^ErrorLog.*,ErrorLog \"|/bin/cat\",' -i /etc/apache2/apache2.conf && \\\n    sed -e \"s,MaxSpareServers[^:].*,MaxSpareServers 5,\" -i /etc/apache2/mods-available/mpm_prefork.conf && \\\n    a2disconf other-vhosts-access-log && \\\n    a2ensite kopano && \\\n    echo \"Listen 80\" > /etc/apache2/ports.conf && \\\n    # configure mod_php\n    a2enmod rewrite && \\\n    crudini --set /etc/php/7.0/apache2/php.ini PHP upload_max_filesize 500M && \\\n    crudini --set /etc/php/7.0/apache2/php.ini PHP post_max_size 500M && \\\n    crudini --set /etc/php/7.0/apache2/php.ini PHP max_input_vars 1800 && \\\n    crudini --set /etc/php/7.0/apache2/php.ini Session session.save_path /run/sessions && \\\n    # configure z-push\n    mkdir -p /var/lib/z-push /var/log/z-push && \\\n    chown www-data:www-data /var/lib/z-push /var/log/z-push\n\n# Patch Gabsync to make it work\n# See https://jira.z-hub.io/browse/ZP-1463\n# https://forum.kopano.io/topic/1928/8-7-80-missing-php-files-in-php-mapi-deb-package-ubuntu-16-04\n# can be removed once gabsync is fixed - should not hurt\nRUN sed -i -e \"s/set_include_path(get_include_path() . PATH_SEPARATOR . BASE_PATH_CLI);/define('PATH_TO_ZPUSH', '..\\/..\\/backend\\/kopano\\/');\\n    set_include_path(get_include_path() . PATH_SEPARATOR . BASE_PATH_CLI . PATH_SEPARATOR . BASE_PATH_CLI . PATH_TO_ZPUSH);/\" /usr/share/z-push/tools/gab-sync/gab-sync.php\n\nVOLUME /var/lib/z-push/\n\nEXPOSE 80/tcp\n\nCOPY start.sh /kopano/start.sh\n\nENV LANG en_US.UTF-8\n\nENTRYPOINT [\"/usr/bin/dumb-init\", \"--\"]\nCMD [ \"/kopano/start.sh\" ]\n"
+}

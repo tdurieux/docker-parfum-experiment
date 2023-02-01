@@ -1,0 +1,53 @@
+{
+  "startTime": 1674252253578,
+  "endTime": 1674252254365,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 19,
+        "lineEnd": 19,
+        "columnStart": 4,
+        "columnEnd": 104
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 63,
+        "lineEnd": 65,
+        "columnStart": 7,
+        "columnEnd": 12
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 83,
+        "lineEnd": 91,
+        "columnStart": 22,
+        "columnEnd": 14
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 14,
+        "lineEnd": 16,
+        "columnStart": 22,
+        "columnEnd": 41
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 83,
+        "lineEnd": 91,
+        "columnStart": 22,
+        "columnEnd": 14
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# To produce a smaller image this Dockerfile contains two separate stages: in\n# the first one all the build dependencies are installed and docs.rs is built,\n# while in the second one just the runtime dependencies are installed, with the\n# binary built in the previous stage copied there.\n#\n# As of 2019-10-29 this reduces the image from 2.8GB to 500 MB.\n\n#################\n#  Build stage  #\n#################\n\nFROM ubuntu:22.04 AS build\n\n# Install packaged dependencies\nRUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \\\n    build-essential git curl cmake gcc g++ pkg-config libmagic-dev \\\n    libssl-dev zlib1g-dev ca-certificates && rm -rf /var/lib/apt/lists/*;\n\n# Install the stable toolchain with rustup\nRUN curl -f https://static.rust-lang.org/rustup/dist/x86_64-unknown-linux-gnu/rustup-init >/tmp/rustup-init && \\\n    chmod +x /tmp/rustup-init && \\\n    /tmp/rustup-init -y --no-modify-path --default-toolchain stable --profile minimal\nENV PATH=/root/.cargo/bin:$PATH\n\n# Build the dependencies in a separate step to avoid rebuilding all of them\n# every time the source code changes. This takes advantage of Docker's layer\n# caching, and it works by copying the Cargo.{toml,lock} with dummy source code\n# and doing a full build with it.\nWORKDIR /build\nCOPY benches benches\nCOPY Cargo.lock Cargo.toml ./\nCOPY crates/metadata crates/metadata/\nCOPY crates/font-awesome-as-a-crate crates/font-awesome-as-a-crate\nRUN mkdir -p src/bin && \\\n    echo \"fn main() {}\" > src/bin/cratesfyi.rs && \\\n    echo \"fn main() {}\" > build.rs\n\nRUN cargo fetch\nRUN cargo build --release\n\n# Dependencies are now cached, copy the actual source code and do another full\n# build. The touch on all the .rs files is needed, otherwise cargo assumes the\n# source code didn't change thanks to mtime weirdness.\nRUN rm -rf src build.rs\n\nCOPY .git .git\nCOPY build.rs build.rs\nRUN touch build.rs\nCOPY src src/\nRUN find src -name \"*.rs\" -exec touch {} \\;\nCOPY templates/style templates/style\nCOPY vendor vendor/\n\nRUN cargo build --release\n\n######################\n#  Web server stage  #\n######################\n\nFROM ubuntu:22.04 AS web-server\n\nRUN apt-get update \\\n    && DEBIAN_FRONTEND=noninteractive apt-get upgrade -y \\\n    && DEBIAN_FRONTEND=noninteractive apt-get --no-install-recommends install -y \\\n        ca-certificates \\\n        tini \\\n    && rm -rf /var/lib/apt/lists/*\n\nCOPY --from=build /build/target/release/cratesfyi /usr/local/bin\nCOPY static /srv/docsrs/static\nCOPY templates /srv/docsrs/templates\nCOPY vendor /srv/docsrs/vendor\n\nWORKDIR /srv/docsrs\n# Tini is a small init binary to properly handle signals\nCMD [\"/usr/bin/tini\", \"/usr/local/bin/cratesfyi\", \"start-web-server\", \"0.0.0.0:80\"]\n\n##################\n#  Output stage  #\n##################\n\nFROM ubuntu:22.04 AS output\n\nRUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get --no-install-recommends install -y \\\n    git \\\n    libmagic1 \\\n    docker.io \\\n    ca-certificates \\\n    build-essential \\\n    gcc \\\n    pkg-config \\\n    libssl-dev && rm -rf /var/lib/apt/lists/*;\n\nRUN mkdir -p /opt/docsrs/prefix\n\nCOPY --from=build /build/target/release/cratesfyi /usr/local/bin\nCOPY static /opt/docsrs/static\nCOPY templates /opt/docsrs/templates\nCOPY dockerfiles/entrypoint.sh /opt/docsrs/\nCOPY vendor /opt/docsrs/vendor\n\nWORKDIR /opt/docsrs\nENTRYPOINT [\"/opt/docsrs/entrypoint.sh\"]\nCMD [\"daemon\", \"--registry-watcher=disabled\"]\n"
+}

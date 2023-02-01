@@ -1,0 +1,35 @@
+{
+  "startTime": 1674218901228,
+  "endTime": 1674218902423,
+  "originalSmells": [
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 50,
+        "lineEnd": 50,
+        "columnStart": 27,
+        "columnEnd": 77
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 23,
+        "lineEnd": 32,
+        "columnStart": 4,
+        "columnEnd": 23
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 45,
+        "lineEnd": 46,
+        "columnStart": 4,
+        "columnEnd": 42
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "ARG FROM=ubuntu:18.04\nFROM ${FROM}\n\nLABEL org.opencontainers.image.authors='airship-discuss@lists.airshipit.org, irc://#airshipit@freenode'\nLABEL org.opencontainers.image.url='https://airshipit.org'\nLABEL org.opencontainers.image.documentation='https://github.com/openstack/airship-maas'\nLABEL org.opencontainers.image.source='https://git.openstack.org/openstack/airship-maas'\nLABEL org.opencontainers.image.vendor='The Airship Authors'\nLABEL org.opencontainers.image.licenses='Apache-2.0'\n\nARG HTTP_PROXY\nARG HTTPS_PROXY\nARG NO_PROXY\nARG http_proxy\nARG https_proxy\nARG no_proxy\n\nENV DEBIAN_FRONTEND noninteractive\nENV container docker\n\nENV MAAS_VERSION 2.8.7-8611-g.f2514168f-0ubuntu1~18.04.1\n\nRUN apt-get -qq update \\\n && apt-get install --no-install-recommends -y \\\n        avahi-daemon \\\n        isc-dhcp-server \\\n        jq \\\n        libvirt-bin \\\n        patch \\\n        software-properties-common \\\n        sudo \\\n        systemd \\\n        ca-certificates \\\n# Don't start any optional services except for the few we need.\n# (specifically, don't start avahi-daemon, isc-dhcp-server, or libvirtd)\n && find /etc/systemd/system \\\n         /lib/systemd/system \\\n         -path '*.wants/*' \\\n         -not -name '*journald*' \\\n         -not -name '*systemd-tmpfiles*' \\\n         -not -name '*systemd-user-sessions*' \\\n         -exec rm \\{} \\; \\\n && systemctl set-default multi-user.target \\\n# Install maas from the ppa\n && add-apt-repository -yu ppa:maas/2.8 \\\n && apt-get install --no-install-recommends -y \\\n        maas-rack-controller=$MAAS_VERSION \\\n && rm -rf /var/lib/apt/lists/*\n\n# Preserve the directory structure, permissions, and contents of /var/lib/maas\nRUN mkdir -p /opt/maas/ && tar -cvzf /opt/maas/var-lib-maas.tgz /var/lib/maas && rm /opt/maas/var-lib-maas.tgz\n\n# register ourselves with the region controller\nCOPY scripts/register-rack-controller.service /lib/systemd/system/register-rack-controller.service\nRUN systemctl enable register-rack-controller.service\n\n# Patch so that Calico interfaces are ignored\nCOPY 2.8_nic_filter.patch /tmp/2.8_nic_filter.patch\nCOPY 2.8_secure_headers.patch /tmp/2.8_secure_headers.patch\n# Patch so maas knows that \"BMC error\" is retriable\nCOPY 2.8_ipmi_error.patch /tmp/2.8_ipmi_error.patch\n# Patch to space redfish request retries apart a bit, to avoid overwhelming the BMC\nCOPY 2.8_redfish_retries.patch /tmp/2.8_redfish_retries.patch\n\nRUN cd /usr/lib/python3/dist-packages/provisioningserver/utils && patch network.py < /tmp/2.8_nic_filter.patch\nRUN cd /usr/lib/python3/dist-packages/twisted/web && patch server.py < /tmp/2.8_secure_headers.patch\nRUN cd /usr/lib/python3/dist-packages/provisioningserver/drivers/power && patch ipmi.py < /tmp/2.8_ipmi_error.patch\nRUN cd /usr/lib/python3/dist-packages/provisioningserver/drivers/power && patch redfish.py < /tmp/2.8_redfish_retries.patch\n\n# echo journalctl logs to the container's stdout\nCOPY scripts/journalctl-to-tty.service /etc/systemd/system/journalctl-to-tty.service\nRUN systemctl enable journalctl-to-tty.service\n\n# quiet sudo for the maas user\nRUN umask 0337; echo 'Defaults:maas !pam_session, !syslog' > /etc/sudoers.d/99-maas-no-log\n\n# avoid triggering bind9 high cpu utilization bug\nRUN sed -i -e '$a\\include \"/etc/bind/bind.keys\";' /etc/bind/named.conf\n\n# initalize systemd\nCMD [\"/bin/bash\", \"-c\", \"exec /sbin/init --log-target=console 3>&1\"]\n"
+}

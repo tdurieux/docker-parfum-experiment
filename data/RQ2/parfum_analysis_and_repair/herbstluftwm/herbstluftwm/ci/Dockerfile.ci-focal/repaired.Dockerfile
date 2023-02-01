@@ -1,0 +1,38 @@
+FROM ubuntu:focal-20200423
+
+# Build deps
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get --no-install-recommends -y install \
+    ccache \
+    clang-10 \
+    clang-tidy-10 \
+    curl \
+    cmake \
+    g++-9 \
+    git \
+    iwyu \
+    lcov \
+    libx11-dev \
+    libxext-dev \
+    libxft-dev \
+    libfreetype-dev \
+    libxinerama-dev \
+    libxrandr-dev \
+    libxfixes-dev \
+    ninja-build \
+    pkg-config \
+    python3.8 \
+    tox \
+    wget \
+    x11-xserver-utils \
+    xdotool \
+    xterm \
+    xvfb \
+    xserver-xephyr \
+    && rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*.deb
+
+# Doc deps would be:
+# (not installed for now because they're huge):
+#    asciidoc \
+#    docbook-xml \
+#    docbook-xsl \
+#    xsltproc

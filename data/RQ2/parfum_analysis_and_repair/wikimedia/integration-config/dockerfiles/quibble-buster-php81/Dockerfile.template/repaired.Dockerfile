@@ -1,0 +1,54 @@
+FROM {{ "sury-php" | image_tag }} AS sury-php
+
+FROM {{ "quibble-buster" | image_tag }}
+
+ENV PHP_VERSION=8.1
+
+USER root
+
+#############################
+#  Debian packages we need  #
+#############################
+{% set mediawiki_deps|replace('\n', ' ') -%}
+php8.1-apcu
+php8.1-bcmath
+php8.1-cli
+php8.1-curl
+php8.1-fpm
+php8.1-gd
+php8.1-gmp
+php8.1-intl
+php8.1-ldap
+php8.1-mbstring
+php8.1-memcached
+php8.1-mysql
+php8.1-pgsql
+php8.1-sqlite3
+php8.1-tidy
+php8.1-xml
+php8.1-zip
+{%- endset -%}
+
+# We need to get a newer version of php-ast from sury.org (T174338)
+COPY --from=sury-php /etc/apt/trusted.gpg.d/php.gpg /etc/apt/trusted.gpg.d/php.gpg
+
+RUN {{ "apt-transport-https" | apt_install }} && \
+    echo "deb https://packages.sury.org/php/ buster main" > /etc/apt/sources.list.d/php.list
+
+# Pin sury's repo higher for the packages that exist in both buster and sury
+COPY sury.pin /etc/apt/preferences.d/sury
+RUN {{ mediawiki_deps | apt_install }} \
+    && /install-php-fpm-conf.sh
+
+# Install XDebug but disables it by default due to its performance impact
+RUN {{ "php8.1-xdebug" | apt_install }} \
+    && phpdismod xdebug
+# Same for pcov, although the performance overheade should be minimal
+RUN {{ "php8.1-pcov" | apt_install }} \
+    && phpdismod pcov
+
+# Unprivileged
+RUN install --directory /workspace --owner=nobody --group=nogroup
+USER nobody
+WORKDIR /workspace
+ENTRYPOINT ["/usr/local/bin/quibble"]

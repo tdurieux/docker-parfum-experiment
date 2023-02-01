@@ -1,0 +1,44 @@
+{
+  "startTime": 1674247927530,
+  "endTime": 1674247928333,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 49,
+        "lineEnd": 49,
+        "columnStart": 4,
+        "columnEnd": 46
+      }
+    },
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 4,
+        "lineEnd": 4,
+        "columnStart": 4,
+        "columnEnd": 87
+      }
+    },
+    {
+      "rule": "aptGetInstallUseY",
+      "position": {
+        "lineStart": 20,
+        "lineEnd": 20,
+        "columnStart": 4,
+        "columnEnd": 39
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 20,
+        "lineEnd": 20,
+        "columnStart": 4,
+        "columnEnd": 39
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM node:alpine as builder\n\nWORKDIR /smr/\n\nRUN npm i --save grunt grunt-contrib-uglify grunt-contrib-cssmin grunt-cache-bust@1.7.0 && npm cache clean --force;\n\n# Copy the SMR source code directories\nCOPY src src\n\n# Perform CSS/JS minification and cache busting\nCOPY Gruntfile.js .\nRUN npx grunt\n\n# Remove local grunt install so it is not copied to the next build stage\nRUN rm -rf node_modules\n\n#---------------------------\n\nFROM php:8.1.7-apache\nRUN apt-get --quiet=2 update \\\n\t&& apt-get --quiet=2 -y --no-install-recommends install zip unzip \\\n\t&& rm -rf /var/lib/apt/lists/* \\\n\t&& docker-php-ext-install mysqli opcache > /dev/null\n\n# Set the baseline php.ini version (default to production)\nARG NO_DEV=1\nRUN MODE=$([ \"$NO_DEV\" = \"0\" ] && echo \"development\" || echo \"production\") \\\n\t&& echo \"Using $MODE php.ini\" \\\n\t&& mv \"$PHP_INI_DIR/php.ini-$MODE\" \"$PHP_INI_DIR/php.ini\"\n\n# Install PHP modules needed for development (xdebug and pcntl)\n# xdebug profiler output will go to /tmp/xdebug\nRUN if [ \"$NO_DEV\" = \"0\" ]; \\\n\tthen \\\n\t\tdocker-php-ext-install pcntl \\\n\t\t&& pecl install xdebug-3.1.5 > /dev/null \\\n\t\t&& docker-php-ext-enable xdebug \\\n\t\t&& echo \"xdebug.output_dir = /tmp/xdebug\" > \"$PHP_INI_DIR/conf.d/xdebug.ini\" \\\n\t\t&& mkdir /tmp/xdebug; \\\n\tfi\n\n# Disable apache access logging (error logging is still enabled)\nRUN sed -i 's|CustomLog.*|CustomLog /dev/null common|' /etc/apache2/sites-enabled/000-default.conf\n\n# Disable apache .htaccess files (suggested optimization)\nRUN sed -i 's/AllowOverride All/AllowOverride None/g' /etc/apache2/conf-enabled/docker-php.conf\n\nWORKDIR /smr/\n\nRUN curl -f -sS https://getcomposer.org/installer | \\\n\tphp -- --install-dir=/usr/local/bin --filename=composer --version=2.3.8\n\nCOPY composer.json .\nRUN COMPOSER_NO_DEV=$NO_DEV composer update --no-interaction\n\nCOPY --from=builder /smr .\nRUN rm -rf /var/www/html/ && ln -s \"$(pwd)/src/htdocs\" /var/www/html\n\n# Make the upload directory writable by the apache user\nRUN chown www-data ./src/htdocs/upload\n\n# Leverage browser caching of static assets using apache's mod_headers\nCOPY apache/cache-static.conf /etc/apache2/conf-enabled/cache-static.conf\nRUN a2enmod headers\n\n# Store the git commit hash of the repo in the final image\nCOPY .git/HEAD .git/HEAD\nCOPY .git/refs .git/refs\nRUN REF=\"ref: HEAD\" \\\n\t&& while [ -n \"$(echo $REF | grep ref:)\" ]; do REF=$(cat \".git/$(echo $REF | awk '{print $2}')\"); done \\\n\t&& echo $REF > git-commit\n"
+}

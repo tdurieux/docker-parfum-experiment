@@ -1,0 +1,44 @@
+{
+  "startTime": 1674249402200,
+  "endTime": 1674249402400,
+  "originalSmells": [
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 41,
+        "lineEnd": 41,
+        "columnStart": 2,
+        "columnEnd": 52
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 55,
+        "lineEnd": 55,
+        "columnStart": 37,
+        "columnEnd": 67
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 8,
+        "lineEnd": 12,
+        "columnStart": 22,
+        "columnEnd": 28
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 8,
+        "lineEnd": 12,
+        "columnStart": 22,
+        "columnEnd": 28
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM ubuntu:14.04\nMAINTAINER Noah Watkins <noahwatkins@gmail.com>\n\n# if firefly, set --without-cls-zlog-bench configuration option on zlog.\n# ENV CEPH_VERSION firefly\nENV CEPH_VERSION jewel\n\n### base dependencies\nRUN apt-get update && apt-get install --no-install-recommends -y git wget vim tmux \\\n  python-virtualenv build-essential libprotobuf-dev \\\n  protobuf-compiler libboost-dev libtool automake autoconf \\\n  pkg-config libboost-system-dev libboost-program-options-dev \\\n  default-jdk openssh-server && rm -rf /var/lib/apt/lists/*;\n\n### cache ceph source and build deps\nRUN mkdir /src\nRUN git clone --recursive https://github.com/ceph/ceph.git /src/ceph\nRUN cd /src/ceph && apt-get update && ./install-deps.sh\n\n### setup password-less ssh to localhost\nRUN sed -i 's/UsePAM yes/UsePAM no/g' /etc/ssh/sshd_config\nRUN ssh-keygen -f $HOME/.ssh/id_rsa -t rsa -N '' && \\\n  cat ~/.ssh/id_rsa.pub >> ~/.ssh/authorized_keys && \\\n  chmod 600 ~/.ssh/authorized_keys\nRUN echo 'Host *\\n  StrictHostKeyChecking no' > ~/.ssh/config\n\n### install ceph-deploy\nRUN git clone https://github.com/ceph/ceph-deploy /src/ceph-deploy\nRUN cd /src/ceph-deploy && ./bootstrap\nRUN ln -s /src/ceph-deploy/ceph-deploy /usr/bin/ceph-deploy\n\n### install ceph base and librados\nRUN ceph-deploy install --release ${CEPH_VERSION} `hostname`\nRUN ceph-deploy pkg --install librados-dev `hostname`\n\n### fetch, build, and install cls_zlog bits\nRUN cd /src/ceph && \\\n  git remote add noahdesu https://github.com/noahdesu/ceph.git && \\\n  git fetch noahdesu && \\\n  git checkout -b zlog_bench/jewel noahdesu/zlog_bench/jewel && \\\n  ./autogen.sh && \\\n  ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" --prefix=/usr --with-librocksdb-static\n\nRUN cd /src/ceph/src && \\\n  make libcls_zlog_bench.la libcls_zlog_bench_client.la && \\\n  cp .libs/libcls_zlog_bench.so /usr/lib/rados-classes/ && \\\n  cp .libs/libcls_zlog_bench_client.* /usr/lib/ && \\\n  cp cls/zlog_bench/cls_zlog_bench_client.h /usr/include/rados/\n\n### fetch zlog and build\nRUN git clone --branch=physical-design https://github.com/cruzdb/zlog.git /src/zlog\n\n# for firefly\n#RUN cd /src/zlog && ./makeconf.sh && ./configure --without-cls-zlog --without-cls-zlog-bench && make\n# for jewel\nRUN cd /src/zlog && ./makeconf.sh && ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" --without-cls-zlog && make\n\nADD entrypoint.sh /entrypoint.sh\nENTRYPOINT [\"/entrypoint.sh\"]\n"
+}

@@ -1,0 +1,17 @@
+{
+  "startTime": 1674249166498,
+  "endTime": 1674249166787,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 15,
+        "lineEnd": 15,
+        "columnStart": 4,
+        "columnEnd": 33
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "ARG IMAGE=python:3.7-alpine3.9\n####################\n# Test build stage #\n####################\nFROM $IMAGE as test\nWORKDIR /usr/src/django-ca\nRUN apk --no-cache add --update gcc linux-headers libc-dev libffi-dev openssl-dev make\n\nCOPY requirements.txt ./\nCOPY requirements/ requirements/\n\n# Add user (some tests check if it's impossible to write a file)\nRUN addgroup -g 9000 -S django-ca && \\\n    adduser -S -u 9000 -G django-ca django-ca\n\nRUN pip install --no-cache-dir -U setuptools pip\nRUN pip install --no-cache-dir -r requirements/requirements-docker.txt\n\nCOPY setup.py dev.py tox.ini fabfile.py ./\nCOPY --chown=django-ca:django-ca docs/ docs/\nCOPY --chown=django-ca:django-ca ca/ ca/\nCOPY --chown=django-ca:django-ca docker/localsettings.py ca/ca/localsettings.py\n\n# Make sure that requirements/requirements-docker.txt has installed all run-time dependencies\nRUN python dev.py test-imports\n\n# Install additional requirements for testing:\nRUN pip install --no-cache-dir \\\n    -r requirements/requirements-docs.txt \\\n    -r requirements/requirements-test.txt \\\n    -r requirements/requirements-lint.txt\n\n# From here on, we run as normal user\nUSER django-ca:django-ca\n\n# copy this late so that changes do not trigger a cache miss during build\nRUN python dev.py code-quality\nRUN python dev.py coverage\nRUN make -C docs html-check\n\nFROM $IMAGE as prepare\nWORKDIR /usr/src/django-ca\n\nRUN apk --no-cache add --update gcc linux-headers libc-dev libffi-dev openssl-dev pcre pcre-dev mailcap\n\nCOPY requirements/ requirements/\n\nRUN pip install --no-warn-script-location --no-cache-dir --prefix=/install -r requirements/requirements-docker.txt\n\nCOPY ca/ ca/\nCOPY docker/ docker/\nRUN mv docker/localsettings.py ca/ca/localsettings.py\nRUN rm -rf requirements/ ca/django_ca/tests ca/ca/test_settings.py ca/ca/localsettings.py.example ca/.coverage\n\n######################\n# Actual build stage #\n######################\nFROM $IMAGE\nWORKDIR /usr/src/django-ca\nRUN apk --no-cache add --update pcre openssl-dev binutils\n\nRUN addgroup -g 9000 -S django-ca && \\\n    adduser -S -u 9000 -G django-ca django-ca && \\\n    mkdir -p /usr/share/django-ca/ /var/lib/django-ca/ && \\\n    chown django-ca:django-ca /usr/share/django-ca/ /var/lib/django-ca/\n\nCOPY --from=prepare /install /usr/local\nCOPY --from=prepare /usr/src/django-ca/ ./\nCOPY uwsgi/ uwsgi/\n\nCMD docker/start.sh\n\nUSER django-ca:django-ca\nEXPOSE 8000\nVOLUME [\"/var/lib/django-ca/\", \"/usr/share/django-ca/\"]\n"
+}

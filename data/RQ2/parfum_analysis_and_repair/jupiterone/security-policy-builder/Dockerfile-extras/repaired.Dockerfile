@@ -1,0 +1,37 @@
+FROM node:14.16.0-stretch-slim
+# Debian stretch base-image, minimized
+WORKDIR /opt
+
+# Install pandoc and other linting/helper tools
+RUN apt-get update && apt-get install -y --no-install-recommends --assume-yes \
+  aspell \
+  jq \
+  pandoc \
+  python3-pip \
+  texlive-base \
+  texlive-fonts-extra \
+  texlive-fonts-recommended \
+  texlive-latex-extra \
+  texlive-xetex && rm -rf /var/lib/apt/lists/*;
+
+# Install psp CLI and additional linting tool
+RUN npm install -g \
+  @jupiterone/security-policy-builder \
+  markdownlint-cli && npm cache clean --force;
+
+# Install Mkdocs
+
+### NOTE: there appears to be an undocumented edge-case preventing Debian9 from
+# succesfully installing mkdocs with python3. Here, we're explicitly copying the
+# dependencies from a pinned squidfunk/mkdocs-material image, which should
+# always 'just work'
+RUN python3 -m pip install --no-cache-dir importlib_metadata
+COPY --from=squidfunk/mkdocs-material:5.5.12 /usr/local/lib/python3.8/site-packages/ /usr/local/lib/python3.5/dist-packages/
+
+# This makes the 'mkdocs' command work as a 'docker run' argument
+COPY bin/docker-mkdocs /usr/local/bin/mkdocs
+RUN chmod +x /usr/local/bin/mkdocs
+
+# clean up unnecessary packages
+RUN apt-get remove --purge --assume-yes $(dpkg -l | grep '^ii.*texlive.*doc' | cut -d' ' -f3)
+RUN apt autoremove --purge --assume-yes gcc cpp gcc g++ gnome-icon-theme gtk-update-icon-cache make x11-utils xbitmaps xterm

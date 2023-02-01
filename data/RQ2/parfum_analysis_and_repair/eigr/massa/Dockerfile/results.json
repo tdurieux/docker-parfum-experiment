@@ -1,0 +1,17 @@
+{
+  "startTime": 1674254601540,
+  "endTime": 1674254602367,
+  "originalSmells": [
+    {
+      "rule": "sha256sumEchoOneSpaces",
+      "position": {
+        "lineStart": 24,
+        "lineEnd": 24,
+        "columnStart": 4,
+        "columnEnd": 57
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM elixir:1.12-alpine as builder\n\nENV MIX_ENV=prod\n\nRUN mkdir -p /app/massa_proxy\nWORKDIR /app/massa_proxy\n\nRUN apk add --no-cache --update git build-base ca-certificates zstd\n\nENV RUSTUP_HOME=/usr/local/rustup \\\n    CARGO_HOME=/usr/local/cargo \\\n    PATH=/usr/local/cargo/bin:$PATH \\\n    RUST_VERSION=1.54.0 \\\n    RUSTFLAGS=\"-C target-feature=-crt-static\"\n\nRUN set -eux; \\\n    apkArch=\"$(apk --print-arch)\"; \\\n    case \"$apkArch\" in \\\n    x86_64) rustArch='x86_64-unknown-linux-musl'; rustupSha256='bdf022eb7cba403d0285bb62cbc47211f610caec24589a72af70e1e900663be9' ;; \\\n    aarch64) rustArch='aarch64-unknown-linux-musl'; rustupSha256='89ce657fe41e83186f5a6cdca4e0fd40edab4fd41b0f9161ac6241d49fbdbbbe' ;; \\\n    *) echo >&2 \"unsupported architecture: $apkArch\"; exit 1 ;; \\\n    esac; \\\n    url=\"https://static.rust-lang.org/rustup/archive/1.24.3/${rustArch}/rustup-init\"; \\\n    wget \"$url\"; \\\n    echo \"${rustupSha256}  *rustup-init\" | sha256sum -c -; \\\n    chmod +x rustup-init; \\\n    ./rustup-init -y --no-modify-path --profile minimal --default-toolchain $RUST_VERSION --default-host ${rustArch}; \\\n    rm rustup-init; \\\n    chmod -R a+w $RUSTUP_HOME $CARGO_HOME; \\\n    rustup --version; \\\n    cargo --version; \\\n    rustc --version;\n\nRUN rustup toolchain install nightly && rustup update && rustup target add wasm32-unknown-unknown --toolchain nightly\n\nCOPY . /app/massa_proxy\n\nRUN mix local.rebar --force \\\n    && mix local.hex --force \\\n    && mix deps.get\n\nRUN echo \"-sname proxy@${PROXY_POD_IP}\" >> /app/massa_proxy/apps/massa_proxy/rel/vm.args.eex \\\n    && echo \"-setcookie ${NODE_COOKIE}\" >> /app/massa_proxy/apps/massa_proxy/rel/vm.args.eex \\\n    && echo \"+sbwt none\" >> /app/massa_proxy/apps/massa_proxy/rel/vm.args.eex \\\n    && echo \"+sbwtdcpu none\" >> /app/massa_proxy/apps/massa_proxy/rel/vm.args.eex \\\n    && echo \"+sbwtdio none\" >> /app/massa_proxy/apps/massa_proxy/rel/vm.args.eex\n\nRUN cd /app/massa_proxy/apps/massa_proxy \\\n    && mix deps.get \\\n    && mix release.init \\\n    && mix release\n\n# ---- Application Stage ----\nFROM alpine:3\nRUN apk add --no-cache --update libgcc ncurses-libs libstdc++ openssl zstd\n\nWORKDIR /home/app\nCOPY --from=builder /app/massa_proxy/_build/prod/rel/bakeware/ .\nCOPY apps/massa_proxy/priv /home/app/\n\nRUN adduser app --disabled-password --home app\n\nRUN mkdir -p /home/app/cache\nRUN chown -R app: .\n\nUSER app\n\nENV MIX_ENV=prod\nENV REPLACE_OS_VARS=true\nENV BAKEWARE_CACHE=/home/app/cache\nENV PROXY_TEMPLATES_PATH=/home/app/templates\n\nENTRYPOINT [\"./massa_proxy\"]\n"
+}

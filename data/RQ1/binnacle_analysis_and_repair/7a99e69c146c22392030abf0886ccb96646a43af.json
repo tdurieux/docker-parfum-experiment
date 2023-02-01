@@ -1,0 +1,44 @@
+{
+  "startTime": 1674239007383,
+  "endTime": 1674239007564,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 33,
+        "lineEnd": 33,
+        "columnStart": 22,
+        "columnEnd": 56
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 36,
+        "lineEnd": 36,
+        "columnStart": 22,
+        "columnEnd": 45
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 33,
+        "lineEnd": 33,
+        "columnStart": 22,
+        "columnEnd": 56
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 36,
+        "lineEnd": 36,
+        "columnStart": 22,
+        "columnEnd": 45
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM golang:1.12-stretch\nMAINTAINER Lars Gierth <lgierth@ipfs.io>\n\nENV SRC_DIR /go-ipfs\n\n# Download packages first so they can be cached.\nCOPY go.mod go.sum $SRC_DIR/\nRUN cd $SRC_DIR \\\n  && go mod download\n\nCOPY . $SRC_DIR\n\n# Build the thing.\n# Also: fix getting HEAD commit hash via git rev-parse.\nRUN cd $SRC_DIR \\\n  && mkdir .git/objects \\\n  && make build\n\n# Get su-exec, a very minimal tool for dropping privileges,\n# and tini, a very minimal init daemon for containers\nENV SUEXEC_VERSION v0.2\nENV TINI_VERSION v0.16.1\nRUN set -x \\\n  && cd /tmp \\\n  && git clone https://github.com/ncopa/su-exec.git \\\n  && cd su-exec \\\n  && git checkout -q $SUEXEC_VERSION \\\n  && make \\\n  && cd /tmp \\\n  && wget -q -O tini https://github.com/krallin/tini/releases/download/$TINI_VERSION/tini \\\n  && chmod +x tini\n\n# Get the TLS CA certificates, they're not provided by busybox.\nRUN apt-get update && apt-get install --no-install-recommends -y ca-certificates && rm -rf /var/lib/apt/lists/*;\n\n# Install FUSE\nRUN apt-get update && apt-get install --no-install-recommends -y fuse && rm -rf /var/lib/apt/lists/*;\n\n# Now comes the actual target image, which aims to be as small as possible.\nFROM busybox:1-glibc\nMAINTAINER Lars Gierth <lgierth@ipfs.io>\n\n# Get the ipfs binary, entrypoint script, and TLS CAs from the build container.\nENV SRC_DIR /go-ipfs\nCOPY --from=0 $SRC_DIR/cmd/ipfs/ipfs /usr/local/bin/ipfs\nCOPY --from=0 $SRC_DIR/bin/container_daemon /usr/local/bin/start_ipfs\nCOPY --from=0 /tmp/su-exec/su-exec /sbin/su-exec\nCOPY --from=0 /tmp/tini /sbin/tini\nCOPY --from=0 /bin/fusermount /usr/local/bin/fusermount\nCOPY --from=0 /etc/ssl/certs /etc/ssl/certs\n\n# Add suid bit on fusermount so it will run properly\nRUN chmod 4755 /usr/local/bin/fusermount\n\n# This shared lib (part of glibc) doesn't seem to be included with busybox.\nCOPY --from=0 /lib/x86_64-linux-gnu/libdl-2.24.so /lib/libdl.so.2\n\n# Swarm TCP; should be exposed to the public\nEXPOSE 4001\n# Daemon API; must not be exposed publicly but to client services under you control\nEXPOSE 5001\n# Web Gateway; can be exposed publicly with a proxy, e.g. as https://ipfs.example.org\nEXPOSE 8080\n# Swarm Websockets; must be exposed publicly when the node is listening using the websocket transport (/ipX/.../tcp/8081/ws).\nEXPOSE 8081\n\n# Create the fs-repo directory and switch to a non-privileged user.\nENV IPFS_PATH /data/ipfs\nRUN mkdir -p $IPFS_PATH \\\n  && adduser -D -h $IPFS_PATH -u 1000 -G users ipfs \\\n  && chown ipfs:users $IPFS_PATH\n\n# Create mount points for `ipfs mount` command\nRUN mkdir /ipfs /ipns \\\n  && chown ipfs:users /ipfs /ipns\n\n# Expose the fs-repo as a volume.\n# start_ipfs initializes an fs-repo if none is mounted.\n# Important this happens after the USER directive so permission are correct.\nVOLUME $IPFS_PATH\n\n# The default logging level\nENV IPFS_LOGGING \"\"\n\n# This just makes sure that:\n# 1. There's an fs-repo, and initializes one if there isn't.\n# 2. The API and Gateway are accessible from outside the container.\nENTRYPOINT [\"/sbin/tini\", \"--\", \"/usr/local/bin/start_ipfs\"]\n\n# Execute the daemon subcommand by default\nCMD [\"daemon\", \"--migrate=true\"]\n"
+}

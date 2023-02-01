@@ -1,0 +1,35 @@
+{
+  "startTime": 1674247112415,
+  "endTime": 1674247117032,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 35,
+        "lineEnd": 35,
+        "columnStart": 4,
+        "columnEnd": 20
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 21,
+        "lineEnd": 33,
+        "columnStart": 7,
+        "columnEnd": 18
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 110,
+        "lineEnd": 116,
+        "columnStart": 7,
+        "columnEnd": 12
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# This file is part of SymCC.\n#\n# SymCC is free software: you can redistribute it and/or modify it under the\n# terms of the GNU General Public License as published by the Free Software\n# Foundation, either version 3 of the License, or (at your option) any later\n# version.\n#\n# SymCC is distributed in the hope that it will be useful, but WITHOUT ANY\n# WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR\n# A PARTICULAR PURPOSE. See the GNU General Public License for more details.\n#\n# You should have received a copy of the GNU General Public License along with\n# SymCC. If not, see <https://www.gnu.org/licenses/>.\n\n#\n# The base image\n#\nFROM ubuntu:20.04 AS builder\n\n# Install dependencies\nRUN apt-get update \\\n    && DEBIAN_FRONTEND=noninteractive apt-get --no-install-recommends install -y \\\n        cargo \\\n        clang-10 \\\n        cmake \\\n        g++ \\\n        git \\\n        libz3-dev \\\n        llvm-10-dev \\\n        llvm-10-tools \\\n        ninja-build \\\n        python2 \\\n        python3-pip \\\n        zlib1g-dev \\\n    && rm -rf /var/lib/apt/lists/*\nRUN pip3 install --no-cache-dir lit\n\n# Build AFL.\nRUN git clone -b v2.56b https://github.com/google/AFL.git afl \\\n    && cd afl \\\n    && make\n\n# Download the LLVM sources already so that we don't need to get them again when\n# SymCC changes\nRUN git clone -b llvmorg-10.0.1 --depth 1 https://github.com/llvm/llvm-project.git /llvm_source\n\n# Build a version of SymCC with the simple backend to compile libc++\nCOPY . /symcc_source\n\n# Init submodules if they are not initialiazed yet\nWORKDIR /symcc_source\nRUN if git submodule status | grep \"^-\">/dev/null ; then \\\n    echo \"Initializing submodules\"; \\\n    git submodule init; \\\n    git submodule update; \\\n    fi\n\n\n#\n# Build SymCC with the simple backend\n#\nFROM builder AS builder_simple\nWORKDIR /symcc_build_simple\nRUN cmake -G Ninja \\\n        -DQSYM_BACKEND=OFF \\\n        -DCMAKE_BUILD_TYPE=RelWithDebInfo \\\n        -DZ3_TRUST_SYSTEM_VERSION=on \\\n        /symcc_source \\\n    && ninja check\n\n#\n# Build libc++ with SymCC using the simple backend\n#\nFROM builder_simple AS builder_libcxx\nWORKDIR /libcxx_symcc\nRUN export SYMCC_REGULAR_LIBCXX=yes SYMCC_NO_SYMBOLIC_INPUT=yes \\\n  && mkdir /libcxx_symcc_build \\\n  && cd /libcxx_symcc_build \\\n  && cmake -G Ninja /llvm_source/llvm \\\n  -DLLVM_ENABLE_PROJECTS=\"libcxx;libcxxabi\" \\\n  -DLLVM_TARGETS_TO_BUILD=\"X86\" \\\n  -DLLVM_DISTRIBUTION_COMPONENTS=\"cxx;cxxabi;cxx-headers\" \\\n  -DCMAKE_BUILD_TYPE=Release \\\n  -DCMAKE_INSTALL_PREFIX=/libcxx_symcc_install \\\n  -DCMAKE_C_COMPILER=/symcc_build_simple/symcc \\\n  -DCMAKE_CXX_COMPILER=/symcc_build_simple/sym++ \\\n  && ninja distribution \\\n  && ninja install-distribution\n\n\n#\n# Build SymCC with the Qsym backend\n#\nFROM builder_libcxx AS builder_qsym\nWORKDIR /symcc_build\nRUN cmake -G Ninja \\\n        -DQSYM_BACKEND=ON \\\n        -DCMAKE_BUILD_TYPE=RelWithDebInfo \\\n        -DZ3_TRUST_SYSTEM_VERSION=on \\\n        /symcc_source \\\n    && ninja check \\\n    && cargo install --path /symcc_source/util/symcc_fuzzing_helper\n\n\n#\n# The final image\n#\nFROM ubuntu:20.04\n\nRUN apt-get update \\\n    && DEBIAN_FRONTEND=noninteractive apt-get --no-install-recommends install -y \\\n        build-essential \\\n        clang-10 \\\n        g++ \\\n        libllvm10 \\\n        zlib1g \\\n        sudo \\\n    && rm -rf /var/lib/apt/lists/* \\\n    && useradd -m -s /bin/bash ubuntu \\\n    && echo 'ubuntu ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/ubuntu\n\nCOPY --from=builder_qsym /symcc_build /symcc_build\nCOPY --from=builder_qsym /root/.cargo/bin/symcc_fuzzing_helper /symcc_build/\nCOPY util/pure_concolic_execution.sh /symcc_build/\nCOPY --from=builder_qsym /libcxx_symcc_install /libcxx_symcc_install\nCOPY --from=builder_qsym /afl /afl\n\nENV PATH /symcc_build:$PATH\nENV AFL_PATH /afl\nENV AFL_CC clang-10\nENV AFL_CXX clang++-10\nENV SYMCC_LIBCXX_PATH=/libcxx_symcc_install\n\nUSER ubuntu\nWORKDIR /home/ubuntu\nCOPY sample.cpp /home/ubuntu/\nRUN mkdir /tmp/output\n"
+}

@@ -1,0 +1,28 @@
+FROM docker.io/nginx/unit:1.27.0-python3.10
+# Alternatively, you can download the base image from AWS ECR:
+# FROM public.ecr.aws/nginx/unit:1.27.0-python3.10
+
+# port used by the listener in config.json
+EXPOSE 8080
+
+# application setup
+RUN mkdir /www/ && echo '                                                \n\
+def application(environ, start_response):                                \n\
+    start_response("200 OK", [("Content-Type", "text/plain")])           \n\
+    return (b"Hello, Python on Unit!")                                     \
+    ' > /www/wsgi.py                                                       \
+# prepare the app config for Unit
+    && echo '{                                                             \
+    "listeners": {                                                         \
+        "*:8080": {                                                        \
+            "pass": "applications/python_app"                              \
+        }                                                                  \
+    },                                                                     \
+    "applications": {                                                      \
+        "python_app": {                                                    \
+            "type": "python",                                              \
+            "path": "/www/",                                               \
+            "module": "wsgi"                                               \
+        }                                                                  \
+    }                                                                      \
+    }' > /docker-entrypoint.d/config.json

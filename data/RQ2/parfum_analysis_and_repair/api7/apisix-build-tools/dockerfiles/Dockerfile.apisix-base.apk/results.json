@@ -1,0 +1,62 @@
+{
+  "startTime": 1674250684340,
+  "endTime": 1674250685751,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 63,
+        "lineEnd": 63,
+        "columnStart": 7,
+        "columnEnd": 150
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 88,
+        "lineEnd": 88,
+        "columnStart": 7,
+        "columnEnd": 21
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 110,
+        "lineEnd": 110,
+        "columnStart": 7,
+        "columnEnd": 102
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 77,
+        "lineEnd": 82,
+        "columnStart": 7,
+        "columnEnd": 35
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 60,
+        "lineEnd": 60,
+        "columnStart": 7,
+        "columnEnd": 54
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 75,
+        "lineEnd": 75,
+        "columnStart": 7,
+        "columnEnd": 48
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "ARG IMAGE_BASE=\"alpine\"\nARG IMAGE_TAG=\"3.14\"\n\nFROM ${IMAGE_BASE}:${IMAGE_TAG} as build\n\nCOPY ./utils/build-common.sh \\\n     ./utils/install-common.sh \\\n     build-apisix-base.sh \\\n     ./utils/determine-dist.sh \\\n     /tmp/\n\n\nARG RESTY_OPENSSL_VERSION=\"1.1.1g\"\nARG RESTY_OPENSSL_PATCH_VERSION=\"1.1.1f\"\nARG RESTY_OPENSSL_URL_BASE=\"https://www.openssl.org/source\"\nARG RESTY_PCRE_VERSION=\"8.44\"\nARG RESTY_J=\"1\"\nARG RESTY_EVAL_PRE_CONFIGURE=\"\"\nARG VERSION\n\nLABEL resty_image_base=\"${RESTY_IMAGE_BASE}\"\nLABEL resty_image_tag=\"${IMAGE_TAG}\"\nLABEL resty_openssl_version=\"${RESTY_OPENSSL_VERSION}\"\nLABEL resty_openssl_patch_version=\"${RESTY_OPENSSL_PATCH_VERSION}\"\nLABEL resty_openssl_url_base=\"${RESTY_OPENSSL_URL_BASE}\"\nLABEL resty_pcre_version=\"${RESTY_PCRE_VERSION}\"\nLABEL resty_eval_pre_configure=\"${RESTY_EVAL_PRE_CONFIGURE}\"\n\n\nENV PATH=$PATH:/usr/local/openresty/luajit/bin:/usr/local/openresty/nginx/sbin:/usr/local/openresty/bin\n\nRUN apk add --no-cache \\\n        build-base \\\n        coreutils \\\n        curl \\\n        gd \\\n        gd-dev \\\n        geoip \\\n        geoip-dev \\\n        libxslt \\\n        libxslt-dev \\\n        linux-headers \\\n        make \\\n        perl-dev \\\n        readline-dev \\\n        zlib \\\n        zlib-dev \\\n        unzip \\\n        git \\\n        sudo \\\n        bash \\\n        libstdc++\n\n# install latest Rust to build wasmtime\nRUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y\n\nRUN cd /tmp \\\n    && if [ -n \"${RESTY_EVAL_PRE_CONFIGURE}\" ]; then eval $(echo ${RESTY_EVAL_PRE_CONFIGURE}); fi \\\n    && cd /tmp \\\n    && curl -fSL \"${RESTY_OPENSSL_URL_BASE}/openssl-${RESTY_OPENSSL_VERSION}.tar.gz\" -o openssl-${RESTY_OPENSSL_VERSION}.tar.gz \\\n    && tar xzf openssl-${RESTY_OPENSSL_VERSION}.tar.gz \\\n    && cd openssl-${RESTY_OPENSSL_VERSION} \\\n    && echo 'patching OpenSSL 1.1.1 for OpenResty' \\\n    && curl -f -s https://raw.githubusercontent.com/openresty/openresty/master/patches/openssl-${RESTY_OPENSSL_PATCH_VERSION}-sess_set_get_cb_yield.patch | patch -p1 \\\n    && ./config \\\n      no-threads shared zlib -g \\\n      enable-ssl3 enable-ssl3-method \\\n      --prefix=/usr/local/openresty/openssl111 \\\n      --libdir=lib \\\n      -Wl,-rpath,/usr/local/openresty/openssl111/lib \\\n    && make -j${RESTY_J} \\\n    && make -j${RESTY_J} install_sw && rm openssl-${RESTY_OPENSSL_VERSION}.tar.gz\n\nRUN cd /tmp \\\n    && curl -fSL https://downloads.sourceforge.net/project/pcre/pcre/${RESTY_PCRE_VERSION}/pcre-${RESTY_PCRE_VERSION}.tar.gz -o pcre-${RESTY_PCRE_VERSION}.tar.gz \\\n    && tar xzf pcre-${RESTY_PCRE_VERSION}.tar.gz \\\n    && cd /tmp/pcre-${RESTY_PCRE_VERSION} \\\n    && ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" \\\n        --prefix=/usr/local/openresty/pcre \\\n        --disable-cpp \\\n        --enable-jit \\\n        --enable-utf \\\n        --enable-unicode-properties \\\n    && make -j${RESTY_J} \\\n    && make -j${RESTY_J} install && rm pcre-${RESTY_PCRE_VERSION}.tar.gz\n\nENV version=${VERSION}\nRUN cd /tmp \\\n    && curl -f --version \\\n    && source /root/.cargo/env \\\n    && ./build-common.sh build_apisix_base_apk \\\n    && rm /usr/local/openresty/wasmtime-c-api/lib/libwasmtime.a \\\n    && rm /usr/local/openresty/wasmtime-c-api/lib/libwasmtime.d \\\n    && /usr/local/openresty/bin/openresty -V\n\n\nFROM ${IMAGE_BASE}:${IMAGE_TAG} as prod\n\nCOPY --from=build /usr/local/openresty /usr/local/openresty\n\nRUN apk add --no-cache \\\n        gd \\\n        geoip \\\n        libxslt \\\n        zlib \\\n        libstdc++ \\\n    && apk add --no-cache --virtual .build-deps \\\n        curl \\\n        make \\\n        sudo \\\n    && curl -f https://raw.githubusercontent.com/apache/apisix/master/utils/linux-install-luarocks.sh -sL | sh - \\\n    && apk del .build-deps\n\n\nENV PATH=$PATH:/usr/local/openresty/luajit/bin:/usr/local/openresty/nginx/sbin:/usr/local/openresty/bin\n\nCMD /bin/sh\n"
+}

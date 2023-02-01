@@ -1,0 +1,20 @@
+FROM debian:9.11
+ENV hey hey
+ENV PATH /usr/local
+ENV testmultipleeq="this=is a=test string=with a=lot of=equals"
+ENV hey hello
+ENV first=foo second=foo2
+ENV third $second:/third
+ENV myName="John Doe" myDog=Rex\ The\ Dog \
+    myCat=fluffy
+ENV PATH something
+ENV test=value\ value2
+ENV test1="a'b'c"
+ENV test2='a"b"c'
+ENV test3=a\ b name2=b\ c
+ENV test4="a\"b"
+ENV test5='a\"b'
+ENV test6="a\'b"
+ENV atomic=one
+ENV atomic=two newatomic=$atomic
+ENV newenv=$doesntexist/newenv

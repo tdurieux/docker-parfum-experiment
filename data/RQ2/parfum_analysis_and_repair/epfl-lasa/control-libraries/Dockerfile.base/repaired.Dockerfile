@@ -1,0 +1,136 @@
+FROM ubuntu:20.04 as core-build-dependencies
+ENV DEBIAN_FRONTEND=noninteractive
+
+# install core compilation and access dependencies for building the libraries
+RUN apt-get update && apt-get install --no-install-recommends -y \
+    autoconf \
+    automake \
+    build-essential \
+    cmake \
+    curl \
+    g++ \
+    gcc \
+    gnupg2 \
+    make \
+    git \
+    wget \
+    libtool \
+    lsb-release \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+
+FROM core-build-dependencies as project-dependencies
+
+# add pinocchio to package list
+RUN echo "deb [arch=amd64] http://robotpkg.openrobots.org/packages/debian/pub $(lsb_release -cs) robotpkg" \
+    | tee /etc/apt/sources.list.d/robotpkg.list \
+    && curl -f https://robotpkg.openrobots.org/packages/debian/robotpkg.key \
+    | apt-key add -
+
+RUN wget -c https://gitlab.com/libeigen/eigen/-/archive/3.4.0/eigen-3.4.0.tar.gz -O - | tar -xz
+RUN cd eigen-3.4.0 && mkdir build && cd build && cmake .. && make install
+RUN rm -r eigen-3.4.0
+
+# install dependencies for building the libraries
+RUN apt-get update && apt-get install --no-install-recommends -y \
+    robotpkg-pinocchio \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# install osqp and eigen wrapper
+WORKDIR /tmp/osqp_build
+RUN git clone --recursive https://github.com/oxfordcontrol/osqp \
+    && cd osqp && mkdir build && cd build && cmake -G "Unix Makefiles" .. && cmake --build . --target install
+
+RUN git clone https://github.com/robotology/osqp-eigen.git \
+    && cd osqp-eigen && mkdir build && cd build && cmake .. && make -j && make install
+
+ENV LD_LIBRARY_PATH=${LD_LIBRARY_PATH}:/usr/local/lib:/opt/openrobots/lib/
+
+WORKDIR /home
+RUN rm -rf /tmp/*
+
+
+FROM core-build-dependencies as google-dependencies
+
+RUN apt-get update && apt-get install --no-install-recommends -y \
+    libgtest-dev \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# install gtest
+WORKDIR /tmp/gtest_build
+RUN cmake /usr/src/gtest \
+    && make \
+    && cp lib/* /usr/local/lib || cp *.a /usr/local/lib
+
+WORKDIR /home
+RUN rm -rf /tmp/*
+
+
+FROM project-dependencies as ssh-configuration
+
+RUN apt-get update && apt-get install --no-install-recommends -y \
+    sudo \
+    libssl-dev \
+    ssh \
+    iputils-ping \
+    rsync \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# Configure sshd server settings
+RUN ( \
+    echo 'LogLevel DEBUG2'; \
+    echo 'PubkeyAuthentication yes'; \
+    echo 'Subsystem sftp /usr/lib/openssh/sftp-server'; \
+  ) > /etc/ssh/sshd_config_development \
+  && mkdir /run/sshd
+
+ENV USER developer
+ENV HOME /home/${USER}
+
+# create amd configure a new user
+ARG UID=1000
+ARG GID=1000
+RUN addgroup --gid ${GID} ${USER}
+RUN adduser --gecos "Remote User" --uid ${UID} --gid ${GID} ${USER} && yes | passwd ${USER}
+RUN usermod -a -G dialout ${USER}
+RUN echo "${USER} ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/99_aptget
+RUN chmod 0440 /etc/sudoers.d/99_aptget && chown root:root /etc/sudoers.d/99_aptget
+
+# Configure sshd entrypoint to authorise the new user for ssh access and
+# optionally update UID and GID when invoking the container with the entrypoint script
+COPY ./docker/sshd_entrypoint.sh /sshd_entrypoint.sh
+RUN chmod 744 /sshd_entrypoint.sh
+
+# create the credentials to be able to pull private repos using ssh
+RUN mkdir /root/.ssh/ && ssh-keyscan github.com | tee -a /root/.ssh/known_hosts
+
+RUN echo "session required pam_limits.so" | tee --append /etc/pam.d/common-session > /dev/null
+
+
+FROM ssh-configuration as development-dependencies
+
+RUN apt-get update && apt-get install --no-install-recommends -y \
+    clang \
+    gdb \
+    python \
+    python3-dev \
+    python3-pip \
+    tar \
+    unzip \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# install python requirements
+RUN pip3 install --no-cache-dir numpy setuptools pybind11
+
+# install google dependencies
+COPY --from=google-dependencies /usr/include/gtest /usr/include/gtest
+COPY --from=ghcr.io/epfl-lasa/control-libraries/proto-dependencies /usr/local/include/google /usr/local/include/google
+COPY --from=google-dependencies /usr/local/lib/libgtest* /usr/local/lib/
+COPY --from=ghcr.io/epfl-lasa/control-libraries/proto-dependencies /usr/local/lib/libproto* /usr/local/lib/
+COPY --from=ghcr.io/epfl-lasa/control-libraries/proto-dependencies /usr/local/bin/protoc /usr/local/bin
+RUN ldconfig

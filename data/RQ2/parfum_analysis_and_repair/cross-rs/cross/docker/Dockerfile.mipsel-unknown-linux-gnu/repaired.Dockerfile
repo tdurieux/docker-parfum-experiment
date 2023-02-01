@@ -1,0 +1,40 @@
+FROM ubuntu:16.04
+ARG DEBIAN_FRONTEND=noninteractive
+
+COPY common.sh lib.sh /
+RUN /common.sh
+
+COPY cmake.sh /
+RUN /cmake.sh
+
+COPY xargo.sh /
+RUN /xargo.sh
+
+RUN apt-get update && apt-get install -y --assume-yes --no-install-recommends \
+    g++-mipsel-linux-gnu \
+    libc6-dev-mipsel-cross && rm -rf /var/lib/apt/lists/*;
+
+COPY deny-debian-packages.sh /
+RUN TARGET_ARCH=mipsel /deny-debian-packages.sh \
+    binutils \
+    binutils-mipsel-linux-gnu
+
+COPY qemu.sh /
+RUN /qemu.sh mipsel softmmu
+
+COPY dropbear.sh /
+RUN /dropbear.sh
+
+COPY linux-image.sh /
+RUN /linux-image.sh mipsel
+
+COPY linux-runner /
+
+ENV CARGO_TARGET_MIPSEL_UNKNOWN_LINUX_GNU_LINKER=mipsel-linux-gnu-gcc \
+    CARGO_TARGET_MIPSEL_UNKNOWN_LINUX_GNU_RUNNER="/linux-runner mipsel" \
+    CC_mipsel_unknown_linux_gnu=mipsel-linux-gnu-gcc \
+    CXX_mipsel_unknown_linux_gnu=mipsel-linux-gnu-g++ \
+    BINDGEN_EXTRA_CLANG_ARGS_mipsel_unknown_linux_gnu="--sysroot=/usr/mipsel-linux-gnu" \
+    QEMU_LD_PREFIX=/usr/mipsel-linux-gnu \
+    RUST_TEST_THREADS=1 \
+    PKG_CONFIG_PATH="/usr/lib/mipsel-linux-gnu/pkgconfig/:${PKG_CONFIG_PATH}"

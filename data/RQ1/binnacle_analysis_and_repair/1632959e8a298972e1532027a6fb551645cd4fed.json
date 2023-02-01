@@ -1,0 +1,26 @@
+{
+  "startTime": 1674251902570,
+  "endTime": 1674251902738,
+  "originalSmells": [
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 12,
+        "lineEnd": 12,
+        "columnStart": 4,
+        "columnEnd": 58
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 58,
+        "lineEnd": 58,
+        "columnStart": 4,
+        "columnEnd": 66
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "################################################################################\n# Build stage 0 `prep_es_files`:\n# Extract elasticsearch artifact\n# Install required plugins\n# Set gid=0 and make group perms==owner perms\n################################################################################\n\nFROM centos:7 AS prep_es_files\n\nENV PATH /usr/share/elasticsearch/bin:$PATH\nENV JAVA_HOME /usr/lib/jvm/jre-1.8.0-openjdk\n\nRUN yum install -y java-1.8.0-openjdk-headless unzip which && rm -rf /var/cache/yum\n\nRUN groupadd -g 1000 elasticsearch && \\\n    adduser -u 1000 -g 1000 -d /usr/share/elasticsearch elasticsearch\n\nWORKDIR /usr/share/elasticsearch\n\nUSER 1000\n\n# Download and extract defined ES version.\nRUN curl -fsSL https://artifacts.elastic.co/downloads/elasticsearch/elasticsearch-6.2.4.tar.gz | \\\n    tar zx --strip-components=1\n\nRUN set -ex && for esdirs in config data logs; do \\\n        mkdir -p \"$esdirs\"; \\\n    done\n\n# Install x-pack and also the ingest-{agent,geoip} modules required for Filebeat\n#RUN for PLUGIN in ingest-user-agent ingest-geoip; do \\elasticsearch-plugin install --batch \"$PLUGIN\"; done\n\nCOPY --chown=1000:0 elasticsearch.yml log4j2.properties config/\n\nUSER 0\n\n# Set gid to 0 for elasticsearch and make group permission similar to that of user\n# This is needed, for example, for Openshift Open: https://docs.openshift.org/latest/creating_images/guidelines.html\n# and allows ES to run with an uid\nRUN chown -R elasticsearch:0 . && \\\n    chmod -R g=u /usr/share/elasticsearch\n\n################################################################################\n# Build stage 1 (the actual elasticsearch image):\n# Copy elasticsearch from stage 0\n# Add entrypoint\n################################################################################\n\n# Use a centos base that has openjdk-1.8.0.b141 pre-installed and excluded from yum.conf\n# until potential issues with build 144 have been troubleshooted\nFROM centos:7\nLABEL maintainer=\"foolcage <5533061@qq.com>\"\n\nENV ELASTIC_CONTAINER true\nENV PATH /usr/share/elasticsearch/bin:$PATH\nENV JAVA_HOME /usr/lib/jvm/jre-1.8.0-openjdk\n\nRUN yum update -y && \\\n    yum install -y nc java-1.8.0-openjdk-headless unzip wget which && \\\n    yum clean all && rm -rf /var/cache/yum\n\nRUN groupadd -g 1000 elasticsearch && \\\n    adduser -u 1000 -g 1000 -G 0 -d /usr/share/elasticsearch elasticsearch && \\\n    chmod 0775 /usr/share/elasticsearch && \\\n    chgrp 0 /usr/share/elasticsearch\n\nWORKDIR /usr/share/elasticsearch\n\nCOPY --from=prep_es_files --chown=1000:0 /usr/share/elasticsearch /usr/share/elasticsearch\n\nCOPY --chown=1000:0 bin/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh\n\n# Openshift overrides USER and uses ones with randomly uid>1024 and gid=0\n# Allow ENTRYPOINT (and ES) to run even with a different user\nRUN chgrp 0 /usr/local/bin/docker-entrypoint.sh && \\\n    chmod g=u /etc/passwd && \\\n    chmod 0775 /usr/local/bin/docker-entrypoint.sh\n\nEXPOSE 9200 9300\n\nENTRYPOINT [\"/usr/local/bin/docker-entrypoint.sh\"]\n# Dummy overridable parameter parsed by entrypoint\nCMD [\"eswrapper\"]\n\n################################################################################\n# End of multi-stage Dockerfile\n################################################################################\n"
+}

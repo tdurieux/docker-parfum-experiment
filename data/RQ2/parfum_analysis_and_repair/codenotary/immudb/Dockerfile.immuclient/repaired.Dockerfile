@@ -1,0 +1,18 @@
+FROM golang:1.17 as build
+WORKDIR /src
+COPY . .
+RUN GOOS=linux GOARCH=amd64 make immuclient-static
+
+FROM debian:bullseye-slim as bullseye
+LABEL org.opencontainers.image.authors="CodeNotary, Inc. <info@codenotary.com>"
+
+COPY --from=build /src/immuclient /app/immuclient
+
+ENV IMMUCLIENT_IMMUDB_ADDRESS="127.0.0.1" \
+    IMMUCLIENT_IMMUDB_PORT="3322" \
+    IMMUCLIENT_AUTH="true" \
+    IMMUCLIENT_MTLS="false"
+
+RUN chmod +x /app/immuclient
+
+ENTRYPOINT ["/app/immuclient"]

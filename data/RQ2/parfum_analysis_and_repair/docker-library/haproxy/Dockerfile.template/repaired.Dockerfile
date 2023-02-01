@@ -1,0 +1,175 @@
+{{ if env.variant == "alpine" then ( -}}
+FROM alpine:{{ .alpine }}
+
+# roughly, https://git.alpinelinux.org/aports/tree/main/haproxy/haproxy.pre-install?h=3.12-stable
+RUN set -eux; \
+	addgroup --gid 99 --system haproxy; \
+	adduser \
+		--disabled-password \
+		--home /var/lib/haproxy \
+		--ingroup haproxy \
+		--no-create-home \
+		--system \
+		--uid 99 \
+		haproxy \
+	; \
+	mkdir /var/lib/haproxy; \
+	chown haproxy:haproxy /var/lib/haproxy
+{{ ) else ( -}}
+FROM debian:{{ .debian }}
+
+# roughly, https://salsa.debian.org/haproxy-team/haproxy/-/blob/732b97ae286906dea19ab5744cf9cf97c364ac1d/debian/haproxy.postinst#L5-6
+RUN set -eux; \
+	groupadd --gid 99 --system haproxy; \
+	useradd \
+		--gid haproxy \
+		--home-dir /var/lib/haproxy \
+		--no-create-home \
+		--system \
+		--uid 99 \
+		haproxy \
+	; \
+	mkdir /var/lib/haproxy; \
+	chown haproxy:haproxy /var/lib/haproxy
+{{ ) end -}}
+
+ENV HAPROXY_VERSION {{ .version }}
+ENV HAPROXY_URL {{ .url }}
+ENV HAPROXY_SHA256 {{ .sha256 }}
+
+# see https://sources.debian.net/src/haproxy/jessie/debian/rules/ for some helpful navigation of the possible "make" arguments
+RUN set -eux; \
+	\
+{{ if env.variant == "alpine" then ( -}}
+	apk add --no-cache --virtual .build-deps \
+		gcc \
+		libc-dev \
+		linux-headers \
+		lua5.3-dev \
+		make \
+		openssl \
+		openssl-dev \
+		pcre2-dev \
+		readline-dev \
+		tar \
+{{ if ([ "1.8", "2.0", "2.2", "2.3" ] | index(env.version)) then ( -}}
+		zlib-dev \
+{{ ) else "" end -}}
+	; \
+{{ ) else ( -}}
+	savedAptMark="$(apt-mark showmanual)"; \
+	apt-get update && apt-get install -y --no-install-recommends \
+		ca-certificates \
+		gcc \
+		libc6-dev \
+		liblua5.3-dev \
+		libpcre2-dev \
+		libssl-dev \
+		make \
+		wget \
+{{ if ([ "1.8", "2.0", "2.2", "2.3" ] | index(env.version)) then ( -}}
+		zlib1g-dev \
+{{ ) else "" end -}}
+	; \
+	rm -rf /var/lib/apt/lists/*; \
+{{ ) end -}}
+	\
+	wget -O haproxy.tar.gz "$HAPROXY_URL"; \
+	echo "$HAPROXY_SHA256 *haproxy.tar.gz" | sha256sum -c; \
+	mkdir -p /usr/src/haproxy; \
+	tar -xzf haproxy.tar.gz -C /usr/src/haproxy --strip-components=1; \
+	rm haproxy.tar.gz; \
+	\
+{{
+	def haproxy_target:
+		if env.version | startswith("1.") then
+			"linux2628"
+		elif env.variant == "alpine" and env.version != "2.0" then
+			"linux-musl"
+		else
+			"linux-glibc"
+		end
+-}}
+	makeOpts=' \
+		TARGET={{ haproxy_target }} \
+		USE_GETADDRINFO=1 \
+		USE_LUA=1 LUA_INC=/usr/include/lua5.3 {{ if env.variant == "alpine" then "LUA_LIB=/usr/lib/lua5.3 " else "" end }}\
+		USE_OPENSSL=1 \
+		USE_PCRE2=1 USE_PCRE2_JIT=1 \
+{{ if ([ "1.8", "2.0", "2.2", "2.3" ] | index(env.version)) then ( -}}
+		USE_ZLIB=1 \
+{{ ) else "" end -}}
+{{ if ([ "1.8", "2.0", "2.2", "2.3" ] | index(env.version) | not) then ( -}}
+		USE_PROMEX=1 \
+{{ ) else "" end -}}
+		\
+		EXTRA_OBJS=" \
+{{ if [ "2.0", "2.2", "2.3" ] | index(env.version) then ( -}}
+# see https://github.com/docker-library/haproxy/issues/94#issuecomment-505673353 for more details about prometheus support
+			contrib/prometheus-exporter/service-prometheus.o \
+{{ ) else "" end -}}
+		" \
+	'; \
+{{ if env.variant == "alpine" then ( -}}
+	\
+	nproc="$(getconf _NPROCESSORS_ONLN)"; \
+{{ ) else ( -}}
+# https://salsa.debian.org/haproxy-team/haproxy/-/commit/53988af3d006ebcbf2c941e34121859fd6379c70
+	dpkgArch="$(dpkg --print-architecture)"; \
+	case "$dpkgArch" in \
+		armel) makeOpts="$makeOpts ADDLIB=-latomic" ;; \
+	esac; \
+	\
+	nproc="$(nproc)"; \
+{{ ) end -}}
+	eval "make -C /usr/src/haproxy -j '$nproc' all $makeOpts"; \
+	eval "make -C /usr/src/haproxy install-bin $makeOpts"; \
+	\
+	mkdir -p /usr/local/etc/haproxy; \
+	cp -R /usr/src/haproxy/examples/errorfiles /usr/local/etc/haproxy/errors; \
+	rm -rf /usr/src/haproxy; \
+	\
+{{ if env.variant == "alpine" then ( -}}
+	runDeps="$( \
+		scanelf --needed --nobanner --format '%n#p' --recursive /usr/local \
+			| tr ',' '\n' \
+			| sort -u \
+			| awk 'system("[ -e /usr/local/lib/" $1 " ]") == 0 { next } { print "so:" $1 }' \
+	)"; \
+	apk add --no-network --virtual .haproxy-rundeps $runDeps; \
+	apk del --no-network .build-deps; \
+{{ ) else ( -}}
+	apt-mark auto '.*' > /dev/null; \
+	[ -z "$savedAptMark" ] || apt-mark manual $savedAptMark; \
+	find /usr/local -type f -executable -exec ldd '{}' ';' \
+		| awk '/=>/ { print $(NF-1) }' \
+		| sort -u \
+		| xargs -r dpkg-query --search \
+		| cut -d: -f1 \
+		| sort -u \
+		| xargs -r apt-mark manual \
+	; \
+	apt-get purge -y --auto-remove -o APT::AutoRemove::RecommendsImportant=false; \
+{{ ) end -}}
+	\
+# smoke test
+	haproxy -v
+
+# https://www.haproxy.org/download/1.8/doc/management.txt
+# "4. Stopping and restarting HAProxy"
+# "when the SIGTERM signal is sent to the haproxy process, it immediately quits and all established connections are closed"
+# "graceful stop is triggered when the SIGUSR1 signal is sent to the haproxy process"
+STOPSIGNAL SIGUSR1
+
+COPY docker-entrypoint.sh /usr/local/bin/
+{{ if [ "1.8", "2.0", "2.2", "2.3" ] | index(env.version) then ( -}}
+RUN ln -s usr/local/bin/docker-entrypoint.sh / # backwards compat
+{{ ) else "" end -}}
+ENTRYPOINT ["docker-entrypoint.sh"]
+
+{{ if [ "1.8", "2.0", "2.2", "2.3" ] | index(env.version) then ( -}}
+# no USER for backwards compatibility (to try to avoid breaking existing users)
+{{ ) else ( -}}
+USER haproxy
+{{ ) end -}}
+CMD ["haproxy", "-f", "/usr/local/etc/haproxy/haproxy.cfg"]

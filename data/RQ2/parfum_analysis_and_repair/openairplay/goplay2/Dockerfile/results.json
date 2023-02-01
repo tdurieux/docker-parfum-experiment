@@ -1,0 +1,35 @@
+{
+  "startTime": 1674253606984,
+  "endTime": 1674253607882,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseY",
+      "position": {
+        "lineStart": 25,
+        "lineEnd": 31,
+        "columnStart": 8,
+        "columnEnd": 46
+      }
+    },
+    {
+      "rule": "aptGetInstallUseY",
+      "position": {
+        "lineStart": 44,
+        "lineEnd": 47,
+        "columnStart": 8,
+        "columnEnd": 24
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 25,
+        "lineEnd": 31,
+        "columnStart": 8,
+        "columnEnd": 46
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Single source stage\nFROM    --platform=$BUILDPLATFORM golang:1.16-buster   as fetcher\n\n# Bring the source in\nCOPY    . \"$GOPATH\"/src/github.com/albanseurat/goplay2\nWORKDIR \"$GOPATH\"/src/github.com/albanseurat/goplay2\n\n# Patch source to be able to link dynamically as debian packages do not provide static version of libfdk\nRUN      sed -Ei 's/-l:libfdk-aac.a/-lfdk-aac/' ./codec/aac.go\n\n# Actual cross-compiling image, per target platform\nFROM    --platform=$BUILDPLATFORM fetcher       as builder\n\nARG     TARGETOS\nARG     TARGETARCH\nARG     TARGETVARIANT\n\nENV     GOOS=$TARGETOS\nENV     GOARCH=$TARGETARCH\nENV     CGO_ENABLED=1\n\nRUN sed -Ei 's/main$/main non-free/g' /etc/apt/sources.list; \\\n        DEB_TARGET_ARCH=\"$(echo \"$TARGETARCH$TARGETVARIANT\" | sed -e \"s/^armv6$/armel/\" -e \"s/^armv7$/armhf/\" -e \"s/^ppc64le$/ppc64el/\" -e \"s/^386$/i386/\")\"; \\\n        dpkg --add-architecture \"$DEB_TARGET_ARCH\"; \\\n        apt-get update; \\\n        apt-get install -y -qq --no-install-recommends \\\n            autoconf \\\n            libtool \\\n            crossbuild-essential-\"$DEB_TARGET_ARCH\" \\\n            libfdk-aac1:\"$DEB_TARGET_ARCH\" \\\n            libfdk-aac-dev:\"$DEB_TARGET_ARCH\" \\\n            portaudio19-dev:\"$DEB_TARGET_ARCH\" && rm -rf /var/lib/apt/lists/*;\n\nRUN     eval \"$(dpkg-architecture -A \"$(echo \"$TARGETARCH$TARGETVARIANT\" | sed -e \"s/^armv6$/armel/\" -e \"s/^armv7$/armhf/\" -e \"s/^ppc64le$/ppc64el/\" -e \"s/^386$/i386/\")\")\"; \\\n        export CC=\"${DEB_TARGET_GNU_TYPE}-gcc\"; \\\n        export CXX=\"${DEB_TARGET_GNU_TYPE}-g++\"; \\\n        export GOARM=\"$(printf \"%s\" \"$TARGETVARIANT\" | tr -d v)\"; \\\n        go build -trimpath -buildmode=pie -tags \"netgo osusergo cgo\" -ldflags \"-s -w\" -o /dist/goplay2 .\n\n# Runtime image\nFROM    debian:buster\n\nRUN sed -Ei 's/main$/main non-free/g' /etc/apt/sources.list; \\\n        apt-get update; \\\n        apt-get install -y -qq --no-install-recommends \\\n            libportaudio2 \\\n            pulseaudio-utils \\\n            libfdk-aac1; \\\n        apt-get -qq autoremove      && \\\n        apt-get -qq clean           && \\\n        rm -rf /var/lib/apt/lists/* && \\\n        rm -rf /tmp/*               && \\\n        rm -rf /var/tmp/*\n\nWORKDIR /opt\n\nRUN     adduser --system --no-create-home --home /nonexistent --gecos \"in dockerfile user\" --uid 1000 goplay\nRUN     chown 1000 /opt\n\nCOPY    --from=builder --chown=1000:root /dist/goplay2 .\nRUN     setcap 'cap_net_bind_service+ep' ./goplay2\n\nUSER    goplay\n\nCMD     [\"/opt/goplay2\"]\n"
+}

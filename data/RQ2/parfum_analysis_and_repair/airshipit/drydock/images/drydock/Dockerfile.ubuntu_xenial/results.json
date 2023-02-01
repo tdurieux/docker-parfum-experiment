@@ -1,0 +1,54 @@
+{
+  "startTime": 1674216726356,
+  "endTime": 1674216727276,
+  "originalSmells": [
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 46,
+        "lineEnd": 46,
+        "columnStart": 7,
+        "columnEnd": 18
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 41,
+        "lineEnd": 41,
+        "columnStart": 7,
+        "columnEnd": 47
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 41,
+        "lineEnd": 41,
+        "columnStart": 7,
+        "columnEnd": 47
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 41,
+        "lineEnd": 41,
+        "columnStart": 7,
+        "columnEnd": 47
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 41,
+        "lineEnd": 41,
+        "columnStart": 7,
+        "columnEnd": 71
+      }
+    }
+  ],
+  "repairedDockerfile": "# Copyright 2017 AT&T Intellectual Property.  All other rights reserved.\n#\n# Licensed under the Apache License, Version 2.0 (the \"License\");\n# you may not use this file except in compliance with the License.\n# You may obtain a copy of the License at\n#\n#     http://www.apache.org/licenses/LICENSE-2.0\n#\n# Unless required by applicable law or agreed to in writing, software\n# distributed under the License is distributed on an \"AS IS\" BASIS,\n# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.\n# See the License for the specific language governing permissions and\n# limitations under the License.\n\nARG FROM=ubuntu:16.04\nFROM ${FROM} AS baclient_builder\n\nARG UBUNTU_REPO=http://archive.ubuntu.com/ubuntu\nARG TRUSTED_UBUNTU_REPO=no\nARG ALLOW_UNAUTHENTICATED=false\nARG BUILD_DIR\nENV container docker\nENV LC_ALL C.UTF-8\nENV LANG C.UTF-8\n\n# Copy direct dependency requirements only to build a dependency layer\nRUN echo \"deb  ${UBUNTU_REPO} xenial main restricted universe multiverse\" > /etc/apt/sources.list; \\\n    echo \"deb  ${UBUNTU_REPO} xenial-security main restricted universe multiverse\" >> /etc/apt/sources.list; \\\n    echo \"deb  ${UBUNTU_REPO} xenial-updates main restricted universe multiverse\" >> /etc/apt/sources.list; \\\n    cat /etc/apt/sources.list; \\\n    echo \"APT::Get::AllowUnauthenticated ${ALLOW_UNAUTHENTICATED};\" >> /etc/apt/apt.conf.d/00-local-mirrors;\n\n\nCOPY ./tools/baclient_build.sh /tmp/drydock/\nCOPY ./go /tmp/drydock/go\nWORKDIR /tmp/drydock\nRUN ./baclient_build.sh /tmp/drydock/go /tmp/drydock/baclient\n\n# Build LibYAML\nARG LIBYAML_VERSION=0.2.5\nRUN set -ex \\\n    && apt install --no-install-recommends -y git automake make libtool \\\n    && git clone https://github.com/yaml/libyaml.git \\\n    && cd libyaml \\\n    && git checkout $LIBYAML_VERSION \\\n    && ./bootstrap \\\n    && ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" \\\n    && make \\\n    && make install \\\n    && cd .. \\\n    && rm -fr libyaml && rm -rf /var/lib/apt/lists/*;\n\nRUN rm -r /var/lib/apt/lists/*\n\n\nFROM ${FROM}\n\nLABEL org.opencontainers.image.authors='airship-discuss@lists.airshipit.org, irc://#airshipit@freenode' \\\n      org.opencontainers.image.url='https://airshipit.org' \\\n      org.opencontainers.image.documentation='https://airship-drydock.readthedocs.org' \\\n      org.opencontainers.image.source='https://git.openstack.org/openstack/airship-drydock' \\\n      org.opencontainers.image.vendor='The Airship Authors' \\\n      org.opencontainers.image.licenses='Apache-2.0'\n\nARG UBUNTU_REPO=http://archive.ubuntu.com/ubuntu\nARG TRUSTED_UBUNTU_REPO=no\nARG ALLOW_UNAUTHENTICATED=false\nARG PIP_TRUSTED_HOST=foo.com\nARG PIP_INDEX_URL=https://pypi.org/simple\nARG BUILD_DIR\nENV container docker\nENV PORT 9000\nENV LC_ALL C.UTF-8\nENV LANG C.UTF-8\n\n# Copy direct dependency requirements only to build a dependency layer\nRUN echo \"deb  ${UBUNTU_REPO} xenial main restricted universe multiverse\" > /etc/apt/sources.list; \\\n    echo \"deb  ${UBUNTU_REPO} xenial-security main restricted universe multiverse\" >> /etc/apt/sources.list; \\\n    echo \"deb  ${UBUNTU_REPO} xenial-updates main restricted universe multiverse\" >> /etc/apt/sources.list; \\\n    cat /etc/apt/sources.list; \\\n    echo \"APT::Get::AllowUnauthenticated ${ALLOW_UNAUTHENTICATED};\" >> /etc/apt/apt.conf.d/00-local-mirrors;\n\n\nCOPY ./requirements-host.txt /tmp/drydock/\nCOPY ./hostdeps.sh /tmp/drydock\nWORKDIR /tmp/drydock\nRUN ./hostdeps.sh; \\\n    rm -r /var/lib/apt/lists/*\n\n# Install LibYAML\nENV LD_LIBRARY_PATH=/usr/local/lib\nCOPY --from=baclient_builder /usr/local/lib /usr/local/lib\nCOPY --from=baclient_builder /usr/local/include/yaml.h /usr/local/include/yaml.h\n\nRUN python3 -m pip install -U 'pip<21.0'\nCOPY ./python/requirements-lock.txt /tmp/drydock/\nRUN cat /tmp/drydock/requirements-lock.txt | xargs -d '\\n' \\\n    -l1 pip3 -vv install --no-cache-dir\n\nCOPY ./python /tmp/drydock/python\nWORKDIR /tmp/drydock/python\nRUN python3 setup.py install\n\nCOPY ./alembic /tmp/drydock/alembic\nCOPY ./alembic.ini /tmp/drydock/alembic.ini\nCOPY ./entrypoint.sh /tmp/drydock/entrypoint.sh\n\nCOPY --from=baclient_builder /tmp/drydock/baclient /tmp/drydock/python/drydock_provisioner/assets/baclient\n\n\nEXPOSE $PORT\n\nWORKDIR /tmp/drydock\n\nENTRYPOINT [\"./entrypoint.sh\"]\nCMD [\"server\"]\n"
+}

@@ -1,0 +1,10 @@
+.circleci
+.git
+.github
+.gitignore
+cache
+Dockerfile
+docker-compose.yml
+LICENSE
+*.md
+dockerhash.txt

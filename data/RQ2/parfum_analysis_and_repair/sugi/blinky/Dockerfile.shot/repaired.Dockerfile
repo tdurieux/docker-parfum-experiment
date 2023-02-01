@@ -1,0 +1,25 @@
+FROM ruby:3
+ENV DEBIAN_FRONTEND noninteractive
+RUN apt update && apt -y upgrade && apt install -y --no-install-recommends libjemalloc2 && apt clean && rm -rf /var/lib/apt/lists/*;
+RUN adduser --system --home /blinky --group --uid 800 --disabled-password blinky
+RUN gem install bundler
+RUN apt -y --no-install-recommends install libfontconfig1 fonts-symbola fonts-noto fonts-noto-hinted fonts-noto-unhinted fonts-noto-mono fonts-noto-cjk && apt clean && rm -rf /var/lib/apt/lists/*;
+RUN wget -nv -O- https://mirrors.arege.jp/phantomjs/downloads/phantomjs-2.1.1-linux-x86_64.tar.bz2 | tar -C /opt -jx && ln -s /opt/phantomjs-2.1.1-linux-x86_64/bin/phantomjs /usr/local/bin
+COPY Gemfile* runapp /blinky/
+RUN cd /blinky && bundle --without=web
+COPY bin    /blinky/bin
+COPY lib    /blinky/lib
+COPY views  /blinky/views
+COPY public /blinky/public
+
+RUN wget https://github.com/progrium/entrykit/releases/download/v0.4.0/entrykit_0.4.0_Linux_x86_64.tgz && \
+  tar -C /usr/local/bin -xvf entrykit_0.4.0_Linux_x86_64.tgz && \
+  rm -f entrykit_0.4.0_Linux_x86_64.tgz && \
+  entrykit --symlink
+ENV APP_CMD "ulimit -t 3600; while /usr/bin/timeout -k 30 3h bundle exec ruby -Ilib bin/shot.rb; do sleep 3; done"
+ENV OPENSSL_CONF /etc/ssl/
+ENV LD_PRELOAD libjemalloc.so.2
+CMD /blinky/runapp
+ENTRYPOINT [ \
+  "prehook", "find /tmp -type f -delete", "--", \
+  "prehook", "rm -rf /blinky/.local/share", "--" ]

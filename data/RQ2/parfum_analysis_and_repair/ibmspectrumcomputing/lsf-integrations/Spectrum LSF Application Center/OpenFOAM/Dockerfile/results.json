@@ -1,0 +1,44 @@
+{
+  "startTime": 1674248020930,
+  "endTime": 1674248022133,
+  "originalSmells": [
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 37,
+        "lineEnd": 37,
+        "columnStart": 4,
+        "columnEnd": 33
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 38,
+        "lineEnd": 38,
+        "columnStart": 4,
+        "columnEnd": 35
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 44,
+        "lineEnd": 44,
+        "columnStart": 4,
+        "columnEnd": 37
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 6,
+        "lineEnd": 18,
+        "columnStart": 4,
+        "columnEnd": 87
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Start from the official Ubuntu Bionic (18.04 LTS) image\nFROM ubuntu:bionic\n\n# Install any extra things we might need\n# added items suggested on https://openfoam.org/download/source/software-for-compilation/\nRUN export DEBIAN_FRONTEND=noninteractive && apt-get update && \\\n    apt-get install --no-install-recommends -y \\\n                tzdata \\\n                vim \\\n                ssh \\\n                sudo \\\n                wget \\\n                paraview \\\n                software-properties-common \\\n                build-essential flex bison git-core cmake zlib1g-dev libboost-system-dev \\\n                libboost-thread-dev libopenmpi-dev openmpi-bin gnuplot libreadline-dev libncurses-dev libxt-dev \\\n                libqt5x11extras5-dev libxt-dev qt5-default qttools5-dev curl \\\n                lsb-release tk8.6 debhelper chrpath tcl tcl8.5 flex gfortran dpatch libgfortran3 \\\n                automake bison m4 autoconf tk autotools-dev graphviz net-tools iproute2; \\\n\t\trm -rf /var/lib/apt/lists/*\n\nSHELL [\"/bin/bash\", \"-c\"]\n\n# Copy in minimal LSF components for openMPI build.\nADD lsf /tmp/lsf\n\n# Setup the temporary LSF paths\nARG LSF_ENVDIR=/tmp/lsf/conf\nARG LSF_LIBDIR=/tmp/lsf/10.1/lib\n\nARG OF_VER=\"v1912\"\nWORKDIR /opt\n# Download latest OpenFOAM, ThirdParty tarballs\nRUN wget https://sourceforge.net/projects/openfoam/files/$OF_VER/OpenFOAM-$OF_VER.tgz\nRUN wget https://sourceforge.net/projects/openfoam/files/$OF_VER/ThirdParty-$OF_VER.tgz\n\n# Expand tarballs\nRUN tar -zxf OpenFOAM-$OF_VER.tgz && rm OpenFOAM-$OF_VER.tgz\nRUN tar -zxf ThirdParty-$OF_VER.tgz && rm ThirdParty-$OF_VER.tgz\n\nARG OMPI_VER=\"4.0.3\"\n# Download openMPI\nWORKDIR /opt/ThirdParty-$OF_VER\nRUN wget https://www.open-mpi.org/software/ompi/v4.0/downloads/openmpi-$OMPI_VER.tar.gz\nRUN tar zxvf openmpi-$OMPI_VER.tar.gz && rm openmpi-$OMPI_VER.tar.gz\n\n# Configure OPENMPI with LSF\nWORKDIR /opt/ThirdParty-$OF_VER\nRUN echo \"export WM_MPLIB=OPENMPI\" >> /opt/OpenFOAM-$OF_VER/etc/prefs.sh && \\\n    echo \"FOAM_MPI=openmpi-$OMPI_VER\" > /opt/OpenFOAM-$OF_VER/etc/config.sh/openmpi && \\\n    sed 's/sge/lsf --disable-getpwuid/g' makeOPENMPI > makeOPENMPI.lsf && \\\n    source /opt/OpenFOAM-$OF_VER/etc/bashrc && \\\n    chmod +x makeOPENMPI.lsf && \\\n    ./makeOPENMPI.lsf\n\n# Compile OpenFOAM\nWORKDIR /opt/OpenFOAM-$OF_VER\nRUN source /opt/OpenFOAM-$OF_VER/etc/bashrc && \\\n    ./Allwmake -j\n\n# Compile Pstream\nWORKDIR /opt/OpenFOAM-$OF_VER/src/Pstream\nRUN source /opt/OpenFOAM-$OF_VER/etc/bashrc && \\\n  ./Allwmake\n\n# Install hello_world as a test app\nRUN mkdir /tmp/hello-world\nWORKDIR /tmp/hello-world\nRUN git clone https://github.com/wesleykendall/mpitutorial && \\\n    source /opt/OpenFOAM-$OF_VER/etc/bashrc && \\\n    cd mpitutorial/tutorials/mpi-hello-world/code && \\\n    make && \\\n    cp /tmp/hello-world/mpitutorial/tutorials/mpi-hello-world/code/mpi_hello_world /usr/local/bin\n\n# Cleaup tarballs\nWORKDIR /opt\nRUN rm OpenFOAM-$OF_VER.tgz\nRUN rm ThirdParty-$OF_VER.tgz\nRUN rm -f /opt/ThirdParty-$OF_VER/openmpi-$OMPI_VER.tar.gz\nRUN rm -rf /tmp/lsf\nRUN rm -rf /tmp/hello-world\n\n# Add OpenFOAM bashrc to system /etc/bash.bashrc\nRUN echo \"source /opt/OpenFOAM-$OF_VER/etc/bashrc\" >> /etc/bash.bashrc\n\n# Create symlink from sh to bash (instead of dash)\nWORKDIR /bin\nRUN rm sh\nRUN ln -s /bin/bash /bin/sh\n\n# Setup an easy mpi path\nRUN source /opt/OpenFOAM-$OF_VER/etc/bashrc && ln -s ${MPI_ARCH_PATH} /usr/local/mpi\nENV PATH=/usr/local/mpi/bin:$PATH\nENV LD_LIBRARY_PATH=/usr/local/mpi/lib64:$LD_LIBRARY_PATH\n\n# Create a new user called foam\nRUN useradd --user-group --create-home --shell /bin/bash foam && \\\n    echo \"foam ALL=(ALL) NOPASSWD:ALL\" >> /etc/sudoers\n\n# Set the default container user to foam\nUSER foam\n\nWORKDIR /opt\n"
+}

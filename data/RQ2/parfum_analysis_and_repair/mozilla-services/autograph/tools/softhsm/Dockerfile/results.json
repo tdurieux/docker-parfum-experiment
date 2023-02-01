@@ -1,0 +1,26 @@
+{
+  "startTime": 1674248430502,
+  "endTime": 1674248431178,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 5,
+        "lineEnd": 5,
+        "columnStart": 6,
+        "columnEnd": 72
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 5,
+        "lineEnd": 5,
+        "columnStart": 6,
+        "columnEnd": 72
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM autograph-app\n\nUSER root\nRUN apt update && \\\n      apt -y upgrade && \\\n      apt -y --no-install-recommends install jq softhsm2 python3 python3-pip python3-ruamel.yaml && \\\n      apt-get clean && \\\n      python3 -m pip install yq && rm -rf /var/lib/apt/lists/*;\n\n# copy the config\nADD autograph.softhsm.yaml /app/\n\n# give app access to dev db root cert\nADD db-root.crt /opt/db-root.crt\nRUN chgrp -vR app /opt\nRUN chmod -vR 0444 /opt/db-root.crt\n\n# Setup SoftHSM\nRUN mkdir -p /var/lib/softhsm/tokens && \\\n      softhsm2-util --init-token --slot 0 --label test --pin 0000 --so-pin 0000\n\n# load dev keys\nADD webextensions-rsa.pem /app/src/autograph/tools/softhsm/\nADD extensions-ecdsa-pk8.pem /app/src/autograph/tools/softhsm/\n\n# Import a key pair from the given path. The file must be in PKCS#8-format. Use with --slot or --token or --serial, --file-pin, --label, --id, --no-public-key, and --pxin.\nRUN softhsm2-util --token test --pin 0000 --so-pin 0000 --label webextrsa4096 --id deadbeef --import /app/src/autograph/tools/softhsm/webextensions-rsa.pem\nRUN softhsm2-util --token test --pin 0000 --so-pin 0000 --label ext-ecdsa-p384 --id 12345678 --import /app/src/autograph/tools/softhsm/extensions-ecdsa-pk8.pem\nRUN softhsm2-util --token test --pin 0000 --so-pin 0000 --label ext-ecdsa-p384-2 --id 11111111 --import /app/src/autograph/tools/softhsm/extensions-ecdsa-2-pk8.pem\n\n# genkeys\nRUN cd /app/src/autograph/tools/softhsm/ && go run genkeys.go\n\n# make a pki in softhsm\n# then update the config\n# then write the generated config and new root hash to /tmp\n# docker-compose mounts /tmp for the monitor-hsm service\nRUN cd /app/src/autograph/tools/genpki/ && \\\n      go run genpki.go > /app/genpki.out && \\\n      cd /app/src/autograph/tools/configurator && \\\n      python3 configurator.py -c /app/autograph.softhsm.yaml -i -s normandy \\\n      -p issuerprivkey -v \"$(grep 'inter key name' /app/genpki.out | awk '{print $4}')\" && \\\n      python3 configurator.py -c /app/autograph.softhsm.yaml -i -s normandy \\\n      -p issuercert -v \"$(grep 'inter cert path' /app/genpki.out | awk '{print $4}')\" && \\\n      python3 configurator.py -c /app/autograph.softhsm.yaml -i -s normandy \\\n      -p cacert -v \"$(grep 'root cert path' /app/genpki.out | awk '{print $4}')\" && \\\n      python3 configurator.py -c /app/autograph.softhsm.yaml -i -s kinto \\\n      -p issuerprivkey -v \"$(grep 'inter key name' /app/genpki.out | awk '{print $4}')\" && \\\n      python3 configurator.py -c /app/autograph.softhsm.yaml -i -s kinto \\\n      -p issuercert -v \"$(grep 'inter cert path' /app/genpki.out | awk '{print $4}')\" && \\\n      python3 configurator.py -c /app/autograph.softhsm.yaml -i -s kinto \\\n      -p cacert -v \"$(grep 'root cert path' /app/genpki.out | awk '{print $4}')\" && \\\n      cp /app/autograph.softhsm.yaml /tmp/ && \\\n      /bin/bash /app/src/autograph/tools/softhsm/hash_signer_cacert.sh /app/autograph.softhsm.yaml normandy > /tmp/normandy_dev_root_hash.txt && \\\n      cat /tmp/normandy_dev_root_hash.txt\n\nCMD /go/bin/autograph -c /app/autograph.softhsm.yaml\n"
+}

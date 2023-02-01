@@ -1,0 +1,53 @@
+{
+  "startTime": 1674249182270,
+  "endTime": 1674249183301,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 20,
+        "lineEnd": 20,
+        "columnStart": 1,
+        "columnEnd": 47
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 19,
+        "lineEnd": 19,
+        "columnStart": 19,
+        "columnEnd": 44
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 23,
+        "lineEnd": 30,
+        "columnStart": 1,
+        "columnEnd": 51
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 19,
+        "lineEnd": 19,
+        "columnStart": 19,
+        "columnEnd": 44
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 23,
+        "lineEnd": 30,
+        "columnStart": 1,
+        "columnEnd": 51
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Base x64 image for all targets.\n\nFROM ubuntu:18.04\n\n# Username is assumed to be 'duktape' for now, change only UID/GID if required.\nARG USERNAME=duktape\nARG UID=1000\nARG GID=1000\n\n# Set timezone to Europe/Helsinki, some tests depend on it.  Must be done\n# first to avoid interactive prompts in tzdata install.\nRUN echo \"=== Timezone setup ===\" && \\\n\techo \"Europe/Helsinki\" > /etc/timezone && \\\n\trm -f /etc/localtime && \\\n\tln -s /usr/share/zoneinfo/Europe/Helsinki /etc/localtime\n\n# Node.js and packages.  This set should cover everything necessary to build\n# Duktape, the duktape.org website, run tests, etc.\nRUN echo \"=== Node.js and package install ===\" && \\\n\tapt-get update && apt-get install --no-install-recommends -qqy curl && \\\n\tcurl -f -sL https://deb.nodesource.com/setup_16.x | bash - && \\\n\tdpkg --add-architecture i386 && \\\n\tapt-get update && \\\n\tapt-get install --no-install-recommends -qqy \\\n\t\tbuild-essential llvm valgrind strace libc6-dbg libc6-dbg:i386 \\\n\t\tgcc gcc-multilib g++-multilib gcc-4.8 gcc-5 gcc-6 \\\n\t\tclang clang-tools clang-3.9 clang-4.0 clang-5.0 clang-6.0 clang-7 \\\n\t\tlibncurses5-dev libncurses5 \\\n\t\tpython python-yaml make tig git bc ant diffstat colordiff nodejs \\\n\t\tpython-bs4 tidy wget curl source-highlight rst2pdf openjdk-11-jre \\\n\t\tzip unzip genisoimage vim w3m screen tzdata cdecl && rm -rf /var/lib/apt/lists/*;\n\n# Add non-root uid/gid to image, replicating host uid/gid if possible.\n# Setup the /home/$USERNAME user with some convenience stuff like a .gitconfig,\n# replicating the host setup if possible.  Also set prompts so that it's easy\n# to see when we're running inside a container.\n#\n# https://stackoverflow.com/questions/44683119/dockerfile-replicate-the-host-user-uid-and-gid-to-the-image\nRUN echo \"=== User setup, /work directory creation ===\" && \\\n\tgroupadd -g $GID -o $USERNAME && \\\n\tuseradd -m -u $UID -g $GID -o -s /bin/bash $USERNAME && \\\n\tmkdir /work && chown $UID:$GID /work && chmod 755 /work && \\\n\techo \"PS1='\\033[40;37mDOCKER\\033[0;34m \\u@\\h [\\w] >>>\\033[0m '\" > /root/.profile && \\\n\techo \"PS1='\\033[40;37mDOCKER\\033[0;34m \\u@\\h [\\w] >>>\\033[0m '\" > /home/$USERNAME/.profile && \\\n\tchown $UID:$GID /home/$USERNAME/.profile\n\n# Switch to non-root user.  (Note that COPY will still copy files as root,\n# so use COPY --chown for files copied.)\nUSER $USERNAME\n\n# Use /work for builds, temporaries, etc.\nWORKDIR /work\n\n# Shared script for setting up the duktape/ directory, .gitconfig.\nCOPY --chown=duktape:duktape prepare_repo.sh .\nCOPY --chown=duktape:duktape gitconfig /home/$USERNAME/.gitconfig\nRUN chmod 755 prepare_repo.sh && \\\n    chmod 644 /home/$USERNAME/.gitconfig\n\n# Emscripten.  Source emsdk/emsdk_env.sh to get 'emcc' into PATH.\nRUN echo \"=== Emscripten (emsdk) ===\" && \\\n\tgit clone https://github.com/emscripten-core/emsdk && \\\n\tcd emsdk && \\\n\t./emsdk install latest && \\\n\t./emsdk activate latest\n\n# Clone some useful repositories into 'repo-snapshots' to reduce network\n# traffic.  Derived images can then just 'git pull' to get them up to date.\nRUN echo \"=== Repo snapshots ===\" && \\\n\tmkdir /work/repo-snapshots && \\\n\tgit clone https://github.com/svaarala/duktape.git repo-snapshots/duktape && \\\n\tgit clone https://github.com/svaarala/duktape-wiki.git repo-snapshots/duktape-wiki && \\\n\tgit clone https://github.com/svaarala/duktape-releases.git repo-snapshots/duktape-releases\n\n# /work/duktape-prep is prepared to be close to master in case the derived\n# image needs master.  Copy it from the repo snapshot, but leave the snapshot\n# intact.  Try to minimize network traffic by pulling in some dependencies into\n# the image.\nRUN echo \"=== Prepare duktape-prep repo ===\" && \\\n\tcp -r repo-snapshots/duktape duktape-prep && \\\n\tcp -r repo-snapshots/duktape-releases duktape-prep/duktape-releases && \\\n\tcd duktape-prep && \\\n\tmake runtestsdeps deps/linenoise deps/UglifyJS && \\\n\tmake deps/duktape-releases deps/lz-string deps/jquery-1.11.2.js && \\\n\tmake deps/luajs deps/underscore deps/lodash deps/bluebird.js deps/closure-compiler && \\\n\tmake clean\n\n# Initialize Emscripten cached bytecode files.\n#RUN echo \"=== Prepare Emscripten cached bytecode files ===\" && \\\n#\tcp -r duktape-prep /tmp/duktape-emcc-init && \\\n#\tbash -c '. emsdk/emsdk_env.sh && cd /tmp/duktape-emcc-init && make emscriptenluatest dukweb.js' && \\\n#\trm -rf /tmp/duktape-emcc-init /tmp/duk-emcc*\n\n# Dump some versions.\nRUN echo \"=== Versions ===\" && \\\n\techo \"GCC:\" && gcc -v && \\\n\techo \"CLANG:\" && clang -v && \\\n\tbash -c 'echo \"EMCC:\" && . emsdk/emsdk_env.sh && emcc -v'\n"
+}

@@ -1,0 +1,71 @@
+{
+  "startTime": 1674252755064,
+  "endTime": 1674252756010,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 19,
+        "lineEnd": 19,
+        "columnStart": 15,
+        "columnEnd": 100
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 24,
+        "lineEnd": 24,
+        "columnStart": 15,
+        "columnEnd": 103
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 51,
+        "lineEnd": 51,
+        "columnStart": 15,
+        "columnEnd": 98
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 19,
+        "lineEnd": 19,
+        "columnStart": 104,
+        "columnEnd": 142
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 24,
+        "lineEnd": 24,
+        "columnStart": 107,
+        "columnEnd": 148
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 3,
+        "lineEnd": 7,
+        "columnStart": 22,
+        "columnEnd": 6
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 3,
+        "lineEnd": 7,
+        "columnStart": 22,
+        "columnEnd": 6
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM occitech/magento:php7.0-apache\n\n# packages/dependencies installation\nRUN apt-get update && apt-get install --no-install-recommends -y \\\n  mysql-server \\\n  libxml2-dev \\\n  git-core \\\n  wget && rm -rf /var/lib/apt/lists/*;\n\nRUN docker-php-ext-install soap\nRUN docker-php-ext-install mysqli\n\nCOPY bin/php.ini /usr/local/etc/php/php.ini\n\nRUN sed -i -e 's/\\/var\\/www\\/html/\\/var\\/www\\/htdocs/' /etc/apache2/sites-enabled/000-default.conf\n\n## download & install Magento\nARG MAGENTO_VERSION\n\nRUN cd /tmp && curl -f -O https://demos-cdn.algolia.com/magento/archive/magento-$MAGENTO_VERSION.tar.gz && tar xf magento-$MAGENTO_VERSION.tar.gz && mv magento/* magento/.htaccess /var/www/htdocs && rm magento-$MAGENTO_VERSION.tar.gz\nCOPY ./bin/install-magento /usr/local/bin/install-magento\nRUN chmod +x /usr/local/bin/install-magento\n\n## sample dataset import\nRUN cd /tmp && curl -f -O https://demos-cdn.algolia.com/magento/archive/magento-sample-data-1.9.0.0.tar.gz && tar xf magento-sample-data-1.9.0.0.tar.gz && rm magento-sample-data-1.9.0.0.tar.gz\nRUN cd /var/www/htdocs/media && cp -R /tmp/magento-sample-data-1.9.0.0/media/* . && chmod -R 777 /var/www/htdocs/media\nRUN cd /var/www/htdocs/skin && cp -R /tmp/magento-sample-data-1.9.0.0/skin/* .\nRUN chown -R www-data:www-data /var/www/htdocs\n\n## database setup\nRUN service mysql start && \\\n\tmysql -u root -e \"CREATE DATABASE magento;\"\n\nRUN service mysql start && \\\n\tmysql -u root -e \"CREATE USER 'magento'@'localhost' IDENTIFIED BY 'P4ssw0rd'; GRANT ALL PRIVILEGES ON *.* TO 'magento'@'localhost'; FLUSH PRIVILEGES;\"\n\nRUN service mysql start && \\\n\tmysql -u root magento < /tmp/magento-sample-data-1.9.0.0/magento_sample_data_for_1.9.0.0.sql\n\nRUN service mysql start && \\\n\tMYSQL_HOST=127.0.0.1 MYSQL_USER=magento MYSQL_PASSWORD=P4ssw0rd MYSQL_DATABASE=magento MAGENTO_LOCALE=en_US MAGENTO_TIMEZONE=Europe/Paris MAGENTO_DEFAULT_CURRENCY=USD MAGENTO_URL=http://mymagentostore.com MAGENTO_ADMIN_FIRSTNAME=Admin MAGENTO_ADMIN_LASTNAME=MyStore MAGENTO_ADMIN_EMAIL=amdin@mymagentostore.com MAGENTO_ADMIN_USERNAME=admin MAGENTO_ADMIN_PASSWORD=magentorocks1 /usr/local/bin/install-magento\n\n## configure Magento\nRUN service mysql start && \\\n\tn98-magerun --skip-root-check --root-dir=/var/www/htdocs cache:flush && \\\n\tn98-magerun --skip-root-check --root-dir=/var/www/htdocs cache:disable && \\\n\tn98-magerun --skip-root-check --root-dir=/var/www/htdocs config:set dev/template/allow_symlink \"1\" >/dev/null 2>&1 && \\\n\tn98-magerun --skip-root-check --root-dir=/var/www/htdocs admin:notifications >/dev/null 2>&1 && \\\n    n98-magerun --skip-root-check --root-dir=/var/www/htdocs config:set admin/security/use_form_key \"0\" >/dev/null 2>&1\n\n# algoliasearch-magento setup\nRUN cd /tmp && curl -f -s -L -O https://raw.github.com/colinmollenhour/modman/master/modman-installer && chmod +x modman-installer && ./modman-installer\nRUN cd /var/www/htdocs && /root/bin/modman init && /root/bin/modman clone https://github.com/algolia/algoliasearch-magento && rm -rf .modman/algoliasearch-magento\nRUN cd /var/www/htdocs && /root/bin/modman clone https://github.com/algolia/algoliasearch-magento-extend-module-skeleton && rm -rf .modman/algoliasearch-magento-extend-module-skeleton\n\n# release config file\nCOPY ./bin/algoliasearch.xml /var/www/htdocs/var/connect/algoliasearch.xml\nCOPY ./bin/makeRelease.php /var/www/htdocs/makeRelease.php\n\n#path admin template to have credentials filled && auto login\nRUN sed -i 's/name=\"login\\[username\\]\" value=\"\"/name=\"login[username]\" value=\"admin\"/g' /var/www/htdocs/app/design/adminhtml/default/default/template/login.phtml && \\\n\tsed -i 's/name=\"login\\[password\\]\" class=\"required-entry input-text\" value=\"\"/name=\"login[password]\" class=\"required-entry input-text\" value=\"magentorocks1\"/g' /var/www/htdocs/app/design/adminhtml/default/default/template/login.phtml && \\\n\tsed -i 's/<\\/script>/Event.observe(window, \"load\", function() {$(\"loginForm\").submit();});<\\/script>/g' /var/www/htdocs/app/design/adminhtml/default/default/template/login.phtml && \\\n\tsed -i \"s/#ini_set('display_errors', 1);/ini_set('display_errors', 1);error_reporting(E_ALL);Mage::setIsDeveloperMode(true);/g\" /var/www/htdocs/index.php && \\\n\tsed -i \"s/\\$out .= \\$this->getBlock(\\$callback\\[0\\])->\\$callback\\[1\\]()/\\$out .= \\$this->getBlock(\\$callback\\[0\\])->{\\$callback\\[1\\]}()/g\" /var/www/htdocs/app/code/core/Mage/Core/Model/Layout.php\n"
+}

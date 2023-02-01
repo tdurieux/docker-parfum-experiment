@@ -1,0 +1,89 @@
+{
+  "startTime": 1674244133998,
+  "endTime": 1674244134366,
+  "originalSmells": [
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 46,
+        "lineEnd": 46,
+        "columnStart": 4,
+        "columnEnd": 15
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 19,
+        "lineEnd": 19,
+        "columnStart": 7,
+        "columnEnd": 58
+      }
+    },
+    {
+      "rule": "sha256sumEchoOneSpaces",
+      "position": {
+        "lineStart": 32,
+        "lineEnd": 38,
+        "columnStart": 5,
+        "columnEnd": 66
+      }
+    },
+    {
+      "rule": "sha256sumEchoOneSpaces",
+      "position": {
+        "lineStart": 34,
+        "lineEnd": 34,
+        "columnStart": 7,
+        "columnEnd": 64
+      }
+    },
+    {
+      "rule": "gpgVerifyAscRmAsc",
+      "position": {
+        "lineStart": 37,
+        "lineEnd": 37,
+        "columnStart": 7,
+        "columnEnd": 31
+      }
+    },
+    {
+      "rule": "gpgUseBatchFlag",
+      "position": {
+        "lineStart": 16,
+        "lineEnd": 16,
+        "columnStart": 7,
+        "columnEnd": 77
+      }
+    },
+    {
+      "rule": "gpgUseBatchFlag",
+      "position": {
+        "lineStart": 35,
+        "lineEnd": 35,
+        "columnStart": 7,
+        "columnEnd": 74
+      }
+    },
+    {
+      "rule": "gpgUseBatchFlag",
+      "position": {
+        "lineStart": 37,
+        "lineEnd": 37,
+        "columnStart": 7,
+        "columnEnd": 31
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 4,
+        "lineEnd": 6,
+        "columnStart": 42,
+        "columnEnd": 84
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM node:8.15-slim as builder\n\nARG STANDALONE\n\nRUN mkdir /opt/local && apt-get update && apt-get install -y --no-install-recommends git \\\n    $([ -n \"$STANDALONE\" ] || echo \"autoconf automake build-essential libtool libgmp-dev \\\n                                     libsqlite3-dev python python3 wget zlib1g-dev\") && rm -rf /var/lib/apt/lists/*;\n\nARG TESTRUNNER\n\nENV LIGHTNINGD_VERSION=v0.7.0\nENV LIGHTNINGD_PGP_KEY=15EE8D6CAB0E7F0CF999BFCBD9200E6CD1ADB8F1\n\nRUN [ -n \"$STANDALONE\" ] || \\\n    ( git clone https://github.com/ElementsProject/lightning.git /opt/lightningd \\\n    && cd /opt/lightningd \\\n    && gpg --batch --keyserver keyserver.ubuntu.com --recv-keys \"$LIGHTNINGD_PGP_KEY\" \\\n    && git verify-tag $LIGHTNINGD_VERSION \\\n    && git checkout $LIGHTNINGD_VERSION \\\n    && DEVELOPER=$TESTRUNNER ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" --prefix=./target \\\n    && make -j3 \\\n    && make install \\\n    && rm -r target/share \\\n    && mv -f target/* /opt/local/)\n\nENV BITCOIN_VERSION 0.18.0\nENV BITCOIN_FILENAME bitcoin-$BITCOIN_VERSION-x86_64-linux-gnu.tar.gz\nENV BITCOIN_URL https://bitcoincore.org/bin/bitcoin-core-$BITCOIN_VERSION/$BITCOIN_FILENAME\nENV BITCOIN_SHA256 5146ac5310133fbb01439666131588006543ab5364435b748ddfc95a8cb8d63f\nENV BITCOIN_ASC_URL https://bitcoincore.org/bin/bitcoin-core-$BITCOIN_VERSION/SHA256SUMS.asc\nENV BITCOIN_PGP_KEY 01EA5486DE18A882D4C2684590C8019E36C2E964\nRUN [ -n \"$STANDALONE\" ] || \\\n    ( mkdir /opt/bitcoin && cd /opt/bitcoin \\\n    && wget -qO \"$BITCOIN_FILENAME\" \"$BITCOIN_URL\" \\\n    && echo \"$BITCOIN_SHA256    $BITCOIN_FILENAME\" | sha256sum -c - \\\n    && gpg --batch --keyserver keyserver.ubuntu.com --recv-keys \"$BITCOIN_PGP_KEY\" \\\n    && wget -qO bitcoin.asc \"$BITCOIN_ASC_URL\" \\\n    && gpg --batch --verify bitcoin.asc \\\n    && cat bitcoin.asc | grep \"$BITCOIN_FILENAME\" | sha256sum -c - \\\n    && BD=bitcoin-$BITCOIN_VERSION/bin \\\n    && tar -xzvf \"$BITCOIN_FILENAME\" $BD/bitcoind $BD/bitcoin-cli --strip-components=1 \\\n    && mv bin/* /opt/local/bin/) && rm bitcoin.asc\n\nWORKDIR /opt/charged\n\nCOPY package.json npm-shrinkwrap.json ./\nRUN npm install \\\n   && test -n \"$TESTRUNNER\" || { \\\n      cp -r node_modules node_modules.dev \\\n      && npm prune --production \\\n      && mv -f node_modules node_modules.prod \\\n      && mv -f node_modules.dev node_modules; } && npm cache clean --force;\n\nCOPY . .\nRUN npm run dist \\\n    && rm -rf src \\\n    && test -n \"$TESTRUNNER\" || (rm -rf test node_modules && mv -f node_modules.prod node_modules)\n\nFROM node:8.15-slim\n\nWORKDIR /opt/charged\nARG TESTRUNNER\nENV HOME /tmp\nENV NODE_ENV production\nARG STANDALONE\nENV STANDALONE=$STANDALONE\n\nRUN ([ -n \"$STANDALONE\" ] || ( \\\n          apt-get update && apt-get install -y --no-install-recommends inotify-tools libgmp-dev libsqlite3-dev \\\n          $(test -n \"$TESTRUNNER\" && echo jq procps))) \\\n    && rm -rf /var/lib/apt/lists/* \\\n    && ln -s /opt/charged/bin/charged /usr/bin/charged \\\n    && mkdir /data \\\n    && ln -s /data/lightning /tmp/.lightning\n\nCOPY --from=builder /opt/local /usr/local\nCOPY --from=builder /opt/charged /opt/charged\n\nCMD [ \"bin/docker-entrypoint.sh\" ]\nEXPOSE 9112 9735\n"
+}

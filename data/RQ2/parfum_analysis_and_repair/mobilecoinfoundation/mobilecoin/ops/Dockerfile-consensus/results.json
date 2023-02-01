@@ -1,0 +1,44 @@
+{
+  "startTime": 1674253803573,
+  "endTime": 1674253804411,
+  "originalSmells": [
+    {
+      "rule": "gpgUseBatchFlag",
+      "position": {
+        "lineStart": 28,
+        "lineEnd": 29,
+        "columnStart": 1,
+        "columnEnd": 33
+      }
+    },
+    {
+      "rule": "gpgUseBatchFlag",
+      "position": {
+        "lineStart": 30,
+        "lineEnd": 31,
+        "columnStart": 1,
+        "columnEnd": 79
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 12,
+        "lineEnd": 14,
+        "columnStart": 1,
+        "columnEnd": 7
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 42,
+        "lineEnd": 60,
+        "columnStart": 1,
+        "columnEnd": 8
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# ################################ #\n#  MobileCoin Consensus Validator  #\n# ################################ #\nFROM ubuntu:18.04 AS consensus\n\n#\n# This builds a slim runtime container based on Ubuntu 18.04 LTS for distribution of a MobileCoin Consensus Validator.\n#\nSHELL [\"/bin/bash\", \"-c\"]\n\nRUN apt-get update -q -q && \\\n apt-get upgrade --yes && \\\n apt-get install --no-install-recommends --yes \\\n   gpg \\\n   wget \\\n   && \\\n rm -rf /var/cache/apt && \\\n rm -rf /var/lib/apt/lists/*\n\n# Install SGX Ubuntu/Debian Repo\nRUN source /etc/os-release && \\\n\twget \"https://download.01.org/intel-sgx/sgx-linux/2.16/distro/ubuntu${VERSION_ID}-server/sgx_linux_x64_driver_2.11.054c9c4c.bin\" && \\\n\n\twget \"https://download.01.org/intel-sgx/sgx-linux/2.16/distro/ubuntu${VERSION_ID}-server/sgx_linux_x64_sdk_2.16.100.4.bin\" && \\\n\techo \"deb [arch=amd64 signed-by=/usr/local/share/apt-keyrings/intel-sgx-archive-keyring.gpg] https://download.01.org/intel-sgx/sgx_repo/ubuntu/ ${UBUNTU_CODENAME} main\" > /etc/apt/sources.list.d/intel-sgx.list\n\nRUN mkdir -p /usr/local/share/apt-keyrings && \\\n\twget -O /tmp/intel-sgx-deb.key https://download.01.org/intel-sgx/sgx_repo/ubuntu/intel-sgx-deb.key && \\\n\tgpg --batch -v --no-default-keyring --keyring /tmp/intel-sgx-archive-keyring.gpg \\\n\t\t--import /tmp/intel-sgx-deb.key && \\\n\tgpg --batch -v --no-default-keyring --keyring /tmp/intel-sgx-archive-keyring.gpg \\\n\t\t--export --output /usr/local/share/apt-keyrings/intel-sgx-archive-keyring.gpg && \\\n\trm /tmp/intel-sgx-archive-keyring.gpg && \\\n\trm /tmp/intel-sgx-deb.key\n\n# Update OS and install deps\n#\n# - All of these are runtime dependencies of both aesm_service and mobilenode.\n# - This is run as a one-off in order to reduce the number of layers in the resulting image\n#\nRUN apt-get update -q -q && \\\n apt-get upgrade --yes && \\\n apt-get install --no-install-recommends --yes \\\n  build-essential \\\n  ca-certificates \\\n  cmake \\\n  gettext \\\n  libc6 \\\n  libcurl4 \\\n  libgcc-7-dev \\\n  libgcc1 \\\n  libnghttp2-14 \\\n  libprotobuf-c1 \\\n  libprotobuf10 \\\n  libstdc++6 \\\n  libsgx-uae-service \\\n  rsync \\\n  sgx-aesm-service \\\n  supervisor \\\n  tar \\\n  zlib1g \\\n  && \\\n rm -rf /var/cache/apt && \\\n rm -rf /var/lib/apt/lists/*\n\n# Add grpc_health_probe for healthcheck/liveness probes\nRUN GRPC_HEALTH_PROBE_VERSION=v0.3.2 && \\\n    wget -qO/bin/grpc_health_probe https://github.com/grpc-ecosystem/grpc-health-probe/releases/download/${GRPC_HEALTH_PROBE_VERSION}/grpc_health_probe-linux-amd64 && \\\n    chmod +x /bin/grpc_health_probe\n\nWORKDIR /\n\nCOPY bin/libconsensus-enclave.signed.so /usr/bin/\nCOPY bin/consensus-service /usr/bin/\nCOPY bin/ledger-distribution /usr/bin/\nCOPY bin/mc-admin-http-gateway /usr/bin/\nCOPY bin/mc-ledger-migration /usr/bin/\nCOPY bin/mc-util-grpc-admin-tool /usr/bin/\n\n# Q: Why not use NODE_LEDGER_DIR here?\n# A: The ENV dictates where the app actually looks, and the ARG sets\n#    the default ENV value, but the origin_data install dir should\n#    remain constant, and image builds may make that location their\n#    default. -- jmc\nARG ORIGIN_DATA_DIR\nCOPY ${ORIGIN_DATA_DIR}/ledger /var/lib/mobilecoin/origin_data\n\nCOPY entrypoints/consensus_validator.sh /usr/bin/entrypoint.sh\n\n# Set default NODE_LEDGER_DIR to use ORIGIN_DATA_DIR, but override if docker run if intent is to preserve origin\nENV NODE_LEDGER_DIR \"/var/lib/mobilecoin/origin_data\"\n\n# Put arg and env configuration at the end when possible to improve use of docker layer caching\nENV NODE_MANAGEMENT_PORT 8000\nENV NODE_CLIENT_PORT 3223\nENV NODE_CONSENSUS_PORT 8443\nARG BRANCH\nENV BRANCH \"${BRANCH}\"\nARG AWS_ACCESS_KEY_ID\nENV AWS_ACCESS_KEY_ID \"${AWS_ACCESS_KEY_ID}\"\nARG AWS_SECRET_ACCESS_KEY\nENV AWS_SECRET_ACCESS_KEY \"${AWS_SECRET_ACCESS_KEY}\"\nARG AWS_PATH\nENV AWS_PATH \"${AWS_PATH}\"\nENV RUST_LOG \"debug\"\nENV RUST_BACKTRACE \"full\"\nENV RUST_LOG_STYLE \"never\"\n\nEXPOSE $NODE_CLIENT_PORT\nEXPOSE $NODE_CONSENSUS_PORT\nEXPOSE $NODE_MANAGEMENT_PORT\n\nENTRYPOINT [\"entrypoint.sh\"]\n"
+}

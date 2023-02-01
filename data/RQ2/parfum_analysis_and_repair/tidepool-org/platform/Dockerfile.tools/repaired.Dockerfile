@@ -1,0 +1,27 @@
+# Development
+FROM golang:1.18.3-alpine AS development
+WORKDIR /go/src/github.com/tidepool-org/platform
+RUN echo 'http://dl-cdn.alpinelinux.org/alpine/v3.9/community' >> /etc/apk/repositories && \
+    echo 'http://dl-cdn.alpinelinux.org/alpine/v3.9/main' >> /etc/apk/repositories && \
+    apk --no-cache add git make tzdata mongodb yaml-cpp=0.6.2-r2 && \
+    apk add --no-cache ca-certificates tzdata && \
+    go install github.com/githubnemo/CompileDaemon@v1.4.0 && \
+    adduser -D tidepool && \
+    chown -R tidepool /go/src/github.com/tidepool-org/platform
+USER tidepool
+COPY . .
+ENV SERVICE=tools
+RUN ["make", "service-build"]
+CMD ["make", "service-start"]
+
+# Production
+FROM mongo:4.2.14 AS production
+ENV ENV="/home/tidepool/.bashrc" DEBIAN_FRONTEND="noninteractive"
+RUN apt -y update && \
+    apt -y --no-install-recommends install ca-certificates tzdata && \
+    adduser --disabled-password tidepool && rm -rf /var/lib/apt/lists/*;
+WORKDIR /home/tidepool
+USER tidepool
+COPY --from=development --chown=tidepool /go/src/github.com/tidepool-org/platform/_bin/tools/ .
+COPY ./tools/ashrc /home/tidepool/.bashrc
+CMD ["./tools"]

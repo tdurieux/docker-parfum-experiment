@@ -1,0 +1,62 @@
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+    # Change BASE_IMAGE to centos when RHEL_VERSION=7
+ARG BASE_IMAGE=rockylinux \
+    RHEL_VERSION=8
+FROM ${BASE_IMAGE}:${RHEL_VERSION} as common-dependencies
+ARG RHEL_VERSION=8
+
+MAINTAINER dev@trafficcontrol.apache.org
+
+# top level of trafficcontrol directory must be mounted as a volume:
+# docker run --volume /trafficcontrol:$(pwd) ...
+VOLUME /trafficcontrol
+
+### Common for all sub-component builds
+RUN rpm --import /etc/pki/rpm-gpg/RPM-GPG-KEY-* && \
+	rpm --import "https://dl.fedoraproject.org/pub/epel/RPM-GPG-KEY-EPEL-${RHEL_VERSION%%.*}" && \
+	yum -y update ca-certificates && \
+	yum -y install \
+		git \
+		rpm-build \
+		rsync \
+		epel-release && \
+	yum -y clean all && rm -rf /var/cache/yum
+
+### docs specific requirements
+FROM common-dependencies AS docs
+ARG RHEL_VERSION=8
+
+RUN if [[ ${RHEL_VERSION%%.*} -ge 8 ]]; then \
+		yum -y install dnf-plugins-core && \
+		yum config-manager --set-enabled powertools; rm -rf /var/cache/yum \
+	fi
+
+ADD docs/source/requirements.txt /docs.requirements.txt
+RUN yum -y install \
+		pandoc \
+		python3 \
+		python3-pip \
+		make && \
+	yum -y clean all && rm -rf /var/cache/yum
+RUN	python3 -m pip install --upgrade setuptools && \
+	python3 -m pip install -r /docs.requirements.txt
+###
+
+CMD /trafficcontrol/build/clean_build.sh docs
+
+# vi:syntax=Dockerfile

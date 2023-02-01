@@ -1,0 +1,81 @@
+################################
+# STEP 1 build executable binary
+################################
+
+FROM golang:1.17-alpine AS build-stage
+
+ENV VENDOR drweb
+
+# Install git + SSL ca certificates.
+# Git is required for fetching the dependencies.
+# Ca-certificates is required to call HTTPS endpoints.
+RUN apk update && apk add --no-cache git ca-certificates tzdata \
+	&& update-ca-certificates 2>/dev/null || true
+
+# Set the Current Working Directory inside the container.
+WORKDIR $GOPATH/src/saferwall/$VENDOR/
+
+# Copy go mod and sum files.
+COPY go.mod go.sum ./
+
+# Download all dependencies. Dependencies will be cached if the go.mod
+# and go.sum files are not changed.
+RUN go mod download
+
+# Copy our go files.
+COPY . .
+
+# Build the binary.
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+	go build -a -installsuffix cgo -ldflags '-extldflags "-static"' \
+	-o /go/bin/$VENDOR-svc cmd/services/multiav/$VENDOR/main.go
+
+############################
+# STEP 2 build a small image
+############################
+
+FROM saferwall/drweb:latest
+LABEL maintainer="https://github.com/saferwall"
+LABEL version="0.0.3"
+LABEL description="drweb linux version with nsq consumer"
+
+# Environment variables.
+ENV DR_WEB_DB_UPDATE_DATE    /av_db_update_date.txt
+
+# Set the Current Working Directory inside the container.
+WORKDIR /saferwall
+
+# Install requirements.
+RUN apt-get update \
+    && apt-get install --no-install-recommends sudo -y && rm -rf /var/lib/apt/lists/*;
+
+# Update virus definition file.
+RUN /opt/drweb.com/bin/drweb-configd -d \
+    && echo "Updating the database ..." \
+    && /bin/bash -c 'while /opt/drweb.com/bin/drweb-ctl baseinfo | grep -q  \
+    "Last successful update: unknown"; do sleep 5; done' \
+    && $DR_WEB_CTL baseinfo \
+    && $DR_WEB_CTL appinfo \
+    && echo -n "$(date +%s)" >> $DR_WEB_DB_UPDATE_DATE
+
+# Create an app user so our program doesn't run as root.
+RUN groupadd -r saferwall \
+	&& useradd --no-log-init -r -g saferwall saferwall
+
+# Copy our static executable.
+COPY --from=build-stage /go/bin/drweb-svc .
+
+# Copy the config files.
+COPY configs/services/multiav/drweb conf/
+
+# Update permissions.
+RUN usermod -u 101 saferwall \
+    && chown -R saferwall:saferwall . \
+	&& groupmod -g 102 saferwall \
+    && usermod -aG sudo saferwall \
+	&& echo 'saferwall    ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers
+
+# Switch to our user.
+USER saferwall
+
+ENTRYPOINT ["/saferwall/drweb-svc", "-config", "/saferwall/conf"]

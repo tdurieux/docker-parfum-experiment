@@ -1,0 +1,90 @@
+{
+  "startTime": 1674215392592,
+  "endTime": 1674215393992,
+  "originalSmells": [
+    {
+      "rule": "wgetUseHttpsUrl",
+      "position": {
+        "lineStart": 58,
+        "lineEnd": 58,
+        "columnStart": 4,
+        "columnEnd": 71
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 36,
+        "lineEnd": 36,
+        "columnStart": 4,
+        "columnEnd": 21
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 43,
+        "lineEnd": 43,
+        "columnStart": 4,
+        "columnEnd": 35
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 31,
+        "lineEnd": 31,
+        "columnStart": 4,
+        "columnEnd": 37
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 31,
+        "lineEnd": 31,
+        "columnStart": 4,
+        "columnEnd": 37
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 4,
+        "lineEnd": 6,
+        "columnStart": 0,
+        "columnEnd": 83
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 31,
+        "lineEnd": 31,
+        "columnStart": 4,
+        "columnEnd": 37
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 49,
+        "lineEnd": 51,
+        "columnStart": 0,
+        "columnEnd": 83
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 31,
+        "lineEnd": 31,
+        "columnStart": 4,
+        "columnEnd": 61
+      }
+    }
+  ],
+  "repairedDockerfile": "FROM nvidia/cuda:10.0-cudnn7-devel AS compile-image\n\n#get deps\nRUN apt-get update && \\\nDEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \\\npython3.7-dev python3-pip git g++ wget make libprotobuf-dev protobuf-compiler libopencv-dev \\\nlibgoogle-glog-dev libboost-all-dev libcaffe-cuda-dev libhdf5-dev libatlas-base-dev && rm -rf /var/lib/apt/lists/*;\n\n#replace cmake as old version has CUDA variable bugs\nRUN wget https://github.com/Kitware/CMake/releases/download/v3.16.0/cmake-3.16.0-Linux-x86_64.tar.gz && \\\ntar xzf cmake-3.16.0-Linux-x86_64.tar.gz -C /opt && \\\nrm cmake-3.16.0-Linux-x86_64.tar.gz\nENV PATH=\"/opt/cmake-3.16.0-Linux-x86_64/bin:${PATH}\"\n\n#get openpose\nWORKDIR /openpose\nRUN git clone https://github.com/CMU-Perceptual-Computing-Lab/openpose.git .\n\n#build it\nWORKDIR /openpose/build\n#patch because dataset server posefs1.perception.cs.cmu.edu horribly slow (2020-09-04)\nRUN sed -i 's/posefs1.perception.cs.cmu.edu/opencv.facetraining.mobiledgex.net/g' /openpose/CMakeLists.txt\n# patch to comment this line out because our version of Cuda doesn't support AMPERE architecture\n# TODO: 2020-12-01: When 11.0-cudnn8-devel-ubuntu20.04 is available, we will revisit this.\n# Check for updates here: https://gitlab.com/nvidia/container-images/cuda/blob/master/doc/supported-tags.md\nRUN sed -i 's/set(AMPERE \"80 86\")/#set(AMPERE \"80 86\")/g' /openpose/cmake/Cuda.cmake\nRUN cmake -DBUILD_PYTHON=ON ..\nRUN sed -i 's/set(AMPERE \"80 86\")/#set(AMPERE \"80 86\")/g' /openpose/3rdparty/caffe/cmake/Cuda.cmake\nRUN make -j `nproc`\n\n# Use a virtualenv for all of our Python requirements.\nRUN apt-get install --no-install-recommends -y python3.7-venv && rm -rf /var/lib/apt/lists/*;\nRUN python3.7 -m venv /opt/venv\n# Make sure we use the virtualenv:\nENV PATH=\"/opt/venv/bin:$PATH\"\n\nRUN pip install --no-cache-dir wheel\n# Special handling for imagecodecs package. See https://pypi.org/project/imagecodecs/\nRUN python -m pip install --upgrade pip setuptools\nRUN python -m pip install --upgrade imagecodecs\n\n# Dependencies for our Django app.\nCOPY requirements.txt .\nRUN pip install --no-cache-dir -r requirements.txt\n\nFROM nvidia/cuda:10.0-cudnn7-runtime AS build-image\nCOPY --from=compile-image /openpose /openpose\nCOPY --from=compile-image /opt/venv /opt/venv\nRUN apt-get update && \\\nDEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \\\npython3.7-dev python3-pip git g++ wget make libopencv-dev iputils-ping \\\nlibgoogle-glog-dev libboost-all-dev libcaffe-cuda-dev libhdf5-dev libatlas-base-dev && rm -rf /var/lib/apt/lists/*;\n\n# Make sure we use the virtualenv:\nENV PATH=\"/opt/venv/bin:$PATH\"\n\n# Download weights file required for object detection\nWORKDIR /usr/src/app/moedx/pytorch_objectdetecttrack/config\nRUN wget https://opencv.facetraining.mobiledgex.net/files/yolov3.weights\nWORKDIR /usr/src/app/moedx\nCOPY . /usr/src/app\n# Initialize the database.\nRUN python manage.py makemigrations tracker\nRUN python manage.py migrate\n\nRUN python manage.py collectstatic --noinput\n\n# port for REST\nEXPOSE 8008/tcp\n\n# Fix for \"click\" Python library, a uvicorn dependency.\nENV LC_ALL=C.UTF-8\nENV LANG=C.UTF-8\n\nCMD [\"gunicorn\",\"moedx.asgi:application\",\"--bind\", \"0.0.0.0:8008\",\"-k\",\"uvicorn.workers.UvicornWorker\",\"--workers\",\"1\"]\n"
+}

@@ -1,0 +1,19 @@
+FROM golang:1.11
+
+RUN go get github.com/the-gigi/delinkcious/...
+
+WORKDIR /go/src/github.com/the-gigi/delinkcious/svc/social_graph_service
+ADD ./main.go main.go
+
+# Update
+RUN apt-get --allow-releaseinfo-change update && apt upgrade -y
+
+# Fetch dependencies
+RUN go get -d -v
+
+ADD ./service service
+
+RUN CGO_ENABLED=0 GOOS=linux go build -o /social_graph_service -a -tags netgo -ldflags '-s -w' .
+
+EXPOSE 8080
+ENTRYPOINT ["/social_graph_service"]

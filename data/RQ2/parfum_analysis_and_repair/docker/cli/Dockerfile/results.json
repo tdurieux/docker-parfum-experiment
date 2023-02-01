@@ -1,0 +1,35 @@
+{
+  "startTime": 1674250954104,
+  "endTime": 1674250954914,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 95,
+        "lineEnd": 95,
+        "columnStart": 22,
+        "columnEnd": 84
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 23,
+        "lineEnd": 23,
+        "columnStart": 22,
+        "columnEnd": 84
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 95,
+        "lineEnd": 95,
+        "columnStart": 22,
+        "columnEnd": 84
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "ARG BASE_VARIANT=alpine\nARG GO_VERSION=1.18.3\nARG XX_VERSION=1.1.1\nARG GOVERSIONINFO_VERSION=v1.3.0\nARG GOTESTSUM_VERSION=v1.7.0\nARG BUILDX_VERSION=0.8.2\n\nFROM --platform=$BUILDPLATFORM tonistiigi/xx:${XX_VERSION} AS xx\n\nFROM --platform=$BUILDPLATFORM golang:${GO_VERSION}-${BASE_VARIANT} AS build-base-alpine\nCOPY --from=xx / /\nRUN apk add --no-cache bash clang lld llvm file git\nWORKDIR /go/src/github.com/docker/cli\n\nFROM build-base-alpine AS build-alpine\nARG TARGETPLATFORM\n# gcc is installed for libgcc only\nRUN xx-apk add --no-cache musl-dev gcc\n\nFROM --platform=$BUILDPLATFORM golang:${GO_VERSION}-bullseye AS build-base-bullseye\nCOPY --from=xx / /\nRUN apt-get update && apt-get install --no-install-recommends -y bash clang lld file && rm -rf /var/lib/apt/lists/*;\nWORKDIR /go/src/github.com/docker/cli\n\nFROM build-base-bullseye AS build-bullseye\nARG TARGETPLATFORM\nRUN xx-apt-get install --no-install-recommends -y libc6-dev libgcc-10-dev\n\nFROM build-base-${BASE_VARIANT} AS goversioninfo\nARG GOVERSIONINFO_VERSION\nRUN --mount=type=cache,target=/root/.cache/go-build \\\n    --mount=type=cache,target=/go/pkg/mod \\\n    GOBIN=/out GO111MODULE=on go install \"github.com/josephspurrier/goversioninfo/cmd/goversioninfo@${GOVERSIONINFO_VERSION}\"\n\nFROM build-base-${BASE_VARIANT} AS gotestsum\nARG GOTESTSUM_VERSION\nRUN --mount=type=cache,target=/root/.cache/go-build \\\n    --mount=type=cache,target=/go/pkg/mod \\\n    GOBIN=/out GO111MODULE=on go install \"gotest.tools/gotestsum@${GOTESTSUM_VERSION}\" \\\n    && /out/gotestsum --version\n\nFROM build-${BASE_VARIANT} AS build\n# GO_LINKMODE defines if static or dynamic binary should be produced\nARG GO_LINKMODE=static\n# GO_BUILDTAGS defines additional build tags\nARG GO_BUILDTAGS\n# GO_STRIP strips debugging symbols if set\nARG GO_STRIP\n# CGO_ENABLED manually sets if cgo is used\nARG CGO_ENABLED\n# VERSION sets the version for the produced binary\nARG VERSION\n# PACKAGER_NAME sets the company that produced the windows binary\nARG PACKAGER_NAME\nCOPY --from=goversioninfo /out/goversioninfo /usr/bin/goversioninfo\n# in bullseye arm64 target does not link with lld so configure it to use ld instead\nRUN [ ! -f /etc/alpine-release ] && xx-info is-cross && [ \"$(xx-info arch)\" = \"arm64\" ] && XX_CC_PREFER_LINKER=ld xx-clang --setup-target-triple || true\nRUN --mount=type=bind,target=.,ro \\\n    --mount=type=cache,target=/root/.cache \\\n    --mount=from=dockercore/golang-cross:xx-sdk-extras,target=/xx-sdk,src=/xx-sdk \\\n    --mount=type=tmpfs,target=cli/winresources \\\n    # override the default behavior of go with xx-go\n    xx-go --wrap && \\\n    # export GOCACHE=$(go env GOCACHE)/$(xx-info)$([ -f /etc/alpine-release ] && echo \"alpine\") && \\\n    TARGET=/out ./scripts/build/binary && \\\n    xx-verify $([ \"$GO_LINKMODE\" = \"static\" ] && echo \"--static\") /out/docker\n\nFROM build-${BASE_VARIANT} AS test\nCOPY --from=gotestsum /out/gotestsum /usr/bin/gotestsum\nENV GO111MODULE=auto\nRUN --mount=type=bind,target=.,rw \\\n    --mount=type=cache,target=/root/.cache \\\n    --mount=type=cache,target=/go/pkg/mod \\\n    gotestsum -- -coverprofile=/tmp/coverage.txt $(go list ./... | grep -vE '/vendor/|/e2e/')\n\nFROM scratch AS test-coverage\nCOPY --from=test /tmp/coverage.txt /coverage.txt\n\nFROM build-${BASE_VARIANT} AS build-plugins\nARG GO_LINKMODE=static\nARG GO_BUILDTAGS\nARG GO_STRIP\nARG CGO_ENABLED\nARG VERSION\nRUN --mount=ro --mount=type=cache,target=/root/.cache \\\n    --mount=from=dockercore/golang-cross:xx-sdk-extras,target=/xx-sdk,src=/xx-sdk \\\n    xx-go --wrap && \\\n    TARGET=/out ./scripts/build/plugins e2e/cli-plugins/plugins/*\n\nFROM build-base-alpine AS e2e-base-alpine\nRUN apk add --no-cache build-base curl docker-compose openssl openssh-client\n\nFROM build-base-bullseye AS e2e-base-bullseye\nRUN apt-get update && apt-get install --no-install-recommends -y build-essential curl openssl openssh-client && rm -rf /var/lib/apt/lists/*;\nARG COMPOSE_VERSION=1.29.2\nRUN curl -fsSL https://github.com/docker/compose/releases/download/${COMPOSE_VERSION}/docker-compose-$(uname -s)-$(uname -m) -o /usr/local/bin/docker-compose && \\\n    chmod +x /usr/local/bin/docker-compose\n\nFROM docker/buildx-bin:${BUILDX_VERSION} AS buildx\n\nFROM e2e-base-${BASE_VARIANT} AS e2e\nARG NOTARY_VERSION=v0.6.1\nADD --chmod=0755 https://github.com/theupdateframework/notary/releases/download/${NOTARY_VERSION}/notary-Linux-amd64 /usr/local/bin/notary\nCOPY e2e/testdata/notary/root-ca.cert /usr/share/ca-certificates/notary.cert\nRUN echo 'notary.cert' >> /etc/ca-certificates.conf && update-ca-certificates\nCOPY --from=gotestsum /out/gotestsum /usr/bin/gotestsum\nCOPY --from=build /out ./build/\nCOPY --from=build-plugins /out ./build/\nCOPY --from=buildx /buildx /usr/libexec/docker/cli-plugins/docker-buildx\nCOPY . .\nENV DOCKER_BUILDKIT=1\nENV PATH=/go/src/github.com/docker/cli/build:$PATH\nCMD ./scripts/test/e2e/entry\n\nFROM build-base-${BASE_VARIANT} AS dev\nCOPY . .\n\nFROM scratch AS binary\nCOPY --from=build /out .\n\nFROM scratch AS plugins\nCOPY --from=build-plugins /out .\n"
+}

@@ -1,0 +1,26 @@
+{
+  "startTime": 1674217933689,
+  "endTime": 1674217934847,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 6,
+        "lineEnd": 6,
+        "columnStart": 7,
+        "columnEnd": 48
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 50,
+        "lineEnd": 50,
+        "columnStart": 7,
+        "columnEnd": 46
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM rust:1.62-bullseye as builder\n\n# Avoid warnings by switching to noninteractive\nENV DEBIAN_FRONTEND=noninteractive\n\nRUN apt-get update \\\n    && apt-get install --no-install-recommends -y libclang-dev cmake git \\\n    #\n    # Clean up\n    && apt-get autoremove -y \\\n    && apt-get clean -y \\\n    && rm -rf /var/lib/apt/lists/*\n\n# Switch back to dialog for any ad-hoc use of apt-get\nENV DEBIAN_FRONTEND=dialog\nENV RUSTFLAGS=\"-C target-feature=+avx,+avx2,+sse4.2\"\n\nWORKDIR /app\n\nCOPY Cargo.* /app/\n\n# We change lto to 'thin' for docker builds so it\n# can be build on more moderate system\nRUN mv Cargo.toml Cargo.toml.orig && sed 's/lto = true/lto = \"thin\"/' Cargo.toml.orig > Cargo.toml\n\n# Main library\nCOPY src /app/src\nCOPY build.rs /app/build.rs\nCOPY .cargo /app/.cargo\n# supporting libraries\nCOPY tremor-pipeline /app/tremor-pipeline\nCOPY tremor-script /app/tremor-script\nCOPY tremor-api /app/tremor-api\nCOPY tremor-influx /app/tremor-influx\nCOPY tremor-value /app/tremor-value\n# Binaries\nCOPY tremor-cli /app/tremor-cli\nCOPY tremor-common /app/tremor-common\n# Git info to track version\nCOPY .git /app/.git\n\nRUN cat /proc/cpuinfo\nRUN cargo build --release --all --verbose\nRUN strip target/release/tremor\n\nFROM debian:bullseye-slim\n\nRUN useradd -ms /bin/bash tremor\n\nRUN apt-get update \\\n    && apt-get install --no-install-recommends -y libatomic1 tini curl \\\n    #\n    # Clean up\n    && apt-get autoremove -y \\\n    && apt-get clean -y \\\n    && rm -rf /var/lib/apt/lists/*\n\nCOPY --from=builder /app/target/release/tremor /tremor\n\n# stdlib\nRUN mkdir -p /usr/share/tremor/lib\nCOPY tremor-script/lib /usr/share/tremor/lib\n\n# Entrypoint\nCOPY docker/entrypoint.sh /entrypoint.sh\n# configuration file\nRUN mkdir /etc/tremor\nCOPY docker/config /etc/tremor/config\n# logger configuration\nCOPY docker/logger.yaml /etc/tremor/logger.yaml\n\n# setting TREMOR_PATH\n# /usr/local/share/tremor - for host-specific local tremor-script modules and libraries, takes precedence\n# /usr/share/tremor/lib - place for the tremor-script stdlib\nENV TREMOR_PATH=\"/usr/local/share/tremor:/usr/share/tremor/lib\"\n\nENTRYPOINT [\"/entrypoint.sh\"]\n\nHEALTHCHECK --interval=30s --timeout=1s --start-period=5s --retries=3 CMD curl -f http://localhost:9898/v1/status || exit 1"
+}

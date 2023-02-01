@@ -1,0 +1,17 @@
+{
+  "startTime": 1674220876391,
+  "endTime": 1674220877188,
+  "originalSmells": [
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 6,
+        "lineEnd": 6,
+        "columnStart": 4,
+        "columnEnd": 40
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Generic RPM building, which should work for centos and oraclelinux\n\n##############################################################################\n# Shared package building base image\n\nFROM dist-base as package-builder-base\nRUN yum install -y rpm-build rpmdevtools && rpmdev-setuptree && rm -rf /var/cache/yum\n\nRUN mkdir -p /dist /build\nWORKDIR /build\n\n##############################################################################\n# Our package-builder target image\n\nFROM package-builder-base as package-builder\n\n# Only ADD/COPY the files you really need for efficient docker caching.\nADD builder/helpers/ /build/builder/helpers/\n\n# Used for -p option to only build specific spec files\nARG BUILDER_PACKAGE_MATCH\n\n# Enables the builder rpm file cache (requires -c flag).\n# This must only be used for vendor deps, because it is based on the hash of the spec.\n# It might slow down your second build if you have docker layer caching, but\n# it's useful for Travis and if you build different modules and branches all\n# the time.\n@IF [ ! -z \"$BUILDER_CACHE\" ]\n@EVAL ADD builder/cache/${BUILDER_TARGET}/ /cache/old/\nENV BUILDER_CACHE 1\nRUN mkdir /cache/new\n@ENDIF\n\n# Vendor specs\n# These do not depend on code in this repository and have independent versioning.\n# Only vendor specs can safely use the builder cache for these reasons.\n@IF [ ! -z \"$M_all$M_vendor\" ]\nCOPY builder-support/vendor-specs/ builder-support/vendor-specs/\nRUN BUILDER_CACHE_THIS=1 BUILDER_SOURCE_DATE_FROM_SPEC_MTIME=1 builder/helpers/build-specs.sh builder-support/vendor-specs/*.spec\n@ENDIF\n\n# You can override these build args for faster Python builds\n# by adding these to your local .env\n# For pip: http://doc.devpi.net/latest/quickstart-pypimirror.html\n#ARG PIP_INDEX_URL\n#ARG PIP_TRUSTED_HOST\n\n# Set after vendor builds to not invalidate their cached layers every time\nARG BUILDER_VERSION\nARG BUILDER_RELEASE\nARG SOURCE_DATE_EPOCH\nCOPY --from=sdist /sdist /sdist\nRUN for file in /sdist/* ; do ln -s $file /root/rpmbuild/SOURCES/ ; done && ls /root/rpmbuild/SOURCES/\n\nCOPY builder-support/specs/ builder-support/specs/\n\n@IF [ ! -z \"$M_all$M_a\" ]\nRUN builder/helpers/build-specs.sh builder-support/specs/a.spec\n@ENDIF\n\n@IF [ ! -z \"$M_all$M_b\" ]\nRUN builder/helpers/build-specs.sh builder-support/specs/b.spec\n@ENDIF\n\n# mv accross layers with overlay2 is buggy in some kernel versions (results in empty dirs)\n# See: https://github.com/moby/moby/issues/33733\n#RUN mv /root/rpmbuild/RPMS/* /dist/\nRUN cp -R /root/rpmbuild/RPMS/* /dist/\n\n# Write text files with lists of all files in the rpms\nRUN rpm -qlp --queryformat '\\n# %{RPMTAG_NAME}\\n' /dist/*/*.rpm > /dist/rpm-contents-all.txt\n"
+}

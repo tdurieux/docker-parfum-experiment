@@ -1,0 +1,35 @@
+{
+  "startTime": 1674219482889,
+  "endTime": 1674219484131,
+  "originalSmells": [
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 40,
+        "lineEnd": 40,
+        "columnStart": 4,
+        "columnEnd": 75
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 92,
+        "lineEnd": 92,
+        "columnStart": 7,
+        "columnEnd": 57
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 92,
+        "lineEnd": 92,
+        "columnStart": 7,
+        "columnEnd": 57
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# A dockerfile which builds a docker image for building a debian package for\n# synapse. The distro to build for is passed as a docker build var.\n#\n# The default entrypoint expects the synapse source to be mounted as a\n# (read-only) volume at /synapse/source, and an output directory at /debs.\n#\n# A pair of environment variables (TARGET_USERID and TARGET_GROUPID) can be\n# passed to the docker container; if these are set, the build script will chown\n# the build products accordingly, to avoid ending up with things owned by root\n# in the host filesystem.\n\n# Get the distro we want to pull from as a dynamic build variable\nARG distro=\"\"\n\n###\n### Stage 0: build a dh-virtualenv\n###\n\n# This is only really needed on focal, since other distributions we\n# care about have a recent version of dh-virtualenv by default. Unfortunately,\n# it looks like focal is going to be with us for a while.\n#\n# (focal doesn't have a dh-virtualenv package at all. There is a PPA at\n# https://launchpad.net/~jyrki-pulliainen/+archive/ubuntu/dh-virtualenv, but\n# it's not obviously easier to use that than to build our own.)\n\nFROM ${distro} as builder\n\nRUN apt-get update -qq -o Acquire::Languages=none\nRUN env DEBIAN_FRONTEND=noninteractive apt-get install \\\n        -yqq --no-install-recommends \\\n        build-essential \\\n        ca-certificates \\\n        devscripts \\\n        equivs \\\n        wget\n\n# fetch and unpack the package\nRUN mkdir /dh-virtualenv\nRUN wget -q -O /dh-virtualenv.tar.gz https://github.com/spotify/dh-virtualenv/archive/refs/tags/1.2.2.tar.gz\nRUN tar -xv --strip-components=1 -C /dh-virtualenv -f /dh-virtualenv.tar.gz && rm /dh-virtualenv.tar.gz\n\n# install its build deps. We do another apt-cache-update here, because we might\n# be using a stale cache from docker build.\nRUN apt-get update -qq -o Acquire::Languages=none \\\n    && cd /dh-virtualenv \\\n    && env DEBIAN_FRONTEND=noninteractive mk-build-deps -ri -t \"apt-get -y --no-install-recommends\"\n\n# Build it. Note that building the docs doesn't work due to differences in\n# Sphinx APIs across versions/distros.\nRUN cd /dh-virtualenv && DEB_BUILD_OPTIONS=nodoc dpkg-buildpackage -us -uc -b\n\n###\n### Stage 1\n###\nFROM ${distro}\n\n# Get the distro we want to pull from as a dynamic build variable\n# (We need to define it in each build stage)\nARG distro=\"\"\nENV distro ${distro}\n\n# Python < 3.7 assumes LANG=\"C\" means ASCII-only and throws on printing unicode\n# http://bugs.python.org/issue19846\nENV LANG C.UTF-8\n\n# Install the build dependencies\n#\n# NB: keep this list in sync with the list of build-deps in debian/control\n# TODO: it would be nice to do that automatically.\nRUN apt-get update -qq -o Acquire::Languages=none \\\n    && env DEBIAN_FRONTEND=noninteractive apt-get install \\\n        -yqq --no-install-recommends -o Dpkg::Options::=--force-unsafe-io \\\n        build-essential \\\n        debhelper \\\n        devscripts \\\n        libsystemd-dev \\\n        lsb-release \\\n        pkg-config \\\n        python3-dev \\\n        python3-pip \\\n        python3-setuptools \\\n        python3-venv \\\n        sqlite3 \\\n        libpq-dev \\\n        xmlsec1\n\nCOPY --from=builder /dh-virtualenv_1.2.2-1_all.deb /\n\n# install dhvirtualenv. Update the apt cache again first, in case we got a\n# cached cache from docker the first time.\nRUN apt-get update -qq -o Acquire::Languages=none \\\n    && apt-get install --no-install-recommends -yq /dh-virtualenv_1.2.2-1_all.deb && rm -rf /var/lib/apt/lists/*;\n\nWORKDIR /synapse/source\nENTRYPOINT [\"bash\",\"/synapse/source/docker/build_debian.sh\"]\n"
+}

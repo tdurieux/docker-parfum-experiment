@@ -1,0 +1,29 @@
+FROM registry.access.redhat.com/ubi8/nginx-118
+
+WORKDIR /opt/app-root/src
+
+COPY hack/config /tmp/config
+
+USER 0
+RUN dnf -y install zip
+USER 1001
+
+ARG download_url=https://github.com/kubevirt/kubevirt/releases/download
+
+RUN eval $(cat /tmp/config  |grep KUBEVIRT_VERSION=) && \
+    echo "KUBEVIRT_VERSION: $KUBEVIRT_VERSION" && \
+    curl -v --fail -L -o virtctl "${download_url}/${KUBEVIRT_VERSION}/virtctl-${KUBEVIRT_VERSION}-linux-amd64" && \
+    mkdir -p ./amd64/linux && tar -zhcf ./amd64/linux/virtctl.tar.gz virtctl && rm virtctl && \
+    curl -v --fail -L -o virtctl "${download_url}/${KUBEVIRT_VERSION}/virtctl-${KUBEVIRT_VERSION}-darwin-amd64" && \
+    mkdir -p ./amd64/mac && zip -r -q ./amd64/mac/virtctl.zip virtctl && rm virtctl && \
+    curl -v --fail -L -o virtctl.exe "${download_url}/${KUBEVIRT_VERSION}/virtctl-${KUBEVIRT_VERSION}-windows-amd64.exe" && \
+    mkdir -p ./amd64/windows && zip -r -q ./amd64/windows/virtctl.zip virtctl.exe && rm virtctl.exe && rm ./amd64/linux/virtctl.tar.gz
+
+
+ARG git_url=https://github.com/kubevirt/hyperconverged-cluster-operator.git
+ARG git_sha=NONE
+
+LABEL multi.GIT_URL=${git_url} \
+      multi.GIT_SHA=${git_sha}
+
+CMD nginx -g "daemon off;"

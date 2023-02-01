@@ -1,0 +1,1 @@
+# docker build -t ucfconsort.azurecr.io/ucx/fedora:5 -f buildlib/fedora.Dockerfile buildlib/

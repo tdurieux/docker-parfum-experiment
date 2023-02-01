@@ -1,0 +1,26 @@
+{
+  "startTime": 1674216618185,
+  "endTime": 1674216619060,
+  "originalSmells": [
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 24,
+        "lineEnd": 24,
+        "columnStart": 4,
+        "columnEnd": 28
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 13,
+        "lineEnd": 13,
+        "columnStart": 7,
+        "columnEnd": 70
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "ARG PHP_VERSION=7.4\nARG BAK_STORAGE_PATH=/var/www/app/docker-backup-storage/\nARG BAK_PUBLIC_PATH=/var/www/app/docker-backup-public/\n\n# Get Invoice Ninja and install nodejs packages\nFROM --platform=$BUILDPLATFORM node:lts-alpine as build\n\n# Download Invoice Ninja\nARG INVOICENINJA_VERSION\nADD https://github.com/invoiceninja/invoiceninja/tarball/v$INVOICENINJA_VERSION /tmp/ninja.tar.gz\n\n# Extract Invoice Ninja\nRUN mkdir -p /var/www/app \\\n    && tar --strip-components=1 -xf /tmp/ninja.tar.gz -C /var/www/app/ \\\n    && mkdir -p /var/www/app/public/logo /var/www/app/storage \\\n    && mv /var/www/app/.env.example /var/www/app/.env \\\n    && rm -rf /var/www/app/docs /var/www/app/tests && rm /tmp/ninja.tar.gz\n\nWORKDIR /var/www/app/\n\n# Install node packages\nARG BAK_STORAGE_PATH\nARG BAK_PUBLIC_PATH\nRUN --mount=target=/var/www/app/node_modules,type=cache \\\n    npm install --production \\\n    && npm run production \\\n    && mv /var/www/app/storage $BAK_STORAGE_PATH \\\n    && mv /var/www/app/public $BAK_PUBLIC_PATH && npm cache clean --force;\n\n# Prepare php image\nFROM php:${PHP_VERSION}-fpm-alpine3.13 as prod\n\nLABEL maintainer=\"David Bomba <turbo124@gmail.com>\"\n\nRUN mv /usr/local/etc/php/php.ini-production /usr/local/etc/php/php.ini\n\n# Install PHP extensions\n# https://hub.docker.com/r/mlocati/php-extension-installer/tags\nCOPY --from=mlocati/php-extension-installer /usr/bin/install-php-extensions /usr/local/bin/\n\nRUN install-php-extensions \\\n    bcmath \\\n    exif \\\n    gd \\\n    gmp \\\n    mysqli \\\n    opcache \\\n    pdo_mysql \\\n    zip \\\n    @composer \\\n    && rm /usr/local/bin/install-php-extensions\n\n# Install chromium\nRUN set -eux; \\\n    apk add --no-cache \\\n    supervisor \\\n    mysql-client \\\n    git \\\n    chromium \\\n    ttf-freefont\n\n# Copy files\nCOPY rootfs /\n\n## Create user\nARG UID=1500\nENV INVOICENINJA_USER invoiceninja\n\nRUN addgroup --gid=$UID -S \"$INVOICENINJA_USER\" \\\n    && adduser --uid=$UID \\\n    --disabled-password \\\n    --gecos \"\" \\\n    --home \"/var/www/app\" \\\n    --ingroup \"$INVOICENINJA_USER\" \\\n    \"$INVOICENINJA_USER\"\n\n# Set up app\nARG INVOICENINJA_VERSION\nARG BAK_STORAGE_PATH\nARG BAK_PUBLIC_PATH\nENV INVOICENINJA_VERSION $INVOICENINJA_VERSION\nENV BAK_STORAGE_PATH $BAK_STORAGE_PATH\nENV BAK_PUBLIC_PATH $BAK_PUBLIC_PATH\nCOPY --from=build --chown=$INVOICENINJA_USER:$INVOICENINJA_USER /var/www/app /var/www/app\n\nUSER $UID\nWORKDIR /var/www/app\n\n# Do not remove this ENV\nENV IS_DOCKER true\nRUN /usr/local/bin/composer install --no-dev --quiet\n\n# Override the environment settings from projects .env file\nENV APP_ENV production\nENV LOG errorlog\nENV SNAPPDF_EXECUTABLE_PATH /usr/bin/chromium-browser\n\nENTRYPOINT [\"docker-entrypoint\"]\nCMD [\"supervisord\"]\n"
+}

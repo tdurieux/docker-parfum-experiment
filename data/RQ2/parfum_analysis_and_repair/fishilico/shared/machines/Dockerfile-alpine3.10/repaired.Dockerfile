@@ -1,0 +1,84 @@
+FROM alpine:3.10
+LABEL Description="Alpine Linux 3.10 with build dependencies for shared"
+
+# Alpine does not provide coq, mingw-w64
+RUN \
+    apk --no-cache --update add \
+        cargo \
+        clang \
+        clang-dev \
+        gcc \
+        gdb \
+        gmp-dev \
+        gtk+3.0-dev \
+        iproute2 \
+        libmnl-dev \
+        libressl \
+        linux-vanilla-dev \
+        linux-headers \
+        llvm-dev \
+        make \
+        musl-dev \
+        musl-utils \
+        nss \
+        openjdk8 \
+        openssh \
+        openssl-dev \
+        pulseaudio-dev \
+        py-numpy \
+        py2-cffi \
+        py2-crypto \
+        py2-pillow \
+        py3-cffi \
+        py3-crypto \
+        py3-cryptography \
+        py3-pillow \
+        py3-pynacl \
+        py3-z3 \
+        python2-dev \
+        python3-dev \
+        sdl2-dev \
+        z3-dev && \
+    rm -rf /var/cache/apk/*
+
+# Add OpenJDK to $PATH
+ENV JAVA_HOME=/usr/lib/jvm/java-1.8-openjdk
+ENV PATH="${JAVA_HOME}/bin:${PATH}"
+
+WORKDIR /shared
+RUN ln -s shared/machines/run_shared_test.sh /run_shared_test.sh
+COPY . /shared/
+
+CMD ["/run_shared_test.sh"]
+
+# make list-nobuild:
+#    Global blacklist: latex% rust/asymkeyfind% rust/check_linux_pass% rust/download_web% windows%
+#    In sub-directories:
+#       c: x86-read_64b_regs_in_32b_mode
+#       glossaries:
+#       java/keystore: parse_jceks.py parse_pkcs12.py util_asn1.py
+#       linux:
+#       python:
+#       python/crypto: bip32_seed_derivation.py chacha20_poly1305_tests.py dhparam_tests.py dsa_tests.py ec_tests.py parse_openssl_enc.py rsa_tests.py
+#       python/network:
+#       python/network/dnssec: verify_dnssec.py
+#       python/qrcode:
+#       rust:
+#       verification: ackermann.vo
+#    Compilers:
+#       gcc -m64: ok
+#       gcc -m32: not working
+#       clang -m64: ok
+#       clang -m32: not working
+#       musl-gcc: not working
+#       x86_64-w64-mingw32-gcc: not working
+#       i686-w64-mingw32-gcc: not working
+#    Versions:
+#       gcc: gcc (Alpine 8.3.0) 8.3.0
+#       clang: Alpine clang version 8.0.0 (tags/RELEASE_800/final) (based on LLVM 8.0.0)
+#       Linux kernel: 4.19.176-0-vanilla
+#       /lib/ld-musl-x86_64.so.1: musl libc (x86_64) Version 1.1.22
+#       python3: Python 3.7.10
+#       rustc: rustc 1.34.2
+#       cargo: cargo 1.34.0
+#       openssl: LibreSSL 2.7.5

@@ -1,0 +1,90 @@
+{
+  "startTime": 1674252218782,
+  "endTime": 1674252219823,
+  "originalSmells": [
+    {
+      "rule": "wgetUseHttpsUrl",
+      "position": {
+        "lineStart": 60,
+        "lineEnd": 60,
+        "columnStart": 4,
+        "columnEnd": 93
+      }
+    },
+    {
+      "rule": "wgetUseHttpsUrl",
+      "position": {
+        "lineStart": 79,
+        "lineEnd": 79,
+        "columnStart": 4,
+        "columnEnd": 94
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 37,
+        "lineEnd": 37,
+        "columnStart": 4,
+        "columnEnd": 30
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 65,
+        "lineEnd": 65,
+        "columnStart": 4,
+        "columnEnd": 42
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 61,
+        "lineEnd": 61,
+        "columnStart": 5,
+        "columnEnd": 43
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 80,
+        "lineEnd": 80,
+        "columnStart": 4,
+        "columnEnd": 46
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 47,
+        "lineEnd": 56,
+        "columnStart": 4,
+        "columnEnd": 11
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 47,
+        "lineEnd": 56,
+        "columnStart": 4,
+        "columnEnd": 11
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 47,
+        "lineEnd": 56,
+        "columnStart": 4,
+        "columnEnd": 11
+      }
+    }
+  ],
+  "repairedDockerfile": "FROM ubuntu:22.04 as base_runtime\nLABEL maintainer=\"https://github.com/underworldcode/\"\nENV LANG=C.UTF-8\nENV PYVER=3.10\n# Setup some things in anticipation of virtualenvs\nENV VIRTUAL_ENV=/opt/venv\n# The following ensures that the venv takes precedence if available\nENV PATH=${VIRTUAL_ENV}/bin:$PATH\n\n# The following ensures venv packages are available when using system python (such as from jupyter)\nENV PYTHONPATH=${PYTHONPATH}:${VIRTUAL_ENV}/lib/python${PYVER}/site-packages\n# add joyvan user, volume mount and expose port 8888\nEXPOSE 8888\nENV NB_USER jovyan\nENV NB_WORK /home/$NB_USER\nRUN useradd -m -s /bin/bash -N $NB_USER -g users \\\n&&  mkdir -p /$NB_WORK/workspace \\\n&&  chown -R $NB_USER:users $NB_WORK\nVOLUME $NB_WORK/workspace\n\n# make virtualenv directory and set permissions\nRUN mkdir ${VIRTUAL_ENV} \\\n&&  chmod ugo+rwx ${VIRTUAL_ENV}\n\n# install runtime requirements\nRUN apt-get update -qq \\\n&&  DEBIAN_FRONTEND=noninteractive apt-get install -yq --no-install-recommends \\\n        bash-completion \\\n        python3-minimal \\\n        python3-venv \\\n        python3-pip \\\n        python3-numpy \\\n        libopenblas-base \\\n        gcc python3-dev \\\n&&  apt-get clean \\\n&&  rm -rf /var/lib/apt/lists/*\n\nRUN pip3 install --no-cache-dir -U setuptools \\\n&& pip3 install --no-cache-dir \\\n        packaging \\\n        appdirs \\\n        jupyter \\\n        ipyparallel\n\nFROM base_runtime AS build_base\n# install build requirements\nRUN apt-get update -qq\nRUN DEBIAN_FRONTEND=noninteractive apt-get install -yq --no-install-recommends \\\n        build-essential \\\n        cmake \\\n        wget \\\n        gfortran \\\n        python3-dev \\\n        libopenblas-dev \\\n        libz-dev \\\n        cmake \\\n        git && rm -rf /var/lib/apt/lists/*;\n# build mpi\nWORKDIR /tmp/mpich-build\nARG MPICH_VERSION=\"4.0.2\"\nRUN wget https://www.mpich.org/static/downloads/${MPICH_VERSION}/mpich-${MPICH_VERSION}.tar.gz\nRUN tar xvzf mpich-${MPICH_VERSION}.tar.gz && rm mpich-${MPICH_VERSION}.tar.gz\nWORKDIR /tmp/mpich-build/mpich-${MPICH_VERSION}             \nARG MPICH_CONFIGURE_OPTIONS=\"--prefix=/usr/local --enable-g=option=none --disable-debuginfo --enable-fast=O3,ndebug --without-timing --without-mpit-pvars --with-device=ch3 FFLAGS=-fallow-argument-mismatch FCFLAGS=-fallow-argument-mismatch\"\nARG MPICH_MAKE_OPTIONS=\"-j8\"\nRUN ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" ${MPICH_CONFIGURE_OPTIONS}\nRUN make ${MPICH_MAKE_OPTIONS}            \nRUN make install                          \nRUN ldconfig\n\n# create venv now for forthcoming python packages\nUSER $NB_USER\nRUN /usr/bin/python3 -m venv --system-site-packages ${VIRTUAL_ENV}\nRUN pip3 install --no-cache-dir Cython git+https://github.com/mpi4py/mpi4py@3.1.0\n\nUSER root\n# build petsc\nWORKDIR /tmp/petsc-build\nARG PETSC_VERSION=\"3.17.1\"\nRUN wget https://ftp.mcs.anl.gov/pub/petsc/release-snapshots/petsc-lite-${PETSC_VERSION}.tar.gz\nRUN tar zxf petsc-lite-${PETSC_VERSION}.tar.gz && rm petsc-lite-${PETSC_VERSION}.tar.gz\nWORKDIR /tmp/petsc-build/petsc-${PETSC_VERSION}\nRUN python3 -m pip install cython\nRUN python3 ./configure --with-debugging=0 --prefix=/usr/local \\\n                --COPTFLAGS=\"-g -O3\" --CXXOPTFLAGS=\"-g -O3\" --FOPTFLAGS=\"-g -O3\" \\\n                --with-petsc4py=1               \\\n                --with-zlib=1                   \\\n                --download-hdf5=1               \\\n                --download-mumps=1              \\\n                --download-parmetis=1           \\\n                --download-metis=1              \\\n                --download-superlu=1            \\\n                --download-hypre=1              \\\n                --download-scalapack=1          \\\n                --download-superlu_dist=1       \\\n                --download-ctetgen              \\\n                --download-eigen                \\\n                --download-triangle             \\\n                --useThreads=0                  \\\n                --download-superlu=1            \\\n                --with-shared-libraries         \\\n                --with-cxx-dialect=C++11        \\\n                --with-make-np=8\nRUN make PETSC_DIR=/tmp/petsc-build/petsc-${PETSC_VERSION} PETSC_ARCH=arch-linux-c-opt all\nRUN make PETSC_DIR=/tmp/petsc-build/petsc-${PETSC_VERSION} PETSC_ARCH=arch-linux-c-opt install\n# these aren't needed\nRUN rm -fr /usr/local/share/petsc\n# build petsc4py\nENV PETSC_DIR=/usr/local\nUSER $NB_USER\nRUN CC=h5pcc HDF5_MPI=\"ON\" HDF5_DIR=${PETSC_DIR} pip3 install --no-cache-dir --no-binary=h5py h5py\n\nFROM base_runtime AS minimal\nCOPY --from=build_base $VIRTUAL_ENV $VIRTUAL_ENV\nCOPY --from=build_base /usr/local /usr/local\n# Record Python packages, but only record system packages!\n# Not venv packages, which will be copied directly in.\nRUN PYTHONPATH= /usr/bin/pip3 freeze >/opt/requirements.txt\n# Record manually install apt packages.\nRUN apt-mark showmanual >/opt/installed.txt\n\n# Add user environment\nFROM minimal\nUSER $NB_USER\nWORKDIR $NB_WORK\nCMD [\"jupyter\", \"notebook\", \"--no-browser\", \"--ip='0.0.0.0'\"]\n"
+}

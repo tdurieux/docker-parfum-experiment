@@ -1,0 +1,35 @@
+FROM kspp-build3rdparty:latest
+WORKDIR /src
+
+MAINTAINER sk svante.karlsson@csi.se
+
+ENV TZ=GMT
+RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
+
+
+COPY cmake 	 cmake
+COPY examples    examples
+COPY include     include
+COPY src         src
+COPY tests       tests
+COPY tools       tools
+COPY libraries   libraries
+COPY CMakeLists.txt    .
+
+RUN mkdir build && \
+    cd build && \
+    cmake  -DCMAKE_BUILD_TYPE=Release -DENABLE_ROCKSDB=ON -DENABLE_POSTGRES=ON -DENABLE_TDS=ON -DENABLE_ELASTICSEARCH=ON -DENABLE_INFLUXDB=ON -DENABLE_POSTGRES=ON -DENABLE_MQTT=ON -DBUILD_TOOLS=ON -DBUILD_SAMPLES=OFF -DBUILD_TESTS=OFF -DBUILD_STATIC_LIBS=ON -DBUILD_SHARED_LIBS=ON -DLINK_SHARED=ON .. && \
+    make -j "$(getconf _NPROCESSORS_ONLN)" && \
+    make install && \
+    strip --strip-all /usr/local/lib/*.so* && \
+    strip --strip-unneeded /usr/local/bin/*  && \
+    cd .. && rm -rf build    
+
+RUN runDeps="$( \
+      scanelf --needed --nobanner --recursive /usr/local \
+        | awk '{ gsub(/,/, "\n", $2); print $2 }' \
+        | sort -u \
+        | xargs -r dpkg -S | cut -d : -f 1  \
+        | sort -u \
+      )" && \
+     echo "$runDeps" > runDeps

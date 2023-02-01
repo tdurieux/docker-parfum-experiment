@@ -1,0 +1,44 @@
+{
+  "startTime": 1674251866779,
+  "endTime": 1674251867349,
+  "originalSmells": [
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 64,
+        "lineEnd": 64,
+        "columnStart": 4,
+        "columnEnd": 15
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 3,
+        "lineEnd": 5,
+        "columnStart": 7,
+        "columnEnd": 26
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 11,
+        "lineEnd": 12,
+        "columnStart": 22,
+        "columnEnd": 9
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 44,
+        "lineEnd": 45,
+        "columnStart": 22,
+        "columnEnd": 16
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM emscripten/emsdk AS emscripten\n\nRUN apt-get -qq -y update \\\n    && DEBIAN_FRONTEND=\"noninteractive\" \\\n       apt-get -qq install -y --no-install-recommends \\\n            libmsgpack-dev && rm -rf /var/lib/apt/lists/*;\n\nFROM emscripten AS cppbuild\nCOPY --from=emscripten /usr/include/msgpack.* /msgpack/\nCOPY --from=emscripten /usr/include/msgpack/  /msgpack/msgpack/\n\nRUN apt-get update && apt-get install --no-install-recommends -y \\\n    cmake && rm -rf /var/lib/apt/lists/*;\nCOPY ./core ./core\n\nRUN emcmake cmake \\\n    -S core/ -B /src/js/core/ \\\n    -DBUILD_CORE=OFF \\\n    -DCMAKE_BUILD_TYPE=Release \\\n    -DCMAKE_CXX_FLAGS=-I/msgpack \\\n    -DCMAKE_TOOLCHAIN_FILE=/emsdk/upstream/emscripten/cmake/Modules/Platform/Emscripten.cmake\nWORKDIR /src/js/core/\nRUN emmake make\n\n\nFROM cppbuild AS jsbuild\nCOPY ./javascript /javascript\n\nWORKDIR /\nRUN emcmake cmake \\\n    -S javascript/ -B /src/js/javascript/ \\\n    -Doneseismic_DIR=/src/js/core/ \\\n    -DCMAKE_BUILD_TYPE=Release \\\n    -DCMAKE_CXX_FLAGS=-I/msgpack \\\n    -DCMAKE_INTERPROCEDURAL_OPTIMIZATION=1 \\\n    -DCMAKE_TOOLCHAIN_FILE=/emsdk/upstream/emscripten/cmake/Modules/Platform/Emscripten.cmake \\\n    -DONESEISMIC_MODULARIZE=ON \\\n    -DCMAKE_INTERPROCEDURAL_OPTIMIZATION=OFF\nWORKDIR /src/js/javascript/\nRUN emmake make\n\n\nFROM node:16-buster AS build\nCOPY /python /python\nRUN apt-get update && apt-get install --no-install-recommends -y \\\n    python3-venv && rm -rf /var/lib/apt/lists/*;\nRUN python3 -m venv /pyenv/upload_with\n\nRUN /pyenv/upload_with/bin/python -m pip install --upgrade pip\nRUN /pyenv/upload_with/bin/pip install -r /python/requirements-dev.txt\n\nARG UPLOAD_WITH_CLIENT_VERSION\nENV UPLOAD_WITH_CLIENT_VERSION=$UPLOAD_WITH_CLIENT_VERSION\nRUN if test -z \"$UPLOAD_WITH_CLIENT_VERSION\"; \\\n    then echo /python > /pyenv/upload_with/lib/python3.7/site-packages/oneseismic.pth; \\\n    else /pyenv/upload_with/bin/pip install oneseismic==\"$UPLOAD_WITH_CLIENT_VERSION\"; \\\n    fi\n\n\nFROM build AS jstest\nCOPY --from=jsbuild /src/js/javascript/ /build\nCOPY /tests /tests\n\nWORKDIR /tests/javascript\nRUN npm install && npm cache clean --force;\n\nENV UPLOAD_WITH_PYTHON /pyenv/upload_with/bin/python\nENV NODE_PATH /build:$NODE_PATH\n\n\nFROM jstest AS localtest\nENTRYPOINT [\"npm\",\"run\", \"testintegration\"]\n"
+}

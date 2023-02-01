@@ -1,0 +1,44 @@
+{
+  "startTime": 1674248457809,
+  "endTime": 1674248459018,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 77,
+        "lineEnd": 77,
+        "columnStart": 4,
+        "columnEnd": 74
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 36,
+        "lineEnd": 36,
+        "columnStart": 4,
+        "columnEnd": 61
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 58,
+        "lineEnd": 58,
+        "columnStart": 4,
+        "columnEnd": 29
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 78,
+        "lineEnd": 78,
+        "columnStart": 4,
+        "columnEnd": 34
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "################################################################################\n# H3 builder image\n################################################################################\nFROM centos:7.7.1908 as h3-builder\n\n# Install dependencies\nRUN yum groupinstall -y \"Development Tools\" && \\\n    yum install -y epel-release && \\\n    yum install -y cmake3 glib2-devel libuuid-devel hiredis-devel cppcheck fuse3 fuse3-devel python3-devel python3-wheel java-8-openjdk-headless maven && \\\n    yum clean all \\\n    && rm -rf /var/cache/yum \\\n        /tmp/* \\\n        /var/tmp/* \\\n        /usr/share/man \\\n        /usr/share/doc \\\n        /usr/share/doc-base\n\n# Copy in H3, build, and install\nCOPY h3lib /root/h3lib/\nCOPY h3fuse /root/h3fuse/\nCOPY pyh3lib /root/pyh3lib/\nCOPY JH3lib /root/JH3lib/\nCOPY Jclouds-H3 /root/Jclouds-H3/\n\nARG BUILD_TYPE=Release\n\nWORKDIR /root/h3lib\nRUN mkdir build && \\\n    (cd build && cmake3 -DCMAKE_INSTALL_PREFIX=\"/usr\" -DCMAKE_BUILD_TYPE=\"${BUILD_TYPE}\" .. && make package && make install)\n\nWORKDIR /root/h3fuse\nRUN mkdir build && \\\n    (cd build && cmake3 -DCMAKE_INSTALL_PREFIX=\"/usr\" -DCMAKE_BUILD_TYPE=\"${BUILD_TYPE}\" .. && make package && make install)\n\nWORKDIR /root/pyh3lib\nRUN ./setup.py bdist_wheel && \\\n    pip3 install --no-cache-dir dist/pyh3lib-1.2-cp36-cp36m-linux_x86_64.whl\n\nWORKDIR /root/JH3lib\nRUN mvn clean install\n\nWORKDIR /root/Jclouds-H3\nRUN mvn clean install -DskipTests=true -Drat.skip=true -Dcheckstyle.skip=true\n\nWORKDIR /root\n\n####################################################################################################\n# H3 distribution\n####################################################################################################\nFROM centos:7.7.1908 as h3\n\nCOPY --from=h3-builder /root/h3lib/build/h3lib*.rpm /root/\nCOPY --from=h3-builder /root/h3fuse/build/h3fuse*.rpm /root/\nCOPY --from=h3-builder /root/pyh3lib/dist/pyh3lib*.whl /root/\nWORKDIR /root\nRUN yum install -y epel-release && \\\n    yum install -y python3 fuse3 && \\\n    yum install -y h3lib*.rpm h3fuse*.rpm && \\\n    pip3 install --no-cache-dir pyh3lib*.whl && \\\n    rm -rf *.rpm *.whl && \\\n    yum clean all \\\n    && rm -rf /var/cache/yum \\\n        /tmp/* \\\n        /var/tmp/* \\\n        /usr/share/man \\\n        /usr/share/doc \\\n        /usr/share/doc-base\n\n################################################################################\n# S3proxy builder image\n################################################################################\nFROM maven:3.5.0-jdk-8-alpine as s3proxy-builder\n\nCOPY --from=h3-builder /root/.m2/ /root/.m2/\n\nRUN mkdir /opt && \\\n    cd /opt && \\\n    curl -f -sLO https://github.com/gaul/s3proxy/archive/s3proxy-1.7.1.tar.gz && \\\n    tar -zxvf s3proxy-1.7.1.tar.gz && \\\n    mv s3proxy-s3proxy-1.7.1 s3proxy && rm s3proxy-1.7.1.tar.gz\n\nCOPY Jclouds-H3/config/s3proxy.conf /opt/s3proxy/\n#COPY Jclouds-H3/config/keystore.jks /opt/s3proxy/\n#COPY Jclouds-H3/config/run-docker-container.sh /opt/s3proxy/src/main/resources/\n\nWORKDIR /opt/s3proxy\nRUN sed -i 's/filesystem/h3/g' pom.xml && \\\n    mvn package -DskipTests\n\n####################################################################################################\n# S3proxy with Jclouds-H3 distribution\n####################################################################################################\nFROM h3-builder as h3-s3proxy\n\nWORKDIR /opt/s3proxy\n\nCOPY --from=s3proxy-builder /opt/s3proxy/target/s3proxy /opt/s3proxy/\nCOPY Jclouds-H3/config/keystore.jks /opt/s3proxy/\nCOPY Jclouds-H3/config/run-docker-container.sh /opt/s3proxy/\n\nENV \\\n    LOG_LEVEL=\"info\" \\\n    S3PROXY_AUTHORIZATION=\"aws-v2-or-v4\" \\\n    S3PROXY_IDENTITY=\"test:tester\" \\\n    S3PROXY_CREDENTIAL=\"testing\" \\\n    S3PROXY_CORS_ALLOW_ALL=\"false\" \\\n    S3PROXY_CORS_ALLOW_ORIGINS=\"\" \\\n    S3PROXY_CORS_ALLOW_METHODS=\"\" \\\n    S3PROXY_CORS_ALLOW_HEADERS=\"\" \\\n    S3PROXY_KEYSTORE_PATH=\"keystore.jks\" \\\n    S3PROXY_KEYSTORE_PASSWORD=\"CARVICS\" \\\n    S3PROXY_IGNORE_UNKNOWN_HEADERS=\"false\" \\\n    JCLOUDS_PROVIDER=\"h3\" \\\n    S3PROXY_ENDPOINT=\"https://0.0.0.0:8080\" \\\n    JCLOUDS_REGION=\"\" \\\n    JCLOUDS_KEYSTONE_VERSION=\"\" \\\n    JCLOUDS_BASEDIR=\"file:///data/h3container\" \\\n    JCLOUDS_KEYSTONE_SCOPE=\"\" \\\n    JCLOUDS_KEYSTONE_PROJECT_DOMAIN_NAME=\"\"\n\nEXPOSE 8080\nVOLUME /data\n\nRUN mkdir /data/h3container\n\nENTRYPOINT [\"/opt/s3proxy/run-docker-container.sh\"]\n"
+}

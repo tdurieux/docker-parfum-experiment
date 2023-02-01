@@ -1,0 +1,26 @@
+{
+  "startTime": 1674236095860,
+  "endTime": 1674236096033,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 5,
+        "lineEnd": 6,
+        "columnStart": 22,
+        "columnEnd": 9
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 5,
+        "lineEnd": 6,
+        "columnStart": 22,
+        "columnEnd": 9
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Builder\n#########\n\nFROM golang:1.12 AS build\n\nRUN apt-get update && apt-get install --no-install-recommends -y \\\n      zip && rm -rf /var/lib/apt/lists/*; # required for generate-index.bash\n\n# Check out the desired version of Go, both to build the golangorg binary and serve\n# as the goroot for content serving.\nARG GO_REF\nRUN test -n \"$GO_REF\" # GO_REF is required.\nRUN git clone --single-branch --depth=1 -b $GO_REF https://go.googlesource.com/go /goroot\nRUN cd /goroot/src && ./make.bash\n\nENV GOROOT /goroot\nENV PATH=/goroot/bin:$PATH\nENV GO111MODULE=on\nENV GOPROXY=https://proxy.golang.org\n\nRUN go version\n\nCOPY . /website\n\nWORKDIR /website/cmd/golangorg\nRUN GOLANGORG_DOCSET=/goroot ./generate-index.bash\n\nRUN go build -o /golangorg -tags=golangorg golang.org/x/website/cmd/golangorg\n\n# Clean up goroot for the final image.\nRUN cd /goroot && git clean -xdf\n\n# Add build metadata.\nRUN cd /goroot && echo \"go repo HEAD: $(git rev-parse HEAD)\" >> /goroot/buildinfo\nRUN echo \"requested go ref: ${GO_REF}\" >> /goroot/buildinfo\nARG WEBSITE_HEAD\nRUN echo \"x/website HEAD: ${WEBSITE_HEAD}\" >> /goroot/buildinfo\nARG WEBSITE_CLEAN\nRUN echo \"x/website clean: ${WEBSITE_CLEAN}\" >> /goroot/buildinfo\nARG DOCKER_TAG\nRUN echo \"image: ${DOCKER_TAG}\" >> /goroot/buildinfo\nARG BUILD_ENV\nRUN echo \"build env: ${BUILD_ENV}\" >> /goroot/buildinfo\n\nRUN rm -rf /goroot/.git\n\n# Final image\n#############\n\nFROM gcr.io/distroless/base\n\nWORKDIR /app\nCOPY --from=build /golangorg /app/\nCOPY --from=build /website/cmd/golangorg/hg-git-mapping.bin /app/\n\nCOPY --from=build /goroot /goroot\nENV GOROOT /goroot\n\nCOPY --from=build /website/cmd/golangorg/index.split.* /app/\nENV GOLANGORG_INDEX_GLOB index.split.*\n\nCMD [\"/app/golangorg\"]\n"
+}

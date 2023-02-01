@@ -1,0 +1,50 @@
+FROM {{ "quibble-buster" | image_tag }}
+
+ENV PHP_VERSION=7.2
+
+USER root
+
+# Align with SRE provided packages
+COPY wikimedia-php72.list /etc/apt/sources.list.d/wikimedia-php72.list
+
+#############################
+#  Debian packages we need  #
+#############################
+{% set mediawiki_deps|replace('\n', ' ') -%}
+php-apcu
+php7.2-bcmath
+php7.2-cli
+php7.2-curl
+php7.2-fpm
+php7.2-gd
+php7.2-gmp
+php7.2-intl
+php7.2-ldap
+php7.2-mbstring
+php7.2-memcached
+php7.2-mysql
+php7.2-pgsql
+php7.2-sqlite3
+php7.2-tidy
+php7.2-xml
+php7.2-zip
+php-wikidiff2
+{%- endset -%}
+# See T236333 for wikidiff2 rationale; may need ported forward to
+# quibble-buster-php73 at some point in future.
+
+RUN {{ mediawiki_deps | apt_install }} \
+    && /install-php-fpm-conf.sh
+
+# Install XDebug but disables it by default due to its performance impact
+RUN {{ "php-xdebug" | apt_install }} \
+    && phpdismod xdebug
+
+# Make the image use PHP 7.2, not 7.3 which is the default on buster
+RUN update-alternatives --set php /usr/bin/php7.2
+
+# Unprivileged
+RUN install --directory /workspace --owner=nobody --group=nogroup
+USER nobody
+WORKDIR /workspace
+ENTRYPOINT ["/usr/local/bin/quibble"]

@@ -1,0 +1,12 @@
+FROM registry.fedoraproject.org/fedora:31
+RUN dnf -y install --refresh dnf-plugins-core && dnf -y install docker git python3-setuptools e2fsprogs koji osbs-client\
+    python3-osbs-client gssproxy fedpkg python3-docker-squash atomic-reactor python3-atomic-reactor* go-md2man python3-productmd\
+    python3-gobject python3-libmodulemd python3-pdc-client ostree flatpak-module-tools flatpak skopeo && dnf clean all
+ADD ./orchestrator_customize.json /usr/share/osbs/orchestrator_customize.json
+ADD ./worker_customize.json /usr/share/osbs/worker_customize.json
+ADD ./krb5.conf /etc
+RUN printf '[libdefaults]\n default_ccache_name = DIR:/tmp/ccache_%%{uid}' >/etc/krb5.conf.d/ccache.conf
+ADD ./krb5.osbs_{{osbs_url}}.keytab /etc/
+ADD ./ca.crt /etc/pki/ca-trust/source/anchors/osbs.ca.crt
+RUN update-ca-trust
+CMD ["python3", "/usr/bin/atomic-reactor", "--verbose", "inside-build"]

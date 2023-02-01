@@ -1,0 +1,107 @@
+{
+  "startTime": 1674217681448,
+  "endTime": 1674217682595,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 46,
+        "lineEnd": 46,
+        "columnStart": 4,
+        "columnEnd": 24
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 48,
+        "lineEnd": 48,
+        "columnStart": 4,
+        "columnEnd": 26
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 49,
+        "lineEnd": 49,
+        "columnStart": 4,
+        "columnEnd": 22
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 41,
+        "lineEnd": 41,
+        "columnStart": 4,
+        "columnEnd": 15
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 37,
+        "lineEnd": 37,
+        "columnStart": 4,
+        "columnEnd": 32
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 15,
+        "lineEnd": 18,
+        "columnStart": 4,
+        "columnEnd": 19
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 34,
+        "lineEnd": 34,
+        "columnStart": 4,
+        "columnEnd": 60
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 45,
+        "lineEnd": 45,
+        "columnStart": 4,
+        "columnEnd": 41
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 15,
+        "lineEnd": 18,
+        "columnStart": 4,
+        "columnEnd": 19
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 34,
+        "lineEnd": 34,
+        "columnStart": 4,
+        "columnEnd": 60
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 45,
+        "lineEnd": 45,
+        "columnStart": 4,
+        "columnEnd": 41
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM ubuntu:18.04\n\n# Basics\nENV _RESOURCES_PATH=\"/resources\"\n\n# Layer cleanup script\nCOPY docker-res/scripts/clean-layer.sh /usr/bin/clean-layer.sh\n\nRUN \\\n    mkdir $_RESOURCES_PATH && \\\n    chmod ug+rwx $_RESOURCES_PATH && \\\n    chmod a+rwx /usr/bin/clean-layer.sh\n\nRUN \\\n    apt-get update && \\\n    apt-get install --no-install-recommends -y \\\n        wget \\\n        python3 \\\n        python3-pip && \\\n        ln -s /usr/bin/pip3 /usr/bin/pip && \\\n        ln -s /usr/bin/python3 /usr/bin/python && \\\n    # Cleanup\n    clean-layer.sh && rm -rf /var/lib/apt/lists/*;\n\n# SSH Server\n## Install & Prepare SSH\nRUN \\\n    mkdir /var/run/sshd && \\\n    mkdir /root/.ssh && \\\n    mkdir /var/lib/sshd && \\\n    chmod -R 700 /var/lib/sshd/ && \\\n    chown -R root:sys /var/lib/sshd/ && \\\n    useradd -r -U -d /var/lib/sshd/ -c \"sshd privsep\" -s /bin/false sshd && \\\n    apt-get update && \\\n    apt-get install --no-install-recommends -y build-essential libssl-dev zlib1g-dev && \\\n    cd $_RESOURCES_PATH && \\\n    wget \"https://cdn.openbsd.org/pub/OpenBSD/OpenSSH/portable/openssh-8.0p1.tar.gz\" && \\\n    tar xfz openssh-8.0p1.tar.gz && \\\n    cd $_RESOURCES_PATH/openssh-8.0p1/ && \\\n    # modify the code where the 'PermitOpen' host is checked so that it supports regexes\n    sed -i \"s@strcmp(allowed_open->host_to_connect, requestedhost) != 0@strcmp(allowed_open->host_to_connect, requestedhost) != 0 \\&\\& match_hostname(requestedhost, allowed_open->host_to_connect) == 0@g\" ./channels.c && \\\n    ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" && \\\n    make && \\\n    make install && \\\n    # filelock is needed for our custom AuthorizedKeysCommand script in the OpenSSH server\n    apt-get install --no-install-recommends -y python3-setuptools && \\\n    pip install --no-cache-dir filelock && \\\n    # Python kubernetes client is needed for caching the authorized keys in Kubernetes mode\n    pip install --no-cache-dir kubernetes && \\\n    pip install --no-cache-dir docker && \\\n    # Cleanup\n    clean-layer.sh && rm openssh-8.0p1.tar.gz && rm -rf /var/lib/apt/lists/*;\n\n## Create user with restricted permissions for ssh\n# https://gist.github.com/smoser/3e9430c51e23e0c0d16c359a2ca668ae\n# https://www.tecmint.com/restrict-ssh-user-to-directory-using-chrooted-jail/\n# http://www.ab-weblog.com/en/creating-a-restricted-ssh-user-for-ssh-tunneling-only/\nRUN useradd -d /home/limited-user -m -s /bin/true --gid nogroup --skel /dev/null --create-home limited-user && \\ \n    #chmod 755 /home/limited-user && \\ \n    #chmod g+rwx /home/limited-user && \\ \n    echo 'PATH=\"\"' >> /home/limited-user/.profile && \\\n    echo 'limited-user:limited' |chpasswd && \\\n    chmod 555 /home/limited-user/ && \\\n    cd /home/limited-user/ && \\\n    # .bash_logout .bashrc\n    chmod 444 .profile && \\\n    chown root:root /home/limited-user/\n\nCOPY docker-res/start_ssh.py $_RESOURCES_PATH/start_ssh.py\nCOPY docker-res/ssh/* /etc/ssh/\n\n# Set default configuration\nENV SSH_PERMIT_TARGET_HOST=\"*\" \\\n    SSH_PERMIT_TARGET_PORT=\"*\" \\ \n    SSH_TARGET_KEY_PATH=\"~/.ssh/id_ed25519.pub\" \\ \n    MANUAL_AUTH_FILE=\"false\" \\\n    SSHD_ENVIRONMENT_VARIABLES=\"${_RESOURCES_PATH}/sshd_environment\" \\\n    SSH_TARGET_PUBLICKEY_API_PORT=8080 \\\n    ENV_NAME_SSH_TARGET_LABELS=\"\"\n\nRUN \\\n    chmod -R ug+rwx $_RESOURCES_PATH && \\\n    touch $SSHD_ENVIRONMENT_VARIABLES && \\\n    chmod a+r $SSHD_ENVIRONMENT_VARIABLES && \\\n    # Replace the environment variable in the script directly here, since the script is executed from sshd shell and cannot \n    # access the environment variable directly \n    sed -i 's@$SSHD_ENVIRONMENT_VARIABLES@'\"$SSHD_ENVIRONMENT_VARIABLES\"'@g' /etc/ssh/authorize.sh\n\nENTRYPOINT python $_RESOURCES_PATH/start_ssh.py\n"
+}

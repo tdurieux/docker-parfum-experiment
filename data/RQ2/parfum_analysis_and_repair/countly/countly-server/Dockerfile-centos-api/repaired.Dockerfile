@@ -1,0 +1,61 @@
+FROM centos:7.8.2003
+
+ARG COUNTLY_PLUGINS=mobile,web,desktop,plugins,density,locale,browser,sources,views,enterpriseinfo,logger,systemlogs,populator,reports,crashes,push,star-rating,slipping-away-users,compare,server-stats,dbviewer,assistant,times-of-day,compliance-hub,alerts,onboarding,consolidate,remote-config,hooks,dashboards
+# Enterprise Edition:
+#ARG COUNTLY_PLUGINS=mobile,web,desktop,plugins,density,locale,browser,sources,views,drill,funnels,retention_segments,flows,cohorts,surveys,remote-config,ab-testing,formulas,activity-map,concurrent_users,revenue,logger,systemlogs,populator,reports,crashes,push,geo,block,users,star-rating,slipping-away-users,compare,server-stats,assistant,dbviewer,crash_symbolication,groups,white-labeling,alerts,times-of-day,compliance-hub,onboarding,active_users,performance-monitoring,config-transfer,consolidate,data-manager,hooks,dashboards,heatmaps
+
+EXPOSE 3001
+HEALTHCHECK --start-period=400s CMD curl --fail http://localhost:3001/o/ping || exit 1
+
+USER root
+
+# Core dependencies
+## Tini
+ENV COUNTLY_CONTAINER="api" \
+	COUNTLY_DEFAULT_PLUGINS="${COUNTLY_PLUGINS}" \
+	COUNTLY_CONFIG_API_API_WORKERS="1" \
+	COUNTLY_CONFIG_API_API_HOST="0.0.0.0" \
+	TINI_VERSION="0.18.0" \
+	PATH="/opt/rh/rh-nodejs10/root/usr/bin:${PATH}"
+
+WORKDIR /opt/countly
+COPY . .
+
+RUN curl -f -s -L -o /tmp/tini.rpm "https://github.com/krallin/tini/releases/download/v${TINI_VERSION}/tini_${TINI_VERSION}.rpm" && \
+	rpm -i /tmp/tini.rpm && \
+
+	curl -f -sL https://rpm.nodesource.com/setup_14.x | bash - && \
+	yum -y install nodejs && \
+	ln -s /usr/bin/node /usr/bin/nodejs && \
+
+	yum -y install centos-release-scl && \
+	yum -y install openssl-devel devtoolset-7-gcc-c++ make git wget unzip bzip2 make binutils autoconf automake makedepend libtool pkgconfig zlib-devel libxml2-devel python-setuptools which && \
+	source /opt/rh/devtoolset-7/enable && \
+
+	# modify standard distribution
+	./bin/docker/modify.sh && \
+
+	# preinstall
+	cp -n ./api/config.sample.js ./api/config.js && \
+	cp -n ./frontend/express/config.sample.js ./frontend/express/config.js && \
+	HOME=/tmp npm install --unsafe-perm=true --allow-root && \
+	HOME=/tmp npm install argon2 --build-from-source --unsafe-perm=true --allow-root && \
+	./bin/docker/preinstall.sh && \
+	bash /opt/countly/bin/scripts/detect.init.sh && \
+
+	# cleanup & chown
+	npm remove -y --no-save mocha nyc should supertest && \
+	rm -rf /opt/app-root/src/.npm && \
+	yum remove -y git wget unzip gcc-c++ gcc centos-release-scl devtoolset-7-gcc-c++ devtoolset-7-gcc make automake autoconf makedepend zlib-devel libxml2-devel python-setuptools openssl-devel devtoolset-7-gcc devtoolset-7-libstdc++-devel python36-devel centos-release-scl devtoolset-7-gcc-c++ && \
+	yum -y install pango.x86_64 libXcomposite.x86_64 libXcursor.x86_64 libXdamage.x86_64 libXext.x86_64 libXi.x86_64 libXtst.x86_64 cups-libs.x86_64 libXScrnSaver.x86_64 libXrandr.x86_64 GConf2.x86_64 alsa-lib.x86_64 atk.x86_64 gtk3.x86_64 ipa-gothic-fonts xorg-x11-fonts-100dpi xorg-x11-fonts-75dpi xorg-x11-utils xorg-x11-fonts-cyrillic xorg-x11-fonts-Type1 xorg-x11-fonts-misc && \
+	yum clean all && \
+	rm -rf test /tmp/* /tmp/.??* /var/tmp/* /var/tmp/.??* /var/log/* && \
+	chown -R 1001:0 /opt/countly && \
+	chmod -R g=u /opt/countly && npm cache clean --force; && rm -rf /var/cache/yum
+
+
+USER 1001:0
+
+ENTRYPOINT ["/usr/bin/tini", "-v", "--"]
+
+CMD ["/opt/countly/bin/docker/cmd.sh"]

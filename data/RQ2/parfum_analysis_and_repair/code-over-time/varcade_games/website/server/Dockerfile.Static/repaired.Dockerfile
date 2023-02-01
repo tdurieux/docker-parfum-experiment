@@ -1,0 +1,1 @@
+# A very basic image that will just mount a persistent volume and server static files

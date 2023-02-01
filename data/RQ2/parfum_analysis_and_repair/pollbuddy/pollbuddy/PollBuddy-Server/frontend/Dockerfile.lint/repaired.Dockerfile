@@ -1,0 +1,31 @@
+# This dockerfile is merely to launch a lint test. The app will not run afterwards.
+
+FROM node:16
+
+# Create app directory
+WORKDIR /usr/src/app
+
+# Install app dependencies
+# A wildcard is used to ensure both package.json AND package-lock.json are copied
+# where available (npm@5+)
+COPY package*.json ./
+
+# Install all dependencies
+RUN npm install && npm cache clean --force;
+
+# Bundle app source
+# Folders
+COPY public ./public
+COPY src ./src
+# Files
+COPY .eslint* ./
+
+# copy both the example file and any existing custom .env
+COPY .env* ./
+# attempt to move the example .env to the name ".env"
+# if .env is already there, this fails and the custom instance is used
+# if not, the example instance is used
+RUN ["mv","-n", ".env.example", ".env"]
+
+# Start command
+CMD ["sh", "-c", "echo 'Running frontend lint:' ; npm run lint"]

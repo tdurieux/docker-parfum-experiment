@@ -1,0 +1,14 @@
+# syntax=docker/dockerfile:experimental
+FROM wyrihaximusnet/php:7.4-nts-alpine-slim-dev-root AS install-dependencies
+RUN mkdir /workdir
+COPY ./composer.json /workdir
+COPY ./composer.lock /workdir
+WORKDIR /workdir
+RUN composer install --ansi --no-progress --no-interaction --prefer-dist
+
+## Compile runtime image
+FROM wyrihaximusnet/php:7.4-nts-alpine-slim-root AS runtime
+RUN mkdir /workdir
+COPY ./entrypoint.sh ./comment.php ./post-process.php ./composer.* /workdir/
+COPY --from=install-dependencies /workdir/vendor/ /workdir/vendor/
+ENTRYPOINT ["/workdir/entrypoint.sh"]

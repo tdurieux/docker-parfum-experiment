@@ -1,0 +1,42 @@
+FROM ubuntu:18.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+WORKDIR /
+
+RUN apt-get update && apt-get upgrade -y && apt-get clean
+
+# get python 3.7, default for (Ubuntu 18.04) is Python 3.6
+RUN apt-get install --no-install-recommends -y curl python3.7 python3.7-dev python3.7-distutils && rm -rf /var/lib/apt/lists/*;
+RUN update-alternatives --install /usr/bin/python python /usr/bin/python3.7 1
+
+# Use python 3.7 as default
+RUN update-alternatives --set python /usr/bin/python3.7
+
+# get pip
+RUN curl -f -s https://bootstrap.pypa.io/get-pip.py -o get-pip.py && \
+    python get-pip.py --force-reinstall && \
+    rm get-pip.py
+
+# Scann needs gcc9 and default for (Ubuntu 18.04) is gcc7
+RUN apt update && apt install --no-install-recommends -y build-essential && \
+    apt-get install --no-install-recommends -y software-properties-common && \
+    add-apt-repository ppa:ubuntu-toolchain-r/test && \
+    apt update && \
+    apt install --no-install-recommends -y gcc-9 g++-9 && rm -rf /var/lib/apt/lists/*;
+
+
+# get the scann whl
+RUN curl -f https://storage.googleapis.com/scann/releases/1.0.0/scann-1.0.0-cp37-cp37m-linux_x86_64.whl --output scann-1.0.0-cp37-cp37m-linux_x86_64.whl
+
+COPY requirements.txt /requirements.txt
+
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY . /workspace
+WORKDIR /workspace
+
+# for testing the image
+RUN pip install --no-cache-dir pytest && pytest -v -s
+
+ENTRYPOINT ["jina", "pod", "--uses", "config.yml"]

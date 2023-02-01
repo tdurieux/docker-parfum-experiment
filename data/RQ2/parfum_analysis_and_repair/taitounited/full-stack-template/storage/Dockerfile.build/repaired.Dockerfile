@@ -1,0 +1,1 @@
+# Dummy dockerfile for 'taito start --prod'

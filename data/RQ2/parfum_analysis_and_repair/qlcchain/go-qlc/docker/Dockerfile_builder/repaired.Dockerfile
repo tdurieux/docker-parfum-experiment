@@ -1,0 +1,1 @@
+# Build gqlc in a stock Go builder container

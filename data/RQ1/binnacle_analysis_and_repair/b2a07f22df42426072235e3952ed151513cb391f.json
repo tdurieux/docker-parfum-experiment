@@ -1,0 +1,35 @@
+{
+  "startTime": 1674250383471,
+  "endTime": 1674250383966,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 22,
+        "lineEnd": 22,
+        "columnStart": 4,
+        "columnEnd": 60
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 22,
+        "lineEnd": 22,
+        "columnStart": 64,
+        "columnEnd": 91
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 32,
+        "lineEnd": 32,
+        "columnStart": 4,
+        "columnEnd": 72
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM centos:latest\n# Tag in \"FROM\" will be replaced by \"dockit\" script\nMAINTAINER Alan Robertson <alanr@assimilationsystems.com>\nENV YUM @YUM@\nENV NEOPARENT /usr/share\nENV NEOROOT $NEOPARENT/neo4j\nENV NEODATA /var/lib/neo4j/data\nENV NEOSERVFILE /lib/systemd/system/neo4j.service\nENV CERT https://debian.neo4j.org/neotechnology.gpg.key\nENV GITREPOSITORY assimilation-official\nENV GITVERSION master\nENV GITHUB https://github.com/assimilation/$GITREPOSITORY\nENV GITTARZAN $GITHUB/tarball/$GITVERSION\nENV GITHASH 5e5971a # Will be updated by \"dockit\" script\nENV GITPATH assimilation-${GITREPOSITORY}-${GITHASH}\nRUN $YUM install epel-release pkg-config || true\nRUN $YUM install deltarpm glib2 libpcap zlib-devel python\t\\\n\tpython-devel python-flask which @JRE@ lsof\t\\\n\tlibsodium-devel gcc cmake make glib2-devel valgrind resource-agents \\\n\twget libpcap-devel pylint rpm-build iproute\nRUN $YUM remove vim-minimal && $YUM install doxygen graphviz\nRUN $YUM install python-pip\nRUN pip install --no-cache-dir 'py2neo==@PY2NEOVERS@' getent netaddr pytest && pip install --no-cache-dir ctypesgen --pre\n#Can't do this - their RPM process is broken...\n#RUN wget -q -O - $CERT > neotechnology.gpg.key; rpm --import neotechnology.gpg.key; rm neotechnology.gpg.key\n#RUN printf '[neo4j]\\nname=Neo4j Yum Repo\\nbaseurl=http://yum.neo4j.org\\nenabled=1\\ngpgcheck=1' > /etc/yum.repos.d/neo4j.repo\n#RUN $YUM install neo4j-${NEOVERS}\n########################################################################\n# This is where we roll our own installer because Neo4j doesn't have one\n#\n# Install the @NEOVERS@ of Neo4j @NEOEDITION@ edition\nRUN wget -q \"https://neo4j.com/artifact.php?name=neo4j-@NEOEDITION@-@NEOVERS@-unix.tar.gz\" -O /tmp/neo4j-@NEOEDITION@-@NEOVERS@-unix.tar.gz\nRUN tar -C $NEOPARENT -xzf /tmp/neo4j-@NEOEDITION@-@NEOVERS@-unix.tar.gz && rm /tmp/neo4j-@NEOEDITION@-@NEOVERS@-unix.tar.gz\nRUN rm -f $NEOROOT\nRUN ln -s $NEOPARENT/neo4j-@NEOEDITION@-@NEOVERS@/ $NEOROOT\nRUN useradd -c 'Neo4j Graph database' -d ${NEOROOT} --user-group --no-create-home --system --shell /bin/false neo4j\nRUN chown -R neo4j:neo4j  $NEOROOT-@NEOEDITION@-@NEOVERS@/\nRUN mkdir -p $NEODATA/databases\nRUN chown -R neo4j:neo4j $NEODATA\nRUN rm -fr $NEOROOT/data\nRUN ln -s $NEODATA $NEOROOT/data\nRUN printf '[Unit]\\nDescription = Neo4j Graph Database\\nAfter = network.target\\n\\n' > $NEOSERVFILE\nRUN printf '[Service]\\nType = simple\\n' >> $NEOSERVFILE\nRUN printf 'ExecStart = %s/bin/neo4j console\\n' \"$NEOROOT\" >> $NEOSERVFILE\nRUN printf 'TimeoutStartSec = 120\\nTimeoutStopSec = 30\\nuser=neo4j\\ngroup=neo4j\\n' >> $NEOSERVFILE\nRUN printf 'LimitNOFILE=40000\\n\\n' >> $NEOSERVFILE\nRUN printf '[Install]\\nWantedBy = multi-user.target\\n' >> $NEOSERVFILE\nRUN echo $NEOSERVFILE; cat $NEOSERVFILE\n#\n# End of our home-brew Neo4j installer...\n#\n########################################################################\nRUN echo \"@OURDATE@\"\nRUN mkdir -p /root/assimilation/bin /root/assimilation/packages /run/systemd/journal /root/rpmbuild/SOURCES /var/lib/heartbeat/lrm\nRUN echo RUNNING \"ADD $GITTARZAN /root/assimilation\"\nADD $GITTARZAN /root/assimilation/\nWORKDIR /root/assimilation\nRUN tar xzf $GITVERSION && mv [Aa]ssimilation-* src\nRUN cp $GITVERSION /root/rpmbuild/SOURCES/${GITPATH}.tgz\n# Build the RPM\nWORKDIR /root/rpmbuild/SOURCES\nRUN rpmbuild -ba /root/assimilation/src/docker/CentOS6/assimilation-cma.spec --define=\"assimversion $GITPATH\"\nWORKDIR /root/assimilation/bin\n# Now build separately to test installing the packages and run our tests...\nRUN cmake ../src && make install\nENV BROKENDNS true\nRUN $YUM install rsyslog || /bin/true\nRUN $YUM install jq\nWORKDIR /root/rpmbuild/RPMS/@ARCH@/\nRUN pwd; ls -l\nRUN $YUM install assimilation-nanoprobe*.rpm assimilation-cma*.rpm\nRUN echo \"/usr/lib*/assimilation\" > /etc/ld.so.conf.d/assimilation.conf && ldconfig /usr/lib*/assimilation\nWORKDIR /root/assimilation/src/cma\nRUN if test -f /etc/rsyslog.conf; then  sed /etc/rsyslog.conf -e 's%^$.*imjournal%#&%' -e 's%.*$OmitLocalLogging.*%$OmitLocalLogging off%' > /tmp/foo; fi\nRUN printf \"%s\\n%s\\n\" '$ModLoad imuxsock' '$SystemLogSocketName /dev/log' >> /tmp/foo\nRUN  cp /tmp/foo /etc/rsyslog.conf; rm /tmp/foo\nRUN /usr/sbin/assimcli genkeys\nRUN $YUM install python-demjson\nRUN /usr/sbin/rsyslogd&  $NEOROOT/bin/neo4j console & sleep 20; py.test -rw -v tests\nRUN cp /root/rpmbuild/RPMS/@ARCH@/* /root/assimilation/packages\nRUN echo \"GOOD BUILD: centos:latest\" # Will be updated by \"dockit\" script\nRUN echo \"GOODBUILD=$(echo \"$(lsb_release -i -s)_$(lsb_release -r -s)-$(uname -m)\" | tr '[A-Z]' '[a-z]')\"\nRUN echo \"ASSIMVERSION=$(cma --version)\"\n###  Our RPMs\n"
+}

@@ -1,0 +1,13 @@
+FROM node:10
+
+RUN apt-get update && apt-get install --no-install-recommends -y jq && rm -rf /var/lib/apt/lists/*;
+RUN mkdir -p /usr/src/app && rm -rf /usr/src/app
+COPY . /usr/src/app
+WORKDIR /usr/src/app
+# This is okay, as it's only the builder image. This will not work on Jenkins otherwise.
+RUN npm config set unsafe-perm true
+RUN npm install -g typescript@$(jq .devDependencies.typescript package.json | tr -d '"') && npm cache clean --force;
+RUN npm install --production && npm cache clean --force;
+RUN tsc && npm pack && cp -f wicked-sdk-*.tgz wicked-sdk.tgz
+
+CMD ["/bin/true"]

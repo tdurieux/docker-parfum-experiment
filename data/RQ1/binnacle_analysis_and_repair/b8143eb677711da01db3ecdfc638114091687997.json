@@ -1,0 +1,26 @@
+{
+  "startTime": 1674236892558,
+  "endTime": 1674236892682,
+  "originalSmells": [
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 30,
+        "lineEnd": 30,
+        "columnStart": 2,
+        "columnEnd": 26
+      }
+    },
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 32,
+        "lineEnd": 32,
+        "columnStart": 5,
+        "columnEnd": 16
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "### Stage 0 - Base image\nFROM node:10.14.2-alpine as base\nWORKDIR /app\nRUN mkdir -p dist node_modules && chown -R node:node .\n\n### Stage 1 - Base image for development image to install and configure Chromium for unit tests\nFROM base as developBase\nRUN \\\n  echo \"http://dl-cdn.alpinelinux.org/alpine/edge/community\" >> /etc/apk/repositories \\\n  && echo \"http://dl-cdn.alpinelinux.org/alpine/edge/main\" >> /etc/apk/repositories \\\n  && echo \"http://dl-cdn.alpinelinux.org/alpine/edge/testing\" >> /etc/apk/repositories \\\n  && apk --no-cache  update \\\n  && apk --no-cache  upgrade \\\n  && apk add --no-cache fontconfig bash udev ttf-opensans chromium \\\n  && mkdir -p /@tidepool/viz/node_modules /tideline/node_modules /tidepool-platform-client/node_modules \\\n  && chown -R node:node /@tidepool /tideline /tidepool-platform-client \\\n  && rm -rf /var/cache/apk/* /tmp/*\nENV \\\n  CHROME_BIN=/usr/bin/chromium-browser \\\n  LIGHTHOUSE_CHROMIUM_PATH=/usr/bin/chromium-browser \\\n  NODE_ENV=development\n\n\n### Stage 2 - Create cached `node_modules`\n# Only rebuild layer if `package.json` has changed\nFROM base as dependencies\nUSER node\nCOPY package.json .\nRUN \\\n\n  npm install --production && cp -R node_modules production_node_modules \\\n  # Build all modules, including `devDependancies` \\\n  && npm install && npm cache clean --force;\n\n\n### Stage 3 - Development root with Chromium installed for unit tests\nFROM developBase as develop\nWORKDIR /app\nUSER node\n# Copy all `node_modules`\nCOPY --chown=node:node --from=dependencies /app/node_modules ./node_modules\n# Copy source files\nCOPY --chown=node:node . .\nVOLUME [\"/app\", \"/app/node_modules\", \"/app/dist\"]\nCMD [\"npm\", \"start\"]\n\n\n### Stage 4 - Linting and unit testing\nFROM develop as test\nENV NODE_ENV=test\nUSER node\nCMD [\"npm\", \"test\"]\n\n\n### Stage 5 - Base image for builds to share args and environment variables\nFROM base as buildBase\n# ARGs\nARG API_HOST\nARG DISCOVERY_HOST=hakken:8000\nARG PORT=3000\nARG PUBLISH_HOST=hakken\nARG SERVICE_NAME=blip\n# Set ENV from ARGs\nENV \\\n  API_HOST=$API_HOST \\\n  DISCOVERY_HOST=$DISCOVERY_HOST \\\n  PORT=$PORT \\\n  PUBLISH_HOST=$PUBLISH_HOST \\\n  SERVICE_NAME=$SERVICE_NAME \\\n  NODE_ENV=production\n\n\n### Stage 6 - Build production-ready release\nFROM buildBase as build\nUSER node\n# Copy all `node_modules` from `dependancies` layer\nCOPY --from=dependencies /app/node_modules ./node_modules\n# Copy source files, and possibily invalidate so we have to rebuild\nCOPY . .\nRUN npm run build\n\n\n### Stage 7 - Serve production-ready release\nFROM buildBase as serve\nUSER node\n# Copy only `node_modules` and files needed to run the server\nCOPY --from=dependencies /app/production_node_modules ./node_modules\nCOPY --from=build /app/dist dist\nCOPY --from=build \\\n  /app/config.server.js \\\n  /app/package.json \\\n  /app/server.js \\\n  ./\nCMD [\"npm\", \"run\", \"server\"]\n"
+}

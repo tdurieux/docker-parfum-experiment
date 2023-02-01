@@ -1,0 +1,43 @@
+ARG PACKAGE_TYPE
+ARG DOCKER_KONG_SUFFIX
+ARG KONG_SHA
+ARG DOCKER_REPOSITORY
+
+FROM ${DOCKER_REPOSITORY}:kong-${PACKAGE_TYPE}-${DOCKER_KONG_SUFFIX} as KONG
+
+FROM kong/fpm:latest as FPM
+
+COPY --from=KONG /tmp/build /tmp/build
+COPY fpm-entrypoint.sh /fpm-entrypoint.sh
+COPY after-install.sh /after-install.sh
+COPY .rpmmacros /root/.rpmmacros
+ARG PRIVATE_KEY_FILE
+COPY ${PRIVATE_KEY_FILE} /kong.private.asc
+ARG PRIVATE_KEY_PASSPHRASE
+ENV PRIVATE_KEY_PASSPHRASE ${PRIVATE_KEY_PASSPHRASE}
+
+ARG RESTY_IMAGE_BASE="ubuntu"
+ARG RESTY_IMAGE_TAG="18.04"
+
+ARG PACKAGE_TYPE
+ARG KONG_VERSION
+ARG KONG_PACKAGE_NAME
+ARG BUILDPLATFORM
+
+ARG PACKAGE_CONFLICTS="kong-enterprise-edition"
+ENV PACKAGE_CONFLICTS $PACKAGE_CONFLICTS
+
+ARG PACKAGE_PROVIDES="kong-community-edition"
+ENV PACKAGE_PROVIDES $PACKAGE_PROVIDES
+
+ARG PACKAGE_REPLACES="kong-community-edition"
+ENV PACKAGE_REPLACES $PACKAGE_REPLACES
+
+RUN mkdir -p /tmp/build/lib/systemd/system/
+COPY kong.service /tmp/build/lib/systemd/system/kong.service
+COPY kong.logrotate /tmp/build/etc/kong/kong.logrotate
+
+RUN /fpm-entrypoint.sh
+
+FROM alpine
+COPY --from=FPM /output /output

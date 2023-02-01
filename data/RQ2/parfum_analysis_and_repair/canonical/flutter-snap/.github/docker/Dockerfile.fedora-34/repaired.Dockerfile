@@ -1,0 +1,1 @@
+# based on https://github.com/ogra1/snapd-docker

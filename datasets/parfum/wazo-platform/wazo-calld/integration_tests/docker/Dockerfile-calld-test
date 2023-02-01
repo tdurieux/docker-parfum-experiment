@@ -1,0 +1,10 @@
+FROM wazoplatform/wazo-calld
+
+ENV PYTHONDONTWRITEBYTECODE='true'
+
+RUN install -dm777 /usr/share/asterisk/voicemail
+
+ADD . /usr/src/wazo-calld
+WORKDIR /usr/src/wazo-calld
+
+RUN python setup.py develop

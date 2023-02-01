@@ -1,0 +1,1 @@
+# Build an appveyor Windows container image with Sming tools installed

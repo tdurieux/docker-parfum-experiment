@@ -1,0 +1,89 @@
+{
+  "startTime": 1674243859235,
+  "endTime": 1674243859723,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 16,
+        "lineEnd": 16,
+        "columnStart": 4,
+        "columnEnd": 34
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 66,
+        "lineEnd": 66,
+        "columnStart": 4,
+        "columnEnd": 37
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 67,
+        "lineEnd": 67,
+        "columnStart": 4,
+        "columnEnd": 52
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 68,
+        "lineEnd": 68,
+        "columnStart": 4,
+        "columnEnd": 53
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 58,
+        "lineEnd": 58,
+        "columnStart": 24,
+        "columnEnd": 103
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 57,
+        "lineEnd": 57,
+        "columnStart": 4,
+        "columnEnd": 40
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 14,
+        "lineEnd": 14,
+        "columnStart": 4,
+        "columnEnd": 256
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 14,
+        "lineEnd": 14,
+        "columnStart": 4,
+        "columnEnd": 256
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 14,
+        "lineEnd": 14,
+        "columnStart": 4,
+        "columnEnd": 256
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM nvidia/cuda:latest\n\nENV USER root\n\n# -------------------------------------------------------------------------------------\n# install needed software -\n# openssh\n# mpi\n# awscli\n# supervisor\n# -------------------------------------------------------------------------------------\n\nRUN apt update && DEBIAN_FRONTEND=noninteractive apt --no-install-recommends install -y iproute2 openssh-server openssh-client python python-pip python3 python3-dev python3-pip build-essential gfortran wget curl libfftw3-dev git libcudnn7 libcudnn7-dev wget libjemalloc-dev pkg-config zip unzip && rm -rf /var/lib/apt/lists/*;\nRUN apt upgrade -y\n\n\nRUN pip2 install --no-cache-dir supervisor awscli\n\nENV DEBIAN_FRONTEND noninteractive\n\nENV NOTVISIBLE \"in users profile\"\n\n#####################################################\n## SSH SETUP\nRUN mkdir -p /var/run/sshd\nRUN sed -i 's/PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config\nRUN sed 's@session\\s*required\\s*pam_loginuid.so@session optional pam_loginuid.so@g' -i /etc/pam.d/sshd\nRUN echo \"export VISIBLE=now\" >> /etc/profile\n\nRUN echo \"${USER} ALL=(ALL) NOPASSWD:ALL\" >> /etc/sudoers\nENV SSHDIR /root/.ssh\nRUN mkdir -p ${SSHDIR}\nRUN touch ${SSHDIR}/sshd_config\nRUN ssh-keygen -t rsa -f ${SSHDIR}/ssh_host_rsa_key -N ''\nRUN cp ${SSHDIR}/ssh_host_rsa_key.pub ${SSHDIR}/authorized_keys\nRUN cp ${SSHDIR}/ssh_host_rsa_key ${SSHDIR}/id_rsa\nRUN echo \"    IdentityFile ${SSHDIR}/id_rsa\" >> /etc/ssh/ssh_config\nRUN echo \"Host *\" >> /etc/ssh/ssh_config && echo \"    StrictHostKeyChecking no\" >> /etc/ssh/ssh_config\nRUN chmod -R 600 ${SSHDIR}/* && \\\n    chown -R ${USER}:${USER} ${SSHDIR}/\n# check if ssh agent is running or not, if not, run\nRUN eval `ssh-agent -s` && ssh-add ${SSHDIR}/id_rsa\n\n##################################################\n## S3 OPTIMIZATION\n\nRUN aws configure set default.s3.max_concurrent_requests 30\nRUN aws configure set default.s3.max_queue_size 10000\nRUN aws configure set default.s3.multipart_threshold 64MB\nRUN aws configure set default.s3.multipart_chunksize 16MB\nRUN aws configure set default.s3.max_bandwidth 4096MB/s\nRUN aws configure set default.s3.addressing_style path\n\n##################################################\n## CUDA MPI\n\nRUN wget -O /tmp/openmpi.tar.gz https://download.open-mpi.org/release/open-mpi/v4.0/openmpi-4.0.0.tar.gz && \\\n    tar -xvf /tmp/openmpi.tar.gz -C /tmp && rm /tmp/openmpi.tar.gz\nRUN cd /tmp/openmpi* && ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" --prefix=/opt/openmpi --with-cuda --enable-mpirun-prefix-by-default && \\\n    make -j $(nproc) && make install\nRUN echo \"export PATH=$PATH:/opt/openmpi/bin\" >> /etc/bash.bashrc\nRUN echo \"export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/opt/openmpi/lib:/usr/local/cuda/include:/usr/local/cuda/lib64:/usr/local/cuda/extras/CUPTI/lib64\" >> /etc/bash.bashrc\n\n###################################################\n## TENSORFLOW INSTALL\n\nRUN pip3 install --no-cache-dir numpy six wheel mock\nRUN pip3 install --no-cache-dir keras_applications==1.0.6 --no-deps\nRUN pip3 install --no-cache-dir keras_preprocessing==1.0.5 --no-deps\n\nRUN mkdir -p /usr/lib/x86_64-linux-gnu/nccl/lib\nRUN mkdir -p /usr/lib/x86_64-linux-gnu/nccl/include\nRUN cp /usr/lib/x86_64-linux-gnu/libnccl* /usr/lib/x86_64-linux-gnu/nccl/\nRUN cp /usr/include/nccl.h /usr/lib/x86_64-linux-gnu/nccl/include\n\nRUN wget -O /tmp/bazel.sh \"https://github.com/bazelbuild/bazel/releases/download/0.18.0/bazel-0.18.0-installer-linux-x86_64.sh\"\nRUN chmod +x /tmp/bazel.sh\nRUN bash -c \"/tmp/bazel.sh\"\nRUN git clone https://github.com/tensorflow/tensorflow /root/tensorflow\nADD conf/tensorflow_build.sh /root/\nRUN chmod +x /root/tensorflow_build.sh\nRUN /root/tensorflow_build.sh\n\nADD conf/horovod_build.sh /root/\nRUN chmod +x /root/horovod_build.sh\nRUN /root/horovod_build.sh\n\n###################################################\n## IMAGENET DATASET\n\nRUN git clone https://github.com/aws-samples/deep-learning-models.git /root/deep-learning-models\n\n\n###################################################\n## supervisor container startup\n\nADD conf/supervisord/supervisord.conf /etc/supervisor/supervisord.conf\nADD supervised-scripts/mpi-run.sh supervised-scripts/mpi-run.sh\nRUN chmod 755 supervised-scripts/mpi-run.sh\n\nEXPOSE 22\nRUN export PATH=\"$PATH:/opt/openmpi/bin\"\nADD batch-runtime-scripts/entry-point.sh batch-runtime-scripts/entry-point.sh\nRUN chmod 0755 batch-runtime-scripts/entry-point.sh\n\nCMD /batch-runtime-scripts/entry-point.sh\n"
+}

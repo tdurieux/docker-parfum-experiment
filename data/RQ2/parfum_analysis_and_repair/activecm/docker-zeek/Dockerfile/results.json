@@ -1,0 +1,35 @@
+{
+  "startTime": 1674253030758,
+  "endTime": 1674253031491,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 89,
+        "lineEnd": 89,
+        "columnStart": 4,
+        "columnEnd": 33
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 37,
+        "lineEnd": 40,
+        "columnStart": 7,
+        "columnEnd": 22
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 47,
+        "lineEnd": 47,
+        "columnStart": 7,
+        "columnEnd": 68
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM alpine:3.12 as builder\n\nARG ZEEK_VERSION=4.2.0\nARG AF_PACKET_VERSION=3.0.2\n\nARG BUILD_PROCS=2\n\nRUN apk add --no-cache zlib openssl libstdc++ libpcap libgcc\nRUN apk add --no-cache -t .build-deps \\\n    bsd-compat-headers \\\n    libmaxminddb-dev \\\n    linux-headers \\\n    openssl-dev \\\n    libpcap-dev \\\n    python3-dev \\\n    zlib-dev \\\n    binutils \\\n    fts-dev \\\n    cmake \\\n    clang \\\n    bison \\\n    bash \\\n    swig \\\n    perl \\\n    make \\\n    flex \\\n    git \\\n    g++ \\\n    fts \\\n    krb5-dev\n\nRUN echo \"===> Cloning zeek...\" \\\n    && cd /tmp \\\n    && git clone --recursive --branch v$ZEEK_VERSION https://github.com/zeek/zeek.git\n\nRUN echo \"===> Compiling zeek...\" \\\n    && cd /tmp/zeek \\\n    && CC=clang ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" --prefix=/usr/local/zeek \\\n    --build-type=Release \\\n    --disable-broker-tests \\\n    --disable-auxtools \\\n    && make -j $BUILD_PROCS \\\n    && make install\n\nRUN echo \"===> Compiling af_packet plugin...\" \\\n    && git clone https://github.com/J-Gras/zeek-af_packet-plugin.git --branch ${AF_PACKET_VERSION} /tmp/zeek-af_packet-plugin \\\n    && cd /tmp/zeek-af_packet-plugin \\\n    && CC=clang ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" --with-kernel=/usr --zeek-dist=/tmp/zeek \\\n    && make -j $BUILD_PROCS \\\n    && make install \\\n    && /usr/local/zeek/bin/zeek -NN Zeek::AF_Packet\n\nRUN echo \"===> Shrinking image...\" \\\n    && strip -s /usr/local/zeek/bin/zeek\n\nRUN echo \"===> Size of the Zeek install...\" \\\n    && du -sh /usr/local/zeek\n\n####################################################################################################\nFROM alpine:3.12\n\n# python3 & bash are needed for zeekctl scripts\n# ethtool is needed to manage interface features\n# util-linux provides taskset command needed to pin CPUs\n# py3-pip and git are needed for zeek's package manager\nRUN apk --no-cache add \\\n    ca-certificates zlib openssl libstdc++ libpcap libmaxminddb libgcc fts krb5-libs \\\n    python3 bash \\\n    ethtool \\\n    util-linux \\\n    py3-pip git\n\nRUN ln -s $(which ethtool) /sbin/ethtool\n\nCOPY --from=builder /usr/local/zeek /usr/local/zeek\n\nENV ZEEKPATH .:/usr/local/zeek/share/zeek:/usr/local/zeek/share/zeek/policy:/usr/local/zeek/share/zeek/site\nENV PATH $PATH:/usr/local/zeek/bin\n\n# Install Zeek package manager\n# In Zeek v4, zkg is bundled with Zeek. However, the configuration of zkg when bundled with Zeek\n# differs from the configuration when installed via pip. The state directory is\n# /usr/local/zeek/var/lib/zkg when using v4's bundled zkg. When zkg is installed via pip\n# or the --user flag is supplied to the bundled zkg, .root/zkg is used as the state directory.\n# In order to re-use the same configuration across v3 and v4, we manually install zkg from pip.\nARG ZKG_VERSION=2.12.0\n\nARG ZEEK_DEFAULT_PACKAGES=\"bro-interface-setup bro-doctor ja3\"\n\nRUN pip install --no-cache-dir zkg==$ZKG_VERSION \\\n    && zkg autoconfig \\\n    && zkg refresh \\\n    && zkg install --force $ZEEK_DEFAULT_PACKAGES\n\nARG ZEEKCFG_VERSION=0.0.5\n\n# Set TARGET_ARCH to Docker build host arch unless TARGETARCH is specified via BuildKit\nRUN case `uname -m` in \\\n    x86_64) \\\n        TARGET_ARCH=\"amd64\" \\\n        ;; \\\n    aarch64) \\\n        TARGET_ARCH=\"arm64\" \\ \n        ;; \\\n    arm|armv7l) \\\n        TARGET_ARCH=\"arm\" \\\n        ;; \\\n    esac; \\\n    TARGET_ARCH=${TARGETARCH:-$TARGET_ARCH}; \\\n    echo https://github.com/activecm/zeekcfg/releases/download/v${ZEEKCFG_VERSION}/zeekcfg_${ZEEKCFG_VERSION}_linux_${TARGET_ARCH}; \\\n    wget -qO /usr/local/zeek/bin/zeekcfg https://github.com/activecm/zeekcfg/releases/download/v${ZEEKCFG_VERSION}/zeekcfg_${ZEEKCFG_VERSION}_linux_${TARGET_ARCH} \\\n    && chmod +x /usr/local/zeek/bin/zeekcfg\n\n# Run zeekctl cron to heal processes every 5 minutes\nRUN echo \"*/5       *       *       *       *       /usr/local/zeek/bin/zeekctl cron\" >> /etc/crontabs/root\nCOPY docker-entrypoint.sh /docker-entrypoint.sh\n\n# Users must supply their own node.cfg\nRUN rm -f /usr/local/zeek/etc/node.cfg\nCOPY etc/networks.cfg /usr/local/zeek/etc/networks.cfg\nCOPY etc/zeekctl.cfg /usr/local/zeek/etc/zeekctl.cfg\nCOPY share/zeek/site/ /usr/local/zeek/share/zeek/site/\n\nCMD [\"/docker-entrypoint.sh\"]\n"
+}

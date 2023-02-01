@@ -1,0 +1,19 @@
+FROM registry.ci.openshift.org/ocp/builder:rhel-8-golang-1.18-openshift-4.11 AS builder
+WORKDIR /go/src/github.com/openshift/cluster-kube-apiserver-operator
+COPY . .
+ENV GO_PACKAGE github.com/openshift/cluster-kube-apiserver-operator
+RUN make build --warn-undefined-variables
+
+FROM registry.ci.openshift.org/ocp/4.11:base
+COPY --from=builder /go/src/github.com/openshift/cluster-kube-apiserver-operator/bindata/bootkube/bootstrap-manifests /usr/share/bootkube/manifests/bootstrap-manifests/
+COPY --from=builder /go/src/github.com/openshift/cluster-kube-apiserver-operator/bindata/bootkube/config /usr/share/bootkube/manifests/config/
+COPY --from=builder /go/src/github.com/openshift/cluster-kube-apiserver-operator/bindata/bootkube/manifests /usr/share/bootkube/manifests/manifests/
+COPY --from=builder /go/src/github.com/openshift/cluster-kube-apiserver-operator/bindata/bootkube/scc-manifests /usr/share/bootkube/manifests/manifests/
+COPY --from=builder /go/src/github.com/openshift/cluster-kube-apiserver-operator/vendor/github.com/openshift/api/apiserver/v1/apiserver.openshift.io_apirequestcount.yaml /usr/share/bootkube/manifests/manifests/
+COPY --from=builder /go/src/github.com/openshift/cluster-kube-apiserver-operator/cluster-kube-apiserver-operator /usr/bin/
+COPY manifests /manifests
+COPY bindata/bootkube/scc-manifests /manifests
+COPY vendor/github.com/openshift/api/operator/v1/0000_20_kube-apiserver-operator_01_config.crd.yaml /manifests
+LABEL io.openshift.release.operator true
+# FIXME: entrypoint shouldn't be bash but the binary (needs fixing the chain)
+# ENTRYPOINT ["/usr/bin/cluster-kube-apiserver-operator"]

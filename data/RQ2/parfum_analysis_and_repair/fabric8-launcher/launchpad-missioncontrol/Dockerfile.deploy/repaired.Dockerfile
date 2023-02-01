@@ -1,0 +1,1 @@
+# FROM registry.centos.org/jboss/wildfly:10.1.0.Final

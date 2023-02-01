@@ -1,0 +1,17 @@
+{
+  "startTime": 1674254972501,
+  "endTime": 1674254973552,
+  "originalSmells": [
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 9,
+        "lineEnd": 18,
+        "columnStart": 22,
+        "columnEnd": 29
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "#\n# This is a slimmer version of our docker image without the graphical player\n# and notification system integration.\n#\n# Handles compiling and package installation\nFROM ubuntu:20.04 AS compile-image\n\n# Install build dependencies\nARG DEBIAN_FRONTEND=noninteractive\nRUN apt-get update && apt-get install -y --no-install-recommends \\\n        python3 python3-pip \\\n        # Required for local pip install\n        python3-setuptools \\\n        # Required for venv setup\n        python3-venv \\\n        # Required to build RLE module\n        build-essential python3-dev \\\n        # Required for ARM builds (because we need to build cryptography instead of using a prebuilt wheel)\n        libssl-dev libffi-dev && rm -rf /var/lib/apt/lists/*;\n\nRUN python3 -m venv /opt/venv\n# Make sure we use the virtualenv:\nENV PATH=\"/opt/venv/bin:$PATH\"\n\n# Required for ARM builds\n# Building dependencies didn't work without an upgraded pip and wheel on ARM\nRUN pip3 --no-cache-dir install -U pip wheel\n\n# Install dependencies only (speeds repetitive builds)\nCOPY requirements-slim.txt /pyrdp/requirements.txt\nRUN cd /pyrdp && pip3 --no-cache-dir install -r requirements.txt\n\n# Compile only our C extension and install\n# This way changes to source tree will not trigger full images rebuilds\nCOPY ext/rle.c /pyrdp/ext/rle.c\nCOPY setup.py /pyrdp/setup.py\nRUN cd /pyrdp \\\n    && python setup.py build_ext \\\n    && python setup.py install_lib\n\n\n# Handles runtime only (minimize size for distribution)\nFROM ubuntu:20.04 AS docker-image\n\n# Install runtime dependencies except pre-built venv\nARG DEBIAN_FRONTEND=noninteractive\nRUN apt-get update && apt-get install -y --no-install-recommends python3 \\\n        # To generate certificates\n        openssl \\\n        # Required for the setup.py install\n        python3-distutils \\\n        && rm -rf /var/lib/apt/lists/*\n\n# Copy preinstalled dependencies from compile image\nCOPY --from=compile-image /opt/venv /opt/venv\n\n# Create user\nRUN useradd --create-home --home-dir /home/pyrdp pyrdp\n\n# Make sure we use the virtualenv\nENV PATH=\"/opt/venv/bin:$PATH\"\n\n# Install python source and package\n# NOTE: we are no longer doing this in the compile image to avoid long image rebuilds in development\nCOPY --from=compile-image /pyrdp /pyrdp\nCOPY bin/ /pyrdp/bin/\nCOPY pyrdp/ /pyrdp/pyrdp/\nCOPY setup.py /pyrdp/setup.py\nRUN cd /pyrdp \\\n    && python setup.py install\n\nUSER pyrdp\n\n# UTF-8 support on the console output (for pyrdp-player)\nENV PYTHONIOENCODING=utf-8\n# Make sure we use the virtualenv\nENV PATH=\"/opt/venv/bin:$PATH\"\n\nWORKDIR /home/pyrdp\n"
+}

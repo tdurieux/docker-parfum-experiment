@@ -1,0 +1,57 @@
+# Licensed to the Apache Software Foundation (ASF) under one or more
+# contributor license agreements.  See the NOTICE file distributed with
+# this work for additional information regarding copyright ownership.
+# The ASF licenses this file to You under the Apache License, Version 2.0
+# (the "License"); you may not use this file except in compliance with
+# the License.  You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+FROM alpine:3.12.1 AS builder
+
+RUN apk add --no-cache bash gettext nmap-ncat openssl busybox-extras
+
+ARG version
+
+# SWCK version
+ENV SWCK_VERSION ${version}
+
+# SWCK home
+ENV SWCK_HOME  /swck
+
+WORKDIR  ${SWCK_HOME}
+
+# Setup
+RUN set -eux; \
+    apk add --no-cache --virtual .build-deps curl gnupg unzip
+
+# Download
+RUN set -eux; \
+    curl -f https://archive.apache.org/dist/skywalking/swck/${SWCK_VERSION}/skywalking-swck-${SWCK_VERSION}-bin.tgz -o swck.tgz; \
+    curl -f https://archive.apache.org/dist/skywalking/swck/${SWCK_VERSION}/skywalking-swck-${SWCK_VERSION}-bin.tgz.asc -o swck.tgz.asc; \
+	curl -f https://downloads.apache.org/skywalking/KEYS -o KEYS
+
+# Install
+RUN set -eux; \
+	gpg --batch --import KEYS; \
+    gpg --batch --verify swck.tgz.asc swck.tgz; \
+    tar -xvf swck.tgz --strip-components=1; \
+	rm swck.tgz ; \
+    rm swck.tgz.asc KEYS; \
+	apk del .build-deps ; \
+    rm -rf /var/cache/apk/* ; \
+    rm -rf /tmp/*
+
+FROM gcr.io/distroless/static:nonroot
+WORKDIR /
+COPY --from=builder --chown=65532:65532 /swck/bin/manager-linux-amd64 /manager
+COPY --from=builder --chown=65532:65532 /swck/bin/adapter-linux-amd64 /adapter
+USER 65532:65532
+
+ENTRYPOINT ["/manager"]

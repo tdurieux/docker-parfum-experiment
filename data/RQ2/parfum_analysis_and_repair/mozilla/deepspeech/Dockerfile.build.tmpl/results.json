@@ -1,0 +1,44 @@
+{
+  "startTime": 1674251975031,
+  "endTime": 1674251975911,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 45,
+        "lineEnd": 45,
+        "columnStart": 4,
+        "columnEnd": 103
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 150,
+        "lineEnd": 150,
+        "columnStart": 4,
+        "columnEnd": 38
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 152,
+        "lineEnd": 152,
+        "columnStart": 4,
+        "columnEnd": 37
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 126,
+        "lineEnd": 126,
+        "columnStart": 33,
+        "columnEnd": 44
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Please refer to the USING documentation, \"Dockerfile for building from source\"\n\n# Need devel version cause we need /usr/include/cudnn.h\nFROM nvidia/cuda:10.1-cudnn7-devel-ubuntu18.04\n\nENV DEEPSPEECH_REPO=#DEEPSPEECH_REPO# \\\n    DEEPSPEECH_SHA=#DEEPSPEECH_SHA#\n\n# >> START Install base software\n\n# Get basic packages\nRUN apt-get update && apt-get install -y --no-install-recommends \\\n    apt-utils \\\n    bash-completion \\\n    build-essential \\\n    ca-certificates \\\n    cmake \\\n    curl \\\n    g++ \\\n    gcc \\\n    git \\\n    libbz2-dev \\\n    libboost-all-dev \\\n    libgsm1-dev \\\n    libltdl-dev \\\n    liblzma-dev \\\n    libmagic-dev \\\n    libpng-dev \\\n    libsox-fmt-mp3 \\\n    libsox-dev \\\n    locales \\\n    openjdk-8-jdk \\\n    pkg-config \\\n    python3 \\\n    python3-dev \\\n    python3-pip \\\n    python3-wheel \\\n    python3-numpy \\\n    sox \\\n    unzip \\\n    wget \\\n    zlib1g-dev; \\\n    update-alternatives --install /usr/bin/pip pip /usr/bin/pip3 1 && \\\n    update-alternatives --install /usr/bin/python python /usr/bin/python3 1; \\\n    # Install Bazel \\\n    curl -f -LO \"https://github.com/bazelbuild/bazel/releases/download/3.1.0/bazel_3.1.0-linux-x86_64.deb\" && dpkg -i bazel_*.deb; \\\n    # Try and free some space \\\n    rm -rf /var/lib/apt/lists/* bazel_*.deb\n\n# << END Install base software\n\n# >> START Configure Tensorflow Build\n\n# GPU Environment Setup\nENV TF_NEED_ROCM=0 \\\n    TF_NEED_OPENCL_SYCL=0 \\\n    TF_NEED_OPENCL=0 \\\n    TF_NEED_CUDA=1 \\\n    TF_CUDA_PATHS=\"/usr,/usr/local/cuda-10.1,/usr/lib/x86_64-linux-gnu/\" \\\n    TF_CUDA_VERSION=10.1 \\\n    TF_CUDNN_VERSION=7.6 \\\n    TF_CUDA_COMPUTE_CAPABILITIES=6.0 \\\n    TF_NCCL_VERSION=2.8 \\\n    # Common Environment Setup \\\n    TF_BUILD_CONTAINER_TYPE=GPU \\\n    TF_BUILD_OPTIONS=OPT \\\n    TF_BUILD_DISABLE_GCP=1 \\\n    TF_BUILD_ENABLE_XLA=0 \\\n    TF_BUILD_PYTHON_VERSION=PYTHON3 \\\n    TF_BUILD_IS_OPT=OPT \\\n    TF_BUILD_IS_PIP=PIP \\\n    # Build client.cc and install Python client and decoder bindings \\\n    TFDIR=/DeepSpeech/tensorflow \\\n    # Allow Python printing utf-8 \\\n    PYTHONIOENCODING=UTF-8 \\\n    # Other Parameters \\\n    CC_OPT_FLAGS=\"-mavx -mavx2 -msse4.1 -msse4.2 -mfma\" \\\n    TF_NEED_GCP=0 \\\n    TF_NEED_HDFS=0 \\\n    TF_NEED_JEMALLOC=1 \\\n    TF_NEED_OPENCL=0 \\\n    TF_CUDA_CLANG=0 \\\n    TF_NEED_MKL=0 \\\n    TF_ENABLE_XLA=0 \\\n    TF_NEED_AWS=0 \\\n    TF_NEED_KAFKA=0 \\\n    TF_NEED_NGRAPH=0 \\\n    TF_DOWNLOAD_CLANG=0 \\\n    TF_NEED_TENSORRT=0 \\\n    TF_NEED_GDR=0 \\\n    TF_NEED_VERBS=0 \\\n    TF_NEED_OPENCL_SYCL=0 \\\n    PYTHON_BIN_PATH=/usr/bin/python3.6 \\\n    PYTHON_LIB_PATH=/usr/local/lib/python3.6/dist-packages\n\n# << END Configure Tensorflow Build\n\n# >> START Configure Bazel\n\n# Running bazel inside a `docker build` command causes trouble, cf:\n#   https://github.com/bazelbuild/bazel/issues/134\n# The easiest solution is to set up a bazelrc file forcing --batch.\n# Similarly, we need to workaround sandboxing issues:\n#   https://github.com/bazelbuild/bazel/issues/418\nRUN echo \"startup --batch\" >>/etc/bazel.bazelrc; \\\n    echo \"build --spawn_strategy=standalone --genrule_strategy=standalone\" >> /etc/bazel.bazelrc\n\n# << END Configure Bazel\n\nWORKDIR /\n\nRUN git clone --recursive $DEEPSPEECH_REPO DeepSpeech && \\\n    cd /DeepSpeech && \\\n    git fetch origin $DEEPSPEECH_SHA && git checkout $DEEPSPEECH_SHA; \\\n    git submodule sync tensorflow/ && git submodule update --init tensorflow/; \\\n    git submodule sync kenlm/ && git submodule update --init kenlm/\n\n# >> START Build and bind\n# Fix for not found script https://github.com/tensorflow/tensorflow/issues/471\n# Using CPU optimizations:\n# -mtune=generic -march=x86-64 -msse -msse2 -msse3 -msse4.1 -msse4.2 -mavx.\n# Adding --config=cuda flag to build using CUDA.\n\n# passing LD_LIBRARY_PATH is required cause Bazel doesn't pickup it from environment\n\n# Build DeepSpeech\nRUN cd /DeepSpeech/tensorflow && ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" && bazel build \\\n\t--workspace_status_command=\"bash native_client/bazel_workspace_status_cmd.sh\" \\\n\t--config=monolithic \\\n\t--config=cuda \\\n\t-c opt \\\n\t--copt=-O3 \\\n\t--copt=\"-D_GLIBCXX_USE_CXX11_ABI=0\" \\\n\t--copt=-mtune=generic \\\n\t--copt=-march=x86-64 \\\n\t--copt=-msse \\\n\t--copt=-msse2 \\\n\t--copt=-msse3 \\\n\t--copt=-msse4.1 \\\n\t--copt=-msse4.2 \\\n\t--copt=-mavx \\\n\t--copt=-fvisibility=hidden \\\n\t//native_client:libdeepspeech.so \\\n\t--verbose_failures \\\n\t--action_env=LD_LIBRARY_PATH=${LD_LIBRARY_PATH} && \\\n    cp bazel-bin/native_client/libdeepspeech.so /DeepSpeech/native_client/ && \\\n    rm -fr /root/.cache/*\n\nRUN cd /DeepSpeech/native_client && make NUM_PROCESSES=$(nproc) deepspeech ; \\\n    cd /DeepSpeech/native_client/python && make NUM_PROCESSES=$(nproc) bindings; \\\n    pip3 install --no-cache-dir --upgrade dist/*.whl; \\\n    cd /DeepSpeech/native_client/ctcdecode && make NUM_PROCESSES=$(nproc) bindings; \\\n    pip3 install --no-cache-dir --upgrade dist/*.whl\n\n# << END Build and bind\n\n# Build KenLM in /DeepSpeech/kenlm folder\nWORKDIR /DeepSpeech/kenlm\nRUN wget -O - https://gitlab.com/libeigen/eigen/-/archive/3.3.8/eigen-3.3.8.tar.bz2 | tar xj; \\\n    mkdir -p build && \\\n    cd build && \\\n    EIGEN3_ROOT=/DeepSpeech/kenlm/eigen-3.3.8 cmake .. && \\\n    make -j $(nproc)\n\n# Done\nWORKDIR /DeepSpeech\n"
+}

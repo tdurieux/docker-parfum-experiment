@@ -1,0 +1,44 @@
+{
+  "startTime": 1674215293666,
+  "endTime": 1674215294952,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 70,
+        "lineEnd": 70,
+        "columnStart": 7,
+        "columnEnd": 53
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 75,
+        "lineEnd": 75,
+        "columnStart": 7,
+        "columnEnd": 113
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 17,
+        "lineEnd": 17,
+        "columnStart": 4,
+        "columnEnd": 28
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 76,
+        "lineEnd": 76,
+        "columnStart": 7,
+        "columnEnd": 44
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "ARG PYTHON_VERSION\nFROM python:${PYTHON_VERSION}-slim-bullseye as base\n\nRUN apt-get update \\\n    && apt-get install --no-install-recommends -y \\\n    # Postgres\n    libpq-dev \\\n    && rm -rf /var/lib/apt/lists/*\n\nRUN useradd -ms /bin/bash frappe\nUSER frappe\nRUN mkdir -p /home/frappe/frappe-bench/apps /home/frappe/frappe-bench/logs /home/frappe/frappe-bench/sites\nWORKDIR /home/frappe/frappe-bench\n\nUSER root\nRUN pip install --no-cache-dir -U pip wheel \\\n    && python -m venv env \\\n    && env/bin/pip install -U pip wheel\n\nCOPY install-app.sh /usr/local/bin/install-app\n\n\nFROM base as build_deps\n\nRUN apt-get update \\\n    && apt-get install --no-install-recommends -y \\\n    # Install git here because it is not required in production\n    git \\\n    # gcc and g++ are required for building different packages across different versions\n    # of Frappe and ERPNext and also on different platforms (for example, linux/arm64).\n    # It is safe to install build deps even if they are not required\n    # because they won't be included in final images.\n    gcc \\\n    g++ \\\n    # Make is required to build wheels of ERPNext deps in develop branch for linux/arm64\n    make \\\n    && rm -rf /var/lib/apt/lists/*\n\n\nFROM build_deps as frappe_builder\n\nARG FRAPPE_VERSION\nARG FRAPPE_REPO=https://github.com/frappe/frappe\nRUN --mount=type=cache,target=/root/.cache/pip \\\n    git clone --depth 1 -b ${FRAPPE_VERSION} ${FRAPPE_REPO} apps/frappe \\\n    && install-app frappe \\\n    && env/bin/pip install -U gevent \\\n    # Link Frappe's node_modules/ to make Website Theme work\n    && mkdir -p /home/frappe/frappe-bench/sites/assets/frappe/node_modules \\\n    && ln -s /home/frappe/frappe-bench/sites/assets/frappe/node_modules /home/frappe/frappe-bench/apps/frappe/node_modules\n\n\nFROM frappe_builder as erpnext_builder\n\nARG ERPNEXT_VERSION\nARG ERPNEXT_REPO=https://github.com/frappe/erpnext\nRUN --mount=type=cache,target=/root/.cache/pip \\\n    git clone --depth 1 -b ${ERPNEXT_VERSION} ${ERPNEXT_REPO} apps/erpnext \\\n    && install-app erpnext\n\n\nFROM base as configured_base\n\nARG WKHTMLTOPDF_VERSION=0.12.6-1\n\nRUN apt-get update \\\n    # Setup Node lists\n    && apt-get install --no-install-recommends -y curl \\\n    && curl -f -sL https://deb.nodesource.com/setup_14.x | bash - \\\n    # Install wkhtmltopdf with patched qt\n    && if [ \"$(uname -m)\" = \"aarch64\" ]; then export ARCH=arm64; fi \\\n    && if [ \"$(uname -m)\" = \"x86_64\" ]; then export ARCH=amd64; fi \\\n    && downloaded_file=wkhtmltox_$WKHTMLTOPDF_VERSION.buster_${ARCH}.deb \\\n    && curl -f -sLO https://github.com/wkhtmltopdf/packaging/releases/download/$WKHTMLTOPDF_VERSION/$downloaded_file \\\n    && apt-get install --no-install-recommends -y ./$downloaded_file \\\n    && rm $downloaded_file \\\n    # Cleanup\n    && apt-get purge -y --auto-remove curl \\\n    && apt-get update \\\n    && apt-get install --no-install-recommends -y \\\n    # MariaDB\n    mariadb-client \\\n    # Postgres\n    postgresql-client \\\n    # For healthcheck\n    wait-for-it \\\n    jq \\\n    # other\n    nodejs \\\n    && rm -rf /var/lib/apt/lists/*\n\nCOPY pretend-bench.sh /usr/local/bin/bench\nCOPY push_backup.py /usr/local/bin/push-backup\nCOPY configure.py patched_bench_helper.py /usr/local/bin/\nCOPY gevent_patch.py /opt/patches/\n\nWORKDIR /home/frappe/frappe-bench/sites\n\nCMD [ \"/home/frappe/frappe-bench/env/bin/gunicorn\", \\\n  \"--bind=0.0.0.0:8000\", \\\n  \"--threads=4\", \\\n  \"--workers=2\", \\\n  \"--worker-class=gthread\", \\\n  \"--worker-tmp-dir=/dev/shm\", \\\n  \"--timeout=120\", \\\n  \"--preload\", \\\n  \"frappe.app:application\" \\\n]\n\n\nFROM configured_base as frappe\n\nCOPY --from=frappe_builder /home/frappe/frappe-bench/apps/frappe /home/frappe/frappe-bench/apps/frappe\nCOPY --from=frappe_builder /home/frappe/frappe-bench/env /home/frappe/frappe-bench/env\nCOPY --from=frappe_builder /home/frappe/frappe-bench/sites/apps.txt /home/frappe/frappe-bench/sites/\n\nUSER frappe\n\n\n# Split frappe and erpnext to reduce image size (because of frappe-bench/env/ directory)\nFROM configured_base as erpnext\n\nCOPY --from=frappe_builder /home/frappe/frappe-bench/apps/frappe /home/frappe/frappe-bench/apps/frappe\nCOPY --from=erpnext_builder /home/frappe/frappe-bench/apps/erpnext /home/frappe/frappe-bench/apps/erpnext\nCOPY --from=erpnext_builder /home/frappe/frappe-bench/env /home/frappe/frappe-bench/env\nCOPY --from=erpnext_builder /home/frappe/frappe-bench/sites/apps.txt /home/frappe/frappe-bench/sites/\n\nUSER frappe\n"
+}

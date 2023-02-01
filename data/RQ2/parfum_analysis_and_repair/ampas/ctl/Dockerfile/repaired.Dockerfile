@@ -1,0 +1,27 @@
+FROM ubuntu:focal
+
+RUN apt-get update
+
+# disable interactive install
+ENV DEBIAN_FRONTEND noninteractive
+
+# install developement tools
+RUN apt-get -y --no-install-recommends install cmake && rm -rf /var/lib/apt/lists/*;
+RUN apt-get -y --no-install-recommends install g++ && rm -rf /var/lib/apt/lists/*;
+
+# install CTL dependencies
+RUN apt-get -y --no-install-recommends install libilmbase-dev && rm -rf /var/lib/apt/lists/*;
+RUN apt-get -y --no-install-recommends install libopenexr-dev && rm -rf /var/lib/apt/lists/*;
+RUN apt-get -y --no-install-recommends install libtiff-dev && rm -rf /var/lib/apt/lists/*;
+
+# build CTL
+WORKDIR /usr/src/CTL
+COPY . .
+WORKDIR /usr/src/CTL/build
+RUN cmake ..
+RUN make
+RUN make install
+
+# finalize docker environment
+WORKDIR /usr/src/CTL
+

@@ -1,0 +1,20 @@
+FROM node:16 as build
+ARG VITE_API_URL
+ARG VITE_BOT_PREFIX
+WORKDIR /build/app
+COPY web/package.json web/yarn.lock web/.yarnrc.yml ./
+COPY web/.yarn ./.yarn
+COPY lib ../lib
+RUN yarn install --immutable && yarn cache clean;
+COPY web .
+RUN yarn build
+
+FROM node:16 as prod
+WORKDIR /app/web
+COPY --from=build /build/app/package.json /build/app/yarn.lock /build/app/.yarnrc.yml ./
+COPY --from=build /build/app/.yarn ./.yarn
+COPY --from=build /build/app/dist ./dist
+COPY ./lib ../lib
+RUN yarn add vite
+# Running this with bash -c because it won't exit on ctrl+c otherwise
+CMD ["bash", "-c", "yarn preview --port=80 --strictPort=true --clearScreen=false --host"]

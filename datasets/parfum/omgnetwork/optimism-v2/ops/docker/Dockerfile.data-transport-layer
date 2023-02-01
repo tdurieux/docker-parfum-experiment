@@ -1,0 +1,38 @@
+FROM bobanetwork/builder AS builder
+
+FROM node:14-alpine
+
+RUN apk add --no-cache curl bash jq
+
+WORKDIR /opt/optimism
+
+# copy top level files
+COPY --from=builder /optimism/*.json ./
+COPY --from=builder /optimism/yarn.lock .
+COPY --from=builder /optimism/node_modules ./node_modules
+
+# copy deps (would have been nice if docker followed the symlinks required)
+COPY --from=builder /optimism/packages/core-utils/package.json ./packages/core-utils/package.json
+COPY --from=builder /optimism/packages/core-utils/dist ./packages/core-utils/dist
+COPY --from=builder /optimism/packages/common-ts/package.json ./packages/common-ts/package.json
+COPY --from=builder /optimism/packages/common-ts/dist ./packages/common-ts/dist
+
+COPY --from=builder /optimism/packages/contracts/package.json ./packages/contracts/package.json
+COPY --from=builder /optimism/packages/contracts/deployments ./packages/contracts/deployments
+COPY --from=builder /optimism/packages/contracts/dist ./packages/contracts/dist
+COPY --from=builder /optimism/packages/contracts/artifacts ./packages/contracts/artifacts
+
+# copy the service
+WORKDIR /opt/optimism/packages/data-transport-layer
+
+# For development, comment out the next COPY and uncomment the ADD. This will
+# build the image from the current tree instead of the old builder files.
+COPY --from=builder /optimism/packages/data-transport-layer/dist ./dist
+#ADD ./packages/data-transport-layer/dist ./dist
+
+RUN mkdir ./state-dumps
+COPY --from=builder /optimism/packages/data-transport-layer/package.json .
+COPY --from=builder /optimism/packages/data-transport-layer/node_modules ./node_modules
+
+COPY ./ops/scripts/dtl.sh .
+ENTRYPOINT ["node", "dist/src/services/run.js"]

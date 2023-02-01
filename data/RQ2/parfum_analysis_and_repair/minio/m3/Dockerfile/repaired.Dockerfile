@@ -1,0 +1,32 @@
+FROM golang:1.14.0
+
+RUN apt-get update -y && apt-get install --no-install-recommends -y ca-certificates && rm -rf /var/lib/apt/lists/*;
+
+ADD go.mod /go/src/github.com/minio/m3/go.mod
+ADD go.sum /go/src/github.com/minio/m3/go.sum
+WORKDIR /go/src/github.com/minio/m3/
+# Get dependencies - will also be cached if we won't change mod/sum
+RUN go mod download
+
+ADD . /go/src/github.com/minio/m3/
+WORKDIR /go/src/github.com/minio/m3/
+
+ENV CGO_ENABLED=0
+
+ARG build_version
+ARG build_time
+ENV env_build_version=$build_version
+ENV env_build_time=$build_time
+
+ENV CGO_ENABLED=0
+
+RUN go build -ldflags "-w -s -X 'github.com/minio/m3/version.BuildTime=$env_build_time' -X 'github.com/minio/m3/version.BuildVersion=$env_build_version'" -a -o m3 ./cmd/m3
+
+FROM scratch
+MAINTAINER MinIO Development "dev@min.io"
+EXPOSE 9009
+
+COPY --from=0 /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
+COPY --from=0 /go/src/github.com/minio/m3/m3 .
+
+CMD ["/m3","controller"]

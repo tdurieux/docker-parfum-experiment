@@ -1,0 +1,8 @@
+FROM registry.cn-beijing.aliyuncs.com/yunionio/baremetal-base:v0.3.6
+
+MAINTAINER "Zexi Li <lizexi@yunionyun.com>"
+
+RUN mkdir -p /opt/yunion/bin
+
+ENV TZ UTC
+ADD ./_output/alpine-build/bin/baremetal-agent /opt/yunion/bin/baremetal-agent

@@ -1,0 +1,32 @@
+FROM golang:1.17-alpine as build-base
+RUN apk update && apk upgrade && \
+    apk add --no-cache bash git openssh make wget
+WORKDIR /workspace
+ENV GO111MODULE on
+
+# Copy the Go Modules manifests
+COPY go.mod go.mod
+COPY go.sum go.sum
+# cache deps before building and copying source so that we don't need to re-download as much
+# and so that source changes don't invalidate our downloaded layer
+RUN go mod download
+
+# Copy the go source
+COPY main.go main.go
+COPY server/ server/
+
+# Build
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 GO111MODULE=on go build -mod=readonly -o liftbridge
+
+RUN GRPC_HEALTH_PROBE_VERSION=v0.3.1 && \
+    wget -qO /bin/grpc_health_probe https://github.com/grpc-ecosystem/grpc-health-probe/releases/download/${GRPC_HEALTH_PROBE_VERSION}/grpc_health_probe-linux-amd64 && \
+    chmod +x /bin/grpc_health_probe
+
+FROM alpine:latest
+RUN apk update && apk add --no-cache bash
+RUN addgroup -g 1001 -S liftbridge && adduser -u 1001 -S liftbridge -G liftbridge
+COPY --chown=liftbridge:liftbridge --from=build-base /workspace/liftbridge /usr/local/bin/liftbridge
+COPY --chown=liftbridge:liftbridge --from=build-base /bin/grpc_health_probe /bin/grpc_health_probe
+COPY k8s/entrypoint.sh /entrypoint.sh
+ENTRYPOINT ["/entrypoint.sh"]
+USER liftbridge

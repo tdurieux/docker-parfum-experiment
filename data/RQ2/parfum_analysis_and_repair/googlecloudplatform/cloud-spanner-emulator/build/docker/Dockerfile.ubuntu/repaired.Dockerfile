@@ -1,0 +1,82 @@
+#
+# Copyright 2020 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+
+################################################################################
+#                                     BUILD                                    #
+################################################################################
+
+# We use the bazel base image which comes with all bazel dependencies.
+FROM marketplace.gcr.io/google/bazel:3.4.1 as build
+
+# Unfortunately ZetaSQL has issues with clang (default bazel compiler), so
+# we install GCC. Also install make for rules_foreign_cc bazel rules.
+RUN add-apt-repository ppa:ubuntu-toolchain-r/test                          && \
+    apt-get -qq update && \
+    apt-get -qq --no-install-recommends install -y gcc-8 g++-8 make tzdata && \
+    apt-get -qq --no-install-recommends install -y ca-certificates libgnutls30 && \
+    update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-8 90           \
+                        --slave   /usr/bin/g++ g++ /usr/bin/g++-8 && \
+    update-alternatives --set gcc /usr/bin/gcc-8 && rm -rf /var/lib/apt/lists/*;
+
+# Copy over the emulator code base into the container. We explicitly copy only
+# the required files to maximize chances that the layer will be cached. There
+# does not seem to be a nicer way to do this than multiple COPY commands as
+# COPY copies the contents of the source, not the directory itself.
+COPY BUILD.bazel WORKSPACE .bazelrc src/
+COPY common      src/common/
+COPY gateway     src/gateway/
+COPY frontend    src/frontend/
+COPY backend     src/backend/
+COPY binaries    src/binaries/
+COPY tests       src/tests/
+COPY build/bazel src/build/bazel/
+
+# Build the emulator.
+RUN cd src                                                                  && \
+    CC=/usr/bin/gcc CXX=/usr/bin/g++                                           \
+    bazel build -c opt ...
+
+# Generate licenses file.
+RUN for file in $(find -L src/bazel-src/external                               \
+                       -name "LICENSE" -o -name "COPYING")                   ; \
+    do                                                                         \
+      echo "----"                                                            ; \
+      echo $file                                                             ; \
+      echo "----"                                                            ; \
+      cat $file                                                              ; \
+    done > licenses.txt                                                     && \
+    gzip licenses.txt
+
+################################################################################
+#                                   RELEASE                                    #
+################################################################################
+
+# Now build the release image from the build image.
+FROM gcr.io/distroless/cc
+
+# Copy binaries.
+COPY --from=build /src/bazel-bin/binaries/emulator_main .
+COPY --from=build /src/bazel-bin/binaries/gateway_main_/gateway_main .
+
+# Copy licenses
+COPY --from=build /licenses.txt.gz .
+
+# Expose the default ports 9010 (gRPC) and 9020 (REST)
+EXPOSE 9010 9020
+
+# Run the gateway process, bind to 0.0.0.0 as under MacOS, listening on
+# localhost will make the server invisible outside the container.
+CMD ["./gateway_main", "--hostname", "0.0.0.0"]

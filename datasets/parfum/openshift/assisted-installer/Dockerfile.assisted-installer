@@ -1,0 +1,19 @@
+FROM registry.ci.openshift.org/openshift/release:golang-1.17 AS builder
+ENV GOFLAGS=-mod=mod
+WORKDIR /go/src/github.com/openshift/assisted-installer
+
+# Bring in the go dependencies before anything else so we can take
+# advantage of caching these layers in future builds.
+COPY go.mod go.mod
+COPY go.sum go.sum
+RUN go mod download
+
+COPY . .
+RUN make installer
+
+FROM quay.io/centos/centos:stream8
+
+COPY --from=builder /go/src/github.com/openshift/assisted-installer/build/installer /usr/bin/installer
+COPY --from=builder /go/src/github.com/openshift/assisted-installer/deploy/assisted-installer-controller /assisted-installer-controller/deploy
+
+ENTRYPOINT ["/usr/bin/installer"]

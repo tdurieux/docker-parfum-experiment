@@ -1,0 +1,28 @@
+FROM registry.suse.com/bci/golang:1.17
+
+ARG DAPPER_HOST_ARCH="amd64"
+ENV ARCH=${DAPPER_HOST_ARCH}
+
+ARG http_proxy=$http_proxy
+ARG https_proxy=$https_proxy
+ARG no_proxy=$no_proxy
+
+RUN zypper -n install curl bash git jq docker
+RUN zypper clean -a
+
+
+RUN if [[ "${ARCH}" == "amd64" ]]; then \
+    curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s v1.44.0; \
+    fi
+
+ENV DOCKER_CLI_EXPERMENTAL enabled
+ENV DAPPER_SOURCE /go/src/github.com/rancher/dapper
+ENV DAPPER_OUTPUT ./bin ./dist
+ENV DAPPER_DOCKER_SOCKET true
+ENV TRASH_CACHE ${DAPPER_SOURCE}/.trash-cache
+ENV DAPPER_ENV CROSS VERSION
+ENV HOME ${DAPPER_SOURCE}
+WORKDIR ${DAPPER_SOURCE}
+
+ENTRYPOINT ["./scripts/entry"]
+CMD ["ci"]

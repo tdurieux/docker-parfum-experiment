@@ -1,0 +1,210 @@
+FROM docker-config-engine-buster-{{DOCKER_USERNAME}}:{{DOCKER_USERTAG}}
+
+ARG docker_container_name
+RUN [ -f /etc/rsyslog.conf ] && sed -ri "s/%syslogtag%/$docker_container_name#%syslogtag%/;" /etc/rsyslog.conf
+
+## Make apt-get non-interactive
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get install --no-install-recommends -y gnupg && rm -rf /var/lib/apt/lists/*;
+COPY ["sonic-dev.gpg.key", "/etc/apt/"]
+RUN apt-key add /etc/apt/sonic-dev.gpg.key
+RUN echo "deb http://packages.microsoft.com/repos/sonic-dev/ jessie main" >> /etc/apt/sources.list
+RUN apt-get update
+
+RUN apt-get install --no-install-recommends -y net-tools \
+                       arping \
+                       ndisc6 \
+                       ethtool \
+                       tcpdump \
+                       ifupdown \
+                       bridge-utils \
+                       python-ply \
+                       libqt5core5a \
+                       libqt5network5 \
+                       libboost-program-options1.71.0 \
+                       libboost-system1.71.0 \
+                       libboost-thread1.71.0 \
+                       libgmp10 \
+                       libjudydebian1 \
+                       openssh-client \
+                       openssh-server \
+                       libc-ares2 \
+                       iproute2 \
+                       grub2-common \
+                       bash-completion \
+                       libelf1 \
+                       libmnl0 \
+                       logrotate \
+                       apt-utils \
+                       psmisc \
+                       tcpdump \
+                       python-scapy \
+                       conntrack \
+                       iptables \
+                       jq \
+                       libzmq5 \
+
+
+                       build-essential \
+                       python-dev \
+                       python-pip \
+                       python3-dev \
+                       libssl-dev \
+                       swig \
+
+                       openssl \
+
+
+                       libcairo2-dev \
+                       libdbus-1-dev \
+                       libgirepository1.0-dev \
+                       libsystemd-dev \
+                       pkg-config \
+
+
+                       gir1.2-glib-2.0 \
+                       libdbus-1-3 \
+                       libgirepository-1.0-1 \
+                       {%- if ENABLE_ASAN == "y" %} && rm -rf /var/lib/apt/lists/*;
+                       libasan5 \
+                       {%- endif %}
+                       libsystemd0
+
+# Install redis-server
+{% if CONFIGURED_ARCH == "armhf" %}
+RUN curl -f -k -o redis-tools_6.0.6-1~bpo10+1_armhf.deb "https://sonicstorage.blob.core.windows.net/packages/redis/redis-tools_6.0.6-1_bpo10+1_armhf.deb?sv=2015-04-05&sr=b&sig=67vHAMxsl%2BS3X1KsqhdYhakJkGdg5FKSPgU8kUiw4as%3D&se=2030-10-24T04%3A22%3A40Z&sp=r"
+RUN curl -f -k -o redis-server_6.0.6-1~bpo10+1_armhf.deb "https://sonicstorage.blob.core.windows.net/packages/redis/redis-server_6.0.6-1_bpo10+1_armhf.deb?sv=2015-04-05&sr=b&sig=xTdayvm0RBguxi9suyv855jKRjU%2FmKQ8nHuct4WSX%2FA%3D&se=2030-10-24T04%3A22%3A05Z&sp=r"
+RUN dpkg -i redis-tools_6.0.6-1~bpo10+1_armhf.deb redis-server_6.0.6-1~bpo10+1_armhf.deb || apt-get install -y -f
+RUN rm redis-tools_6.0.6-1~bpo10+1_armhf.deb redis-server_6.0.6-1~bpo10+1_armhf.deb
+{% elif CONFIGURED_ARCH == "arm64" %}
+RUN curl -f -o redis-tools_6.0.6-1~bpo10+1_arm64.deb "https://sonicstorage.blob.core.windows.net/packages/redis/redis-tools_6.0.6-1_bpo10+1_arm64.deb?sv=2015-04-05&sr=b&sig=GbkJV2wWln3hoz27zKi5erdk3NDKrAFrQriA97bcRCY%3D&se=2030-10-24T04%3A22%3A21Z&sp=r"
+RUN curl -f -o redis-server_6.0.6-1~bpo10+1_arm64.deb "https://sonicstorage.blob.core.windows.net/packages/redis/redis-server_6.0.6-1_bpo10+1_arm64.deb?sv=2015-04-05&sr=b&sig=622w2KzIKIjAaaA0Bz12MzU%2BUBzY2AiXFIFfuKNoKSk%3D&se=2030-10-24T04%3A21%3A44Z&sp=r"
+RUN dpkg -i redis-tools_6.0.6-1~bpo10+1_arm64.deb redis-server_6.0.6-1~bpo10+1_arm64.deb || apt-get install -y -f
+RUN rm redis-tools_6.0.6-1~bpo10+1_arm64.deb redis-server_6.0.6-1~bpo10+1_arm64.deb
+{% else %}
+RUN curl -f -o redis-tools_6.0.6-1~bpo10+1_amd64.deb "https://sonicstorage.blob.core.windows.net/packages/redis/redis-tools_6.0.6-1~bpo10+1_amd64.deb?sv=2015-04-05&sr=b&sig=73zbmjkf3pi%2Bn0R8Hy7CWT2EUvOAyzM5aLYJWCLySGM%3D&se=2030-09-06T19%3A44%3A59Z&sp=r"
+RUN curl -f -o redis-server_6.0.6-1~bpo10+1_amd64.deb "https://sonicstorage.blob.core.windows.net/packages/redis/redis-server_6.0.6-1~bpo10+1_amd64.deb?sv=2015-04-05&sr=b&sig=2Ketg7BmkZEaTxR%2FgvAFVmhjn7ywdmkc7l2T2rsL57o%3D&se=2030-09-06T19%3A45%3A20Z&sp=r"
+RUN dpkg -i redis-tools_6.0.6-1~bpo10+1_amd64.deb redis-server_6.0.6-1~bpo10+1_amd64.deb || apt-get install -y -f
+RUN rm redis-tools_6.0.6-1~bpo10+1_amd64.deb redis-server_6.0.6-1~bpo10+1_amd64.deb
+{% endif %}
+
+RUN pip2 install --no-cache-dir --upgrade 'pip<21'
+RUN apt-get purge -y python-pip
+RUN pip2 install --no-cache-dir setuptools==40.8.0
+RUN pip2 install --no-cache-dir wheel==0.33.6
+RUN pip2 install --no-cache-dir py2_ipaddress
+RUN pip2 install --no-cache-dir six
+RUN pip2 install --no-cache-dir pyroute2==0.5.3 netifaces==0.10.7
+RUN pip2 install --no-cache-dir monotonic==1.5
+RUN pip2 install --no-cache-dir urllib3
+RUN pip2 install --no-cache-dir requests
+RUN pip2 install --no-cache-dir crontab
+
+# For sonic-config-engine Python 3 package
+# Install pyangbind here, outside sonic-config-engine dependencies, as pyangbind causes enum34 to be installed.
+# Then immediately uninstall enum34, as enum34 should not be installed for Python >= 3.4, as it causes a
+# conflict with the new 'enum' module in the standard library
+# https://github.com/robshakir/pyangbind/issues/232
+RUN pip3 install --no-cache-dir pyangbind==0.8.1
+RUN pip3 uninstall -y enum34
+
+# Dependencies of restore_neighbors.py
+RUN pip3 install --no-cache-dir \
+         scapy==2.4.4 \
+         pyroute2==0.5.14 \
+         netifaces==0.10.9
+
+{% if docker_sonic_vs_debs.strip() -%}
+# Copy locally-built Debian package dependencies
+COPY {%- for deb in docker_sonic_vs_debs.split(' ') %} debs/{{ deb }}{%- endfor %} /debs/
+
+# Install locally-built Debian packages and implicitly install their dependencies
+RUN dpkg_apt() { [ -f $1 ] && { dpkg -i $1 || apt-get -y install -f; } || return 1; }; {%- for deb in docker_sonic_vs_debs.split(' ') %} dpkg_apt /debs/{{ deb }};{%- endfor %}
+{%- endif %}
+
+{% if docker_sonic_vs_pydebs.strip() -%}
+# Copy locally-built Debian package dependencies
+COPY {%- for deb in docker_sonic_vs_pydebs.split(' ') %} python-debs/{{ deb }}{%- endfor %} /debs/
+
+# Install locally-built Debian packages and implicitly install their dependencies
+RUN dpkg_apt() { [ -f $1 ] && { dpkg -i $1 || apt-get -y install -f; } || return 1; }; {%- for deb in docker_sonic_vs_pydebs.split(' ') %} dpkg_apt /debs/{{ deb }};{%- endfor %}
+{%- endif %}
+
+{% if docker_sonic_vs_whls.strip() %}
+# copy all whl PKGs first,
+copy {%- for whl in docker_sonic_vs_whls.split(' ') %} python-wheels/{{ whl }}{%- endfor %} python-wheels/
+
+# install PKGs after copying all PKGs to avoid dependency failure
+# use py3 to find python3 package, which is forced by wheel as of now
+{%- for whl in docker_sonic_vs_whls.split(' ') %}
+RUN pip{% if 'py3' in whl %}3{% else %}2{% endif %} install python-wheels/{{ whl }}
+{%- endfor %}
+{% endif %}
+
+# Clean up
+RUN apt-get purge -y build-essential libssl-dev swig
+RUN apt-get purge -y python-dev python3-dev
+RUN apt-get purge -y libcairo2-dev libdbus-1-dev libgirepository1.0-dev libsystemd-dev pkg-config
+RUN apt-get clean -y
+RUN apt-get autoclean -y
+RUN apt-get autoremove -y
+RUN rm -rf /debs ~/.cache
+
+RUN sed -ri 's/^(save .*$)/# \1/g;                                                      \
+             s/^daemonize yes$/daemonize no/;                                           \
+             s/^logfile .*$/logfile ""/;                                                \
+             s/^# syslog-enabled no$/syslog-enabled no/;                                \
+             s/^# unixsocket/unixsocket/;                                               \
+             s/notify-keyspace-events ""/notify-keyspace-events AKE/;                   \
+             s/redis-server.sock/redis.sock/g;                                          \
+             s/^client-output-buffer-limit pubsub [0-9]+mb [0-9]+mb [0-9]+/client-output-buffer-limit pubsub 0 0 0/ \
+            ' /etc/redis/redis.conf
+
+COPY ["50-default.conf", "/etc/rsyslog.d/"]
+COPY ["start.sh", "orchagent.sh", "files/update_chassisdb_config", "/usr/bin/"]
+COPY ["supervisord.conf.j2", "/usr/share/sonic/templates/"]
+COPY ["files/configdb-load.sh", "/usr/bin/"]
+COPY ["files/arp_update", "/usr/bin/"]
+COPY ["files/buffers_config.j2", "files/qos_config.j2", "files/arp_update_vars.j2", "files/copp_cfg.j2", "/usr/share/sonic/templates/"]
+COPY ["files/sonic_version.yml", "/etc/sonic/"]
+COPY ["port_breakout_config_db.json", "/etc/sonic/"]
+COPY ["database_config.json", "/etc/default/sonic-db/"]
+COPY ["hostname.j2", "/usr/share/sonic/templates/"]
+COPY ["init_cfg.json.j2", "/usr/share/sonic/templates/"]
+COPY ["default_chassis_cfg.json", "/etc/default/sonic-db/"]
+COPY ["asic_table.json", "/etc/sonic/"]
+COPY ["zero_profiles.json", "/etc/sonic"]
+COPY ["buffermgrd.sh", "/usr/bin/"]
+
+COPY ["platform.json", "/usr/share/sonic/device/x86_64-kvm_x86_64-r0/"]
+COPY ["hwsku.json", "/usr/share/sonic/device/x86_64-kvm_x86_64-r0/Force10-S6000/"]
+COPY ["hwsku.json", "/usr/share/sonic/device/x86_64-kvm_x86_64-r0/brcm_gearbox_vs/"]
+COPY ["hwsku.json", "/usr/share/sonic/device/x86_64-kvm_x86_64-r0/Mellanox-SN2700/"]
+
+RUN mkdir -p /etc/supervisor/conf.d/
+RUN sonic-cfggen -a "{\"ENABLE_ASAN\":\"{{ENABLE_ASAN}}\"}" -t /usr/share/sonic/templates/supervisord.conf.j2 > /etc/supervisor/conf.d/supervisord.conf
+RUN rm -f /usr/share/sonic/templates/supervisord.conf.j2
+
+{%- if ENABLE_ASAN == "y" %}
+RUN mkdir -p /var/log/asan
+{%- endif %}
+
+# Workaround the tcpdump issue
+RUN mv /usr/sbin/tcpdump /usr/bin/tcpdump
+
+RUN echo "docker-sonic-vs" > /etc/hostname
+RUN mkdir -p /etc/quagga
+RUN touch /etc/quagga/zebra.conf
+
+# disable integrated vtysh config
+RUN rm /etc/frr/frr.conf
+
+# Create /var/warmboot/teamd folder for teammgrd
+RUN mkdir -p /var/warmboot/teamd
+
+# Set PLATFORM and HWSKU environment variables
+ENV PLATFORM=x86_64-kvm_x86_64-r0
+ENV HWSKU=Force10-S6000
+
+ENTRYPOINT ["/usr/local/bin/supervisord"]

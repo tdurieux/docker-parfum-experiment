@@ -1,0 +1,50 @@
+FROM debian:stable as mruby_base
+
+WORKDIR /app
+RUN \
+  apt-get update -y && \
+  apt-get upgrade -y && \
+  apt-get install -y --no-install-recommends \
+    git \
+    ca-certificates && \
+  apt-get clean -y && apt-get autoremove -y && \
+  git clone --branch master --depth 1 https://github.com/mruby/mruby.git . && rm -rf /var/lib/apt/lists/*;
+
+FROM mruby_base as mruby_include
+RUN mv ./include/mruby.h ./
+RUN mv ./include/mrbconf.h ./
+
+FROM taylor/build-linux as mruby_linux
+WORKDIR /app
+COPY --from=mruby_base /app /app
+COPY ./scripts/mruby/linux.rb /app/build_config/
+RUN MRUBY_CONFIG=linux rake
+
+FROM taylor/build-windows as mruby_windows
+WORKDIR /app
+COPY --from=mruby_base /app /app
+COPY ./scripts/mruby/mingw.rb /app/build_config/
+RUN MRUBY_CONFIG=mingw rake
+
+FROM taylor/build-osx as mruby_osxcross
+WORKDIR /app
+COPY --from=mruby_base /app /app
+COPY ./scripts/mruby/darwin.rb /app/build_config/
+RUN MRUBY_CONFIG=darwin rake
+
+FROM taylor/build-web as mruby_web
+WORKDIR /app
+COPY --from=mruby_base /app /app/
+COPY ./scripts/mruby/emscripten.rb /app/build_config/
+
+RUN MRUBY_CONFIG=emscripten rake
+
+FROM scratch AS export
+
+COPY --from=mruby_include /app/mruby.h ./vendor/mruby/
+COPY --from=mruby_include /app/mrbconf.h ./vendor/mruby/
+COPY --from=mruby_include /app/include/* ./vendor/mruby/mruby/
+COPY --from=mruby_linux /app/build/host/lib/libmruby.a ./vendor/linux/
+COPY --from=mruby_windows /app/build/x86_64-w64-mingw32/lib/libmruby.a ./vendor/windows/
+COPY --from=mruby_osxcross /app/build/x86_64-apple-darwin19/lib/libmruby.a ./vendor/osx/
+COPY --from=mruby_web /app/build/emscripten/lib/libmruby.a ./vendor/web/

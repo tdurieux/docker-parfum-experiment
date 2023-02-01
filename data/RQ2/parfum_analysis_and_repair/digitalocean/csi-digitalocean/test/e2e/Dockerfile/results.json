@@ -1,0 +1,26 @@
+{
+  "startTime": 1674246806664,
+  "endTime": 1674246807549,
+  "originalSmells": [
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 18,
+        "lineEnd": 18,
+        "columnStart": 4,
+        "columnEnd": 86
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 78,
+        "lineEnd": 78,
+        "columnStart": 4,
+        "columnEnd": 96
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Copyright 2022 DigitalOcean\n#\n# Licensed under the Apache License, Version 2.0 (the \"License\");\n# you may not use this file except in compliance with the License.\n# You may obtain a copy of the License at\n#\n#    http://www.apache.org/licenses/LICENSE-2.0\n#\n# Unless required by applicable law or agreed to in writing, software\n# distributed under the License is distributed on an \"AS IS\" BASIS,\n# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.\n# See the License for the specific language governing permissions and\n# limitations under the License.\n\n### base build containers\nFROM golang:1.13 AS builder\n\nRUN apt-get update && \\\n    DEBIAN_FRONTEND=noninteractive apt-get install --yes --no-install-recommends rsync && rm -rf /var/lib/apt/lists/*;\nRUN mkdir -p /go/src/k8s.io\nWORKDIR /go/src/k8s.io\n\n### Kubernetes 1.23\nFROM builder AS tests-1.23\nARG KUBE_VERSION_1_23=1.23.7\nARG KUBE_VERSION_1_23_E2E_BIN_SHA256_CHECKSUM=e1a9a632b7715d4bfbac3322da5d32072eaf544b31a81a6c3df205d0dc0e96b7\n\nRUN curl --fail --location https://dl.k8s.io/v${KUBE_VERSION_1_23}/kubernetes-test-linux-amd64.tar.gz | tar xvzf - --strip-components 3 kubernetes/test/bin/e2e.test\nRUN echo \"${KUBE_VERSION_1_23_E2E_BIN_SHA256_CHECKSUM}\" e2e.test | sha256sum --check\nRUN cp e2e.test /e2e.1.23.test\n\n### Kubernetes 1.22\nFROM builder AS tests-1.22\nARG KUBE_VERSION_1_22=1.22.5\nARG KUBE_VERSION_1_22_E2E_BIN_SHA256_CHECKSUM=8665242697896acf544fee3e060ccdacc49ddac68adca083ce4de131c4a7e829\n\nRUN curl --fail --location https://dl.k8s.io/v${KUBE_VERSION_1_22}/kubernetes-test-linux-amd64.tar.gz | tar xvzf - --strip-components 3 kubernetes/test/bin/e2e.test\nRUN echo \"${KUBE_VERSION_1_22_E2E_BIN_SHA256_CHECKSUM}\" e2e.test | sha256sum --check\nRUN cp e2e.test /e2e.1.22.test\n\n### Kubernetes 1.21\nFROM builder AS tests-1.21\nARG KUBE_VERSION_1_21=1.21.6\nARG KUBE_VERSION_1_21_E2E_BIN_SHA256_CHECKSUM=74db305a069c82a7cf874c483a1d4ef163ae061bb259cdaea3047066b21c2a6c\n\nRUN curl --fail --location https://dl.k8s.io/v${KUBE_VERSION_1_21}/kubernetes-test-linux-amd64.tar.gz | tar xvzf - --strip-components 3 kubernetes/test/bin/e2e.test\nRUN echo \"${KUBE_VERSION_1_21_E2E_BIN_SHA256_CHECKSUM}\" e2e.test | sha256sum --check\nRUN cp e2e.test /e2e.1.21.test\n\n### ginkgo and tools\nFROM golang:1.13 AS tools\n# See comment at the bottom on why we need tini.\nARG TINI_VERSION=0.18.0\n# doctl is needed to support clusters that had their kubeconfig fetched via the\n# CLI because those leverage a kubeconfig authentication plugin based on doctl.\nARG DOCTL_VERSION=1.76.2\n# ginkgo is needed to run the upstream end-to-end tests.\nARG GINKGO_VERSION=1.10.3\n# kubectl is needed by some tests.\nARG KUBECTL_VERSION=1.23.7\n\nRUN curl --fail --location --output /tini https://github.com/krallin/tini/releases/download/v${TINI_VERSION}/tini\nRUN chmod u+x /tini\n\nRUN curl --fail --location https://github.com/digitalocean/doctl/releases/download/v${DOCTL_VERSION}/doctl-${DOCTL_VERSION}-linux-amd64.tar.gz | tar -xzv\nRUN cp doctl /\n\nRUN GO111MODULE=on go get github.com/onsi/ginkgo/ginkgo@v${GINKGO_VERSION}\nRUN cp bin/ginkgo /\n\nRUN curl --fail --location --remote-name https://storage.googleapis.com/kubernetes-release/release/$(curl --fail --silent https://storage.googleapis.com/kubernetes-release/release/stable.txt)/bin/linux/amd64/kubectl\nRUN chmod u+x kubectl\nRUN cp kubectl /\n\n### final test container\nFROM bitnami/minideb:buster AS runtime\n# Certificates needed to trust the CA for any HTTPS connections to the DO API.\nRUN apt-get update && \\\n    DEBIAN_FRONTEND=noninteractive apt-get install --yes --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*;\nCOPY --from=tests-1.23 /e2e.1.23.test /\nCOPY --from=tests-1.22 /e2e.1.22.test /\nCOPY --from=tests-1.21 /e2e.1.21.test /\nCOPY --from=tools /tini /sbin/\nCOPY --from=tools /doctl /usr/local/bin/\nCOPY --from=tools /ginkgo /usr/local/bin/\nCOPY --from=tools /kubectl /usr/local/bin/\n\nCOPY cleanup-clusters.sh /\n\n# Docker comes with built-in tini support (--init parameter) but does not allow\n# to enable child process group killing\n# (https://github.com/krallin/tini#process-group-killing) via \"-g\". We need this\n# since our entrypoint script spawns child processes during multiple invocations\n# of ginkgo. The usual approach of using \"exec\" to replace the shell does not\n# work here as that would terminate the script prematurely.\n# We also enable subreaping (https://github.com/krallin/tini#subreaping) to fix\n# a startup warning.\n# See also https://hynek.me/articles/docker-signals/ for the usual pid 1\n# gotchas.\nENTRYPOINT [\"/sbin/tini\", \"-g\", \"-s\", \"--\", \"/run-versioned-e2e-tests.sh\"]\nCOPY run-versioned-e2e-tests.sh /\n"
+}

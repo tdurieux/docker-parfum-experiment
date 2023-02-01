@@ -1,0 +1,32 @@
+ARG BASE_IMAGE
+FROM ${BASE_IMAGE}
+
+ARG TOOLBOX_VERSION
+ARG KUBE_CLIENT_VERSION
+
+RUN curl -f -LO https://storage.googleapis.com/kubernetes-release/release/${KUBE_CLIENT_VERSION}/bin/linux/amd64/kubectl && \
+        chmod +x ./kubectl && \
+        mv ./kubectl /usr/local/bin/kubectl
+
+RUN yum install -y \
+    which \
+    singlestoredb-toolbox-${TOOLBOX_VERSION} \
+    epel-release \
+ && yum clean all && rm -rf /var/cache/yum
+
+RUN yum update -y \
+ && yum clean all
+
+RUN /usr/bin/pip3 install awscli;if [ $? -ne 0 ]; then \
+    yum install -y unzip scl-utils && \
+    curl -f "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip" && \
+    unzip awscliv2.zip && \
+    ./aws/install; rm -rf /var/cache/yum \
+fi
+
+RUN /usr/bin/pip3 install pymysql boto3; if [ $? -ne 0 ]; then \
+ /usr/bin/python3 -m pip install boto3;\
+fi
+
+ADD assets/report /report
+ADD assets/backup /backup

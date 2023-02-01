@@ -1,0 +1,21 @@
+FROM jenkins/jenkins:2.347-jdk11
+
+USER jenkins
+RUN jenkins-plugin-cli --plugins blueocean:1.25.5 build-timestamp:1.0.3 timestamper:1.17 pollscm:1.3.1 github-api:1.303-400.v35c2d8258028
+
+USER root
+ENV FLUENTD_HOST "fluentd"
+ENV FLUENTD_PORT "24224"
+ENV JAVA_OPTS -Djenkins.install.runSetupWizard=false
+ENV JENKINS_URL "http://jenkins:10000"
+ENV ACCESS_KEY ${ACCESS_KEY}
+ENV SECRET_KEY ${SECRET_KEY}
+
+COPY ./requirements.txt requirements.txt
+
+RUN apt update && \
+    apt install --no-install-recommends -y python3 python3-pip && rm -rf /var/lib/apt/lists/*;
+RUN pip3 install --no-cache-dir -r requirements.txt
+
+COPY jenkins/1-configureJenkins.groovy /usr/share/jenkins/ref/init.groovy.d/1-configureJenkins.groovy
+COPY jenkins/2-addAccessKeys.groovy /usr/share/jenkins/ref/init.groovy.d/2-addAccessKeys.groovy

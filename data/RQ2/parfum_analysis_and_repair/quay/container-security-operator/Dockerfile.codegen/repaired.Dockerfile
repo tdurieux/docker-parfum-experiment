@@ -1,0 +1,7 @@
+FROM golang:1.17
+
+RUN  go get -u k8s.io/code-generator || true && \
+  go get -u k8s.io/kube-openapi || true && \
+  cd src/k8s.io/code-generator && \
+  go install ./cmd/... && \
+  sed -i '/go install .\//d' ./generate-groups.sh 

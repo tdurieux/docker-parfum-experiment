@@ -1,0 +1,1 @@
+f2b97c4629a92aa7f9b378b49f6e1b42  Dockerfile_alpine3

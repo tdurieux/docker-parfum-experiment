@@ -1,0 +1,19 @@
+FROM stretch_elixir110
+# replaced by custom image
+# FROM elixir:1.7
+
+MAINTAINER Areski <areski@gmail.com>
+
+ENV REFRESHED_AT 2019-02-25
+
+# Install hex
+RUN /usr/local/bin/mix local.hex --force && \
+    /usr/local/bin/mix local.rebar --force && \
+    /usr/local/bin/mix hex.info
+
+WORKDIR /app
+COPY . .
+
+RUN mix deps.get
+
+CMD ["bash"]

@@ -1,0 +1,2 @@
+<%= render_erb 'images/Dockerfile.python.erb' %>
+<%= render_erb 'images/Dockerfile.end.erb' %>

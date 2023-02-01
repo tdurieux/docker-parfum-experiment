@@ -1,0 +1,44 @@
+{
+  "startTime": 1674248886184,
+  "endTime": 1674248887361,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 32,
+        "lineEnd": 32,
+        "columnStart": 4,
+        "columnEnd": 50
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 35,
+        "lineEnd": 35,
+        "columnStart": 4,
+        "columnEnd": 115
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 42,
+        "lineEnd": 42,
+        "columnStart": 4,
+        "columnEnd": 55
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 33,
+        "lineEnd": 33,
+        "columnStart": 4,
+        "columnEnd": 25
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "#---------------------------------------------------------------------\n# STAGE 1: Build skopeo inside a temporary container\n#---------------------------------------------------------------------\nFROM fedora:32 AS skopeo-build\n\nRUN dnf install -y skopeo\n\n#---------------------------------------------------------------------\n# STAGE 2: Build credential helpers inside a temporary container\n#---------------------------------------------------------------------\nFROM golang:1.18 AS cred-helpers-build\n\nRUN go install github.com/awslabs/amazon-ecr-credential-helper/ecr-login/cli/docker-credential-ecr-login@69c85dc22db6511932bbf119e1a0cc5c90c69a7f\nRUN go install github.com/chrismellard/docker-credential-acr-env@d4055f832e8b16ea2ee93189c5e14faafd36baf6\n\n#---------------------------------------------------------------------\n# STAGE 3: Build the kubernetes-monitor\n#---------------------------------------------------------------------\nFROM registry.access.redhat.com/ubi8/ubi:8.6\n\nLABEL name=\"Snyk Controller\" \\\n      maintainer=\"support@snyk.io\" \\\n      vendor=\"Snyk Ltd\" \\\n      summary=\"Snyk integration for Kubernetes\" \\\n      description=\"Snyk Controller enables you to import and test your running workloads and identify vulnerabilities in their associated images and configurations that might make those workloads less secure.\"\n\nCOPY LICENSE /licenses/LICENSE\n\nENV NODE_ENV production\n\nRUN yum upgrade -y\n\nRUN curl -f -sL https://rpm.nodesource.com/setup_16.x | bash -\nRUN yum install -y nodejs && rm -rf /var/cache/yum\n\nRUN curl -f -L -o /usr/bin/dumb-init https://github.com/Yelp/dumb-init/releases/download/v1.2.5/dumb-init_1.2.5_x86_64\nRUN chmod 755 /usr/bin/dumb-init\n\nRUN groupadd -g 10001 snyk\nRUN useradd -g snyk -d /srv/app -u 10001 snyk\n\n# Install gcloud\nRUN curl -f -sL https://sdk.cloud.google.com > /install.sh\nRUN bash /install.sh --disable-prompts --install-dir=/ && rm /google-cloud-sdk/bin/anthoscli\nENV PATH=/google-cloud-sdk/bin:$PATH\nRUN rm /install.sh\n\n# Copy credential helpers\nCOPY --chown=snyk:snyk --from=cred-helpers-build /go/bin/docker-credential-ecr-login /usr/bin/docker-credential-ecr-login\nCOPY --chown=snyk:snyk --from=cred-helpers-build /go/bin/docker-credential-acr-env /usr/bin/docker-credential-acr-env\n\nWORKDIR /srv/app\n\nCOPY --chown=snyk:snyk --from=skopeo-build /usr/bin/skopeo /usr/bin/skopeo\nCOPY --chown=snyk:snyk --from=skopeo-build /etc/containers/registries.d/default.yaml /etc/containers/registries.d/default.yaml\nCOPY --chown=snyk:snyk --from=skopeo-build /etc/containers/policy.json /etc/containers/policy.json\n\n# Add manifest files and install before adding anything else to take advantage of layer caching\nADD --chown=snyk:snyk package.json package-lock.json ./\n\n# The `.config` directory is used by `snyk protect` and we also mount a K8s volume there at runtime.\n# This clashes with OpenShift 3 which mounts things differently and prevents access to the directory.\n# TODO: Remove this line once OpenShift 3 comes out of support.\nRUN mkdir -p .config\n\nRUN npm ci\n\n# add the rest of the app files\nADD --chown=snyk:snyk . .\n\n# OpenShift 4 doesn't allow dumb-init access the app folder without this permission.\nRUN chmod 755 /srv/app && chmod 755 /srv/app/bin && chmod +x /srv/app/bin/start\n\n# This must be in the end for Red Hat Build Service\nRUN chown -R snyk:snyk .\nUSER 10001:10001\n\n# Build typescript\nRUN npm run build\n\nENTRYPOINT [\"/usr/bin/dumb-init\", \"--\", \"bin/start\"]\n"
+}

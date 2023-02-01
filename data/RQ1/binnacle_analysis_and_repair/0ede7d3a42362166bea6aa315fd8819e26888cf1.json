@@ -1,0 +1,35 @@
+{
+  "startTime": 1674239201639,
+  "endTime": 1674239201998,
+  "originalSmells": [
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 35,
+        "lineEnd": 40,
+        "columnStart": 5,
+        "columnEnd": 18
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 49,
+        "lineEnd": 49,
+        "columnStart": 5,
+        "columnEnd": 65
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 81,
+        "lineEnd": 81,
+        "columnStart": 5,
+        "columnEnd": 34
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM alpine:3.8 as builder\n\nLABEL maintainer \"https://github.com/blacktop\"\n\nENV ZEEK_VERSION 2.6.1\n\nRUN apk add --no-cache zlib openssl libstdc++ libpcap libgcc\nRUN apk add --no-cache -t .build-deps \\\n  libmaxminddb-dev \\\n  linux-headers \\\n  openssl-dev \\\n  libpcap-dev \\\n  python-dev \\\n  zlib-dev \\\n  binutils \\\n  fts-dev \\\n  cmake \\\n  clang \\\n  bison \\\n  bash \\\n  swig \\\n  perl \\\n  make \\\n  flex \\\n  git \\\n  g++ \\\n  fts\n\nRUN echo \"===> Cloning zeek...\" \\\n  && cd /tmp \\\n  && git clone --recursive https://github.com/zeek/zeek.git\n# && git clone --branch v$ZEEK_VERSION https://github.com/zeek/zeek.git\n\nRUN echo \"===> Compiling zeek...\" \\\n  && cd /tmp/zeek \\\n  && CC=clang ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" --prefix=/usr/local/bro \\\n  --build-type=MinSizeRel \\\n  --disable-broker-tests \\\n  --disable-zeekctl \\\n  --disable-auxtools \\\n  --disable-python \\\n  && make -j 2 \\\n  && make install\n\nRUN echo \"===> Compiling af_packet plugin...\" \\\n  && cd /tmp/zeek/aux/ \\\n  && git clone https://github.com/J-Gras/bro-af_packet-plugin.git \\\n  && cd /tmp/zeek/aux/bro-af_packet-plugin \\\n  && find . -name \"*.bro\" -exec sh -c 'mv \"$1\" \"${1%.bro}.zeek\"' _ {} \\; \\\n  && CC=clang ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" --with-kernel=/usr --bro-dist=/tmp/zeek \\\n  && make -j 2 \\\n  && make install \\\n  && /usr/local/bro/bin/bro -NN Bro::AF_Packet\n\nRUN echo \"===> Installing hosom/file-extraction package...\" \\\n  && cd /tmp \\\n  && git clone https://github.com/hosom/file-extraction.git \\\n  && find file-extraction -name \"*.bro\" -exec sh -c 'mv \"$1\" \"${1%.bro}.zeek\"' _ {} \\; \\\n  && mv file-extraction/scripts /usr/local/bro/share/bro/site/file-extraction\n\nRUN echo \"===> Installing corelight/json-streaming-logs package...\" \\\n  && cd /tmp \\\n  && git clone https://github.com/corelight/json-streaming-logs.git json-streaming-logs \\\n  && find json-streaming-logs -name \"*.bro\" -exec sh -c 'mv \"$1\" \"${1%.bro}.zeek\"' _ {} \\; \\\n  && mv json-streaming-logs/scripts /usr/local/bro/share/bro/site/json-streaming-logs\n\nRUN echo \"===> Shrinking image...\" \\\n  && strip -s /usr/local/bro/bin/bro\n####################################################################################################\nFROM alpine:3.8 as geoip\n\nENV MAXMIND_CITY https://geolite.maxmind.com/download/geoip/database/GeoLite2-City.tar.gz\nENV MAXMIND_CNTRY https://geolite.maxmind.com/download/geoip/database/GeoLite2-Country.tar.gz\nENV MAXMIND_ASN http://geolite.maxmind.com/download/geoip/database/GeoLite2-ASN.tar.gz\nENV GITHUB_CITY https://github.com/blacktop/docker-zeek/raw/master/maxmind/GeoLite2-City.tar.gz\nENV GITHUB_CNTRY https://github.com/blacktop/docker-zeek/raw/master/maxmind/GeoLite2-Country.tar.gz\n\n# Install the GeoIPLite Database\nRUN cd /tmp \\\n  && mkdir -p /usr/share/GeoIP \\\n  && wget ${GITHUB_CITY} \\\n  && tar xzvf GeoLite2-City.tar.gz \\\n  && mv GeoLite2-City*/GeoLite2-City.mmdb /usr/share/GeoIP/ && rm GeoLite2-City.tar.gz\n  # && wget ${MAXMIND_ASN} \\\n  # && tar xzvf GeoLite2-ASN.tar.gz \\\n  # && mv GeoLite2-ASN*/GeoLite2-ASN.mmdb /usr/share/GeoIP/\n####################################################################################################\nFROM alpine:3.8\n\nLABEL maintainer \"https://github.com/blacktop\"\n\nRUN apk --no-cache add ca-certificates zlib openssl libstdc++ libpcap libgcc fts libmaxminddb\n\nCOPY --from=builder /usr/local/bro /usr/local/bro\nCOPY local.bro /usr/local/bro/share/bro/site/local.zeek\n\n# Add a few zeek scripts\nADD https://raw.githubusercontent.com/blacktop/docker-zeek/master/scripts/conn-add-geodata.bro /usr/local/bro/share/bro/site/geodata/conn-add-geodata.bro\nADD https://raw.githubusercontent.com/blacktop/docker-zeek/master/scripts/log-passwords.bro /usr/local/bro/share/bro/site/passwords/log-passwords.bro\n\nENV BROPATH .:/data/config:/usr/local/bro/share/bro:/usr/local/bro/share/bro/policy:/usr/local/bro/share/bro/site\nENV PATH $PATH:/usr/local/bro/bin\n\nCOPY --from=geoip /usr/share/GeoIP /usr/share/GeoIP\n\nWORKDIR /pcap\n\nENTRYPOINT [\"bro\"]\nCMD [\"-h\"]"
+}

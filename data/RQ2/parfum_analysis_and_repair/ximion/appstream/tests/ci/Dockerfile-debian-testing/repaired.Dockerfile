@@ -1,0 +1,13 @@
+#
+# Docker file for AppStream CI tests on Debian Testing
+#
+FROM debian:testing
+
+# prepare
+RUN mkdir -p /build/ci/
+
+# install build dependencies
+COPY install-deps-deb.sh /build/ci/
+RUN chmod +x /build/ci/install-deps-deb.sh && /build/ci/install-deps-deb.sh
+
+# finish

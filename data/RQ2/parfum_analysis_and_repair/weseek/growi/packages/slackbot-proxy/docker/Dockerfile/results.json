@@ -1,0 +1,71 @@
+{
+  "startTime": 1674256050343,
+  "endTime": 1674256051351,
+  "originalSmells": [
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 29,
+        "lineEnd": 29,
+        "columnStart": 4,
+        "columnEnd": 42
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 33,
+        "lineEnd": 35,
+        "columnStart": 4,
+        "columnEnd": 25
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 53,
+        "lineEnd": 55,
+        "columnStart": 4,
+        "columnEnd": 25
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 73,
+        "lineEnd": 73,
+        "columnStart": 4,
+        "columnEnd": 28
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 85,
+        "lineEnd": 90,
+        "columnStart": 4,
+        "columnEnd": 30
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 115,
+        "lineEnd": 115,
+        "columnStart": 4,
+        "columnEnd": 28
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 116,
+        "lineEnd": 116,
+        "columnStart": 4,
+        "columnEnd": 24
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "##\n## packages-json-picker\n##\nFROM node:16-slim AS packages-json-picker\n\nENV optDir /opt\n\nWORKDIR ${optDir}\nCOPY [\"package.json\", \"yarn.lock\", \"lerna.json\", \"./\"]\nCOPY packages packages\n# Find and remove non-package.json files\nRUN find packages \\! -name \"package.json\" -mindepth 2 -maxdepth 2 -print | xargs rm -rf\n\n\n##\n## deps-resolver-dev\n##\nFROM node:16-slim AS deps-resolver-dev\n\nENV optDir /opt\n\nWORKDIR ${optDir}\n\n# copy files\nCOPY --from=packages-json-picker ${optDir} .\n\n# setup\nRUN yarn config set network-timeout 300000 && yarn cache clean;\nRUN npx -y lerna bootstrap -- --frozen-lockfile\n\n# make artifacts\nRUN tar -cf node_modules.tar \\\n  node_modules \\\n  packages/*/node_modules && rm node_modules.tar\n\n\n\n##\n## deps-resolver-prod\n##\nFROM node:16-slim AS deps-resolver-prod\n\nENV optDir /opt\n\nWORKDIR ${optDir}\nCOPY [\"package.json\", \"yarn.lock\", \"lerna.json\", \"./\"]\nCOPY ./packages/slack/package.json ./packages/slack/package.json\nCOPY ./packages/slackbot-proxy/package.json ./packages/slackbot-proxy/package.json\n\nRUN npx -y lerna bootstrap -- --production\n# make artifacts\nRUN tar -cf dependencies.tar \\\n  node_modules \\\n  packages/*/node_modules && rm dependencies.tar\n\n\n\n##\n## builder\n##\nFROM node:16-slim AS builder\n\nENV optDir /opt\n\nWORKDIR ${optDir}\n\n# copy dependent packages\nCOPY --from=deps-resolver-dev \\\n  ${optDir}/node_modules.tar ${optDir}/\n\n# extract node_modules.tar\nRUN tar -xf node_modules.tar && rm node_modules.tar\nRUN rm node_modules.tar\n\nCOPY [\"package.json\", \"lerna.json\", \"tsconfig.base.json\", \"./\"]\n# copy all related packages\nCOPY packages/slack packages/slack\nCOPY packages/slackbot-proxy packages/slackbot-proxy\n\n# build\nRUN yarn lerna run build\n\n# make artifacts\nRUN tar -cf packages.tar \\\n  packages/slack/package.json \\\n  packages/slack/dist \\\n  packages/slackbot-proxy/package.json \\\n  packages/slackbot-proxy/.env \\\n  packages/slackbot-proxy/dist && rm packages.tar\n\n\n\n##\n## release\n##\nFROM node:16-slim\nLABEL maintainer Yuki Takei <yuki@weseek.co.jp>\n\nENV NODE_ENV production\n\nENV optDir /opt\nENV appDir ${optDir}\n\nUSER node\n\nWORKDIR ${appDir}\n# copy artifacts\nCOPY --from=deps-resolver-prod --chown=node:node \\\n  ${optDir}/dependencies.tar ./\nCOPY --from=builder --chown=node:node \\\n  ${optDir}/packages.tar ./\n\n# extract artifacts\nRUN tar -xf dependencies.tar && rm dependencies.tar\nRUN tar -xf packages.tar && rm packages.tar\nRUN rm dependencies.tar packages.tar\n\nWORKDIR ${appDir}/packages/slackbot-proxy\n\nEXPOSE 8080\n\nCMD [\"node\", \"-r\", \"dotenv-flow/config\", \"dist/index.js\"]\n"
+}

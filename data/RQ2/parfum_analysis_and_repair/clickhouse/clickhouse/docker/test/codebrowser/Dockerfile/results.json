@@ -1,0 +1,26 @@
+{
+  "startTime": 1674248061086,
+  "endTime": 1674248061857,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 10,
+        "lineEnd": 10,
+        "columnStart": 22,
+        "columnEnd": 117
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 10,
+        "lineEnd": 10,
+        "columnStart": 22,
+        "columnEnd": 117
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# rebuild in #33610\n# docker build --network=host -t clickhouse/codebrowser .\n# docker run --volume=path_to_repo:/repo_folder --volume=path_to_result:/test_output clickhouse/codebrowser\nARG FROM_TAG=latest\nFROM clickhouse/binary-builder:$FROM_TAG\n\n# ARG for quick switch to a given ubuntu mirror\nARG apt_archive=\"http://archive.ubuntu.com\"\nRUN sed -i \"s|http://archive.ubuntu.com|$apt_archive|g\" /etc/apt/sources.list\n\nRUN apt-get update && apt-get --yes --no-install-recommends --allow-unauthenticated install clang-14 libllvm14 libclang-14-dev libmlir-14-dev && rm -rf /var/lib/apt/lists/*;\n\n# repo versions doesn't work correctly with C++17\n# also we push reports to s3, so we add index.html to subfolder urls\n# https://github.com/ClickHouse-Extras/woboq_codebrowser/commit/37e15eaf377b920acb0b48dbe82471be9203f76b\n# TODO: remove branch in a few weeks after merge, e.g. in May or June 2022\nRUN git clone https://github.com/ClickHouse-Extras/woboq_codebrowser --branch llvm-14 \\\n  && cd woboq_codebrowser \\\n  && cmake . -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_COMPILER=clang\\+\\+-14 -DCMAKE_C_COMPILER=clang-14 \\\n  && make -j \\\n  && cd .. \\\n  && rm -rf woboq_codebrowser\n\nENV CODEGEN=/woboq_codebrowser/generator/codebrowser_generator\nENV CODEINDEX=/woboq_codebrowser/indexgenerator/codebrowser_indexgenerator\nENV STATIC_DATA=/woboq_codebrowser/data\n\nENV SOURCE_DIRECTORY=/repo_folder\nENV BUILD_DIRECTORY=/build\nENV HTML_RESULT_DIRECTORY=$BUILD_DIRECTORY/html_report\nENV SHA=nosha\nENV DATA=\"https://s3.amazonaws.com/clickhouse-test-reports/codebrowser/data\"\n\nCMD mkdir -p $BUILD_DIRECTORY && cd $BUILD_DIRECTORY && \\\n    cmake $SOURCE_DIRECTORY -DCMAKE_CXX_COMPILER=/usr/bin/clang\\+\\+-14 -DCMAKE_C_COMPILER=/usr/bin/clang-14 -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DENABLE_EMBEDDED_COMPILER=0 -DENABLE_S3=0 && \\\n    mkdir -p $HTML_RESULT_DIRECTORY && \\\n    $CODEGEN -b $BUILD_DIRECTORY -a -o $HTML_RESULT_DIRECTORY -p ClickHouse:$SOURCE_DIRECTORY:$SHA -d $DATA | ts '%Y-%m-%d %H:%M:%S' && \\\n    cp -r $STATIC_DATA $HTML_RESULT_DIRECTORY/ &&\\\n    $CODEINDEX $HTML_RESULT_DIRECTORY -d \"$DATA\" | ts '%Y-%m-%d %H:%M:%S' && \\\n    mv $HTML_RESULT_DIRECTORY /test_output\n"
+}

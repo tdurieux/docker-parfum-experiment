@@ -1,0 +1,17 @@
+{
+  "startTime": 1674253484341,
+  "endTime": 1674253484870,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 7,
+        "lineEnd": 7,
+        "columnStart": 4,
+        "columnEnd": 83
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Build Stage\n################################################################################\nFROM rust:1.54-slim-buster as builder\n\nRUN rustup component add clippy\n\nRUN apt-get update \\\n && apt-get install --no-install-recommends -y ca-certificates pkg-config cmake g++ libssl-dev libsasl2-dev \\\n && rm -rf /var/lib/apt/lists/*\n\nWORKDIR /connector\n\nCOPY source-kafka/Cargo.* /connector/\n\n# Avoid having to install/build all dependencies by copying the Cargo files and\n# making a dummy src/main.rs and empty lib.rs files.\nRUN mkdir src \\\n && echo \"fn main() {}\" > src/main.rs \\\n && touch src/lib.rs \\\n && cargo test --locked \\\n && cargo build --release --locked \\\n && rm -r src\n\nCOPY source-kafka/src ./src\n\n# This touch prevents Docker from using a cached empty main.rs file.\nRUN touch src/main.rs \\\n && touch src/lib.rs \\\n && cargo test --locked --offline \\\n && cargo clippy --locked --offline \\\n && cargo install --path . --locked --offline\n\n\n# Runtime Stage\n################################################################################\nFROM ghcr.io/estuary/base-image:v1\n\nWORKDIR /connector\nENV PATH=\"/connector:$PATH\"\n\nCOPY --from=busybox:latest /bin/sh /bin/sh\n\n# Copy in the shared library files we linked against.\nCOPY --from=builder /usr/lib/x86_64-linux-gnu/libdb-5.3.so* /usr/lib/x86_64-linux-gnu/\nCOPY --from=builder /usr/lib/x86_64-linux-gnu/sasl2/libsasldb.so* /usr/lib/x86_64-linux-gnu/sasl2/\nCOPY --from=builder /usr/lib/x86_64-linux-gnu/libsasl2.so.2* /usr/lib/x86_64-linux-gnu/\n\n# Copy in the connector artifact.\nCOPY --from=builder /usr/local/cargo/bin/source-kafka ./connector\n\n# Avoid running the connector as root.\nUSER nonroot:nonroot\n\nENTRYPOINT [\"/connector/connector\"]\n"
+}

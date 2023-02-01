@@ -1,0 +1,90 @@
+FROM ubuntu:20.04
+
+MAINTAINER Josh Ellithorpe <quest@mac.com>
+
+ARG SMARTBCH_VERSION="v0.4.4-p2"
+ARG MOEINGEVM_VERSION="v0.4.2"
+ARG CONFIG_VERSION="v0.0.6"
+
+ARG GOLANG_VERSION="1.18"
+ARG PATCH_CGO_VERSION="0.1.2"
+ARG ROCKSDB_VERSION="5.18.4"
+ARG SNAPPY_VERSION="1.1.8"
+
+ARG GCC_VERSION="9"
+ENV GV=${GCC_VERSION}
+
+# Install apt based dependencies
+ENV DEBIAN_FRONTEND="noninteractive"
+RUN apt-get -y update && apt-get -y upgrade
+RUN apt-get -y --no-install-recommends install software-properties-common && add-apt-repository -y ppa:ubuntu-toolchain-r/test && rm -rf /var/lib/apt/lists/*;
+RUN apt-get -y --no-install-recommends install cmake gcc-${GV} g++-${GV} g++ gcc git libgflags-dev make vim wget && rm -rf /var/lib/apt/lists/*;
+
+# Setup build directory
+RUN mkdir /build
+WORKDIR /build
+
+# Install Go
+RUN wget https://dl.google.com/go/go${GOLANG_VERSION}.linux-amd64.tar.gz
+RUN tar zxvf go${GOLANG_VERSION}.linux-amd64.tar.gz && rm go${GOLANG_VERSION}.linux-amd64.tar.gz
+RUN mv go /usr/local
+RUN mkdir -p /go/bin
+
+ENV GOROOT=/usr/local/go
+ENV GOPATH=/go
+ENV PATH=$GOPATH/bin:$GOROOT/bin:$PATH
+
+# Patch Go for larger cgo stack size
+RUN wget https://github.com/smartbch/patch-cgo-for-golang/archive/refs/tags/v${PATCH_CGO_VERSION}.tar.gz
+RUN tar zxvf v${PATCH_CGO_VERSION}.tar.gz && rm v${PATCH_CGO_VERSION}.tar.gz
+RUN rm v${PATCH_CGO_VERSION}.tar.gz
+RUN cd patch-cgo-for-golang-${PATCH_CGO_VERSION} && cp *.c $GOROOT/src/runtime/cgo/
+
+# Build libsnappy
+RUN wget https://github.com/google/snappy/archive/refs/tags/${SNAPPY_VERSION}.tar.gz
+RUN tar zxvf ${SNAPPY_VERSION}.tar.gz && rm ${SNAPPY_VERSION}.tar.gz
+RUN cd snappy-${SNAPPY_VERSION} && mkdir build && cd build && \
+    CXX=g++-${GV} cmake ../ && make CC=gcc-${GV} CXX=g++-${GV} && make install
+
+# Build rocksdb
+RUN wget https://github.com/facebook/rocksdb/archive/refs/tags/v${ROCKSDB_VERSION}.tar.gz
+RUN tar zxvf v${ROCKSDB_VERSION}.tar.gz && rm v${ROCKSDB_VERSION}.tar.gz
+RUN cd rocksdb-${ROCKSDB_VERSION} && \
+    wget -O - https://raw.githubusercontent.com/smartbch/artifacts/main/patches/rocksdb.gcc11.patch | git apply -v && \
+    CXXFLAGS=-Wno-range-loop-construct make -j4 CC=gcc-${GV} CXX=g++-${GV} static_lib
+
+# Create smartbch directory
+RUN mkdir /smart_bch
+WORKDIR /smart_bch
+
+# Ugly hack: force compiling libevmwrap and smartbchd with gcc-${GV} and g++-${GV}
+RUN ln -s /usr/bin/gcc-${GV} /usr/local/bin/gcc
+RUN ln -s /usr/bin/g++-${GV} /usr/local/bin/g++
+
+# Build libevmwrap
+RUN git clone -b ${MOEINGEVM_VERSION} --depth 1 https://github.com/smartbch/moeingevm
+RUN cd moeingevm/evmwrap && make
+
+# Build smartbchd
+ENV ROCKSDB_PATH="/build/rocksdb-${ROCKSDB_VERSION}"
+ENV CGO_CFLAGS="-I$ROCKSDB_PATH/include"
+ENV CGO_LDFLAGS="-L$ROCKSDB_PATH -L/smart_bch/moeingevm/evmwrap/host_bridge/ -l:librocksdb.a -lstdc++ -lm -lsnappy"
+RUN cd /smart_bch
+RUN git clone -b ${SMARTBCH_VERSION} --depth 1 https://github.com/smartbch/smartbch
+RUN cd smartbch && go build -tags cppbtree github.com/smartbch/smartbch/cmd/smartbchd
+
+# Setup smartbchd
+RUN cp /smart_bch/smartbch/smartbchd /build/smartbchd
+WORKDIR /root
+RUN /build/smartbchd init mynode --chain-id 0x2710
+RUN wget https://github.com/smartbch/artifacts/releases/download/${CONFIG_VERSION}/dot.smartbchd.tgz
+RUN tar zxvf dot.smartbchd.tgz && rm dot.smartbchd.tgz
+RUN cp -rf dot.smartbchd/* .smartbchd/
+
+# Go back to main workdir.
+WORKDIR /build
+
+VOLUME ["/root/.smartbchd"]
+
+ENTRYPOINT ["/build/smartbchd"]
+EXPOSE 8545 8546

@@ -1,0 +1,14 @@
+FROM node:14-alpine
+WORKDIR /app
+COPY . .
+
+RUN npm install && npm cache clean --force;
+RUN npm audit
+ENV DEEPL_MOCK_SERVER_PORT=3000 DEEPL_MOCK_PROXY_SERVER_PORT=3001
+EXPOSE 3000 3001
+
+RUN chown 1000 -R /app
+
+USER 1000
+
+CMD ["npm", "start"]

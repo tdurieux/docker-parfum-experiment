@@ -1,0 +1,50 @@
+# ch-test-scope: full
+# ch-test-arch-exclude: aarch64      # only x86-64, ppc64le supported by nVidia
+
+# This Dockerfile demonstrates a multi-stage build. With a single-stage build
+# that brings along the nVidia build environment, the resulting unpacked image
+# is 2.9 GiB; with the multi-stage build, it's 146 MiB.
+#
+# See: https://docs.docker.com/develop/develop-images/multistage-build
+
+
+## Stage 1: Install the nVidia build environment and build a sample app.
+FROM ubuntu:20.04
+
+# OS packages needed
+ARG DEBIAN_FRONTEND=noninteractive
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+                    ca-certificates \
+                    gnupg \
+                    make \
+                    wget \
+ && rm -rf /var/lib/apt/lists/*
+
+# Install CUDA from nVidia.
+# See: https://developer.nvidia.com/cuda-downloads?target_os=Linux&target_arch=x86_64&target_distro=Ubuntu&target_version=2004&target_type=debnetwork
+WORKDIR /usr/local/src
+ARG nvidia_pub=3bf863cc.pub
+RUN wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2004/x86_64/cuda-ubuntu2004.pin \
+ && mv cuda-ubuntu2004.pin /etc/apt/preferences.d/cuda-repository-pin-600 \
+ && wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2004/x86_64/$nvidia_pub \
+ && apt-key add $nvidia_pub \
+ && echo "deb https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2004/x86_64/ /" >> /etc/apt/sources.list \
+ && apt-get update \
+ && apt-get install -y --no-install-recommends cuda-toolkit-11-2 \
+ && rm -rf /var/lib/apt/lists/* $nvidia_pub
+
+# Build the sample app we'll use to test.
+WORKDIR /usr/local/cuda-11.2/samples/0_Simple/matrixMulCUBLAS
+RUN make
+
+
+## Stage 2: Copy the built sample app into a clean Ubuntu image.
+FROM ubuntu:20.04
+
+COPY --from=0 /usr/local/cuda-11.2/samples/0_Simple/matrixMulCUBLAS /
+
+# These are the two nVidia shared libraries that the sample app needs. We could
+# be smarter about finding this path. However, one thing to avoid is copying in
+# all of /usr/local/cuda-11.2/targets/x86_64-linux/lib, because that directory
+# is quite large.

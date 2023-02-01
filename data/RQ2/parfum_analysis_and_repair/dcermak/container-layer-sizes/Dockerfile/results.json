@@ -1,0 +1,26 @@
+{
+  "startTime": 1674249121276,
+  "endTime": 1674249122198,
+  "originalSmells": [
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 16,
+        "lineEnd": 16,
+        "columnStart": 4,
+        "columnEnd": 23
+      }
+    },
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 16,
+        "lineEnd": 16,
+        "columnStart": 27,
+        "columnEnd": 39
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM registry.suse.com/bci/golang:1.17 as go-builder\nWORKDIR /app/\nCOPY . /app/\n\nRUN zypper -n ref && \\\n    zypper -n in --allow-downgrade libgpgme-devel libassuan-devel libbtrfs-devel device-mapper-devel awk\nRUN go build ./bin/analyzer && go build ./bin/storage\nRUN for lib in $(ldd analyzer |grep '=>'|awk '{print $3}'); do \\\n        pkg=$(rpm -q --whatprovides $lib); \\\n        if [[ ! $pkg =~ glibc ]]; then zypper download $pkg; fi; \\\n    done\n\nFROM registry.suse.com/bci/node:16 as node-builder\nWORKDIR /app/\nCOPY . /app/\n\nRUN npm -g install yarn && yarn install && yarn run buildProduction && npm cache clean --force; && yarn cache clean;\n\n\nFROM registry.suse.com/bci/bci-micro:15.3 as storage-backend-deploy\nWORKDIR /app/\nCOPY --from=go-builder /app/storage .\n\nEXPOSE 4040\n\nENTRYPOINT [\"/app/storage\"]\n\n\nFROM registry.suse.com/bci/bci-minimal:15.3 as deploy\nWORKDIR /app/\nCOPY --from=go-builder /app/analyzer .\nCOPY --from=node-builder /app/public/ public/\nCOPY --from=go-builder /var/cache/zypp/packages/SLE_BCI/x86_64/ .\n\nRUN rpm -i --nodeps --force *rpm && rm -rf *rpm\nRUN mkdir -p /etc/containers/ /var/lib/containers/storage /var/run/containers/storage && \\\n    echo '{\"default\":[{\"type\":\"insecureAcceptAnything\"}],\"transports\":{\"docker-daemon\":{\"\":[{\"type\":\"insecureAcceptAnything\"}]}}}' > /etc/containers/policy.json && \\\n    echo $'[storage] \\n\\\ndriver = \"vfs\" \\n\\\nrunroot = \"/var/run/containers/storage\" \\n\\\ngraphroot = \"/var/lib/containers/storage\"' > /etc/containers/storage.conf\n\nEXPOSE 5050\n\nENTRYPOINT [\"/app/analyzer\", \"--no-rootless\"]\n"
+}

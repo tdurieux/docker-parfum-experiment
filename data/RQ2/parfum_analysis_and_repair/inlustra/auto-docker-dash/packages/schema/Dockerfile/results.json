@@ -1,0 +1,35 @@
+{
+  "startTime": 1674250770102,
+  "endTime": 1674250770583,
+  "originalSmells": [
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 53,
+        "lineEnd": 53,
+        "columnStart": 4,
+        "columnEnd": 16
+      }
+    },
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 59,
+        "lineEnd": 59,
+        "columnStart": 4,
+        "columnEnd": 41
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 82,
+        "lineEnd": 84,
+        "columnStart": 16,
+        "columnEnd": 11
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "##\n## Base\n##\nFROM node:14-alpine as install-prep\n\nARG BUILD_DIR=packages/agent\n\nWORKDIR /opt/demo\n\n##\n## Only include non stateful files from yarn\n## If your set has files elsewhere you may need to change this\n## to include or exclude yarn files as needed.\n##\n## .yarn/*\n## !.yarn/cache\n## !.yarn/releases\n## !.yarn/plugins\n##\n\nCOPY ${BUILD_DIR}/package.json ${BUILD_DIR}/\nCOPY package.json yarn.lock .yarnrc.yml .pnp.js codegen.yml tsconfig.base.json .\nCOPY .yarn/ /opt/demo/.yarn/\n\n##\n## If your workspace depends on any other workspace\n## include them here also\n## ie: COPY packages/requiredbydemo/ /opt/demo/packages/requiredbydemo/\n## You could optionly run the install out of docker however if you do\n## have compiled binaries that depend on system libaries you should\n## compile them with in your docker to ensure they are compatable\n##\n## You should also install any compile-time system libaries not included\n## by defautl from your base image.\n##\n\nCOPY packages/common /opt/demo/packages/common\nCOPY packages/connectors /opt/demo/packages/connectors\nCOPY packages/agent /opt/demo/packages/agent\n\n##\n## Install prod dependencies\n##\nFROM install-prep as install\nARG BUILD_DIR=packages/agent\n\nWORKDIR /opt/demo\n\n##\n## This is needed as the install state will be invalid otherwise\n##\nRUN yarn install && yarn cache clean;\n\nRUN yarn gen\n\nRUN yarn build packages/agent\n\nRUN yarn workspaces focus -A --production && yarn cache clean;\n\n##\n## Final Image\n##\nFROM node:14-alpine\nARG BUILD_DIR=packages/agent\nWORKDIR /opt/demo\n\n##\n## The installing of gosu, dumb-init and the use of --chown are optional\n## This is just showing a best practice docker\n## It will run as a non root account the user `node` is provided by the node base image\n## gosu proformes the stepdown from root\n## dumb-init handles pid 0 signal handling\n##\n\n##\n## Any run-time system libaries should be installed now\n##\n\nRUN --mount=type=cache,sharing=locked,target=/var/cache/apt \\\n  --mount=type=cache,target=/var/lib/apt \\\n  apk update && apk add --no-cache \\\n  su-exec \\\n  dumb-init \\\n  && su-exec node true\n\n##\n## This includes our yarn install (like grabbing node_modules of old)\n## Then includes the built code\n##\nCOPY --chown=node:node --from=install /opt/demo/ /opt/prod/\n\n##\n## How you start and build your app is up to you this is just an example\n##\nWORKDIR /opt/prod/packages/agent\n\nENTRYPOINT [\"/usr/bin/dumb-init\", \"--\"]\n\nCMD su-exec ${PUID}:${PGID} yarn node dist/server.js\n"
+}

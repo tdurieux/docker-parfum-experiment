@@ -1,0 +1,70 @@
+# © Copyright IBM Corporation 2020
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+ARG BASE_IMAGE=ubuntu:18.04
+FROM $BASE_IMAGE
+
+# Create location for the git clone and MQ installation
+RUN mkdir -p /opt/bin \
+  && chmod -R 777 /opt/bin \
+  && mkdir -p /opt/mqm \
+  && chmod a+rx /opt/mqm \
+  && mkdir -p /opt/config \
+  && chmod a+rx /opt/config
+
+# Install curl
+RUN apt-get update \
+    && apt-get install --no-install-recommends -y curl bash ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# Location of the downloadable MQ client package \
+ENV RDURL="https://public.dhe.ibm.com/ibmdl/export/pub/software/websphere/messaging/mqdev/redist" \
+    RDTAR="IBM-MQC-Redist-LinuxX64.tar.gz" \
+    VRMF=9.3.0.0
+
+# Install the MQ client from the Redistributable package. This also contains the
+# header files we need to compile against. Setup the subset of the package
+# we are going to keep - the genmqpkg.sh script removes unneeded parts
+ENV genmqpkg_incnls=1 \
+    genmqpkg_incsdk=1 \
+    genmqpkg_inctls=1
+
+RUN cd /opt/mqm \
+ && curl -f -LO "$RDURL/$VRMF-$RDTAR" \
+ && tar -zxf ./*.tar.gz \
+ && rm -f ./*.tar.gz \
+ && bin/genmqpkg.sh -b /opt/mqm \
+ && mkdir -p /IBM/MQ/data/errors \
+   && mkdir -p /.mqm \
+   && chmod -R 777 /IBM \
+   && chmod -R 777 /.mqm
+
+ENV LD_LIBRARY_PATH="/opt/mqm/lib64:/usr/lib64" \
+    MQ_CONNECT_TYPE=CLIENT
+
+ARG MONITOR_ARG="mq_prometheus"
+ENV MONITOR=$MONITOR_ARG
+RUN echo "Building container for $MONITOR"
+
+# Copy over the binary file, which is in the same directory as this one
+COPY $MONITOR /opt/bin/$MONITOR
+
+# Set default values for some configuration settings
+ENV IBMMQ_GLOBAL_CONFIGURATIONFILE=/opt/config/$MONITOR.yaml
+# Other env vars follow the same pattern. For example,
+#   ENV IBMMQ_GLOBAL_LOGLEVEL=info
+#   ENV IBMMQ_CONNECTION_QUEUEMANAGER=QM1
+
+# The configuration file should be mounted from the host into the /opt/config directory.
+CMD /opt/bin/$MONITOR

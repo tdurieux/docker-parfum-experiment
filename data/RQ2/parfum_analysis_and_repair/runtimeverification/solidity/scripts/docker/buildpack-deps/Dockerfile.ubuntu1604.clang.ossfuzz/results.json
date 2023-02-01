@@ -1,0 +1,54 @@
+{
+  "startTime": 1674255706158,
+  "endTime": 1674255707063,
+  "originalSmells": [
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 128,
+        "lineEnd": 128,
+        "columnStart": 4,
+        "columnEnd": 50
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 35,
+        "lineEnd": 35,
+        "columnStart": 4,
+        "columnEnd": 49
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 29,
+        "lineEnd": 34,
+        "columnStart": 1,
+        "columnEnd": 54
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 35,
+        "lineEnd": 35,
+        "columnStart": 4,
+        "columnEnd": 49
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 34,
+        "lineEnd": 34,
+        "columnStart": 4,
+        "columnEnd": 73
+      }
+    }
+  ],
+  "repairedDockerfile": "#------------------------------------------------------------------------------\n# Dockerfile for building and testing Solidity Compiler on CI\n# Target: Ubuntu 16.04 (Xenial Xerus) ossfuzz Clang variant\n# URL: https://hub.docker.com/r/ethereum/solidity-buildpack-deps\n#\n# This file is part of solidity.\n#\n# solidity is free software: you can redistribute it and/or modify\n# it under the terms of the GNU General Public License as published by\n# the Free Software Foundation, either version 3 of the License, or\n# (at your option) any later version.\n#\n# solidity is distributed in the hope that it will be useful,\n# but WITHOUT ANY WARRANTY; without even the implied warranty of\n# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the\n# GNU General Public License for more details.\n#\n# You should have received a copy of the GNU General Public License\n# along with solidity.  If not, see <http://www.gnu.org/licenses/>\n#\n# (c) 2016-2019 solidity contributors.\n#------------------------------------------------------------------------------\nFROM gcr.io/oss-fuzz-base/base-clang as base\nLABEL version=\"7\"\n\nARG DEBIAN_FRONTEND=noninteractive\n\nRUN apt-get update; \\\n\tapt-get -qqy install --no-install-recommends \\\n\t\tbuild-essential \\\n\t\tsoftware-properties-common \\\n\t\tninja-build git wget \\\n\t\tlibbz2-dev zlib1g-dev git curl uuid-dev \\\n\t\tpkg-config openjdk-8-jdk liblzma-dev unzip mlton m4; rm -rf /var/lib/apt/lists/*; \\\n    apt-get install --no-install-recommends -qy python-pip python-sphinx;\n\n# Install cmake 3.14 (minimum requirement is cmake 3.10)\nRUN wget https://github.com/Kitware/CMake/releases/download/v3.14.5/cmake-3.14.5-Linux-x86_64.sh; \\\n    chmod +x cmake-3.14.5-Linux-x86_64.sh; \\\n    ./cmake-3.14.5-Linux-x86_64.sh --skip-license --prefix=\"/usr\"\n\nFROM base AS libraries\n\n# Boost\nRUN set -ex; \\\n    cd /usr/src; \\\n    wget -q 'https://dl.bintray.com/boostorg/release/1.73.0/source/boost_1_73_0.tar.bz2' -O boost.tar.bz2; \\\n    test \"$(sha256sum boost.tar.bz2)\" = \"4eb3b8d442b426dc35346235c8733b5ae35ba431690e38c6a8263dce9fcbb402  boost.tar.bz2\"; \\\n    tar -xf boost.tar.bz2; \\\n    rm boost.tar.bz2; \\\n    cd boost_1_73_0; \\\n    CXXFLAGS=\"-stdlib=libc++ -pthread\" LDFLAGS=\"-stdlib=libc++\" ./bootstrap.sh --with-toolset=clang --prefix=/usr; \\\n    ./b2 toolset=clang cxxflags=\"-stdlib=libc++ -pthread\" linkflags=\"-stdlib=libc++ -pthread\" headers; \\\n    ./b2 toolset=clang cxxflags=\"-stdlib=libc++ -pthread\" linkflags=\"-stdlib=libc++ -pthread\" \\\n        link=static variant=release runtime-link=static \\\n        system filesystem unit_test_framework program_options \\\n        install -j $(($(nproc)/2)); \\\n    rm -rf /usr/src/boost_1_73_0\n\n# Z3\nRUN set -ex; \\\n    git clone --depth 1 -b z3-4.8.9 https://github.com/Z3Prover/z3.git \\\n    /usr/src/z3; \\\n    cd /usr/src/z3; \\\n    mkdir build; \\\n    cd build; \\\n    LDFLAGS=$CXXFLAGS cmake -DZ3_BUILD_LIBZ3_SHARED=OFF -DCMAKE_INSTALL_PREFIX=/usr \\\n    -DCMAKE_BUILD_TYPE=Release ..; \\\n    make libz3 -j; \\\n    make install; \\\n    rm -rf /usr/src/z3\n\n# OSSFUZZ: libprotobuf-mutator\nRUN set -ex; \\\n\tgit clone https://github.com/google/libprotobuf-mutator.git \\\n\t    /usr/src/libprotobuf-mutator; \\\n\tcd /usr/src/libprotobuf-mutator; \\\n\tgit checkout 3521f47a2828da9ace403e4ecc4aece1a84feb36; \\\n\tmkdir build; \\\n\tcd build; \\\n\tcmake .. -GNinja -DLIB_PROTO_MUTATOR_DOWNLOAD_PROTOBUF=ON \\\n        -DLIB_PROTO_MUTATOR_TESTING=OFF -DCMAKE_BUILD_TYPE=Release \\\n        -DCMAKE_INSTALL_PREFIX=\"/usr\"; \\\n\tninja; \\\n\tcp -vpr external.protobuf/bin/* /usr/bin/; \\\n\tcp -vpr external.protobuf/include/* /usr/include/; \\\n\tcp -vpr external.protobuf/lib/* /usr/lib/; \\\n\tninja install/strip; \\\n\trm -rf /usr/src/libprotobuf-mutator\n\n# EVMONE\nRUN set -ex; \\\n\tcd /usr/src; \\\n\tgit clone --branch=\"v0.4.0\" --recurse-submodules https://github.com/ethereum/evmone.git; \\\n\tcd evmone; \\\n\tmkdir build; \\\n\tcd build; \\\n\tcmake -G Ninja -DBUILD_SHARED_LIBS=OFF -DCMAKE_INSTALL_PREFIX=\"/usr\" ..; \\\n\tninja; \\\n\tninja install/strip; \\\n\trm -rf /usr/src/evmone\n\n# HERA\nRUN set -ex; \\\n\tcd /usr/src; \\\n\tgit clone --branch=\"v0.3.2\" --depth 1 --recurse-submodules https://github.com/ewasm/hera.git; \\\n\tcd hera; \\\n\tmkdir build; \\\n\tcd build; \\\n\tcmake -G Ninja -DBUILD_SHARED_LIBS=OFF -DCMAKE_INSTALL_PREFIX=\"/usr\" ..; \\\n\tninja; \\\n\tninja install/strip; \\\n\trm -rf /usr/src/hera\n\n# gmp\nRUN set -ex; \\\n    # Replace system installed libgmp static library\n    # with sanitized version. Do not perform apt\n    # remove because it removes mlton as well that\n    # we need for building libabicoder\n    rm -f /usr/lib/x86_64-linux-gnu/libgmp.*; \\\n    rm -f /usr/include/x86_64-linux-gnu/gmp.h; \\\n    cd /usr/src; \\\n    wget -q 'https://gmplib.org/download/gmp/gmp-6.2.1.tar.xz' -O gmp.tar.xz; \\\n    test \"$(sha256sum gmp.tar.xz)\" = \"fd4829912cddd12f84181c3451cc752be224643e87fac497b69edddadc49b4f2  gmp.tar.xz\"; \\\n    tar -xf gmp.tar.xz; \\\n    cd gmp-6.2.1; \\\n    ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" --prefix=/usr --enable-static=yes; \\\n    make -j; \\\n    make install; \\\n    rm -rf /usr/src/gmp-6.2.1; \\\n    rm -f /usr/src/gmp.tar.xz\n\n# libabicoder\nRUN set -ex; \\\n    cd /usr/src; \\\n    git clone https://github.com/ekpyron/Yul-Isabelle; \\\n    cd Yul-Isabelle; \\\n    cd libabicoder; \\\n    CXX=clang++ CXXFLAGS=\"-stdlib=libc++ -pthread\" make; \\\n    cp libabicoder.a /usr/lib; \\\n    cp abicoder.hpp /usr/include; \\\n    rm -rf /usr/src/Yul-Isabelle\n\nFROM base\nCOPY --from=libraries /usr/lib /usr/lib\nCOPY --from=libraries /usr/bin /usr/bin\nCOPY --from=libraries /usr/include /usr/include"
+}

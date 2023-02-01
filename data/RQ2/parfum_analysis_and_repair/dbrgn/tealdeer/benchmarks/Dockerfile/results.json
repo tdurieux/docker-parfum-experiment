@@ -1,0 +1,44 @@
+{
+  "startTime": 1674246755689,
+  "endTime": 1674246757716,
+  "originalSmells": [
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 63,
+        "lineEnd": 63,
+        "columnStart": 4,
+        "columnEnd": 20
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 31,
+        "lineEnd": 31,
+        "columnStart": 22,
+        "columnEnd": 60
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 89,
+        "lineEnd": 89,
+        "columnStart": 22,
+        "columnEnd": 72
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 73,
+        "lineEnd": 73,
+        "columnStart": 4,
+        "columnEnd": 15
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Benchmark Dockerfile for tealdeer\n#\n# To run the benchmarks, execute\n#\n#     docker build --pull -t tldr-benchmark .\n#     docker run --privileged --rm -it tldr-benchmark\n#\n# as root in the directory of this Dockerfile. This will build the compared\n# clients and benchmark them with `hyperfine` at the end.\n#\n# The `--privileged` flag is needed to drop the disk caches before every run. If\n# you want to test with hot caches or don't want to use this flag, you will have\n# to remove the `--prepare` line from the `hyperfine` command at the end of this\n# file and rebuild the image.\n\n################################################################################\n\nFROM rust AS tealdeer-builder\n\nWORKDIR /build\nRUN git clone https://github.com/dbrgn/tealdeer.git \\\n        && cd tealdeer \\\n        && cargo build --release \\\n        && mkdir /build-outputs \\\n        && cp target/release/tldr /build-outputs/tealdeer\n\n################################################################################\n\nFROM ubuntu:latest AS tldr-c-builder\n\nWORKDIR /build\nRUN apt-get update && apt-get install --no-install-recommends -y build-essential git && rm -rf /var/lib/apt/lists/*\nRUN git clone https://github.com/tldr-pages/tldr-c-client.git \\\n        && cd tldr-c-client \\\n        && DEBIAN_FRONTEND=noninteractive ./deps.sh \\\n        && make \\\n        && mkdir /build-outputs /deps \\\n        && cp tldr /build-outputs/tldr-c \\\n        && cp deps.sh /deps/tldr-c-deps.sh\n\n################################################################################\n\nFROM haskell AS haskell-builder\n\nWORKDIR /build\n\nRUN git clone https://github.com/psibi/tldr-hs.git \\\n        && cd tldr-hs \\\n        && stack build --install-ghc\n\nRUN git clone https://github.com/gutjuri/fast-tldr \\\n        && cd fast-tldr \\\n        && stack build --install-ghc\n\nRUN mkdir /build-outputs \\\n        && find tldr-hs/.stack-work/dist -type f -iname tldr -exec mv '{}' /build-outputs/tldr-hs \\; \\\n        && find fast-tldr/.stack-work/dist -type f -iname tldr -exec mv '{}' /build-outputs/fast-tldr \\;\n\n################################################################################\n\nFROM node:slim AS node-builder\n\nWORKDIR /build-outputs\nRUN npm install tldr \\\n        && cp $(which node) . \\\n        && echo './node -- ./node_modules/.bin/tldr \"$@\"' > tldr-node \\\n        && chmod +x tldr-node && npm cache clean --force;\n\n################################################################################\n\nFROM euantorano/zig:0.8.0 AS zig-builder\n\nWORKDIR /build\nRUN apk add --no-cache git \\\n        && git clone https://gitlab.com/ve-nt/outfieldr.git \\\n        && cd outfieldr \\\n        && git submodule init \\\n        && git submodule update \\\n        && zig build -Drelease-safe \\\n        && mkdir /build-outputs \\\n        && cp bin/tldr /build-outputs/outfieldr\n\n################################################################################\n\nFROM ubuntu:latest AS benchmark\n\nENV LANG=\"en_US.UTF-8\"\n\nWORKDIR /deps\nRUN apt-get update && apt-get install --no-install-recommends -y wget unzip python3 python3-venv && rm -rf /var/lib/apt/lists/*\nCOPY --from=tldr-c-builder /deps/* ./\nRUN for file in *; do DEBIAN_FRONTEND=noninteractive sh $file; done\n\nWORKDIR /clients\nCOPY --from=tealdeer-builder /build-outputs/* ./\nCOPY --from=tldr-c-builder /build-outputs/* ./\nCOPY --from=haskell-builder /build-outputs/* ./\nRUN wget -qO tldr-bash https://4e4.win/tldr && chmod +x tldr-bash\nCOPY --from=node-builder /build-outputs/node /build-outputs/tldr-node ./\nCOPY --from=node-builder /build-outputs/node_modules/ ./node_modules/\nCOPY --from=zig-builder /build-outputs/* ./\n\n# python is really hard to isolate in a package, using pyinstaller didn't really work either, so for now we just use it like this\nRUN python3 -m venv tldr-python \\\n        && cd tldr-python \\\n        && bash -c 'source bin/activate; pip install wheel; pip install tldr; deactivate' \\\n        && cd .. \\\n        && echo '#!/bin/bash' > tldr-python.bash \\\n        && echo 'source tldr-python/bin/activate; tldr $@' >> tldr-python.bash \\\n        && chmod +x tldr-python.bash\n\n# Update all the individual caches\nRUN bash -c 'mkdir -p /caches/{tealdeer,tldr-c,tldr-hs,fast-tldr,tldr-bash,tldr-node,tldr-python,outfieldr/.local/share}' \\\n        && TEALDEER_CACHE_DIR=/caches/tealdeer ./tealdeer -u \\\n        && TLDR_CACHE_DIR=/caches/tldr-c ./tldr-c -u \\\n        && XDG_DATA_HOME=/caches/tldr-hs ./tldr-hs -u \\\n        && XDG_DATA_HOME=/caches/fast-tldr ./fast-tldr -u \\\n        && XDG_DATA_HOME=/caches/tldr-bash ./tldr-bash -u \\\n        && HOME=/caches/tldr-node ./tldr-node -u \\\n        && HOME=/caches/tldr-python ./tldr-python.bash -u \\\n        && HOME=/caches/outfieldr ./outfieldr -u\n\nWORKDIR /tools\nRUN wget -q https://github.com/sharkdp/hyperfine/releases/download/v1.11.0/hyperfine_1.11.0_amd64.deb && dpkg -i hyperfine_1.11.0_amd64.deb\n\nENV PAGE=\"tar\"\nWORKDIR /clients\nCMD hyperfine \\\n        --warmup 10 \\\n        --runs 50 \\\n        --prepare 'sync; echo 3 | tee /proc/sys/vm/drop_caches' \\\n        \"TEALDEER_CACHE_DIR=/caches/tealdeer ./tealdeer $PAGE\" \\\n        \"TLDR_CACHE_DIR=/caches/tldr-c ./tldr-c $PAGE\" \\\n        \"XDG_DATA_HOME=/caches/tldr-hs ./tldr-hs $PAGE\" \\\n        \"XDG_DATA_HOME=/caches/fast-tldr ./fast-tldr $PAGE\" \\\n        \"XDG_DATA_HOME=/caches/tldr-bash TLDR_LESS=0 ./tldr-bash $PAGE\" \\\n        \"HOME=/caches/tldr-python ./tldr-python.bash $PAGE\" \\\n        \"HOME=/caches/outfieldr ./outfieldr $PAGE\" \\\n        \"HOME=/caches/tldr-node ./tldr-node $PAGE\"\n"
+}

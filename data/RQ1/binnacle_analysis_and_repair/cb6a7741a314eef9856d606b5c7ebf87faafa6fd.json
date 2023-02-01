@@ -1,0 +1,53 @@
+{
+  "startTime": 1674235315196,
+  "endTime": 1674235315610,
+  "originalSmells": [
+    {
+      "rule": "rmRecursiveAfterMktempD",
+      "position": {
+        "lineStart": 51,
+        "lineEnd": 51,
+        "columnStart": 24,
+        "columnEnd": 33
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 61,
+        "lineEnd": 63,
+        "columnStart": 4,
+        "columnEnd": 127
+      }
+    },
+    {
+      "rule": "gpgUseBatchFlag",
+      "position": {
+        "lineStart": 52,
+        "lineEnd": 52,
+        "columnStart": 4,
+        "columnEnd": 99
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 102,
+        "lineEnd": 112,
+        "columnStart": 25,
+        "columnEnd": 6
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 102,
+        "lineEnd": 112,
+        "columnStart": 25,
+        "columnEnd": 6
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM debian:jessie\n\n# add our user and group first to make sure their IDs get assigned consistently, regardless of whatever dependencies get added\n#RUN groupadd -r www-data && useradd -r --create-home -g www-data www-data\n\nENV HTTPD_PREFIX /usr/local/apache2\nENV PATH $HTTPD_PREFIX/bin:$PATH\n\nRUN mkdir -p \"$HTTPD_PREFIX\" \\\n\t&& chown www-data:www-data \"$HTTPD_PREFIX\"\nWORKDIR $HTTPD_PREFIX\n\n# install httpd runtime dependencies\n# https://httpd.apache.org/docs/2.4/install.html#requirements\nRUN apt-get update \\\n\t&& apt-get install -y --no-install-recommends \\\n\t\tlibapr1 \\\n\t\tlibaprutil1 \\\n\t\tlibaprutil1-ldap \\\n\t\tlibapr1-dev \\\n\t\tlibaprutil1-dev \\\n\t\tlibpcre++0 \\\n\t\tlibssl1.0.0 \\\n\t\tnetcat \\\n\t&& rm -r /var/lib/apt/lists/*\n\nRUN apt-get update \\\n        && apt-get install -y --no-install-recommends --no-install-suggests netcat \\\n\t    && rm -r /var/lib/apt/lists/*\n\nENV HTTPD_VERSION 2.2.34\nENV HTTPD_SHA1 829206394e238af0b800fc78d19c74ee466ecb23\nENV HTTPD_BZ2_URL https://www.apache.org/dist/httpd/httpd-$HTTPD_VERSION.tar.bz2\n\nRUN set -x \\\n\t&& buildDeps=' \\\n\t\tbzip2 \\\n\t\tca-certificates \\\n\t\tgcc \\\n\t\tlibpcre++-dev \\\n\t\tlibssl-dev \\\n\t\tmake \\\n\t\twget \\\n\t' \\\n\t&& apt-get update \\\n\t&& apt-get install -y --no-install-recommends $buildDeps \\\n\t&& rm -r /var/lib/apt/lists/* \\\n\t\\\n\t&& wget -O httpd.tar.bz2 \"$HTTPD_BZ2_URL\" \\\n\t&& echo \"$HTTPD_SHA1 *httpd.tar.bz2\" | sha1sum -c - \\\n\t&& wget -O httpd.tar.bz2.asc \"$HTTPD_BZ2_URL.asc\" \\\n\t&& export GNUPGHOME=\"$(mktemp -d)\" \\\n\t&& gpg --batch --keyserver ha.pool.sks-keyservers.net --recv-keys B1B96F45DFBDCCF974019235193F180AB55D9977 \\\n\t&& gpg --batch --verify httpd.tar.bz2.asc httpd.tar.bz2 \\\n\t&& rm -r \"$GNUPGHOME\" httpd.tar.bz2.asc \\\n\n\t&& mkdir -p src \\\n\t&& tar -xvf httpd.tar.bz2 -C src --strip-components=1 \\\n\t&& rm httpd.tar.bz2 \\\n\t&& cd src \\\n\n\t&& ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" \\\n\t\t--prefix=\"$HTTPD_PREFIX\" \\\n\t\t--enable-mods-shared='all ssl ldap cache proxy authn_alias mem_cache file_cache authnz_ldap charset_lite dav_lock disk_cache' \\\n\t&& make -j\"$(nproc)\" \\\n\t&& make install \\\n\n\t&& cd .. \\\n\t&& rm -r src \\\n\n\t&& sed -ri \\\n\t\t-e 's!^(\\s*CustomLog)\\s+\\S+!\\1 /proc/self/fd/1!g' \\\n\t\t-e 's!^(\\s*ErrorLog)\\s+\\S+!\\1 /proc/self/fd/2!g' \\\n\t\t\"$HTTPD_PREFIX/conf/httpd.conf\" \\\n\n\t&& apt-get purge -y --auto-remove $buildDeps && rm -rf -d\n\nCOPY httpd-foreground /usr/local/bin/\n\n## CLOUDUNIT :: BEGINNING\nENV CU_SERVER_RESTART_POST_DEPLOYMENT false\nENV CU_SOFTWARE \"\"\nENV CU_SERVER_MANAGER_PATH \"\"\nENV CU_SERVER_MANAGER_PORT 80\nENV CU_SERVER_PORT 80\nENV CU_SERVER_RESTART_POST_CREDENTIALS true\nENV CU_DEFAULT_LOG_FILE access.log\nENV CU_LOGS STDOUT\nENV JAVA_OPTS \" \"\n\n# add custom scripts\nADD scripts /opt/cloudunit/scripts\nRUN chmod +x /opt/cloudunit/scripts/*\n\n# Ennable apache status app\nRUN echo \"<Location /server-status>\" >> /usr/local/apache2/conf/httpd.conf \\\n  && echo \"\t\tSetHandler server-status\" >> /usr/local/apache2/conf/httpd.conf \\\n\t&& echo \"\t\tOrder deny,allow\" >> /usr/local/apache2/conf/httpd.conf \\\n\t&& echo \"\t\tDeny from all\" >> /usr/local/apache2/conf/httpd.conf \\\n\t&& echo \"\t\tAllow from 127.0.0.1\" >> /usr/local/apache2/conf/httpd.conf \\\n\t&& echo \"</Location>\" >> /usr/local/apache2/conf/httpd.conf\n\nRUN apt-get -y update && apt-get install --no-install-recommends -y \\\napache2 \\\nunzip \\\nphp5 \\\nlibapache2-mod-php5 \\\nphp5-gd \\\nphp5-json \\\nphp5-sqlite \\\nphp5-mysql \\\nphp5-mcrypt \\\nmcrypt && rm -rf /var/lib/apt/lists/*;\n\n# on veut une machine de dev qui affiche toutes les erreurs PHP\nRUN sed -i -e 's/^error_reporting\\s*=.*/error_reporting = E_ALL/' /etc/php5/apache2/php.ini\nRUN sed -i -e 's/^display_errors\\s*=.*/display_errors = On/' /etc/php5/apache2/php.ini\n## CLOUDUNIT :: END\n\nEXPOSE 80\nCMD [\"httpd-foreground\"]\n\nLABEL origin application\nLABEL application-type apache\nLABEL application-version 2-2\n"
+}

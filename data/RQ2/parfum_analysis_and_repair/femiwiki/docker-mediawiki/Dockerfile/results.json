@@ -1,0 +1,72 @@
+{
+  "startTime": 1674218992875,
+  "endTime": 1674218994315,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 51,
+        "lineEnd": 54,
+        "columnStart": 22,
+        "columnEnd": 9
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 103,
+        "lineEnd": 120,
+        "columnStart": 22,
+        "columnEnd": 10
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 51,
+        "lineEnd": 54,
+        "columnStart": 22,
+        "columnEnd": 9
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 103,
+        "lineEnd": 120,
+        "columnStart": 22,
+        "columnEnd": 10
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 19,
+        "lineEnd": 20,
+        "columnStart": 18,
+        "columnEnd": 11
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 51,
+        "lineEnd": 53,
+        "columnStart": 22,
+        "columnEnd": 9
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 103,
+        "lineEnd": 112,
+        "columnStart": 22,
+        "columnEnd": 10
+      }
+    }
+  ],
+  "repairedDockerfile": "ARG MEDIAWIKI_VERSION=1.38.2\nARG CADDY_MWCACHE_COMMIT=8322c2622509823908230c93ec3ba092d81e5015\n\nARG TINI_VERSION=0.18.0\n\n#\n# 미디어위키 확장 설치 스테이지. 루비 스크립트를 이용해 수많은 미디어위키\n# 확장들을 병렬로 빠르게 미리 다운받아 놓는다.\n#\nFROM --platform=$TARGETPLATFORM ruby:3.1.2-alpine AS base-extension\n\n# ARG instructions without a value inside of a build stage to use the default\n# value of an ARG declared before the first FROM use\nARG MEDIAWIKI_VERSION\n\n# aria2\n#\n# References:\n#   https://aria2.github.io/\nRUN apk update && apk add --no-cache \\\n      aria2\n\n# Install aria2.conf\nCOPY extension-installer/aria2.conf /root/.config/aria2/aria2.conf\n\nRUN mkdir /mediawiki/\n\n# Extensions and skins setup\nCOPY extension-installer/* /\nRUN bundle config set deployment 'true' &&\\\n    bundle config set without 'development test' &&\\\n    bundle install\nRUN MEDIAWIKI_BRANCH=\"REL$(echo $MEDIAWIKI_VERSION | cut -d. -f-2 | sed 's/\\./_/g')\" &&\\\n    bundle exec ruby /install_extensions.rb \"${MEDIAWIKI_BRANCH}\"\n\n#\n# Composer 스테이지. Composer 이미지는 PHP 버전을 따로 설정할 수 없어 스테이지를 생성해\n# /usr/bin/composer만 복사해 사용하여야 합니다.\n# See 'PHP version & extensions' section on https://hub.docker.com/_/composer for more details.\n#\nFROM --platform=$TARGETPLATFORM composer:2.3.8 AS composer\n\n#\n# 미디어위키 다운로드 스테이지. 다운받은 확장기능에 더해 미디어위키를 추가로 받고\n# Composer로 디펜던시들을 설치한다.\n#\nFROM --platform=$TARGETPLATFORM php:7.4.27-fpm AS base-mediawiki\n\nARG MEDIAWIKI_VERSION\n\n# Install dependencies and utilities\nRUN apt-get update && apt-get install --no-install-recommends -y \\\n      libicu-dev \\\n\n      git && rm -rf /var/lib/apt/lists/*;\n\n# Install the PHP extensions we need\nRUN docker-php-ext-install -j8 \\\n    intl \\\n    calendar\n\nCOPY --from=base-extension /mediawiki /tmp/mediawiki\n\n# Create a cache directory for composer\nRUN mkdir -p /tmp/composer\n\n# MediaWiki setup\nRUN MEDIAWIKI_MAJOR_VERSION=\"$(echo $MEDIAWIKI_VERSION | cut -d. -f-2)\" &&\\\n    curl -fSL \"https://releases.wikimedia.org/mediawiki/${MEDIAWIKI_MAJOR_VERSION}/mediawiki-core-${MEDIAWIKI_VERSION}.tar.gz\" -o mediawiki.tar.gz &&\\\n    tar -xzf mediawiki.tar.gz --strip-components=1 --directory /tmp/mediawiki/ &&\\\n    rm mediawiki.tar.gz\nCOPY configs/composer.local.json /tmp/mediawiki/\n\nCOPY --from=composer /usr/bin/composer /usr/bin/composer\nRUN COMPOSER_HOME=/tmp/composer /usr/bin/composer update --no-dev --working-dir '/tmp/mediawiki'\n\n#\n# Caddy 스테이지. Route53와 caddy-mwcache 패키지를 설치한 Caddy를 빌드한다.\n#\nFROM --platform=$TARGETPLATFORM caddy:2.4.6-builder AS caddy\nARG CADDY_MWCACHE_COMMIT\n\nRUN xcaddy build \\\n      --with github.com/caddy-dns/route53 \\\n      --with \"github.com/femiwiki/caddy-mwcache@${CADDY_MWCACHE_COMMIT}\"\n\n#\n# 미디어위키 도커이미지 생성 스테이지. 미디어위키 실행에 필요한 각종 PHP\n# 디펜던시들을 설치한다.\n#\n# 파일 목록:\n#   /usr/local/etc/php     PHP 설정\n#   /srv/femiwiki.com      미디어위키 소스코드 및 확장들\n#   /usr/local/{bin,sbin}  임의로 설치한 실행파일들\n#   /tmp/cache             캐시 디렉토리\n#   /var/log/cron.log      크론 로그\n#   /tini                  tini\n#\nFROM --platform=$TARGETPLATFORM php:7.4.27-fpm\nARG TARGETPLATFORM\nARG TINI_VERSION\n\n# Install dependencies and utilities\nRUN apt-get update && apt-get install --no-install-recommends -y \\\n\n      build-essential \\\n      libicu-dev \\\n\n      imagemagick \\\n      librsvg2-bin \\\n\n      git \\\n\n      python3 \\\n\n\n\n      lua5.1 \\\n\n      cron \\\n      sudo && rm -rf /var/lib/apt/lists/*;\n\n# Install Caddy\nCOPY --from=caddy /usr/bin/caddy /usr/bin/caddy\n\nRUN mkdir -p \\\n      /config/caddy \\\n      /data/caddy \\\n      /etc/caddy \\\n      /usr/share/caddy\n\n# See https://caddyserver.com/docs/conventions#file-locations for details\nENV XDG_CONFIG_HOME /config\nENV XDG_DATA_HOME /data\n\n# Install the PHP extensions we need\nRUN docker-php-ext-install -j8 \\\n    mysqli \\\n    opcache \\\n    intl \\\n    sockets \\\n    calendar\n\n# Install the default object cache\nRUN pecl channel-update pecl.php.net\nRUN pecl install apcu\nRUN docker-php-ext-enable apcu\n\n#\n# Tini\n#\n# See https://github.com/krallin/tini for the further details\nRUN PLATFORM=\"$(echo $TARGETPLATFORM | cut -d/ -f2)\" &&\\\n    curl -sLfo /tini \"https://github.com/krallin/tini/releases/download/v${TINI_VERSION}/tini-${PLATFORM}\"\nRUN chmod +x /tini\nENTRYPOINT [\"/tini\", \"--\"]\n\n# Remove packages which is not needed anymore (build dependencies of PHP extensions)\nONBUILD RUN apt-get autoremove -y --purge \\\n              build-essential \\\n              libicu-dev\n\n# Set timezone\nENV TZ=Asia/Seoul\nRUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone\n\n# Prepare PHP log\nRUN touch /var/log/php-fpm.log &&\\\n    chown www-data:www-data /var/log/php-fpm.log\n\n# Install Mediawiki and extensions\nCOPY --from=base-mediawiki --chown=www-data /tmp/mediawiki /srv/femiwiki.com\n\n# Create cache directories for mediawiki\n# $wgCacheDirectory should not be accessible from the web and writable by the web server\n# See https://www.mediawiki.org/wiki/Manual:$wgCacheDirectory for details\nRUN sudo -u www-data mkdir -p /tmp/file-cache /tmp/cache\n\n# Web server should be able to write 'extensions/Widgets/compiled_templates'\n# directory Required by 'Widgets' extension\n# Reference: https://www.mediawiki.org/wiki/Extension:Widgets\nRUN chmod o+w /srv/femiwiki.com/extensions/Widgets/compiled_templates\n\n# Web server should be able to execute lua binary\n# Reference: https://www.mediawiki.org/wiki/Extension:Scribunto#Additional_binaries\nRUN chmod o+x /usr/bin/lua\n\n\n#\n# Install and register cron\n#\nCOPY cron/crontab /tmp/crontab\nRUN crontab /tmp/crontab && rm /tmp/crontab\n\n# Install scripts\nRUN sudo -u www-data mkdir -p /srv/femiwiki.com/sitemap\nCOPY cron/generate-sitemap \\\n      cron/update-special-pages \\\n      cron/run-jobs \\\n      /usr/local/bin/\n\n# Ship femiwiki resources\nCOPY --chown=www-data:www-data resources /srv/femiwiki.com/\n\n# Ship femiwiki-specific mediawiki configurations\nCOPY --chown=www-data [ \"configs/LocalSettings.php\", \"configs/Hotfix.php\", \"configs/site-list.xml\", \"/a/\" ]\n# secret.php should be mounted to '/a/secret.php'\nVOLUME /a\n\nWORKDIR /srv/femiwiki.com\n\nEXPOSE 80\nEXPOSE 443\nEXPOSE 9000\n\nCOPY run /usr/local/bin/\nCMD [\"/usr/local/bin/run\"]\n"
+}

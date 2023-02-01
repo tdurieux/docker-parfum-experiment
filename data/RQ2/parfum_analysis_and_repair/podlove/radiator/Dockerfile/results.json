@@ -1,0 +1,44 @@
+{
+  "startTime": 1674255645247,
+  "endTime": 1674255646421,
+  "originalSmells": [
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 61,
+        "lineEnd": 61,
+        "columnStart": 4,
+        "columnEnd": 38
+      }
+    },
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 77,
+        "lineEnd": 77,
+        "columnStart": 4,
+        "columnEnd": 15
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 4,
+        "lineEnd": 4,
+        "columnStart": 18,
+        "columnEnd": 47
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 101,
+        "lineEnd": 101,
+        "columnStart": 18,
+        "columnEnd": 57
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM beardedeagle/alpine-elixir-builder:1.9.1 AS elixir_prep\n\n# git: git dependency in mix.exs\n# make gcc libc-dev: argon2_elixir\nRUN apk update && apk add --no-cache git make gcc libc-dev\n\n# Set environment variables for building the application\nENV MIX_ENV=prod \\\n  LANG=C.UTF-8\n\n# Install hex and rebar\nRUN mix local.hex --force && mix local.rebar --force\n\n# Create the application build directory\nRUN mkdir /app\nWORKDIR /app\n\n# Copy and build deps first\nCOPY mix.exs .\nCOPY mix.lock .\n\nRUN mix deps.get\nRUN mix deps.compile\n\n# Copy over all other necessary application files and directories\nCOPY config ./config\nCOPY lib ./lib\n\n# only copy selected directories in priv\n# - exclude \"static\" because it will be generated fresh\n# - exclude \"gettext\" because it's unused\n# - exclude \"user-agent-db\" because it will be fetched fresh\nRUN mkdir /app/priv\n# COPY priv/cert ./priv/cert\nCOPY priv/repo ./priv/repo\n\n# compile and fail if there are any warnings\nRUN mix compile --warnings-as-errors\n\n# this starts the application which sucks because there is no db when building?\n# RUN mix ua_inspector.download --force\nRUN mix run --no-start -e \"UAInspector.Downloader.download()\"\n\n# ---- Node/Asset Stage ----\nFROM node:10.16-alpine AS node_builder\n\n# fix for Error: could not get uid/gid\n# https://stackoverflow.com/questions/52196518/could-not-get-uid-gid-when-building-node-docker\n\n# Add the patch fix\nCOPY docker-fixes/stack-fix.c /lib/\n\n# Prepare the libraries packages\nRUN set -ex \\\n  && apk add --no-cache  --virtual .build-deps build-base \\\n  && gcc  -shared -fPIC /lib/stack-fix.c -o /lib/stack-fix.so \\\n  && apk del .build-deps\n\n# export the environment variable of LD_PRELOAD\nENV LD_PRELOAD /lib/stack-fix.so\n\nRUN npm install -g webpack webpack-cli && npm cache clean --force;\n\nRUN mkdir /app\nRUN mkdir /app/deps\n\nCOPY assets /app/assets\n\nCOPY --from=elixir_prep /app/deps/phoenix /app/deps/phoenix\nCOPY --from=elixir_prep /app/deps/phoenix_html /app/deps/phoenix_html\n\n# for purgecss\nCOPY --from=elixir_prep /app/lib/radiator_web/templates /app/lib/radiator_web/templates\nCOPY --from=elixir_prep /app/lib/radiator_web/views /app/lib/radiator_web/views\n\nWORKDIR /app/assets\n\nRUN npm install && npm cache clean --force;\nRUN npm audit fix\nRUN webpack --mode production\n\n# --- Elixir Builder Stage ---\n#  Continues elixir_builder, generating the final release.\n\nFROM elixir_prep AS elixir_builder\n\nCOPY --from=node_builder /app/priv/static /app/priv/static\n\nWORKDIR /app\n\nRUN mix phx.digest\n\n# build the application\nRUN mix release\n\n# ---- Application Stage ----\nFROM alpine:3.9 as app\n\nENV LANG=C.UTF-8\n\n# Install openssl\nRUN apk update && apk add --no-cache openssl wget imagemagick ffmpeg\n\n# Create non root user in a canonical cross linux way (was for debian: RUN useradd --create-home app)\n# https://stackoverflow.com/questions/49955097/how-do-i-add-a-user-when-im-using-alpine-as-a-base-image\nENV USER=app\nENV UID=12345\nENV GID=23456\nENV USER_HOME=/home/app\n\nRUN addgroup --gid \"$GID\" \"$USER\" \\\n  && adduser \\\n  --disabled-password \\\n  --gecos \"\" \\\n  --home \"$USER_HOME\" \\\n  --ingroup \"$USER\" \\\n  --uid \"$UID\" \\\n  \"$USER\"\n\n\n# Copy over the build artifact from the previous step and create a non root user\nWORKDIR $USER_HOME\n\n# Install minio client\nRUN wget --quiet https://dl.minio.io/client/mc/release/linux-amd64/mc\nRUN chmod +x mc\n# Make sure we are allowed to write in our own home\nRUN chown $USER $USER_HOME\n\nCOPY --from=elixir_builder /app/_build .\nCOPY --from=elixir_builder /app/priv ./priv\nRUN chown -R app: ./prod\nRUN chown -R app: ./priv\nUSER app\n\nCOPY entrypoint.sh .\nENTRYPOINT [ \"./entrypoint.sh\" ]\n\n# expose our default port\nEXPOSE 4000\n"
+}

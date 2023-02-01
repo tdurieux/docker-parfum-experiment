@@ -1,0 +1,17 @@
+{
+  "startTime": 1674251237816,
+  "endTime": 1674251239204,
+  "originalSmells": [
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 31,
+        "lineEnd": 32,
+        "columnStart": 4,
+        "columnEnd": 16
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# To create a clean image, first copy all data and scripts from import-data\n# image into builder, and use import it during the docker build phase.\n# Next, create an identical postgis-based image and copy resulting PGDATA dir.\n\n# OMT_TOOLS_VERSION will be injected by the dockerhub auto-build environment\nARG OMT_TOOLS_VERSION=latest\nFROM openmaptiles/import-data:${OMT_TOOLS_VERSION} as data\n\nARG OMT_TOOLS_VERSION\nRUN echo \"**********************************************************\" \\\n && echo \"** Preparing database using openmaptiles/postgis:${OMT_TOOLS_VERSION}...\" \\\n && echo \"**********************************************************\"\n\n\nFROM openmaptiles/postgis:${OMT_TOOLS_VERSION} as builder\n\n# Override PGDATA to change the default location of the Postgres data directory\n# to another place that has not been created as a volume\n# See also a relevant discussion about data pre-packaging in\n# https://github.com/docker-library/postgres/issues/661#issuecomment-573192715\n\nENV DATA_DIR=/import \\\n    POSTGRES_DB=openmaptiles \\\n    POSTGRES_USER=openmaptiles \\\n    POSTGRES_PASSWORD=openmaptiles\n\nUSER root\n\n# NOTE: The ogr2ogr in Debian stable does not support PostgreSQL 12\n# Thus parent image must be PG11 or before\nRUN DEBIAN_FRONTEND=noninteractive apt-get update \\\n && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \\\n        gdal-bin && rm -rf /var/lib/apt/lists/*;\n\n# switch to postgres user for ownership and execution\nUSER postgres\n\nCOPY --from=data $DATA_DIR $DATA_DIR/\n\n# Postgis adds 10_... script, and OMT postgis adds 20_... script, so run after both are done\nCOPY --from=data /usr/src/app/import_data.sh /docker-entrypoint-initdb.d/30_omt_preload.sh\n\nCOPY preload-database.sh /usr/local/bin/\n\n# initialize and build the data dir\n# /var/lib/postgresql/data is a volume\n# but the volume may not be accessed from another build stage,\n# so preserve it in another directory\nRUN preload-database.sh \\\n && mkdir -p /var/lib/postgresql/data_copy \\\n && cp -ap \"${PGDATA}\" /var/lib/postgresql/data_copy\n\n# Final image - contains just the resulting PGDATA, without the copy of import-data\nARG OMT_TOOLS_VERSION\nFROM openmaptiles/postgis:${OMT_TOOLS_VERSION}\n\nLABEL maintainer=\"Yuri Astrakhan <YuriAstrakhan@gmail.com>\"\n\nENV POSTGRES_DB=openmaptiles \\\n    POSTGRES_USER=openmaptiles \\\n    POSTGRES_PASSWORD=openmaptiles\n\n# switch to postgres user for ownership and execution\nUSER postgres\n\n# Make sure PGDATA is owned by postgres user\nRUN mkdir -p \"${PGDATA}\"\n\nCOPY --from=builder --chown=postgres:postgres /var/lib/postgresql/data_copy/* \"${PGDATA}/\"\n"
+}

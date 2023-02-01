@@ -1,0 +1,90 @@
+{
+  "startTime": 1674250832517,
+  "endTime": 1674250834518,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 86,
+        "lineEnd": 86,
+        "columnStart": 4,
+        "columnEnd": 29
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 115,
+        "lineEnd": 115,
+        "columnStart": 65,
+        "columnEnd": 90
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 118,
+        "lineEnd": 118,
+        "columnStart": 4,
+        "columnEnd": 40
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 115,
+        "lineEnd": 115,
+        "columnStart": 65,
+        "columnEnd": 90
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 118,
+        "lineEnd": 118,
+        "columnStart": 4,
+        "columnEnd": 40
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 115,
+        "lineEnd": 115,
+        "columnStart": 65,
+        "columnEnd": 90
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 118,
+        "lineEnd": 118,
+        "columnStart": 4,
+        "columnEnd": 40
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 115,
+        "lineEnd": 115,
+        "columnStart": 65,
+        "columnEnd": 114
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 118,
+        "lineEnd": 118,
+        "columnStart": 4,
+        "columnEnd": 64
+      }
+    }
+  ],
+  "repairedDockerfile": "FROM node:14 as frontend\n\n# Make build & post-install scripts behave as if we were in a CI environment (e.g. for logging verbosity purposes).\nARG CI=true\n\n# Install front-end dependencies.\nCOPY package.json package-lock.json .babelrc.js webpack.config.js ./\nRUN npm ci --no-optional --no-audit --progress=false\n\n# Compile static files\nCOPY ./tbx/static_src/ ./tbx/static_src/\nRUN npm run build:prod\n\n\n# We use Debian images because they are considered more stable than the alpine\n# ones becase they use a different C compiler. Debian images also come with\n# all useful packages required for image manipulation out of the box. They\n# however weight a lot, approx. up to 1.5GiB per built image.\nFROM python:3.9-buster as production\n\nARG POETRY_HOME=/opt/poetry\nARG POETRY_INSTALL_ARGS=\"--no-dev\"\n\n# IMPORTANT: Remember to review both of these when upgrading\nARG POETRY_VERSION=1.1.13\n# To get this value locally:\n# $ wget https://raw.githubusercontent.com/python-poetry/poetry/1.1.8/get-poetry.py\n# $ sha1sum get-poetry.py\nARG POETRY_INSTALLER_SHA=eedf0fe5a31e5bb899efa581cbe4df59af02ea5f\n\n# Install dependencies in a virtualenv\nENV VIRTUAL_ENV=/venv\n\nRUN useradd tbx --create-home && mkdir /app $VIRTUAL_ENV && chown -R tbx /app $VIRTUAL_ENV\n\nWORKDIR /app\n\n# Set default environment variables. They are used at build time and runtime.\n# If you specify your own environment variables on Heroku or Dokku, they will\n# override the ones set here. The ones below serve as sane defaults only.\n#  * PATH - Make sure that Poetry is on the PATH, along with our venv\n#  * PYTHONUNBUFFERED - This is useful so Python does not hold any messages\n#    from being output.\n#    https://docs.python.org/3.9/using/cmdline.html#envvar-PYTHONUNBUFFERED\n#    https://docs.python.org/3.9/using/cmdline.html#cmdoption-u\n#  * DJANGO_SETTINGS_MODULE - default settings used in the container.\n#  * PORT - default port used. Please match with EXPOSE so it works on Dokku.\n#    Heroku will ignore EXPOSE and only set PORT variable. PORT variable is\n#    read/used by Gunicorn.\n#  * WEB_CONCURRENCY - number of workers used by Gunicorn. The variable is\n#    read by Gunicorn.\n#  * GUNICORN_CMD_ARGS - additional arguments to be passed to Gunicorn. This\n#    variable is read by Gunicorn\nENV PATH=${POETRY_HOME}/bin:$VIRTUAL_ENV/bin:$PATH \\\n    POETRY_INSTALL_ARGS=${POETRY_INSTALL_ARGS} \\\n    PYTHONUNBUFFERED=1 \\\n    DJANGO_SETTINGS_MODULE=tbx.settings.production \\\n    PORT=8000 \\\n    WEB_CONCURRENCY=3 \\\n    GUNICORN_CMD_ARGS=\"-c gunicorn-conf.py --max-requests 1200 --max-requests-jitter 50 --access-logfile - --timeout 25\"\n\n# Make $BUILD_ENV available at runtime\nARG BUILD_ENV\nENV BUILD_ENV=${BUILD_ENV}\n\n\n# Port exposed by this container. Should default to the port used by your WSGI\n# server (Gunicorn). This is read by Dokku only. Heroku will ignore this.\nEXPOSE 8000\n\n# Install poetry using the installer (keeps Poetry's dependencies isolated from the app's)\n# chown protects us against cases where files downloaded by poetry have invalid ownership\n# (see https://git.torchbox.com/internal/wagtail-kit/-/merge_requests/682)\n# chmod ensures poetry dependencies are accessible when packages are installed\nRUN wget https://raw.githubusercontent.com/python-poetry/poetry/${POETRY_VERSION}/get-poetry.py && \\\n    echo \"${POETRY_INSTALLER_SHA} get-poetry.py\" | sha1sum -c - && \\\n    python get-poetry.py && \\\n    rm get-poetry.py && \\\n    chown -R root:root ${POETRY_HOME} && \\\n    chmod -R 0755 ${POETRY_HOME}\n\nUSER tbx\n\n# Install your app's Python requirements.\nRUN python -m venv $VIRTUAL_ENV\nCOPY --chown=tbx pyproject.toml poetry.lock ./\nRUN pip install --no-cache-dir --upgrade pip && poetry install ${POETRY_INSTALL_ARGS} --no-root --extras gunicorn\n\nCOPY --chown=tbx --from=frontend ./tbx/static_compiled ./tbx/static_compiled\n\n# Copy application code.\nCOPY --chown=tbx . .\n\n# Run poetry install again to install our project (so the the tbx package is always importable)\nRUN poetry install ${POETRY_INSTALL_ARGS}\n\n# Collect static. This command will move static files from application\n# directories and \"static_compiled\" folder to the main static directory that\n# will be served by the WSGI server.\nRUN SECRET_KEY=none python manage.py collectstatic --noinput --clear\n\n# Load shortcuts\nCOPY ./docker/bashrc.sh /home/tbx/.bashrc\n\n# Run the WSGI server. It reads GUNICORN_CMD_ARGS, PORT and WEB_CONCURRENCY\n# environment variable hence we don't specify a lot options below.\nCMD gunicorn tbx.wsgi:application\n\n# These steps won't be run on production\nFROM production as dev\n\n# Swap user, so the following tasks can be run as root\nUSER root\n\n# Install node (Keep the version in sync with the node container above)\nRUN curl -fsSL https://deb.nodesource.com/setup_14.x | bash - && apt-get install --no-install-recommends -y nodejs && rm -rf /var/lib/apt/lists/*;\n\n# Install `psql`, useful for `manage.py dbshell`\nRUN apt-get install --no-install-recommends -y postgresql-client && rm -rf /var/lib/apt/lists/*;\n\n# Restore user\nUSER tbx\n\n# Pull in the node modules for the frontend\nCOPY --chown=tbx --from=frontend ./node_modules ./node_modules\n\n# do nothing forever - exec commands elsewhere\nCMD tail -f /dev/null\n"
+}

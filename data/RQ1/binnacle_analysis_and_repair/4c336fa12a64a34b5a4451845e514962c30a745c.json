@@ -1,0 +1,53 @@
+{
+  "startTime": 1674239096923,
+  "endTime": 1674239097261,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 43,
+        "lineEnd": 43,
+        "columnStart": 4,
+        "columnEnd": 193
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 49,
+        "lineEnd": 49,
+        "columnStart": 4,
+        "columnEnd": 88
+      }
+    },
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 56,
+        "lineEnd": 56,
+        "columnStart": 7,
+        "columnEnd": 28
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 35,
+        "lineEnd": 35,
+        "columnStart": 7,
+        "columnEnd": 18
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 30,
+        "lineEnd": 30,
+        "columnStart": 7,
+        "columnEnd": 85
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "ARG IMAGE_REPO\nFROM ${IMAGE_REPO:-lagoon}/commons as commons\nFROM ubuntu:latest\n\nLABEL maintainer=\"amazee.io\"\n\n# Copy commons files\nCOPY --from=commons /lagoon /lagoon\nCOPY --from=commons /bin/fix-permissions /bin/ep /bin/docker-sleep /bin/\nCOPY --from=commons /home /home\n\nRUN chmod g+w /etc/passwd \\\n    && mkdir -p /home\n\nENV TMPDIR=/tmp \\\n    TMP=/tmp \\\n    HOME=/home \\\n    # When Bash is invoked via `sh` it behaves like the old Bourne Shell and sources a file that is given in `ENV`\n    ENV=/home/.bashrc \\\n    # When Bash is invoked as non-interactive (like `bash -c command`) it sources a file that is given in `BASH_ENV`\n    BASH_ENV=/home/.bashrc\n\nENV LAGOON=ssh \\\n    OC_VERSION=v3.6.0 \\\n    OC_HASH=c4dd4cf \\\n\t\tOC_SHA256=ecb0f52560ac766331052a0052b1de646011247f637c15063f4d74432e1ce389\n\nCOPY services/ssh/libnss-mysql-1.5.tar.gz /tmp/libnss-mysql-1.5.tar.gz\n\nRUN apt-get update \\\n    && apt-get install --no-install-recommends -y curl build-essential libmysqlclient-dev ssh curl npm vim jq \\\n    && ln -s /usr/lib/x86_64-linux-gnu/libmysqlclient.so /usr/lib/libmysqlclient.so \\\n    && mkdir /tmp/libnss-mysql \\\n    && tar -xzf /tmp/libnss-mysql-1.5.tar.gz -C /tmp/libnss-mysql --strip-components=1 \\\n    && cd /tmp/libnss-mysql \\\n    && ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" \\\n    && make \\\n    && make install \\\n    && apt-get remove --purge -y build-essential \\\n    && apt-get autoremove -y \\\n    && rm -rf /var/lib/apt/lists/* /tmp/libnss-mysql-1.5.tar.gz /tmp/libnss-mysql\n\nRUN mkdir -p /openshift-origin-client-tools && \\\n    curl -f -Lo /tmp/openshift-origin-client-tools.tar https://github.com/openshift/origin/releases/download/${OC_VERSION}/openshift-origin-client-tools-${OC_VERSION}-${OC_HASH}-linux-64bit.tar.gz && \\\n    echo \"$OC_SHA256  /tmp/openshift-origin-client-tools.tar\" | sha256sum -c - && \\\n    mkdir /tmp/openshift-origin-client-tools && \\\n    tar -xzf /tmp/openshift-origin-client-tools.tar -C /tmp/openshift-origin-client-tools --strip-components=1 && \\\n    install /tmp/openshift-origin-client-tools/oc /usr/bin/oc && rm -rf /tmp/openshift-origin-client-tools && rm -rf /tmp/openshift-origin-client-tools.tar\n\nRUN curl -f -L https://github.com/krallin/tini/releases/download/v0.18.0/tini -o /sbin/tini && chmod a+x /sbin/tini\n\n# Reproduce behavior of Alpine: Run Bash as sh\nRUN rm -f /bin/sh && ln -s /bin/bash /bin/sh\n\n# Needed for jwt generation\nRUN npm config set unsafe-perm true \\\n    && npm -g install jwtgen && npm cache clean --force;\n\nCOPY services/ssh/etc/ /etc/\nCOPY services/ssh/home/ /home/\n\n# token.sh needs some envplating, so we fix permissions\nRUN fix-permissions /home/token.sh\n\nRUN fix-permissions /etc/ssh/ && \\\n    fix-permissions /run/ && \\\n    fix-permissions /etc/libnss-mysql.cfg\n\nRUN mkdir -p /var/run/sshd && chmod 700 /var/run/sshd\n\n# This is the authorized keys command, which will be defined as AuthorizedKeysCommand\nCOPY services/ssh/authorize.sh /authorize.sh\n\n# Files defined in AuthorizedKeysCommand need the specific permissions for\n# root to own and no write permission by group or others\nRUN chmod 755 /authorize.sh\n\n# create_60_sec_jwt to create a JWT Admin Token which is valid for 60 secs\nCOPY services/ssh/create_60_sec_jwt.sh /create_60_sec_jwt.sh\n\n# Create /authorize.env file and give api right to write it, it will be filled\n# within docker-entrypoint with all environment variables and then sourced\n# by /authorize.sh\nRUN touch /authorize.env && fix-permissions /authorize.env\n\n# Setup folder for oc to save it's credentials\nRUN mkdir -p /home/.kube && fix-permissions /home/.kube\n\n# This will set the username of the random generated user by openshift to 'api' (see 10-passwd.sh)\nENV USER_NAME lagoon\n\n# Entrypoint file which will replace some environment variables into\n# hardcoded values every time the container is started\nCOPY services/ssh/docker-entrypoint.sh /lagoon/entrypoints/99-envplate.sh\n\n# Global lagoon default environment variables\nCOPY .env.defaults .\n\nENV AUTH_SERVER=http://auth-server:3000 \\\n    API_HOST=http://api:3000\n\nEXPOSE 2020\n\nENTRYPOINT [\"/sbin/tini\", \"--\", \"/lagoon/entrypoints.sh\"]\nCMD [\"/usr/sbin/sshd\", \"-e\", \"-D\", \"-f\", \"/etc/ssh/sshd_config\"]"
+}

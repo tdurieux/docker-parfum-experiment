@@ -1,0 +1,9 @@
+ARG BASE=gcr.io/istio-testing/proxyv2:latest
+
+FROM scratch
+
+COPY krun /usr/local/bin/krun
+
+WORKDIR /
+
+ENTRYPOINT ["/usr/local/bin/krun"]

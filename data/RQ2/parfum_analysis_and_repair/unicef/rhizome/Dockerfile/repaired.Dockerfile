@@ -1,0 +1,27 @@
+FROM python:2.7
+
+ENV INSTANCE=docker
+
+# Download and install wkhtmltopdf
+RUN apt-get update
+RUN apt-get upgrade -y
+RUN apt-get install -y --no-install-recommends sudo && rm -rf /var/lib/apt/lists/*;
+RUN sudo apt-get install --no-install-recommends -y xvfb && rm -rf /var/lib/apt/lists/*;
+RUN sudo apt-get -y --no-install-recommends install python-pandas && rm -rf /var/lib/apt/lists/*;
+#RUN sudo apt-get remove -y wkhtmltopdf
+
+# The version for local Debian env
+RUN sudo apt-get install --no-install-recommends -y xfonts-75dpi && rm -rf /var/lib/apt/lists/*;
+RUN wget https://download.gna.org/wkhtmltopdf/0.12/0.12.2.1/wkhtmltox-0.12.2.1_linux-jessie-amd64.deb
+RUN sudo dpkg -i wkhtmltox-0.12.2.1_linux-jessie-amd64.deb
+RUN rm wkhtmltox-0.12.2.1_linux-jessie-amd64.deb
+
+# The version for server Ubuntu env
+# RUN wget http://download.gna.org/wkhtmltopdf/0.12/0.12.2.1/wkhtmltox-0.12.2.1_linux-trusty-amd64.deb
+# RUN sudo dpkg -i wkhtmltox-0.12.2.1_linux-trusty-amd64.deb
+# RUN rm wkhtmltox-0.12.2.1_linux-trusty-amd64.deb
+
+COPY ./requirements.txt /tmp/
+RUN pip install --no-cache-dir --requirement /tmp/requirements.txt
+
+WORKDIR '/rhizome'

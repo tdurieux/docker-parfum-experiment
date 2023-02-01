@@ -1,0 +1,62 @@
+{
+  "startTime": 1674238938294,
+  "endTime": 1674238939042,
+  "originalSmells": [
+    {
+      "rule": "gpgUseBatchFlag",
+      "position": {
+        "lineStart": 73,
+        "lineEnd": 73,
+        "columnStart": 2,
+        "columnEnd": 56
+      }
+    },
+    {
+      "rule": "gpgUseBatchFlag",
+      "position": {
+        "lineStart": 169,
+        "lineEnd": 169,
+        "columnStart": 2,
+        "columnEnd": 64
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 5,
+        "lineEnd": 5,
+        "columnStart": 20,
+        "columnEnd": 59
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 106,
+        "lineEnd": 106,
+        "columnStart": 19,
+        "columnEnd": 56
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 5,
+        "lineEnd": 5,
+        "columnStart": 20,
+        "columnEnd": 59
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 106,
+        "lineEnd": 106,
+        "columnStart": 19,
+        "columnEnd": 56
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM gcr.io/google-appengine/debian9:latest AS plugins\n\nCOPY license-checksums /\n\nRUN set -eux; \\\n  apt-get update && apt-get install --no-install-recommends -y ca-certificates wget; rm -rf /var/lib/apt/lists/*; \\\n\n  mkdir /plugins && cd /plugins; \\\n\n  readonly base_url='https://github.com/deadtrickster/prometheus_rabbitmq_exporter/releases/download/v3.7.2.5'; \\\n  wget \"${base_url}/accept-0.3.5.ez\"; \\\n  wget \"${base_url}/prometheus-4.2.2.ez\"; \\\n  wget \"${base_url}/prometheus_cowboy-0.1.7.ez\"; \\\n  wget \"${base_url}/prometheus_httpd-2.1.10.ez\"; \\\n  wget \"${base_url}/prometheus_rabbitmq_exporter-3.7.2.5.ez\"; \\\n\n  mkdir -p \"/licenses\" && cd \"/licenses\"; \\\n  readonly git_base='https://raw.githubusercontent.com/deadtrickster'; \\\n\n  mkdir accept && wget -O accept/LICENSE \"${git_base}/accept/master/LICENSE\"; \\\n  mkdir prometheus && wget -O prometheus/LICENSE \"${git_base}/prometheus.erl/master/LICENSE\"; \\\n  mkdir prometheus_cowboy && wget -O prometheus_cowboy/LICENSE \"${git_base}/prometheus-cowboy/master/LICENSE\"; \\\n  mkdir prometheus_httpd && wget -O prometheus_httpd/LICENSE \"${git_base}/prometheus-httpd/master/LICENSE\"; \\\n  mkdir prometheus_rabbitmq_exporter && wget -O prometheus_rabbitmq_exporter/LICENSE \"${git_base}/prometheus_rabbitmq_exporter/master/LICENSE\"; \\\n\n  sha256sum -c /license-checksums\n\nFROM gcr.io/google-appengine/debian9:latest\n\nRUN set -eux; \\\n\tapt-get update; \\\n\tapt-get install -y --no-install-recommends \\\n\t\tgnupg \\\n\t\tdirmngr \\\n\t; \\\n\trm -rf /var/lib/apt/lists/*\n\n# add our user and group first to make sure their IDs get assigned consistently, regardless of whatever dependencies get added\nRUN groupadd -r rabbitmq && useradd -r -d /var/lib/rabbitmq -m -g rabbitmq rabbitmq\n\n# grab gosu for easy step-down from root\nENV GOSU_VERSION 1.10\nENV GOSU_GPG B42F6819007F00F88E364FD4036A9C25BF357DD4\nRUN set -eux; \\\n\n\tfetchDeps=' \\\n\t\tca-certificates \\\n\t\twget \\\n\t'; \\\n\tapt-get update; \\\n\tapt-get install -y --no-install-recommends $fetchDeps; \\\n\trm -rf /var/lib/apt/lists/*; \\\n\n\tdpkgArch=\"$(dpkg --print-architecture | awk -F- '{ print $NF }')\"; \\\n\twget -O /usr/local/bin/gosu \"https://github.com/tianon/gosu/releases/download/$GOSU_VERSION/gosu-$dpkgArch\"; \\\n\twget -O /usr/local/bin/gosu.asc \"https://github.com/tianon/gosu/releases/download/$GOSU_VERSION/gosu-$dpkgArch.asc\"; \\\n\n# copy source code\n\twget -O /usr/local/src/gosu.tar.gz \"https://github.com/tianon/gosu/archive/$GOSU_VERSION.tar.gz\"; \\\n\n# verify the signature\n\texport GNUPGHOME=\"$(mktemp -d)\"; \\\n\tfound='' && \\\n\tfor server in \\\n\t\tpool.sks-keyservers.net \\\n\t\tna.pool.sks-keyservers.net \\\n\t\teu.pool.sks-keyservers.net \\\n\t\toc.pool.sks-keyservers.net \\\n\t\tha.pool.sks-keyservers.net \\\n\t\thkp://p80.pool.sks-keyservers.net:80 \\\n\t\thkp://keyserver.ubuntu.com:80 \\\n\t\tpgp.mit.edu; \\\n\tdo \\\n\t\tgpg --batch --no-tty --keyserver $server --recv-keys $GOSU_GPG \\\n\t\t\t&& found=yes && break; \\\n\tdone; \\\n\ttest -n \"$found\"; \\\n\tgpg --no-tty --batch --verify /usr/local/bin/gosu.asc /usr/local/bin/gosu; \\\n\trm -rf \"$GNUPGHOME\" /usr/local/bin/gosu.asc; \\\n\n\tchmod +x /usr/local/bin/gosu; \\\n# verify that the binary works\n\tgosu nobody true; \\\n\n\tapt-get purge -y --auto-remove $fetchDeps\n# RabbitMQ 3.6.15+ requires Erlang 19.3+ (and Stretch only has 19.2); https://www.rabbitmq.com/which-erlang.html\n# so we'll pull Erlang from Buster instead (not using Erlang Solutions since their multiarch support is extremely limited)\nRUN set -eux; \\\n# add buster sources.list\n\tsed 's/stretch/buster/g' /etc/apt/sources.list \\\n\t\t| tee /etc/apt/sources.list.d/buster.list; \\\n# update apt-preferences such that we get only erlang* from buster (and erlang* only from buster)\n\t{ \\\n\t\techo 'Package: *'; \\\n\t\techo 'Pin: release n=buster*'; \\\n\t\techo 'Pin-Priority: 1'; \\\n\t\techo; \\\n\t\techo 'Package: erlang*'; \\\n\t\techo 'Pin: release n=buster*'; \\\n\t\techo 'Pin-Priority: 999'; \\\n\t\techo; \\\n\t\techo 'Package: erlang*'; \\\n\t\techo 'Pin: release n=stretch*'; \\\n\t\techo 'Pin-Priority: -10'; \\\n\t} | tee /etc/apt/preferences.d/buster-erlang\nRUN echo 'deb http://http.us.debian.org/debian testing main' >> /etc/apt/sources.list && \\\n\tapt-get update && apt-get install --no-install-recommends -t testing -y openssl && rm -rf /var/lib/apt/lists/*;\n\n# install Erlang\nRUN set -eux; \\\n\tapt-get update; \\\n# \"erlang-base-hipe\" is optional (and only supported on a few arches)\n# so, only install it if it's available for our current arch\n\tif apt-cache show erlang-base-hipe 2>/dev/null | grep -q 'Package: erlang-base-hipe'; then \\\n\t\tapt-get install -y --no-install-recommends \\\n\t\t\terlang-base-hipe \\\n\t\t; \\\n\tfi; \\\n# we start with \"erlang-base-hipe\" because it and \"erlang-base\" (non-hipe) are exclusive\n\tapt-get install -y --no-install-recommends \\\n\t\terlang-asn1 \\\n\t\terlang-crypto \\\n\t\terlang-eldap \\\n\t\terlang-inets \\\n\t\terlang-mnesia \\\n\t\terlang-nox \\\n\t\terlang-os-mon \\\n\t\terlang-public-key \\\n\t\terlang-ssl \\\n\t\terlang-xmerl \\\n\t; \\\n\trm -rf /var/lib/apt/lists/*\n\n# get logs to stdout (thanks @dumbbell for pushing this upstream! :D)\nENV RABBITMQ_LOGS=- RABBITMQ_SASL_LOGS=-\n# https://github.com/rabbitmq/rabbitmq-server/commit/53af45bf9a162dec849407d114041aad3d84feaf\n\n# /usr/sbin/rabbitmq-server has some irritating behavior, and only exists to \"su - rabbitmq /usr/lib/rabbitmq/bin/rabbitmq-server ...\"\nENV PATH /usr/lib/rabbitmq/bin:$PATH\n\n# gpg: key 6026DFCA: public key \"RabbitMQ Release Signing Key <info@rabbitmq.com>\" imported\nENV RABBITMQ_GPG_KEY 0A9AF2115F4687BD29803A206B73A36E6026DFCA\n\nENV RABBITMQ_VERSION 3.7.13\nENV RABBITMQ_GITHUB_TAG v3.7.9\nENV RABBITMQ_DEBIAN_VERSION 3.7.9-1\n\nRUN set -eux; \\\n\n\tapt-get update; \\\n\tapt-get install -y --no-install-recommends ca-certificates wget; \\\n\n\twget -O rabbitmq-server.deb.asc \"https://github.com/rabbitmq/rabbitmq-server/releases/download/$RABBITMQ_GITHUB_TAG/rabbitmq-server_${RABBITMQ_DEBIAN_VERSION}_all.deb.asc\"; \\\n\twget -O rabbitmq-server.deb     \"https://github.com/rabbitmq/rabbitmq-server/releases/download/$RABBITMQ_GITHUB_TAG/rabbitmq-server_${RABBITMQ_DEBIAN_VERSION}_all.deb\"; \\\n\n\tapt-get purge -y --auto-remove ca-certificates wget; \\\n\n\texport GNUPGHOME=\"$(mktemp -d)\"; \\\n\tfound='' && \\\n\tfor server in \\\n\t\tpool.sks-keyservers.net \\\n\t\tna.pool.sks-keyservers.net \\\n\t\teu.pool.sks-keyservers.net \\\n\t\toc.pool.sks-keyservers.net \\\n\t\tha.pool.sks-keyservers.net \\\n\t\thkp://p80.pool.sks-keyservers.net:80 \\\n\t\thkp://keyserver.ubuntu.com:80 \\\n\t\tpgp.mit.edu; \\\n\tdo \\\n\t\tgpg --batch --no-tty --keyserver $server --recv-keys $RABBITMQ_GPG_KEY \\\n\t\t\t&& found=yes && break; \\\n\tdone; \\\n\ttest -n \"$found\"; \\\n\tgpg --no-tty --batch --verify rabbitmq-server.deb.asc rabbitmq-server.deb; \\\n\trm -rf \"$GNUPGHOME\"; \\\n\n\tapt install -y --no-install-recommends ./rabbitmq-server.deb; \\\n\tdpkg -l | grep rabbitmq-server; \\\n\trm -f rabbitmq-server.deb*; \\\n\n\trm -rf /var/lib/apt/lists/*\n# warning: the VM is running with native name encoding of latin1 which may cause Elixir to malfunction as it expects utf8. Please ensure your locale is set to UTF-8 (which can be verified by running \"locale\" in your shell)\nENV LANG C.UTF-8\n\n# set home so that any `--user` knows where to put the erlang cookie\nENV HOME /var/lib/rabbitmq\n\nRUN mkdir -p /var/lib/rabbitmq /etc/rabbitmq \\\n\t&& chown -R rabbitmq:rabbitmq /var/lib/rabbitmq /etc/rabbitmq \\\n\t&& chmod -R 777 /var/lib/rabbitmq /etc/rabbitmq\nVOLUME /var/lib/rabbitmq\n\n# add a symlink to the .erlang.cookie in /root so we can \"docker exec rabbitmqctl ...\" without gosu\nRUN ln -sf /var/lib/rabbitmq/.erlang.cookie /root/\n\nRUN ln -sf \"/usr/lib/rabbitmq/lib/rabbitmq_server-$RABBITMQ_VERSION/plugins\" /plugins\n\n# Download RabbitMQ metrics plugins:\nRUN \\\n  mkdir -p /usr/lib/rabbitmq/plugins; \\\n  mkdir /usr/share/doc/rabbitmq-plugins;\n\nCOPY --from=plugins /plugins/* /usr/lib/rabbitmq/plugins/\nCOPY --from=plugins /licenses/* /usr/share/doc/rabbitmq-plugins/\n\nCOPY docker-entrypoint.sh /usr/local/bin/\nRUN ln -s usr/local/bin/docker-entrypoint.sh / # backwards compat\nENTRYPOINT [\"docker-entrypoint.sh\"]\n\nEXPOSE 4369 5671 5672 25672\nCMD [\"rabbitmq-server\"]\n"
+}

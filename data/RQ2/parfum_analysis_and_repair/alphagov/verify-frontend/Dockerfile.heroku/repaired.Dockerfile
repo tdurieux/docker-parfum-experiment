@@ -1,0 +1,38 @@
+# Dockerfile for Heroku Review App (deployed as part of a PR)
+# TODO refactor common code with ./Dockerfile
+FROM ruby:2.7.6
+
+ENV RAILS_SERVE_STATIC_FILES true
+ENV RAILS_LOG_TO_STDOUT true
+ENV RAILS_ENV production
+ENV SECRET_KEY_BASE notused
+ENV STUB_MODE true
+
+ADD Gemfile Gemfile
+RUN mkdir -p /usr/local/etc \
+  && { \
+    echo 'install: --no-document'; \
+    echo 'update: --no-document'; \
+  } >> /usr/local/etc/gemrc;
+
+RUN gem install --update bundler && rm -rf /root/.gem;
+
+RUN bundle install --binstubs
+
+ADD . /verify-frontend/
+
+WORKDIR /verify-frontend
+
+RUN bundle config --global frozen 1 && \
+    bundle check || bundle install --without development test
+
+RUN echo 'assets/heroku' > /verify-frontend/.build-number
+
+RUN bash -c 'source .env \
+             && export $(cut -d= -f1 .env) \
+             && bundle exec rake assets:precompile' \
+    && ln -s /verify-frontend/public/assets /assets
+
+# Puma needs these dockerignored dirs to write to
+RUN mkdir -p log tmp
+

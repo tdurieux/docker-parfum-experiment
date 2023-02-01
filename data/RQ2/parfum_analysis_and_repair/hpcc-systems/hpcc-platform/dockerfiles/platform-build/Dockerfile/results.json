@@ -1,0 +1,90 @@
+{
+  "startTime": 1674215076576,
+  "endTime": 1674215077562,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 35,
+        "lineEnd": 35,
+        "columnStart": 4,
+        "columnEnd": 103
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 26,
+        "lineEnd": 26,
+        "columnStart": 4,
+        "columnEnd": 99
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 29,
+        "lineEnd": 29,
+        "columnStart": 4,
+        "columnEnd": 32
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 26,
+        "lineEnd": 26,
+        "columnStart": 4,
+        "columnEnd": 99
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 29,
+        "lineEnd": 29,
+        "columnStart": 4,
+        "columnEnd": 32
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 26,
+        "lineEnd": 26,
+        "columnStart": 4,
+        "columnEnd": 99
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 29,
+        "lineEnd": 29,
+        "columnStart": 4,
+        "columnEnd": 32
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 26,
+        "lineEnd": 26,
+        "columnStart": 4,
+        "columnEnd": 123
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 29,
+        "lineEnd": 29,
+        "columnStart": 4,
+        "columnEnd": 56
+      }
+    }
+  ],
+  "repairedDockerfile": "##############################################################################\n#\n#    HPCC SYSTEMS software Copyright (C) 2020 HPCC Systems®.\n#\n#    Licensed under the Apache License, Version 2.0 (the \"License\");\n#    you may not use this file except in compliance with the License.\n#    You may obtain a copy of the License at\n#\n#       http://www.apache.org/licenses/LICENSE-2.0\n#\n#    Unless required by applicable law or agreed to in writing, software\n#    distributed under the License is distributed on an \"AS IS\" BASIS,\n#    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.\n#    See the License for the specific language governing permissions and\n#    limitations under the License.\n##############################################################################\n\n# Base container image that builds all HPCC platform components\n\nARG BASE_VER=8.6\nARG CR_USER=hpccsystems\nARG CR_REPO=docker.io\nARG CR_CONTAINER_NAME=platform-build-base\nFROM ${CR_REPO}/${CR_USER}/${CR_CONTAINER_NAME}:${BASE_VER}\n\nRUN apt-get update\nRUN apt-get install --no-install-recommends -y dirmngr gnupg apt-transport-https ca-certificates software-properties-common && rm -rf /var/lib/apt/lists/*;\nRUN apt-key adv --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys 3FA7E0328081BFF6A14DA29AA6A19B38D3D831EF\nRUN apt-add-repository 'deb https://download.mono-project.com/repo/ubuntu stable-focal main'\nRUN apt install --no-install-recommends -y mono-complete && rm -rf /var/lib/apt/lists/*;\n\nRUN groupadd -g 10001 hpcc\nRUN useradd -s /bin/bash -r -m -N -c \"hpcc runtime User\" -u 10000 -g hpcc hpcc\nRUN passwd -l hpcc\n\nRUN curl -f -LO https://storage.googleapis.com/kubernetes-release/release/v1.18.18/bin/linux/amd64/kubectl && chmod +x ./kubectl && mv ./kubectl /usr/local/bin\n\nENV VCPKG_BINARY_SOURCES=\"clear;nuget,GitHub,read\"\nENV VCPKG_NUGET_REPOSITORY=https://github.com/hpcc-systems/vcpkg\n\nWORKDIR /hpcc-dev\nRUN chown hpcc:hpcc /hpcc-dev\n\n# Runs as hpcc to fetch sources and build, to aid debugging containers as user hpcc\nUSER hpcc\n\nARG BUILD_USER=hpcc-systems\nARG BUILD_TAG=none\nRUN echo BUILD_USER is ${BUILD_USER}\nRUN git clone --no-checkout https://github.com/${BUILD_USER}/HPCC-Platform.git\n\nWORKDIR /hpcc-dev/HPCC-Platform\nRUN git checkout ${BUILD_TAG} && \\\n    git submodule update --init --recursive\n\nWORKDIR /hpcc-dev/HPCC-Platform/vcpkg\nRUN ./bootstrap-vcpkg.sh\nARG GITHUB_ACTOR=hpcc-systems\nARG GITHUB_TOKEN=none\nRUN mono `./vcpkg fetch nuget | tail -n 1` \\\n    sources add \\\n    -name \"GitHub\" \\\n    -source \"https://nuget.pkg.github.com/hpcc-systems/index.json\" \\\n    -storepasswordincleartext \\\n    -username \"${GITHUB_ACTOR}\" \\\n    -password \"${GITHUB_TOKEN}\"\n\nWORKDIR /hpcc-dev\nRUN mkdir build\nWORKDIR /hpcc-dev/build\n\nARG BUILD_TYPE=RelWithDebInfo\nARG USE_CPPUNIT=1\nRUN cmake /hpcc-dev/HPCC-Platform -Wno-dev -DCONTAINERIZED=1 -DINCLUDE_PLUGINS=1 -DCMAKE_BUILD_TYPE=${BUILD_TYPE} -DUSE_PYTHON2=0 -DSUPPRESS_SPARK=1 -DUSE_CPPUNIT=${USE_CPPUNIT}\n\nARG BUILD_THREADS\nRUN if [ -n \"${BUILD_THREADS}\" ] ; then echo ${BUILD_THREADS} > ~/build_threads; else echo $(nproc) > ~/build_threads ; fi\nRUN echo Building with $(cat ~/build_threads) threads\nRUN make -j$(cat ~/build_threads) jlib\nRUN make -j$(cat ~/build_threads) esp\nRUN make -j$(cat ~/build_threads) roxie\nRUN make -j$(cat ~/build_threads) ws_workunits ecl\nRUN make -j$(cat ~/build_threads)\n\nUSER root\n\nRUN make -j$(cat ~hpcc/build_threads) install\nRUN mkdir /var/lib/HPCCSystems && chown hpcc:hpcc /var/lib/HPCCSystems\nRUN mkdir /var/log/HPCCSystems && chown hpcc:hpcc /var/log/HPCCSystems\nRUN mkdir /var/lock/HPCCSystems && chown hpcc:hpcc /var/lock/HPCCSystems\nRUN mkdir /var/run/HPCCSystems && chown hpcc:hpcc /var/run/HPCCSystems\n\n"
+}

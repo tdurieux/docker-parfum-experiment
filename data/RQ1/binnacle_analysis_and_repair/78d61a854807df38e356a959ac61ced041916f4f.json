@@ -1,0 +1,53 @@
+{
+  "startTime": 1674246429841,
+  "endTime": 1674246430373,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 53,
+        "lineEnd": 53,
+        "columnStart": 4,
+        "columnEnd": 23
+      }
+    },
+    {
+      "rule": "mkdirUsrSrcThenRemove",
+      "position": {
+        "lineStart": 89,
+        "lineEnd": 89,
+        "columnStart": 4,
+        "columnEnd": 32
+      }
+    },
+    {
+      "rule": "sha256sumEchoOneSpaces",
+      "position": {
+        "lineStart": 149,
+        "lineEnd": 149,
+        "columnStart": 1,
+        "columnEnd": 52
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 176,
+        "lineEnd": 176,
+        "columnStart": 4,
+        "columnEnd": 40
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 129,
+        "lineEnd": 129,
+        "columnStart": 4,
+        "columnEnd": 29
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM alpine:latest AS base\n\n# We install and then uninstall quality to cache the dependencies\n# while we still have the build tools installed but still be able to\n# install the very latest quality gem later on without having the disk\n# space impact of two versions.\n\nRUN apk update && \\\n    apk add --no-cache ruby ruby-irb ruby-dev make gcc libc-dev git icu-dev zlib-dev g++ cmake openssl-dev coreutils && \\\n    gem install --no-ri --no-rdoc bigdecimal rake etc quality && \\\n    gem uninstall quality && \\\n    strip /usr/lib/ruby/gems/2.5.0/extensions/x86_64-linux/2.5.0/rugged-*/rugged/rugged.so && \\\n    apk del ruby-irb ruby-dev make gcc libc-dev icu-dev zlib-dev g++ cmake openssl-dev nghttp2 curl pax-utils && \\\n    apk add --no-cache libssl1.1 icu-libs && \\\n    rm -fr /usr/lib/ruby/gems/2.5.0/gems/rugged-0.27.4/vendor/libgit2/build/src \\\n           /usr/lib/ruby/gems/2.5.0/gems/rugged-0.27.4/vendor/libgit2/src \\\n           /usr/lib/ruby/gems/2.5.0/gems/rugged-0.27.4/ext/rugged \\\n           /usr/lib/ruby/gems/2.5.0/gems/rugged-0.27.4/vendor/libgit2/build/libgit2.a \\\n           /usr/lib/ruby/gems/2.5.0/gems/rugged-0.27.4/lib/rugged/rugged.so \\\n           /usr/lib/ruby/gems/2.5.0/gems/unf_ext-0.0.7.5/ext/unf_ext/unf \\\n           /usr/lib/ruby/gems/2.5.0/gems/kramdown-1.17.0/test \\\n           /usr/lib/ruby/gems/2.5.0/gems/ruby_parser-3.11.0/lib/*.y \\\n           /usr/lib/ruby/gems/2.5.0/gems/ruby_parser-3.11.0/lib/*.yy \\\n           /usr/lib/ruby/gems/2.5.0/gems/ruby_parser-3.11.0/lib/*.rex \\\n           /usr/lib/ruby/gems/2.5.0/cache \\\n           /usr/lib/ruby/gems/2.5.0/gems/erubis-2.7.0/doc-api \\\n           /usr/lib/ruby/gems/2.5.0/gems/reek-5.0.2/spec \\\n           /usr/lib/ruby/gems/2.5.0/gems/kwalify-0.7.2/doc-api \\\n      && \\\n      echo \"Done\"\n\nRUN mkdir /usr/quality\nADD sample-project/.pronto.yml /usr/quality/.pronto.yml\nADD sample-project/Rakefile /usr/quality/Rakefile\nCOPY entrypoint.sh /\n\n\nFROM base AS latest\nVOLUME /usr/app\nWORKDIR /usr/app\nENTRYPOINT [\"/entrypoint.sh\"]\nARG quality_gem_version\nRUN gem install --no-ri --no-rdoc quality:${quality_gem_version}\nCMD [\"quality\"]\n\n\n\nFROM base AS python-base\n#\n# Install flake8 and pycodestyle\n#\n\nRUN apk add --no-cache python3 py3-pip && \\\n    pip3 install --no-cache-dir flake8 && \\\n    apk del py3-pip && \\\n    pip3 uninstall -y pip\n\nRUN apk update && \\\n    apk add --no-cache ruby-dev gcc make g++ cmake && \\\n    gem install --no-ri --no-rdoc io-console pronto:0.9.5 'pronto-reek:<0.10.0' 'pronto-rubocop:<0.10.0' 'pronto-flake8:<0.10.0' 'pronto-flay:<0.10.0' && \\\n    apk del ruby-dev gcc make g++ cmake\n\n\nFROM python-base AS python\nVOLUME /usr/app\nWORKDIR /usr/app\nENTRYPOINT [\"/entrypoint.sh\"]\nARG quality_gem_version\nRUN gem install --no-ri --no-rdoc quality:${quality_gem_version}\nCMD [\"quality\"]\n\n\n\n\nFROM python-base AS shellcheck-builder\n\n#\n# Install shellcheck\n#\n\n# https://github.com/mitchty/alpine-ghc\nCOPY mitch.tishmack@gmail.com-55881c97.rsa.pub /etc/apk/keys/mitch.tishmack@gmail.com-55881c97.rsa.pub\n\nRUN echo \"https://s3-us-west-2.amazonaws.com/alpine-ghc/8.0\" >> /etc/apk/repositories && \\\n    apk add --no-cache ghc cabal stack\n\n# https://github.com/NLKNguyen/alpine-shellcheck/blob/master/builder/Dockerfile\nRUN apk add --no-cache build-base git wget\n\nRUN mkdir -p /usr/src/shellcheck && rm -rf /usr/src/shellcheck\nWORKDIR /usr/src/shellcheck\n\nRUN git clone https://github.com/koalaman/shellcheck .\nRUN cabal update && cabal install\n\nENV PATH=\"/root/.cabal/bin:$PATH\"\n\n\n\n\n\nFROM python-base as shellcheck-base\n\nCOPY --from=4 /root/.cabal/bin /usr/local/bin\nRUN apk update && apk add --no-cache ruby ruby-dev # TODO: Do this as another build image\nRUN gem install --no-ri --no-rdoc 'pronto-shellcheck:<0.10.0'\n\n\n\n\n\nFROM shellcheck-base as shellcheck\nVOLUME /usr/app\nWORKDIR /usr/app\nENTRYPOINT [\"/entrypoint.sh\"]\nARG quality_gem_version\nRUN gem install --no-ri --no-rdoc quality:${quality_gem_version}\nCMD [\"quality\"]\n\n\n\n\n\nFROM shellcheck-base AS jumbo-base\n\n# https://github.com/sgerrand/alpine-pkg-glibc\nRUN apk --no-cache add ca-certificates wget && \\\n    wget -q -O /etc/apk/keys/sgerrand.rsa.pub https://alpine-pkgs.sgerrand.com/sgerrand.rsa.pub && \\\n    wget https://github.com/sgerrand/alpine-pkg-glibc/releases/download/2.28-r0/glibc-2.28-r0.apk && \\\n    apk add --no-cache glibc-2.28-r0.apk\n\nENV LANG=C.UTF-8\n\n# To upgrade:\n# 1. Check https://jdk.java.net/13/ for latest build - see 'Alpine Linux/x64' link\n# 2. See if there's an update here: https://github.com/docker-library/openjdk/blob/master/13/jdk/alpine/Dockerfile\n\nENV JAVA_HOME /opt/openjdk-13\nENV PATH $JAVA_HOME/bin:$PATH\n\n# https://jdk.java.net/\nENV JAVA_VERSION 13-ea+19\nENV JAVA_URL https://download.java.net/java/early_access/alpine/19/binaries/openjdk-13-ea+19_linux-x64-musl_bin.tar.gz\nENV JAVA_SHA256 010ea985fba7e3d89a9170545c4e697da983cffc442b84e65dba3baa771299a5\n# \"For Alpine Linux, builds are produced on a reduced schedule and may not be in sync with the other platforms.\"\n\nRUN set -eux; \\\n\n\twget -O /openjdk.tgz \"$JAVA_URL\"; \\\n\techo \"$JAVA_SHA256  */openjdk.tgz\" | sha256sum -c -; \\\n\tmkdir -p \"$JAVA_HOME\"; \\\n\ttar --extract --file /openjdk.tgz --directory \"$JAVA_HOME\" --strip-components 1; \\\n\trm /openjdk.tgz; \\\n\n# https://github.com/docker-library/openjdk/issues/212#issuecomment-420979840\n# https://openjdk.java.net/jeps/341\n\tjava -Xshare:dump; \\\n\n# basic smoke test\n\tjava --version; \\\n\tjavac --version\n\n# https://docs.oracle.com/javase/10/tools/jshell.htm\n# https://docs.oracle.com/javase/10/jshell/\n# https://en.wikipedia.org/wiki/JShell\n\n# https://github.com/frol/docker-alpine-scala/blob/master/Dockerfile\nENV SCALA_VERSION=2.12.0-M5 \\\n    SCALA_HOME=/usr/share/scala\n\n# NOTE: bash is used by scala/scalac scripts, and it cannot be easily replaced with ash.\n\nRUN apk add --no-cache --virtual=.build-dependencies wget ca-certificates && \\\n    apk add --no-cache bash && \\\n    cd \"/tmp\" && \\\n    wget \"https://downloads.typesafe.com/scala/${SCALA_VERSION}/scala-${SCALA_VERSION}.tgz\" && \\\n    tar xzf \"scala-${SCALA_VERSION}.tgz\" && \\\n    mkdir \"${SCALA_HOME}\" && \\\n    rm \"/tmp/scala-${SCALA_VERSION}/bin/\"*.bat && \\\n    mv \"/tmp/scala-${SCALA_VERSION}/bin\" \"/tmp/scala-${SCALA_VERSION}/lib\" \"${SCALA_HOME}\" && \\\n    ln -s \"${SCALA_HOME}/bin/\"* \"/usr/bin/\" && \\\n    apk del .build-dependencies && \\\n    rm -rf \"/tmp/\"* && rm \"scala-${SCALA_VERSION}.tgz\"\n\n\n#https://oss.sonatype.org/content/repositories/releases/org/scalastyle/scalastyle-batch_2.10/0.5.0/scalastyle_2.10-0.5.0.jar\" && \\\n\nENV SCALASTYLE_JAR=scalastyle_2.10-0.8.0-batch.jar\n\nCOPY etc/scalastyle_config.xml /usr/src/scalastyle_config.xml\n\nRUN cd /usr/lib && \\\n    wget \"https://oss.sonatype.org/content/repositories/releases/org/scalastyle/scalastyle_2.10/0.8.0/${SCALASTYLE_JAR}\" && \\\n    echo '#!/bin/bash' > /bin/scalastyle && \\\n    echo \"java -jar `pwd`/${SCALASTYLE_JAR}\" --config \"/usr/src/scalastyle_config.xml\" '${@}' >> /bin/scalastyle && \\\n    chmod +x /bin/scalastyle\n\n\n\nFROM jumbo-base as jumbo\nVOLUME /usr/app\nWORKDIR /usr/app\nENTRYPOINT [\"/entrypoint.sh\"]\nARG quality_gem_version\nRUN gem install --no-ri --no-rdoc quality:${quality_gem_version}\nCMD [\"quality\"]\n"
+}

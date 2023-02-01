@@ -1,0 +1,26 @@
+{
+  "startTime": 1674252053347,
+  "endTime": 1674252054265,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 52,
+        "lineEnd": 52,
+        "columnStart": 4,
+        "columnEnd": 29
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 53,
+        "lineEnd": 53,
+        "columnStart": 4,
+        "columnEnd": 22
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM registry.access.redhat.com/ubi8/ubi-minimal:latest\n\n# PIPENV_DEV is set to true in the docker-compose allowing\n# local builds to install the dev dependencies\nARG PIPENV_DEV=False\nARG USER_ID=1000\n\nUSER root\n\nENV PYTHON_VERSION=3.8 \\\n    PYTHONUNBUFFERED=1 \\\n    PYTHONIOENCODING=UTF-8 \\\n    LC_ALL=en_US.UTF-8 \\\n    LANG=en_US.UTF-8 \\\n    PIP_NO_CACHE_DIR=1 \\\n    PIPENV_VENV_IN_PROJECT=1 \\\n    PIPENV_VERBOSITY=-1 \\\n    APP_ROOT=/opt/koku \\\n    APP_HOME=/opt/koku/koku \\\n    PLATFORM=\"el8\"\n\nENV SUMMARY=\"Koku is the Cost Management application\" \\\n    DESCRIPTION=\"Koku is the Cost Management application\"\n\nLABEL summary=\"$SUMMARY\" \\\n    description=\"$DESCRIPTION\" \\\n    io.k8s.description=\"$DESCRIPTION\" \\\n    io.k8s.display-name=\"Koku\" \\\n    io.openshift.expose-services=\"8000:http\" \\\n    io.openshift.tags=\"builder,python,python38,rh-python38\" \\\n    com.redhat.component=\"python38-docker\" \\\n    name=\"Koku\" \\\n    version=\"1\" \\\n    maintainer=\"Red Hat Cost Management Services <cost-mgmt@redhat.com>\"\n\n# Very minimal set of packages\n# glibc-langpack-en is needed to set locale to en_US and disable warning about it\n# gcc to compile some python packages (e.g. ciso8601)\n# shadow-utils to make useradd available\nRUN INSTALL_PKGS=\"python38 python38-devel glibc-langpack-en gcc shadow-utils\" && \\\n    microdnf --nodocs -y upgrade && \\\n    microdnf -y --setopt=tsflags=nodocs --setopt=install_weak_deps=0 install $INSTALL_PKGS && \\\n    rpm -V $INSTALL_PKGS && \\\n    microdnf -y clean all --enablerepo='*'\n\n# Create a Python virtual environment for use by any application to avoid\n# potential conflicts with Python packages preinstalled in the main Python\n# installation.\nRUN python3.8 -m venv /pipenv-venv\nENV PATH=\"/pipenv-venv/bin:$PATH\"\n# Install pipenv into the virtual env\nRUN \\\n    pip install --no-cache-dir --upgrade pip && \\\n    pip install --no-cache-dir pipenv\n\nWORKDIR ${APP_ROOT}\n\n# install dependencies\nCOPY Pipfile .\nCOPY Pipfile.lock .\nRUN \\\n    # install the dependencies into the working dir (i.e. ${APP_ROOT}/.venv)\n    pipenv install --deploy && \\\n    # delete the pipenv cache\n    pipenv --clear\n\n# Runtime env variables:\nENV VIRTUAL_ENV=${APP_ROOT}/.venv\nENV \\\n    # Add the koku virtual env bin to the front of PATH.\n    # This activates the virtual env for all subsequent python calls.\n    PATH=\"$VIRTUAL_ENV/bin:$PATH\" \\\n    PROMETHEUS_MULTIPROC_DIR=/tmp\n\n# copy the src files into the workdir\nCOPY . .\n\n# create the koku user\nRUN \\\n    adduser koku -u ${USER_ID} -g 0 && \\\n    chmod ug+rw ${APP_ROOT} ${APP_HOME} ${APP_HOME}/static /tmp\nUSER koku\n\n# create the static files\nRUN \\\n    python koku/manage.py collectstatic --noinput && \\\n    # This `app.log` file is created during the `collectstatic` step. We need to\n    # remove it else the random OCP user will not be able to access it. This file\n    # will be recreated by the Pod when the application starts.\n    rm ${APP_HOME}/app.log\n\nEXPOSE 8000\n\n# GIT_COMMIT is added during build in `build_deploy.sh`\n# Set this at the end to leverage build caching\nARG GIT_COMMIT=undefined\nENV GIT_COMMIT=${GIT_COMMIT}\n\n# Set the default CMD.\nCMD [\"./scripts/entrypoint.sh\"]\n"
+}

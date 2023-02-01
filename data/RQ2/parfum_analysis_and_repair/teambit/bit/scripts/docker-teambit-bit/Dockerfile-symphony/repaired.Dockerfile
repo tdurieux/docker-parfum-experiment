@@ -1,0 +1,23 @@
+FROM node:12.22.0
+RUN adduser --disabled-password --gecos '' user
+RUN chown -R user /usr/local/
+USER user
+
+ARG MAX_OLD_SPACE_SIZE=4096
+ENV NODE_OPTIONS=--max-old-space-size=${MAX_OLD_SPACE_SIZE}
+
+# RUN npm i @teambit/bvm -g
+# RUN bvm upgrade
+# RUN bvm link bbit
+# ENV PATH=$PATH:/home/user/bin
+RUN npm config set @teambit:registry https://node.bit.dev
+RUN npm i @teambit/bit -g --unsafe-perm=true && npm cache clean --force;
+RUN bbit config set analytics_reporting false
+RUN bbit config set no_warnings false
+RUN bbit config set interactive false
+RUN bbit config set error_reporting true
+RUN ln -s /usr/local/bin/bbit /usr/local/bin/bit
+
+RUN ln -s /tmp/symphony/etc/.bitrc.jsonc ~/.bitrc.jsonc
+WORKDIR /tmp/scope-fs
+CMD bit start

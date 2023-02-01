@@ -1,0 +1,22 @@
+ARG PACKAGE_TYPE
+ARG DOCKER_OPENRESTY_SUFFIX
+ARG DOCKER_REPOSITORY
+
+FROM ${DOCKER_REPOSITORY}:openresty-${PACKAGE_TYPE}-${DOCKER_OPENRESTY_SUFFIX}
+
+ARG GITHUB_TOKEN=
+ENV GITHUB_TOKEN $GITHUB_TOKEN
+
+ARG ENABLE_LJBC=
+ENV ENABLE_LJBC $ENABLE_LJBC
+
+RUN rm -rf /kong && rm -rf /distribution/*
+COPY kong /kong
+
+COPY kong/.requirements kong/distribution/ /distribution/
+WORKDIR /distribution
+RUN if [ -f "/distribution/post-install.sh" ] ; then ./post-install.sh; fi
+
+WORKDIR /kong
+COPY build-kong.sh /build-kong.sh
+RUN /build-kong.sh

@@ -1,0 +1,1 @@
+# This file creates standard build environment for building Mahakam

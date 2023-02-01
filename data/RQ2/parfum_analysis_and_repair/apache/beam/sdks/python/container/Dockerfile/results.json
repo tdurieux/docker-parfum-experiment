@@ -1,0 +1,53 @@
+{
+  "startTime": 1674256241339,
+  "endTime": 1674256242137,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 55,
+        "lineEnd": 55,
+        "columnStart": 4,
+        "columnEnd": 80
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 41,
+        "lineEnd": 41,
+        "columnStart": 4,
+        "columnEnd": 61
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 70,
+        "lineEnd": 70,
+        "columnStart": 4,
+        "columnEnd": 74
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 99,
+        "lineEnd": 99,
+        "columnStart": 6,
+        "columnEnd": 54
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 24,
+        "lineEnd": 30,
+        "columnStart": 4,
+        "columnEnd": 13
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "###############################################################################\n#  Licensed to the Apache Software Foundation (ASF) under one\n#  or more contributor license agreements.  See the NOTICE file\n#  distributed with this work for additional information\n#  regarding copyright ownership.  The ASF licenses this file\n#  to you under the Apache License, Version 2.0 (the\n#  \"License\"); you may not use this file except in compliance\n#  with the License.  You may obtain a copy of the License at\n#\n#      http://www.apache.org/licenses/LICENSE-2.0\n#\n#  Unless required by applicable law or agreed to in writing, software\n#  distributed under the License is distributed on an \"AS IS\" BASIS,\n#  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.\n#  See the License for the specific language governing permissions and\n# limitations under the License.\n###############################################################################\n\nARG py_version\nFROM python:\"${py_version}\"-bullseye as beam\nMAINTAINER \"Apache Beam <dev@beam.apache.org>\"\n\n# Install native bindings required for dependencies.\nRUN apt-get update && \\\n    apt-get install --no-install-recommends -y \\\n       # Required by python-snappy\n       libsnappy-dev \\\n       # Required by pyyaml (for c bindings)\n       libyaml-dev \\\n       # This is used to speed up the re-installation of the sdk.\n       ccache \\\n       && \\\n    rm -rf /var/lib/apt/lists/*\n\n####\n# Install required packages for Beam Python SDK and common dependencies used by users.\n####\n\nCOPY target/base_image_requirements.txt /tmp/base_image_requirements.txt\nRUN \\\n\n    pip install --no-cache-dir --no-deps -r /tmp/base_image_requirements.txt && \\\n    python -c \"import nltk; nltk.download('stopwords')\" && \\\n    rm /root/nltk_data/corpora/stopwords.zip && \\\n    # Check that the fast implementation of protobuf is used.\n    python -c \"from google.protobuf.internal import api_implementation; assert api_implementation._default_implementation_type == 'cpp'; print ('Verified fast protobuf used.')\" && \\\n    # Remove pip cache.\n    rm -rf /root/.cache/pip && \\\n    rm -rf /tmp/base_image_requirements.txt\n\n# Install Google Cloud SDK.\nENV CLOUDSDK_CORE_DISABLE_PROMPTS yes\nENV PATH $PATH:/usr/local/gcloud/google-cloud-sdk/bin\nRUN mkdir -p /usr/local/gcloud && \\\n    cd /usr/local/gcloud && \\\n    curl -f -s -O https://dl.google.com/dl/cloudsdk/release/google-cloud-sdk.tar.gz && \\\n    tar -xf google-cloud-sdk.tar.gz && \\\n    /usr/local/gcloud/google-cloud-sdk/install.sh && \\\n    rm google-cloud-sdk.tar.gz\n\n# Configure ccache prior to installing Beam SDK.\nRUN ln -s /usr/bin/ccache /usr/local/bin/gcc\n# These parameters are needed as pip compiles artifacts in random temporary directories.\nRUN ccache --set-config=sloppiness=file_macro && ccache --set-config=hash_dir=false\n\n####\n# Install Apache Beam SDK. Use --no-deps and pip check to verify that all\n# necessary dependencies are specified in base_image_requiremetns.txt.\n####\nCOPY target/apache-beam.tar.gz /opt/apache/beam/tars/\nRUN pip install --no-cache-dir --no-deps -v /opt/apache/beam/tars/apache-beam.tar.gz[gcp]\nRUN pip check || (echo \"Container does not include required Beam dependencies or has conflicting dependencies. If Beam dependencies have changed, you need to regenerate base_image_requirements.txt files. See: https://s.apache.org/beam-python-requirements-generate\" && exit 1)\n# Log complete list of what exact packages and versions are installed.\nRUN pip freeze --all\n\nCOPY target/LICENSE /opt/apache/beam/\nCOPY target/LICENSE.python /opt/apache/beam/\nCOPY target/NOTICE /opt/apache/beam/\nCOPY target/launcher/linux_amd64/boot /opt/apache/beam/\n\nENTRYPOINT [\"/opt/apache/beam/boot\"]\n\n####\n# Pull and add third party licenses to the image if pull_licenses is true.\n# Use multistage build to eliminate unwanted changes to beam image due to\n# extra dependencies needed to pull licenses.\n####\n\nFROM beam as third_party_licenses\nARG pull_licenses\nCOPY target/license_scripts /tmp/license_scripts/\n# Add golang licenses. Because the go-license directory may be empty if\n# pull_licenses is false, and COPY fails if there are no files,\n# copy an extra LICENSE file then remove it.\nCOPY target/LICENSE target/go-licenses/* /opt/apache/beam/third_party_licenses/golang/\nRUN rm /opt/apache/beam/third_party_licenses/golang/LICENSE\n\nCOPY target/license_scripts /tmp/license_scripts/\nRUN if [ \"$pull_licenses\" = \"true\" ] ; then \\\n      pip install --no-cache-dir 'pip-licenses<4.0.0' pyyaml tenacity && \\\n      python /tmp/license_scripts/pull_licenses_py.py; \\\n    fi\n\nFROM beam\nARG pull_licenses\nCOPY --from=third_party_licenses /opt/apache/beam/third_party_licenses /opt/apache/beam/third_party_licenses\nRUN if [ \"$pull_licenses\" != \"true\" ] ; then \\\n      rm -rf /opt/apache/beam/third_party_licenses ; \\\n    fi\n\n\n"
+}

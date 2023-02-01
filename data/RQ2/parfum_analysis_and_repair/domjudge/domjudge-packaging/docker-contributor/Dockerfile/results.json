@@ -1,0 +1,26 @@
+{
+  "startTime": 1674252552935,
+  "endTime": 1674252554388,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 40,
+        "lineEnd": 40,
+        "columnStart": 4,
+        "columnEnd": 25
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 40,
+        "lineEnd": 40,
+        "columnStart": 29,
+        "columnEnd": 49
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "ARG ARCH=\nFROM \"${ARCH}ubuntu:focal\"\nLABEL maintainer=\"DOMjudge team <team@domjudge.org>\"\n\nENV DEBIAN_FRONTEND=noninteractive \\\n  CONTAINER_TIMEZONE=Europe/Amsterdam \\\n  MYSQL_HOST=mariadb \\\n  MYSQL_USER=domjudge \\\n  MYSQL_DATABASE=domjudge \\\n  MYSQL_PASSWORD=domjudge \\\n  MYSQL_ROOT_PASSWORD=domjudge \\\n  FPM_MAX_CHILDREN=40 \\\n  DJ_SKIP_MAKE=0 \\\n  DJ_DB_INSTALL_BARE=0 \\\n  PHPSUPPORTED=\"7.2 7.3 7.4 8.0 8.1\" \\\n  DEFAULTPHPVERSION=\"8.1\" \\\n  APTINSTALL=\"apt install -y -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold\"\n\n# Install required packages and clean up afterwards to make this image layer smaller\nRUN apt update \\\n    && apt install --no-install-recommends --no-install-suggests -y \\\n    dumb-init autoconf automake git acl \\\n    gcc g++ make zip unzip mariadb-client \\\n    nginx php7.4 php7.4-cli php7.4-fpm php7.4-zip \\\n    php7.4-gd php7.4-curl php7.4-mysql php7.4-json php7.4-intl \\\n    php7.4-gmp php7.4-xml php7.4-mbstring php7.4-xdebug php7.4-pcov \\\n    bsdmainutils ntp \\\n    linuxdoc-tools linuxdoc-tools-text groff \\\n    python3-sphinx python3-sphinx-rtd-theme python3-pip fontconfig python3-yaml \\\n    texlive-latex-recommended texlive-latex-extra \\\n    texlive-fonts-recommended texlive-lang-european latexmk \\\n    sudo debootstrap libcgroup-dev procps \\\n    default-jre-headless default-jdk \\\n    supervisor apache2-utils lsb-release \\\n    libcurl4-gnutls-dev libjsoncpp-dev libmagic-dev \\\n    enscript lpr ca-certificates less vim \\\n    php-pear php-dev software-properties-common \\\n    && rm -rf /var/lib/apt/lists/*\n\n# Needed for building the docs\nRUN pip3 install --no-cache-dir pygments && pip3 install --no-cache-dir rst2pdf\n\n# Forward nginx request and error logs to standard output/error. Also create directory for PHP-FPM socket\nRUN ln -sf /dev/stdout /var/log/nginx/access.log \\\n\t&& ln -sf /dev/stderr /var/log/nginx/error.log \\\n  && mkdir -p /run/php\n\n# Set up users\nRUN useradd -m domjudge \\\n  && groupadd domjudge-run \\\n  && for id in $(seq 0 4); do useradd -d /nonexistent -g nogroup -s /bin/false \"domjudge-run-$id\"; done\n\n# Install composer\nRUN apt update && \\\n    apt install --no-install-recommends --no-install-suggests -y ca-certificates \\\n\t&& rm -rf /var/lib/apt/lists/* \\\n    && php -r \"copy('https://getcomposer.org/installer', 'composer-setup.php');\" && php composer-setup.php \\\n    && mv /composer.phar /usr/local/bin/composer\n\n# Install all supported PHP versions\nRUN add-apt-repository ppa:ondrej/php -y && apt update\nRUN for VERSION in $PHPSUPPORTED; do \\\n        if [ \"${VERSION}\" != \"7.4\" ]; then \\\n            $APTINSTALL php${VERSION}; \\\n        fi; \\\n    done\nRUN PACKAGES=$(dpkg-query -f '${binary:Package}\\n' -W|grep \"^php.*-\"); \\\n    for PACKAGE in $PACKAGES; do \\\n        PACKAGEALLVERSIONS=\"\" && \\\n        for VERSION in $PHPSUPPORTED; do \\\n            if [ \"${VERSION}\" != \"7.4\" ]; then \\\n                PACKAGEALLVERSIONS=\"$PACKAGEALLVERSIONS php${VERSION}-${PACKAGE#php*-}\"; \\\n            fi; \\\n        done; \\\n        $APTINSTALL $PACKAGEALLVERSIONS; \\\n    done\nRUN update-alternatives --set php /usr/bin/php${DEFAULTPHPVERSION}\n\n# Set up alternatives for PHP-FPM\nRUN for VERSION in $PHPSUPPORTED; do \\\n        PRIORTIY=$(echo ${VERSION} | tr -d '.'); \\\n        update-alternatives --install /usr/sbin/php-fpm php-fpm /usr/sbin/php-fpm${VERSION} ${PRIORTIY}; \\\n    done\nRUN update-alternatives --set php-fpm /usr/sbin/php-fpm${DEFAULTPHPVERSION}\n\n# Add exposed volume\nVOLUME [\"/domjudge\"]\n\nWORKDIR /domjudge\n\n# Add PHP configuration\nRUN mkdir /php-config\nCOPY [\"php-config\", \"/php-config\"]\nRUN for VERSION in $PHPSUPPORTED; do \\\n        cp -Rf /php-config/* /etc/php/${VERSION}/cli/conf.d; \\\n        cp -Rf /php-config/* /etc/php/${VERSION}/fpm/conf.d; \\\n    done; \\ \n    rm -Rf /php-config\n\n# Disable Xdebug by default\nRUN phpdismod xdebug\n\n# Add scripts\nCOPY [\"scripts\", \"/scripts/\"]\nRUN chmod 755 /scripts/start.sh \\\n  && chmod 755 /scripts/bin/* \\\n  && ln -s /scripts/bin/* /usr/bin/\nENTRYPOINT [\"/usr/bin/dumb-init\", \"--\"]\nCMD [\"/scripts/start.sh\"]\n\n# Copy supervisor files\nCOPY [\"supervisord.conf\", \"/etc/supervisor/\"]\nCOPY [\"supervisor\", \"/etc/supervisor/conf.d/\"]\nCOPY [\"sudoers-domjudge\", \"/etc/sudoers.d/domjudge\"]\nRUN chmod 440 /etc/sudoers.d/domjudge\n\n# Expose HTTP port\nEXPOSE 80\n"
+}

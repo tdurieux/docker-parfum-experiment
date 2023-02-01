@@ -1,0 +1,61 @@
+FROM centos:7
+
+ARG TARGETARCH
+ENV GOPATH /go
+ENV GOVERSION 1.17
+ENV CODE_DIR $GOPATH/src/github.com/pganalyze/collector
+ENV PATH $PATH:/usr/local/go/bin
+ENV ROOT_DIR /root
+ENV SOURCE_DIR /source
+
+# Packages required for both building and packaging
+RUN yum install -y centos-release-scl scl-utils tar make git rpmdevtools gcc && yum install -y rh-ruby27 rh-ruby27-ruby-devel && rm -rf /var/cache/yum
+
+# FPM
+RUN source scl_source enable rh-ruby27 && gem install fpm -v 1.14.1
+
+# Golang
+RUN curl -f -o go.tar.gz -sSL "https://golang.org/dl/go${GOVERSION}.linux-${TARGETARCH}.tar.gz"
+RUN tar -C /usr/local -xzf go.tar.gz && rm go.tar.gz
+
+# Build arguments
+ARG VERSION
+ARG GIT_VERSION
+ENV NAME pganalyze-collector
+
+# Build the collector
+COPY . $CODE_DIR
+WORKDIR $CODE_DIR
+RUN git checkout ${GIT_VERSION}
+RUN make build_dist
+
+# Update contrib and packages directory beyond the tagged release
+COPY ./contrib $CODE_DIR/contrib
+COPY ./packages $CODE_DIR/packages
+
+# Prepare the package source
+RUN mkdir -p $SOURCE_DIR/usr/bin/
+RUN cp $CODE_DIR/pganalyze-collector $SOURCE_DIR/usr/bin/
+RUN cp $CODE_DIR/pganalyze-collector-helper $SOURCE_DIR/usr/bin/
+RUN chmod +x $SOURCE_DIR/usr/bin/pganalyze-collector
+RUN chmod +x $SOURCE_DIR/usr/bin/pganalyze-collector-helper
+RUN mkdir -p $SOURCE_DIR/etc/
+RUN cp $CODE_DIR/contrib/pganalyze-collector.conf $SOURCE_DIR/etc/pganalyze-collector.conf
+RUN mkdir -p $SOURCE_DIR/etc/systemd/system/
+RUN cp $CODE_DIR/contrib/systemd/pganalyze-collector.service $SOURCE_DIR/etc/systemd/system/pganalyze-collector.service
+RUN mkdir -p $SOURCE_DIR/usr/share/pganalyze-collector/sslrootcert
+RUN cp $CODE_DIR/contrib/sslrootcert/* $SOURCE_DIR/usr/share/pganalyze-collector/sslrootcert
+
+# Build the package
+WORKDIR $ROOT_DIR
+RUN scl enable rh-ruby27 -- fpm \
+  -n $NAME -v ${VERSION} -t rpm --rpm-os linux \
+  --config-files /etc/pganalyze-collector.conf \
+  --after-install $CODE_DIR/packages/src/rpm-systemd/post.sh \
+  --before-remove $CODE_DIR/packages/src/rpm-systemd/preun.sh \
+  -m "<team@pganalyze.com>" --url "https://pganalyze.com/" \
+  --description "pganalyze statistics collector" \
+	--vendor "pganalyze" --license="BSD" \
+  -s dir -C $SOURCE_DIR etc usr
+
+VOLUME ["/out"]

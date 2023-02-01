@@ -1,0 +1,48 @@
+# We use debian 9 to allow our binary distribution to run on a lower version of libc.
+# This increases our compatiblity.
+# However, we need openssl 1.1.1 (for the -pbkdf2 argument support), which is
+# only on debian 10. So we'll compile openssl.
+FROM debian:9
+
+WORKDIR /src/fastfreeze
+
+# Few essential things before we can get going
+RUN apt-get update && apt-get install --no-install-recommends -y build-essential pkg-config sudo curl git python3 && rm -rf /var/lib/apt/lists/*;
+
+RUN set -ex; \
+  curl -fsSL https://www.openssl.org/source/openssl-1.1.1j.tar.gz | \
+    tar xzf - -C /tmp; \
+  cd /tmp/openssl-1.1.1j; \
+  ./config; \
+  make -j4; \
+  make install -j4
+
+# Build dependencies (CRIU, rust toolchain, libvirtcpuid, etc.)
+COPY deps deps
+# We clean first because we might have a copy of the host compiled binaries
+# No -j2 because compiling two rust programs will make the memory usage blow up
+RUN make -C deps clean && make -C deps
+ENV CARGO=/root/.cargo/bin/cargo
+
+# Build FastFreeze Rust dependencies
+# This enables fast image rebuild when making code modification
+COPY Cargo.lock .
+COPY Cargo.toml .
+RUN set -ex; \
+  mkdir src; \
+  echo "" > src/lib.rs; \
+  echo "fn main() {}" > src/main.rs; \
+  $CARGO test --release; \
+  $CARGO build --release;
+
+# Build FastFreeze
+COPY src src
+RUN touch src/lib.rs src/main.rs
+RUN $CARGO test --release
+RUN $CARGO build --release
+
+# Package FastFreeze.
+# Note: We only copy the files we need to get better build caches with docker
+COPY Makefile .
+COPY scripts/fastfreeze scripts/
+RUN make

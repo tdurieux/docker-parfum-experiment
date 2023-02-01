@@ -1,0 +1,27 @@
+# Build the manager binary
+FROM golang:1.17 as builder
+
+WORKDIR /workspace
+
+# Download the dependencies. Doing this, if there are changes in the source
+# code but not in the dependencies to download, the tool to build the image will
+# use the cached dependencies
+COPY hack/install/install-dependencies.sh hack/install/
+COPY hack/install/install-utils.sh hack/install/
+COPY go.mod .
+COPY go.sum .
+RUN ./hack/install/install-dependencies.sh
+
+COPY tests tests
+
+ENV CGO_ENABLED=0
+
+# Build
+
+RUN go build -o ./reporter -a ./tests/assert-jobs/reporter/main.go
+RUN go build -o ./reporter-otlp -a ./tests/assert-jobs/reporter-otlp/main.go
+RUN go build -o ./query -a ./tests/assert-jobs/query/main.go
+RUN go build -o ./index -a ./tests/assert-jobs/index/main.go
+
+# Use the curl container image to ensure we have curl installed. Also, it is a
+# minimal container image

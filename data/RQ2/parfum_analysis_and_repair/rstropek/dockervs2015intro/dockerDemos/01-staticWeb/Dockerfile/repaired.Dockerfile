@@ -1,0 +1,1 @@
+# Remember to build app in *app* folder before running this Dockerfile

@@ -1,0 +1,18 @@
+FROM golang:1.16 AS builder
+WORKDIR /srv
+COPY . .
+ARG GOARCH=
+ARG CGO_ENABLED=0
+RUN git clone https://github.com/snsinfu/reconf.git /tmp/reconf \
+ && cd /tmp/reconf \
+ && go build -o /srv/reconf .
+RUN go build -o rtun ./agent/cmd
+
+FROM scratch
+COPY --from=builder /srv/reconf /srv/rtun /
+COPY --from=builder /srv/docker/rtun.yml.template /config/
+ENV RTUN_GATEWAY=
+ENV RTUN_KEY=
+ENV RTUN_FORWARD=
+ENTRYPOINT ["/reconf", "-w", "/config/rtun.yml", "/rtun"]
+CMD ["-f", "/config/rtun.yml"]

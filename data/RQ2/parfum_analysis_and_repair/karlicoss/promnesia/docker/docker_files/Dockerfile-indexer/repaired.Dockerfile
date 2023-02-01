@@ -1,0 +1,5 @@
+FROM promnesia:latest
+
+RUN apt-get update && apt-get install --no-install-recommends -y cron && rm -rf /var/lib/apt/lists/*;
+COPY docker/docker_files/indexer-entrypoint.sh /
+ENTRYPOINT ["/indexer-entrypoint.sh"]

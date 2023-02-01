@@ -1,0 +1,60 @@
+FROM quay.io/centos/centos:stream8
+
+RUN echo "2022-05-25" > /build_time
+
+RUN sed -i -e 's/^#RateLimitInterval=.*/RateLimitInterval=0/' \
+    -e 's/^#RateLimitBurst=.*/RateLimitBurst=0/' \
+    /etc/systemd/journald.conf
+
+RUN echo net.ipv6.conf.all.disable_ipv6=0 > /etc/sysctl.d/00-enable-ipv6.conf && \
+    echo kernel.core_pattern=/exported-artifacts/core.%h.%e.%t > /etc/sysctl.d/01-export-kernel-cores.conf
+
+RUN dnf update -y && \
+    dnf -y install dnf-plugins-core epel-release && \
+    dnf config-manager --set-enabled powertools && \
+    dnf copr enable nmstate/ovs-el8 -y && \
+    dnf copr enable nmstate/nispor -y && \
+    dnf -y install --setopt=install_weak_deps=False \
+                   make \
+                   go \
+                   rust-toolset \
+                   NetworkManager \
+                   NetworkManager-ovs \
+                   NetworkManager-team \
+                   NetworkManager-config-server \
+                   openvswitch2.11 \
+                   systemd-udev \
+                   python3-devel \
+                   python3-pyyaml \
+                   python3-setuptools \
+                   python36 \
+                   dnsmasq \
+                   git \
+                   iproute \
+                   rpm-build \
+                   python3-pytest \
+                   python3-virtualenv \
+                   python3-tox \
+                   tcpreplay \
+                   wpa_supplicant \
+                   hostapd \
+                   libndp \
+                   procps-ng \
+                   dpdk \
+                   nispor \
+                   && \
+    alternatives --set python /usr/bin/python3 && \
+    ln -s /usr/bin/pytest-3 /usr/bin/pytest && \
+    dnf clean all && \
+    systemctl enable openvswitch
+
+COPY network_manager_enable_trace.conf \
+     /etc/NetworkManager/conf.d/97-trace-logging.conf
+COPY network_manager_keyfile.conf \
+     /etc/NetworkManager/conf.d/96-keyfile.conf
+
+RUN systemctl enable dbus systemd-udevd NetworkManager
+
+VOLUME [ "/sys/fs/cgroup" ]
+
+CMD ["/usr/sbin/init"]

@@ -1,0 +1,62 @@
+{
+  "startTime": 1674250710891,
+  "endTime": 1674250712295,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 49,
+        "lineEnd": 49,
+        "columnStart": 4,
+        "columnEnd": 121
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 83,
+        "lineEnd": 83,
+        "columnStart": 4,
+        "columnEnd": 103
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 84,
+        "lineEnd": 84,
+        "columnStart": 4,
+        "columnEnd": 127
+      }
+    },
+    {
+      "rule": "curlUseHttpsUrl",
+      "position": {
+        "lineStart": 83,
+        "lineEnd": 83,
+        "columnStart": 4,
+        "columnEnd": 103
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 18,
+        "lineEnd": 23,
+        "columnStart": 22,
+        "columnEnd": 19
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 27,
+        "lineEnd": 31,
+        "columnStart": 5,
+        "columnEnd": 7
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM kaixhin/torch:latest\nMAINTAINER Zeming Lin <zlin@fb.com>\n\n### X11 server: inspired by suchja/x11server and suchja/wine ###\n\n# first create user and group for all the X Window stuff\n# required to do this first so we have consistent uid/gid between server and client container\nRUN addgroup --system torchcraft \\\n  && adduser \\\n    --home /home/torchcraft \\\n    --disabled-password \\\n    --shell /bin/bash \\\n    --gecos \"user for running an torcraft application\" \\\n    --ingroup torchcraft \\\n    --quiet \\\n    torchcraft\n\n# Install packages required for connecting against X Server\nRUN apt-get update && apt-get install -y --no-install-recommends \\\n  xvfb \\\n  xauth \\\n  x11vnc \\\n  x11-utils \\\n  x11-xserver-utils && rm -rf /var/lib/apt/lists/*;\n\n# Install packages for building the image\nRUN apt-get update -y \\\n  && apt-get install -y --no-install-recommends \\\n    curl \\\n    unzip \\\n    software-properties-common \\\n    vim \\\n  && add-apt-repository ppa:ubuntu-wine/ppa && rm -rf /var/lib/apt/lists/*;\n\n# Define which versions we need\nENV WINE_MONO_VERSION 4.5.6\nENV WINE_GECKO_VERSION 2.40\n\n# Install wine and related packages\nRUN dpkg --add-architecture i386 \\\n  && apt-get update -y \\\n  && apt-get install -y --no-install-recommends \\\n    wine1.8 \\\n    wine-gecko$WINE_GECKO_VERSION:i386 \\\n    wine-gecko$WINE_GECKO_VERSION:amd64 \\\n    wine-mono$WINE_MONO_VERSION \\\n  && rm -rf /var/lib/apt/lists/*\n\n# Use the latest version of winetricks\nRUN curl -f -SL 'https://raw.githubusercontent.com/Winetricks/winetricks/master/src/winetricks' -o /usr/local/bin/winetricks \\\n&& chmod +x /usr/local/bin/winetricks\n\n# Wine really doesn't like to be run as root, so let's use a non-root user\nRUN adduser torchcraft sudo\nRUN echo 'torchcraft:starcraft' | chpasswd\n\nENV WINEPREFIX /home/torchcraft/.wine\nENV WINEARCH win32\n# Use torchcraft's home dir as working dir\nWORKDIR /home/torchcraft\n\nRUN echo \"alias winegui='wine explorer /desktop=DockerDesktop,1024x768'\" > /home/torchcraft/.bash_aliases\n\nENV DISPLAY :0.0\nRUN echo \"#!/bin/bash\" >> /entrypoint.sh\nRUN echo \"Xvfb :0 -auth ~/.Xauthority -screen 0 1024x768x24 >>~/xvfb.log 2>&1 &\" >> /entrypoint.sh\nRUN echo \"x11vnc -forever -passwd mot2pass -display :0 >> ~/xvnc.log 2>&1 &\" >> /entrypoint.sh\nRUN echo \"exec \\\"\\$@\\\"\" >> /entrypoint.sh\nRUN chmod +x /entrypoint.sh\n\n\n### Starcraft stuff ###\n# export torch variables for torchcraft\nENV LUA_PATH='/root/.luarocks/share/lua/5.1/?.lua;/root/.luarocks/share/lua/5.1/?/init.lua;/root/torch/install/share/lua/5.1/?.lua;/root/torch/install/share/lua/5.1/?/init.lua;./?.l\nENV LUA_CPATH='/root/.luarocks/lib/lua/5.1/?.so;/root/torch/install/lib/lua/5.1/?.so;./?.so;/usr/local/lib/lua/5.1/?.so;/usr/local/lib/lua/5.1/loadall.so'\nENV PATH=/root/torch/install/bin:$PATH\nENV LD_LIBRARY_PATH=/root/torch/install/lib:$LD_LIBRARY_PATH\nENV DYLD_LIBRARY_PATH=/root/torch/install/lib:$DYLD_LIBRARY_PATH\nENV LUA_CPATH='/root/torch/install/lib/?.so;'$LUA_CPATH\n\nRUN git clone https://github.com/TorchCraft/TorchCraft\nRUN cd ./TorchCraft; luarocks make *.rockspec\n\nRUN curl -f -L https://ftp.blizzard.com/pub/broodwar/patches/PC/BW-1161.exe -o /home/torchcraft/BW-1161.exe\nRUN curl -f -L https://github.com/bwapi/bwapi/releases/download/v4.2.0/BWAPI_420_Setup.exe -o /home/torchcraft/BWAPI_420_Setup.exe\n\nRUN chown -R torchcraft:torchcraft /root\nRUN chmod -R 777 /root\nRUN chown -R torchcraft:torchcraft /home/torchcraft/TorchCraft\nRUN chmod -R 777 /home/torchcraft/TorchCraft\n\nUSER torchcraft\nADD common/* ./\nRUN echo \". /root/torch/install/bin/torch-activate\" >> ~/.bashrc\n\nENTRYPOINT [\"/entrypoint.sh\"]\n"
+}

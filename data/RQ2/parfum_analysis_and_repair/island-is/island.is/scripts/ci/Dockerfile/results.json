@@ -1,0 +1,62 @@
+{
+  "startTime": 1674248143719,
+  "endTime": 1674248144400,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 88,
+        "lineEnd": 88,
+        "columnStart": 2,
+        "columnEnd": 95
+      }
+    },
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 47,
+        "lineEnd": 50,
+        "columnStart": 4,
+        "columnEnd": 4
+      }
+    },
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 99,
+        "lineEnd": 99,
+        "columnStart": 4,
+        "columnEnd": 23
+      }
+    },
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 11,
+        "lineEnd": 11,
+        "columnStart": 4,
+        "columnEnd": 42
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 4,
+        "lineEnd": 4,
+        "columnStart": 4,
+        "columnEnd": 18
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 87,
+        "lineEnd": 87,
+        "columnStart": 2,
+        "columnEnd": 14
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# This is a multi-stage Dockerfile which contains all CI-related operations as well as images to be deployed in production\nARG DOCKER_IMAGE_REGISTRY=public.ecr.aws\nFROM $DOCKER_IMAGE_REGISTRY/docker/library/node:14.19.0-alpine3.14 as deps\n\nRUN apk add --no-cache -U git\n\nWORKDIR /build\n\n# Adding and installing packages\nADD package.json yarn.lock ./\n\nRUN CI=true yarn install --frozen-lockfile && yarn cache clean;\n\nFROM deps as src\n# image with the source code\nADD . .\n\nFROM src as builder\nARG APP\nARG APP_DIST_HOME\nENV APP=${APP}\nENV NODE_ENV=production\nENV NODE_OPTIONS=\"--max-old-space-size=4096\"\n\nRUN yarn run build ${APP} --prod\n\nFROM $DOCKER_IMAGE_REGISTRY/docker/library/node:14.19.0-alpine3.14 as output-base\n# this is base image for containers that are to be deployed\nARG GIT_BRANCH\nARG GIT_SHA\nLABEL branch=${GIT_BRANCH}\nLABEL commit=${GIT_SHA}\nENV GIT_BRANCH=${GIT_BRANCH}\nENV GIT_SHA=${GIT_SHA}\nARG APP\nARG APP_HOME\nARG APP_DIST_HOME\nENV APP=${APP}\nENV NODE_ENV=production\n\nWORKDIR /webapp\n\n# Adding user for running the app\nRUN addgroup runners && adduser -D runner -G runners\n\nFROM output-base as output-base-with-pg\n\nRUN npm install -g \\\n  sequelize \\\n  sequelize-cli \\\n  pg && npm cache clean --force;\n\nUSER runner\n\nFROM output-base-with-pg as output-express\n\nCOPY --from=builder /build/${APP_DIST_HOME} /webapp/\n\nENTRYPOINT []\nCMD [ \"node\", \"main.js\" ]\n\nFROM output-base-with-pg as output-next\n\nENV PORT=4200\n\n# TODO: smallify\nCOPY --from=deps /build/node_modules /webapp/node_modules\nCOPY --from=builder /build/${APP_DIST_HOME} /webapp/\n\nENTRYPOINT [ \"node\", \"main.js\" ]\n\nFROM $DOCKER_IMAGE_REGISTRY/nginx/nginx:1.21-alpine as output-static\n\nARG APP\nARG APP_DIST_HOME\nARG GIT_BRANCH\nARG GIT_SHA\nLABEL branch=${GIT_BRANCH}\nLABEL commit=${GIT_SHA}\nENV GIT_BRANCH=${GIT_BRANCH}\nENV GIT_SHA=${GIT_SHA}\nENV APP=${APP}\nENV BASEPATH=/\n\nRUN mkdir -p /etc/nginx/templates\nRUN apk update && \\\n  apk upgrade && \\\n  apk add --no-cache bash && \\\n  curl -f -L https://github.com/stedolan/jq/releases/download/jq-1.6/jq-linux64 -o /tmp/jq-linux64 && \\\n  chmod a+x /tmp/jq-linux64 && \\\n  mv /tmp/jq-linux64 /usr/bin/jq\nADD scripts/dockerfile-assets/nginx/* /etc/nginx/templates\nADD scripts/dockerfile-assets/bash/extract-environment.sh /docker-entrypoint.d\nCOPY --from=builder /build/${APP_DIST_HOME} /usr/share/nginx/html\n\nFROM output-base as output-jest\n\nRUN echo 'module.exports = {};' > jest.config.js\n\nRUN npm install -g jest && npm cache clean --force;\n\nCOPY --from=builder /build/${APP_DIST_HOME} /webapp/\n\nUSER runner\n\nCMD [ \"jest\", \"main.spec.js\" ]\n"
+}

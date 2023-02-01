@@ -1,0 +1,80 @@
+{
+  "startTime": 1674252918270,
+  "endTime": 1674252919329,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 57,
+        "lineEnd": 57,
+        "columnStart": 4,
+        "columnEnd": 32
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 109,
+        "lineEnd": 109,
+        "columnStart": 4,
+        "columnEnd": 44
+      }
+    },
+    {
+      "rule": "aptGetInstallUseY",
+      "position": {
+        "lineStart": 31,
+        "lineEnd": 31,
+        "columnStart": 7,
+        "columnEnd": 23
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 15,
+        "lineEnd": 22,
+        "columnStart": 7,
+        "columnEnd": 30
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 31,
+        "lineEnd": 31,
+        "columnStart": 7,
+        "columnEnd": 23
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 37,
+        "lineEnd": 50,
+        "columnStart": 7,
+        "columnEnd": 17
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 105,
+        "lineEnd": 105,
+        "columnStart": 7,
+        "columnEnd": 53
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 31,
+        "lineEnd": 31,
+        "columnStart": 7,
+        "columnEnd": 23
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Default output dir containing build artifacts\nARG BUILD_OUTPUT_DIR=cmake-docker-build-debug\n\n#############################################\n# builder image - contains all dependencies #\n#############################################\nFROM ubuntu:22.04 as builder\n\n\n# deps versions\nARG LLVM_VERSION=14\n\n# Install standard packages\nRUN apt-get update \\\n    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends tzdata \\\n    && apt-get install --no-install-recommends -y \\\n    tar \\\n    git \\\n    curl \\\n    wget \\\n    python3-pip \\\n    lsb-release \\\n    software-properties-common \\\n    && rm -rf /var/lib/apt/lists/*\n\n# install solc for py_test if arch is not arm64 because it is not availiable\nRUN \\\nif [ `arch` != \"aarch64\" ]; \\\n then \\\n    add-apt-repository ppa:ethereum/ethereum \\\n    && apt-get update \\\n    && apt install -y --no-install-recommends solc; rm -rf /var/lib/apt/lists/*; \\\nfi\n\n# install standart tools\nRUN add-apt-repository ppa:ethereum/ethereum \\\n    && apt-get update \\\n    && apt-get install --no-install-recommends -y \\\n    clang-format-$LLVM_VERSION \\\n    clang-tidy-$LLVM_VERSION \\\n    llvm-$LLVM_VERSION \\\n    golang-go \\\n    ca-certificates \\\n    libtool \\\n    autoconf \\\n    binutils \\\n    cmake \\\n    ccache \\\n    # this libs are required for arm build by go part\n    libzstd-dev \\\n    libsnappy-dev \\\n    && rm -rf /var/lib/apt/lists/*\n\nENV CXX=\"clang++-${LLVM_VERSION}\"\nENV CC=\"clang-${LLVM_VERSION}\"\n\n# Install conan\nRUN pip3 install --no-cache-dir --upgrade conan\n\nENV CONAN_REVISIONS_ENABLED=1\n\n# Install conan deps\nWORKDIR /opt/taraxa/\nCOPY conanfile.py .\n\nRUN conan remote add -f bincrafters \"https://bincrafters.jfrog.io/artifactory/api/conan/public-conan\" \\\n    && conan profile new clang --detect \\\n    && conan profile update settings.compiler=clang clang  \\\n    && conan profile update settings.compiler.version=$LLVM_VERSION clang  \\\n    && conan profile update settings.compiler.libcxx=libstdc++11 clang \\\n    && conan profile update settings.build_type=RelWithDebInfo clang \\\n    && conan profile update env.CC=clang-$LLVM_VERSION clang  \\\n    && conan profile update env.CXX=clang++-$LLVM_VERSION clang  \\\n    && conan install --build missing -pr=clang .\n\n###################################################################\n# Build stage - use builder image for actual build of taraxa node #\n###################################################################\nFROM builder as build\n\n# Default output dir containing build artifacts\nARG BUILD_OUTPUT_DIR\n\n# Build taraxa-node project\nWORKDIR /opt/taraxa/\nCOPY . .\n\nRUN mkdir $BUILD_OUTPUT_DIR && cd $BUILD_OUTPUT_DIR \\\n    && cmake -DCMAKE_BUILD_TYPE=RelWithDebInfo \\\n    -DTARAXA_ENABLE_LTO=OFF \\\n    -DTARAXA_STATIC_BUILD=OFF \\\n    ../ \\\n    && make -j$(nproc) all \\\n    # Copy CMake generated Testfile to be able to trigger ctest from bin directory\n    && cp tests/CTestTestfile.cmake bin/ \\\n    # keep only required shared libraries and final binaries\n    && find . -maxdepth 1 ! -name \"lib\" ! -name \"bin\" -exec rm -rfv {} \\;\n\n###############################################################################\n##### Taraxa image containing taraxad binary + dynamic libraries + config #####\n###############################################################################\nFROM ubuntu:22.04\n\n# Install curl and jq\nRUN apt-get update \\\n    && apt-get install --no-install-recommends -y curl jq python3 python3-pip \\\n    && rm -rf /var/lib/apt/lists/*\n\n# Install required Python packages\nRUN pip3 install --no-cache-dir click eth-account eth-utils\n\nARG BUILD_OUTPUT_DIR\nWORKDIR /root/.taraxa\n\n# Copy required binaries\nCOPY --from=build /opt/taraxa/$BUILD_OUTPUT_DIR/bin/taraxad /usr/local/bin/taraxad\nCOPY --from=build /opt/taraxa/$BUILD_OUTPUT_DIR/bin/taraxa-bootnode /usr/local/bin/taraxa-bootnode\nCOPY --from=build /opt/taraxa/$BUILD_OUTPUT_DIR/lib/*.so /usr/local/lib/\n\n# Copy scripts\nCOPY scripts/taraxa-sign.py /usr/local/bin/taraxa-sign\n\n# Set LD_LIBRARY_PATH so taraxad binary finds shared libs\nENV LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/local/lib\n\nCOPY docker-entrypoint.sh /entrypoint.sh\n\nENTRYPOINT [\"/entrypoint.sh\"]\n"
+}

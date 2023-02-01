@@ -1,0 +1,44 @@
+{
+  "startTime": 1674255608883,
+  "endTime": 1674255609657,
+  "originalSmells": [
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 5,
+        "lineEnd": 5,
+        "columnStart": 4,
+        "columnEnd": 16
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 36,
+        "lineEnd": 36,
+        "columnStart": 22,
+        "columnEnd": 48
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 36,
+        "lineEnd": 36,
+        "columnStart": 22,
+        "columnEnd": 48
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 22,
+        "lineEnd": 22,
+        "columnStart": 4,
+        "columnEnd": 24
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "### FRONT BUILD START ###\nFROM --platform=$BUILDPLATFORM node:16-alpine as front\nCOPY ./web /app\nWORKDIR /app\n# Build front once upon multiarch build\nRUN yarn install && yarn run build && yarn cache clean;\n### FRONT BUILD END ###\n\n### BUILD TORRSERVER MULTIARCH START ###\nFROM --platform=$BUILDPLATFORM golang:1.18-alpine as builder\n\nCOPY . /opt/src\nCOPY --from=front /app/build /opt/src/web/build\n\nWORKDIR /opt/src\n\nARG TARGETARCH\n\n# Step for multiarch build with docker buildx\nENV GOARCH=$TARGETARCH\n\n# Build torrserver\nRUN apk add --no-cache --update g++ \\\n&& go run gen_web.go \\\n&& cd server \\\n&& go clean -i -r -cache \\\n&& go mod tidy \\\n&& go build -ldflags '-w -s' --o \"torrserver\" ./cmd\n### BUILD TORRSERVER MULTIARCH END ###\n\n\n### UPX COMPRESSING START ###\nFROM debian:buster-slim as compressed\n\nCOPY --from=builder /opt/src/server/torrserver ./torrserver\n\nRUN apt-get update && apt-get install --no-install-recommends -y upx-ucl && upx --best --lzma ./torrserver && rm -rf /var/lib/apt/lists/*;\n# Compress torrserver only for amd64 and arm64 no variant platforms\n# ARG TARGETARCH\n# ARG TARGETVARIANT\n# RUN if [ \"$TARGETARCH\" == 'amd64' ]; then compress=1; elif [ \"$TARGETARCH\" == 'arm64' ] && [ -z \"$TARGETVARIANT\"  ]; then compress=1; else compress=0; fi \\\n# && if [[ \"$compress\" -eq 1 ]]; then ./upx --best --lzma ./torrserver; fi\n### UPX COMPRESSING END ###\n\n### BUILD MAIN IMAGE START ###\nFROM alpine\n\nENV TS_CONF_PATH=\"/opt/ts/config\"\nENV TS_LOG_PATH=\"/opt/ts/log\"\nENV TS_TORR_DIR=\"/opt/ts/torrents\"\nENV TS_PORT=8090\nENV GODEBUG=madvdontneed=1\n\nCOPY --from=compressed ./torrserver /usr/bin/torrserver\nCOPY ./docker-entrypoint.sh /docker-entrypoint.sh\n\nRUN apk add --no-cache --update ffmpeg\n\nCMD /docker-entrypoint.sh\n### BUILD MAIN IMAGE end ###\n"
+}

@@ -1,0 +1,33 @@
+# Copyright (C) The Arvados Authors. All rights reserved.
+#
+# SPDX-License-Identifier: AGPL-3.0
+
+FROM arvados/arvbox-base
+ARG arvados_version
+ARG workbench2_version=main
+
+RUN cd /usr/src && \
+    git clone --no-checkout https://git.arvados.org/arvados.git && \
+    git -C arvados checkout ${arvados_version} && \
+    git clone --no-checkout https://git.arvados.org/arvados-workbench2.git workbench2 && \
+    git -C workbench2 checkout ${workbench2_version} && \
+    chown -R 1000:1000 /usr/src
+
+# avoid rebuilding arvados-server, it's already been built as part of the base image
+RUN install $GOPATH/bin/arvados-server /usr/local/bin
+
+ADD service/ /var/lib/arvbox/service
+RUN ln -sf /var/lib/arvbox/service /etc
+RUN mkdir -p $ARVADOS_CONTAINER_PATH
+RUN echo "production" > $ARVADOS_CONTAINER_PATH/api_rails_env
+RUN echo "production" > $ARVADOS_CONTAINER_PATH/workbench_rails_env
+
+# for the federation tests, the dev server watches a lot of files,
+# and we run three instances of the docker container. Bump up the
+# inotify limit from 8192, to avoid errors like
+#   events.js:183
+#         throw er; // Unhandled 'error' event
+#         ^
+#
+#   Error: watch /usr/src/workbench2/public ENOSPC
+# cf. https://github.com/facebook/jest/issues/3254

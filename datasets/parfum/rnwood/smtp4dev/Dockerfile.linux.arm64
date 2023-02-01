@@ -1,0 +1,9 @@
+FROM --platform=linux/arm64 mcr.microsoft.com/dotnet/aspnet:6.0.5 AS runtime
+COPY out /app
+VOLUME ["/smtp4dev"]
+WORKDIR /
+ENV XDG_CONFIG_HOME /
+EXPOSE 80
+EXPOSE 25
+EXPOSE 143
+ENTRYPOINT ["dotnet", "/app/Rnwood.Smtp4dev.dll"]

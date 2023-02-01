@@ -1,0 +1,37 @@
+# -----------------
+# Front build stage
+# -----------------
+FROM node:13.13.0 as website
+
+COPY ./website ./website
+WORKDIR /website
+RUN npm ci && npm run export
+
+# -----------------
+# Cargo build stage
+# -----------------
+FROM rust:1.50.0 as cargo-build
+RUN USER=root cargo new --bin bast
+WORKDIR /bast
+
+COPY Cargo.lock .
+COPY Cargo.toml .
+COPY migrations ./migrations
+COPY static     ./static
+RUN mkdir -p ./static/front
+RUN mkdir .cargo
+RUN cargo vendor > .cargo/config
+
+COPY ./server server
+RUN rm -rf src/
+RUN cargo build --release
+RUN cargo install --path . --verbose
+
+# -----------------
+# Final stage
+# -----------------
+COPY --from=website /website/out /bast/static/front/
+
+CMD ["/usr/local/cargo/bin/bast"]
+
+EXPOSE 3333

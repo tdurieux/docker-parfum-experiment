@@ -1,0 +1,48 @@
+FROM archlinux:base-devel
+LABEL maintainer="QBDI Team <qbdi@quarkslab.com>"
+
+ENV USER="docker" \
+    HOME="/home/docker" \
+    PREFIX="/usr" \
+    QBDI_PLATFORM="linux" \
+    QBDI_ARCH="X86_64"
+
+# Get latest package list, upgrade packages, install required packages 
+# and cleanup to keep container as small as possible
+RUN pacman -Suy --noconfirm && \
+    pacman -S --noconfirm \
+        base-devel \
+        sudo \
+        gcc \
+        git \
+        ninja \
+        cmake \
+        python3 \
+        wget && \
+    (pacman -Sc --noconfirm || true)
+
+# create a user
+RUN useradd -Groot $USER && \
+    echo '%root ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers
+
+# switch to new user
+USER $USER
+
+# build / test / install QBDI
+
+# git archive -o qbdi.tar.gz --prefix=qbdi/ HEAD .
+ADD qbdi.tar.gz $HOME/
+
+WORKDIR $HOME/qbdi
+
+RUN sudo chown -R $USER:$USER . && \
+    rm -rf deps && \
+    ln -s $HOME/qbdi-deps/deps deps && \
+    mkdir build && \
+    cd build && \
+    cp ../docker/archlinux/PKGBUILD.$QBDI_ARCH PKGBUILD && \
+    makepkg -fc && \
+    sudo pacman -U --noconfirm QBDI-*.pkg.tar.zst
+
+WORKDIR "$HOME/"
+CMD ["/bin/bash"]

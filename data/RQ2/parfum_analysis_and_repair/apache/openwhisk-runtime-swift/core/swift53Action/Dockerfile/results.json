@@ -1,0 +1,17 @@
+{
+  "startTime": 1674249734556,
+  "endTime": 1674249735239,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 29,
+        "lineEnd": 30,
+        "columnStart": 4,
+        "columnEnd": 91
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "#\n# Licensed to the Apache Software Foundation (ASF) under one or more\n# contributor license agreements.  See the NOTICE file distributed with\n# this work for additional information regarding copyright ownership.\n# The ASF licenses this file to You under the Apache License, Version 2.0\n# (the \"License\"); you may not use this file except in compliance with\n# the License.  You may obtain a copy of the License at\n#\n#     http://www.apache.org/licenses/LICENSE-2.0\n#\n# Unless required by applicable law or agreed to in writing, software\n# distributed under the License is distributed on an \"AS IS\" BASIS,\n# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.\n# See the License for the specific language governing permissions and\n# limitations under the License.\n#\n\n# build go proxy from source\nFROM golang:1.16 AS builder_source\nARG GO_PROXY_GITHUB_USER=apache\nARG GO_PROXY_GITHUB_BRANCH=master\nRUN git clone --branch ${GO_PROXY_GITHUB_BRANCH} \\\n   https://github.com/${GO_PROXY_GITHUB_USER}/openwhisk-runtime-go /src ;\\\n   cd /src ; env GO111MODULE=on CGO_ENABLED=0 go build main/proxy.go && \\\n   mv proxy /bin/proxy\n\n# or build it from a release\nFROM golang:1.16 AS builder_release\nARG GO_PROXY_RELEASE_VERSION=1.16@1.19.0\nRUN curl -f -sL \\\n  https://github.com/apache/openwhisk-runtime-go/archive/{$GO_PROXY_RELEASE_VERSION}.tar.gz \\\n  | tar xzf - \\\n  && cd openwhisk-runtime-go-*/main \\\n  && GO111MODULE=on go build -o /bin/proxy\n\nFROM swift:5.3\n\n# select the builder to use\nARG GO_PROXY_BUILD_FROM=release\n\nRUN rm -rf /var/lib/apt/lists/* && apt-get clean && apt-get -qq update \\\n\t&& apt-get install -y --no-install-recommends locales python3 vim libssl-dev libicu-dev \\\n\t&& rm -rf /var/lib/apt/lists/* \\\n\t&& locale-gen en_US.UTF-8\n\nENV LANG=\"en_US.UTF-8\" \\\n\tLANGUAGE=\"en_US:en\" \\\n\tLC_ALL=\"en_US.UTF-8\"\n\nRUN mkdir -p /swiftAction\nWORKDIR /swiftAction\n\nCOPY --from=builder_source /bin/proxy /bin/proxy_source\nCOPY --from=builder_release /bin/proxy /bin/proxy_release\nRUN mv /bin/proxy_${GO_PROXY_BUILD_FROM} /bin/proxy\nADD swiftbuild.py /bin/compile\nADD swiftbuild.py.launcher.swift /bin/compile.launcher.swift\nCOPY _Whisk.swift /swiftAction/Sources/\nCOPY Package.swift /swiftAction/\nCOPY swiftbuildandlink.sh /swiftAction/\nCOPY main.swift /swiftAction/Sources/\nRUN swift build -c release; \\\n\ttouch /swiftAction/Sources/main.swift; \\\n\trm /swiftAction/.build/release/Action\n\nENV OW_COMPILER=/bin/compile\nENTRYPOINT [ \"/bin/proxy\" ]\n"
+}

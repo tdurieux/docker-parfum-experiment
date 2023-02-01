@@ -1,0 +1,35 @@
+{
+  "startTime": 1674253870074,
+  "endTime": 1674253870977,
+  "originalSmells": [
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 22,
+        "lineEnd": 22,
+        "columnStart": 4,
+        "columnEnd": 51
+      }
+    },
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 24,
+        "lineEnd": 24,
+        "columnStart": 4,
+        "columnEnd": 50
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 10,
+        "lineEnd": 10,
+        "columnStart": 18,
+        "columnEnd": 51
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM node:16.16.0-alpine@sha256:554142f9a6367f1fbd776a1b2048fab3a2cc7aa477d7fe9c00ce0f110aa45716 AS base\n\nFROM base AS builder\n# Build arguments to change source url, branch or tag\nARG CODIMD_REPOSITORY\nARG HEDGEDOC_REPOSITORY=https://github.com/hedgedoc/hedgedoc.git\nARG VERSION=master\nRUN if [ -n \"${CODIMD_REPOSITORY}\" ]; then echo \"CODIMD_REPOSITORY is deprecated. Please use HEDGEDOC_REPOSITORY instead\" && exit 1; fi\n\n# Clone the source and remove git repository but keep the HEAD file\nRUN apk update && apk add --no-cache git jq python3 build-base\nRUN ln -s /usr/bin/python3 /usr/bin/python # sqlite3 build scripts want a 'python' binary\nRUN git clone --depth 1 --branch \"$VERSION\" \"$HEDGEDOC_REPOSITORY\" /hedgedoc\nRUN git -C /hedgedoc log --pretty=format:'%ad %h %d' --abbrev-commit --date=short -1\nRUN git -C /hedgedoc rev-parse HEAD > /tmp/gitref\nRUN rm -rf /hedgedoc/.git/*\nRUN mv /tmp/gitref /hedgedoc/.git/HEAD\nRUN jq \".repository.url = \\\"${HEDGEDOC_REPOSITORY}\\\"\" /hedgedoc/package.json > /hedgedoc/package.new.json\nRUN mv /hedgedoc/package.new.json /hedgedoc/package.json\n\n# Install app dependencies and build\nWORKDIR /hedgedoc\nRUN yarn install --production=false --pure-lockfile && yarn cache clean;\nRUN yarn run build\nRUN yarn install --production=true --pure-lockfile && yarn cache clean;\n\n\nFROM base\nARG UID=10000\nENV NODE_ENV=production\nENV UPLOADS_MODE=0700\n\n# Create hedgedoc user\nRUN adduser -u $UID -h /hedgedoc/ -D -S hedgedoc\n\nCOPY --chown=$UID --from=builder /hedgedoc /hedgedoc\n\n# Add configuraton files\nCOPY [\"resources/config.json\", \"/files/\"]\n\n# Healthcheck\nCOPY --chown=$UID /resources/healthcheck.mjs /hedgedoc/healthcheck.mjs\nHEALTHCHECK --interval=5s CMD node healthcheck.mjs\n\n# For backwards compatibility\nRUN ln -s /hedgedoc /codimd\n\n# Install all dependencies and build project\nRUN apk add --no-cache --no-progress --repository http://dl-cdn.alpinelinux.org/alpine/edge/testing/ gosu\n\n# Symlink configuration files\nRUN rm -f /hedgedoc/config.json\nRUN ln -s /files/config.json /hedgedoc/config.json\n\nWORKDIR /hedgedoc\nEXPOSE 3000\n\nCOPY [\"resources/docker-entrypoint.sh\", \"/usr/local/bin/docker-entrypoint.sh\"]\nENTRYPOINT [\"/usr/local/bin/docker-entrypoint.sh\"]\n\nCMD [\"node\", \"app.js\"]\n"
+}

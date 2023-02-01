@@ -1,0 +1,28 @@
+FROM bobanetwork/builder AS builder
+
+FROM node:14-alpine
+
+RUN apk add --no-cache git curl bash jq
+
+WORKDIR /opt/optimism/
+
+COPY --from=builder /optimism/*.json /optimism/yarn.lock ./
+COPY --from=builder /optimism/node_modules ./node_modules
+
+# copy deps (would have been nice if docker followed the symlinks required)
+COPY --from=builder /optimism/packages/core-utils/package.json ./packages/core-utils/package.json
+COPY --from=builder /optimism/packages/core-utils/dist ./packages/core-utils/dist
+
+COPY --from=builder /optimism/packages/message-relayer/package.json ./packages/message-relayer/package.json
+COPY --from=builder /optimism/packages/message-relayer/dist ./packages/message-relayer/dist
+
+COPY --from=builder /optimism/packages/contracts ./packages/contracts
+COPY --from=builder /optimism/packages/boba/contracts ./packages/boba/contracts
+COPY --from=builder /optimism/packages/boba/turing ./packages/boba/turing
+
+# get the needed built artifacts
+WORKDIR /opt/optimism/integration-tests
+COPY --from=builder /optimism/integration-tests ./
+
+COPY ./ops/scripts/integration-tests.sh ./
+ENTRYPOINT yarn test:integration

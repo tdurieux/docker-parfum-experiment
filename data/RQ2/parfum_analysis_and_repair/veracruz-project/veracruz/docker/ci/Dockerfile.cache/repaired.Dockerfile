@@ -1,0 +1,14 @@
+# docker image for remote CI.
+# Downloads additional Rust toolchains / components
+#
+# AUTHORS
+#
+# The Veracruz Development Team.
+#
+# COPYRIGHT
+#
+# See the `LICENSE.markdown` file in the Veracruz root directory for licensing
+# and copyright information.
+#
+# NOTE: We try to follow the guide in https://docs.docker.com/develop/develop-images/dockerfile_best-practices/
+#       Each RUN contains a bundle of steps, which reduces the cache.

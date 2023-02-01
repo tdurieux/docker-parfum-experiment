@@ -1,0 +1,40 @@
+#FROM golang:1.10-stretch as build
+FROM golang:1.14-stretch as build
+
+RUN mkdir -p /go/src/github.com/kubeflow/arena
+
+WORKDIR /go/src/github.com/kubeflow/arena
+COPY . .
+
+RUN make
+
+RUN wget https://kubeflow-hk.oss-cn-hongkong.aliyuncs.com/helm-v2.14.1-linux-amd64.tar.gz && \
+    tar -xvf helm-v2.14.1-linux-amd64.tar.gz && \
+    mv linux-amd64/helm /usr/local/bin/helm && \
+    chmod u+x /usr/local/bin/helm && rm helm-v2.14.1-linux-amd64.tar.gz
+
+ENV K8S_VERSION v1.13.6
+RUN curl -f -o /usr/local/bin/kubectl https://storage.googleapis.com/kubernetes-release/release/${K8S_VERSION}/bin/linux/amd64/kubectl && chmod +x /usr/local/bin/kubectl
+
+
+FROM centos:7
+
+COPY --from=build /go/src/github.com/kubeflow/arena/bin/arena /usr/local/bin/arena
+
+COPY --from=build /usr/local/bin/helm /usr/local/bin/helm
+
+COPY --from=build /go/src/github.com/kubeflow/arena/kubernetes-artifacts /root/kubernetes-artifacts
+
+COPY --from=build /usr/local/bin/kubectl /usr/local/bin/kubectl
+
+COPY --from=build /go/src/github.com/kubeflow/arena/charts /charts
+
+ADD run_arena.sh /usr/local/bin
+
+RUN chmod u+x /usr/local/bin/run_arena.sh
+
+RUN yum install bash-completion -y && \
+    echo "source <(arena completion bash)" >> ~/.bashrc && rm -rf /var/cache/yum
+
+ENTRYPOINT ["/usr/local/bin/run_arena.sh"]
+

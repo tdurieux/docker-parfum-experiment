@@ -1,0 +1,71 @@
+{
+  "startTime": 1674219765684,
+  "endTime": 1674219767703,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 66,
+        "lineEnd": 66,
+        "columnStart": 15,
+        "columnEnd": 83
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 68,
+        "lineEnd": 68,
+        "columnStart": 4,
+        "columnEnd": 112
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 69,
+        "lineEnd": 69,
+        "columnStart": 4,
+        "columnEnd": 117
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 73,
+        "lineEnd": 73,
+        "columnStart": 4,
+        "columnEnd": 176
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 75,
+        "lineEnd": 75,
+        "columnStart": 4,
+        "columnEnd": 109
+      }
+    },
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 45,
+        "lineEnd": 45,
+        "columnStart": 4,
+        "columnEnd": 35
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 46,
+        "lineEnd": 46,
+        "columnStart": 4,
+        "columnEnd": 34
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM fedora:36\n\n# Unless specified otherwise, compress to a medium level which gives (from experemintation) a\n# good balance between compression time and resulting image size.\nARG UPX_LEVEL=-5\nENV DAPPER_HOST_ARCH=amd64 SHIPYARD_DIR=/opt/shipyard SHELL=/bin/bash \\\n    DAPPER_RUN_ARGS=\"--net=kind\"\nENV HOST_ARCH=${DAPPER_HOST_ARCH} ARCH=${DAPPER_HOST_ARCH} PATH=/root/.local/bin:/go/bin:/usr/local/go/bin:$PATH \\\n    GOLANG_ARCH_amd64=amd64 GOLANG_ARCH_arm=armv6l GOLANG_ARCH=GOLANG_ARCH_${DAPPER_HOST_ARCH} \\\n    GOPATH=/go GO111MODULE=on GOFLAGS=-mod=vendor GOPROXY=https://proxy.golang.org \\\n    SCRIPTS_DIR=${SHIPYARD_DIR}/scripts\n\n# Requirements:\n# Component        | Usage\n# -------------------------------------------------------------\n# curl             | download other tools\n# findutils        | make unit (find unit test dirs)\n# gcc              | needed by `go test -race` (https://github.com/golang/go/issues/27089)\n# gh               | backport, releases\n# ginkgo           | tests\n# git              | find the workspace root\n# gitlint          | Commit message linting\n# golang           | build\n# golangci-lint    | code linting\n# helm             | e2e tests\n# jq               | JSON processing (GitHub API)\n# kind             | e2e tests\n# kubectl          | e2e tests (in kubernetes-client)\n# make             | OLM installation\n# markdownlint     | Markdown linting\n# moby-engine      | Docker (for Dapper)\n# npm              | Required for installing markdownlint\n# qemu-user-static | Emulation (for multiarch builds)\n# ShellCheck       | shell script linting\n# skopeo           | container image manipulation\n# subctl *         | Submariner's deploy tool (operator)\n# upx              | binary compression\n# yamllint         | YAML linting\n# yq               | YAML processing (OCM deploy tool)\n\n# This layer's versioning is handled by dnf, and isn't expected to be rebuilt much except in CI\nRUN dnf -y install --nodocs --setopt=install_weak_deps=False \\\n                   gcc git-core curl moby-engine make golang kubernetes-client \\\n                   findutils upx jq ShellCheck npm gitlint yamllint \\\n                   qemu-user-static python3-pip skopeo && \\\n    npm install -g markdownlint-cli && \\\n    pip install --no-cache-dir j2cli[yaml] --user && \\\n    rpm -e --nodeps containerd npm python3-pip && \\\n    rpm -qa \"selinux*\" | xargs -r rpm -e --nodeps && \\\n    dnf -y clean all && \\\n    rm -f /usr/bin/{dockerd,lto-dump} \\\n          /usr/libexec/gcc/x86_64-redhat-linux/10/lto1 && \\\n    find /usr/bin /usr/lib/golang /usr/libexec -type f -executable -newercc /proc -size +1M ! -name hyperkube \\( -execdir upx ${UPX_LEVEL} {} \\; -o -true \\) && \\\n    ln -f /usr/bin/kubectl /usr/bin/hyperkube && npm cache clean --force;\n\nENV LINT_VERSION=v1.46.0 \\\n    HELM_VERSION=v3.9.0 \\\n    KIND_VERSION=v0.12.0 \\\n    BUILDX_VERSION=v0.8.2 \\\n    GH_VERSION=2.5.1 \\\n    YQ_VERSION=4.20.2\n\n# This layer's versioning is determined by us, and thus could be rebuilt more frequently to test different versions\n# We temporarily install kind-0.12 and kind-0.14; kind-0.12 is the default, and kind-0.14 is used for K8s 1.24, until\n# all kind images are available with containerd 1.6.5 or later\nRUN curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $(go env GOPATH)/bin -d ${LINT_VERSION} && \\\n    i=0; while curl -f \"https://get.helm.sh/helm-${HELM_VERSION}-linux-${ARCH}.tar.gz\" | tar -xzf -; ; do \\\n     do if ((++i > 5)); then break; fi; sleep 1; \\\n   done && \\\n    mv linux-${ARCH}/helm /go/bin/ && chmod a+x /go/bin/helm && rm -rf linux-${ARCH} && \\\n    curl -f -Lo /go/bin/kind \"https://github.com/kubernetes-sigs/kind/releases/download/v0.12.0/kind-linux-${ARCH}\" && chmod a+x /go/bin/kind && \\\n    curl -f -Lo /go/bin/kind-0.14 \"https://github.com/kubernetes-sigs/kind/releases/download/v0.14.0/kind-linux-${ARCH}\" && chmod a+x /go/bin/kind-0.14 && \\\n    GOFLAGS=\"\" go install -v github.com/onsi/ginkgo/ginkgo@latest && \\\n    GOFLAGS=\"\" go install -v github.com/mikefarah/yq/v4@v${YQ_VERSION} && \\\n    mkdir -p /usr/local/libexec/docker/cli-plugins && \\\n    curl -f -L \"https://github.com/docker/buildx/releases/download/${BUILDX_VERSION}/buildx-${BUILDX_VERSION}.linux-${ARCH}\" -o /usr/local/libexec/docker/cli-plugins/docker-buildx && \\\n    chmod 755 /usr/local/libexec/docker/cli-plugins/docker-buildx && \\\n    curl -f -L https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_${ARCH}.tar.gz | tar xzf - && \\\n    mv gh_${GH_VERSION}_linux_${ARCH}/bin/gh /go/bin/ && \\\n    rm -rf gh_${GH_VERSION}_linux_${ARCH} && \\\n    find /go/bin /usr/local/libexec/docker/cli-plugins -type f -executable -newercc /proc -exec strip {} + && \\\n    find /go/bin /usr/local/libexec/docker/cli-plugins -type f -executable -newercc /proc \\( -execdir upx ${UPX_LEVEL} {} \\; -o -true \\) && \\\n    go clean -cache -modcache\n\n# Copy kubecfg to always run on the shell\nCOPY scripts/shared/lib/kubecfg /etc/profile.d/kubecfg.sh\n\n# Copy shared files so that downstream projects can use them\nCOPY Makefile.* .gitlint ${SHIPYARD_DIR}/\n\n# Copy the global dapper file so that we can make sure consuming projects are up to date\nCOPY Dockerfile.dapper ${SHIPYARD_DIR}/\n\n# Copy CI deployment scripts into image to share with all submariner-io/* projects\nWORKDIR $SCRIPTS_DIR\nCOPY scripts/shared/ .\n"
+}

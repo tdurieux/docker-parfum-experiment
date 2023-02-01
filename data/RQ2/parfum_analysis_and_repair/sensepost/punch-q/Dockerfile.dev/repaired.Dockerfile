@@ -1,0 +1,66 @@
+FROM ubuntu:20.04 as build
+
+RUN export DEBIAN_FRONTEND=noninteractive \
+  && apt-get update \
+  && apt-get install -y --no-install-recommends \
+    python3-minimal \
+    python3-pip \
+    python3-setuptools \
+    python3-wheel \
+    python3-dev \
+    git \
+    curl \
+    tar \
+    build-essential \
+  && rm -rf /var/lib/apt/lists/*
+
+#ENV RDURL="https://public.dhe.ibm.com/ibmdl/export/pub/software/websphere/messaging/mqdev/redist" \
+ENV RDURL="http://host.docker.internal:8000" \
+    RDTAR="IBM-MQC-Redist-LinuxX64.tar.gz" \
+    VRMF=9.2.2.0
+
+RUN mkdir -p /opt/mqm && cd /opt/mqm \
+ && curl -f -LO "$RDURL/$VRMF-$RDTAR" \
+ && tar -zxf ./*.tar.gz \
+ && rm -f ./*.tar.gz
+
+RUN mkdir -p /src/punch-q \
+    && cd /src/punch-q
+ADD . /src/punch-q
+
+WORKDIR /src/punch-q
+RUN mkdir wheels \
+    && pip3 wheel -w wheels/ -r requirements.txt
+
+# --
+FROM ubuntu:20.04
+
+ENV LD_LIBRARY_PATH=/opt/mqm/lib64
+
+COPY --from=build /opt/mqm /opt/mqm
+COPY --from=build /src/punch-q /src/punch-q
+
+RUN export DEBIAN_FRONTEND=noninteractive \
+  && apt-get update \
+  && apt-get install -y --no-install-recommends \
+    python3 \
+    python3-pip \
+    python3-wheel \
+    python3-setuptools \
+  && apt-get clean \
+  && rm -rf /var/lib/apt/lists/*
+
+# Cleanup some files we dont need here
+RUN cd /opt/mqm \
+  && rm -Rf gskit8/lib java samp bin inc
+
+RUN pip3 install --no-cache-dir -r /src/punch-q/requirements.txt -f /src/punch-q/wheels/
+
+RUN mkdir -p /punch-q
+VOLUME /punch-q
+
+WORKDIR /punch-q
+ADD entrypoint-dev.sh /entrypoint-dev.sh
+
+ENTRYPOINT [ "/entrypoint-dev.sh" ]
+

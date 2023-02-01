@@ -1,0 +1,26 @@
+{
+  "startTime": 1674221112055,
+  "endTime": 1674221113265,
+  "originalSmells": [
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 58,
+        "lineEnd": 58,
+        "columnStart": 1,
+        "columnEnd": 150
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 7,
+        "lineEnd": 7,
+        "columnStart": 22,
+        "columnEnd": 50
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# SPDX-License-Identifier: MIT\n# Larger base stage with required items for building various tools\nFROM nvcr.io/nvidia/cuda:11.2.0-devel-ubuntu20.04 as build\n\nENV DEBIAN_FRONTEND=noninteractive\n\n# Install all required build dependencies\nRUN apt-get update && apt-get -y --no-install-recommends install apt-utils && rm -rf /var/lib/apt/lists/*\nRUN apt-get update && apt-get install -y --allow-downgrades --allow-change-held-packages --no-install-recommends \\\n\tswig \\\n\tbison \\\n\tgcc \\\n\tlibgfortran4 \\\n\tpkg-config \\\n\tautotools-dev \\\n\tdebhelper \\\n\tautomake \\\n\tm4 \\\n\tgfortran \\\n\ttk \\\n\tflex \\\n\tlibltdl-dev \\\n\tautoconf \\\n\tdpatch \\\n\tgraphviz \\\n\ttcl \\\n\tchrpath \\\n\tlibglib2.0-0 \\\n\tpython-libxml2 \\\n\tbuild-essential \\\n\tcmake \\\n\tgit \\\n\tcurl \\\n\twget \\\n\tca-certificates \\\n\tiputils-ping \\\n\tnet-tools \\\n\tethtool \\\n\tperl \\\n\tlsb-release \\\n\tiproute2 \\\n\tpciutils \\\n\tkmod \\\n\tlibnuma1 \\\n\tlsof \\\n\tlibopenmpi-dev && \\\n\trm -rf /var/lib/apt/lists/*\n\n# Compile NVIDIA's NCCL tests\nRUN git clone https://github.com/NVIDIA/nccl-tests && \\\n\tcd nccl-tests/ && \\\n\tgit reset --hard ec1b5e22e618d342698fda659efdd5918da6bd9f && \\\n\tmake MPI=1 MPI_HOME=/usr/lib/x86_64-linux-gnu/openmpi\n\n# Compile OSU microbenchmarks\nRUN wget --no-check-certificate https://mvapich.cse.ohio-state.edu/download/mvapich/osu-micro-benchmarks-5.6.2.tar.gz && \\\n\ttar zxf osu-micro-benchmarks-5.6.2.tar.gz && \\\n\tcd osu-micro-benchmarks-5.6.2 && \\\n\t./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" CC=/usr/bin/mpicc CXX=/usr/bin/mpicxx --enable-cuda --with-cuda-include=/usr/local/cuda/include --with-cuda-libpath=/usr/local/cuda/lib64 && \\\n\tmake && \\\n\tmake install && \\\n\trm -rf ../*.tar.gz\n\n# Build IO500, IOR, and mdtest\nRUN git clone https://github.com/jyvet/io-500-dev && \\\n\tcd io-500-dev && \\\n\tgit reset --hard 0232acfa8e64f7c543db8930dd279009ec9c32bc && \\\n\tutilities/prepare.sh\n\n# Lighter runtime stage copying only necessary build artifacts from earlier\nFROM nvcr.io/nvidia/cuda:11.2.0-runtime-ubuntu20.04\n\nENV DEBIAN_FRONTEND=noninteractive\n\nRUN apt-get update && apt-get install -y --allow-downgrades --allow-change-held-packages --no-install-recommends \\\n\topenssh-client \\\n\topenssh-server \\\n\tgit \\\n\tfio \\\n\tpsmisc \\\n\tlibopenmpi-dev \\\n\topenmpi-bin \\\n\tpython \\\n\tpython3-dev \\\n\tpython3-pip \\\n\tpython3-distutils && \\\n\trm -rf /var/lib/apt/lists/*\n\n# Set default NCCL parameters\nRUN echo NCCL_DEBUG=INFO >> /etc/nccl.conf\n\n# Install OpenSSH for MPI to communicate between containers\nRUN mkdir -p /var/run/sshd && \\\n    mkdir -p /root/.ssh && \\\n    echo \"StrictHostKeyChecking no\" >> /etc/ssh/ssh_config && \\\n    echo \"UserKnownHostsFile /dev/null\" >> /etc/ssh/ssh_config && \\\n    sed -i 's/^#*Port 22/Port 2222/' /etc/ssh/sshd_config && \\\n    echo \"HOST *\" >> /root/.ssh/config && \\\n    echo \"PORT 2222\" >> /root/.ssh/config && \\\n    ssh-keygen -t rsa -b 4096 -f /root/.ssh/id_rsa -N \"\" && \\\n    cp /root/.ssh/id_rsa.pub /root/.ssh/authorized_keys && \\\n    chmod 700 /root/.ssh && \\\n    chmod 600 /root/.ssh/*\n\nWORKDIR /\n\n# Copy the compiled nccl-tests binaries to the runtime image\nCOPY --from=build /nccl-tests/build /nccl-tests/build\n\n# Copy the compiled OSU microbenchmarks to the runtime image\nCOPY --from=build /usr/local/libexec/osu-micro-benchmarks/mpi/collective/ /usr/local/libexec/osu-micro-benchmarks/mpi/collective/\n\n# Copy the compiled IO500 binaries to the runtime image\nCOPY --from=build /io-500-dev/bin /io-500-dev/bin\n\nRUN git clone https://github.com/NVIDIA/DALI dali && \\\n\tcd dali/ && \\\n\tgit reset --hard fd30786d773d08185d78988b2903dce2ace0a00b\n\nRUN python3 -m pip install --no-cache-dir --upgrade pip setuptools && \\\n    python3 -m pip install --no-cache-dir nvidia-pyindex && \\\n    python3 -m pip install --no-cache-dir \\\n        nvidia-imageinary['tfrecord']>=1.1.2 \\\n        nvidia-dali-cuda110\n\nCOPY test_scripts /tests/\n\nEXPOSE 2222\n"
+}

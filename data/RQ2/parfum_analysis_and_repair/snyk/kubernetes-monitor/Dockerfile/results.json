@@ -1,0 +1,17 @@
+{
+  "startTime": 1674253636176,
+  "endTime": 1674253636944,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 31,
+        "lineEnd": 31,
+        "columnStart": 4,
+        "columnEnd": 55
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "#---------------------------------------------------------------------\n# STAGE 1: Build credential helpers inside a temporary container\n#---------------------------------------------------------------------\nFROM golang:alpine AS cred-helpers-build\n\nRUN go install github.com/awslabs/amazon-ecr-credential-helper/ecr-login/cli/docker-credential-ecr-login@69c85dc22db6511932bbf119e1a0cc5c90c69a7f\nRUN go install github.com/chrismellard/docker-credential-acr-env@d4055f832e8b16ea2ee93189c5e14faafd36baf6\n\n#---------------------------------------------------------------------\n# STAGE 2: Build the kubernetes-monitor\n#---------------------------------------------------------------------\nFROM node:gallium-alpine\n\nLABEL name=\"Snyk Controller\" \\\n      maintainer=\"support@snyk.io\" \\\n      vendor=\"Snyk Ltd\" \\\n      summary=\"Snyk integration for Kubernetes\" \\\n      description=\"Snyk Controller enables you to import and test your running workloads and identify vulnerabilities in their associated images and configurations that might make those workloads less secure.\"\n\nCOPY LICENSE /licenses/LICENSE\n\nENV NODE_ENV production\n\nRUN apk update\nRUN apk upgrade\nRUN apk --no-cache add dumb-init skopeo curl bash python3\n\nRUN addgroup -S -g 10001 snyk\nRUN adduser -S -G snyk -h /srv/app -u 10001 snyk\n\n# Install gcloud\nRUN curl -f -sL https://sdk.cloud.google.com > /install.sh\nRUN bash /install.sh --disable-prompts --install-dir=/ && rm /google-cloud-sdk/bin/anthoscli\nENV PATH=/google-cloud-sdk/bin:$PATH\nRUN rm /install.sh\nRUN apk del curl bash\n\n# Copy credential helpers\nCOPY --chown=snyk:snyk --from=cred-helpers-build /go/bin/docker-credential-ecr-login /usr/bin/docker-credential-ecr-login\nCOPY --chown=snyk:snyk --from=cred-helpers-build /go/bin/docker-credential-acr-env /usr/bin/docker-credential-acr-env\n\nWORKDIR /srv/app\nUSER 10001:10001\n\n# Add manifest files and install before adding anything else to take advantage of layer caching\nADD --chown=snyk:snyk package.json package-lock.json ./\n\n# The `.config` directory is used by `snyk protect` and we also mount a K8s volume there at runtime.\n# This clashes with OpenShift 3 which mounts things differently and prevents access to the directory.\n# TODO: Remove this line once OpenShift 3 comes out of support.\nRUN mkdir -p .config\n\nRUN npm ci\n\n# add the rest of the app files\nADD --chown=snyk:snyk . .\n\n# OpenShift 4 doesn't allow dumb-init access the app folder without this permission.\nRUN chmod 755 /srv/app && chmod 755 /srv/app/bin && chmod +x /srv/app/bin/start\n\n# This must be in the end for Red Hat Build Service\nRUN chown -R snyk:snyk .\nUSER 10001:10001\n\n# Build typescript\nRUN npm run build\n\nENTRYPOINT [\"/usr/bin/dumb-init\", \"--\", \"bin/start\"]\n"
+}

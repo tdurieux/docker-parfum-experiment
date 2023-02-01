@@ -1,0 +1,24 @@
+FROM golang:1.17.7 as builder
+
+COPY go.mod go.sum /go/src/github.com/moira-alert/moira/
+WORKDIR /go/src/github.com/moira-alert/moira
+RUN go mod download
+
+COPY . /go/src/github.com/moira-alert/moira/
+
+ARG GO_VERSION="GoVersion"
+ARG GIT_COMMIT="git_Commit"
+ARG MoiraVersion="MoiraVersion"
+
+RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -ldflags "-X main.MoiraVersion=${MoiraVersion} -X main.GoVersion=${GO_VERSION} -X main.GitCommit=${GIT_COMMIT}" -o build/checker github.com/moira-alert/moira/cmd/checker
+
+
+FROM alpine
+
+RUN apk add --no-cache ca-certificates && update-ca-certificates
+
+COPY pkg/checker/checker.yml /etc/moira/checker.yml
+
+COPY --from=builder /go/src/github.com/moira-alert/moira/build/checker /usr/bin/checker
+
+ENTRYPOINT ["/usr/bin/checker"]

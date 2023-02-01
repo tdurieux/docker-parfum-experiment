@@ -1,0 +1,13 @@
+# Note: This is the dockerfile for development purposes
+
+# We are aware that some dev dependencies are broken in node 14, for example chokidar
+# npm WARN deprecated chokidar@1.7.0: Chokidar 2 will break on node v14+.
+FROM node:14
+
+# Install python 2, needed for npm packages
+RUN apt-get update && apt-get -y --no-install-recommends install python && rm -rf /var/lib/apt/lists/*;
+
+WORKDIR /ui
+ADD package-lock.json package.json /ui/
+RUN npm install && npm cache clean --force;
+ENTRYPOINT [ "/scripts/await_md5_match.sh", "/ui/src/app/shared/model/.jobs.yaml.md5", "--" ]

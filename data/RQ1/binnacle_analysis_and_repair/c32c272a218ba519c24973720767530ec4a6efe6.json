@@ -1,0 +1,35 @@
+{
+  "startTime": 1674240403802,
+  "endTime": 1674240404019,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 32,
+        "lineEnd": 32,
+        "columnStart": 4,
+        "columnEnd": 108
+      }
+    },
+    {
+      "rule": "curlUseHttpsUrl",
+      "position": {
+        "lineStart": 32,
+        "lineEnd": 32,
+        "columnStart": 4,
+        "columnEnd": 108
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 84,
+        "lineEnd": 84,
+        "columnStart": 4,
+        "columnEnd": 27
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "ARG COREOS_VERSION=1800.5.0\nARG NVIDIA_DRIVER_VERSION=396.44\nARG NVIDIA_PRODUCT_TYPE=tesla\nARG NVIDIA_SITE=us.download.nvidia.com/tesla\n\nFROM bugroger/coreos-developer:${COREOS_VERSION} as BUILD\nLABEL maintainer \"Michael Schmidt <michael.j.schmidt@gmail.com>\"\n\nARG COREOS_VERSION\nARG NVIDIA_DRIVER_VERSION\nARG NVIDIA_PRODUCT_TYPE\nARG NVIDIA_SITE\nENV DRIVER_ARCHIVE=NVIDIA-Linux-x86_64-${NVIDIA_DRIVER_VERSION}\n\n# We need to prepare the Container Linux Developer image. As described at\n# https://coreos.com/os/docs/latest/kernel-modules.html we need to get source\n# packages and prepare the linux source tree.\n#\n# In Docker the `/proc` filesystem does not work as expected, so a bit more magic\n# is required.\n\nRUN emerge-gitclone\nRUN . /usr/share/coreos/release && \\\n  git -C /var/lib/portage/coreos-overlay checkout build-${COREOS_RELEASE_VERSION%%.*}\nRUN emerge -gKv coreos-sources > /dev/null\nRUN cp /usr/lib64/modules/$(ls /usr/lib64/modules)/build/.config /usr/src/linux/\nRUN make -C /usr/src/linux modules_prepare\n\n# Download, extract and move the NVIDIA driver (it won't build in /tmp)\n\nWORKDIR /tmp\nRUN echo \"curl -v -L http://${NVIDIA_SITE}/${NVIDIA_DRIVER_VERSION}/${DRIVER_ARCHIVE}.run -o ${DRIVER_ARCHIVE}.run\"\nRUN curl -f -v -L https://${NVIDIA_SITE}/${NVIDIA_DRIVER_VERSION}/${DRIVER_ARCHIVE}.run -o ${DRIVER_ARCHIVE}.run\nRUN chmod +x ${DRIVER_ARCHIVE}.run\nRUN ./${DRIVER_ARCHIVE}.run -x\nRUN mv ${DRIVER_ARCHIVE} /build\nRUN mkdir /dest\n\n# This abomination doesn't come with source and is encrypted into a binary blob. The\n# only way to build the driver is to try and install it. -.-\n\nRUN /build/nvidia-installer -s -n \\\n  --kernel-source-path=/usr/src/linux \\\n  --no-check-for-alternate-installs \\\n  --no-kernel-module-source \\\n  --no-opengl-files \\\n  --no-distro-scripts \\\n  --kernel-install-path=/dest \\\n  --log-file-name=${PWD}/nvidia-installer.log || true\n\n# Ok, so the installer always fails. It tries to load the built kernel module. That\n# doesn't work in the Docker container at this time. We usually don't have a GPU or\n# permissions to do so.\n#\n# In order to figure out whether the installer actually built the modules, we check\n# for the error in the installation log. If it gets that far to actually load the\n# module, we assume the build worked.\n\nRUN grep \"ERROR: Unable to load the kernel module 'nvidia.ko'\" ${PWD}/nvidia-installer.log\n\n# We copy the created binaries, shared libraries and kernel modules to a clean\n# folder.\n\nRUN mkdir -p /opt/nvidia/${NVIDIA_DRIVER_VERSION}/${COREOS_VERSION}/bin\nRUN mkdir -p /opt/nvidia/${NVIDIA_DRIVER_VERSION}/${COREOS_VERSION}/lib64/modules/$(ls /usr/lib64/modules)/kernel/drivers/video/nvidia\nRUN find /build        -maxdepth 1 -name \"nvidia-*\" -executable -exec cp {} /opt/nvidia/${NVIDIA_DRIVER_VERSION}/${COREOS_VERSION}/bin \\;\nRUN find /build        -maxdepth 1 -name \"*.so.*\"               -exec cp {} /opt/nvidia/${NVIDIA_DRIVER_VERSION}/${COREOS_VERSION}/lib64 \\;\nRUN find /build/kernel -maxdepth 1 -name \"*.ko\"                 -exec cp {} /opt/nvidia/${NVIDIA_DRIVER_VERSION}/${COREOS_VERSION}/lib64/modules/$(ls /usr/lib64/modules)/kernel/drivers/video/nvidia \\;\n\n\n# Create a clean transport image containing only the driver\n\nFROM ubuntu\nLABEL maintainer \"Michael Schmidt <michael.j.schmidt@gmail.com>\"\n\nARG COREOS_VERSION\nARG NVIDIA_DRIVER_VERSION\nARG NVIDIA_PRODUCT_TYPE\n\nENV NVIDIA_DRIVER_COREOS_VERSION $COREOS_VERSION\nENV NVIDIA_DRIVER_VERSION $NVIDIA_DRIVER_VERSION\nENV NVIDIA_PRODUCT_TYPE $NVIDIA_PRODUCT_TYPE\n\nRUN apt-get update -qq && \\\n    apt-get install --no-install-recommends -y kmod && \\\n    rm -rf /var/lib/apt/lists/*\n\nCOPY --from=BUILD /opt/nvidia /opt/nvidia\nCOPY install.sh /\n\nENTRYPOINT [\"/install.sh\"]\n"
+}

@@ -1,0 +1,5 @@
+# This container is the basis for all the other benchmark containers based on Oracle Linux.
+FROM centos:7
+LABEL maintainer="Kinvolk"
+
+# Common script

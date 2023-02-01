@@ -1,0 +1,35 @@
+{
+  "startTime": 1674251993874,
+  "endTime": 1674251995091,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 26,
+        "lineEnd": 43,
+        "columnStart": 4,
+        "columnEnd": 18
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 79,
+        "lineEnd": 90,
+        "columnStart": 4,
+        "columnEnd": 18
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 79,
+        "lineEnd": 90,
+        "columnStart": 4,
+        "columnEnd": 18
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# buildbot/buildbot-master\n\n# please follow docker best practices\n# https://docs.docker.com/engine/userguide/eng-image/dockerfile_best-practices/\n\n# Use a multi-stage build:\n# https://docs.docker.com/develop/develop-images/multistage-build/\n\n# Provides a base Debian (10) image with latest buildbot mater installed\n# the master image is not optimized for size, but rather uses Debian for wider package availability\n\n# Provide an intermediate Docker image named \"buildbot-build\".\n# This intermediate image builds binary wheels\n# which get installed in the final image.\n# This allows us to avoid installing build tools like gcc in the final image.\n\nFROM        debian:11 AS buildbot-build\nMAINTAINER  Buildbot maintainers\n\n# Last build date - this can be updated whenever there are security updates so\n# that everything is rebuilt\nENV         security_updates_as_of 2022-03-06\n\nRUN \\\n    apt-get update && \\\n    apt-get -y upgrade && \\\n    apt-get -y --no-install-recommends install -q \\\n        curl \\\n        git \\\n        libcairo-gobject2 \\\n        libcairo2-dev \\\n        libgirepository1.0-dev \\\n        libglib2.0-dev \\\n        libffi-dev \\\n        libpq-dev \\\n        libssl-dev \\\n        pkg-config \\\n        python3 \\\n        python3-dev \\\n        python3-pip \\\n        yarnpkg \\\n        tar \\\n        tzdata \\\n        virtualenv \\\n        && \\\n    rm -rf /var/lib/apt/lists/*\n\nCOPY . /usr/src/buildbot\n\nRUN cd /usr/src/buildbot && make tarballs\nRUN virtualenv --python=python3 /buildbot_venv && \\\n    /buildbot_venv/bin/pip3 install -r /usr/src/buildbot/requirements-master-docker-extras.txt && \\\n    env CRYPTOGRAPHY_DONT_BUILD_RUST=1 /buildbot_venv/bin/pip3 install /usr/src/buildbot/dist/*.whl\n\nRUN mkdir -p /wheels && \\\n    /buildbot_venv/bin/pip3 list --format freeze | grep -v '^buildbot' | grep -v '^pkg-resources' > /wheels/wheels.txt && \\\n    cat /wheels/wheels.txt && \\\n    cd /wheels && \\\n    /buildbot_venv/bin/pip3 wheel -r wheels.txt && \\\n    rm /wheels/wheels.txt && \\\n    cp /usr/src/buildbot/dist/*.whl /wheels\n\n#==============================================================================================\n# Build the final image here.  Use build artifacts from the buildbot-build\n# container.\n\n# Note that the UI and worker packages are the latest version published on pypi\n# This is to avoid pulling node inside this container\n\nFROM        debian:11-slim\nMAINTAINER  Buildbot maintainers\n\n# Last build date - this can be updated whenever there are security updates so\n# that everything is rebuilt\nENV         security_updates_as_of 2022-03-06\n\nRUN \\\n    apt-get update && \\\n    apt-get -y upgrade && \\\n    apt-get -y --no-install-recommends install -q \\\n        curl \\\n        dumb-init \\\n        git \\\n        libpq5 \\\n        libcairo2 \\\n        openssh-client \\\n        python3 \\\n        python3-pip \\\n        tar \\\n        tzdata \\\n        virtualenv \\\n        && \\\n    rm -rf /var/lib/apt/lists && rm -rf /var/lib/apt/lists/*;\n\n# Build wheels in other container using the Dockerfile.build\n# and copy them into this container.\n# We do this to avoid having to pull gcc for building native extensions.\nCOPY --from=buildbot-build /wheels /wheels\n\n# install pip dependencies\nRUN virtualenv --python=python3 /buildbot_venv && \\\n    /buildbot_venv/bin/pip3 install --upgrade pip setuptools && \\\n    cd /wheels && /buildbot_venv/bin/pip3 install $(ls -1 | grep -v 'buildbot-worker') && \\\n    rm -r /root/.cache /wheels\n\nCOPY master/docker/buildbot.tac /usr/src/buildbot/buildbot.tac\nCOPY master/docker/start_buildbot.sh /usr/src/buildbot/start_buildbot.sh\n\nWORKDIR /buildbot\nCMD [\"dumb-init\", \"/usr/src/buildbot/start_buildbot.sh\"]\n"
+}

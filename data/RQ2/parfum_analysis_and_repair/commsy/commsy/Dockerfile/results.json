@@ -1,0 +1,45 @@
+{
+  "startTime": 1674218139583,
+  "endTime": 1674218140608,
+  "originalSmells": [
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 108,
+        "lineEnd": 108,
+        "columnStart": 1,
+        "columnEnd": 14
+      }
+    },
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 109,
+        "lineEnd": 109,
+        "columnStart": 1,
+        "columnEnd": 12
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 108,
+        "lineEnd": 108,
+        "columnStart": 15,
+        "columnEnd": 32
+      }
+    },
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 109,
+        "lineEnd": 109,
+        "columnStart": 1,
+        "columnEnd": 12
+      }
+    }
+  ],
+  "repairedDockerfile": "# the different stages of this Dockerfile are meant to be built into separate images\n# https://docs.docker.com/develop/develop-images/multistage-build/#stop-at-a-specific-build-stage\n# https://docs.docker.com/compose/compose-file/#target\n\n# https://docs.docker.com/engine/reference/builder/#understand-how-arg-and-from-interact\nARG PHP_VERSION=7.4\nARG NGINX_VERSION=1.21\n\nFROM php:${PHP_VERSION}-fpm-alpine AS commsy_php\n\n# persistent / runtime deps\nRUN apk add --no-cache \\\n\t\tacl \\\n\t\tautoconf \\\n\t\tfcgi \\\n\t\tfile \\\n\t\tfontconfig \\\n\t\tgettext \\\n\t\tgit \\\n\t\tgnu-libiconv \\\n\t\tlibxrender \\\n        mariadb-client \\\n\t\tnodejs \\\n        supervisor \\\n\t\tttf-freefont \\\n\t\tyarn \\\n\t;\n\n# install gnu-libiconv and set LD_PRELOAD env to make iconv work fully on Alpine image.\n# see https://github.com/docker-library/php/issues/240#issuecomment-763112749\nENV LD_PRELOAD /usr/lib/preloadable_libiconv.so\n\nARG APCU_VERSION=5.1.21\nRUN set -eux; \\\n\tapk add --no-cache --virtual .build-deps \\\n\t\t$PHPIZE_DEPS \\\n\t\ticu-dev \\\n\t\tlibzip-dev \\\n\t\tzlib-dev \\\n\t\tlibxml2-dev \\\n\t\topenldap-dev \\\n\t\timap-dev \\\n\t\tlibpng-dev \\\n\t\tjpeg-dev \\\n\t\tfreetype-dev \\\n\t; \\\n\t\\\n\tdocker-php-ext-configure zip; \\\n\tdocker-php-ext-configure imap --with-imap-ssl; \\\n\tdocker-php-ext-configure gd --with-freetype --with-jpeg; \\\n\tdocker-php-ext-install -j$(nproc) \\\n\t\tintl \\\n\t\tpdo_mysql \\\n\t\tzip \\\n\t\tsoap \\\n\t\tldap \\\n\t\timap \\\n\t\tgd \\\n\t; \\\n\tpecl install \\\n\t\tapcu-${APCU_VERSION} \\\n\t; \\\n\tpecl clear-cache; \\\n\tdocker-php-ext-enable \\\n\t\tapcu \\\n\t\topcache \\\n\t; \\\n\t\\\n\trunDeps=\"$( \\\n\t\tscanelf --needed --nobanner --format '%n#p' --recursive /usr/local/lib/php/extensions \\\n\t\t\t| tr ',' '\\n' \\\n\t\t\t| sort -u \\\n\t\t\t| awk 'system(\"[ -e /usr/local/lib/\" $1 \" ]\") == 0 { next } { print \"so:\" $1 }' \\\n\t)\"; \\\n\tapk add --no-cache --virtual .api-phpexts-rundeps $runDeps; \\\n\t\\\n\tapk del .build-deps\n\n# Composer\nCOPY --from=composer:2 /usr/bin/composer /usr/bin/composer\n\n# wkhtmltopdf\nCOPY --from=surnet/alpine-wkhtmltopdf:3.13.5-0.12.6-full /bin/wkhtmltopdf /usr/local/bin/wkhtmltopdf\n\n# Set up php configuration\nRUN ln -s $PHP_INI_DIR/php.ini-production $PHP_INI_DIR/php.ini\nCOPY docker/php/conf.d/commsy.prod.ini $PHP_INI_DIR/conf.d/commsy.ini\nCOPY docker/php/conf.d/commsy.pool.conf /usr/local/etc/php-fpm.d/commsy.pool.conf\n\n# https://getcomposer.org/doc/03-cli.md#composer-allow-superuser\nENV COMPOSER_ALLOW_SUPERUSER=1\nENV PATH=\"${PATH}:/root/.composer/vendor/bin\"\n\nWORKDIR /var/www/html\n\n# build for production\nARG APP_ENV=prod\n\n# prevent the reinstallation of vendors at every changes in the source code\nCOPY composer.json composer.lock symfony.lock ./\nRUN set -eux; \\\n\tcomposer install --prefer-dist --no-dev --no-scripts --no-progress; \\\n\tcomposer clear-cache\n\n# prevent the reinstallation of node_modules at every changes in the source code\nCOPY webpack.config.js tsconfig.json package.json yarn.lock ./\nCOPY assets assets/\nRUN set -eux; \\\n\tyarn install; yarn cache clean; \\\n\tyarn build; \\\n\trm -r assets; \\\n\trm tsconfig.json\n\n# copy only specifically what we need\nCOPY .env ./\nCOPY VERSION ./\nCOPY bin bin/\nCOPY config config/\nCOPY legacy legacy/\nCOPY migrations migrations/\nCOPY public public/\nCOPY src src/\nCOPY templates templates/\nCOPY themes themes/\nCOPY translations translations/\n\nRUN set -eux; \\\n\tmkdir -p var/cache var/log; \\\n\tcomposer dump-autoload --classmap-authoritative --no-dev; \\\n\tcomposer dump-env prod; \\\n\tcomposer run-script --no-dev post-install-cmd; \\\n\tchmod +x bin/console; sync\n\nVOLUME /var/www/html/var\n\nCOPY docker/php/docker-healthcheck.sh /usr/local/bin/docker-healthcheck\nRUN chmod +x /usr/local/bin/docker-healthcheck\n\nHEALTHCHECK --interval=10s --timeout=3s --retries=3 CMD [\"docker-healthcheck\"]\n\nCOPY docker/php/docker-entrypoint.sh /usr/local/bin/docker-entrypoint\nRUN chmod +x /usr/local/bin/docker-entrypoint\n\nCOPY docker/php/supervisord.conf /etc/supervisord.conf\nCOPY docker/php/supervisor.d /etc/supervisor/conf.d/\n\nENTRYPOINT [\"docker-entrypoint\"]\nCMD [\"/usr/bin/supervisord\", \"-c\", \"/etc/supervisord.conf\"]\n\n##############################################################################\n\n# Dockerfile\nFROM commsy_php AS commsy_php_debug\n\nARG XDEBUG_VERSION=3.1.2\nRUN set -eux; \\\n\tapk add --no-cache --virtual .build-deps $PHPIZE_DEPS; \\\n\tpecl install xdebug-$XDEBUG_VERSION; \\\n\tdocker-php-ext-enable xdebug; \\\n\tapk del .build-deps\n\nCMD [\"php-fpm\"]\n\n##############################################################################\n\nFROM nginx:${NGINX_VERSION}-alpine AS commsy_nginx\n\nCOPY docker/nginx/conf.d/default.conf /etc/nginx/conf.d/default.conf\n\nWORKDIR /var/www/html\n\nCOPY --from=commsy_php /var/www/html/public public/\n\n##############################################################################\n\nFROM nginx:${NGINX_VERSION}-alpine AS commsy_test_nginx\n\nCOPY docker/nginx/conf.d/test.conf /etc/nginx/conf.d/default.conf\n\nWORKDIR /var/www/html\n\n#COPY --from=commsy_php /var/www/html/public public/\n"
+}

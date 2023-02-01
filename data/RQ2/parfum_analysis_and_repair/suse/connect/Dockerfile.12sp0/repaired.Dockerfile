@@ -1,0 +1,34 @@
+FROM registry.scc.suse.de/sles12_base
+ENV PRODUCT SLE_12
+ENV BUILT_AT "Mon May 8 16:53 CET 2017"
+
+RUN useradd --no-log-init --create-home scc
+
+ARG OBS_USER
+ARG OBS_PASSWORD
+
+RUN zypper ar http://download.suse.de/ibs/SUSE:/SLE-12:/GA/standard/ SLE-12-standard &&\
+    zypper ar -f http://download.suse.de/ibs/SUSE:/SLE-12:/Update/standard/ SLE-12-update-standard &&\
+    zypper ar -f http://download.suse.de/ibs/SUSE/Updates/SLE-SERVER/12-LTSS/x86_64/update/ SLE-12-ltss &&\
+    zypper --non-interactive --gpg-auto-import-keys ref &&\
+    zypper --non-interactive up --replacefiles zypper &&\
+    zypper --non-interactive install --replacefiles git-core ruby-devel make gcc gcc-c++ build wget dmidecode \
+      vim osc ruby2.1-rubygem-gem2rpm hwinfo libx86emu1 zypper-migration-plugin sudo curl && \
+    zypper --non-interactive rr SLE-12-standard SLE-12-update-standard SLE-12-ltss
+
+COPY integration/create-oscrc.sh /tmp/connect/integration/create-oscrc.sh
+RUN sh /tmp/connect/integration/create-oscrc.sh
+
+RUN echo 'gem: --no-ri --no-rdoc' > /etc/gemrc && \
+    gem install bundler --version '~> 1.17' --no-document
+
+RUN mkdir -p /tmp/connect/lib/suse/connect
+WORKDIR /tmp/connect
+
+COPY Gemfile .
+COPY suse-connect.gemspec .
+COPY lib/suse/connect/version.rb ./lib/suse/connect/
+RUN bundle config jobs $(nproc) && \
+    bundle install
+COPY . /tmp/connect
+RUN chown -R scc /tmp/connect

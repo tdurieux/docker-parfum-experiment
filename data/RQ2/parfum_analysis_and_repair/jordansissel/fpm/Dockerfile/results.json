@@ -1,0 +1,45 @@
+{
+  "startTime": 1674218536757,
+  "endTime": 1674218537653,
+  "originalSmells": [
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 79,
+        "lineEnd": 80,
+        "columnStart": 4,
+        "columnEnd": 27
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 59,
+        "lineEnd": 60,
+        "columnStart": 4,
+        "columnEnd": 39
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 79,
+        "lineEnd": 80,
+        "columnStart": 4,
+        "columnEnd": 27
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 79,
+        "lineEnd": 80,
+        "columnStart": 4,
+        "columnEnd": 27
+      }
+    }
+  ],
+  "repairedDockerfile": "# Are we running against the minimal container, or the everything\n# container? Minimal is mostly the compiled package tools. Everything\n# pulls in scripting langauges.\nARG BASE_ENV=everything\n\n# Are we running tests, or a release? Tests build and run against the\n# CWD, where release will use the downloaded gem.\nARG TARGET=test\n\n# Container to throw an error if called with a bare `docker build .`\nFROM ubuntu:18.04 as error\nRUN echo \"\\n\\n\\nHey! Use buildkit. See the Makefile or docs\\n\\n\\n\"\nRUN false\n\n# Base container is used for various release and test things\nFROM ubuntu:18.04 as minimal-base\n\n# Runtime deps. Build deps go in the build or test containers\nRUN apt-get update \\\n\t&& apt-get -y dist-upgrade \\\n\t&& apt-get install --no-install-recommends -y \\\n\truby rubygems rubygems-integration \\\n\tbsdtar \\\n\tcpio \\\n\tdebsigs \\\n\tpacman \\\n\trpm  \\\n\tsquashfs-tools \\\n\txz-utils \\\n\tzip \\\n\t&& rm -rf /var/lib/apt/lists/* \\\n\t&& apt-get clean\nRUN adduser fpm\n\n# everything container includes all the scripting languages. These\n# greatly embiggen the underlying docker container, so they're\n# conditionalized.\nFROM minimal-base AS everything-base\nRUN apt-get update \\\n\t&& apt-get install --no-install-recommends -y \\\n\tcpanminus \\\n\tnpm \\\n\tperl \\\n\tpython3-pip \\\n\t&& pip3 --no-cache-dir install setuptools \\\n\t&& pip3 --no-cache-dir install wheel \\\n\t&& pip3 --no-cache-dir install virtualenv virtualenv-tools3 \\\n\t&& update-alternatives --install /usr/bin/python python /usr/bin/python3 10 \\\n\t&& rm -rf /var/lib/apt/lists/*\n\n\n# Run tests against the current working directory. This is a bit\n# orthogonal to the container release process, but it has a lot of\n# same dependancies, so we reuse it. This uses COPY to allow rspect to\n# initall the gems, but runtime usage expects you to mount a volume\n# into /src\nFROM ${BASE_ENV}-base AS test\nWORKDIR /src\nRUN apt-get update \\\n\t&& apt-get install --no-install-recommends -y \\\n\tgcc make ruby-dev libc-dev lintian git && rm -rf /var/lib/apt/lists/*;\n# installing ffi here is a bit of an optimization for how COPY and layer reuse works\nRUN gem install --no-ri --no-rdoc ffi\n\nRUN install -d -o fpm /origsrc\nCOPY --chown=fpm . /origsrc\nENV HOME=/origsrc\nENV BUNDLE_PATH=/origsrc/.bundle\n# Install a specific version of bundler\nWORKDIR /origsrc\nRUN gem install -v \"$(grep -A1 '^BUNDLED WITH' Gemfile.lock | tail -1)\" bundler\nUSER fpm\nRUN bundle install\nCMD bundle exec rspec\n\n# build a container from a released gem. install build deps here, so\n# we can omit them from the final release package\nFROM ${BASE_ENV}-base AS build\nRUN apt-get update\nRUN apt-get install --no-install-recommends -y \\\n\tgcc make ruby-dev libc-dev && rm -rf /var/lib/apt/lists/*;\nENV GEM_PATH /fpm\nENV PATH \"/fpm/bin:${PATH}\"\nRUN gem install --no-ri --no-rdoc --install-dir=/fpm fpm\n\nFROM build as release\nCOPY --from=build /fpm /fpm\nENV GEM_PATH /fpm\nENV PATH \"/fpm/bin:${PATH}\"\nWORKDIR /src\nENTRYPOINT [\"/fpm/bin/fpm\"]\n\n# This target is to help docker buildkit in resolving things.\nFROM ${TARGET} as final\n"
+}

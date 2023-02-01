@@ -1,0 +1,17 @@
+{
+  "startTime": 1674241270151,
+  "endTime": 1674241270227,
+  "originalSmells": [
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 46,
+        "lineEnd": 46,
+        "columnStart": 4,
+        "columnEnd": 29
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM elixir:1.7.3-alpine as builder\nRUN apk add --no-cache \\\n    gcc \\\n    git \\\n    make \\\n    musl-dev\nRUN mix local.rebar --force && \\\n    mix local.hex --force\nWORKDIR /app\nENV MIX_ENV=prod\n\n# docker build -t kube_native:deps --target=deps .\nFROM builder as deps\nCOPY mix.* /app/\n# Explicit list of umbrella apps\nRUN mkdir -p \\\n    /app/apps/kube_native \\\n    /app/apps/kube_native_web\nCOPY apps/kube_native/mix.* /app/apps/kube_native/\nCOPY apps/kube_native_web/mix.* /app/apps/kube_native_web/\nRUN mix do deps.get --only prod, deps.compile\n\n# docker build -t kube_native:frontend --target=frontend .\nFROM node:10.12-alpine as frontend\nWORKDIR /app\nCOPY apps/kube_native_web/assets/package*.json /app/\nCOPY --from=deps /app/deps/phoenix /deps/phoenix\nCOPY --from=deps /app/deps/phoenix_html /deps/phoenix_html\nRUN npm ci\nCOPY apps/kube_native_web/assets /app\nRUN npm run deploy\n\n# docker build -t kube_native:releaser --target=releaser .\nFROM deps as releaser\nCOPY . /app/\nCOPY --from=frontend /priv/static apps/kube_native_web/priv/static\nRUN mix do phx.digest, release --env=prod --no-tar\n\n# docker run -it --rm elixir:1.7.3-alpine sh -c 'head -n1 /etc/issue'\nFROM alpine:3.8 as runner\nRUN addgroup -g 1000 kube_native && \\\n    adduser -D -h /app \\\n      -G kube_native \\\n      -u 1000 \\\n      kube_native\nRUN apk add --no-cache -U bash libssl1.0\nUSER kube_native\nWORKDIR /app\nCOPY --from=releaser /app/_build/prod/rel/kube_native_umbrella /app\nEXPOSE 4000\nENTRYPOINT [\"/app/bin/kube_native_umbrella\"]\nCMD [\"foreground\"]\n"
+}

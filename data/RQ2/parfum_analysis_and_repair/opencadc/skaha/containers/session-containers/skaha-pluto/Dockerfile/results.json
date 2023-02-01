@@ -1,0 +1,17 @@
+{
+  "startTime": 1674251146335,
+  "endTime": 1674251147646,
+  "originalSmells": [
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 4,
+        "lineEnd": 4,
+        "columnStart": 4,
+        "columnEnd": 52
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM centos:7\n\nRUN yum makecache -y && \\\n    yum update -y && \\\n    yum install -y iproute lsof sssd-client acl wget && yum group install -y \"Development Tools\" && \\\n    yum clean all && rm -rf /var/cache/yum\n\nWORKDIR /\nRUN wget https://julialang-s3.julialang.org/bin/linux/x64/1.8/julia-1.8.0-beta3-linux-x86_64.tar.gz && \\\n    tar zxvf julia-1.8.0-beta3-linux-x86_64.tar.gz && \\\n    rm julia-1.8.0-beta3-linux-x86_64.tar.gz\n\n# We want to set up Julia carefully.\n# We want some packages e.g. Pluto backed into the container,\n# and we want others to persist in the user's home folder.\n# We also want JULIA_PROJECT set up so that by default they\n# get the stack of their home packages ontop of the image packages.\n# Finally, we need to load the registry while making this image\n# but then need to clear it so that the user re-loads it into their\n# home folder (otherwise all package versions are frozen at the time\n# this image is created).\n\n# Pluto by default does track all notebook dependencies internally,\n# but we want to fall back on best-practices if the user opts\n# out of the default automatic handling.\n\n# install the global Julia packages in /opt/julia instead of $HOME\nENV JULIA_DEPOT_PATH=/opt/julia\nENV JULIA_PKGDIR=/opt/julia\nRUN mkdir \"${JULIA_PKGDIR}\" && mkdir \"${JULIA_PKGDIR}/artifacts\"\n\nENV PATH=\"/julia-1.8.0-beta3/bin:${PATH}\"\nRUN echo \"PATH: ${PATH}\"\n\n# Copy a script that we will use to correct permissions after running certain commands\nCOPY fix-permissions /usr/local/bin/fix-permissions\nRUN chmod a+rx /usr/local/bin/fix-permissions\n\n\n# Install Pluto etc.\n\n# This could be done more carefully by copying in a Julia Project.toml and/or Manifest.toml\n# to ensure reproducibility. Here, we just get the latest versions of each.\n# Once complete, create a custom \"sys-image\" to compile Pluto into the Julia binary.\n# Then it will start almost instantly.\n# We do this all in one step to avoid inflating the image size with temporary steps.\n\n# One cautionary note about this approach: since these packages are now baked into the Julia\n# binary (through PlutoSysImg.so) users can't download and load other versions. This is fine\n# for e.g. Pluto but might cause issues if they install a new package that is incompatible with\n# a transitive dependency like requiring an old version of HTML.jl\n\nRUN julia -e 'using Pkg; Pkg.add([\"Pluto\", \"PlutoUI\", \"PackageCompiler\"]); using PackageCompiler; create_sysimage([:Pluto, :PlutoUI],sysimage_path=\"/PlutoSysImg.so\")' && \\\n    rm -rf ${JULIA_DEPOT_PATH}/registries/General && \\\n    chmod -R 755 ${JULIA_DEPOT_PATH}/artifacts && \\\n    fix-permissions /julia* /opt/julia PlutoSysImg.so\n\nRUN mkdir /skaha\nADD src/startup.sh /skaha/\nRUN chmod gou+x /skaha/startup.sh\n\nEXPOSE 5000\n\n# Network file systems do not fire file events without polling\nENV JULIA_REVISE_POLL=1\n\n# nsswitch for correct sss lookup\nADD src/nsswitch.conf /etc/\n\n# For local testing of permissions\n# RUN useradd -ms /bin/bash tstusr\n# WORKDIR /home/newuser\n# USER tstusr\nENTRYPOINT [ \"/skaha/startup.sh\" ]\n"
+}

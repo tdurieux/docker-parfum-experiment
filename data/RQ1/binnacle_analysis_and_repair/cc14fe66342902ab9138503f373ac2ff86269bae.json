@@ -1,0 +1,62 @@
+{
+  "startTime": 1674242853505,
+  "endTime": 1674242853656,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 30,
+        "lineEnd": 30,
+        "columnStart": 0,
+        "columnEnd": 47
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 65,
+        "lineEnd": 65,
+        "columnStart": 0,
+        "columnEnd": 46
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 81,
+        "lineEnd": 81,
+        "columnStart": 0,
+        "columnEnd": 90
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 26,
+        "lineEnd": 26,
+        "columnStart": 0,
+        "columnEnd": 42
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 46,
+        "lineEnd": 46,
+        "columnStart": 0,
+        "columnEnd": 42
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 109,
+        "lineEnd": 109,
+        "columnStart": 0,
+        "columnEnd": 42
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Highly-Optimized Docker Image of pyLoad (alpine variant)\n# AUTHOR: vuolter\n#      ____________\n#   _ /       |    \\ ___________ _ _______________ _ ___ _______________\n#  /  |    ___/    |   _ __ _  _| |   ___  __ _ __| |   \\\\    ___  ___ _\\\n# /   \\___/  ______/  | '_ \\ || | |__/ _ \\/ _` / _` |    \\\\  / _ \\/ _ `/ \\\n# \\       |   o|      | .__/\\_, |____\\___/\\__,_\\__,_|    // /_//_/\\_, /  /\n#  \\______\\    /______|_|___|__/________________________//______ /___/__/\n#          \\  /\n#           \\/\n\nARG ALPINE_RELEASE=\"3.9\"\n\n\n\n\nFROM lsiobase/alpine:$ALPINE_RELEASE as builder\n\nARG APK_INSTALL_OPTIONS=\"--no-cache\"\nARG PIP_INSTALL_OPTIONS=\"--disable-pip-version-check --no-cache-dir --no-compile --upgrade\"\n\nARG APK_PACKAGES=\"python3 openssl\"\nARG PIP_PACKAGES=\"pip setuptools wheel\"\n\nRUN \\\n echo \"**** install Python ****\" && \\\n apk add --no-cache $APK_INSTALL_OPTIONS $APK_PACKAGES && \\\nln -sf python3 /usr/bin/python && \\\n\necho \"**** install pip ****\" && \\\n pip3 install --no-cache-dir $PIP_INSTALL_OPTIONS $PIP_PACKAGES && \\\nln -sf pip3 /usr/bin/pip\n\n\n\n\nFROM builder as wheels_builder\n\nCOPY setup.cfg /source/setup.cfg\nWORKDIR /wheels\n\nARG APK_INSTALL_OPTIONS=\"--no-cache\"\nARG APK_PACKAGES=\"gcc musl-dev python3-dev libffi-dev openssl-dev jpeg-dev zlib-dev libxml2-dev libxslt-dev\"\n\nRUN \\\n echo \"**** install build packages ****\" && \\\n apk add --no-cache $APK_INSTALL_OPTIONS $APK_PACKAGES && \\\n\necho \"**** build pyLoad dependencies ****\" && \\\npython -c \"import configparser as cp; c = cp.ConfigParser(); c.read('/source/setup.cfg'); print(c['options']['install_requires'] + c['options.extras_require']['extra'])\" | \\\nxargs pip wheel --wheel-dir=.\n\n\n\n\nFROM builder as source_builder\n\nCOPY . /source\nWORKDIR /source\n\nARG PIP_INSTALL_OPTIONS=\"--disable-pip-version-check --no-cache-dir --no-compile --upgrade\"\nARG PIP_PACKAGES=\"Babel Jinja2\"\n\nRUN \\\n echo \"**** build pyLoad locales ****\" && \\\n pip install --no-cache-dir $PIP_INSTALL_OPTIONS $PIP_PACKAGES && \\\npython setup.py build_locale\n\n\n\n\nFROM builder as package_builder\n\nCOPY --from=wheels_builder /wheels /wheels\nCOPY --from=source_builder /source /source\nWORKDIR /package\n\nARG PIP_INSTALL_OPTIONS=\"--disable-pip-version-check --no-cache-dir --no-compile --upgrade\"\n\nRUN \\\n echo \"**** build pyLoad package ****\" && \\\n pip install --no-cache-dir $PIP_INSTALL_OPTIONS --find-links=/wheels --no-index --prefix=. /source[extra]\n\n\n\n\nFROM builder\n\nLABEL \\\nversion=\"1.0\" \\\ndescription=\"The free and open-source Download Manager written in pure Python\" \\\nmaintainer=\"vuolter@gmail.com\"\n\n# Set Python to force stdin, stdout and stderr to be totally unbuffered.\nENV PYTHONUNBUFFERED=1\n\n# Stop if any script (fix-attrs or cont-init) has failed.\nENV S6_BEHAVIOUR_IF_STAGE2_FAILS=2\n\n# Set Python to use UTF-8 encoding rather than ASCII.\nENV LANG C.UTF-8\n\nARG APK_INSTALL_OPTIONS=\"--no-cache\"\nARG APK_PACKAGES=\"sqlite tesseract-ocr unrar\"\n\nARG TEMP_PATHS=\"/root/.cache /tmp/* /var/tmp/*\"\n\nRUN \\\n echo \"**** install binary packages ****\" && \\\n apk add --no-cache $APK_INSTALL_OPTIONS $APK_PACKAGES && \\\n\necho \"**** create s6 fix-attr script ****\" && \\\necho -e \"/config true abc 0644 0755\\n \\\n/downloads false abc 0644 0755\" > /etc/fix-attrs.d/10-run && \\\n\necho \"**** create s6 service script ****\" && \\\nmkdir -p /etc/services.d/pyload && \\\necho -e \"#!/usr/bin/with-contenv bash\\n\\n \\\numask 022\\n \\\nexec s6-setuidgid abc pyload --userdir /config --storagedir /downloads\" > /etc/services.d/pyload/run && \\\n\necho \"**** cleanup ****\" && \\\nrm -rf $TEMP_PATHS && \\\n\necho \"**** finalize pyLoad ****\"\n\nCOPY --from=package_builder /package /usr/local\n\nEXPOSE 8001 9666\n\nVOLUME /config /downloads\n"
+}

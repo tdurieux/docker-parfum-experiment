@@ -1,0 +1,7 @@
+ARG OPENSEARCH_VERSION
+FROM opensearchproject/opensearch:${OPENSEARCH_VERSION}
+
+ARG opensearch_path=/usr/share/opensearch
+ARG SECURE_INTEGRATION
+
+RUN if [ "$SECURE_INTEGRATION" != "true" ] ; then $opensearch_path/bin/opensearch-plugin remove opensearch-security; fi

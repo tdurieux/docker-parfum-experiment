@@ -1,0 +1,44 @@
+{
+  "startTime": 1674641721308,
+  "endTime": 1674641721502,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 5,
+        "lineEnd": 5,
+        "columnStart": 4,
+        "columnEnd": 100
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 39,
+        "lineEnd": 39,
+        "columnStart": 109,
+        "columnEnd": 144
+      }
+    },
+    {
+      "rule": "aptGetInstallUseY",
+      "position": {
+        "lineStart": 39,
+        "lineEnd": 39,
+        "columnStart": 53,
+        "columnEnd": 74
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 39,
+        "lineEnd": 39,
+        "columnStart": 53,
+        "columnEnd": 74
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# State 1: Build\nFROM microsoft/dotnet:2.1-sdk as source\nARG target=\"Release\"\n\nWORKDIR /utils\nRUN curl -f -L -o opa https://github.com/open-policy-agent/opa/releases/download/v0.8.2/opa_linux_amd64\nRUN chmod u+x ./opa\nENV OPA_PATH=/utils/opa\n\nWORKDIR /src\nCOPY ./Tweek.Publishing.sln ./Tweek.Publishing.sln\nCOPY ./Tweek.Publishing.Service/Tweek.Publishing.Service.csproj ./Tweek.Publishing.Service/Tweek.Publishing.Service.csproj\nCOPY ./Tweek.Publishing.Tests/Tweek.Publishing.Tests.csproj ./Tweek.Publishing.Tests/Tweek.Publishing.Tests.csproj\nRUN dotnet restore\n\nCOPY . .\n\nRUN dotnet test ./Tweek.Publishing.Tests\nRUN dotnet publish -c $target -o obj/docker/publish\n\nRUN cp -r /src/scripts /tweek \\\n    && cp -r /src/hooks /tweek/hooks \\\n    && cp -r /src/base-repo /tweek/base-repo \\\n    && cp -r /src/Tweek.Publishing.Service/obj/docker/publish /tweek/Tweek.Publishing.Service\n\n# Stage 2: Release\nFROM microsoft/dotnet:2.1.8-aspnetcore-runtime as release\nARG target=\"Release\"\nRUN apt-get update \\\n    && apt-get install -y --no-install-recommends \\\n       openssh-client openssh-server git  \\\n       && rm -rf /var/lib/apt/lists/*\n\nRUN adduser --disabled-password -u 1000 --shell /usr/bin/git-shell git \\\n    && mkdir /home/git/.ssh \\\n    && ssh-keygen -A \\\n    && git config --global user.email \"git@tweek\" \\\n    && git config --global user.name \"git\"\n\nRUN if [ $target = \"Debug\" ]; then \\\n apt-get update && apt-get install -y --no-install-recommends unzip && rm -rf /var/lib/apt/lists/* && curl -f -sSL https://aka.ms/getvsdbgsh | bash /dev/stdin -v latest -l /vsdbg; fi\n\nCOPY --from=source /utils /tweek\nENV OPA_PATH=/tweek/opa\n\nCOPY --from=source /tweek /tweek\nENV GIT_SSH=/tweek/ssh-helper.sh \\\n    REPO_LOCATION=/tweek/repo \\\n    SSHD_CONFIG_LOCATION=/tweek/sshd_config\n\nRUN mkdir -p /var/run/sshd && chown -R git:git /tweek\nRUN chmod u+x /tweek/*.sh\nWORKDIR /tweek\n\nEXPOSE 22\nEXPOSE 80\n\nHEALTHCHECK --interval=15s --timeout=15s --retries=8 \\\n      CMD curl -f http://localhost/health || exit 1\n\nENTRYPOINT [\"bash\", \"-c\", \"/tweek/init-git.sh && dotnet /tweek/Tweek.Publishing.Service/Tweek.Publishing.Service.dll 2>/dev/stderr 1>/dev/stdout & wait\" ]\n"
+}

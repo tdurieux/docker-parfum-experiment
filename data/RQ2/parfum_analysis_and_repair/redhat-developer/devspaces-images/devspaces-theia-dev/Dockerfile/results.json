@@ -1,0 +1,35 @@
+{
+  "startTime": 1674251739813,
+  "endTime": 1674251740700,
+  "originalSmells": [
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 78,
+        "lineEnd": 78,
+        "columnStart": 4,
+        "columnEnd": 45
+      }
+    },
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 105,
+        "lineEnd": 105,
+        "columnStart": 4,
+        "columnEnd": 20
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 68,
+        "lineEnd": 68,
+        "columnStart": 18,
+        "columnEnd": 57
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Copyright (c) 2018-2021 Red Hat, Inc.\n# This program and the accompanying materials are made\n# available under the terms of the Eclipse Public License 2.0\n# which is available at https://www.eclipse.org/legal/epl-2.0/\n#\n# SPDX-License-Identifier: EPL-2.0\n#\n# Contributors:\n#   Red Hat, Inc. - initial API and implementation\n\n###\n# Theia dev Image\n#\n# https://access.redhat.com/containers/?tab=tags#/registry.access.redhat.com/ubi8/nodejs-14\nFROM ubi8/nodejs-14:1-79\nUSER 0\nRUN yum -y -q update && \\\n    yum -y -q clean all && rm -rf /var/cache/yum\n\n# Install packages\nUSER root\n# Install libsecret as Theia requires it\n# Install libsecret-devel on s390x and ppc64le for keytar build (binary included in npm package for x86)\nRUN yum install -y curl make cmake gcc gcc-c++ python2 git git-core-doc openssh less bash tar gzip rsync patch \\\n    libsecret libsecret-devel \\\n    && yum -y clean all && rm -rf /var/cache/yum && \\\n    ln -s /usr/bin/python2.7 /usr/bin/python; python --version && \\\n    echo \"Installed Packages\" && rpm -qa | sort -V && echo \"End Of Installed Packages\"\n\n# setup yarn (if missing)\n# Include yarn assets\nCOPY asset-yarn-*.tgz /tmp/\nRUN tar xzf /tmp/asset-yarn-$(uname -m).tgz -C / && rm -f /tmp/asset-yarn-*.tgz\n\n# Add npm global bin directory to the path\nENV HOME=/home/theia-dev \\\n    PATH=/home/theia-dev/.npm-global/bin:${PATH} \\\n    # Specify the directory of git (avoid to search at init of Theia)\n    USE_LOCAL_GIT=true \\\n    LOCAL_GIT_DIRECTORY=/usr \\\n    GIT_EXEC_PATH=/usr/libexec/git-core \\\n    THEIA_ELECTRON_SKIP_REPLACE_FFMPEG=true \\\n    ELECTRON_SKIP_BINARY_DOWNLOAD=1 \\\n    YARN_FLAGS=\"\"\n\n# setup extra stuff\nENV YARN_FLAGS=\"--offline\"\n\nENV SUMMARY=\"Red Hat OpenShift Dev Spaces - theia-dev container\" \\\n    DESCRIPTION=\"Red Hat OpenShift Dev Spaces - theia-dev container\" \\\n    PRODNAME=\"devspaces\" \\\n    COMPNAME=\"theia-dev-rhel8\"\n\nLABEL summary=\"$SUMMARY\" \\\n      description=\"$DESCRIPTION\" \\\n      io.k8s.description=\"$DESCRIPTION\" \\\n      io.k8s.display-name=\"$DESCRIPTION\" \\\n      io.openshift.tags=\"$PRODNAME,$COMPNAME\" \\\n      com.redhat.component=\"$PRODNAME-$COMPNAME-container\" \\\n      name=\"$PRODNAME/$COMPNAME\" \\\n      version=\"3.2\" \\\n      license=\"EPLv2\" \\\n      maintainer=\"Nick Boldt <nboldt@redhat.com>\" \\\n      io.openshift.expose-services=\"\" \\\n      usage=\"\"\n\n# Define package of the theia generator to use\nCOPY asset-eclipse-che-theia-generator.tgz ${HOME}/eclipse-che-theia-generator.tgz\nRUN cd ${HOME} && tar zxf eclipse-che-theia-generator.tgz && mv package eclipse-che-theia-generator && rm eclipse-che-theia-generator.tgz\n\nWORKDIR ${HOME}\n\n# Exposing Theia ports\nEXPOSE 3000 3030\n\n# Configure npm and yarn to use home folder for global dependencies\nRUN npm config set prefix \"${HOME}/.npm-global\" && \\\n    echo \"--global-folder \\\"${HOME}/.yarn-global\\\"\" > ${HOME}/.yarnrc && \\\n    yarn config set network-timeout 600000 -g && \\\n    # add eclipse che-theia generator\n    # use v1 of vsce as v2 requires nodejs 14\n    yarn ${YARN_FLAGS} global add yo generator-code vsce@^1 @theia/generator-plugin@0.0.1-1622834185 file:${HOME}/eclipse-che-theia-generator && \\\n    rm -rf ${HOME}/eclipse-che-theia-generator && \\\n    # Generate .passwd.template \\\n    cat /etc/passwd | \\\n    sed s#root:x.*#theia-dev:x:\\${USER_ID}:\\${GROUP_ID}::${HOME}:/bin/bash#g \\\n    > ${HOME}/.passwd.template && \\\n    # Generate .group.template \\\n    cat /etc/group | \\\n    sed s#root:x:0:#root:x:0:0,\\${USER_ID}:#g \\\n    > ${HOME}/.group.template && \\\n    mkdir /projects && \\\n    # Define default prompt\n    echo \"export PS1='\\[\\033[01;33m\\](\\u@container)\\[\\033[01;36m\\] (\\w) \\$ \\[\\033[00m\\]'\" > ${HOME}/.bashrc  && \\\n    # Disable the statistics for yeoman\n    mkdir -p ${HOME}/.config/insight-nodejs/ && \\\n    echo '{\"optOut\": true}' > ${HOME}/.config/insight-nodejs/insight-yo.json && \\\n    # Change permissions to let any arbitrary user\n    for f in \"${HOME}\" \"/etc/passwd\" \"/etc/group\" \"/projects\"; do \\\n        echo \"Changing permissions on ${f}\" && chgrp -R 0 ${f} && \\\n        chmod -R g+rwX ${f}; \\\n    done && yarn cache clean;\n\n# post yarn config\nRUN echo \"Installed npm Packages\" && npm ls -g | sort | uniq || true\nRUN yarn global list || true && yarn cache clean;\nRUN echo \"End Of Installed npm Packages\"\n\nWORKDIR /projects\n\nCOPY src/entrypoint.sh /entrypoint.sh\n\nENTRYPOINT [\"/entrypoint.sh\"]\n\nCMD tail -f /dev/null\n"
+}

@@ -1,0 +1,32 @@
+FROM node:16
+
+# Create app directory
+WORKDIR /usr/src/app
+
+# Install app dependencies
+# A wildcard is used to ensure both package.json AND package-lock.json are copied
+# where available (npm@5+)
+COPY package*.json ./
+
+RUN npm install && npm cache clean --force;
+
+# Bundle app source
+# Folders
+COPY bin ./bin
+COPY models ./models
+COPY modules ./modules
+COPY public ./public
+COPY routes ./routes
+# Files
+COPY app.js ./
+COPY .eslint* ./
+
+# copy both the example file and any existing custom .env
+COPY .env* ./
+# attempt to move the example .env to the name ".env"
+# if .env is already there, this fails and the custom instance is used
+# if not, the example instance is used
+RUN ["mv","-n", ".env.example", ".env"]
+
+# Start command
+CMD ["sh", "-c", "echo 'Running backend lint:' ; npm run lint"]

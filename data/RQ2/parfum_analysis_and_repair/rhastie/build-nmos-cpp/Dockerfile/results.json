@@ -1,0 +1,44 @@
+{
+  "startTime": 1674255083425,
+  "endTime": 1674255084971,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 13,
+        "lineEnd": 13,
+        "columnStart": 4,
+        "columnEnd": 50
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 30,
+        "lineEnd": 30,
+        "columnStart": 17,
+        "columnEnd": 105
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 105,
+        "lineEnd": 105,
+        "columnStart": 4,
+        "columnEnd": 114
+      }
+    },
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 84,
+        "lineEnd": 84,
+        "columnStart": 4,
+        "columnEnd": 42
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM ubuntu:focal as stage1-build\nMAINTAINER rhastie@nvidia.com\nLABEL maintainer=\"rhastie@nvidia.com\"\n\nARG makemt\n\nENV APT_KEY_DONT_WARN_ON_DANGEROUS_USAGE=DontWarn\n\nRUN apt-get update && export DEBIAN_FRONTEND=noninteractive && apt-get install -y --no-install-recommends \\\n    g++ build-essential \\\n    openssl libssl-dev git wget gnupg curl ca-certificates nano \\\n    python3 python3-pip python3-setuptools rdma-core && \\\n# Avahi:    dbus avahi-daemon libavahi-compat-libdnssd-dev libnss-mdns AND NOT make \\\n    curl -f -sL https://deb.nodesource.com/setup_16.x | bash - && \\\n    apt-get update && apt-get install -y --no-install-recommends nodejs && corepack enable && \\\n    rm -rf /var/lib/apt/lists/* && \\\n    apt-get clean -y --no-install-recommends && \\\n    apt-get autoclean -y --no-install-recommends\n\n## Install latest versions of CMake and Conan using pip3 package installer\nRUN python3 -m pip install --upgrade pip setuptools wheel cmake conan\n\n## Get Certificates and scripts from AMWA-TV/nmos-testing\nRUN cd /home && mkdir certs && git config --global http.sslVerify false && \\\n    git clone https://github.com/AMWA-TV/nmos-testing.git && \\\n    mv /home/nmos-testing/test_data/BCP00301/ca/* /home/certs && \\\n    rm -rf /home/nmos-testing\n\n## Get source for Sony nmos-cpp/\nENV NMOS_CPP_VERSION=7ca64c4fb5604fb8a3e0c05db2e8f8ffe7ef3857\nRUN cd /home/ && curl -f --output - -s -k https://codeload.github.com/sony/nmos-cpp/tar.gz/$NMOS_CPP_VERSION | tar zxvf - -C . && \\\n    mv ./nmos-cpp-${NMOS_CPP_VERSION} ./nmos-cpp\n\n## You should use either Avahi or Apple mDNS - DO NOT use both\n##\n## mDNSResponder 878.260.1 Build and install\nRUN cd /home/ && wget --no-check-certificate https://opensource.apple.com/tarballs/mDNSResponder/mDNSResponder-878.260.1.tar.gz && \\\n    tar xvf mDNSResponder-878.260.1.tar.gz && rm mDNSResponder-878.260.1.tar.gz && \\\n    patch -d mDNSResponder-878.260.1/ -p1 <nmos-cpp/Development/third_party/mDNSResponder/unicast.patch && \\\n    patch -d mDNSResponder-878.260.1/ -p1 <nmos-cpp/Development/third_party/mDNSResponder/permit-over-long-service-types.patch && \\\n    patch -d mDNSResponder-878.260.1/ -p1 <nmos-cpp/Development/third_party/mDNSResponder/poll-rather-than-select.patch && \\\n    cd /home/mDNSResponder-878.260.1/mDNSPosix && make os=linux && make os=linux install\n\n## Build Sony nmos-cpp from sources\nRUN mkdir /home/nmos-cpp/Development/build && \\\n    cd /home/nmos-cpp/Development/build && \\\n    cmake \\\n    -G \"Unix Makefiles\" \\\n    -DCMAKE_BUILD_TYPE:STRING=\"MinSizeRel\" \\\n    -DCMAKE_CONFIGURATION_TYPES:STRING=\"MinSizeRel\" \\\n    -DCXXFLAGS:STRING=\"-Os\" \\\n    -DNMOS_CPP_USE_AVAHI:BOOL=\"0\" \\\n    /home/nmos-cpp/Development/build .. && \\\n    if [ -n \"$makemt\" ]; then echo \"Making multi-threaded with $makemt jobs\"; make -j$makemt; else echo \"Making single-threaded\"; make; fi\n\n## Generate Example Certificates and position into correct locations\nRUN cd /home/certs && mkdir run-certs && ./generateCerts registration1 nmos.tv query1.nmos.tv && \\\n    cd /home/certs/certs && \\\n    cp ca.cert.pem /home/certs/run-certs/ca.cert.pem && \\\n    cd /home/certs/intermediate/certs && \\\n    mv ecdsa.registration1.nmos.tv.cert.chain.pem /home/certs/run-certs/ecdsa.cert.chain.pem && \\\n    mv rsa.registration1.nmos.tv.cert.chain.pem /home/certs/run-certs/rsa.cert.chain.pem && \\\n    cd /home/certs/intermediate/private && \\\n    mv ecdsa.registration1.nmos.tv.key.pem /home/certs/run-certs/ecdsa.key.pem && \\\n    mv rsa.registration1.nmos.tv.key.pem /home/certs/run-certs/rsa.key.pem && \\\n    cp dhparam.pem /home/certs/run-certs/dhparam.pem\n\n## Create relevant configuration files for Sony Registry and Node\nRUN cd /home/ && mkdir example-conf && mkdir admin\nADD example-conf /home/example-conf\n\n## Get and build source for Sony nmos-js\nRUN cd /home/ && git config --global http.sslVerify false && git clone https://github.com/sony/nmos-js.git\n\n## Custom branding\nCOPY NVIDIA_Logo_H_ForScreen_ForLightBG.png nmos-js.patch /home/nmos-js/Development/src/assets/\nRUN cd /home && \\\n    mv /home/nmos-js/Development/src/assets/nmos-js.patch /home && \\\n    patch -p0 <nmos-js.patch && \\\n    rm /home/nmos-js/Development/src/assets/sea-lion.png && \\\n    rm nmos-js.patch\n\n## Build and install Sony nmos-js\nRUN cd /home/nmos-js/Development && \\\n    yarn install --network-timeout 1000000 && \\\n    yarn build && \\\n    cp -rf /home/nmos-js/Development/build/* /home/admin && yarn cache clean;\n\n## Move executables, libraries and clean up container as much as possible\nRUN cd /home/nmos-cpp/Development/build && \\\n    cp nmos-cpp-node nmos-cpp-registry /home && \\\n    cd /home && rm -rf .git nmos-cpp nmos-js\n\n## Re-build container for optimised runtime environment using clean Ubuntu Bionic release\nFROM ubuntu:focal\n\n##Copy required files from build container\nCOPY --from=stage1-build /home /home\n\n##Update container with latest patches and needed packages\nRUN apt-get update && export DEBIAN_FRONTEND=noninteractive && apt-get install -y --no-install-recommends \\\n    openssl make nano curl jq gnupg rdma-core && \\\n# Avahi:    dbus avahi-daemon libavahi-compat-libdnssd-dev libnss-mdns AND NOT make \\\n    cd /home/mDNSResponder-878.260.1/mDNSPosix && make os=linux install && \\\n    cd /home && rm -rf /home/mDNSResponder-878.260.1 /etc/nsswitch.conf.pre-mdns && \\\n    curl -f -sS -k \"https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x77b7346a59027b33c10cafe35e64e954262c4500\" | apt-key add - && \\\n    echo \"deb http://ppa.launchpad.net/mosquitto-dev/mosquitto-ppa/ubuntu focal main\" | tee /etc/apt/sources.list.d/mosquitto.list && \\\n    apt-get update && apt-get install -y --no-install-recommends mosquitto && \\\n    apt-get remove --purge -y make gnupg && \\\n    apt-get autoremove -y && \\\n    apt-get clean -y --no-install-recommends && \\\n    apt-get autoclean -y --no-install-recommends && \\\n    rm -rf /var/lib/apt/lists/* && \\\n    rm -rf /usr/share/doc/ && rm -rf /usr/share/man/ && rm -rf /usr/share/locale/ && \\\n    rm -rf /usr/local/share/man/* && rm -rf /usr/local/share/.cache/*\n\n##Copy entrypoint.sh script and master config to image\nCOPY entrypoint.sh container-config registry.json node.json /home/\n\n##Set script to executable\nRUN chmod +x /home/entrypoint.sh\n\n##Set default config variable to run registry (FALSE) or node (TRUE)\nARG runnode=FALSE\nENV RUN_NODE=$runnode\n\n##Expose correct default ports to allow quick publishing\nEXPOSE 8010 8011 11000 11001 1883 5353/udp\n\nWORKDIR /home/\nENTRYPOINT [\"/home/entrypoint.sh\"]\n#CMD []\n"
+}

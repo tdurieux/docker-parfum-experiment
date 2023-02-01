@@ -1,0 +1,35 @@
+{
+  "startTime": 1674241075544,
+  "endTime": 1674241075709,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 36,
+        "lineEnd": 36,
+        "columnStart": 4,
+        "columnEnd": 106
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 54,
+        "lineEnd": 54,
+        "columnStart": 4,
+        "columnEnd": 15
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 68,
+        "lineEnd": 69,
+        "columnStart": 22,
+        "columnEnd": 13
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM debian:stretch-slim AS compilator\n\nLABEL maintainer \"Infer team\"\n\n# mkdir the man/man1 directory due to Debian bug #863199\nRUN apt-get update && \\\n    mkdir -p /usr/share/man/man1 && \\\n    apt-get install --yes --no-install-recommends \\\n      autoconf \\\n      automake \\\n      bubblewrap \\\n      bzip2 \\\n      cmake \\\n      curl \\\n      g++ \\\n      gcc \\\n      git \\\n      libc6-dev \\\n      libgmp-dev \\\n      libmpfr-dev \\\n      libsqlite3-dev \\\n      make \\\n      openjdk-8-jdk-headless \\\n      patch \\\n      patchelf \\\n      pkg-config \\\n      python2.7 \\\n      unzip \\\n      xz-utils \\\n      zlib1g-dev && \\\n    rm -rf /var/lib/apt/lists/*\n\n# Some scripts in facebook-clang-plugins assume \"python\" is available\nRUN cd /usr/local/bin && ln -s /usr/bin/python2.7 python\n\n# Install opam 2\nRUN curl -f -sL https://github.com/ocaml/opam/releases/download/2.0.3/opam-2.0.3-x86_64-linux > /usr/bin/opam && \\\n    chmod +x /usr/bin/opam\n\n# Disable sandboxing\n# Without this opam fails to compile OCaml for some reason. We don't need sandboxing inside a Docker container anyway.\nRUN opam init --reinit --bare --disable-sandboxing --yes --auto-setup\n\n# Download the latest Infer master\nRUN cd / && \\\n    git clone --recurse-submodules https://github.com/facebook/infer/\n\n# Build opam deps first, then clang, then infer. This way if any step\n# fails we don't lose the significant amount of work done in the\n# previous steps.\nRUN cd /infer && ./build-infer.sh --only-setup-opam\nRUN cd /infer && \\\n    eval $(opam env) && \\\n    ./autogen.sh && \\\n    ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" && \\\n    ./facebook-clang-plugins/clang/setup.sh\n\n# Generate a release\nRUN cd /infer && \\ \n    make install-with-libs \\\n    BUILD_MODE=opt \\ \n    PATCHELF=patchelf \\\n    DESTDIR=\"/infer-release\" \\ \n    libdir_relative_to_bindir=\"../lib\"\n\nFROM debian:stretch-slim AS executor\n\n# Install python 2.7 since infer requires it to run\nRUN apt-get update && apt-get install --yes --no-install-recommends \\\n    python2.7 && rm -rf /var/lib/apt/lists/*;\n\n# Get the infer release\nCOPY --from=compilator /infer-release/usr/local /infer\n\n# Installl infer\nENV PATH /infer/bin:${PATH}\n\n# if called with /infer-host mounted then copy infer there\nRUN if test -d /infer-host; then \\\n      cp -av /infer/. /infer-host; \\\n    fi\n"
+}

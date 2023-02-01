@@ -1,0 +1,87 @@
+FROM teamserverless/license-check:0.3.6 as license-check
+
+# Build stage
+FROM golang:1.17 as builder
+
+ARG GIT_COMMIT
+ARG VERSION
+
+ENV GO111MODULE=on
+ENV GOFLAGS=-mod=vendor
+ENV CGO_ENABLED=0
+
+WORKDIR /usr/bin/
+
+COPY --from=license-check /license-check /usr/bin/
+
+WORKDIR /go/src/github.com/openfaas/faas-cli
+COPY . .
+
+# Run a gofmt and exclude all vendored code.
+RUN test -z "$(gofmt -l $(find . -type f -name '*.go' -not -path "./vendor/*"))" || { echo "Run \"gofmt -s -w\" on your Golang code"; exit 1; }
+
+# ldflags "-s -w" strips binary
+# ldflags -X injects commit version into binary
+
+RUN /usr/bin/license-check -path ./ --verbose=false "Alex Ellis" "OpenFaaS Author(s)" "OpenFaaS Ltd" \
+       && go test $(go list ./... | grep -v /vendor/ | grep -v /template/|grep -v /build/) -cover
+
+FROM builder as linux
+RUN CGO_ENABLED=0 GOOS=linux go build --ldflags "-s -w \
+       -X github.com/openfaas/faas-cli/version.GitCommit=${GIT_COMMIT} \
+       -X github.com/openfaas/faas-cli/version.Version=${VERSION} \
+       -X github.com/openfaas/faas-cli/commands.Platform=x86_64" \
+       -a -installsuffix cgo -o faas-cli
+
+FROM builder as darwin
+RUN CGO_ENABLED=0 GOOS=darwin go build --ldflags "-s -w \
+       -X github.com/openfaas/faas-cli/version.GitCommit=${GIT_COMMIT} \
+       -X github.com/openfaas/faas-cli/version.Version=${VERSION} \
+       -X github.com/openfaas/faas-cli/commands.Platform=x86_64" \
+       -a -installsuffix cgo -o faas-cli-darwin
+
+FROM builder as windows
+RUN CGO_ENABLED=0 GOOS=windows go build --ldflags "-s -w \
+       -X github.com/openfaas/faas-cli/version.GitCommit=${GIT_COMMIT} \
+       -X github.com/openfaas/faas-cli/version.Version=${VERSION} \
+       -X github.com/openfaas/faas-cli/commands.Platform=x86_64" \
+       -a -installsuffix cgo -o faas-cli.exe
+
+FROM builder as arm
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=arm GOARM=6 go build --ldflags "-s -w \
+       -X github.com/openfaas/faas-cli/version.GitCommit=${GIT_COMMIT} \
+       -X github.com/openfaas/faas-cli/version.Version=${VERSION} \
+       -X github.com/openfaas/faas-cli/commands.Platform=armhf" \
+       -a -installsuffix cgo -o faas-cli-armhf
+
+FROM builder as arm64
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build --ldflags "-s -w \
+       -X github.com/openfaas/faas-cli/version.GitCommit=${GIT_COMMIT} \
+       -X github.com/openfaas/faas-cli/version.Version=${VERSION} \
+       -X github.com/openfaas/faas-cli/commands.Platform=arm64" \
+       -a -installsuffix cgo -o faas-cli-arm64
+
+# Release stage
+FROM alpine:3.13
+
+RUN apk --no-cache add ca-certificates git
+
+RUN addgroup -S app \
+       && adduser -S -g app app \
+       && apk add --no-cache ca-certificates
+
+WORKDIR /home/app
+
+COPY --from=linux    /go/src/github.com/openfaas/faas-cli/faas-cli                .
+COPY --from=darwin   /go/src/github.com/openfaas/faas-cli/faas-cli-darwin         .
+COPY --from=arm      /go/src/github.com/openfaas/faas-cli/faas-cli-armhf          .
+COPY --from=windows  /go/src/github.com/openfaas/faas-cli/faas-cli.exe            .
+COPY --from=arm64    /go/src/github.com/openfaas/faas-cli/faas-cli-arm64          .
+
+RUN chown -R app:app ./
+
+ENV PATH=$PATH:/home/app/
+
+USER app
+
+CMD ["faas-cli"]

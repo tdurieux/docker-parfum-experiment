@@ -1,0 +1,10 @@
+FROM storm:2.4.0
+
+ARG JAR
+ARG CLASS
+ENV TOPOLOGY_JAR=$JAR
+ENV TOPOLOGY_CLASS=$CLASS
+
+WORKDIR /deploy
+COPY $TOPOLOGY_JAR .
+COPY storm-entrypoint.sh /docker-entrypoint.sh

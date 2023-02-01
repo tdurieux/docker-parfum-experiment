@@ -1,0 +1,18 @@
+FROM python:3.10
+
+WORKDIR /srv
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONIOENCODING=UTF-8 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    LC_ALL=C.UTF-8 \
+    LANG=C.UTF-8 \
+    PYTHONPATH=/srv/ \
+    DJANGO_SETTINGS_MODULE=settings_dev \
+    DJANGO_SUPERUSER_PASSWORD=p
+
+COPY . /srv/
+
+RUN pip install --no-cache-dir django-filter~=21.0 psycopg2-binary~=2.8.0 -e .
+
+CMD [ "django-admin" , "runserver", "0.0.0.0:8080"]

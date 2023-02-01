@@ -1,0 +1,1 @@
+# OFFICIAL REPOSITORY: https://hub.docker.com/_/golang/

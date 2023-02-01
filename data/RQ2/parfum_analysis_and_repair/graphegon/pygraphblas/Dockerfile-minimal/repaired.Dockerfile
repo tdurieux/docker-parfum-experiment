@@ -1,0 +1,14 @@
+ARG BASE_CONTAINER=python:3.9-slim-buster
+FROM ${BASE_CONTAINER}
+
+RUN apt-get update \
+    && apt-get install --no-install-recommends -y graphviz \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /pygraphblas
+
+ADD . /pygraphblas
+
+RUN python3 setup.py install
+RUN pip3 install --no-cache-dir -r minimal-requirements.txt
+RUN ldconfig

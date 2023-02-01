@@ -1,0 +1,44 @@
+{
+  "startTime": 1674236543101,
+  "endTime": 1674236543326,
+  "originalSmells": [
+    {
+      "rule": "wgetUseHttpsUrl",
+      "position": {
+        "lineStart": 24,
+        "lineEnd": 24,
+        "columnStart": 4,
+        "columnEnd": 106
+      }
+    },
+    {
+      "rule": "wgetUseHttpsUrl",
+      "position": {
+        "lineStart": 29,
+        "lineEnd": 29,
+        "columnStart": 4,
+        "columnEnd": 121
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 9,
+        "lineEnd": 9,
+        "columnStart": 9,
+        "columnEnd": 54
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 14,
+        "lineEnd": 18,
+        "columnStart": 9,
+        "columnEnd": 38
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM ubuntu:14.04\n\n# Set version and github repo which you want to build from\nENV GITHUB_OWNER druid-io\nENV DRUID_VERSION master\nENV ZOOKEEPER_VERSION 3.4.12\n\n# Java 8\nRUN apt-get update \\\n      && apt-get install --no-install-recommends -y software-properties-common \\\n      && apt-add-repository -y ppa:webupd8team/java \\\n      && apt-get purge --auto-remove -y software-properties-common \\\n      && apt-get update \\\n      && echo oracle-java-8-installer shared/accepted-oracle-license-v1-1 select true | /usr/bin/debconf-set-selections \\\n      && apt-get install --no-install-recommends -y oracle-java8-installer oracle-java8-set-default \\\n                            mysql-server \\\n                            supervisor \\\n                            git \\\n                            python-pip \\\n      && apt-get clean \\\n      && rm -rf /var/cache/oracle-jdk8-installer \\\n      && rm -rf /var/lib/apt/lists/*\n\n# Maven\nRUN wget -q -O - https://archive.apache.org/dist/maven/maven-3/3.3.9/binaries/apache-maven-3.3.9-bin.tar.gz | tar -xzf - -C /usr/local \\\n      && ln -s /usr/local/apache-maven-3.3.9 /usr/local/apache-maven \\\n      && ln -s /usr/local/apache-maven/bin/mvn /usr/local/bin/mvn\n\n# Zookeeper\nRUN wget -q -O - https://www.us.apache.org/dist/zookeeper/zookeeper-$ZOOKEEPER_VERSION/zookeeper-$ZOOKEEPER_VERSION.tar.gz | tar -xzf - -C /usr/local \\\n      && cp /usr/local/zookeeper-$ZOOKEEPER_VERSION/conf/zoo_sample.cfg /usr/local/zookeeper-$ZOOKEEPER_VERSION/conf/zoo.cfg \\\n      && ln -s /usr/local/zookeeper-$ZOOKEEPER_VERSION /usr/local/zookeeper\n\n# Druid system user\nRUN adduser --system --group --no-create-home druid \\\n      && mkdir -p /var/lib/druid \\\n      && chown druid:druid /var/lib/druid\n\n# Druid (from source)\nRUN mkdir -p /usr/local/druid/lib\n\n# trigger rebuild only if branch changed\nADD https://api.github.com/repos/$GITHUB_OWNER/druid/git/refs/heads/$DRUID_VERSION druid-version.json\nRUN git clone -q --branch $DRUID_VERSION --depth 1 https://github.com/$GITHUB_OWNER/druid.git /tmp/druid\nWORKDIR /tmp/druid\n\n# package and install Druid locally\n# use versions-maven-plugin 2.1 to work around https://jira.codehaus.org/browse/MVERSIONS-285\nRUN mvn -U -B org.codehaus.mojo:versions-maven-plugin:2.1:set -DgenerateBackupPoms=false -DnewVersion=$DRUID_VERSION \\\n  && mvn -U -B install -DskipTests=true -Dmaven.javadoc.skip=true \\\n  && cp services/target/druid-services-$DRUID_VERSION-selfcontained.jar /usr/local/druid/lib \\\n  && cp -r distribution/target/extensions /usr/local/druid/ \\\n  && cp -r distribution/target/hadoop-dependencies /usr/local/druid/ \\\n  && rm -rf /tmp/* \\\n            /var/tmp/* \\\n            /usr/local/apache-maven-3.3.9 \\\n            /usr/local/apache-maven \\\n            /root/.m2\n\nWORKDIR /usr/local/druid\n\nRUN java \\\n  -cp \"lib/*\" \\\n  -Ddruid.extensions.directory=\"extensions\" \\\n  -Ddruid.extensions.hadoopDependenciesDir=\"hadoop-dependencies\" \\\n  io.druid.cli.Main tools pull-deps \\\n  --no-default-hadoop \\\n  -c \"org.apache.parquet:parquet-avro:1.9.0\"\n\nWORKDIR /\n\n# Setup metadata store\nRUN /etc/init.d/mysql start \\\n      && mysql -u root -e \"GRANT ALL ON druid.* TO 'druid'@'localhost' IDENTIFIED BY 'diurd'; CREATE database druid CHARACTER SET utf8;\" \\\n      && java -cp /usr/local/druid/lib/druid-services-*-selfcontained.jar \\\n          -Ddruid.extensions.directory=/usr/local/druid/extensions \\\n          -Ddruid.extensions.loadList=[\\\"mysql-metadata-storage\\\",\\\"druid-kafka-indexing-service\\\"] \\\n          -Ddruid.metadata.storage.type=mysql \\\n          io.druid.cli.Main tools metadata-init \\\n              --connectURI=\"jdbc:mysql://localhost:3306/druid\" \\\n              --user=druid --password=diurd \\\n      && /etc/init.d/mysql stop\n\n# Setup supervisord\nADD supervisord.conf /etc/supervisor/conf.d/supervisord.conf\n\n# Expose ports:\n# - 8081: HTTP (coordinator)\n# - 8082: HTTP (broker)\n# - 8083: HTTP (historical)\n# - 8090: HTTP (overlord)\n# - 3306: MySQL\n# - 2181 2888 3888: ZooKeeper\nEXPOSE 8081\nEXPOSE 8082\nEXPOSE 8083\nEXPOSE 8090\nEXPOSE 3306\nEXPOSE 2181 2888 3888\n\nWORKDIR /var/lib/druid\n\nCMD export HOSTIP=\"$(resolveip -s $HOSTNAME)\" && exec /usr/bin/supervisord -c /etc/supervisor/conf.d/supervisord.conf\n"
+}

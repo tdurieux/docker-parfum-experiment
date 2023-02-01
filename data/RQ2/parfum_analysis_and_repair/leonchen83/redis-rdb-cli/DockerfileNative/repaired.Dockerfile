@@ -1,0 +1,34 @@
+FROM springci/graalvm-ce:stable-java11-0.10.x AS builder
+
+ARG MAVEN_VERSION=3.8.5
+ARG BASE_URL=https://ftp.yz.yamagata-u.ac.jp/pub/network/apache/maven/maven-3/${MAVEN_VERSION}/binaries
+
+WORKDIR /app
+COPY . /app
+
+RUN apt-get update && apt-get install --no-install-recommends -y curl && rm -rf /var/lib/apt/lists/*;
+
+RUN mkdir -p /usr/share/maven /usr/share/maven/ref \
+ && curl -fsSL -o /tmp/apache-maven.tar.gz ${BASE_URL}/apache-maven-${MAVEN_VERSION}-bin.tar.gz \
+ && tar -xzf /tmp/apache-maven.tar.gz -C /usr/share/maven --strip-components=1 \
+ && rm -f /tmp/apache-maven.tar.gz \
+ && ln -s /usr/share/maven/bin/mvn /usr/bin/mvn
+
+RUN mvn clean install -Pstatic -DskipTests
+
+FROM frolvlad/alpine-glibc:alpine-3.14_glibc-2.33
+COPY --from=builder /app/target/redis-rdb-cli-release.zip /tmp/redis-rdb-cli-release.zip
+WORKDIR /app
+# because of the cli has set shebang
+RUN unzip -o /tmp/redis-rdb-cli-release.zip \
+        && apk add --no-cache bash \
+        && rm -f /tmp/redis-rdb-cli-release.zip \
+        && ln -s /app/redis-rdb-cli/bin/rct /usr/local/bin/rct \
+        && ln -s /app/redis-rdb-cli/bin/rmt /usr/local/bin/rmt \
+        && ln -s /app/redis-rdb-cli/bin/rst /usr/local/bin/rst \
+        && ln -s /app/redis-rdb-cli/bin/ret /usr/local/bin/ret \
+        && ln -s /app/redis-rdb-cli/bin/rdt /usr/local/bin/rdt \
+        && ln -s /app/redis-rdb-cli/bin/rcut /usr/local/bin/rcut \
+        && ln -s /app/redis-rdb-cli/bin/rcut /usr/local/bin/rmonitor
+
+WORKDIR /app/redis-rdb-cli

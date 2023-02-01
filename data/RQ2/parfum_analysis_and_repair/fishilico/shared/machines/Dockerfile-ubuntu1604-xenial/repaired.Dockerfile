@@ -1,0 +1,113 @@
+FROM ubuntu:16.04
+LABEL Description="Ubuntu 16.04 LTS Xenial Xerus with build dependencies for shared"
+
+# Override the language to force UTF-8 output
+ENV LANG=C.UTF-8
+
+# python-z3 does not install an __init__.py file, which is required with Python 2
+# Install OpenJDK 8 because OpenJDK 9 package is buggy: https://bugs.launchpad.net/ubuntu/+source/openjdk-9/+bug/1593191
+RUN \
+    export DEBIAN_FRONTEND=noninteractive && \
+    dpkg --add-architecture i386 && \
+    apt-get -qq update && \
+    apt-get install --no-install-recommends --no-install-suggests -qqy \
+        binutils-mingw-w64 \
+        cargo \
+        clang \
+        coq \
+        gcc-mingw-w64 \
+        gcc-multilib \
+        gdb \
+        libc-dev \
+        libc6-dev-i386 \
+        libgmp-dev \
+        libgtk-3-dev \
+        libmnl-dev \
+        libpulse-dev \
+        libsdl2-dev \
+        libssl-dev \
+        linux-headers-generic \
+        m4 \
+        make \
+        musl-dev \
+        musl-tools \
+        openjdk-8-jdk \
+        openssh-client \
+        openssl \
+        pkgconf \
+        python3 \
+        python3-cffi \
+        python3-crypto \
+        python3-cryptography \
+        python3-dev \
+        python3-gmpy2 \
+        python3-nacl \
+        python3-numpy \
+        python3-pil \
+        python-argparse \
+        python-cffi \
+        python-crypto \
+        python-dev \
+        python-gmpy2 \
+        python-numpy \
+        python-pil \
+        python-z3 \
+        wine && \
+    apt-get clean && \
+    echo 'from .z3 import *' > /usr/lib/python2.7/dist-packages/z3/__init__.py && rm -rf /var/lib/apt/lists/*;
+
+WORKDIR /shared
+RUN ln -s shared/machines/run_shared_test.sh /run_shared_test.sh
+COPY . /shared/
+
+CMD ["/run_shared_test.sh"]
+
+# make list-nobuild:
+#    Global blacklist: latex% rust/download_web%
+#    In sub-directories:
+#       c:
+#       glossaries: check_sort_order.py
+#       java/keystore: parse_jceks.py parse_pkcs12.py util_asn1.py
+#       linux:
+#       python: clang_cfi_typeid.py z3_example.py
+#       python/crypto: bip32_seed_derivation.py chacha20_poly1305_tests.py dhparam_tests.py dsa_tests.py ec_tests.py eth_functions_keccak.py parse_openssl_enc.py rsa_tests.py
+#       python/network:
+#       python/network/dnssec: verify_dnssec.py
+#       python/qrcode:
+#       rust:
+#       verification:
+#    With gcc -m32:
+#       Global blacklist: latex% rust/download_web%
+#       In sub-directories:
+#          c: gmp_functions gtk_alpha_window
+#          glossaries: check_sort_order.py
+#          java/keystore: parse_jceks.py parse_pkcs12.py util_asn1.py
+#          linux: enum_link_addrs pulseaudio_echo sdl_v4l_video
+#          python: clang_cfi_typeid.py z3_example.py
+#          python/crypto: bip32_seed_derivation.py chacha20_poly1305_tests.py dhparam_tests.py dsa_tests.py ec_tests.py eth_functions_keccak.py parse_openssl_enc.py rsa_tests.py
+#          python/network:
+#          python/network/dnssec: verify_dnssec.py
+#          python/qrcode:
+#          rust:
+#          verification:
+#    Compilers:
+#       gcc -m64: ok
+#       gcc -m32: ok
+#       clang -m64: ok
+#       clang -m32: ok
+#       musl-gcc: ok
+#       x86_64-w64-mingw32-gcc: ok
+#       i686-w64-mingw32-gcc: ok
+#    Versions:
+#       gcc: gcc (Ubuntu 5.4.0-6ubuntu1~16.04.12) 5.4.0 20160609
+#       clang: clang version 3.8.0-2ubuntu4 (tags/RELEASE_380/final)
+#       x86_64-w64-mingw32-gcc: x86_64-w64-mingw32-gcc (GCC) 5.3.1 20160211
+#       i686-w64-mingw32-gcc: i686-w64-mingw32-gcc (GCC) 5.3.1 20160211
+#       wine: wine-1.6.2
+#       Linux kernel: 4.4.0-210-generic
+#       /lib/ld-musl-x86_64.so.1: musl libc Version 1.1.9
+#       python3: Python 3.5.2
+#       rustc: rustc 1.47.0
+#       cargo: cargo 1.46.0
+#       coqc: The Coq Proof Assistant, version 8.4pl4 (November 2015) compiled on Nov 04 2015 12:56:53 with OCaml 4.02.3
+#       openssl: OpenSSL 1.0.2g  1 Mar 2016

@@ -1,0 +1,50 @@
+# Copyright 2020 The Kubernetes Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# hash below referred to `:36` tag
+FROM registry.fedoraproject.org/fedora-minimal@sha256:b4b4e7b6d82e0b3650039e1eb27b13594cd82133f7b6b2b05244865f95c0f10f AS build
+USER root
+WORKDIR /work
+
+RUN microdnf install -y \
+        git \
+        glibc-static \
+        golang-bin \
+        make \
+        libseccomp-static
+
+ADD . /work
+RUN mkdir -p build
+
+ARG APPARMOR_ENABLED=0
+ARG BPF_ENABLED=0
+
+RUN make
+
+# hash below referred to latest
+FROM registry.access.redhat.com/ubi8/ubi-minimal@sha256:16da4d4c5cb289433305050a06834b7328769f8a5257ad5b4a5006465a0379ff
+ARG version
+USER root
+
+LABEL name="Security Profiles Operator" \
+      version=$version \
+      description="The Security Profiles Operator makes it easier for cluster admins to manage their seccomp, SELinux or AppArmor profiles and apply them to Kubernetes' workloads."
+
+COPY --from=build /work/build/security-profiles-operator /usr/bin/
+
+ENTRYPOINT ["/usr/bin/security-profiles-operator"]
+
+USER 65535:65535
+
+# vim: ft=dockerfile

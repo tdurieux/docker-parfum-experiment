@@ -1,0 +1,26 @@
+FROM golang:1.17 as build
+WORKDIR /src
+COPY . .
+RUN GOOS=linux GOARCH=amd64 make immuadmin-static
+
+FROM debian:bullseye-slim as bullseye
+LABEL org.opencontainers.image.authors="CodeNotary, Inc. <info@codenotary.com>"
+
+COPY --from=build /src/immuadmin /usr/local/bin/immuadmin
+
+ARG IMMU_UID="3322"
+ARG IMMU_GID="3322"
+
+ENV IMMUADMIN_IMMUDB_ADDRESS="127.0.0.1" \
+    IMMUADMIN_IMMUDB_PORT="3322" \
+    IMMUADMIN_MTLS="false" \
+    IMMUADMIN_TOKENFILE="/var/lib/immudb"
+
+RUN addgroup --system --gid $IMMU_GID immu && \
+    adduser --system --uid $IMMU_UID --no-create-home --ingroup immu immu && \
+    mkdir -p "$IMMUADMIN_TOKENFILE" && \
+    chown -R immu:immu "$IMMUADMIN_TOKENFILE" && \
+    chmod +x /usr/local/bin/immuadmin
+
+USER immu
+ENTRYPOINT ["/usr/local/bin/immuadmin"]

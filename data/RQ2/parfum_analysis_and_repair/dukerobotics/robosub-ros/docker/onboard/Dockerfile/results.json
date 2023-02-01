@@ -1,0 +1,35 @@
+{
+  "startTime": 1674246080959,
+  "endTime": 1674246082053,
+  "originalSmells": [
+    {
+      "rule": "wgetUseHttpsUrl",
+      "position": {
+        "lineStart": 74,
+        "lineEnd": 74,
+        "columnStart": 4,
+        "columnEnd": 92
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 69,
+        "lineEnd": 69,
+        "columnStart": 4,
+        "columnEnd": 53
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 65,
+        "lineEnd": 65,
+        "columnStart": 4,
+        "columnEnd": 21
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "ARG BASE_IMAGE=dukerobotics/robosub-ros:core\n\n# Multistage build, allows us to store the built pytorch wheel in an image\n# and retrieve it later, since compiling pytorch from source takes 6-12 hrs\nFROM dukerobotics/jetson-pytorch as jetson-pytorch\n\nFROM ${BASE_IMAGE}\n\nARG TARGETPLATFORM\nARG CUDA\n\n### SSH Setup ###\n\n# Set ssh to use port 2200\nRUN echo \"Port 2200\" >> /etc/ssh/sshd_config\n\n### CUDA setup for Jetson ###\n\nCOPY setup_jetson.sh setup_jetson.sh\nRUN ./setup_jetson.sh\n\nENV TMP_PATH ${CUDA:+/usr/local/cuda/bin:}\nENV PATH ${TMP_PATH}${PATH}\nENV NVIDIA_VISIBLE_DEVICES ${CUDA:+all}\nENV NVIDIA_DRIVER_CAPABILITIES ${CUDA:+all}\n\n### Basic Setup ###\n\n# Update and install tools\nRUN apt-get update && apt-get install -y --no-install-recommends \\\n    xauth pciutils \\\n    libusb-dev libqt5x11extras5 \\\n    unzip zip util-linux \\\n    ros-noetic-tf \\ \n    ros-noetic-robot-localization \\\n    ros-noetic-pid \\\n    ros-noetic-rosserial ros-noetic-rosserial-arduino \\\n    python3-pandas && \\\n    apt-get clean && \\\n    # Clear apt caches to reduce image size\n    rm -rf /var/lib/apt/lists/*\n\n# Get required python packages\nRUN pip3 install --no-cache-dir \\\n    numpy==1.20.3 scipy pymba python-dateutil \\\n    pyserial dependency-injector \\ \n    gputil saleae\n\n# Install PyTorch and Torchvision\nCOPY torch_installer.sh torch_deps/torch_installer.sh\nCOPY --from=jetson-pytorch /root/torch-1.8.0a0+5c1479f-cp38-cp38-linux_aarch64.whl torch_deps/torch-1.8.0a0+5c1479f-cp38-cp38-linux_aarch64.whl\nCOPY --from=jetson-pytorch /root/torchvision-0.9.0a0+8fb5838-cp38-cp38-linux_aarch64.whl torch_deps/torchvision-0.9.0a0+8fb5838-cp38-cp38-linux_aarch64.whl\nRUN cd torch_deps && \\\n    ./torch_installer.sh && \\\n    cd ../ && \\\n    rm -rf torch_deps\n\n# Install Detecto\nRUN pip3 install --no-cache-dir detecto\n\n### ROS Plugins and Dependencies ###\n\n# Install Vimba libraries for avt_vimba_camera\nRUN git clone https://github.com/DukeRobotics/camera-driver.git && \\\n    mv camera-driver/$TARGETPLATFORM/Vimba.tgz Vimba.tgz && \\\n    tar -xf Vimba.tgz && \\\n    cd Vimba_4_2/VimbaGigETL && \\\n    ./Install.sh && rm Vimba.tgz\nRUN cd Vimba_4_2/VimbaPython && \\\n    pip3 install --no-cache-dir ./Source[numpy-export,opencv-export]\nRUN rm -rf camera-driver && \\\n    rm Vimba.tgz\n\n# Install Saleae Logic application and add to path\nRUN wget -O \"logic.zip\" \"https://downloads.saleae.com/logic/1.2.18/Logic+1.2.18+(64-bit).zip\" && \\\n    unzip logic.zip && \\\n    mv \"Logic 1.2.18 (64-bit)\" \"Logic\" && \\\n    ln -s /root/docker-build/Logic/Logic /usr/local/bin/Logic\n\n# Install Arduino CLI for Arduino upload script\n# v0.17.0 is required due to issues with adding libraries in the current version v0.18.0\nRUN curl -fsSL https://raw.githubusercontent.com/arduino/arduino-cli/master/install.sh | BINDIR=/usr/local/bin sh -s 0.17.0\n\n# Set ROS_IP to avoid unresolvable hostnames\nCOPY setup_network.bash /opt/ros/noetic/setup_network.bash\nRUN chmod +x /opt/ros/noetic/setup_network.bash\n\n# Set computer type\nENV COMPUTER_TYPE=onboard\nRUN echo \"COMPUTER_TYPE=onboard\" >> /root/.ssh/environment\n\n# Set working directory to codebase\nWORKDIR /root/dev/robosub-ros\n"
+}

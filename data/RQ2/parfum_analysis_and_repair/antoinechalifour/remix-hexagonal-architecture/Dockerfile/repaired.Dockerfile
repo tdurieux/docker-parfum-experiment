@@ -1,0 +1,41 @@
+FROM node:18-slim as builder
+
+# OpenSSL is required to build prisma on M1 Mac
+# (See https://github.com/prisma/prisma/issues/861#issuecomment-881992292)
+RUN apt-get update
+RUN apt-get install --no-install-recommends -y openssl && rm -rf /var/lib/apt/lists/*;
+WORKDIR /usr/src/app
+
+COPY package.json yarn.lock ./
+RUN yarn install && yarn cache clean;
+
+COPY . .
+
+RUN yarn prisma:setup
+RUN yarn build
+
+FROM node:18-slim as runner
+RUN apt-get update
+RUN apt-get install --no-install-recommends -y openssl && rm -rf /var/lib/apt/lists/*;
+WORKDIR /usr/src/app
+
+ARG NODE_ENV=production
+ENV NODE_ENV=${NODE_ENV}
+
+COPY package.json yarn.lock ./
+
+RUN yarn install --production && yarn cache clean;
+
+# dev dependnecies are required for generating the prisma client,
+# so we copy the one generated in the builder container
+COPY --from=builder /usr/src/app/node_modules/.prisma ./node_modules/.prisma
+COPY --from=builder /usr/src/app/node_modules/@prisma/client ./node_modules/@prisma/client
+
+# Nest.js build output
+COPY --from=builder /usr/src/app/dist ./dist
+# Remix build output (client)
+COPY --from=builder /usr/src/app/public ./public
+# Remix build output (server)
+COPY --from=builder /usr/src/app/build ./build
+
+CMD ["node", "dist/main"]

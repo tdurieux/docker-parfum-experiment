@@ -1,0 +1,24 @@
+ARG IMAGE=registry.gitlab.com/brndnmtthws-oss/conky
+FROM ${IMAGE}/builder/ubuntu-base:latest
+
+RUN wget -q https://apt.llvm.org/llvm-snapshot.gpg.key \
+  && apt-key add llvm-snapshot.gpg.key \
+  && add-apt-repository 'deb http://apt.llvm.org/focal/ llvm-toolchain-focal-11 main' \
+  && DEBIAN_FRONTEND=noninteractive \
+  apt-get install -qy --no-install-recommends \
+  clang-11 \
+  clang-format-11 \
+  clang-tidy-11 \
+  clang-tools-11 \
+  gcovr \
+  libc++-11-dev \
+  libc++abi-11-dev \
+  lld-11 \
+  lldb-11 \
+  llvm-11 \
+  nodejs \
+  npm \
+  && apt-get clean \
+  && rm -rf /var/lib/apt/lists/* \
+  && npm install -g lcov-summary \
+  && npm cache clean --force

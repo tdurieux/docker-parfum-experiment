@@ -1,0 +1,23 @@
+FROM golang:1-buster as builder
+
+WORKDIR /go/src/github.com/terra-money/mantle
+
+COPY main.go main.go
+COPY indexers indexers
+COPY utils utils
+COPY go.mod go.mod
+COPY go.sum go.sum
+
+RUN apt-get install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/*;
+
+RUN go mod download \
+  && go build main.go
+
+FROM ubuntu:latest
+
+WORKDIR /app
+
+COPY docker/libgo_cosmwasm.so /lib/libgo_cosmwasm.so
+COPY --from=builder /go/src/github.com/terra-money/mantle/main /usr/local/bin/mantle
+
+ENTRYPOINT [ "mantle" ]

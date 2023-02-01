@@ -1,0 +1,62 @@
+#
+#    LEAN Jupyter Docker Container 20190428
+#
+
+# Use base system for cleaning up wayward processes
+ARG LEAN_TAG=latest
+FROM quantconnect/lean:$LEAN_TAG
+
+MAINTAINER QuantConnect <contact@quantconnect.com>
+
+# Install Tini
+RUN if [ "$(uname -m)" = "aarch64" ]; then \
+        tini_binary="tini-arm64"; \
+        tini_sha256="07952557df20bfd2a95f9bef198b445e006171969499a1d361bd9e6f8e5e0e81"; \
+    else \
+        tini_binary="tini-amd64"; \
+        tini_sha256="93dcc18adc78c65a028a84799ecf8ad40c936fdfc5f2a57b1acda5a8117fa82c"; \
+    fi && \
+    wget --quiet -O tini "https://github.com/krallin/tini/releases/download/v0.19.0/${tini_binary}" && \
+    echo "${tini_sha256} *tini" | sha256sum -c - && \
+    mv tini /usr/local/bin/tini && \
+    chmod +x /usr/local/bin/tini
+
+# Install clr-loader for PythonNet
+RUN pip install --no-cache-dir clr-loader==0.1.6
+
+ENV LD_LIBRARY_PATH=/lib/
+
+# Install .NET Interactive to support C# in Jupyter notebooks
+ENV PATH="${PATH}:/root/.dotnet/tools"
+RUN dotnet tool install -g --no-cache --version 1.0.317502 --add-source "https://pkgs.dev.azure.com/dnceng/public/_packaging/dotnet-tools/nuget/v3/index.json" Microsoft.dotnet-interactive && \
+    dotnet interactive jupyter install
+
+# Setting some environment variables
+ENV WORK /Lean/Launcher/bin/Debug/
+ENV PYTHONPATH=${WORK}:${PYTHONPATH}
+
+# Clone Lean; Link Python startup file to profile; Install Lean/PythonToolbox; Remove extra files
+RUN git clone https://github.com/QuantConnect/Lean.git && \
+    mkdir -p /root/.ipython/profile_default/startup/ && \
+    ln -s /Lean/Launcher/bin/Debug/start.py /root/.ipython/profile_default/startup/start.py && \
+    cd Lean/PythonToolbox && python setup.py install \
+    && cd ../.. && rm -irf Lean
+
+RUN find ${WORK} -type f -not -name '*.py*' -not -name '*.xml' -not -name '*.exe.config' -not -name '*.exe' -not -name '*.so' -not -name '*.dll' -not -name '*.ipynb' -not -name '*.csx' -not -name 'QuantConnect.Lean.Launcher.runtimeconfig.json' -not -name 'decimal.py' -delete
+
+#Create initialize script
+RUN echo "if [ ! -d \"${WORK}Notebooks\" ]; then mkdir ${WORK}Notebooks; fi && \
+    if [ ! -f \"${WORK}Notebooks/config.json\" ]; then echo '{ \"data-folder\": \"/home/Data/\", \
+    \"composer-dll-directory\": \"$WORK\", \"algorithm-language\": \"Python\", \
+    \"messaging-handler\": \"QuantConnect.Messaging.Messaging\", \"job-queue-handler\": \"QuantConnect.Queues.JobQueue\", \
+    \"api-handler\": \"QuantConnect.Api.Api\" }' > ${WORK}Notebooks/config.json; fi && \
+    echo \"Starting JupyterLab, access in your browser at localhost:8888\" && \
+    jupyter lab --ip='0.0.0.0' --port=8888 --no-browser --allow-root --notebook-dir=\"Notebooks\" --LabApp.token='' " \
+    > start.sh && echo "from QuantConnect.AlphaStream import *" >> ${WORK}AlgorithmImports.py
+
+RUN chmod -R 777 ${WORK}
+EXPOSE 8888
+WORKDIR $WORK
+
+ENTRYPOINT [ "/usr/local/bin/tini", "--" ]
+CMD ./start.sh

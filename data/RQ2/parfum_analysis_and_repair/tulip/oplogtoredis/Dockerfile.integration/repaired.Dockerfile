@@ -1,0 +1,55 @@
+# expects build context of oplogtoredis
+
+FROM --platform=linux/amd64 golang:1.17.0-buster AS integration_base
+
+ENV GO111MODULE on
+
+RUN apt-get update && apt-get install --no-install-recommends -y gcc git && rm -rf /var/lib/apt/lists/*;
+
+WORKDIR /oplogtoredis
+
+COPY go.mod go.sum ./
+COPY lib ./lib
+COPY integration-tests/helpers ./integration-tests/helpers
+RUN go mod download
+
+WORKDIR /oplogtoredis/integration-tests
+
+
+FROM integration_base AS acceptance
+COPY integration-tests/acceptance/*.go ./acceptance/
+WORKDIR ./acceptance
+RUN go test -c -o /test
+
+FROM integration_base AS fault-injection
+COPY integration-tests/fault-injection/*.go ./fault-injection/
+COPY integration-tests/fault-injection/harness/*.go ./fault-injection/harness/
+WORKDIR ./fault-injection
+RUN go test -c -o /test
+
+FROM integration_base AS meteor
+COPY integration-tests/meteor/*.go ./meteor/
+COPY integration-tests/meteor/harness/*.go ./meteor/harness/
+WORKDIR ./meteor
+RUN go test -c -o /test
+
+FROM integration_base AS performance
+COPY integration-tests/performance/*.go ./performance/
+WORKDIR ./performance
+RUN go test -c -o /test
+RUN go build -o /analyze analyzeBench.go
+
+
+FROM --platform=linux/amd64 debian:buster
+COPY scripts/install-debian-mongo.sh ./install-debian-mongo.sh
+RUN apt-get update && apt-get install --no-install-recommends -y jq netcat && ./install-debian-mongo.sh && rm -rf /var/lib/apt/lists/*;
+RUN mkdir -p /integration/bin
+
+COPY --from=acceptance          /test       /integration/bin/acceptance.test
+COPY --from=fault-injection     /test       /integration/bin/fault-injection.test
+COPY --from=meteor              /test       /integration/bin/meteor.test
+COPY --from=performance         /test       /integration/bin/performance.test
+COPY --from=performance         /analyze    /integration/bin/analyze
+
+COPY ./integration-tests /integration
+COPY ./scripts/wait-for.sh /wait-for.sh

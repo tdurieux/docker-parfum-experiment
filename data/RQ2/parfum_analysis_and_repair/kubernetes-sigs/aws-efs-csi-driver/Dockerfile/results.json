@@ -1,0 +1,53 @@
+{
+  "startTime": 1674221208206,
+  "endTime": 1674221209063,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 53,
+        "lineEnd": 53,
+        "columnStart": 4,
+        "columnEnd": 25
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 37,
+        "lineEnd": 37,
+        "columnStart": 9,
+        "columnEnd": 62
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 39,
+        "lineEnd": 39,
+        "columnStart": 9,
+        "columnEnd": 42
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 43,
+        "lineEnd": 43,
+        "columnStart": 21,
+        "columnEnd": 62
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 50,
+        "lineEnd": 50,
+        "columnStart": 4,
+        "columnEnd": 23
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Copyright 2019 The Kubernetes Authors.\n#\n# Licensed under the Apache License, Version 2.0 (the \"License\");\n# you may not use this file except in compliance with the License.\n# You may obtain a copy of the License at\n#\n#     http://www.apache.org/licenses/LICENSE-2.0\n#\n# Unless required by applicable law or agreed to in writing, software\n# distributed under the License is distributed on an \"AS IS\" BASIS,\n# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.\n# See the License for the specific language governing permissions and\n# limitations under the License.\n\nFROM golang:1.17 as builder\nWORKDIR /go/src/github.com/kubernetes-sigs/aws-efs-csi-driver\n\nARG TARGETOS\nARG TARGETARCH\nRUN echo \"TARGETOS:$TARGETOS, TARGETARCH:$TARGETARCH\"\nRUN echo \"I am running on $(uname -s)/$(uname -m)\"\n\nADD . .\n\n# Default client source is `k8s` which can be overriden with –-build-arg when building the Docker image\nARG client_source=k8s\nENV EFS_CLIENT_SOURCE=$client_source\n\nRUN OS=${TARGETOS} ARCH=${TARGETARCH} make $TARGETOS/$TARGETARCH\n\nFROM amazonlinux:2 as linux-amazon\nRUN yum update -y\n# Install efs-utils from github by default. It can be overriden to `yum` with --build-arg when building the Docker image.\n# If value of `EFSUTILSSOURCE` build arg is overriden with `yum`, docker will install efs-utils from Amazon Linux 2's yum repo.\nARG EFSUTILSSOURCE=github\nRUN if [ \"$EFSUTILSSOURCE\" = \"yum\" ]; \\\n    then \\\n    echo \"Installing efs-utils from Amazon Linux 2 yum repo\" && \\\n         yum -y install amazon-efs-utils-1.31.1-1.amzn2.noarch; rm -rf /var/cache/yum \\\n    else echo \"Installing efs-utils from github using the latest git tag\" && \\\n         yum -y install git rpm-build make && \\\n         git clone https://github.com/aws/efs-utils && \\\n         cd efs-utils && \\\n         git checkout $(git describe --tags $(git rev-list --tags --max-count=1)) && \\\n         make rpm && yum -y install build/amazon-efs-utils*rpm && \\\n         # clean up efs-utils folder after install\n         cd .. && rm -rf efs-utils && \\\n         yum clean all; rm -rf /var/cache/yum \\\n    fi\n\n# Install botocore required by efs-utils for cross account mount\nRUN yum -y install wget && \\\n    wget https://bootstrap.pypa.io/get-pip.py -O /tmp/get-pip.py && \\\n    python3 /tmp/get-pip.py && \\\n    pip3 install --no-cache-dir botocore || /usr/local/bin/pip3 install botocore && \\\n    rm -rf /tmp/get-pip.py && rm -rf /var/cache/yum\n\n# At image build time, static files installed by efs-utils in the config directory, i.e. CAs file, need\n# to be saved in another place so that the other stateful files created at runtime, i.e. private key for\n# client certificate, in the same config directory can be persisted to host with a host path volume.\n# Otherwise creating a host path volume for that directory will clean up everything inside at the first time.\n# Those static files need to be copied back to the config directory when the driver starts up.\nRUN mv /etc/amazon/efs /etc/amazon/efs-static-files\n\nCOPY --from=builder /go/src/github.com/kubernetes-sigs/aws-efs-csi-driver/bin/aws-efs-csi-driver /bin/aws-efs-csi-driver\nCOPY THIRD-PARTY /\n\nENTRYPOINT [\"/bin/aws-efs-csi-driver\"]\n"
+}

@@ -1,0 +1,7 @@
+FROM alpine:3.15
+RUN apk update && apk add --no-cache ca-certificates
+COPY fabio /usr/bin
+ADD fabio.properties /etc/fabio/fabio.properties
+EXPOSE 9998 9999
+ENTRYPOINT ["/usr/bin/fabio"]
+CMD ["-cfg", "/etc/fabio/fabio.properties"]

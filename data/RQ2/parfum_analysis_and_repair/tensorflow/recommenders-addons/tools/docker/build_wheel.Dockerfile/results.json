@@ -1,0 +1,17 @@
+{
+  "startTime": 1674217824308,
+  "endTime": 1674217825010,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 93,
+        "lineEnd": 93,
+        "columnStart": 4,
+        "columnEnd": 53
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "ARG TF_VERSION\nARG PY_VERSION\nARG TF_NEED_CUDA\nARG TF_NAME\nARG HOROVOD_VERSION\nARG BUILD_IMAGE\nFROM ${BUILD_IMAGE} as base_install\n\n# Required for setuptools v50.0.0\n# https://setuptools.readthedocs.io/en/latest/history.html#v50-0-0\n# https://github.com/pypa/setuptools/issues/2352\nENV SETUPTOOLS_USE_DISTUTILS=stdlib\n\n# Fix presented in\n# https://stackoverflow.com/questions/44967202/pip-is-showing-error-lsb-release-a-returned-non-zero-exit-status-1/44967506\nRUN echo \"#! /usr/bin/python2.7\" >> /usr/bin/lsb_release2\nRUN cat /usr/bin/lsb_release >> /usr/bin/lsb_release2\nRUN mv /usr/bin/lsb_release2 /usr/bin/lsb_release\n\nARG PY_VERSION\nRUN ln -sf /usr/local/bin/python$PY_VERSION /usr/bin/python\n\nENV PATH=/dt7/usr/bin:${PATH}\nENV LD_LIBRARY_PATH=/usr/local/lib:${LD_LIBRARY_PATH}\nENV LD_LIBRARY_PATH=/dt7/user/lib64:${LD_LIBRARY_PATH}\nENV LD_LIBRARY_PATH=/dt7/user/lib:${LD_LIBRARY_PATH}\nENV MANPATH=/dt7/user/share/man:${LD_LIBRARY_PATH}\nENV INFOPATH=/dt7/user/share/info\n\nARG TF_VERSION\nARG TF_NAME\nARG HOROVOD_VERSION\n\nRUN python -m pip install --default-timeout=1000 $TF_NAME==$TF_VERSION\n\nCOPY tools/docker/install/install_horovod.sh /install/\nRUN /install/install_horovod.sh $HOROVOD_VERSION\n\nCOPY tools/install_deps/ /install_deps\nRUN python -m pip install -r /install_deps/pytest.txt\n\nCOPY requirements.txt .\nRUN python -m pip install -r requirements.txt\n\nRUN python -m pip install --upgrade protobuf==3.20.0\n\nCOPY ./ /recommenders-addons\nWORKDIR /recommenders-addons\n\n# -------------------------------------------------------------------\nFROM base_install as tfra_gpu_tests\nCMD [\"bash\", \"tools/testing/build_and_run_tests.sh\"]\n\n# -------------------------------------------------------------------\nFROM base_install as make_wheel\nARG NIGHTLY_FLAG\nARG NIGHTLY_TIME\nARG TF_NEED_CUDA\nARG TF_CUDA_VERSION\nARG TF_CUDNN_VERSION\nARG HOROVOD_VERSION\nENV TF_NEED_CUDA=$TF_NEED_CUDA\nENV TF_CUDA_VERSION=$TF_CUDA_VERSION\nENV TF_CUDNN_VERSION=$TF_CUDNN_VERSION\n\nRUN python configure.py\n\nRUN bash tools/testing/build_and_run_tests.sh && \\\n    bazel build \\\n        --noshow_progress \\\n        --noshow_loading_progress \\\n        --verbose_failures \\\n        --test_output=errors \\\n        build_pip_pkg && \\\n    # Package Whl\n    bazel-bin/build_pip_pkg artifacts $NIGHTLY_FLAG\n\nRUN bash tools/releases/tf_auditwheel_patch.sh\nRUN python -m auditwheel repair --plat manylinux2010_x86_64 artifacts/*.whl\nRUN ls -al wheelhouse/\n\n# -------------------------------------------------------------------\n\nFROM python:$PY_VERSION as test_wheel_in_fresh_environment\n\nARG TF_VERSION\nARG TF_NAME\nRUN python -m pip install --default-timeout=1000 $TF_NAME==$TF_VERSION\n\nRUN python -m pip install --upgrade protobuf==3.20.0\n\nCOPY --from=make_wheel /recommenders-addons/wheelhouse/ /recommenders-addons/wheelhouse/\nRUN pip install --no-cache-dir /recommenders-addons/wheelhouse/*.whl\n\nRUN python -c \"import tensorflow_recommenders_addons as tfra; print(tfra.register_all())\"\n\n# -------------------------------------------------------------------\nFROM scratch as output\n\nCOPY --from=test_wheel_in_fresh_environment /recommenders-addons/wheelhouse/ .\n"
+}

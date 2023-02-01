@@ -1,0 +1,26 @@
+{
+  "startTime": 1674255391707,
+  "endTime": 1674255392650,
+  "originalSmells": [
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 35,
+        "lineEnd": 35,
+        "columnStart": 4,
+        "columnEnd": 45
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 32,
+        "lineEnd": 32,
+        "columnStart": 7,
+        "columnEnd": 52
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Copyright 2022 The AI Flow Authors\n#\n# Licensed under the Apache License, Version 2.0 (the \"License\");\n# you may not use this file except in compliance with the License.\n# You may obtain a copy of the License at\n#\n#   http://www.apache.org/licenses/LICENSE-2.0\n#\n# Unless required by applicable law or agreed to in writing,\n# software distributed under the License is distributed on an\n# \"AS IS\" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY\n# KIND, either express or implied.  See the License for the\n# specific language governing permissions and limitations\n# under the License.\nARG ALPINE_VERSION=\"3.12\"\nFROM alpine:${ALPINE_VERSION} AS builder\nSHELL [\"/bin/ash\", \"-e\", \"-x\", \"-c\", \"-o\", \"pipefail\"]\n\nARG PGBOUNCER_VERSION\nARG AIRFLOW_PGBOUNCER_VERSION\n\nARG PGBOUNCER_SHA256=\"a0c13d10148f557e36ff7ed31793abb7a49e1f8b09aa2d4695d1c28fa101fee7\"\n\n# Those are build deps only but still we want the latest versions of those\n# \"Pin versions in apk add\" https://github.com/hadolint/hadolint/wiki/DL3018\n# hadolint ignore=DL3018\nRUN apk --no-cache add make pkgconfig build-base libtool wget gcc g++ libevent-dev libressl-dev c-ares-dev ca-certificates\n# We are not using Dash so we can safely ignore the \"Dash warning\"\n# \"In dash, something is not supported.\" https://github.com/koalaman/shellcheck/wiki/SC2169\n# hadolint ignore=SC2169\nRUN wget --progress=dot:giga \"https://github.com/pgbouncer/pgbouncer/releases/download/pgbouncer_${PGBOUNCER_VERSION//\\./_}/pgbouncer-${PGBOUNCER_VERSION}.tar.gz\" \\\n    && echo \"${PGBOUNCER_SHA256}  pgbouncer-${PGBOUNCER_VERSION}.tar.gz\" | sha256sum -c - \\\n    && tar -xzvf pgbouncer-$PGBOUNCER_VERSION.tar.gz && rm pgbouncer-$PGBOUNCER_VERSION.tar.gz\n\nWORKDIR /pgbouncer-$PGBOUNCER_VERSION\nRUN ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" --prefix=/usr --disable-debug && make && make install \\\n    && mkdir /etc/pgbouncer \\\n    && cp ./etc/pgbouncer.ini /etc/pgbouncer/ \\\n    && touch /etc/pgbouncer/userlist.txt \\\n    && sed -i -e \"s|logfile = |#logfile = |\"  \\\n           -e \"s|pidfile = |#pidfile = |\"  \\\n           -e \"s|listen_addr = .*|listen_addr = 0.0.0.0|\" \\\n           -e \"s|auth_type = .*|auth_type = md5|\" \\\n           /etc/pgbouncer/pgbouncer.ini\n\nFROM alpine:${ALPINE_VERSION}\n\nARG PGBOUNCER_VERSION\nARG AIRFLOW_PGBOUNCER_VERSION\nARG COMMIT_SHA\n\nLABEL org.apache.airflow.component=\"pgbouncer\"\nLABEL org.apache.airflow.pgbouncer.version=\"${PGBOUNCER_VERSION}\"\nLABEL org.apache.airflow.airflow-pgbouncer.version=\"${AIRFLOW_PGBOUNCER_VERSION}\"\nLABEL org.apache.airflow.commit-sha=\"${COMMIT_SHA}\"\nLABEL maintainer=\"Apache Airflow Community <dev@airflow.apache.org>\"\n\n# We want to make sure this one includes latest security fixes.\n# \"Pin versions in apk add\" https://github.com/hadolint/hadolint/wiki/DL3018\n# hadolint ignore=DL3018\nRUN apk --no-cache add libevent libressl c-ares\n\nCOPY --from=builder /etc/pgbouncer /etc/pgbouncer\nCOPY --from=builder /usr/bin/pgbouncer /usr/bin/pgbouncer\n\n# Healthcheck\nHEALTHCHECK --interval=10s --timeout=3s CMD stat /tmp/.s.PGSQL.*\n\nEXPOSE 6432\n\n# pgbouncer can't run as root, so let's drop to 'nobody'\nENTRYPOINT [\"/usr/bin/pgbouncer\", \"-u\", \"nobody\", \"/etc/pgbouncer/pgbouncer.ini\" ]\n"
+}

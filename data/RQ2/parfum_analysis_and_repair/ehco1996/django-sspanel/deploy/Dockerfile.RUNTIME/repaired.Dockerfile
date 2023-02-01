@@ -1,0 +1,20 @@
+# FROM ehco1996/django-sspanel:runtime as base
+# NOTE comment the before line and  uncomment the next line only when bump python version
+FROM python:3.8-alpine as base
+
+LABEL Name=django-sspanel
+
+WORKDIR /tmp
+COPY pyproject.toml poetry.lock /tmp/
+
+RUN pip install --no-cache-dir -U pip
+
+RUN apk add --update --no-cache mariadb-connector-c-dev tzdata \
+	&& apk add --no-cache --virtual .build-deps mariadb-dev libgcc gcc musl-dev libffi-dev libressl-dev make cargo \
+	# TODO workaround start
+	&& pip install --no-cache-dir poetry \
+    && poetry config virtualenvs.create false \
+    && poetry install  --no-dev --no-interaction --no-ansi \
+	# TODO workaround end
+	&& cp /usr/share/zoneinfo/Asia/Shanghai /etc/localtime \
+	&& echo "Asia/Shanghai" > /etc/timezone

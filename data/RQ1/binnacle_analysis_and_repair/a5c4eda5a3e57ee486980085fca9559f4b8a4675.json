@@ -1,0 +1,35 @@
+{
+  "startTime": 1674250470158,
+  "endTime": 1674250470277,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 8,
+        "lineEnd": 8,
+        "columnStart": 2,
+        "columnEnd": 76
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 14,
+        "lineEnd": 18,
+        "columnStart": 2,
+        "columnEnd": 9
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 14,
+        "lineEnd": 18,
+        "columnStart": 2,
+        "columnEnd": 9
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "ARG YDL_VERSION=2019.06.21\nARG FFMPEG_VERSION=4.1.3-2\n\nFROM mwader/static-ffmpeg:$FFMPEG_VERSION AS ffmpeg\n\nFROM golang:1.12-stretch AS youtube-dl\nARG YDL_VERSION\nRUN \\\n  curl -f -L -o /youtube-dl https://yt-dl.org/downloads/$YDL_VERSION/youtube-dl && \\\n  chmod a+x /youtube-dl\n\nFROM golang:1.12-stretch AS ydls-builder\nRUN \\\n  apt-get update -q && \\\n  apt-get install --no-install-recommends -qy \\\n  python \\\n  python-crypto \\\n  rtmpdump \\\n  mplayer && rm -rf /var/lib/apt/lists/*;\n\nCOPY --from=ffmpeg /ffmpeg /ffprobe /usr/local/bin/\nCOPY --from=youtube-dl /youtube-dl /usr/local/bin/\n\nWORKDIR /src\nCOPY go.mod /src\nCOPY cmd /src/cmd\nCOPY internal /src/internal\nCOPY ydls.json /src\nCOPY ydls.json /etc\n\n# hack to conditionally get git commit if possible\nCOPY Dockerfile .git* /src/.git/\nRUN echo $(git describe --always 2>/dev/null || echo nogit) > .GIT_COMMIT\n\nRUN \\\n  CONFIG=/src/ydls.json \\\n  TEST_EXTERNAL=1 \\\n  go test -v -cover -race ./...\n\nRUN \\\n  go install \\\n  -installsuffix netgo \\\n  -tags netgo \\\n  -ldflags \"-X main.gitCommit=$(cat .GIT_COMMIT)\" \\\n  ./cmd/ydls\nRUN \\\n  CONFIG=/etc/ydls.json cmd/ydls/ydls_server_test.sh && \\\n  CONFIG=/etc/ydls.json cmd/ydls/ydls_get_test.sh\n\nFROM alpine:3.10\nLABEL maintainer=\"Mattias Wadman mattias.wadman@gmail.com\"\nENV PORT=8080\nENV LISTEN=:$PORT\nENV CONFIG=/etc/ydls.json\n\nRUN apk add --no-cache \\\n  ca-certificates \\\n  tini \\\n  python \\\n  py2-crypto \\\n  rtmpdump \\\n  mplayer\nCOPY --from=ffmpeg /ffmpeg /ffprobe /usr/local/bin/\nCOPY --from=youtube-dl /youtube-dl /usr/local/bin/\nCOPY --from=ydls-builder /go/bin/ydls /usr/local/bin/\nCOPY entrypoint.sh /usr/local/bin\nCOPY ydls.json $CONFIG\n\n# make sure all binaries work\nRUN \\\n  ffmpeg -version && \\\n  ffprobe -version && \\\n  youtube-dl --version && \\\n  ydls -version\n\nUSER nobody\nEXPOSE $PORT/tcp\nENTRYPOINT [\"/usr/local/bin/entrypoint.sh\"]\n"
+}

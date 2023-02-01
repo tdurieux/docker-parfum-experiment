@@ -1,0 +1,1 @@
+# if node version is changed, also adapt .nvmrc file

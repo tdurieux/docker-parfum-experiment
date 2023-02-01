@@ -1,0 +1,68 @@
+# This builds an Ubuntu image, clones the coreclr github repo and builds it.
+# It then sets up the environment for compiling the New Relic .NET profiler.
+FROM ubuntu:18.04
+
+RUN apt-get update
+RUN apt-get install -y \
+  wget \
+  curl \
+  git \
+  dos2unix \
+  gnupg
+  
+RUN echo "deb http://apt.llvm.org/bionic/ llvm-toolchain-bionic-7 main" | tee /etc/apt/sources.list.d/llvm.list
+RUN wget -O - https://apt.llvm.org/llvm-snapshot.gpg.key | apt-key add -
+RUN apt-get update
+
+# Putting this on it's own line, tzdata is a dependency of one of the packages being installed below
+# and it needs to be told what timezone it is in.  Just use UTC.
+RUN DEBIAN_FRONTEND=noninteractive TZ=Etc/UTC apt-get -y install tzdata
+
+RUN apt-get install -y \
+  cmake llvm-7 clang-7 lldb-7 liblldb-7-dev libunwind8 libunwind8-dev gettext libicu-dev liblttng-ust-dev libcurl4-openssl-dev libssl-dev libnuma-dev libkrb5-dev \
+  libc++-dev \
+  uuid-dev \
+  zlib1g-dev \
+  locales \
+  locales-all
+
+# The CoreCLR build notes say their repos should be pulled into a `git` directory.
+# Not sure how necessary that is.
+RUN mkdir /root/git
+WORKDIR /root/git
+
+RUN git clone --branch release/3.1 https://github.com/dotnet/coreclr.git
+
+# Build CoreCLR with clang 7
+RUN cd /root/git/coreclr; ./build.sh -clang7
+
+# Set up to build the profiler
+RUN ln -sf /usr/bin/clang-7 /usr/bin/cc; ln -sf /usr/bin/clang++-7 /usr/bin/c++
+
+# Install dotnet core 3.1
+RUN wget https://packages.microsoft.com/config/ubuntu/18.04/packages-microsoft-prod.deb -O packages-microsoft-prod.deb && \
+  dpkg -i packages-microsoft-prod.deb && rm packages-microsoft-prod.deb && \
+  apt-get install -y apt-transport-https && apt-get update && apt-get install -y dotnet-sdk-3.1
+
+WORKDIR /root/git
+
+# Environment for running the profiler
+
+ENV CORECLR_ENABLE_PROFILING=1
+ENV CORECLR_PROFILER={36032161-FFC0-4B61-B559-F6C5D41BAE5A}
+ENV CORECLR_PROFILER_PATH=/profiler/libNewRelicProfiler.so
+ENV CORECLR_NEWRELIC_HOME=/agent
+ENV CORECLR_BINARIES=/root/git/coreclr/bin/Product/Linux.x64.Debug
+
+# (Try to) enable CLR logging
+ENV COMPlus_LogEnable=1
+ENV COMPlus_LogToConsole=1
+ENV COMPlus_LogLevel=10
+
+# Install SOS extension
+RUN dotnet tool install -g --version 3.1 dotnet-sos && \
+  /root/.dotnet/tools/dotnet-sos install
+
+# Write a debug.sh script in $CORECLR_BINARIES that runs lldb on a .NET app
+RUN echo 'lldb-7 -o "plugin load libsosplugin.so" -o "process launch -s"  -o "breakpoint set -n LOADLoadLibraryDirect" corerun $CORECLR_BINARIES/bin/Debug/netcoreapp3.1/Linux.x64.Debug.dll' > $CORECLR_BINARIES/debug.sh
+RUN chmod +x $CORECLR_BINARIES/debug.sh

@@ -1,0 +1,54 @@
+{
+  "startTime": 1674220275894,
+  "endTime": 1674220277114,
+  "originalSmells": [
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 94,
+        "lineEnd": 108,
+        "columnStart": 4,
+        "columnEnd": 6
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 32,
+        "lineEnd": 35,
+        "columnStart": 4,
+        "columnEnd": 13
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 94,
+        "lineEnd": 108,
+        "columnStart": 4,
+        "columnEnd": 6
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 93,
+        "lineEnd": 100,
+        "columnStart": 4,
+        "columnEnd": 6
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 93,
+        "lineEnd": 100,
+        "columnStart": 4,
+        "columnEnd": 6
+      }
+    }
+  ],
+  "repairedDockerfile": "# The minimal package dependencies required to run the app in the release image:\n\n# Use the official Ruby 2.7.5 Slim Bullseye image as base:\nFROM ruby:2.7.5-slim-bullseye AS runtime\n\n# We'll set MALLOC_ARENA_MAX for optimization purposes & prevent memory bloat\n# https://www.speedshop.co/2017/12/04/malloc-doubles-ruby-memory.html\nENV MALLOC_ARENA_MAX=\"2\"\n\n# We'll install curl for later dependency package installation steps\nRUN apt-get update \\\n && apt-get install -y --no-install-recommends \\\n    ca-certificates \\\n    curl \\\n    libpq5 \\\n    openssl \\\n    # Required by mimemagic gem:\n    shared-mime-info \\\n    tzdata \\\n && rm -rf /var/lib/apt/lists/*\n\n# Stage 2: development-base ====================================================\n# This stage will contain the minimal dependencies for the rest of the images\n# used to build the project:\n\n# Use the \"runtime\" stage as base:\nFROM runtime AS development-base\n\n# Install the app build system dependency packages - we won't remove the apt\n# lists from this point onward:\nRUN apt-get update \\\n && apt-get install -y --no-install-recommends \\\n    build-essential \\\n    git \\\n    libpq-dev && rm -rf /var/lib/apt/lists/*;\n\n# Receive the developer user's UID and USER:\nARG DEVELOPER_UID=1000\nARG DEVELOPER_USERNAME=you\n\n# Replicate the developer user in the development image:\nRUN addgroup --gid ${DEVELOPER_UID} ${DEVELOPER_USERNAME} \\\n ;  useradd -r -m -u ${DEVELOPER_UID} --gid ${DEVELOPER_UID} \\\n    --shell /bin/bash -c \"Developer User,,,\" ${DEVELOPER_USERNAME}\n\n# Ensure the developer user's home directory and app path are owned by him/her:\n# (A workaround to a side effect of setting WORKDIR before creating the user)\nRUN userhome=$(eval echo ~${DEVELOPER_USERNAME}) \\\n && chown -R ${DEVELOPER_USERNAME}:${DEVELOPER_USERNAME} $userhome \\\n && mkdir -p /workspaces/sepomex \\\n && chown -R ${DEVELOPER_USERNAME}:${DEVELOPER_USERNAME} /workspaces/sepomex\n\n# Add the app's \"bin/\" directory to PATH:\nENV PATH=/workspaces/sepomex/bin:$PATH\n\n# Set the app path as the working directory:\nWORKDIR /workspaces/sepomex\n\n# Change to the developer user:\nUSER ${DEVELOPER_USERNAME}\n\n# Configure bundler to retry downloads 3 times:\nRUN bundle config set --local retry 3\n\n# Configure bundler to use 4 threads to download, build and install:\nRUN bundle config set --local jobs 4\n\n# Stage 3: Testing =============================================================\n# In this stage we'll complete an image with the minimal dependencies required\n# to run the tests in a continuous integration environment.\nFROM development-base AS testing\n\n# Copy the project's Gemfile and Gemfile.lock files:\nCOPY --chown=${DEVELOPER_USERNAME} Gemfile* /workspaces/sepomex/\n\n# Configure bundler to exclude the gems from the \"development\" group when\n# installing, so we get the leanest Docker image possible to run tests:\nRUN bundle config set --local without development\n\n# Install the project gems, excluding the \"development\" group:\nRUN bundle install\n\n# Stage 4: Development =========================================================\n# In this stage we'll add the packages, libraries and tools required in our\n# day-to-day development process.\n\n# Use the \"development-base\" stage as base:\nFROM development-base AS development\n\n# Change to root user to install the development packages:\nUSER root\n\n# Install sudo, along with any other tool required at development phase:\nRUN apt-get install -y --no-install-recommends \\\n\n  bash-completion \\\n\n\n  gpg \\\n  openssh-client \\\n\n  netcat \\\n\n  procps \\\n\n  vim \\\n\n  sudo && rm -rf /var/lib/apt/lists/*;\n\n# Receive the developer username argument again, as ARGS won't persist between\n# stages on non-buildkit builds:\nARG DEVELOPER_USERNAME=you\n\n# Add the developer user to the sudoers list:\nRUN echo \"${DEVELOPER_USERNAME} ALL=(ALL) NOPASSWD:ALL\" | tee \"/etc/sudoers.d/${DEVELOPER_USERNAME}\"\n\n# Persist the bash history between runs\n# - See https://code.visualstudio.com/docs/remote/containers-advanced#_persist-bash-history-between-runs\nRUN SNIPPET=\"export PROMPT_COMMAND='history -a' && export HISTFILE=/command-history/.bash_history\" \\\n && mkdir /command-history \\\n && touch /command-history/.bash_history \\\n && chown -R ${DEVELOPER_USERNAME} /command-history \\\n && echo $SNIPPET >> \"/home/${DEVELOPER_USERNAME}/.bashrc\"\n\n# Create the extensions directories:\nRUN mkdir -p \\\n  /home/${DEVELOPER_USERNAME}/.vscode-server/extensions \\\n  /home/${DEVELOPER_USERNAME}/.vscode-server-insiders/extensions \\\n && chown -R ${DEVELOPER_USERNAME} \\\n  /home/${DEVELOPER_USERNAME}/.vscode-server \\\n  /home/${DEVELOPER_USERNAME}/.vscode-server-insiders\n\n# Change back to the developer user:\nUSER ${DEVELOPER_USERNAME}\n\n# Copy the gems installed in the \"testing\" stage:\nCOPY --from=testing /usr/local/bundle /usr/local/bundle\nCOPY --from=testing /workspaces/sepomex/ /workspaces/sepomex/\n\n# Configure bundler to not exclude any gem group, so we now get all the gems\n# specified in the Gemfile:\nRUN bundle config unset --local without\n\n# Install the full gem list:\nRUN bundle install\n\n# Stage 5: Asset Precompilation ================================================\n# We'll copy the minimal set of files required by rails to precompile the app\n# assets:\nFROM testing AS asset-precompilation\n\n# Receive the developer username argument again, as ARGS won't persist between\n# stages on non-buildkit builds:\nARG DEVELOPER_USERNAME=you\n\n# Copy all the files required for the asset compilation:\nCOPY --chown=${DEVELOPER_USERNAME} vendor /workspaces/sepomex/vendor\nCOPY --chown=${DEVELOPER_USERNAME} app/assets /workspaces/sepomex/app/assets\nCOPY --chown=${DEVELOPER_USERNAME} app/javascript /workspaces/sepomex/app/javascript\nCOPY --chown=${DEVELOPER_USERNAME} bin/rails /workspaces/sepomex/bin/\nCOPY --chown=${DEVELOPER_USERNAME} Rakefile /workspaces/sepomex/\nCOPY --chown=${DEVELOPER_USERNAME} config/initializers/assets.rb /workspaces/sepomex/config/initializers/assets.rb\nCOPY --chown=${DEVELOPER_USERNAME} config/environments/production.rb /workspaces/sepomex/config/environments/production.rb\nCOPY --chown=${DEVELOPER_USERNAME} config/application.rb config/boot.rb config/environment.rb /workspaces/sepomex/config/\n\n# Compile the assets:\nRUN RAILS_ENV=production SECRET_KEY_BASE=10167c7f7654ed02b3557b05b88ece rails assets:precompile\n\n# Stage 6: Builder =============================================================\n# In this stage we'll add the rest of the code, compile assets, and perform a\n# cleanup for the releasable image.\n\n# Use the \"testing\" stage as base:\nFROM testing AS builder\n\n# Receive the developer username argument again, as ARGS won't persist between\n# stages on non-buildkit builds:\nARG DEVELOPER_USERNAME=you\n\n# Configure bundler to exclude the gems from the \"development\" and \"test\" groups\n# from the installed gemset, which should set them out to remove on cleanup:\nRUN bundle config set --local without development test\n\n# Cleanup the gems excluded from the current configuration. We'll copy the\n# remaining gemset into the deployable image on the next stage:\nRUN bundle clean --force\n\n# Copy the full contents of the project:\nCOPY --chown=${DEVELOPER_USERNAME} . /workspaces/sepomex/\n\n# Copy the precompiled assets:\nCOPY --from=asset-precompilation --chown=${DEVELOPER_USERNAME} /workspaces/sepomex /workspaces/sepomex\n\n# Change to root, before performing the final cleanup:\nUSER root\n\n# Remove unneeded gem cache files (cached *.gem, *.o, *.c):\nRUN rm -rf /usr/local/bundle/cache/*.gem \\\n && find /usr/local/bundle/gems/ -name \"*.c\" -delete \\\n && find /usr/local/bundle/gems/ -name \"*.o\" -delete\n\n# Remove project files not used on release image - be aware that files on git\n# might still be copied to the image, regardless of rules in the .dockerignore\n# file, whenever the image is being built on a Git context.\n# - See https://docs.docker.com/engine/reference/commandline/build/#git-repositories\nRUN rm -rf \\\n    .codeclimate.yml \\\n    .devcontainer \\\n    .dockerignore \\\n    .gitattributes \\\n    .github \\\n    .gitignore \\\n    .reek.yml \\\n    .rspec \\\n    .rubocop.yml \\\n    .simplecov \\\n    .vscode \\\n    Guardfile \\\n    bin/rspec \\\n    bin/dumpdb \\\n    bin/restoredb \\\n    bin/setup \\\n    bin/dev-entrypoint \\\n    ci-compose.yml \\\n    db/dumps \\\n    db/seeds/development.rb \\\n    doc \\\n    docker-compose.yml \\\n    Dockerfile \\\n    log/production.log \\\n    spec \\\n    staging-compose.yml\n\n# Stage 7: Release =============================================================\n# In this stage, we build the final, releasable, deployable Docker image, which\n# should be smaller than the images generated on previous stages:\n\n# Use the \"runtime\" stage as base:\nFROM runtime AS release\n\n# Copy the remaining installed gems from the \"builder\" stage:\nCOPY --from=builder /usr/local/bundle /usr/local/bundle\n\n# Copy the app code and compiled assets from the \"builder\" stage to the\n# final destination at /workspaces/sepomex:\nCOPY --from=builder --chown=nobody:nogroup /workspaces/sepomex /workspaces/sepomex\n\n# Set the container user to 'nobody':\nUSER nobody\n\n# Set the RAILS and PORT default values:\nENV HOME=/workspaces/sepomex \\\n    RAILS_ENV=production \\\n    RAILS_FORCE_SSL=yes \\\n    RAILS_LOG_TO_STDOUT=yes \\\n    RAILS_SERVE_STATIC_FILES=yes \\\n    PORT=3000\n\n# Test if the rails app loads:\nRUN SECRET_KEY_BASE=10167c7f7654ed02b3557b05b88ece rails secret > /dev/null\n\n# Set the installed app directory as the working directory:\nWORKDIR /workspaces/sepomex\n\n# Set the default command:\nCMD [ \"puma\" ]"
+}

@@ -1,0 +1,3 @@
+#FROM alpine@sha256:286be1c7f84de7cbae6cf8aa4e13b3ce2f2512353b3e734336e47e92de4a881e as build
+FROM alpine@sha256:2ed83b97395753366d69f46eb997970baf60fced4cd85932afcfee5ee97d568f as build
+#FROM alpine:3.7 as build

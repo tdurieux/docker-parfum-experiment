@@ -1,0 +1,17 @@
+{
+  "startTime": 1674255933245,
+  "endTime": 1674255934125,
+  "originalSmells": [
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 18,
+        "lineEnd": 18,
+        "columnStart": 4,
+        "columnEnd": 24
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "#\n# Compile\n#\n\nFROM node:10-alpine as vue-build\n\nARG KUBEVIEW_VERSION\n\nRUN apk add --no-cache openssh-client 'git>=2.12.0' 'gnutls>=3.6.7' gnupg gawk socat build-base gcc wget bash curl \\\n    && apk add --no-cache -X http://dl-cdn.alpinelinux.org/alpine/edge/testing git-secret\n\nWORKDIR /build\n\nRUN git clone https://github.com/REBELinBLUE/kubeview.git . && \\\n    git checkout master\n\n# Install all the Vue.js dev tools & CLI, and our app dependencies\nRUN cp web/client/package*.json ./ && \\\n    npm install --silent && npm cache clean --force;\n\n# Copy in the Vue.js app source\nRUN cp web/client/.env.production . && \\\n    cp web/client/.eslintrc.js . && \\\n    cp -R web/client/public ./public && \\\n    cp -R web/client/src ./src\n\n# Run Vue CLI build & bundle, and output to ./dist\nRUN npm run build\n\nFROM golang:1.12-alpine as go-build\n\nARG goPackage=\"github.com/rebelinblue/kubeview/cmd/server\"\nARG version=\"${KUBEVIEW_VERSION}\"\nARG buildInfo=\"Local Docker build\"\n\nCOPY --from=vue-build /build/cmd /build/cmd\nCOPY --from=vue-build /build/go.mod /build\nCOPY --from=vue-build /build/go.sum /build\n\nWORKDIR /build\n\nENV GO111MODULE=on \\\n    CGO_ENABLED=0 \\\n    GOOS=linux \\\n    GOARCH=arm\n\nENV PORT 8000\n\n# Install system dependencies\nRUN apk --no-cache add git gcc musl-dev\n\n# Fetch and cache Go modules\nRUN go mod download\n\n# Now run the build\n# Disabling cgo results in a fully static binary that can run without C libs\n# Also inject version and build details\nRUN GO111MODULE=on CGO_ENABLED=0 GOOS=linux go build \\\n    -ldflags \"-X main.version=$version -X 'main.buildInfo=$buildInfo'\" \\\n    -o server \\\n    $goPackage\n\n#\n# Deploy\n#\n\nFROM scratch\nWORKDIR /app\n\nEXPOSE 8000\n\n# Copy in output from Vue bundle (the dist)\n# Copy the server binary\nCOPY --from=vue-build /build/dist ./frontend\nCOPY --from=go-build /build/server .\n\n# That's it! Just run the server with incluster mode enabled\nENV IN_CLUSTER=true\nCMD [ \"./server\"]\n"
+}

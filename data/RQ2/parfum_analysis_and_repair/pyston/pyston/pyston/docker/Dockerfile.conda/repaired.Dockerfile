@@ -1,0 +1,19 @@
+FROM debian:bullseye-slim
+
+ENV PYSTON_VERSION='2.3.4'
+
+RUN set -eux; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends \
+            ca-certificates \
+            wget \
+        ; \
+    wget https://github.com/pyston/pyston/releases/download/pyston_${PYSTON_VERSION}/PystonConda-${PYSTON_VERSION}-Linux-`uname -m`.sh; \
+    bash PystonConda* -b; \
+    rm PystonConda*; \
+    /root/pystonconda/bin/conda init; \
+    apt-get remove -y wget; \
+    apt-get purge -y --auto-remove -o APT::AutoRemove::RecommendsImportant=false; \
+    rm -rf /var/lib/apt/lists/*
+
+CMD ["/root/pystonconda/bin/python3"]

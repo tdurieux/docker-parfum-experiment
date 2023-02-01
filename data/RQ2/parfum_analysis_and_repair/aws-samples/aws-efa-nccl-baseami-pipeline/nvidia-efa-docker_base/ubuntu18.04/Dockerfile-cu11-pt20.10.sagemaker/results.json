@@ -1,0 +1,62 @@
+{
+  "startTime": 1674250784758,
+  "endTime": 1674250785963,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 72,
+        "lineEnd": 72,
+        "columnStart": 7,
+        "columnEnd": 100
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 94,
+        "lineEnd": 98,
+        "columnStart": 7,
+        "columnEnd": 38
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 73,
+        "lineEnd": 73,
+        "columnStart": 7,
+        "columnEnd": 70
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 20,
+        "lineEnd": 39,
+        "columnStart": 4,
+        "columnEnd": 13
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 20,
+        "lineEnd": 39,
+        "columnStart": 4,
+        "columnEnd": 13
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 20,
+        "lineEnd": 39,
+        "columnStart": 4,
+        "columnEnd": 13
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM nvcr.io/nvidia/pytorch:20.10-py3\n\nARG EFA_INSTALLER_VERSION=latest\nARG AWS_OFI_NCCL_VERSION=aws\nARG NCCL_TESTS_VERSION=master\nARG OPEN_MPI_PATH=/opt/amazon/openmpi\nARG PIP_PATH=/opt/conda/bin\n\nRUN apt-get update -y && DEBIAN_FRONTEND=noninteractive apt --no-install-recommends install -y --allow-unauthenticated \\\n    git \\\n    gcc \\\n    vim \\\n    kmod \\\n    openssh-client \\\n    openssh-server \\\n    build-essential \\\n    curl \\\n    autoconf \\\n    libtool \\\n    gdb \\\n    automake \\\n    cmake \\\n    devscripts \\\n    debhelper \\\n    libsubunit-dev \\\n    check \\\n    pkg-config \\\n    apt-utils && \\\n    DEBIAN_FRONTEND=noninteractive apt remove -y python3 && \\\n    DEBIAN_FRONTEND=noninteractive apt autoremove -y && rm -rf /var/lib/apt/lists/*;\nRUN apt-get remove -y --allow-change-held-packages \\\n                      libmlx5-1 ibverbs-utils libibverbs-dev libibverbs1 \\\n                      libnccl2 libnccl-dev python3\nRUN rm -rf /opt/hpcx \\\n    && rm -rf /usr/local/mpi \\\n    && rm -rf /usr/local/ucx \\\n    && rm -f /etc/ld.so.conf.d/hpcx.conf \\\n    && ldconfig\nENV OPAL_PREFIX=\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\nRUN mkdir -p /var/run/sshd && \\\n    sed -i 's/[ #]\\(.*StrictHostKeyChecking \\).*/ \\1no/g' /etc/ssh/ssh_config && \\\n    echo \"    UserKnownHostsFile /dev/null\" >> /etc/ssh/ssh_config && \\\n    sed -i 's/#\\(StrictModes \\).*/\\1no/g' /etc/ssh/sshd_config && \\\n    sed 's@session\\s*required\\s*pam_loginuid.so@session optional pam_loginuid.so@g' -i /etc/pam.d/sshd\n\nRUN rm -rf /root/.ssh/ \\\n && mkdir -p /root/.ssh/ \\\n && ssh-keygen -q -t rsa -N '' -f /root/.ssh/id_rsa \\\n && cp /root/.ssh/id_rsa.pub /root/.ssh/authorized_keys \\\n && printf \"Host *\\n  StrictHostKeyChecking no\\n\" >> /root/.ssh/config\n\nENV LD_LIBRARY_PATH=/usr/local/cuda/extras/CUPTI/lib64:/opt/amazon/openmpi/lib:/opt/nccl/build/lib:/opt/amazon/efa/lib:/opt/aws-ofi-nccl/install/lib:$LD_LIBRARY_PATH\nENV PATH=/opt/amazon/openmpi/bin/:/opt/amazon/efa/bin:/usr/bin:/usr/local/bin:$PATH\n\n#################################################\n## Install NVIDIA GDRCopy\nRUN git clone https://github.com/NVIDIA/gdrcopy.git $HOME/gdrcopy \\\n    && cd $HOME/gdrcopy \\\n    && make lib_install \\\n    && cd $HOME/gdrcopy/tests \\\n    && make \\\n    && mv copylat copybw sanity apiperf /usr/bin/ \\\n    && rm -rf $HOME/gdrcopy\n\n#################################################\n## Install EFA installer\nRUN cd $HOME \\\n    && curl -f -O https://efa-installer.amazonaws.com/aws-efa-installer-${EFA_INSTALLER_VERSION}.tar.gz \\\n    && tar -xf $HOME/aws-efa-installer-${EFA_INSTALLER_VERSION}.tar.gz \\\n    && cd aws-efa-installer \\\n    && ./efa_installer.sh -y -g -d --skip-kmod --skip-limit-conf --no-verify \\\n    && rm -rf $HOME/aws-efa-installer && rm $HOME/aws-efa-installer-${EFA_INSTALLER_VERSION}.tar.gz\n\n###################################################\n## Install NCCL\nRUN git clone https://github.com/NVIDIA/nccl /opt/nccl \\\n    && cd /opt/nccl \\\n    && git checkout v2.12.7-1 \\\n    && make -j src.build CUDA_HOME=/usr/local/cuda \\\n    NVCC_GENCODE=\"-gencode=arch=compute_86,code=sm_86 -gencode=arch=compute_80,code=sm_80 -gencode=arch=compute_75,code=sm_75 -gencode=arch=compute_70,code=sm_70 -gencode=arch=compute_60,code=sm_60\"\n\n###################################################\n## Install AWS-OFI-NCCL plugin\nRUN export OPAL_PREFIX=\"\" \\\n    && git clone https://github.com/aws/aws-ofi-nccl.git /opt/aws-ofi-nccl \\\n    && cd /opt/aws-ofi-nccl \\\n    && env \\\n    && git checkout ${AWS_OFI_NCCL_VERSION} \\\n    && ./autogen.sh \\\n    && ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" --prefix=/opt/aws-ofi-nccl/install \\\n       --with-libfabric=/opt/amazon/efa/ \\\n       --with-cuda=/usr/local/cuda \\\n       --with-nccl=/opt/nccl/build \\\n       --with-mpi=/opt/amazon/openmpi/ \\\n    && make && make install\n\n###################################################\n## Install NCCL-tests\nRUN git clone https://github.com/NVIDIA/nccl-tests.git /opt/nccl-tests \\\n    && cd /opt/nccl-tests \\\n    && git checkout ${NCCL_TESTS_VERSION} \\\n    && make MPI=1 \\\n       MPI_HOME=/opt/amazon/openmpi/ \\\n       CUDA_HOME=/usr/local/cuda \\\n       NCCL_HOME=/opt/nccl/build \\\n       NVCC_GENCODE=\"-gencode=arch=compute_86,code=sm_86 -gencode=arch=compute_80,code=sm_80 -gencode=arch=compute_75,code=sm_75 -gencode=arch=compute_70,code=sm_70 -gencode=arch=compute_60,code=sm_60\"\n\nRUN rm -rf /var/lib/apt/lists/*\nENV LD_PRELOAD=/opt/nccl/build/lib/libnccl.so\n\nRUN echo \"hwloc_base_binding_policy = none\" >> /opt/amazon/openmpi/etc/openmpi-mca-params.conf \\\n && echo \"rmaps_base_mapping_policy = slot\" >> /opt/amazon/openmpi/etc/openmpi-mca-params.conf\n\nRUN ${PIP_PATH}/pip3 install awscli pynvml sagemaker-training mpi4py\n\nRUN mv $OPEN_MPI_PATH/bin/mpirun $OPEN_MPI_PATH/bin/mpirun.real \\\n && echo '#!/bin/bash' > $OPEN_MPI_PATH/bin/mpirun \\\n && echo '/opt/amazon/openmpi/bin/mpirun.real \"$@\"' >> $OPEN_MPI_PATH/bin/mpirun \\\n && chmod a+x $OPEN_MPI_PATH/bin/mpirun\n\nRUN git clone https://github.com/facebookresearch/param.git /workspace/param\nCOPY pytorch_param.py /opt/ml/code/train.py\nENV SAGEMAKER_PROGRAM train.py\n"
+}

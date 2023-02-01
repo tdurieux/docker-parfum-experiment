@@ -1,0 +1,13 @@
+FROM archlinux:latest
+%%%OS%%%
+ENV LANG en_US.UTF-8
+ENV LC_ALL en_US.UTF-8
+ENV CI_NETWORK true
+RUN echo fubar > /etc/machine-id
+RUN sed "s,#en_US.UTF-8,en_US.UTF-8," /etc/locale.gen -i
+RUN echo "LANG=en_US.UTF-8" > /etc/locale.conf
+RUN locale-gen
+RUN pacman -Syu --noconfirm archlinux-keyring
+%%%INSTALL_DEPENDENCIES_COMMAND%%%
+WORKDIR /github/workspace
+CMD ["./contrib/ci/arch.sh"]

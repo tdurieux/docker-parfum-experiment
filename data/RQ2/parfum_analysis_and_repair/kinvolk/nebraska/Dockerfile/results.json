@@ -1,0 +1,26 @@
+{
+  "startTime": 1674252577301,
+  "endTime": 1674252578311,
+  "originalSmells": [
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 40,
+        "lineEnd": 40,
+        "columnStart": 4,
+        "columnEnd": 15
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 51,
+        "lineEnd": 51,
+        "columnStart": 1,
+        "columnEnd": 31
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM golang:1.17 as base-build\n\nARG NEBRASKA_VERSION=\"\"\n\nENV GOPATH=/go \\\n    GOPROXY=https://proxy.golang.org \\\n\tGO111MODULE=on\\\n\tCGO_ENABLED=0\\ \n\tGOOS=linux\n\n# Backend build\nFROM base-build as version-build\nARG NEBRASKA_VERSION=\"\"\n\nWORKDIR /app/\nCOPY ./.git ./.git\nCOPY ./backend ./backend\n\n# We optionally allow to set the version to display for the image.\n# This is mainly used because when copying the source dir, docker will\n# ignore the files we requested it to, and thus produce a \"dirty\" build\n# as git status returns changes (when effectively for the built source\n# there's none).\nENV VERSION=${NEBRASKA_VERSION}\n\nFROM version-build as backend-build\n\n# make version uses the existing VERSION if set, otherwise gets it from git\nRUN export VERSION=`make -f backend/Makefile version | tail -1` && echo \"VERSION:$VERSION\"\n\nWORKDIR /app/backend\n# COPY backend/go.mod backend/go.sum ./\n# RUN go mod download\nCOPY ./backend ./\nRUN make build\n\n# Frontend build\nFROM docker.io/library/node:15 as frontend-install\nWORKDIR /app/frontend\nCOPY frontend/package*.json ./\nRUN npm install && npm cache clean --force;\n\nFROM frontend-install AS frontend-build\nWORKDIR /app/frontend\nCOPY frontend ./\nRUN npm run build\n\n# Final Docker image\nFROM alpine:3.15.0\n\nRUN apk update && \\\n\tapk add --no-cache ca-certificates tzdata\n\nWORKDIR /nebraska\n\nCOPY --from=backend-build /app/backend/bin/nebraska ./\nCOPY --from=frontend-build /app/frontend/build/ ./static/\n\nENV NEBRASKA_DB_URL \"postgres://postgres@postgres:5432/nebraska?sslmode=disable&connect_timeout=10\"\nEXPOSE 8000\n\nUSER nobody\n\nCMD [\"/nebraska/nebraska\", \"-http-static-dir=/nebraska/static\"]\n"
+}

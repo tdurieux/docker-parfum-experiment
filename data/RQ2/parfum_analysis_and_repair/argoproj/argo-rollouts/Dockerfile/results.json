@@ -1,0 +1,54 @@
+{
+  "startTime": 1674219013395,
+  "endTime": 1674219014535,
+  "originalSmells": [
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 31,
+        "lineEnd": 31,
+        "columnStart": 4,
+        "columnEnd": 41
+      }
+    },
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 37,
+        "lineEnd": 37,
+        "columnStart": 4,
+        "columnEnd": 36
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 7,
+        "lineEnd": 9,
+        "columnStart": 22,
+        "columnEnd": 19
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 31,
+        "lineEnd": 31,
+        "columnStart": 45,
+        "columnEnd": 61
+      }
+    },
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 37,
+        "lineEnd": 37,
+        "columnStart": 40,
+        "columnEnd": 56
+      }
+    }
+  ],
+  "repairedDockerfile": "####################################################################################################\n# Builder image\n# Initial stage which pulls prepares build dependencies and CLI tooling we need for our final image\n# Also used as the image in CI jobs so needs all dependencies\n####################################################################################################\nFROM --platform=$BUILDPLATFORM golang:1.17 as builder\n\nRUN apt-get update && apt-get install --no-install-recommends -y \\\n    wget \\\n    ca-certificates && \\\n    apt-get clean && \\\n    rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*\n\n# Install golangci-lint\nRUN curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $(go env GOPATH)/bin v1.44.0 && \\\n    golangci-lint linters\n\nCOPY .golangci.yml ${GOPATH}/src/dummy/.golangci.yml\n\nRUN cd ${GOPATH}/src/dummy && \\\n    touch dummy.go \\\n    golangci-lint run\n\n####################################################################################################\n# UI build stage\n####################################################################################################\nFROM --platform=$BUILDPLATFORM docker.io/library/node:12.18.4 as argo-rollouts-ui\n\nWORKDIR /src\nADD [\"ui/package.json\", \"ui/yarn.lock\", \"./\"]\n\nRUN yarn install --network-timeout 300000 && yarn cache clean;\n\nADD [\"ui/\", \".\"]\n\nARG ARGO_VERSION=latest\nENV ARGO_VERSION=$ARGO_VERSION\nRUN NODE_ENV='production' yarn build && yarn cache clean;\n\n####################################################################################################\n# Rollout Controller Build stage which performs the actual build of argo-rollouts binaries\n####################################################################################################\nFROM --platform=$BUILDPLATFORM golang:1.17 as argo-rollouts-build\n\nWORKDIR /go/src/github.com/argoproj/argo-rollouts\n\n# Copy only go.mod and go.sum files. This way on subsequent docker builds if the\n# dependencies didn't change it won't re-download the dependencies for nothing.\nCOPY go.mod go.sum ./\nRUN go mod download\n\n# Copy UI files for plugin build\nCOPY --from=argo-rollouts-ui /src/dist/app ./ui/dist/app\n\n# Perform the build\nCOPY . .\n\n# stop make from trying to re-build this without yarn installed\nRUN touch ui/dist/node_modules.marker && \\\n    mkdir -p ui/dist/app && \\\n    touch ui/dist/app/index.html && \\\n    find ui/dist\n\nARG TARGETOS\nARG TARGETARCH\nARG MAKE_TARGET=\"controller plugin\"\nRUN GOOS=$TARGETOS GOARCH=$TARGETARCH make ${MAKE_TARGET}\n\n####################################################################################################\n# Kubectl plugin image\n####################################################################################################\nFROM docker.io/library/ubuntu:20.10 as kubectl-argo-rollouts\n\nCOPY --from=argo-rollouts-build /go/src/github.com/argoproj/argo-rollouts/dist/kubectl-argo-rollouts /bin/kubectl-argo-rollouts\n\nUSER 999\n\nWORKDIR /home/argo-rollouts\n\nENTRYPOINT [\"/bin/kubectl-argo-rollouts\"]\n\nCMD [\"dashboard\"]\n\n####################################################################################################\n# Final image\n####################################################################################################\nFROM scratch\n\nCOPY --from=argo-rollouts-build /go/src/github.com/argoproj/argo-rollouts/dist/rollouts-controller /bin/\nCOPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/\n\n# Use numeric user, allows kubernetes to identify this user as being\n# non-root when we use a security context with runAsNonRoot: true\nUSER 999\n\nWORKDIR /home/argo-rollouts\n\nENTRYPOINT [ \"/bin/rollouts-controller\" ]\n"
+}

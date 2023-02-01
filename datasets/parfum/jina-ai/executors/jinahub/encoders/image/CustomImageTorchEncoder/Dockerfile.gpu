@@ -1,0 +1,12 @@
+FROM jinaai/jina:2-py37-perf
+
+COPY gpu_requirements.txt gpu_requirements.txt
+RUN pip install --no-cache-dir -r gpu_requirements.txt
+
+COPY . /workdir/
+WORKDIR /workdir
+
+# required in order to have a default model for starting the image in CI
+RUN python tests/model/external_model.py
+
+ENTRYPOINT ["jina", "executor", "--uses", "config.yml"]

@@ -1,0 +1,1 @@
+# hhvm docker images only support amd64

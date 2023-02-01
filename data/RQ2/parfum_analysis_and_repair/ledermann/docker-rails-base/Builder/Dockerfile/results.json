@@ -1,0 +1,26 @@
+{
+  "startTime": 1674246070671,
+  "endTime": 1674246071181,
+  "originalSmells": [
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 23,
+        "lineEnd": 23,
+        "columnStart": 4,
+        "columnEnd": 34
+      }
+    },
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 0,
+        "lineEnd": 0,
+        "columnStart": 4,
+        "columnEnd": 16
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM ruby:3.1.2-alpine\nLABEL maintainer=\"georg@ledermann.dev\"\n\n# Add basic packages\nRUN apk add --no-cache \\\n      build-base \\\n      gcompat \\\n      vips-dev \\\n      postgresql-dev \\\n      sqlite-dev \\\n      mariadb-dev \\\n      git \\\n      nodejs \\\n      npm \\\n      yarn \\\n      tzdata \\\n      file\n\nWORKDIR /app\n\n# Install standard Node modules\nCOPY package.json yarn.lock /app/\nRUN yarn install --frozen-lockfile && yarn cache clean;\n\n# Install standard gems\nCOPY Gemfile* /app/\nRUN bundle config --local frozen 1 && \\\n    bundle install -j4 --retry 3\n\n#### ONBUILD: Add triggers to the image, executed later while building a child image\n\n# Install Ruby gems (for production only)\nONBUILD COPY Gemfile* /app/\nONBUILD RUN bundle config --local without 'development test' && \\\n            bundle install -j4 --retry 3 && \\\n            # Remove unneeded gems\n            bundle clean --force && \\\n            # Remove unneeded files from installed gems (cache, *.o, *.c)\n            rm -rf /usr/local/bundle/cache && \\\n            find /usr/local/bundle/gems/ -name \"*.c\" -delete && \\\n            find /usr/local/bundle/gems/ -name \"*.o\" -delete\n\n# Copy the whole application folder into the image\nONBUILD COPY . /app\n\n# Compile assets with Webpacker or Sprockets\n#\n# Notes:\n#   1. Executing \"assets:precompile\" runs \"webpacker:compile\", too\n#   2. For an app using encrypted credentials, Rails raises a `MissingKeyError`\n#      if the master key is missing. Because on CI there is no master key,\n#      we hide the credentials while compiling assets (by renaming them before and after)\n#\nONBUILD RUN mv config/credentials.yml.enc config/credentials.yml.enc.bak 2>/dev/null || true\nONBUILD RUN mv config/credentials config/credentials.bak 2>/dev/null || true\n \\\nRUN yarn install && yarn cache clean; ONBUILD\nONBUILD RUN --mount=type=secret,id=npmrc,dst=/root/.npmrc \\\n            --mount=type=secret,id=yarnrc,dst=/root/.yarnrc.yml \\\n            RAILS_ENV=production \\\n            SECRET_KEY_BASE=dummy \\\n            RAILS_MASTER_KEY=dummy \\\n            bundle exec rails assets:precompile\nONBUILD RUN mv config/credentials.yml.enc.bak config/credentials.yml.enc 2>/dev/null || true\nONBUILD RUN mv config/credentials.bak config/credentials 2>/dev/null || true\n\n# Remove folders not needed in resulting image\n# This includes `app/javascript` which contains the JavaScript source code.\n# Normally it is not needed in the resulting image, because it was compiled\n# to `public/`. But if the app uses importmaps, the folder is still required\n# for pinning and must not be removed.\nONBUILD RUN rm -rf node_modules tmp/cache vendor/bundle test spec app/packs\nONBUILD RUN if [ ! -f config/importmap.rb ]; then rm -rf app/javascript; fi\n"
+}

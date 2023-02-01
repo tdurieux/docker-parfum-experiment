@@ -1,0 +1,81 @@
+{
+  "startTime": 1674236200941,
+  "endTime": 1674236201264,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 8,
+        "lineEnd": 9,
+        "columnStart": 7,
+        "columnEnd": 15
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 10,
+        "lineEnd": 22,
+        "columnStart": 7,
+        "columnEnd": 18
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 52,
+        "lineEnd": 52,
+        "columnStart": 7,
+        "columnEnd": 41
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 52,
+        "lineEnd": 52,
+        "columnStart": 7,
+        "columnEnd": 41
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 8,
+        "lineEnd": 9,
+        "columnStart": 7,
+        "columnEnd": 15
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 10,
+        "lineEnd": 22,
+        "columnStart": 7,
+        "columnEnd": 18
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 52,
+        "lineEnd": 52,
+        "columnStart": 7,
+        "columnEnd": 41
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 52,
+        "lineEnd": 52,
+        "columnStart": 7,
+        "columnEnd": 65
+      }
+    }
+  ],
+  "repairedDockerfile": "FROM phusion/baseimage:0.9.21\nLABEL maintainer \"velaluqa GmbH <info@velalu.qa>\"\n\nENV DEBIAN_FRONTEND noninteractive\nRUN echo \"APT::Install-Recommends 0;\" >> /etc/apt/apt.conf.d/01-no-recommends \\\n    && echo \"APT::Install-Suggests 0;\" >> /etc/apt/apt.conf.d/01-no-recommends\n\nRUN apt-get -q update \\\n    && apt-get install --no-install-recommends -y -q \\\n      apt-utils \\\n    && apt-get install --no-install-recommends -y -q \\\n      wget \\\n      bzip2 \\\n      dovecot-core \\\n      dovecot-imapd \\\n      dovecot-ldap \\\n      dovecot-lmtpd \\\n      dovecot-managesieved \\\n      dovecot-mysql \\\n      dovecot-pop3d \\\n      dovecot-sieve \\\n      iptables \\\n      augeas-tools \\\n    && apt-get clean && rm -rf /var/lib/apt/lists/*;\n\nENV IREDMAIL_VERSION 0.9.6\nARG HOSTNAME=mail\nARG DOMAIN\n\nRUN echo $DOMAIN > /etc/mailname \\\n    && echo $HOSTNAME > /opt/hostname\n\nRUN mv /bin/uname /bin/uname_\nCOPY ./uname /bin/uname\n\nRUN mv /bin/hostname /bin/hostname_\nCOPY ./hostname /bin/hostname\n\nWORKDIR /opt/iredmail\n\nRUN wget -O - https://bitbucket.org/zhb/iredmail/downloads/iRedMail-\"${IREDMAIL_VERSION}\".tar.bz2 | \\\n    tar xvj --strip-components=1 \\\n    && echo \"export DOVECOT_USE_SYSLOG='NO'\" >> /opt/iredmail/conf/dovecot # Requires rsyslog, but phusion/baseimage uses syslog-ng\n\nCOPY ./config ./\n\n# Run iRedMail setup script\n# Start and stop some services for environment setup (e.g. create folders in /var/run)\nRUN sed s/$(hostname_)/$(cat /opt/hostname | xargs echo -n).$(cat /etc/mailname | xargs echo -n)/ /etc/hosts > /tmp/hosts_ \\\n    && cat /tmp/hosts_ > /etc/hosts \\\n    && rm /tmp/hosts_ \\\n    && echo $HOSTNAME > /etc/hostname \\\n    && apt-get install --no-install-recommends mysql-server -y -q \\\n    && service mysql start \\\n    && IREDMAIL_DEBUG='NO' \\\n      CHECK_NEW_IREDMAIL='NO' \\\n      AUTO_USE_EXISTING_CONFIG_FILE=y \\\n      AUTO_INSTALL_WITHOUT_CONFIRM=y \\\n      AUTO_CLEANUP_REMOVE_SENDMAIL=y \\\n      AUTO_CLEANUP_REMOVE_MOD_PYTHON=y \\\n      AUTO_CLEANUP_REPLACE_FIREWALL_RULES=n \\\n      AUTO_CLEANUP_RESTART_IPTABLES=n \\\n      AUTO_CLEANUP_REPLACE_MYSQL_CONFIG=y \\\n      FIRST_DOMAIN=$DOMAIN \\\n      bash iRedMail.sh \\\n    && apt-get clean \\\n    && /usr/lib/php/php7.0-fpm-checkconf \\\n    ; rm -rf /var/lib/apt/lists/*; service clamav-daemon start \\\n    ; service clamav-daemon stop \\\n    ; service amavis start \\\n    ; service amavis stop \\\n    ; service mysql stop \\\n    ; ps aux\n\nWORKDIR /opt\n\n# Update debian system config for mysql\nRUN bash -c \"source iredmail/config \\\n    && sed -i s\\/password\\\\\\\\\\(\\ *\\\\\\\\\\).*\\/password\\\\\\\\1=\\ \\\\\\\"\\$MYSQL_ROOT_PASSWD\\\\\\\"\\/ /etc/mysql/debian.cnf \\\n    && sed -i s\\/user\\\\\\\\\\(\\ *\\\\\\\\\\).*\\/user\\\\\\\\1=\\ root\\/ /etc/mysql/debian.cnf\"\n\nRUN mv /opt/iredmail/iRedMail.tips /opt \\\n    && rm -rf /opt/iredmail /root/.bash_history \\\n    && mv -f /bin/uname_ /bin/uname \\\n    && mv -f /bin/hostname_ /bin/hostname\n\n# Disable SSH and SSH fail2ban\nRUN rm -rf /etc/service/sshd /etc/my_init.d/00_regen_ssh_host_keys.sh \\\n    && wget -qP /usr/share/augeas/lenses/dist https://raw.githubusercontent.com/vynt-kenshiro/augeas-lenses/master/fail2ban.aug \\\n    && echo set /augeas/load/Fail2ban/incl[last\\(\\)+1] /etc/fail2ban/jail.local > /tmp/augscript \\\n    && echo load >> /tmp/augscript \\\n    && echo set /files/etc/fail2ban/jail.local/sshd/enabled false >> /tmp/augscript \\\n    && echo set /files/etc/fail2ban/jail.local/sshd-ddos/enabled false >> /tmp/augscript \\\n    && echo save >> /tmp/augscript \\\n    && augtool -L -f /tmp/augscript \\\n    && rm /tmp/augscript /usr/share/augeas/lenses/dist/fail2ban.aug\n\n# Disable backups\nRUN sed -i '/\\/var\\/vmail\\/backup/d' /var/spool/cron/crontabs/root\n\n# Use one DKIM key for all domains\nRUN sed -i s/^dkim_key\\(\\\"$DOMAIN\\\"/dkim_key\\(\\\"*\\\"/ /etc/amavis/conf.d/50-user\n\n# Bounce banned emails instead of discarding them\nRUN sed -i \"s/=> 'DISCARD'],/=> 'BOUNCE'],/\" /etc/amavis/conf.d/50-user\n\n# Amend config files for runsv compatibility\nRUN sed -i '/^Foreground /c Foreground true' /etc/clamav/clamd.conf \\\n    && sed -i '/init.d/c pkill -sighup clamd' /etc/logrotate.d/clamav-daemon \\\n    && sed -i '/^Foreground /c Foreground true' /etc/clamav/freshclam.conf\n\n# Add syslog-ng configuration for openldap\nRUN echo \"destination d_openldap { file(\\\"/var/log/openldap.log\\\"); };\\n\\\nfilter f_openldap { facility(local4) and not filter(f_debug); };\\n\\\nlog { source(s_src); filter(f_openldap); destination(d_openldap); };\" > /etc/syslog-ng/conf.d/openldap.conf\n\n# Copy runsv files\nADD services/iredapd.sh /etc/service/iredapd/run\nADD services/slapd.sh /etc/service/slapd/run\nADD services/mysql.sh /etc/service/mysql/run\nADD services/nginx.sh /etc/service/nginx/run\nADD services/dovecot.sh /etc/service/dovecot/run\nADD services/php-fpm.sh /etc/service/php-fpm/run\nADD services/postfix.sh /etc/service/postfix/run\nADD services/clamav-daemon.sh /etc/service/clamav-daemon/run\nADD services/amavis.sh /etc/service/amavis/run\nADD services/clamav-freshclam.sh /etc/service/clamav-freshclam/run\nADD services/uwsgi-iredadmin.sh /etc/service/uwsgi-iredadmin/run\nADD services/fail2ban.sh /etc/service/fail2ban/run\n\n"
+}

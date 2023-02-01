@@ -1,0 +1,35 @@
+{
+  "startTime": 1674217204563,
+  "endTime": 1674217205504,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 65,
+        "lineEnd": 66,
+        "columnStart": 7,
+        "columnEnd": 23
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 7,
+        "lineEnd": 15,
+        "columnStart": 22,
+        "columnEnd": 19
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 65,
+        "lineEnd": 66,
+        "columnStart": 7,
+        "columnEnd": 23
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Define a pretty big base build image, with C++ build-time dependencies\nFROM debian:buster-slim AS buildimg\nENV DEBIAN_FRONTEND=noninteractive\n\n# fmt is compiled from source, since buster's versions are slightly off\nENV FMT_VERSION 6.1.2\n\nRUN apt-get update && apt-get install --no-install-recommends -y \\\n    build-essential \\\n    cmake \\\n    pkg-config \\\n    wget \\\n    unzip \\\n    libspdlog-dev \\\n    libmsgpack-dev \\\n    ca-certificates && rm -rf /var/lib/apt/lists/*;\n\nWORKDIR /src\nRUN wget -q https://github.com/fmtlib/fmt/releases/download/${FMT_VERSION}/fmt-${FMT_VERSION}.zip\nRUN unzip fmt-${FMT_VERSION}.zip\n\n# Since this is a docker build, just build the dependencies statically. It\n# makes copying a tad easier, and it makes go happy. This is in no way a\n# requirement though, and oneseismic is perfectly happy to dynamically link.\nWORKDIR /src/fmt-${FMT_VERSION}/build\nRUN cmake \\\n    -DCMAKE_BUILD_TYPE=Release \\\n    -DBUILD_SHARED_LIBS=OFF \\\n    -DFMT_TEST=OFF \\\n    -DCMAKE_INSTALL_PREFIX=/usr/local \\\n    /src/fmt-${FMT_VERSION}\nRUN make -j4 install\n\nFROM buildimg AS cppbuilder\nWORKDIR /src\nCOPY core/ core\n\nWORKDIR /src/build\nRUN cmake \\\n    -DCMAKE_BUILD_TYPE=Release \\\n    -DBUILD_SHARED_LIBS=OFF \\\n    -DBUILD_TESTING=OFF \\\n    -DCMAKE_CXX_FLAGS=-DFMT_HEADER_ONLY=1 \\\n    -DCMAKE_INSTALL_PREFIX=/usr/local \\\n    /src/core\nRUN make -j4 install\n\nFROM golang:1.16-buster as gobuilder\nCOPY --from=cppbuilder /usr/local /usr/local\nENV CGO_CXXFLAGS=\"-std=c++17\"\n\nWORKDIR /src\nCOPY api/go.mod .\nCOPY api/go.sum .\nRUN go mod download\n\nCOPY api api\nWORKDIR /src/api\nRUN go test -race ./...\nRUN go install ./...\n\n# The final image with only the binaries and runtime dependencies\nFROM debian:buster-slim as deployimg\nENV DEBIAN_FRONTEND=noninteractive\nRUN apt-get update \\\n    && apt-get install --no-install-recommends -y \\\n        ca-certificates \\\n    && apt-get clean -y \\\n    && apt-get autoremove -y \\\n    && rm -rf /var/lib/apt/lists && rm -rf /var/lib/apt/lists/*;\n\nCOPY --from=gobuilder /go/bin/query     /bin/oneseismic-query\nCOPY --from=gobuilder /go/bin/result    /bin/oneseismic-result\nCOPY --from=gobuilder /go/bin/fetch     /bin/oneseismic-fetch\nCOPY --from=gobuilder /go/bin/gc        /bin/oneseismic-gc\nCOPY --from=gobuilder /go/bin/catalogue /bin/oneseismic-catalogue\n"
+}

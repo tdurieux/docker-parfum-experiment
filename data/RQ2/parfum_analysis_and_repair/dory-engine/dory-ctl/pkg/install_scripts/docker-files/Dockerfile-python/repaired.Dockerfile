@@ -1,0 +1,6 @@
+FROM {{ $.source }}
+LABEL maintainer="cookeem"
+LABEL email="cookeem@qq.com"
+RUN adduser -u 1000 -D dory && sed -i 's/dl-cdn.alpinelinux.org/mirrors.aliyun.com/g' /etc/apk/repositories && apk --update --no-cache add curl gcc musl-dev
+
+# docker build -t {{ $.source }}-dory -f Dockerfile-python-{{ $.tagName }} .

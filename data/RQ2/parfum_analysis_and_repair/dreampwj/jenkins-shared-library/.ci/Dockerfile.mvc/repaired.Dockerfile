@@ -1,0 +1,35 @@
+# Author: 潘维吉
+# Version 1.0.0
+# Description: 自定义构建Spring MVC项目镜像
+
+# 构建镜像docker build --build-arg PROJECT_NAME=app 或 docker-compose.yaml args参数传入
+ARG JDK_VERSION
+ARG EXPOSE_PORT
+
+# 基础镜像
+FROM tomcat:7.0-jre8
+
+# 设置镜像元数据，利用 docker inspect [镜像名称|镜像ID],即可查看
+#LABEL author="潘维吉"
+
+# 挂载数据卷 docker删除后数据不丢失 docker run -v 映射
+VOLUME /logs
+
+# 指定切换用户
+USER root
+
+# 设置时区
+ENV TZ=Asia/Shanghai
+RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
+
+# 修改tomcat配置  或者 docker run -v /my/tomcat/server.xml:/usr/local/tomcat/conf/server.xml
+# COPY server.xml /usr/local/tomcat/conf/
+
+RUN rm -Rf /usr/local/tomcat/webapps/ROOT*
+# 将部署文件复制到docker内
+COPY  *.war  /usr/local/tomcat/webapps/ROOT.war
+
+# 对外暴露端口
+EXPOSE  $EXPOSE_PORT
+
+# 运行启动命令

@@ -1,0 +1,12 @@
+FROM node:14
+ENV NPM_CONFIG_LOGLEVEL warn
+WORKDIR /usr/src/app
+
+COPY package.json package.json
+COPY yarn.lock yarn.lock
+COPY patches patches
+RUN yarn install --production --ignore-engines --frozen-lockfile && yarn cache clean;
+COPY dist dist
+
+EXPOSE 80
+CMD ["yarn", "start"]

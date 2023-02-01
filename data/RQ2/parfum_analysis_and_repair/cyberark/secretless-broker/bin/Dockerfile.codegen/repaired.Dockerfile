@@ -1,0 +1,11 @@
+FROM golang:1.17
+
+WORKDIR /
+
+ENV GO111MODULE=on
+
+ARG K8S_PKG_TAG
+
+RUN git clone --depth 1 --branch ${K8S_PKG_TAG} https://github.com/kubernetes/code-generator.git
+
+WORKDIR /secretless

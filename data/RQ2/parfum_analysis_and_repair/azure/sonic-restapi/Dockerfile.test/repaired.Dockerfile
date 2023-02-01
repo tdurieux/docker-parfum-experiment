@@ -1,0 +1,63 @@
+FROM debian:buster
+
+## Make apt-get non-interactive
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update \
+ && apt-get install --no-install-recommends -y \
+      vim \
+      redis-server \
+      supervisor \
+      curl \
+      bridge-utils \
+      net-tools \
+      procps \
+      libboost-dev && rm -rf /var/lib/apt/lists/*;
+
+COPY debs /debs
+RUN dpkg -i /debs/libhiredis0.14_0.14.0-3~bpo9+1_amd64.deb \
+ && dpkg -i /debs/libhiredis-dev_0.14.0-3~bpo9+1_amd64.deb \
+ && dpkg -i /debs/libnl-3-200_3.5.0-1_amd64.deb \
+ && dpkg -i /debs/libnl-3-dev_3.5.0-1_amd64.deb \
+ && dpkg -i /debs/libnl-genl-3-200_3.5.0-1_amd64.deb \
+ && dpkg -i /debs/libnl-route-3-200_3.5.0-1_amd64.deb \
+ && dpkg -i /debs/libnl-nf-3-200_3.5.0-1_amd64.deb \
+ && dpkg -i /debs/libswsscommon_1.0.0_amd64.deb \
+ && dpkg -i /debs/libswsscommon-dev_1.0.0_amd64.deb \
+ && dpkg -i /debs/sonic-rest-api_1.0.1_amd64.deb
+RUN rm -fr /debs
+
+# Adjust redis configurations
+RUN sed -ri 's/^(save .*$)/# \1/g;                                                      \
+             s/^daemonize yes$/daemonize no/;                                           \
+             s/^logfile .*$/logfile ""/;                                                \
+             s/^# syslog-enabled no$/syslog-enabled no/;                                \
+             s/^client-output-buffer-limit pubsub [0-9]+mb [0-9]+mb [0-9]+/client-output-buffer-limit pubsub 0 0 0/; \
+             s/^bind 127.0.0.1/bind 0.0.0.0/ \
+            ' /etc/redis/redis.conf
+
+COPY supervisor/redis.conf /etc/supervisor/conf.d/
+COPY supervisor/supervisor.conf /etc/supervisor/conf.d/
+COPY supervisor/rest_api_test.conf /etc/supervisor/conf.d/
+
+COPY start.sh /usr/bin
+
+COPY CreateMockPort.sh /usr/bin
+
+COPY debug/* /usr/bin/
+RUN mkdir /usr/sbin/cert
+RUN mkdir /usr/sbin/cert/client
+RUN mkdir /usr/sbin/cert/server
+COPY cert/client/* /usr/sbin/cert/client/
+COPY cert/server/* /usr/sbin/cert/server/
+COPY files/server_kill.py /usr/bin/server_kill.py
+
+RUN ln -s -f /usr/sbin/cert/client/restapiclient.crt.1 /usr/sbin/cert/client/restapiclient.crt
+RUN ln -s -f /usr/sbin/cert/server/restapiserver.crt.1 /usr/sbin/cert/server/restapiserver.crt
+RUN ln -s -f /usr/sbin/cert/server/restapiserver.key.1 /usr/sbin/cert/server/restapiserver.key
+
+RUN apt-get autoremove -y \
+ && apt-get clean \
+ && rm -fr /var/lib/apt/lists/* /tmp/* /var/tmp/*
+
+ENTRYPOINT ["/usr/bin/supervisord"]

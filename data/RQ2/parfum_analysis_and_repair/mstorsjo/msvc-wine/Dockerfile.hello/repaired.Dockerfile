@@ -1,0 +1,11 @@
+ARG BASE=msvc-wine
+FROM $BASE
+
+COPY hello.c ./
+
+RUN \
+    wineserver -p && \
+    wine64 wineboot && \
+    for arch in x86 x64 arm arm64; do \
+        /opt/msvc/bin/$arch/cl hello.c -Fehello-$arch.exe -DWINAPI_FAMILY=WINAPI_FAMILY_APP || exit 1; \
+    done

@@ -1,0 +1,44 @@
+{
+  "startTime": 1674248422397,
+  "endTime": 1674248423653,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 44,
+        "lineEnd": 44,
+        "columnStart": 4,
+        "columnEnd": 29
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 45,
+        "lineEnd": 45,
+        "columnStart": 4,
+        "columnEnd": 25
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 85,
+        "lineEnd": 85,
+        "columnStart": 4,
+        "columnEnd": 25
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 88,
+        "lineEnd": 93,
+        "columnStart": 4,
+        "columnEnd": 21
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "#\n# firefox Dockerfile\n#\n# https://github.com/jlesage/docker-firefox\n#\n\n# Build the membarrier check tool.\nFROM alpine:3.12\nWORKDIR /tmp\nCOPY membarrier_check.c .\nRUN apk --no-cache add build-base linux-headers\nRUN gcc -static -o membarrier_check membarrier_check.c\nRUN strip membarrier_check\n\n# Pull base image.\nFROM jlesage/baseimage-gui:alpine-3.15-v3.5.8\n\n# Docker image version is provided via build arg.\nARG DOCKER_IMAGE_VERSION=unknown\n\n# Define software versions.\nARG FIREFOX_VERSION=94.0-r0\nARG YAD_VERSION=7.3\nARG JSONLZ4_VERSION=c4305b8\nARG LZ4_VERSION=1.8.1.2\n#ARG PROFILE_CLEANER_VERSION=2.36\n\n# Define software download URLs.\nARG YAD_URL=https://github.com/v1cont/yad/releases/download/v${YAD_VERSION}/yad-${YAD_VERSION}.tar.xz\nARG JSONLZ4_URL=https://github.com/avih/dejsonlz4/archive/${JSONLZ4_VERSION}.tar.gz\nARG LZ4_URL=https://github.com/lz4/lz4/archive/v${LZ4_VERSION}.tar.gz\n#ARG PROFILE_CLEANER_URL=https://github.com/graysky2/profile-cleaner/raw/v${PROFILE_CLEANER_VERSION}/common/profile-cleaner.in\n\n# Define working directory.\nWORKDIR /tmp\n\n# Install JSONLZ4 tools.\nRUN \\\n    add-pkg --virtual build-dependencies \\\n        curl \\\n        build-base \\\n        && \\\n    mkdir jsonlz4 && \\\n    mkdir lz4 && \\\n    curl -f -# -L {$JSONLZ4_URL} | tar xz --strip 1 -C jsonlz4 && \\\n    curl -f -# -L {$LZ4_URL} | tar xz --strip 1 -C lz4 && \\\n    mv jsonlz4/src/ref_compress/*.c jsonlz4/src/ && \\\n    cp lz4/lib/lz4.* jsonlz4/src/ && \\\n    cd jsonlz4 && \\\n    gcc -static -Wall -o dejsonlz4 src/dejsonlz4.c src/lz4.c && \\\n    gcc -static -Wall -o jsonlz4 src/jsonlz4.c src/lz4.c && \\\n    strip dejsonlz4 jsonlz4 && \\\n    cp -v dejsonlz4 /usr/bin/ && \\\n    cp -v jsonlz4 /usr/bin/ && \\\n    cd .. && \\\n    # Cleanup.\n    del-pkg build-dependencies && \\\n    rm -rf /tmp/* /tmp/.[!.]*\n\n# Install Firefox.\nRUN \\\n#    add-pkg --repository http://dl-cdn.alpinelinux.org/alpine/edge/main \\\n#            --repository http://dl-cdn.alpinelinux.org/alpine/edge/community \\\n#            --upgrade firefox=${FIREFOX_VERSION}\n     add-pkg firefox=${FIREFOX_VERSION}\n\n# Install YAD.\n# NOTE: YAD is compiled manually because the version on the Alpine repository\n#       pulls too much dependencies.\nRUN \\\n\n    add-pkg --virtual build-dependencies \\\n        build-base \\\n        curl \\\n        intltool \\\n        gtk+3.0-dev \\\n        && \\\n    # Set same default compilation flags as abuild.\n    export CFLAGS=\"-Os -fomit-frame-pointer\" && \\\n    export CXXFLAGS=\"$CFLAGS\" && \\\n    export CPPFLAGS=\"$CFLAGS\" && \\\n    export LDFLAGS=\"-Wl,--as-needed\" && \\\n    # Download.\n    mkdir yad && \\\n    echo \"Downloading YAD package...\" && \\\n    curl -f -# -L ${YAD_URL} | tar xJ --strip 1  -C yad && \\\n    # Compile.\n    cd yad && \\\n    ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" \\\n        --prefix=/usr \\\n        --enable-standalone \\\n        --disable-icon-browser \\\n        --disable-html \\\n        --disable-pfd \\\n        && \\\n    make && make install && \\\n    strip /usr/bin/yad && \\\n    cd .. && \\\n    # Cleanup.\n    del-pkg build-dependencies && \\\n    rm -rf /tmp/* /tmp/.[!.]*\n\n# Install extra packages.\nRUN \\\n    add-pkg \\\n        desktop-file-utils \\\n        adwaita-icon-theme \\\n        ttf-dejavu \\\n        ffmpeg-libs \\\n        # The following package is used to send key presses to the X process.\n        xdotool\n\n# Set default settings.\nRUN \\\n    CFG_FILE=\"$(ls /usr/lib/firefox/browser/defaults/preferences/firefox-branding.js)\" && \\\n    echo '' >> \"$CFG_FILE\" && \\\n    echo '// Default download directory.' >> \"$CFG_FILE\" && \\\n    echo 'pref(\"browser.download.dir\", \"/config/downloads\");' >> \"$CFG_FILE\" && \\\n    echo 'pref(\"browser.download.folderList\", 2);' >> \"$CFG_FILE\"\n\n# Install profile-cleaner.\n#RUN \\\n#    add-pkg --virtual build-dependencies curl && \\\n#    curl -# -L -o /usr/bin/profile-cleaner {$PROFILE_CLEANER_URL} && \\\n#    sed-patch 's/@VERSION@/'${PROFILE_CLEANER_VERSION}'/' /usr/bin/profile-cleaner && \\\n#    chmod +x /usr/bin/profile-cleaner && \\\n#    add-pkg \\\n#        bash \\\n#        file \\\n#        coreutils \\\n#        bc \\\n#        parallel \\\n#        sqlite \\\n#        && \\\n#    # Cleanup.\n#    del-pkg build-dependencies && \\\n#    rm -rf /tmp/* /tmp/.[!.]*\n\n# Enable log monitoring.\nRUN \\\n    sed-patch 's|LOG_FILES=|LOG_FILES=/config/log/firefox/error.log|' /etc/logmonitor/logmonitor.conf && \\\n    sed-patch 's|STATUS_FILES=|STATUS_FILES=/tmp/.firefox_shm_check,/tmp/.firefox_membarrier_check|' /etc/logmonitor/logmonitor.conf\n\n# Adjust the openbox config.\nRUN \\\n    # Maximize only the main window.\n    sed-patch 's/<application type=\"normal\">/<application type=\"normal\" title=\"Mozilla Firefox\">/' \\\n        /etc/xdg/openbox/rc.xml && \\\n    # Make sure the main window is always in the background.\n    sed-patch '/<application type=\"normal\" title=\"Mozilla Firefox\">/a \\    <layer>below</layer>' \\\n        /etc/xdg/openbox/rc.xml\n\n# Generate and install favicons.\nRUN \\\n    APP_ICON_URL=https://github.com/jlesage/docker-templates/raw/master/jlesage/images/firefox-icon.png && \\\n    install_app_icon.sh \"$APP_ICON_URL\"\n\n# Add files.\nCOPY rootfs/ /\nCOPY --from=0 /tmp/membarrier_check /usr/bin/\n\n# Set environment variables.\nENV APP_NAME=\"Firefox\"\n\n# Define mountable directories.\nVOLUME [\"/config\"]\n\n# Metadata.\nLABEL \\\n      org.label-schema.name=\"firefox\" \\\n      org.label-schema.description=\"Docker container for Firefox\" \\\n      org.label-schema.version=\"$DOCKER_IMAGE_VERSION\" \\\n      org.label-schema.vcs-url=\"https://github.com/jlesage/docker-firefox\" \\\n      org.label-schema.schema-version=\"1.0\"\n"
+}

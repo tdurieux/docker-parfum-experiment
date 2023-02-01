@@ -1,0 +1,9 @@
+FROM node:14
+
+RUN yarn global add node-sass@5.0.0 && yarn cache clean;
+RUN mkdir /cache
+WORKDIR /cache
+COPY ./dashboard/package.json .
+COPY ./dashboard/yarn.lock .
+RUN yarn && yarn cache clean;
+ENV PATH=${PATH}:/cache/node_modules/.bin

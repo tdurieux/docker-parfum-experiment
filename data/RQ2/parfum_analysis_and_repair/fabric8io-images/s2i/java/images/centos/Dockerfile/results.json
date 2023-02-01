@@ -1,0 +1,44 @@
+{
+  "startTime": 1674216699143,
+  "endTime": 1674216701781,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 38,
+        "lineEnd": 38,
+        "columnStart": 5,
+        "columnEnd": 100
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 55,
+        "lineEnd": 56,
+        "columnStart": 5,
+        "columnEnd": 57
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 70,
+        "lineEnd": 71,
+        "columnStart": 4,
+        "columnEnd": 36
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 33,
+        "lineEnd": 36,
+        "columnStart": 5,
+        "columnEnd": 31
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM centos:7\n\nARG EXPOSE_PORT=8080\nEXPOSE ${EXPOSE_PORT}\n\nENV JOLOKIA_VERSION=\"1.6.2\" \\\n    PROMETHEUS_JMX_EXPORTER_VERSION=\"0.13.0\" \\\n    PATH=$PATH:\"/usr/local/s2i\" \\\n    AB_JOLOKIA_PASSWORD_RANDOM=\"true\" \\\n    AB_JOLOKIA_AUTH_OPENSHIFT=\"true\" \\\n    JAVA_MAJOR_VERSION=\"8\" \\\n    JAVA_DATA_DIR=\"/deployments/data\"\n\n# Some version information\nLABEL io.fabric8.s2i.version.maven=\"3.5.4\" \\\n      io.fabric8.s2i.version.jolokia=\"1.6.2\" \\\n      io.fabric8.s2i.version.prometheus.jmx_exporter=\"0.13.0\" \\\n      io.k8s.description=\"Platform for building and running plain Java applications (fat-jar and flat classpath)\" \\\n      io.k8s.display-name=\"Java Applications\" \\\n      io.openshift.tags=\"builder,java\" \\\n      io.openshift.s2i.scripts-url=\"image:///usr/local/s2i\" \\\n      io.openshift.s2i.destination=\"/tmp\" \\\n      org.jboss.deployments-dir=\"/deployments\" \\\n      com.redhat.deployments-dir=\"/deployments\" \\\n      com.redhat.dev-mode=\"JAVA_DEBUG:false\" \\\n      com.redhat.dev-mode.port=\"JAVA_DEBUG_PORT:5005\"\n\n# Temporary switch to root\nUSER root\n\n\n# Install Java package & download Maven from Apache\nRUN yum -y update \\\n  && yum install -y --setopt=skip_missing_names_on_install=False \\\n       unzip rsync \\\n       java-1.8.0-openjdk \\\n       java-1.8.0-openjdk-devel \\\n  && yum clean all \\\n  && curl -f https://archive.apache.org/dist/maven/maven-3/3.5.4/binaries/apache-maven-3.5.4-bin.tar.gz | \\\n    tar -xzf - -C /opt \\\n  && ln -s /opt/apache-maven-3.5.4 /opt/maven \\\n  && ln -s /opt/maven/bin/mvn /usr/bin/mvn \\\n  && groupadd -r jboss -g 1000 \\\n  && useradd -u 1000 -r -g jboss -m -d /opt/jboss -s /sbin/nologin -c \"JBoss user\" jboss \\\n  && chmod 755 /opt/jboss && rm -rf /var/cache/yum\n\nENV JAVA_HOME /etc/alternatives/jre\n\n\n# Use /dev/urandom to speed up startups & Add jboss user to the root group\nRUN echo securerandom.source=file:/dev/urandom >> /usr/lib/jvm/java/jre/lib/security/java.security \\\n && usermod -g root -G jboss jboss\n\n# Prometheus JMX exporter agent\n RUN mkdir -p /opt/prometheus/etc \\\n  && curl -f https://repo1.maven.org/maven2/io/prometheus/jmx/jmx_prometheus_javaagent/0.13.0/jmx_prometheus_javaagent-0.13.0.jar \\\n          -o /opt/prometheus/jmx_prometheus_javaagent.jar\n ADD prometheus-opts /opt/prometheus/prometheus-opts\n ADD prometheus-config.yml /opt/prometheus/prometheus-config.yml\n RUN chmod 444 /opt/prometheus/jmx_prometheus_javaagent.jar \\\n  && chmod 444 /opt/prometheus/prometheus-config.yml \\\n  && chmod 755 /opt/prometheus/prometheus-opts \\\n  && chmod 775 /opt/prometheus/etc \\\n  && chgrp root /opt/prometheus/etc\n\nEXPOSE 9779\n\n\n# Jolokia agent\nRUN mkdir -p /opt/jolokia/etc \\\n && curl -f https://repo1.maven.org/maven2/org/jolokia/jolokia-jvm/1.6.2/jolokia-jvm-1.6.2-agent.jar \\\n         -o /opt/jolokia/jolokia.jar\nADD jolokia-opts /opt/jolokia/jolokia-opts\nRUN chmod 444 /opt/jolokia/jolokia.jar \\\n && chmod 755 /opt/jolokia/jolokia-opts \\\n && chmod 775 /opt/jolokia/etc \\\n && chgrp root /opt/jolokia/etc\n\nEXPOSE 8778\n\n# S2I scripts + README\nCOPY s2i /usr/local/s2i\nRUN chmod 755 /usr/local/s2i/*\nADD README.md /usr/local/s2i/usage.txt\n\n# Add run script as /opt/run-java/run-java.sh and make it executable\nCOPY run-java.sh /opt/run-java/\nRUN chmod 755 /opt/run-java/run-java.sh\n\n# Adding run-env.sh to set app dir\nCOPY run-env.sh /opt/run-java/run-env.sh\nRUN chmod 755 /opt/run-java/run-env.sh\n\n\n# Copy licenses\nRUN mkdir -p /opt/fuse/licenses\nCOPY licenses.css /opt/fuse/licenses\nCOPY licenses.xml /opt/fuse/licenses\nCOPY licenses.html /opt/fuse/licenses\nCOPY apache_software_license_version_2.0-apache-2.0.txt /opt/fuse/licenses\n\n\n# Necessary to permit running with a randomised UID\nRUN mkdir -p /deployments/data \\\n && chmod -R \"g+rwX\" /deployments \\\n && chown -R jboss:root /deployments \\\n && chmod -R \"g+rwX\" /opt/jboss \\\n && chown -R jboss:root /opt/jboss \\\n && chmod 664 /etc/passwd\n\n# S2I scripts rely on /opt/jboss as working directory\nWORKDIR /opt/jboss\n\n# S2I requires a numeric, non-0 UID. This is the UID for the jboss user in the base image\nUSER 1000\nRUN mkdir -p /opt/jboss/.m2\nCOPY settings.xml /opt/jboss/.m2/settings.xml\n\n\n# Use the run script as default since we are working as an hybrid image which can be\n# used directly to. (If we were a plain s2i image we would print the usage info here)\nCMD [ \"/usr/local/s2i/run\" ]\n"
+}

@@ -1,0 +1,6 @@
+FROM jsreport/worker
+
+COPY --chown=jsreport:jsreport packages /app/packages
+COPY --chown=jsreport:jsreport packages/worker /app
+
+CMD ["node", "server.js"]

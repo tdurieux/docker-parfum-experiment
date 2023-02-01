@@ -1,0 +1,44 @@
+# specify the base image for builder
+FROM arm64v8/ubuntu:18.04 as builder
+
+# install tools and deps for compilation
+RUN apt-get update \
+  && apt-get install --no-install-recommends -y wget && rm -rf /var/lib/apt/lists/*;
+
+# Create src directory
+WORKDIR /usr/src
+
+# Download and uncompress monero CLI tools
+RUN wget -q https://downloads.getmonero.org/cli/linuxarm8 -O - | tar -zx
+RUN mv monero-*/* .
+
+
+# Download ban list
+RUN wget -q https://gui.xmr.pm/files/block.txt
+
+# specify the base image for monerod
+FROM arm64v8/ubuntu:18.04
+
+# install tools
+RUN apt-get update \
+  && apt-get install --no-install-recommends -y jq torsocks && rm -rf /var/lib/apt/lists/*;
+
+# Create app directory
+WORKDIR /usr/src/app
+
+# Copy entrypoint file
+COPY monerod_entrypoint.sh ./
+
+# Copy binaries from builder
+COPY --from=builder /usr/src/monerod ./
+
+# Copy banlist from builder
+COPY --from=builder /usr/src/block.txt /etc/monerod.banlist
+
+# Expose p2p port and RPC port
+EXPOSE 18080 18081
+
+ENTRYPOINT ["/usr/src/app/monerod_entrypoint.sh"]
+CMD ["/usr/src/app/monerod", "--config-file=/settings/monerod.conf", "--non-interactive"]
+
+

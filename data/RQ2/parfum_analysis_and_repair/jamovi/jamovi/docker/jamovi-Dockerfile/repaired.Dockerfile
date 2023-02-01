@@ -1,0 +1,220 @@
+FROM ubuntu:22.04 AS base
+
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install --no-install-recommends -y \
+    locales && rm -rf /var/lib/apt/lists/*;
+
+RUN sed -i -e 's/# en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/' /etc/locale.gen && \
+    dpkg-reconfigure --frontend=noninteractive locales && \
+    update-locale LANG=en_US.UTF-8
+ENV LANG en_US.UTF-8
+
+
+##### SERVER #####
+
+FROM base AS server
+
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install --no-install-recommends -y \
+    build-essential \
+    python3-dev \
+    python3 \
+    python3-pip \
+    libprotobuf23 \
+    protobuf-compiler \
+    libboost-filesystem-dev \
+    libboost-system-dev \
+    libnanomsg-dev && rm -rf /var/lib/apt/lists/*;
+
+ARG JAMOVI_ROOT=.
+ARG MODS_ROOT=$JAMOVI_ROOT/docker/mods
+
+COPY $JAMOVI_ROOT/docker/requirements.txt $MODS_ROOT/server/requirements.tx[t] /tmp/source/
+RUN python3 -m pip install --trusted-host pypi.python.org -r /tmp/source/requirements.txt
+
+COPY $JAMOVI_ROOT/readstat /tmp/source/readstat
+WORKDIR /tmp/source/readstat
+RUN python3 setup.py install --install-lib=/usr/lib/jamovi/server
+
+COPY $JAMOVI_ROOT/server/ $MODS_ROOT/server/ /tmp/source/server/
+WORKDIR /tmp/source/server
+RUN python3 setup.py install --install-lib=/usr/lib/jamovi/server
+
+COPY $JAMOVI_ROOT/platform/env.conf /usr/lib/jamovi/bin/
+
+####### CLIENT #######
+
+FROM base AS client
+
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install --no-install-recommends -y \
+    nodejs \
+    npm && rm -rf /var/lib/apt/lists/*;
+
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install --no-install-recommends -y \
+    libarchive-zip-perl && rm -rf /var/lib/apt/lists/*; # for crc32
+
+ARG JAMOVI_ROOT=.
+ARG MODS_ROOT=$JAMOVI_ROOT/docker/mods
+
+COPY $JAMOVI_ROOT/client/package.json $MODS_ROOT/client/package.jso[n] /tmp/source/client/
+WORKDIR /tmp/source/client
+
+RUN npm install && npm cache clean --force;
+RUN mkdir -p /usr/lib/jamovi/client
+
+COPY $JAMOVI_ROOT/client/                           /tmp/source/client/
+COPY   $MODS_ROOT/client/                           /tmp/source/client/
+COPY $JAMOVI_ROOT/server/jamovi/server/jamovi.proto /tmp/source/server/jamovi/server/jamovi.proto
+
+# release
+RUN npm run build:release
+RUN cp www/*.js        /usr/lib/jamovi/client
+RUN cp www/*.html      /usr/lib/jamovi/client
+RUN cp www/*.css       /usr/lib/jamovi/client
+RUN cp -r www/assets   /usr/lib/jamovi/client
+RUN cp favicon.ico     /usr/lib/jamovi/client
+
+# debug
+# RUN npm run build
+# RUN cp *.js        /usr/lib/jamovi/client
+# RUN cp *.html      /usr/lib/jamovi/client
+# RUN cp *.css       /usr/lib/jamovi/client
+# RUN cp -r assets   /usr/lib/jamovi/client
+# RUN cp favicon.ico /usr/lib/jamovi/client
+
+##### ENGINE #####
+
+FROM jamovi/jamovi-deps:2.3 AS engine
+
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install --no-install-recommends -y \
+    build-essential \
+    libprotobuf23 \
+    protobuf-compiler \
+    libboost-filesystem-dev \
+    libboost-system-dev \
+    libasio-dev \
+    libprotobuf-dev \
+    libnanomsg-dev && rm -rf /var/lib/apt/lists/*;
+
+ARG JAMOVI_ROOT=.
+
+COPY $JAMOVI_ROOT/engine                            /tmp/source/engine
+COPY $JAMOVI_ROOT/server/jamovi/common              /tmp/source/server/jamovi/common
+COPY $JAMOVI_ROOT/server/jamovi/server/jamovi.proto /tmp/source/server/jamovi/server/jamovi.proto
+
+WORKDIR /tmp/source/engine
+
+RUN bash configure --rhome=/usr/local/lib/R \
+    --base-module-path=/usr/local/lib/R/library \
+    --rpath=/usr/local/lib/R/library/RInside/lib \
+    --rpath=/usr/local/lib/R/lib \
+    CXXFLAGS=-DJAMOVI_ENGINE_SUPPORT_LOCAL_SOCKETS
+RUN make
+RUN DESTDIR=/usr/lib/jamovi make install
+
+
+##### JMV #####
+
+FROM jamovi/jamovi-deps:2.3 AS jmv
+
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install --no-install-recommends -y \
+    nodejs \
+    npm && rm -rf /var/lib/apt/lists/*;
+
+RUN mkdir -p /usr/lib/jamovi
+RUN mkdir -p /usr/lib/jamovi/modules
+RUN mkdir -p /usr/lib/jamovi/client
+RUN mkdir -p /usr/lib/jamovi/bin
+
+ARG JAMOVI_ROOT=.
+
+COPY $JAMOVI_ROOT/version           /usr/lib/jamovi
+COPY $JAMOVI_ROOT/platform/env.conf /usr/lib/jamovi/bin
+COPY $JAMOVI_ROOT/platform/jamovi   /usr/lib/jamovi/bin
+RUN chmod u+x /usr/lib/jamovi/bin/jamovi
+
+COPY $JAMOVI_ROOT/jmvcore /tmp/source/jmvcore
+RUN R CMD INSTALL /tmp/source/jmvcore --library=/usr/local/lib/R/library
+
+COPY $JAMOVI_ROOT/jamovi-compiler /tmp/source/jamovi-compiler
+WORKDIR /tmp/source/jamovi-compiler
+RUN npm install && npm cache clean --force;
+
+COPY $JAMOVI_ROOT/scatr/ /tmp/source/scatr
+WORKDIR /tmp/source/scatr
+RUN node /tmp/source/jamovi-compiler/index.js --install . --to /usr/lib/jamovi/modules --rhome /usr/local/lib/R --rlibs /tmp/source/jmv/build/R4.1.2-linux
+
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install --no-install-recommends -y \
+    git && rm -rf /var/lib/apt/lists/*;
+
+WORKDIR /tmp/source
+RUN git clone https://github.com/raviselker/surveymv.git
+RUN node /tmp/source/jamovi-compiler/index.js --install surveymv --to /usr/lib/jamovi/modules --rhome /usr/local/lib/R --rlibs /tmp/source/jmv/build/R4.1.2-linux
+RUN git clone https://github.com/davidfoxcroft/lsj-data.git /usr/lib/jamovi/modules/lsj-data
+RUN git clone https://github.com/jamovi/r-datasets.git /usr/lib/jamovi/modules/r-datasets
+
+COPY $JAMOVI_ROOT/jmv/ /tmp/source/jmv
+WORKDIR /tmp/source/jmv
+RUN node /tmp/source/jamovi-compiler/index.js --install . --to /usr/lib/jamovi/modules --rhome /usr/local/lib/R --patch-version
+
+
+##### I18N #####
+
+FROM base AS i18n
+
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install --no-install-recommends -y \
+    nodejs \
+    npm && rm -rf /var/lib/apt/lists/*;
+
+RUN mkdir -p /usr/lib/jamovi/i18n/json
+
+ARG JAMOVI_ROOT=.
+
+COPY $JAMOVI_ROOT/i18n /tmp/source/i18n
+WORKDIR /tmp/source/i18n
+RUN npm install && npm cache clean --force;
+RUN node /tmp/source/i18n/index.js --build src --dest /usr/lib/jamovi/i18n/json
+
+
+##### FINAL #####
+
+from base AS jamovi
+
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install --no-install-recommends -y \
+    python3-minimal \
+    python3-pkg-resources \
+    python3-six \
+    python3-protobuf \
+    libnanomsg5 \
+    libboost-filesystem1.74.0 \
+    libprotobuf23 \
+    protobuf-compiler \
+    libicu70 \
+    libgomp1 \
+    libgfortran5 \
+    libcurl3-nss \
+    libpng16-16 \
+    libjpeg9 \
+    libcairo2 \
+    libharfbuzz0b \
+    libfribidi0 \
+    libtiff5 \
+    libreadline8 && rm -rf /var/lib/apt/lists/*;
+
+COPY --from=jmv     /usr/local/lib/R /usr/local/lib/R
+COPY --from=jmv     /usr/lib/jamovi/ /usr/lib/jamovi/
+COPY --from=server  /usr/lib/jamovi/ /usr/lib/jamovi/
+COPY --from=server  /usr/local/lib/python3.10/dist-packages /usr/local/lib/python3.10/dist-packages
+COPY --from=server  /usr/lib/x86_64-linux-gnu/libnanomsg.so /usr/lib/x86_64-linux-gnu/libnanomsg.so
+COPY --from=client  /usr/lib/jamovi/client/ /usr/lib/jamovi/client/
+COPY --from=i18n    /usr/lib/jamovi/i18n/json /usr/lib/jamovi/i18n/json
+COPY --from=engine  /usr/lib/jamovi/bin/jamovi-engine /usr/lib/jamovi/bin/jamovi-engine
+
+ENV LD_LIBRARY_PATH /usr/local/lib/R/lib
+ENV JAMOVI_HOME /usr/lib/jamovi
+ENV PYTHONPATH /usr/lib/jamovi/server
+ENV R_LIBS /usr/local/lib/R/library
+ENV JAMOVI_SESSION_EXPIRES 0
+ENV JAMOVI_ALLOW_ARBITRARY_CODE false
+
+EXPOSE 41337
+ENTRYPOINT ["/bin/sh", "-c"]
+CMD ["/usr/bin/python3 -m jamovi.server 41337 --if=*"]

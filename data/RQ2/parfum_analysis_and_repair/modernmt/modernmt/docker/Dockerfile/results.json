@@ -1,0 +1,35 @@
+{
+  "startTime": 1674251068600,
+  "endTime": 1674251069811,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 9,
+        "lineEnd": 9,
+        "columnStart": 4,
+        "columnEnd": 114
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 9,
+        "lineEnd": 9,
+        "columnStart": 118,
+        "columnEnd": 155
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 26,
+        "lineEnd": 26,
+        "columnStart": 22,
+        "columnEnd": 97
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# ===================================================================================================\n# STAGE: Base stage with CUDA/cuDNN libraries, Java and python\n# ===================================================================================================\nFROM nvidia/cuda:10.1-cudnn7-runtime-ubuntu18.04 AS modernmt-base\n\nARG MMT_VERSION\nRUN : \"${MMT_VERSION:?Build argument needs to be set and non-empty.}\"\n\nRUN apt-get update && apt-get install -y --no-install-recommends locales gcc g++ python3 python3-dev python3-setuptools python3-wheel python3-pip openjdk-8-jdk curl && \\\n    curl -f https://raw.githubusercontent.com/modernmt/modernmt/$MMT_VERSION/requirements.txt > /tmp/requirements.txt && pip3 install --no-cache-dir -r /tmp/requirements.txt && \\\n    locale-gen --purge en_US.UTF-8 && update-locale LANG=en_US.UTF-8 && echo \"LANG=en_US.UTF-8\" >> /etc/environment && \\\n    apt-get clean && rm -rf /root/.cache/pip/ /tmp/* /var/lib/apt/lists/* /var/tmp/*\n\nENV LD_LIBRARY_PATH /usr/local/cuda/lib64\nENV LANG en_US.UTF-8\nENV LANGUAGE en_US.UTF-8\nENV LC_ALL en_US.UTF-8\n\n# ===================================================================================================\n# STAGE: Release builder\n# ===================================================================================================\nFROM modernmt-base AS release-builder\n\nARG MMT_VERSION\n\n# Git clone repository\nRUN apt-get update && apt-get install -y --no-install-recommends git libboost-all-dev cmake maven && \\\n    git clone https://github.com/modernmt/modernmt.git /tmp/mmt && cd /tmp/mmt && git checkout $MMT_VERSION && rm -rf /var/lib/apt/lists/*;\n\nWORKDIR /tmp/mmt\n\n# Compile ModernMT\nRUN python3 setup.py --skip-pip && cd /tmp/mmt/src && mvn clean install && cd /tmp/mmt && \\\n    git log -1 --pretty=oneline > build/modernmt-commit.log\n\n# Cleanup and pack\nRUN find . -name \".?*\" | xargs rm -rf &> /dev/null && rm -rf src test build/include && \\\n    mkdir vendor2 && mv vendor/kafka-* vendor/cassandra-* vendor2/ && rm -rf vendor && mv vendor2 vendor && \\\n    ldd build/bin/* build/lib/* | grep libboost_ | awk '{print $3}' | sort -u | xargs cp -t build/lib/\n\n# ===================================================================================================\n# Main image\n# ===================================================================================================\nFROM modernmt-base\nMAINTAINER Davide Caroselli <davide@modernmt.eu>\n\nCOPY --from=release-builder /tmp/mmt /opt/mmt\n\nENV LD_LIBRARY_PATH ${LD_LIBRARY_PATH}:/opt/mmt/build/lib\nENV MMT_HOME /opt/mmt\n\n# Running configuration\nWORKDIR /opt/mmt\nEXPOSE 8045\n"
+}

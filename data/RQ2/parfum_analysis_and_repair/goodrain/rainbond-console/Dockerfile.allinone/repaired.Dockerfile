@@ -1,0 +1,63 @@
+ARG VERSION=V5.4-dev
+ARG IMAGE_NAMESPACE=rainbond
+
+FROM golang:1.14-stretch as builder
+ARG VERSION=v5.7.1-release
+# ENV GOPROXY=https://goproxy.io
+ENV CGO_ENABLED=1
+ENV GOPATH=/go
+RUN git clone -b ${VERSION} --depth=1 https://github.com/goodrain/cloud-adaptor /go/src/goodrain.com/cloud-adaptor
+WORKDIR /go/src/goodrain.com/cloud-adaptor/
+ARG LDFLAGS
+RUN go build -ldflags "$LDFLAGS" -o /cloud-adaptor $PWD/cmd/cloud-adaptor
+
+FROM ${IMAGE_NAMESPACE}/rainbond-ui:${VERSION}
+ARG VERSION=v5.7.0-release
+ARG RELEASE_DESC=
+
+LABEL author="zengqg@goodrain.com"
+RUN mkdir -p /app/ui /usr/share/zoneinfo/Asia/ && \
+    apt-get update && apt-get install --no-install-recommends -y supervisor && rm -rf /var/lib/apt/lists/* && \
+    wget https://goodrain-pkg.oss-cn-shanghai.aliyuncs.com/pkg/helm && chmod +x helm && mv helm /usr/local/bin/ && \
+    mkdir -p /var/log/supervisor
+
+COPY --from=builder /go/src/goodrain.com/cloud-adaptor/chart /app/chart
+COPY --from=builder /cloud-adaptor /app/cloudadaptor
+ADD . /app/ui
+WORKDIR /app/ui
+RUN chmod +x /app/ui/entrypoint.sh &&  \
+    mv /app/ui/supervisord.conf /etc/supervisor/supervisord.conf && \
+    mv /app/ui/rainbond.conf /etc/supervisor/conf.d/rainbond.conf && \
+    chmod +x /app/cloudadaptor && \
+    mv /dist/index.html /app/ui/www/templates/index.html && \
+    mkdir -p /app/ui/www/static/dists && \
+    cp -a /dist/* /app/ui/www/static/dists/ && \
+    rm -rf /dist \
+    && mkdir -p /app/logs \
+    && mkdir -p /app/data \
+    && mkdir -p /root/.ssh \
+    && python -m pip install --upgrade pip \
+    && pip install --no-cache-dir -r requirements.txt \
+    && python manage.py collectstatic --noinput --ignore weavescope-src --ignore drf-yasg  --ignore rest_framework \
+    && rm -rf /root/.cache \
+    && rm -rf /tmp/* \
+    && rm -rf /app/ui/www/static/www/weavescope
+
+ENV PORT 7070
+ENV IS_OPEN_API=true
+ENV RELEASE_DESC=${RELEASE_DESC}
+ENV HOME_DIR=/app
+# cloud adaptor
+ENV DB_PATH=/app/data/cloudadaptor
+ENV CHART_PATH=/app/chart
+ENV CONFIG_DIR=/app/data/cloudadaptor
+ENV HELM_PATH=/usr/local/bin/helm
+ENV MYSQL_DB=console
+ENV RAINBOND_VERSION=$VERSION
+ENV OPERATOR_VERSION=$VERSION
+
+VOLUME /app/data
+VOLUME /app/logs
+VOLUME /root/.ssh
+
+CMD ["/usr/bin/supervisord"]

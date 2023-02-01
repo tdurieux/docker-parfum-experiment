@@ -1,0 +1,45 @@
+# Python 3.6
+#FROM python:3.6-slim-buster
+
+# Python 3.7
+#FROM python:3.7-slim-buster
+
+# Python 3.8
+FROM python:3.8-slim-buster
+
+RUN apt-get update \
+    # add some packages required for the pip install \
+    && apt-get install --no-install-recommends -y \
+        gcc \
+        zlib1g-dev \
+        libxslt-dev \
+        libxml2-dev \
+        libgl1-mesa-glx \
+        zip \
+        unzip \
+        make \
+    # cleanup package lists, they are not used anymore in this image
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-cache search linux-headers-generic
+
+COPY requirements.txt requirements.txt
+RUN pip install --no-cache-dir --upgrade pip setuptools six \
+        scikit-image \
+        opencv-contrib-python-headless \
+        opencv-python-headless \
+        && pip install --no-cache-dir -r requirements.txt
+
+ENV PORT 8080
+ENV CONCURRENCY 1
+ENV TIMEOUT 600
+ENV PYTHONUNBUFFERED TRUE
+
+# Copy Lithops proxy and lib to the container image.
+ENV APP_HOME /lithops
+WORKDIR $APP_HOME
+
+COPY lithops_codeengine.zip .
+RUN unzip lithops_codeengine.zip
+RUN rm lithops_codeengine.zip
+
+CMD exec gunicorn --bind :$PORT --workers $CONCURRENCY --timeout $TIMEOUT lithopsentry:proxy

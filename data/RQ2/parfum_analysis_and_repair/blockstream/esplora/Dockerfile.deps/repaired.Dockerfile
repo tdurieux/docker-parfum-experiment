@@ -1,0 +1,87 @@
+# Build libwally wasm files. Used for client-side blinding verification on Elements-based chains
+
+FROM greenaddress/wallycore@sha256:d63d222be12f6b2535e1548aa7f21cf649e2230d6c9e01bd518c23eb0bccd46f AS libwally-wasm
+ARG NO_LIQUID
+ENV EXPORTED_FUNCTIONS="['_malloc', '_free', '_wally_init','_wally_asset_value_commitment','_wally_asset_generator_from_bytes']"
+ENV EXTRA_EXPORTED_RUNTIME_METHODS="['getValue', 'ccall']"
+ENV EMCC_OPTIONS="-s MODULARIZE=1 -s EXPORT_NAME=InitWally"
+RUN sh -c '[ -n "$NO_LIQUID" ] && mkdir -p /wally/wally_dist || ( \
+    cd /opt/emsdk && . ./emsdk_env.sh \
+    && git clone --no-checkout https://github.com/elementsproject/libwally-core /wally \
+    && cd /wally && git checkout ea984fc07f4f450b33d4eb78756f25f553e60b44 \
+    && git submodule sync --recursive && git submodule update --init --recursive \
+    && ./tools/build_wasm.sh --enable-elements)'
+
+FROM debian:bullseye@sha256:4d6ab716de467aad58e91b1b720f0badd7478847ec7a18f66027d0f8a329a43c
+SHELL ["/bin/bash", "-c"]
+
+ENV CORE_BUILD_DEPS="autoconf autotools-dev automake libtool pkg-config bsdmainutils build-essential"
+ENV ESPLORA_BUILD_DEPS="clang cmake curl git"
+RUN mkdir -p /srv/explorer \
+ && apt-get -yqq update \
+ && apt-get -yqq upgrade \
+ && apt-get -yqq --no-install-recommends install ${ESPLORA_BUILD_DEPS} tor ${CORE_BUILD_DEPS} && rm -rf /var/lib/apt/lists/*;
+
+
+RUN git clone --quiet --depth 1 --single-branch --branch v0.39.0 https://github.com/nvm-sh/nvm.git /root/.nvm \
+ && rm -rf /root/.nvm/.git \
+ && source /root/.nvm/nvm.sh \
+ && nvm install v17.1.0
+
+# Build core from sources until PR https://github.com/bitcoin/bitcoin/pull/23387 is merged
+ENV CORE_PATCH=contrib/0001-add-support-to-save-fee-estimates-without-shutting-d.patch
+ENV CORE_SRC=/root/bitcoin
+COPY ${CORE_PATCH} /${CORE_PATCH}
+RUN git clone --quiet --depth 1 --branch v22.0 --single-branch --recursive https://github.com/bitcoin/bitcoin.git ${CORE_SRC} \
+ && ( cd ${CORE_SRC} \
+ && git checkout a0988140b71485ad12c3c3a4a9573f7c21b1eff8 \
+ && git apply /${CORE_PATCH} \
+ && (cd depends \
+ && make HOST=x86_64-pc-linux-gnu NO_QT=1 -j $(nproc --all)) \
+ && ./autogen.sh \
+ && CONFIG_SITE=$PWD/depends/x86_64-pc-linux-gnu/share/config.site ./configure --build="$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)" --prefix=/srv/explorer/bitcoin --disable-man --disable-zmq --disable-qt --disable-gui-tests --disable-bench \
+                --enable-experimental-asm --without-utils --enable-util-cli --without-libs --with-daemon --disable-maintainer-mode \
+                --disable-glibc-back-compat --disable-ccache --disable-dependency-tracking --disable-tests --with-gui=no \
+ && make -j $(nproc --all) \
+ && make install -j $(nproc --all) \
+ && strip /srv/explorer/bitcoin/bin/* \
+ && rm -fr ${CORE_SRC} /${CORE_PATCH})
+
+#ENV SHA256SUM_BITCOINCORE=59ebd25dd82a51638b7a6bb914586201e67db67b919b2a1ff08925a7936d1b16
+#ENV VERSION_BITCOINCORE=22.0
+#RUN curl -sL -o bitcoin.tar.gz "https://bitcoincore.org/bin/bitcoin-core-${VERSION_BITCOINCORE}/bitcoin-${VERSION_BITCOINCORE}-x86_64-linux-gnu.tar.gz" \
+# && echo "${SHA256SUM_BITCOINCORE}  bitcoin.tar.gz" | sha256sum --check \
+# && tar xzf bitcoin.tar.gz -C /srv/explorer \
+# && ln -s "/srv/explorer/bitcoin-${VERSION_BITCOINCORE}" /srv/explorer/bitcoin \
+# && rm bitcoin.tar.gz
+
+ENV SHA256SUM_ELEMENTS=3018116794429b77ce0dd7436c2906f8be4eb5d6163b8451c5ce7e7bedad152b
+ENV VERSION_ELEMENTS=0.21.0.2
+RUN curl -f -sL -o elements.tar.gz "https://github.com/ElementsProject/elements/releases/download/elements-${VERSION_ELEMENTS}/elements-elements-${VERSION_ELEMENTS}-x86_64-linux-gnu.tar.gz" \
+ && echo "${SHA256SUM_ELEMENTS}  elements.tar.gz" | sha256sum --check \
+ && tar xzf elements.tar.gz -C /srv/explorer \
+ && ln -s "/srv/explorer/elements-elements-${VERSION_ELEMENTS}" /srv/explorer/liquid \
+ && mv /srv/explorer/liquid/bin/{elementsd,liquidd} \
+ && mv /srv/explorer/liquid/bin/{elements-cli,liquid-cli} \
+ && rm elements.tar.gz
+
+RUN curl https://sh.rustup.rs -sSf | sh -s -- -y --default-toolchain 1.56.1
+RUN source /root/.cargo/env \
+ && mkdir -p /srv/explorer/electrs{,_liquid} \
+ && git clone --no-checkout https://github.com/blockstream/electrs.git \
+ && (cd electrs \
+ && git checkout a808b51d0d9301fa82390b985c57551966001f9b \
+ && cp contrib/popular-scripts.txt /srv/explorer \
+ && cargo install --root /srv/explorer/electrs_bitcoin --locked --path . --features electrum-discovery \
+ && cargo install --root /srv/explorer/electrs_liquid --locked --path . --features electrum-discovery,liquid) \
+ && rm -fr /root/.cargo electrs \
+ && strip /srv/explorer/electrs_*/bin/electrs
+
+
+# cleanup
+RUN apt-get --auto-remove remove -yqq --purge ${ESPLORA_BUILD_DEPS} manpages ${CORE_BUILD_DEPS} \
+ && apt-get clean \
+ && apt-get autoclean \
+ && rm -rf /usr/share/doc* /usr/share/man /usr/share/postgresql/*/man /var/lib/apt/lists/* /var/cache/* /tmp/* /root/.cache /*.deb /root/.cargo
+
+COPY --from=libwally-wasm /wally/wally_dist /srv/wally_wasm

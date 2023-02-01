@@ -1,0 +1,60 @@
+###############################################################################
+# Stage 1: Build
+FROM ruby:3.0.0 as builder
+
+# Install base packages
+RUN apt-get update -qq && \
+    apt-get install --no-install-recommends -y \
+    build-essential \
+    vim \
+    nano \
+    postgresql-client && \
+    rm -rf /var/lib/apt/lists && rm -rf /var/lib/apt/lists/*;
+
+# Set env variables
+ENV BUNDLER_VERSION 2.2.3
+ENV BUNDLE_JOBS 8
+ENV BUNDLE_RETRY 5
+ENV BUNDLE_CACHE_ALL true
+ENV APP_HOME /app
+ENV RAILS_ENV development
+ENV RACK_ENV development
+
+# Set working directory
+WORKDIR $APP_HOME
+
+# Install gems
+COPY Gemfile Gemfile.lock ./
+RUN gem install bundler -v $BUNDLER_VERSION --no-document
+RUN bundle config --global frozen 1 && \
+  bundle install && \
+  rm -rf /usr/local/bundle/cache/*.gem && \
+  find /usr/local/bundle/gems/ -name "*.c" -delete && \
+  find /usr/local/bundle/gems/ -name "*.o" -delete
+
+# Copy app files
+ADD . .
+
+###############################################################################
+# Stage 2: Run
+FROM ruby:3.0.0
+
+ENV RAILS_ENV development
+ENV APP_HOME /app
+
+RUN mkdir -p $APP_HOME
+WORKDIR $APP_HOME
+
+EXPOSE 3000
+
+# Copy necessary data at runtime
+COPY --from=builder /usr/lib /usr/lib
+
+# Copy gems
+COPY --from=builder /usr/local/bundle /usr/local/bundle
+
+# Copy app files
+COPY --from=builder $APP_HOME $APP_HOME
+
+# Default command (overriden if used with this project's docker-compose)
+CMD ["rails", "server", "-b", "0.0.0.0"]

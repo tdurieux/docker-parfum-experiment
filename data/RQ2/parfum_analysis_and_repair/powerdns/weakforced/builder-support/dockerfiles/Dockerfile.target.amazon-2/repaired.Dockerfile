@@ -1,0 +1,11 @@
+# First do the source builds
+@INCLUDE Dockerfile.target.sdist
+
+# This defines the distribution base layer
+# Put only the bare minimum of common commands here, without dev tools
+FROM amazonlinux:2 as dist-base
+RUN amazon-linux-extras install epel -y
+RUN yum install -y clang clang-devel llvm llvm-devel && rm -rf /var/cache/yum
+
+# Do the actual rpm build
+@INCLUDE Dockerfile.rpmbuild

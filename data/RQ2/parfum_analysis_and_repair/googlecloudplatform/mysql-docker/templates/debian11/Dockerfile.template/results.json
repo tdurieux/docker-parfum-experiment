@@ -1,0 +1,99 @@
+{
+  "startTime": 1674218005625,
+  "endTime": 1674218007013,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 76,
+        "lineEnd": 77,
+        "columnStart": 4,
+        "columnEnd": 31
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 8,
+        "lineEnd": 8,
+        "columnStart": 49,
+        "columnEnd": 105
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 16,
+        "lineEnd": 16,
+        "columnStart": 1,
+        "columnEnd": 65
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 37,
+        "lineEnd": 48,
+        "columnStart": 1,
+        "columnEnd": 2
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 76,
+        "lineEnd": 77,
+        "columnStart": 4,
+        "columnEnd": 31
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 76,
+        "lineEnd": 77,
+        "columnStart": 4,
+        "columnEnd": 31
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 8,
+        "lineEnd": 8,
+        "columnStart": 49,
+        "columnEnd": 105
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 16,
+        "lineEnd": 16,
+        "columnStart": 1,
+        "columnEnd": 65
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 37,
+        "lineEnd": 48,
+        "columnStart": 1,
+        "columnEnd": 2
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 76,
+        "lineEnd": 77,
+        "columnStart": 4,
+        "columnEnd": 31
+      }
+    }
+  ],
+  "repairedDockerfile": "{{- $mysql := index .Packages \"mysql\" -}}\n{{- $gosu := index .Packages \"gosu\" -}}\n\nFROM {{ .From }}\n\n# add our user and group first to make sure their IDs get assigned consistently, regardless of whatever dependencies get added\nRUN groupadd -r mysql && useradd -r -g mysql mysql\n\nRUN apt-get --allow-releaseinfo-change update && apt-get install -y --no-install-recommends gnupg dirmngr && rm -rf /var/lib/apt/lists/*\n\n# add gosu for easy step-down from root\n# https://github.com/tianon/gosu/releases\nENV GOSU_VERSION {{ $gosu.Version }}\nRUN set -eux; \\\n\tsavedAptMark=\"$(apt-mark showmanual)\"; \\\n\tapt-get --allow-releaseinfo-change update; \\\n\tapt-get install -y --no-install-recommends ca-certificates wget; \\\n\trm -rf /var/lib/apt/lists/*; \\\n\tdpkgArch=\"$(dpkg --print-architecture | awk -F- '{ print $NF }')\"; \\\n\twget -O /usr/local/bin/gosu \"https://github.com/tianon/gosu/releases/download/$GOSU_VERSION/gosu-$dpkgArch\"; \\\n\twget -O /usr/local/bin/gosu.asc \"https://github.com/tianon/gosu/releases/download/$GOSU_VERSION/gosu-$dpkgArch.asc\"; \\\n\texport GNUPGHOME=\"$(mktemp -d)\"; \\\n\tgpg --batch --keyserver hkps://keys.openpgp.org --recv-keys {{ $gosu.Gpg }}; \\\n\tgpg --batch --verify /usr/local/bin/gosu.asc /usr/local/bin/gosu; \\\n\tgpgconf --kill all; \\\n\trm -rf \"$GNUPGHOME\" /usr/local/bin/gosu.asc; \\\n\tapt-mark auto '.*' > /dev/null; \\\n\t[ -z \"$savedAptMark\" ] || apt-mark manual $savedAptMark > /dev/null; \\\n\tapt-get purge -y --auto-remove -o APT::AutoRemove::RecommendsImportant=false; \\\n\tchmod +x /usr/local/bin/gosu; \\\n\tgosu --version; \\\n\tgosu nobody true\n\nRUN mkdir /docker-entrypoint-initdb.d\n\nRUN set -eux; \\\n\tapt-get --allow-releaseinfo-change update; \\\n\tapt-get install -y --no-install-recommends \\\n    pwgen \\\n\t\topenssl \\\n# FATAL ERROR: please install the following Perl modules before executing /usr/local/mysql/scripts/mysql_install_db:\n# File::Basename\n# File::Copy\n# Sys::Hostname\n# Data::Dumper\n\t\tperl \\\n\t\txz-utils \\\n\t\tzstd \\\n\t; \\\n\trm -rf /var/lib/apt/lists/*\n\nRUN set -eux; \\\n# gpg: key 3A79BD29: public key \"MySQL Release Engineering <mysql-build@oss.oracle.com>\" imported\n\tkey='{{ $mysql.Gpg }}'; \\\n\texport GNUPGHOME=\"$(mktemp -d)\"; \\\n\tgpg --batch --keyserver keyserver.ubuntu.com --recv-keys \"$key\"; \\\n\tmkdir -p /etc/apt/keyrings; \\\n\tgpg --batch --export \"$key\" > /etc/apt/keyrings/mysql.gpg; \\\n\tgpgconf --kill all; \\\n\trm -rf \"$GNUPGHOME\"\n\nENV MYSQL_MAJOR {{ $mysql.Major }}\nENV MYSQL_VERSION {{ $mysql.Version }}-1debian10\nENV C2D_RELEASE {{ $mysql.Version }}\n\nRUN echo \"deb [ signed-by=/etc/apt/keyrings/mysql.gpg ] http://repo.mysql.com/apt/debian/ buster mysql-${MYSQL_MAJOR}\" > /etc/apt/sources.list.d/mysql.list\n\n# the \"/var/lib/mysql\" stuff here is because the mysql-server postinst doesn't have an explicit way to disable the mysql_install_db codepath besides having a database already \"configured\" (ie, stuff in /var/lib/mysql/mysql)\n# also, we set debconf keys to make APT a little quieter\nRUN { \\\n    echo mysql-community-server mysql-community-server/data-dir select ''; \\\n    echo mysql-community-server mysql-community-server/root-pass password ''; \\\n    echo mysql-community-server mysql-community-server/re-root-pass password ''; \\\n    echo mysql-community-server mysql-community-server/remove-test-db select false; \\\n  } | debconf-set-selections \\\n  && apt-get --allow-releaseinfo-change update \\\n\t&& apt-get install --no-install-recommends -y \\\n{{- if eq $mysql.Major \"8.0\" }} && rm -rf /var/lib/apt/lists/*;\n     mysql-community-client=\"${MYSQL_VERSION}\" \\\n\t\t  mysql-community-server-core=\"${MYSQL_VERSION}\" \\\n{{- else }}\n    mysql-server=\"${MYSQL_VERSION}\" \\\n# comment out a few problematic configuration values\n\t&& find /etc/mysql/ -name '*.cnf' -print0 \\\n\t\t| xargs -0 grep -lZE '^(bind-address|log)' \\\n\t\t| xargs -rt -0 sed -Ei 's/^(bind-address|log)/#&/' \\\n# don't reverse lookup hostnames, they are usually another container\n\t&& echo '[mysqld]\\nskip-host-cache\\nskip-name-resolve' > /etc/mysql/conf.d/docker.cnf \\\n{{- end }}\n  && rm -rf /var/lib/apt/lists/* \\\n\t&& rm -rf /var/lib/mysql && mkdir -p /var/lib/mysql /var/run/mysqld \\\n\t&& chown -R mysql:mysql /var/lib/mysql /var/run/mysqld \\\n# ensure that /var/run/mysqld (used for socket and lock files) is writable regardless of the UID our mysqld instance ends up having at runtime\n\t&& chmod 1777 /var/run/mysqld /var/lib/mysql\n\nVOLUME /var/lib/mysql\n\n{{- if eq $mysql.Major \"8.0\" }}\n# Config files\nCOPY config/ /etc/mysql/\n{{- end }}\n\nCOPY docker-entrypoint.sh /usr/local/bin/\nRUN ln -s usr/local/bin/docker-entrypoint.sh /entrypoint.sh  # for backwards compatibility\nENTRYPOINT [\"docker-entrypoint.sh\"]\n\nEXPOSE 3306\nCMD [\"mysqld\"]\n"
+}

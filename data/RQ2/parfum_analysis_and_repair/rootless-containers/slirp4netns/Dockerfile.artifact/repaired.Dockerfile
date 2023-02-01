@@ -1,0 +1,33 @@
+ARG LIBSLIRP_COMMIT=v4.7.0
+ARG UBUNTU_VERSION=22.04
+ARG XX_VERSION=1.1.0
+
+FROM --platform=$BUILDPLATFORM tonistiigi/xx:${XX_VERSION} AS xx
+
+FROM --platform=$BUILDPLATFORM ubuntu:${UBUNTU_VERSION} AS build-libslirp
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install --no-install-recommends -y apt-utils automake autotools-dev make git ninja-build meson && rm -rf /var/lib/apt/lists/*;
+RUN git clone https://git.qemu.org/libslirp.git /libslirp
+WORKDIR /libslirp
+ARG LIBSLIRP_COMMIT
+RUN  git pull && git checkout ${LIBSLIRP_COMMIT}
+COPY --from=xx / /
+ARG TARGETPLATFORM
+RUN xx-apt-get install -y gcc libglib2.0-dev libcap-dev libseccomp-dev
+COPY Dockerfile.artifact.d/meson-cross /meson-cross
+RUN meson_setup_flags="--default-library=both" ; \
+ if xx-info is-cross; then meson_setup_flags="${meson_setup_flags} --cross-file=/meson-cross/$(xx-info) -Dprefix=/usr/local/$(xx-info)"; fi ; \
+ meson setup ${meson_setup_flags} build && ninja -C build install
+
+FROM build-libslirp AS build
+COPY . /src
+WORKDIR /src
+RUN ./autogen.sh && \
+  ./configure --build="$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)" LDFLAGS="-static" --host=$(xx-info) && \
+  make && \
+  $(xx-info)-strip slirp4netns && \
+  xx-verify --static slirp4netns && \
+  cp -a slirp4netns /
+
+FROM scratch
+COPY --from=build /slirp4netns /slirp4netns

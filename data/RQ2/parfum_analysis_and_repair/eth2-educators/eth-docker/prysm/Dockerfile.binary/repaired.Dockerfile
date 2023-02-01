@@ -1,0 +1,71 @@
+ARG DOCKER_TAG
+FROM prysmaticlabs/prysm-beacon-chain:${DOCKER_TAG} as ccsource
+
+FROM debian:bullseye-slim as consensus
+
+#Included here to avoid build-time complaints
+ARG BUILD_TARGET
+
+ARG USER=prysmconsensus
+ARG UID=10002
+
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive TZ=Etc/UTC apt-get install -y --no-install-recommends \
+  ca-certificates curl bash tzdata \
+  && apt-get clean \
+  && rm -rf /var/lib/apt/lists/*
+
+RUN set -eux; \
+        apt-get update; \
+        apt-get install --no-install-recommends -y gosu; \
+        rm -rf /var/lib/apt/lists/*; \
+# verify that the binary works
+        gosu nobody true
+
+# See https://stackoverflow.com/a/55757473/12429735RUN
+RUN adduser \
+    --disabled-password \
+    --gecos "" \
+    --home "/nonexistent" \
+    --shell "/bin/false" \
+    --no-create-home \
+    --uid "${UID}" \
+    "${USER}"
+
+# Create data mount point with permissions
+RUN mkdir -p /var/lib/prysm && chown ${USER}:${USER} /var/lib/prysm && chmod 700 /var/lib/prysm
+
+COPY --from=ccsource /app/cmd/beacon-chain/beacon-chain /usr/local/bin/
+COPY ./docker-entrypoint.sh /usr/local/bin/
+
+USER ${USER}
+
+ENTRYPOINT ["beacon-chain"]
+
+FROM prysmaticlabs/prysm-validator:${DOCKER_TAG} as vcsource
+
+FROM consensus as validator
+
+ARG USER=prysmvalidator
+ARG UID=10000
+USER root
+
+# See https://stackoverflow.com/a/55757473/12429735RUN
+RUN adduser \
+    --disabled-password \
+    --gecos "" \
+    --home "/nonexistent" \
+    --shell "/bin/false" \
+    --no-create-home \
+    --uid "${UID}" \
+    "${USER}"
+
+# Create data mount point with permissions
+RUN mkdir -p /var/lib/prysm && chown ${USER}:${USER} /var/lib/prysm && chmod 700 /var/lib/prysm
+
+COPY --from=vcsource /app/cmd/validator/validator /usr/local/bin/
+COPY ./validator-import.sh /usr/local/bin/
+COPY ./create-wallet.sh /usr/local/bin/
+
+USER ${USER}
+
+ENTRYPOINT ["validator"]

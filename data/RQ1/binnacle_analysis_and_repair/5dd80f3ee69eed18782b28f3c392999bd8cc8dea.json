@@ -1,0 +1,17 @@
+{
+  "startTime": 1674235844620,
+  "endTime": 1674235844690,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 35,
+        "lineEnd": 35,
+        "columnStart": 1,
+        "columnEnd": 96
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Compile from source to Scala\nFROM hseeberger/scala-sbt:8u151-2.12.4-1.0.2 AS compile\n\nWORKDIR /build\n\n# Hack to fetch sbt first. Makes future compilation faster\nCOPY ./project/assembly.sbt /build/project/assembly.sbt\nCOPY ./project/plugins.sbt /build/project/plugins.sbt\nCOPY ./project/build.properties /build/project/build.properties\nRUN touch /build/build.sbt\nRUN sbt assembly\n\n# Fetch the rest of our dependencies\nCOPY ./build.sbt /build/build.sbt\nRUN sbt assembly\n\n# COPY ./scalastyle-config.xml /build/\nCOPY ./routing /build/routing\nCOPY ./fuzzy-clustering /build/fuzzy-clustering\n\nRUN sbt routing/assembly\n\n# Run the assembly, generate the intermediate files (cache, maps)\nFROM openjdk:jre-alpine AS one\n\nWORKDIR /app\n\nCOPY ./onemap/bus-stops-headings.json /app/onemap/bus-stops-headings.json\nCOPY ./onemap/mrt-stations.json /app\nCOPY ./config.properties /app\n\nCOPY --from=compile /build/routing/target/scala-2.11/routing-assembly-*.jar /app/beeline-routing.jar\n\n# Build the SG map cache files\nRUN apk add --no-cache curl && \\\n\tcurl -f https://download.geofabrik.de/asia/malaysia-singapore-brunei-latest.osm.pbf -o /app/SG.pbf && \\\n\tapk del curl\nRUN java -jar /app/beeline-routing.jar initialize-geo\n\n# Rebuild the distance cache if requested\nCOPY ./distances_cache.dat.gz /app/\nARG SKIP_CACHE_UPDATE=1\nRUN if [ \"${SKIP_CACHE_UPDATE}\" = \"\" ]; then java -jar /app/beeline-routing.jar cache; fi\n\n# Final docker image\nFROM openjdk:jre-alpine AS final\n\nWORKDIR /app\n\nCOPY --from=one /app/SG-gh /app/SG-gh\nCOPY --from=one /app/distances_cache.dat.gz /app\n\nCOPY ./onemap/bus-stops-headings.json /app/onemap/bus-stops-headings.json\nCOPY ./onemap/mrt-stations.json /app\nCOPY ./config.properties /app\n\nCOPY --from=compile /build/routing/target/scala-2.11/routing-assembly-*.jar /app/beeline-routing.jar\n\nENV PORT 5000\n\nCMD java -jar /app/beeline-routing.jar\n\n"
+}

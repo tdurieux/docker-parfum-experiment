@@ -1,0 +1,9 @@
+# Base Distro Arg
+ARG OPENJDK8_ALPINE_VERSION
+
+FROM openjdk:$OPENJDK8_ALPINE_VERSION
+
+# Build Args
+ARG APKTOOL_DOWNLOAD_URL
+
+# Content

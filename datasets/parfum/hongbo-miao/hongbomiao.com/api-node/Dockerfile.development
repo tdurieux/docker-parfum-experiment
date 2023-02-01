@@ -1,0 +1,26 @@
+FROM node:16.15.0-alpine AS base
+WORKDIR /usr/src/app
+
+
+FROM base AS web
+COPY ["web/package.json", "web/package-lock.json", "./"]
+RUN npm ci
+
+# https://create-react-app.dev/docs/adding-custom-environment-variables/
+# In create-react-app, when you run 'npm run build' to make a production bundle, it is always equal to 'production'.
+# So using REACT_APP_SERVER_WS_PROTOCOL=ws in .env.production.local.example for development
+COPY web/.env.production.local.example ./.env.production.local
+COPY web ./
+# Skip lint check during react-scripts build
+RUN rm -f ./.eslintrc.js \
+  && npm run build
+
+
+FROM base AS api-node
+COPY ["api-node/package.json", "api-node/package-lock.json", "./"]
+RUN npm ci
+COPY --from=web /usr/src/app/build ./public
+COPY api-node ./
+
+EXPOSE 5000
+CMD ["npm", "run", "dev"]

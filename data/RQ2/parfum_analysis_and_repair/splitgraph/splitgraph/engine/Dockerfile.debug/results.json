@@ -1,0 +1,71 @@
+{
+  "startTime": 1674251404369,
+  "endTime": 1674251405511,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 36,
+        "lineEnd": 36,
+        "columnStart": 4,
+        "columnEnd": 59
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 107,
+        "lineEnd": 107,
+        "columnStart": 4,
+        "columnEnd": 43
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 113,
+        "lineEnd": 113,
+        "columnStart": 4,
+        "columnEnd": 117
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 117,
+        "lineEnd": 117,
+        "columnStart": 4,
+        "columnEnd": 33
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 118,
+        "lineEnd": 118,
+        "columnStart": 4,
+        "columnEnd": 31
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 122,
+        "lineEnd": 122,
+        "columnStart": 4,
+        "columnEnd": 37
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 32,
+        "lineEnd": 35,
+        "columnStart": 4,
+        "columnEnd": 31
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Multistage Dockerfile to build the Splitgraph engine with debugging capabilities.\n# For now does not include MySQL and Mongo FDWs\n# The underlying splitgraph/pg_debug:development image is built via\n# Dockerfile.pg_debug, and the reason for this separation is so that we don't\n# need to rebuild PG on every change in Multicorn/FDW instances.\n\n\n#####\n##### cstore_fdw and multicorn\n#####\n\nFROM splitgraph/pg_debug:development AS builder_cstore_multicorn\nCOPY ./engine/src/cstore_fdw /src/cstore_fdw\nCOPY ./engine/src/Multicorn /src/Multicorn\n\nCOPY ./engine/build_scripts/fdws/multicorn /build\nCOPY ./engine/build_scripts/fdws/cstore_fdw /build\n\nRUN /build/build_cstore_fdw.sh\nRUN /build/build_multicorn.sh\n\n#####\n##### splitgraph/engine\n#####\n\nFROM splitgraph/pg_debug:development\n\n# We still have to install some runtime libraries here, but no dev.\n\nRUN apt-get update -qq && \\\n    apt-get install --no-install-recommends -y \\\n        libprotobuf-c1 \\\n        libpython3.7 \\\n        postgresql-plpython3-12 && \\\n    curl -f https://bootstrap.pypa.io/get-pip.py -o get-pip.py && \\\n    python3.7 get-pip.py && \\\n    rm get-pip.py && \\\n    rm -rf /var/lib/apt/lists/*\n\n# Set locale to C instead of en-US, Postgres initdb breaks with default\n# locale otherwise + we get build warnings for FDWs.\nENV LANG C.UTF-8\nENV LC_ALL C.UTF-8\n\n# Install Splitgraph itself (required for layered querying)\n\nRUN mkdir -p /var/lib/splitgraph/objects && chmod 777 /var/lib/splitgraph/objects\n\n# Do the installation in two phases to use Docker caching: first,\n# install all the dependencies and then copy the Splitgraph code over (way later in the build).\n# That way, if we just change the code, we only need to rebuild one last layer rather than\n# reinstall all dependencies from scratch. We also do dependency installation before\n# copying over various FDW SOs, since those are cheaper to copy and can get rebuilt more often.\n\n# However, we need to make Poetry think that we actually have a genuine package\n# that we want to install in editable mode in here, so we create and copy some files to fool it.\nRUN mkdir -p /splitgraph/splitgraph && touch /splitgraph/splitgraph/__init__.py\nCOPY poetry.lock pyproject.toml README.md /splitgraph/\nCOPY ./engine/build_scripts/build_splitgraph.sh /build/\nRUN --mount=type=cache,id=pip-cache,target=/root/.cache/pip /build/build_splitgraph.sh\n\n# Extract and copy over all binaries from the builder stages\n# This is slightly sad: whilst multicorn's make install respects DESTDIR,\n# python setup.py doesn't and installs it to /usr/local.\n# Since nothing else in here uses easy_install, we grab the .pth file and the unpacked egg.\n\nCOPY --from=builder_cstore_multicorn /output/root /\nCOPY --from=builder_cstore_multicorn \\\n    /usr/local/lib/python3.7/dist-packages/easy-install.pth \\\n    /usr/local/lib/python3.7/dist-packages/easy-install.pth\nCOPY --from=builder_cstore_multicorn \\\n    /usr/local/lib/python3.7/dist-packages/multicorn-1.4.0.dev0-py3.7-linux-x86_64.egg \\\n    /usr/local/lib/python3.7/dist-packages/multicorn-1.4.0.dev0-py3.7-linux-x86_64.egg\n\n# Also copy over the source code for GDB to be able to print it while\n# traversing through code, or e.g. executing the `list` command\nCOPY --from=builder_cstore_multicorn /src/Multicorn /src/Multicorn\nCOPY --from=builder_cstore_multicorn /src/cstore_fdw /src/cstore_fdw\n\n# NB important: the plpython installation upgrades postgresql and overwrites our binaries,\n# so we have to get them back.\nCOPY --from=splitgraph/pg_debug:development /usr/lib/postgresql/12/bin /usr/lib/postgresql/12/bin\nCOPY --from=splitgraph/pg_debug:development /usr/lib/postgresql/12/lib /usr/lib/postgresql/12/lib\n\nRUN ldconfig\n\n# Set up Postgres config files/envvars/init scripts\n\nEXPOSE 5432\nENV POSTGRES_DB splitgraph\nENV POSTGRES_USER sgr\n\nCOPY ./engine/etc /etc/\nCOPY ./engine/init_scripts /docker-entrypoint-initdb.d/\n\n# We don't install Mongo/MySQL extensions in the debug image\nRUN sed -i '/\\(mongo_fdw\\|mysql_fdw\\)/d' /docker-entrypoint-initdb.d/000_create_extensions.sql\n\n# Copy the actual Splitgraph code over at this point.\nCOPY ./splitgraph /splitgraph/splitgraph\nCOPY ./bin /splitgraph/bin\n\n# \"Install\" elasticsearch_fdw\nRUN --mount=type=cache,id=pip-cache,target=/root/.cache/pip \\\n    mkdir /pg_es_fdw && \\\n    pip install --no-cache-dir \"elasticsearch>=7.7.0,<8.0\"\nCOPY ./engine/src/postgres-elasticsearch-fdw/pg_es_fdw /pg_es_fdw/pg_es_fdw\n\n# Install the Snowflake SQLAlchemy connector\n# Use our fork that supports server-side cursors\nRUN --mount=type=cache,id=pip-cache,target=/root/.cache/pip \\\n    pip install --no-cache-dir \"git+https://github.com/splitgraph/snowflake-sqlalchemy.git@14e64cc0ef7374df0cecc91923ff6901b0d721b7\"\n\n# Install PyAthena for Amazon Athena SQLAlchemy-based FDW, as well as pandas\nRUN --mount=type=cache,id=pip-cache,target=/root/.cache/pip \\\n    pip install --no-cache-dir \"PyAthena>=2.4.1\" && \\\n    pip install --no-cache-dir \"pandas>=1.0.0\"\n\n# Install Google's Big Query SQLAlchemy dialect lib\nRUN --mount=type=cache,id=pip-cache,target=/root/.cache/pip \\\n    pip install --no-cache-dir \"sqlalchemy-bigquery\"\n\nENV PATH \"${PATH}:/splitgraph/bin\"\nENV PYTHONPATH \"${PYTHONPATH}:/splitgraph:/pg_es_fdw\"\n\n# https://github.com/postgis/docker-postgis/blob/master/12-3.0/Dockerfile\nARG with_postgis\nRUN test -z \"${with_postgis}\" || (\\\n    export POSTGIS_MAJOR=3 && \\\n    export POSTGIS_VERSION=3.1.4+dfsg-3.pgdg100+1 && \\\n    apt-get update \\\n      && apt-cache showpkg postgresql-$PG_MAJOR-postgis-$POSTGIS_MAJOR \\\n      && apt-get install -y --no-install-recommends \\\n           postgresql-$PG_MAJOR-postgis-$POSTGIS_MAJOR=$POSTGIS_VERSION \\\n           postgresql-$PG_MAJOR-postgis-$POSTGIS_MAJOR-scripts=$POSTGIS_VERSION \\\n      && rm -rf /var/lib/apt/lists/* && \\\n    echo \"CREATE EXTENSION postgis;\" >> /docker-entrypoint-initdb.d/000_create_extensions.sql)\n\nCMD [\"postgres\", \"-c\", \"config_file=/etc/postgresql/postgresql_debug.conf\"]\n"
+}

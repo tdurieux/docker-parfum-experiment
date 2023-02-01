@@ -1,0 +1,98 @@
+{
+  "startTime": 1674243272192,
+  "endTime": 1674243272423,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 32,
+        "lineEnd": 32,
+        "columnStart": 4,
+        "columnEnd": 50
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 56,
+        "lineEnd": 56,
+        "columnStart": 4,
+        "columnEnd": 104
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 37,
+        "lineEnd": 37,
+        "columnStart": 4,
+        "columnEnd": 49
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 48,
+        "lineEnd": 48,
+        "columnStart": 4,
+        "columnEnd": 21
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 50,
+        "lineEnd": 50,
+        "columnStart": 4,
+        "columnEnd": 82
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 55,
+        "lineEnd": 55,
+        "columnStart": 4,
+        "columnEnd": 22
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 4,
+        "lineEnd": 27,
+        "columnStart": 22,
+        "columnEnd": 15
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 34,
+        "lineEnd": 34,
+        "columnStart": 22,
+        "columnEnd": 46
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 4,
+        "lineEnd": 27,
+        "columnStart": 22,
+        "columnEnd": 15
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 34,
+        "lineEnd": 34,
+        "columnStart": 22,
+        "columnEnd": 46
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM ubuntu:18.04\n\n# Install dependencies.\n# g++ (v. 5.4) does not work: https://github.com/tensorflow/tensorflow/issues/13308\nRUN apt-get update && apt-get install --no-install-recommends -y \\\n    curl \\\n    zip \\\n    unzip \\\n    software-properties-common \\\n    pkg-config \\\n    g++-4.8 \\\n    zlib1g-dev \\\n    python \\\n    lua5.1 \\\n    liblua5.1-0-dev \\\n    libffi-dev \\\n    gettext \\\n    freeglut3 \\\n    libsdl2-dev \\\n    libosmesa6-dev \\\n    libglu1-mesa \\\n    libglu1-mesa-dev \\\n    python-dev \\\n    build-essential \\\n    git \\\n    python-setuptools \\\n    python-pip \\\n    libjpeg-dev && rm -rf /var/lib/apt/lists/*;\n\n# Install bazel\nRUN echo \"deb [arch=amd64] http://storage.googleapis.com/bazel-apt stable jdk1.8\" | \\\n    tee /etc/apt/sources.list.d/bazel.list && \\\n    curl -f https://bazel.build/bazel-release.pub.gpg | \\\n    apt-key add - && \\\n    apt-get update && apt-get install --no-install-recommends -y bazel && rm -rf /var/lib/apt/lists/*;\n\n# Install TensorFlow and other dependencies\nRUN pip install --no-cache-dir tensorflow==1.9.0 dm-sonnet==1.23\n\n# Build and install DeepMind Lab pip package.\n# We explicitly set the Numpy path as shown here:\n# https://github.com/deepmind/lab/blob/master/docs/users/build.md\nRUN NP_INC=\"$(python -c 'import numpy as np; print(np.get_include())[5:]')\" && \\\n    git clone https://github.com/deepmind/lab.git && \\\n    cd lab && \\\n    sed -i 's@hdrs = glob(\\[@hdrs = glob([\"'\"$NP_INC\"'/\\*\\*/*.h\", @g' python.BUILD && \\\n    sed -i 's@includes = \\[@includes = [\"'\"$NP_INC\"'\", @g' python.BUILD && \\\n    bazel build -c opt python/pip_package:build_pip_package && \\\n    pip install --no-cache-dir wheel && \\\n    ./bazel-bin/python/pip_package/build_pip_package /tmp/dmlab_pkg && \\\n    pip install --no-cache-dir /tmp/dmlab_pkg/DeepMind_Lab-1.0-py2-none-any.whl --force-reinstall\n\n# Install dataset (from https://github.com/deepmind/lab/tree/master/data/brady_konkle_oliva2008)\nRUN mkdir dataset && \\\n    cd dataset && \\\n    pip install --no-cache-dir Pillow && \\\n    curl -f -sS https://raw.githubusercontent.com/deepmind/lab/master/data/brady_konkle_oliva2008/README.md | \\\n    tr '\\n' '\\r' | \\\n    sed -e 's/.*```sh\\(.*\\)```.*/\\1/' | \\\n    tr '\\r' '\\n' | \\\n    bash\n\n# Clone.\nRUN git clone https://github.com/deepmind/scalable_agent.git\nWORKDIR scalable_agent\n\n# Build dynamic batching module.\nRUN TF_INC=\"$(python -c 'import tensorflow as tf; print(tf.sysconfig.get_include())')\" && \\\n    TF_LIB=\"$(python -c 'import tensorflow as tf; print(tf.sysconfig.get_lib())')\" && \\\n    g++-4.8 -std=c++11 -shared batcher.cc -o batcher.so -fPIC -I $TF_INC -O2 -D_GLIBCXX_USE_CXX11_ABI=0 -L$TF_LIB -ltensorflow_framework\n\n# Run tests.\nRUN python py_process_test.py\nRUN python dynamic_batching_test.py\nRUN python vtrace_test.py\n\n# Run.\nCMD [\"sh\", \"-c\", \"python experiment.py --total_environment_frames=10000 --dataset_path=../dataset && python experiment.py --mode=test --test_num_episodes=5\"]\n\n# Docker commands:\n#   docker rm scalable_agent -v\n#   docker build -t scalable_agent .\n#   docker run --name scalable_agent scalable_agent\n"
+}

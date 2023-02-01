@@ -1,0 +1,80 @@
+{
+  "startTime": 1674248885217,
+  "endTime": 1674248886513,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 41,
+        "lineEnd": 41,
+        "columnStart": 4,
+        "columnEnd": 66
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 42,
+        "lineEnd": 42,
+        "columnStart": 4,
+        "columnEnd": 70
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 50,
+        "lineEnd": 50,
+        "columnStart": 4,
+        "columnEnd": 16
+      }
+    },
+    {
+      "rule": "gpgVerifyAscRmAsc",
+      "position": {
+        "lineStart": 44,
+        "lineEnd": 44,
+        "columnStart": 4,
+        "columnEnd": 67
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 46,
+        "lineEnd": 46,
+        "columnStart": 4,
+        "columnEnd": 33
+      }
+    },
+    {
+      "rule": "gpgUseHaPools",
+      "position": {
+        "lineStart": 36,
+        "lineEnd": 36,
+        "columnStart": 8,
+        "columnEnd": 87
+      }
+    },
+    {
+      "rule": "gpgUseHaPools",
+      "position": {
+        "lineStart": 37,
+        "lineEnd": 37,
+        "columnStart": 8,
+        "columnEnd": 85
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 22,
+        "lineEnd": 28,
+        "columnStart": 4,
+        "columnEnd": 5
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "##\n# Custom Nextcloud Dockerfile for a PHP-FPM-based Nextcloud installation that\n# does not store the Nextcloud distribution on persistent storage.\n#\n# NOTE: All COPY paths are relative to the parent folder (../docker).\n#\n# This is a multi-stage build.\n#\n# @author Guy Elsmore-Paddock (guy@inveniem.com)\n# @copyright Copyright (c) 2019-2022, Inveniem\n# @license GNU AGPL version 3 or any later version\n#\n\n################################################################################\n# musl Library Build\n################################################################################\n# Patch Alpine musl to work around this issue:\n# https://gitlab.alpinelinux.org/alpine/aports/issues/10960\n#\nFROM alpine:3.10 as musl_compile\n\nRUN set -eux; \\\n    apk add --no-cache --update \\\n        make \\\n        gcc \\\n        musl-dev \\\n        curl \\\n        gnupg \\\n    ; \\\n    mkdir /build; \\\n    cd /build; \\\n\n    for key in \\\n        836489290BB6B70F99FFDA0556BCDB593020450F; \\\n    do \\\n        gpg --batch --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys \"$key\" || \\\n        gpg --batch --keyserver hkp://p80.ha.pool.sks-keyservers.net:80 --recv-keys \"$key\" || \\\n        gpg --batch --keyserver hkp://ipv4.ha.pool.sks-keyservers.net --recv-keys \"$key\" || \\\n        gpg --batch --keyserver hkp://pgp.mit.edu:80 --recv-keys \"$key\"; \\\n    done; \\\n\n    curl -f -O https://www.musl-libc.org/releases/musl-1.1.24.tar.gz; \\\n    curl -f -O https://www.musl-libc.org/releases/musl-1.1.24.tar.gz.asc; \\\n\n    gpg --batch --verify musl-1.1.24.tar.gz.asc musl-1.1.24.tar.gz; rm musl-1.1.24.tar.gz.asc \\\n\n    tar -xvzf musl-1.1.24.tar.gz; \\\n    cd ./musl-1.1.24; \\\n    sed -i 's/char buf\\[2048\\]/char buf\\[8192\\]/' ./src/dirent/__dirent.h; \\\n\n    ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\"; \\\n    make; \\\n    make install\n\n################################################################################\n# Build Nextcloud container\n################################################################################\n# This is the container that actually gets pushed.\n#\nFROM nextcloud:23.0.2-fpm-alpine\n\nENV NEXTCLOUD_CONFIG_READ_ONLY \"false\"\n\n# Fix-up www-data UID from 82 to 33.\n#\n# www-data MUST be UID 33 to match Azure Files SMB Mounts.\n# But first, we have to remove the XFS user account because it's occupying\n# UID 33.\n#\nRUN set -eux; \\\n    apk --update --no-cache add shadow && \\\n    deluser xfs && \\\n    find '/var/www' -user 'www-data' -exec 'chown' 33 '{}' ';' && \\\n    usermod -u 33 www-data && \\\n    groupmod -g 33 www-data && \\\n    apk del shadow\n\n# Tune PHP-FPM process manager\nRUN set -eu; \\\n    { \\\n        echo '[www]'; \\\n        echo 'pm = dynamic'; \\\n        echo 'pm.max_children = 20'; \\\n        echo 'pm.start_servers = 10'; \\\n        echo 'pm.min_spare_servers = 5'; \\\n        echo 'pm.max_spare_servers = 10'; \\\n        echo 'pm.max_requests = 500'; \\\n    } >/usr/local/etc/php-fpm.d/www.pm-tuning.conf\n\n# Eliminate stock Redis config (we provide our own config)\nRUN rm /usr/src/nextcloud/config/redis.config.php\n\n# Setup New Relic (if configured)\nCOPY nextcloud-common/generated/setup_newrelic.sh /\nRUN /setup_newrelic.sh && rm /setup_newrelic.sh\n\nCOPY nextcloud-common/entrypoint.sh /\nCOPY nextcloud-common/config/* /usr/src/nextcloud/config/\n\n# We supply all custom apps via Docker image; app store is disabled\nCOPY nextcloud-common/custom_apps/. /usr/src/nextcloud/custom_apps/\n\n# Apply custom musl library\nCOPY --from=\"musl_compile\" /usr/local/musl/lib/libc.so /lib/ld-musl-x86_64.so.1\n\n# Apply custom patches\nRUN set -eu; \\\n    apk add --update --no-cache patch\nCOPY nextcloud-common/apply_patches.sh /\nCOPY nextcloud-common/bundled-patches/ /usr/src/nextcloud/bundled-patches\nRUN /apply_patches.sh\n\nARG XDEBUG_ENABLED=\"false\"\n\n# Give developers an ability to attach to a running container with XDebug.\n#\n# To take advantage of this, this requires forwarding a port on the local\n# (developer) machine to a port listening inside the container by combining\n# netcat (nc) running locally with `tcpserver` in the container.\n#\n# See ../../launch_xdebug_proxy.sh for more information.\n#\nRUN set -eu; \\\n    if [ \"${XDEBUG_ENABLED}\" = \"true\" ]; then \\\n        apk add --update --no-cache \\\n            --virtual build-dependencies \\\n            $PHPIZE_DEPS \\\n        ; \\\n        pecl install xdebug; \\\n        apk del build-dependencies; \\\n        \\\n        docker-php-ext-enable xdebug; \\\n        \\\n        { \\\n            echo 'xdebug.remote_host=\"xdebug-tunnel\"'; \\\n            echo 'xdebug.remote_port=9001'; \\\n            echo 'xdebug.remote_enable=on'; \\\n            echo 'xdebug.remote_autostart=off'; \\\n            echo 'xdebug.remote_connect_back=off'; \\\n        } >>/usr/local/etc/php/conf.d/xdebug.ini; \\\n    fi\n\n# Install additional utilities for CLI-based utilization\nRUN apk add --update --no-cache \\\n        zip \\\n        unzip \\\n        p7zip \\\n    ;\n\nENTRYPOINT [\"/entrypoint.sh\"]\nCMD [\"php-fpm\"]\n"
+}

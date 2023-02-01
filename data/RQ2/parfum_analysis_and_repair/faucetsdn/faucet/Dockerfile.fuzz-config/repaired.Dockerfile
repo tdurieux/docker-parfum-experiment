@@ -1,0 +1,23 @@
+## Image name: faucet/config-fuzzer
+
+FROM faucet/test-base:10.0.3
+
+ENV PIP3="pip3 --no-cache-dir install --upgrade"
+ENV PATH="/venv/bin:$PATH"
+
+COPY ./ /faucet-src/
+WORKDIR /faucet-src
+
+RUN \
+  apt-get update && \
+  apt-get install --no-install-recommends -y afl cython3 && \
+  $PIP3 -r requirements.txt && \
+  $PIP3 -r fuzz-requirements.txt && \
+  $PIP3 . && \
+  git clone https://github.com/mininet/mininet && \
+  cd mininet && \
+  pip3 install --no-cache-dir -q . && rm -rf /var/lib/apt/lists/*;
+
+VOLUME ["/var/log/afl/"]
+
+CMD ["docker/fuzz_config.sh"]

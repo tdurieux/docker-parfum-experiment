@@ -1,0 +1,57 @@
+FROM node:fermium
+
+ARG COUNTLY_PLUGINS=mobile,web,desktop,plugins,density,locale,browser,sources,views,enterpriseinfo,logger,systemlogs,populator,reports,crashes,push,star-rating,slipping-away-users,compare,server-stats,dbviewer,assistant,times-of-day,compliance-hub,alerts,onboarding,consolidate,remote-config,hooks,dashboards
+# Enterprise Edition:
+#ARG COUNTLY_PLUGINS=mobile,web,desktop,plugins,density,locale,browser,sources,views,drill,funnels,retention_segments,flows,cohorts,surveys,remote-config,ab-testing,formulas,activity-map,concurrent_users,revenue,logger,systemlogs,populator,reports,crashes,push,geo,block,users,star-rating,slipping-away-users,compare,server-stats,assistant,dbviewer,crash_symbolication,groups,white-labeling,alerts,times-of-day,compliance-hub,onboarding,active_users,performance-monitoring,config-transfer,consolidate,data-manager,hooks,dashboards,heatmaps
+EXPOSE 3001
+HEALTHCHECK --start-period=400s CMD curl --fail http://localhost:3001/o/ping || exit 1
+
+USER root
+
+# Core dependencies
+## Tini
+ENV COUNTLY_CONTAINER="api" \
+	COUNTLY_DEFAULT_PLUGINS="${COUNTLY_PLUGINS}" \
+	COUNTLY_CONFIG_API_API_WORKERS="1" \
+	COUNTLY_CONFIG_API_API_HOST="0.0.0.0" \
+	TINI_VERSION="0.18.0"
+
+WORKDIR /opt/countly
+COPY . .
+
+RUN curl -f -s -L -o /tmp/tini.deb "https://github.com/krallin/tini/releases/download/v${TINI_VERSION}/tini_${TINI_VERSION}.deb" && \
+	dpkg -i /tmp/tini.deb && \
+
+	# modify standard distribution
+	apt-get update && apt-get install --no-install-recommends -y sqlite3 && \
+	./bin/docker/modify.sh && \
+
+	# preinstall
+	cp -n ./api/config.sample.js ./api/config.js && \
+	cp -n ./frontend/express/config.sample.js ./frontend/express/config.js && \
+	HOME=/tmp npm install --unsafe-perm=true --allow-root && \
+	HOME=/tmp npm install argon2 --build-from-source --unsafe-perm=true --allow-root && \
+	./bin/docker/preinstall.sh && \
+	bash /opt/countly/bin/scripts/detect.init.sh && \
+
+	# cleanup & chown
+	npm remove -y --no-save mocha nyc should supertest && \
+	apt-get remove -y git gcc g++ make automake autoconf libtool pkg-config unzip sqlite3 && \
+	apt-get -y --no-install-recommends install gconf-service libasound2 libatk1.0-0 libc6 libcairo2 libcups2 libdbus-1-3 libexpat1 libfontconfig1 libgcc1 libgconf-2-4 libgdk-pixbuf2.0-0 libglib2.0-0 libgtk-3-0 libnspr4 libpango-1.0-0 libpangocairo-1.0-0 libstdc++6 libx11-6 libx11-xcb1 libxcb1 libxcomposite1 libxcursor1 libxdamage1 libxext6 libxfixes3 libxi6 libxrandr2 libxrender1 libxss1 libxtst6 ca-certificates fonts-liberation libappindicator1 libnss3 lsb-release xdg-utils && \
+	apt-get clean && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/* && \
+	rm -rf test /tmp/* /tmp/.??* /var/tmp/* /var/tmp/.??* /var/log/* /root/.npm && \
+
+	# temporary to remove npm bug message
+	mkdir /.npm && chown -R 1001:0 /.npm && \
+
+	# More tests needed
+	# (find / -perm +6000 -type f -exec chmod a-s {} \; || true) && \
+	chown -R 1001:0 /opt/countly && \
+	chmod -R g=u /opt/countly && npm cache clean --force;
+
+
+USER 1001:0
+
+ENTRYPOINT ["/usr/bin/tini", "-v", "--"]
+
+CMD ["/opt/countly/bin/docker/cmd.sh"]

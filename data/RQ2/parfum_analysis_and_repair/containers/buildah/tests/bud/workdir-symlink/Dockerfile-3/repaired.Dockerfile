@@ -1,0 +1,1 @@
+# No directory created for the target of the symlink

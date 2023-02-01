@@ -1,0 +1,44 @@
+{
+  "startTime": 1674220844053,
+  "endTime": 1674220844833,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 130,
+        "lineEnd": 130,
+        "columnStart": 5,
+        "columnEnd": 50
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 136,
+        "lineEnd": 136,
+        "columnStart": 5,
+        "columnEnd": 82
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 130,
+        "lineEnd": 130,
+        "columnStart": 5,
+        "columnEnd": 50
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 136,
+        "lineEnd": 136,
+        "columnStart": 5,
+        "columnEnd": 82
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM ubuntu:18.04\n\nARG PACKAGE_NAME\n\nLABEL jp.shiguredo.momo=$PACKAGE_NAME\n\nRUN rm -f /etc/apt/apt.conf.d/docker-clean; echo 'Binary::apt::APT::Keep-Downloaded-Packages \"true\";' > /etc/apt/apt.conf.d/keep-cache\n\n# パッケージのインストール\n\nCOPY script/apt_install_x86_64.sh /root/\nRUN --mount=type=cache,id=$PACKAGE_NAME,target=/var/cache/apt --mount=type=cache,id=$PACKAGE_NAME,target=/var/lib/apt \\\n  /root/apt_install_x86_64.sh\n\n# WebRTC の取得\n\nARG WEBRTC_BUILD_VERSION\n\nCOPY script/get_webrtc.sh /root/\nRUN /root/get_webrtc.sh \"$WEBRTC_BUILD_VERSION\" ubuntu-18.04_x86_64 /root /root\n# COPY webrtc/ /root/webrtc/\n\n# コンパイラの取得\n\nCOPY script/get_llvm.sh /root/\nRUN /root/get_llvm.sh /root/webrtc /root\n\n# Boost のビルド\n\nARG BOOST_VERSION\n\nCOPY _cache/boost/ /root/_cache/boost/\nCOPY script/setup_boost.sh /root/\nRUN \\\n  set -ex \\\n  && /root/setup_boost.sh \"$BOOST_VERSION\" /root/boost-source /root/_cache/boost \\\n  && cd /root/boost-source/source \\\n  && echo 'using clang : : /root/llvm/clang/bin/clang++ : ;' > project-config.jam \\\n  && ./b2 \\\n    cxxstd=17 \\\n    cxxflags=' \\\n      -D_LIBCPP_ABI_UNSTABLE \\\n      -D_LIBCPP_DISABLE_AVAILABILITY \\\n      -nostdinc++ \\\n      -isystem/root/llvm/libcxx/include \\\n    ' \\\n    linkflags=' \\\n    ' \\\n    toolset=clang \\\n    visibility=global \\\n    target-os=linux \\\n    address-model=64 \\\n    link=static \\\n    variant=release \\\n    install \\\n    -j`nproc` \\\n    --ignore-site-config \\\n    --prefix=/root/boost \\\n    --with-filesystem \\\n    --with-json\n\n# CLI11 の取得\n\nARG CLI11_VERSION\nRUN git clone --branch v$CLI11_VERSION --depth 1 https://github.com/CLIUtils/CLI11.git /root/CLI11\n\n# CMake のインストール\nARG CMAKE_VERSION\nCOPY script/get_cmake.sh /root/\nRUN /root/get_cmake.sh \"$CMAKE_VERSION\" linux /root\nENV PATH \"/root/cmake/bin:$PATH\"\n\n# SDL2 のビルド\n\nARG SDL2_VERSION\n\nCOPY script/setup_sdl2.sh /root/\nRUN \\\n  set -ex \\\n  && /root/setup_sdl2.sh \"$SDL2_VERSION\" /root/sdl2-source \\\n  && mkdir -p /root/sdl2-source/build \\\n  && cd /root/sdl2-source/build \\\n  && cmake ../source \\\n    -DCMAKE_BUILD_TYPE=Release \\\n    -DCMAKE_INSTALL_PREFIX=/root/SDL2 \\\n    -DCMAKE_C_COMPILER=/root/llvm/clang/bin/clang \\\n    -DCMAKE_CXX_COMPILER=/root/llvm/clang/bin/clang++ \\\n    -DBUILD_SHARED_LIBS=OFF \\\n    -DSDL_ATOMIC=OFF \\\n    -DSDL_AUDIO=OFF \\\n    -DSDL_VIDEO=ON \\\n    -DSDL_RENDER=ON \\\n    -DSDL_EVENTS=ON \\\n    -DSDL_JOYSTICK=ON \\\n    -DSDL_HAPTIC=ON \\\n    -DSDL_POWER=ON \\\n    -DSDL_THREADS=ON \\\n    -DSDL_TIMERS=OFF \\\n    -DSDL_FILE=OFF \\\n    -DSDL_LOADSO=ON \\\n    -DSDL_CPUINFO=OFF \\\n    -DSDL_FILESYSTEM=OFF \\\n    -DSDL_DLOPEN=ON \\\n    -DSDL_SENSOR=ON \\\n    -DVIDEO_OPENGL=ON \\\n    -DVIDEO_OPENGLES=ON \\\n    -DVIDEO_RPI=OFF \\\n    -DVIDEO_WAYLAND=OFF \\\n    -DVIDEO_X11=ON \\\n    -DX11_SHARED=OFF \\\n    -DVIDEO_X11_XCURSOR=OFF \\\n    -DVIDEO_X11_XINERAMA=OFF \\\n    -DVIDEO_X11_XINPUT=OFF \\\n    -DVIDEO_X11_XRANDR=OFF \\\n    -DVIDEO_X11_XSCRNSAVER=OFF \\\n    -DVIDEO_X11_XSHAPE=OFF \\\n    -DVIDEO_X11_XVM=OFF \\\n    -DVIDEO_VULKAN=OFF \\\n    -DVIDEO_VIVANTE=OFF \\\n    -DVIDEO_COCOA=OFF \\\n    -DVIDEO_METAL=OFF \\\n    -DVIDEO_KMSDRM=OFF \\\n  && make -j`nproc` \\\n  && make install\n\n# CUDA 周りのインストール\nARG CUDA_VERSION\nRUN set -ex \\\n  && apt-get update \\\n  && apt-get install --no-install-recommends -y software-properties-common \\\n  && wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu1804/x86_64/cuda-ubuntu1804.pin \\\n  && mv cuda-ubuntu1804.pin /etc/apt/preferences.d/cuda-repository-pin-600 \\\n  && apt-key adv --fetch-keys https://developer.download.nvidia.com/compute/cuda/repos/ubuntu1804/x86_64/3bf863cc.pub \\\n  && add-apt-repository \"deb http://developer.download.nvidia.com/compute/cuda/repos/ubuntu1804/x86_64/ /\" \\\n  && apt-get update \\\n  && DEBIAN_FRONTEND=noninteractive apt-get --no-install-recommends -y install cuda=$CUDA_VERSION clang-10 && rm -rf /var/lib/apt/lists/*;\n"
+}

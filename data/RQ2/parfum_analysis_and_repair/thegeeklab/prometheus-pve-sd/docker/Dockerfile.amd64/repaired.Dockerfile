@@ -1,0 +1,24 @@
+FROM python:3.10-alpine@sha256:97725c6081f5670080322188827ef5cd95325b8c69e401047f0fa0c21910042d
+
+LABEL maintainer="Robert Kaussow <mail@thegeeklab.de>"
+LABEL org.opencontainers.image.authors="Robert Kaussow <mail@thegeeklab.de>"
+LABEL org.opencontainers.image.title="prometheus-pve-sd"
+LABEL org.opencontainers.image.url="https://github.com/thegeeklab/prometheus-pve-sd/"
+LABEL org.opencontainers.image.source="https://github.com/thegeeklab/prometheus-pve-sd/"
+LABEL org.opencontainers.image.documentation="https://github.com/thegeeklab/prometheus-pve-sd/"
+
+ENV PY_COLORS=1
+ENV TZ=UTC
+
+ADD dist/prometheus_pve_sd-*.whl /
+
+RUN apk --update --no-cache add --virtual .build-deps build-base libffi-dev openssl-dev && \
+    pip install --upgrade --no-cache-dir pip && \
+    pip install --no-cache-dir $( find / -name "prometheus_pve_sd-*.whl") && \
+    rm -f prometheus_pve_sd-*.whl && \
+    rm -rf /var/cache/apk/* && \
+    rm -rf /root/.cache/
+
+USER root
+CMD []
+ENTRYPOINT ["/usr/local/bin/prometheus-pve-sd"]

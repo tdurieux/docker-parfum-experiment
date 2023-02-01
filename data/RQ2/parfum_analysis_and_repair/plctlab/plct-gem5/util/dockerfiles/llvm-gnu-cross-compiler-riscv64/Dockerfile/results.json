@@ -1,0 +1,35 @@
+{
+  "startTime": 1674251715709,
+  "endTime": 1674251716966,
+  "originalSmells": [
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 45,
+        "lineEnd": 45,
+        "columnStart": 4,
+        "columnEnd": 58
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 31,
+        "lineEnd": 34,
+        "columnStart": 39,
+        "columnEnd": 79
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 31,
+        "lineEnd": 34,
+        "columnStart": 39,
+        "columnEnd": 79
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Copyright (c) 2022 The Regents of the University of California\n# All Rights Reserved.\n#\n# Redistribution and use in source and binary forms, with or without\n# modification, are permitted provided that the following conditions are\n# met: redistributions of source code must retain the above copyright\n# notice, this list of conditions and the following disclaimer;\n# redistributions in binary form must reproduce the above copyright\n# notice, this list of conditions and the following disclaimer in the\n# documentation and/or other materials provided with the distribution;\n# neither the name of the copyright holders nor the names of its\n# contributors may be used to endorse or promote products derived from\n# this software without specific prior written permission.\n#\n# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS\n# \"AS IS\" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT\n# LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR\n# A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT\n# OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,\n# SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT\n# LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,\n# DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY\n# THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT\n# (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE\n# OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.\n\n\n# stage 1: download the dependencies\nFROM ubuntu:20.04 AS stage1\n\nENV DEBIAN_FRONTEND=noninteractive\nRUN apt -y update && apt -y upgrade && apt -y --no-install-recommends install \\\n  binutils build-essential libtool texinfo gzip zip unzip patchutils curl git \\\n  make cmake ninja-build automake bison flex gperf grep sed gawk bc \\\n  zlib1g-dev libexpat1-dev libmpc-dev libglib2.0-dev libfdt-dev libpixman-1-dev && rm -rf /var/lib/apt/lists/*;\n\n# stage 2: download the compilers and compile them\nFROM stage1 AS stage2\nRUN mkdir -p /riscv/_install\nWORKDIR /riscv\nENV PATH=`/riscv/_install/bin:$PATH`\nRUN git clone https://github.com/riscv/riscv-gnu-toolchain\nWORKDIR /riscv/riscv-gnu-toolchain\nRUN git checkout 051b9f7ddb7d136777505ea19c70a41926842b96\nRUN git submodule update --init --recursive\nRUN ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" --prefix=/riscv/_install --enable-multilib\nRUN make linux -j`nproc`\nRUN make install\n\nWORKDIR /riscv\nRUN git clone https://github.com/llvm/llvm-project.git riscv-llvm\nWORKDIR /riscv/riscv-llvm\nRUN git checkout 2ef95efb414e215490a222de05cafdffb8054758\nRUN ln -s ../../clang llvm/tools || true\nRUN mkdir _build\nWORKDIR /riscv/riscv-llvm/_build\nRUN cmake -G Ninja -DCMAKE_BUILD_TYPE=\"Release\" \\\n  -DBUILD_SHARED_LIBS=True -DLLVM_USE_SPLIT_DWARF=True \\\n  -DCMAKE_INSTALL_PREFIX=\"/riscv/_install\" \\\n  -DLLVM_OPTIMIZED_TABLEGEN=True -DLLVM_BUILD_TESTS=False \\\n  -DDEFAULT_SYSROOT=\"/riscv/_install/sysroot\" \\\n  -DLLVM_DEFAULT_TARGET_TRIPLE=\"riscv64-unknown-linux-gnu\" \\\n  -DLLVM_TARGETS_TO_BUILD=\"RISCV\" \\\n  ../llvm\nRUN cmake --build . --target install -j`nproc`\n\n# stage 3: create a new container with the compiled cross-compilers only\nFROM stage1\n\nRUN mkdir -p /riscv/\nCOPY --from=stage2 /riscv/_install/ /riscv/_install\nENV PATH=/riscv/_install/bin:$PATH\n\n"
+}

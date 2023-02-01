@@ -1,0 +1,40 @@
+FROM gcc:10 as builder
+
+COPY . /nanomq
+COPY deploy/docker/docker-entrypoint.sh /usr/bin/docker-entrypoint.sh
+
+RUN apt update \
+    && apt install --no-install-recommends -y cmake ninja-build libmbedtls-dev libtool pkg-config build-essential autoconf automake \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /tmp/zeromq
+
+RUN wget https://github.com/zeromq/libzmq/releases/download/v4.3.4/zeromq-4.3.4.tar.gz \
+    && tar zxf zeromq-4.3.4.tar.gz \
+    && cd zeromq-4.3.4 \
+    && mkdir build \
+    && cd build \
+    && cmake -G Ninja -DWITH_PERF_TOOL=OFF  \
+    -DZMQ_BUILD_TESTS=OFF  \
+    -DENABLE_CPACK=OFF  \
+    -DCMAKE_BUILD_TYPE=Release .. \
+    && ninja install \
+    && ldconfig && rm zeromq-4.3.4.tar.gz
+
+WORKDIR /nanomq/build
+
+RUN cmake -G Ninja -DNOLOG=1 -DENABLE_JWT=ON \
+    -DNNG_ENABLE_TLS=ON \
+    -DNNG_ENABLE_SQLITE=ON \
+    -DBUILD_ZMQ_GATEWAY=ON \
+    -DBUILD_BENCH=ON ..
+
+RUN ninja install
+
+RUN ln -s /nanomq/build/nanomq/nanomq /usr/bin/nanomq
+
+EXPOSE 1883 8883 8081
+
+ENTRYPOINT ["/usr/bin/docker-entrypoint.sh"]
+
+CMD ["--url", "nmq-tcp://0.0.0.0:1883"]

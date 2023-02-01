@@ -1,0 +1,63 @@
+{
+  "startTime": 1674234097846,
+  "endTime": 1674234097996,
+  "originalSmells": [
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 41,
+        "lineEnd": 41,
+        "columnStart": 33,
+        "columnEnd": 44
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 45,
+        "lineEnd": 45,
+        "columnStart": 4,
+        "columnEnd": 27
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 20,
+        "lineEnd": 20,
+        "columnStart": 4,
+        "columnEnd": 30
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 20,
+        "lineEnd": 20,
+        "columnStart": 4,
+        "columnEnd": 30
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 20,
+        "lineEnd": 20,
+        "columnStart": 4,
+        "columnEnd": 30
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 20,
+        "lineEnd": 20,
+        "columnStart": 4,
+        "columnEnd": 54
+      }
+    }
+  ],
+  "repairedDockerfile": "FROM python:3.6.8-slim-stretch as socorro_image_base\n\n# Set up user and group\nARG groupid=10001\nARG userid=10001\n\nWORKDIR /app/\nRUN groupadd --gid $groupid app && \\\n    useradd -g app --uid $userid --shell /usr/sbin/nologin --create-home app\n\n# Install OS-level things\nCOPY ./docker/set_up_ubuntu.sh /tmp/\nRUN DEBIAN_FRONTEND=noninteractive /tmp/set_up_ubuntu.sh\n\n\nFROM socorro_image_base as socorro_breakpad\n\nWORKDIR /mdsw/\n\n# Install some helpful debugging things\nRUN apt-get -y --no-install-recommends install gdb vim && rm -rf /var/lib/apt/lists/*;\n\n# Build breakpad client and stackwalker binaries\nCOPY ./scripts/build-breakpad.sh /mdsw/scripts/\nCOPY ./scripts/build-stackwalker.sh /mdsw/scripts/\nCOPY ./minidump-stackwalk/ /mdsw/minidump-stackwalk/\nRUN STACKWALKDIR=/stackwalk SRCDIR=/mdsw /mdsw/scripts/build-stackwalker.sh\n\n# Let app own /mdsw and /stackwalk so it's easier to debug later\nRUN chown -R app.app /mdsw\nRUN chown -R app.app /stackwalk\n\nFROM socorro_image_base\nWORKDIR /app/\n\n# Copy stackwalk bits\nCOPY --from=socorro_breakpad /stackwalk/* /stackwalk/\n\n# Install frontend JS deps\nCOPY ./webapp-django/package.json /webapp-frontend-deps/package.json\nCOPY ./webapp-django/package-lock.json /webapp-frontend-deps/package-lock.json\nRUN cd /webapp-frontend-deps/ && npm install && npm cache clean --force;\n\n# Install Socorro Python requirements\nCOPY ./requirements /app/requirements\nRUN pip install --no-cache-dir -U 'pip>=8' && \\\n    pip install --no-cache-dir -r requirements/default.txt -c requirements/constraints.txt\n\nENV PYTHONUNBUFFERED 1\nENV PYTHONDONTWRITEBYTECODE 1\nENV PYTHONPATH /app\n\nENV LESS_BINARY /webapp-frontend-deps/node_modules/.bin/lessc\nENV UGLIFYJS_BINARY /webapp-frontend-deps/node_modules/.bin/uglifyjs\nENV CSSMIN_BINARY /webapp-frontend-deps/node_modules/.bin/cssmin\nENV NPM_ROOT_PATH /webapp-frontend-deps/\nENV NODE_PATH /webapp-frontend-deps/node_modules/\n\n# Copy everything over\nCOPY . /app/\n\n# Run collectstatic in container which puts files in the default place for\n# static files\nRUN cd /app/webapp-django/ && python manage.py collectstatic --noinput\n\n# app should own everything under /app in the container\nRUN chown -R app.app /app\n\nUSER app\n\n# Build tmp directories for minidump stackwalker\nRUN mkdir -p /tmp/symbols/cache\nRUN mkdir -p /tmp/symbols/tmp\n\n# Set entrypoint for this image. The entrypoint script takes a service\n# to run as the first argument. See the script for available arguments.\nENTRYPOINT [\"/app/docker/socorro_entrypoint.sh\"]\n"
+}

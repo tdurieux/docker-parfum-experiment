@@ -1,0 +1,39 @@
+FROM registry.access.redhat.com/ubi8/ubi-minimal:8.0
+
+LABEL vendor="IBM"
+LABEL summary="The deployment engine."
+LABEL description="The Agbot scans all the edge nodes in the system initiating deployment of services and model to all eligible nodes."
+
+ARG DOCKER_VER=19.03.8
+
+# yum is not installed, use microdnf instead
+# shadow-utils contains groupadd and adduser commands
+# create dirs and add agbotuser
+RUN microdnf update -y --nodocs && microdnf clean all && microdnf install --nodocs -y shadow-utils \
+    && microdnf install --nodocs -y openssl ca-certificates \
+    && microdnf install -y wget iptables vim-minimal procps tar gettext \
+    && wget -O jq https://github.com/stedolan/jq/releases/download/jq-1.6/jq-linux64 \
+    && chmod +x ./jq \
+    && mv jq /usr/bin \
+    && mkdir -p /licenses /usr/horizon/bin /usr/horizon/web /var/horizon/msgKey \
+    && mkdir -p /etc/horizon/agbot/policy.d /etc/horizon/policy.d /etc/horizon/trust \
+    && adduser agbotuser -f -1 -c "agbot user,1,2,3" \
+    && chown -R agbotuser /etc/horizon /var/horizon
+
+# add license file
+COPY LICENSE.txt /licenses
+
+# copy the horizon configurations and binaries
+COPY config/agbot.json.tmpl /etc/horizon/anax.json.tmpl
+COPY config/hzn.json /etc/horizon/
+COPY script/agbot_start.sh /usr/horizon/bin
+ADD anax /usr/horizon/bin/
+ADD hzn /usr/bin/
+
+USER agbotuser
+WORKDIR /home/agbotuser
+RUN mkdir -p /home/agbotuser/policy.d 
+
+
+# Run the application
+ENTRYPOINT /usr/horizon/bin/agbot_start.sh

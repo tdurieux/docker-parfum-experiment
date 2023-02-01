@@ -1,0 +1,80 @@
+{
+  "startTime": 1674254196018,
+  "endTime": 1674254197116,
+  "originalSmells": [
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 32,
+        "lineEnd": 32,
+        "columnStart": 4,
+        "columnEnd": 42
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 36,
+        "lineEnd": 38,
+        "columnStart": 4,
+        "columnEnd": 25
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 52,
+        "lineEnd": 54,
+        "columnStart": 4,
+        "columnEnd": 25
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 72,
+        "lineEnd": 72,
+        "columnStart": 4,
+        "columnEnd": 28
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 111,
+        "lineEnd": 120,
+        "columnStart": 4,
+        "columnEnd": 17
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 152,
+        "lineEnd": 152,
+        "columnStart": 4,
+        "columnEnd": 28
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 153,
+        "lineEnd": 153,
+        "columnStart": 4,
+        "columnEnd": 24
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 139,
+        "lineEnd": 139,
+        "columnStart": 1,
+        "columnEnd": 25
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "ARG flavor=default\n\n\n##\n## packages-json-picker\n##\nFROM node:16-slim AS packages-json-picker\n\nENV optDir /opt\n\nWORKDIR ${optDir}\nCOPY [\"package.json\", \"yarn.lock\", \"lerna.json\", \"./\"]\nCOPY packages packages\n# Find and remove non-package.json files\nRUN find packages \\! -name \"package.json\" -mindepth 2 -maxdepth 2 -print | xargs rm -rf\n\n\n##\n## deps-resolver\n##\nFROM node:16-slim AS deps-resolver\n\nENV optDir /opt\n\nWORKDIR ${optDir}\n\n# copy files\nCOPY --from=packages-json-picker ${optDir} .\n\n# setup\nRUN yarn config set network-timeout 300000 && yarn cache clean;\nRUN npx -y lerna bootstrap -- --frozen-lockfile\n\n# make artifacts\nRUN tar -cf node_modules.tar \\\n  node_modules \\\n  packages/*/node_modules && rm node_modules.tar\n\n\n\n##\n## deps-resolver-prod\n##\nFROM deps-resolver AS deps-resolver-prod\n\n# remove unnecessary packages\nRUN rm -rf packages/slackbot-proxy\n\nRUN npx -y lerna bootstrap -- --production\n# make artifacts\nRUN tar -cf node_modules.tar \\\n  node_modules \\\n  packages/*/node_modules && rm node_modules.tar\n\n\n\n##\n## prebuilder-default\n##\nFROM node:16-slim AS prebuilder-default\n\nENV optDir /opt\n\nWORKDIR ${optDir}\n\n# copy dependent packages\nCOPY --from=deps-resolver \\\n  ${optDir}/node_modules.tar ${optDir}/\n\n# extract node_modules.tar\nRUN tar -xf node_modules.tar && rm node_modules.tar\nRUN rm node_modules.tar\n\n\n\n##\n## prebuilder-nocdn\n##\nFROM prebuilder-default AS prebuilder-nocdn\n\n# add dotenv file for NO_CDN\nCOPY packages/app/docker/nocdn/.env.production.local ${optDir}/packages/app/\n\n\n\n##\n## builder\n##\nFROM prebuilder-${flavor} AS builder\n\nENV optDir /opt\n\nWORKDIR ${optDir}\n\nCOPY [\"package.json\", \"lerna.json\", \"tsconfig.base.json\", \"./\"]\n# copy all related packages\nCOPY packages/app packages/app\nCOPY packages/core packages/core\nCOPY packages/codemirror-textlint packages/codemirror-textlint\nCOPY packages/plugin-attachment-refs packages/plugin-attachment-refs\nCOPY packages/plugin-lsx packages/plugin-lsx\nCOPY packages/plugin-pukiwiki-like-linker packages/plugin-pukiwiki-like-linker\nCOPY packages/slack packages/slack\nCOPY packages/ui packages/ui\n\n# build\nRUN yarn lerna run build\n\n# make artifacts\nRUN tar -cf packages.tar \\\n  package.json \\\n  packages/app/config \\\n  packages/app/public \\\n  packages/app/resource \\\n  packages/app/tmp \\\n  packages/app/migrate-mongo-config.js \\\n  packages/app/.env.production* \\\n  packages/*/package.json \\\n  packages/*/dist && rm packages.tar\n\n\n\n##\n## release\n##\nFROM node:16-slim\nLABEL maintainer Yuki Takei <yuki@weseek.co.jp>\n\nENV NODE_ENV production\n\nENV optDir /opt\nENV appDir ${optDir}/growi\n\n# Add gosu\n# see: https://github.com/tianon/gosu/blob/1.13/INSTALL.md\nRUN set -eux; \\\n\tapt-get update; \\\n\tapt-get install --no-install-recommends -y gosu; \\\n\trm -rf /var/lib/apt/lists/*; \\\n# verify that the binary works\n\tgosu nobody true\n\nCOPY --from=deps-resolver-prod --chown=node:node \\\n  ${optDir}/node_modules.tar ${appDir}/\nCOPY --from=builder --chown=node:node \\\n  ${optDir}/packages.tar ${appDir}/\n\n# extract artifacts as 'node' user\nUSER node\nWORKDIR ${appDir}\nRUN tar -xf node_modules.tar && rm node_modules.tar\nRUN tar -xf packages.tar && rm packages.tar\nRUN rm node_modules.tar packages.tar\n\nCOPY --chown=node:node --chmod=700 packages/app/docker/docker-entrypoint.sh /\n\nUSER root\nWORKDIR ${appDir}/packages/app\n\nVOLUME /data\nEXPOSE 3000\n\nENTRYPOINT [\"/docker-entrypoint.sh\"]\nCMD [\"yarn migrate && node -r dotenv-flow/config --expose_gc dist/server/app.js\"]\n"
+}

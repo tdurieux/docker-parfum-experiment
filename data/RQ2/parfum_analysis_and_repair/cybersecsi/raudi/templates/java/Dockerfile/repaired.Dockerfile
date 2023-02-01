@@ -1,0 +1,9 @@
+# Base Distro Arg
+ARG OPENJDK_ALPINE_VERSION
+
+FROM openjdk:$OPENJDK_ALPINE_VERSION
+
+# Build Args
+ARG DOWNLOAD_URL
+
+# Content

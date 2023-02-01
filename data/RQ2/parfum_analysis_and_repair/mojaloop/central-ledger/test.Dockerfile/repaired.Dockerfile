@@ -1,0 +1,24 @@
+FROM node:16.15.0-alpine
+USER root
+
+WORKDIR /opt/app
+
+RUN apk --no-cache add git
+RUN apk add --no-cache -t build-dependencies make gcc g++ python3 libtool libressl-dev openssl-dev autoconf automake \
+    && cd $(npm root -g)/npm \
+    && npm config set unsafe-perm true \
+    && npm install -g node-gyp tape tap-xunit && npm cache clean --force;
+
+COPY package.json package-lock.json* /opt/app/
+RUN npm install && npm cache clean --force;
+
+RUN apk del build-dependencies
+
+COPY src /opt/app/src
+COPY config /opt/app/config
+COPY migrations /opt/app/migrations
+COPY seeds /opt/app/seeds
+COPY test /opt/app/test
+
+EXPOSE 3001
+CMD ["npm", "start"]

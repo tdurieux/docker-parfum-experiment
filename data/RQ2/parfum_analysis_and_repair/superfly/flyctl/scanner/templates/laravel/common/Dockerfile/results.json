@@ -1,0 +1,44 @@
+{
+  "startTime": 1674247045882,
+  "endTime": 1674247049451,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 23,
+        "lineEnd": 23,
+        "columnStart": 7,
+        "columnEnd": 49
+      }
+    },
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 77,
+        "lineEnd": 77,
+        "columnStart": 8,
+        "columnEnd": 20
+      }
+    },
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 73,
+        "lineEnd": 73,
+        "columnStart": 8,
+        "columnEnd": 21
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 6,
+        "lineEnd": 20,
+        "columnStart": 7,
+        "columnEnd": 19
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM alpine:edge as base\n\nLABEL fly_launch_runtime=\"laravel\"\n\nRUN apk update \\\n    && apk add --no-cache curl zip unzip tzdata supervisor nginx htop vim ca-certificates rsync \\\n           php8 php8-cli php8-pecl-mcrypt \\\n           php8-soap php8-openssl php8-gmp \\\n           php8-pdo_odbc php8-json php8-dom \\\n           php8-pdo php8-zip php8-pdo_mysql \\\n           php8-sqlite3 php8-pdo_pgsql php8-bcmath \\\n           php8-gd php8-odbc php8-pdo_sqlite \\\n           php8-gettext php8-xmlreader php8-bz2 \\\n           php8-iconv php8-pdo_dblib php8-curl \\\n           php8-ctype php8-phar php8-xml \\\n           php8-common php8-mbstring php8-tokenizer \\\n           php8-xmlwriter php8-fileinfo php8-opcache \\\n           php8-simplexml php8-pecl-redis php8-sockets \\\n           php8-pcntl php8-posix php8-pecl-swoole \\\n           php8-fpm \\\n    && cp /etc/nginx/nginx.conf /etc/nginx/nginx.old.conf \\\n    && rm -rf /etc/nginx/http.d/default.conf \\\n    && curl -f -sS https://getcomposer.org/installer | php -- --install-dir=/usr/local/bin --filename=composer \\\n    && adduser -D -u 1000 -g 'app' app \\\n    && addgroup nginx app \\\n    && mkdir -p /var/run/php \\\n    && chown -R app:app /var/run/php \\\n    && mkdir -p /var/www/html\n\nWORKDIR /var/www/html\n# copy application code, skipping files based on .dockerignore\nCOPY . /var/www/html\n\n# Install dependencies, configure server\n# For the time being, we run \"composer update\" as best effort to get php 8.0 working\nRUN composer update \\\n    && composer install --optimize-autoloader --no-dev \\\n    && mkdir -p storage/logs \\\n    && chown -R app:app /var/www/html \\\n    && /usr/bin/crontab docker/crontab \\\n    && mv docker/supervisor.conf /etc/supervisord.conf \\\n    && mv docker/nginx.conf /etc/nginx/nginx.conf \\\n    && mv docker/server.conf /etc/nginx/server.conf \\\n    && mv docker/php.ini /etc/php8/conf.d/php.ini \\\n    && sed -i 's/protected \\$proxies/protected \\$proxies = \"*\"/g' app/Http/Middleware/TrustProxies.php\n\n# If we're not using Octane, configure php-fpm\nRUN if ! grep -Fq \"laravel/octane\" /var/www/html/composer.json; then \\\n        rm -rf /etc/php8/php-fpm.conf; \\\n        rm -rf /etc/php8/php-fpm.d/www.conf; \\\n        mv docker/php-fpm.conf /etc/php8/php-fpm.conf; \\\n        mv docker/app.conf /etc/php8/php-fpm.d/app.conf; \\\n    elif grep -Fq \"spiral/roadrunner\" /var/www/html/composer.json; then \\\n        if [ -f ./vendor/bin/rr ]; then ./vendor/bin/rr get-binary; fi; \\\n        rm -f .rr.yaml; \\\n    fi\n\n# clear Laravel cache that may be left over\nRUN composer dump-autoload \\\n    && php artisan optimize:clear \\\n    && chmod -R ug+w /var/www/html/storage \\\n    && chmod -R 755 /var/www/html\n\n# Multi-stage build: Build static assets\nFROM node:14 as node_modules_go_brrr\n\nRUN mkdir /app\n\nRUN mkdir -p  /app\nWORKDIR /app\nCOPY . .\nRUN if [ -f \"yarn.lock\" ]; then \\\n        yarn install; yarn cache clean; \\\n    elif [ -f \"package-lock.json\" ];then \\\n        npm ci --no-audit; \\\n    else \\\n        npm install; npm cache clean --force; \\\n    fi\n\n# Create final container, adding in static assets\nFROM base\n\nCOPY --from=node_modules_go_brrr /app/public /var/www/html/public-npm\nRUN rsync -ar /var/www/html/public-npm/ /var/www/html/public/ \\\n    && rm -rf /var/www/html/public-npm\n\n# The same port nginx.conf is set to listen on and fly.toml references (standard is 8080)\nEXPOSE 8080\n\nENTRYPOINT [\"/var/www/html/docker/run.sh\"]\n"
+}

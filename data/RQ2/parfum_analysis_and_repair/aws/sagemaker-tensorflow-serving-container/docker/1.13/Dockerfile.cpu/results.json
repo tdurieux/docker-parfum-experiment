@@ -1,0 +1,53 @@
+{
+  "startTime": 1674249400655,
+  "endTime": 1674249401207,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 24,
+        "lineEnd": 24,
+        "columnStart": 4,
+        "columnEnd": 51
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 53,
+        "lineEnd": 53,
+        "columnStart": 4,
+        "columnEnd": 126
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 54,
+        "lineEnd": 54,
+        "columnStart": 4,
+        "columnEnd": 138
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 56,
+        "lineEnd": 56,
+        "columnStart": 4,
+        "columnEnd": 135
+      }
+    },
+    {
+      "rule": "curlUseHttpsUrl",
+      "position": {
+        "lineStart": 24,
+        "lineEnd": 24,
+        "columnStart": 4,
+        "columnEnd": 51
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM ubuntu:18.04\n\nLABEL maintainer=\"Amazon AI\"\nLABEL com.amazonaws.sagemaker.capabilities.accept-bind-to-port=true\n\nARG PYTHON=python3\nARG PIP=pip3\nARG TFS_SHORT_VERSION=1.13\n\n# See http://bugs.python.org/issue19846\nENV LANG C.UTF-8\n# Python won’t try to write .pyc or .pyo files on the import of source modules\nENV PYTHONDONTWRITEBYTECODE=1\nENV PYTHONUNBUFFERED=1\nENV SAGEMAKER_TFS_VERSION=\"${TFS_SHORT_VERSION}\"\nENV PATH=\"$PATH:/sagemaker\"\nENV LD_LIBRARY_PATH='/usr/local/lib:$LD_LIBRARY_PATH'\nENV MODEL_BASE_PATH=/models\n# The only required piece is the model name in order to differentiate endpoints\nENV MODEL_NAME=model\n\n# nginx + njs\nRUN apt-get update \\\n && apt-get -y install --no-install-recommends curl gnupg2 ca-certificates git wget vim build-essential zlib1g-dev \\\n && curl -f -s https://nginx.org/keys/nginx_signing.key | apt-key add - \\\n && echo 'deb http://nginx.org/packages/ubuntu/ bionic nginx' >> /etc/apt/sources.list \\\n && apt-get update \\\n && apt-get -y install --no-install-recommends nginx nginx-module-njs python3 python3-pip python3-setuptools \\\n && apt-get clean \\\n && rm -rf /var/lib/apt/lists/*\n\nRUN ${PIP} --no-cache-dir install --upgrade pip setuptools\n\n# cython, falcon, gunicorn, grpc\nRUN ${PIP} install -U --no-cache-dir \\\n    awscli==1.16.130 \\\n    cython==0.29.10 \\\n    falcon==2.0.0 \\\n    gunicorn==19.9.0 \\\n    gevent==1.4.0 \\\n    requests==2.21.0 \\\n    grpcio==1.24.1 \\\n    protobuf==3.10.0 \\\n# using --no-dependencies to avoid installing tensorflow binary\n && ${PIP} install --no-dependencies --no-cache-dir \\\n    tensorflow-serving-api==1.13.0\n\nCOPY ./ /\n\n# Some TF tools expect a \"python\" binary\nRUN ln -s $(which ${PYTHON}) /usr/local/bin/python \\\n && ln -s /usr/local/bin/pip3 /usr/bin/pip\n\nRUN curl -f https://s3-us-west-2.amazonaws.com/tensorflow-aws/1.13/Serving/CPU-WITH-MKL/libiomp5.so -o /usr/local/lib/libiomp5.so\nRUN curl -f https://s3-us-west-2.amazonaws.com/tensorflow-aws/1.13/Serving/CPU-WITH-MKL/libmklml_intel.so -o /usr/local/lib/libmklml_intel.so\n\nRUN curl -f https://s3-us-west-2.amazonaws.com/tensorflow-aws/1.13/Serving/CPU-WITH-MKL/tensorflow_model_server -o tensorflow_model_server \\\n && chmod 555 tensorflow_model_server \\\n && cp tensorflow_model_server /usr/bin/tensorflow_model_server \\\n && rm -f tensorflow_model_server\n\n# Expose ports\n# gRPC and REST\nEXPOSE 8500 8501\n\n# Set where models should be stored in the container\nRUN mkdir -p ${MODEL_BASE_PATH}\n\n# Create a script that runs the model server so we can use environment variables\n# while also passing in arguments from the docker command line\nRUN echo '#!/bin/bash \\n\\n' > /usr/bin/tf_serving_entrypoint.sh \\\n && echo '/usr/bin/tensorflow_model_server --port=8500 --rest_api_port=8501 --model_name=${MODEL_NAME} --model_base_path=${MODEL_BASE_PATH}/${MODEL_NAME} \"$@\"' >> /usr/bin/tf_serving_entrypoint.sh \\\n && chmod +x /usr/bin/tf_serving_entrypoint.sh\n\nCMD [\"/usr/bin/tf_serving_entrypoint.sh\"]\n"
+}

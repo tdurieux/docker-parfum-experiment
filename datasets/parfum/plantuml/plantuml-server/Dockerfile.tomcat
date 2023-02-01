@@ -1,0 +1,30 @@
+FROM maven:3-jdk-11-slim AS builder
+
+COPY pom.xml /app/
+COPY src/main /app/src/main/
+
+WORKDIR /app
+RUN mvn --batch-mode --define java.net.useSystemProxies=true -Dapache-jsp.scope=compile package
+
+########################################################################################
+
+FROM tomcat:10-jdk11-openjdk-slim
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        fonts-noto-cjk \
+        graphviz \
+        && \
+    rm -rf /var/lib/apt/lists/*
+
+COPY docker-entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+ENV BASE_URL=ROOT \
+    WEBAPP_PATH=$CATALINA_HOME/webapps
+RUN rm -rf $WEBAPP_PATH && \
+    mkdir -p $WEBAPP_PATH
+COPY --from=builder /app/target/plantuml.war $WEBAPP_PATH/ROOT.war
+
+ENTRYPOINT ["/entrypoint.sh"]
+CMD ["catalina.sh", "run"]

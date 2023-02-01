@@ -1,0 +1,53 @@
+{
+  "startTime": 1674250068612,
+  "endTime": 1674250068923,
+  "originalSmells": [
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 30,
+        "lineEnd": 30,
+        "columnStart": 4,
+        "columnEnd": 32
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 7,
+        "lineEnd": 25,
+        "columnStart": 22,
+        "columnEnd": 14
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 87,
+        "lineEnd": 98,
+        "columnStart": 22,
+        "columnEnd": 8
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 103,
+        "lineEnd": 106,
+        "columnStart": 22,
+        "columnEnd": 101
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 7,
+        "lineEnd": 25,
+        "columnStart": 22,
+        "columnEnd": 14
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM debian:stretch AS base\nENV LANG=C.UTF-8\n# To get the list of build dependency packages from the Vagrantfile, run:\n#\n#     sed '/# Install toolchain/,/^$/!d' Vagrantfile \\\n#         | sed -En 's/^\\s+(\\S+)\\s*\\\\?$/\\1/p' | sort\n#\nRUN apt-get update && apt-get install --no-install-recommends -y \\\n    autoconf \\\n    automake \\\n    autopoint \\\n    build-essential \\\n    cmake \\\n    gettext \\\n    git \\\n    libgcrypt-dev \\\n    libidn11-dev \\\n    libssl-dev \\\n    libtool \\\n    libunistring-dev \\\n    pkg-config \\\n    python-twisted \\\n    rsync \\\n    texinfo \\\n    wget \\\n    zlib1g-dev && rm -rf /var/lib/apt/lists/*;\n# quieten wget and unzip\nRUN echo 'quiet = on' >> /etc/wgetrc\nWORKDIR /usr/local/src\nRUN wget -q \"https://downloads.sourceforge.net/project/boost/boost/1.67.0/boost_1_67_0.tar.bz2\" \\\n && tar -xf boost_1_67_0.tar.bz2 \\\n && cd boost_1_67_0 \\\n && ./bootstrap.sh \\\n && ./b2 -j `nproc` -d+0 --link=shared \\\n         --with-system \\\n         --with-program_options \\\n         --with-test \\\n         --with-coroutine \\\n         --with-filesystem \\\n         --with-date_time \\\n         --with-regex \\\n         --with-iostreams \\\n         --prefix=/usr/local install && rm boost_1_67_0.tar.bz2\n\nFROM base as builder\n# This version is a recommendation and this file has been tested to work for it,\n# but you may attempt to build other versions by overriding this argument.\n# Also see `OUINET_DOCKER_VERSION` below.\nARG OUINET_VERSION=v0.0.36\nRUN git clone --recursive -b \"$OUINET_VERSION\" https://github.com/equalitie/ouinet.git\nWORKDIR /opt/ouinet\n# The C.UTF-8 locale (which is always available in Debian)\n# is needed to allow CMake to extract files in the Go language binary distribution\n# with UTF-8-encoded Unicode names.\nRUN cmake /usr/local/src/ouinet \\\n && make\nRUN cp -r /usr/local/src/ouinet/repos/ repo-templates/\nARG OUINET_DEBUG=no\nRUN \\\nif [ $OUINET_DEBUG != yes ]; then \\\n    strip injector client modules/obfs4proxy/obfs4proxy \\\n        && find . -name '*.so' -exec strip '{}' + \\\n        && find . -wholename '*/libexec/*' -executable -type f -exec strip '{}' + ; \\\nfi\n# Setting this to a different version than `OUINET_VERSION` allows to\n# use that version's Docker-specific files (e.g. wrapper scripts)\n# without having to rebuild source.\n# Maybe those Docker-specific files should go in a different repo.\nARG OUINET_DOCKER_VERSION=$OUINET_VERSION\nRUN cd /usr/local/src/ouinet \\\n && git fetch -t \\\n && git checkout \"$OUINET_DOCKER_VERSION\"\n# Populate the licenses directory (avoid version numbers in source paths).\nRUN ln -s /usr/local/src/boost_1_67_0 /usr/local/src/boost \\\n && /usr/local/src/ouinet/scripts/add-licenses-dir.sh /usr/local/src/ouinet .\n\nFROM debian:stretch\n# To get the list of system library packages to install,\n# enter the build directory and execute:\n#\n#     ldd injector client $(find . -name '*.so' | grep -v '\\.libs') \\\n#         | sed -En 's#^.* => (/lib/.*|/usr/lib/.*) \\(.*#\\1#p' | sort -u \\\n#         | (while read l; do dpkg -S $l; done) | cut -f1 -d: | sort -u\n#\nARG OUINET_DEBUG=no\n# This will also be used by the wrapper script.\nENV OUINET_DEBUG=$OUINET_DEBUG\nRUN apt-get update && apt-get install --no-install-recommends -y \\\n    libc6 \\\n    libgcc1 \\\n    libssl1.1 \\\n    libstdc++6 \\\n    zlib1g \\\n\n    ca-certificates \\\n    $(echo $OUINET_DEBUG | sed -n 's/^yes$/gdb/p') \\\n\n    lsb-release \\\n    wget \\\n && rm -rf /var/lib/apt/lists/*\n# Fetch and install i2pd.\nARG I2PD_VERSION=2.23.0\nRUN wget -q -P /tmp \"https://github.com/PurpleI2P/i2pd/releases/download/${I2PD_VERSION}/i2pd_${I2PD_VERSION}-1$(lsb_release -sc)1_$(dpkg --print-architecture).deb\" \\\n && apt-get update && apt-get install --no-install-recommends -y \\\n    cron \\\n    logrotate \\\n    $(dpkg --info /tmp/i2pd_*.deb | sed -nE 's/^.*Depends: (.*)/\\1/p' | sed -E 's/( \\([^)]+\\))?,//g') \\\n && dpkg -i /tmp/i2pd_*.deb \\\n && rm -f /tmp/i2pd_*.deb \\\n && rm -rf /var/lib/apt/lists/*\n# Manually install Boost libraries.\nCOPY --from=builder /usr/local/lib/libboost_* /usr/local/lib/\nWORKDIR /opt/ouinet\n# To get the list of locally built libraries to copy,\n# enter the build directory and execute:\n#\n#     ldd injector client $(find . -name '*.so' | grep -v '\\.libs') \\\n#         | sed -En \"s#^.* => ($PWD/.*) \\(.*#\\1#p\" | sort -u \\\n#         | sed \"s#$PWD#/opt/ouinet#\"\n#\nCOPY --from=builder \\\n     /opt/ouinet/gcrypt/src/gcrypt/src/.libs/libgcrypt.so.20 \\\n     /opt/ouinet/gpg_error/out/lib/libgpg-error.so.0 \\\n     /opt/ouinet/modules/asio-ipfs/ipfs_bindings/libipfs_bindings.so \\\n     /opt/ouinet/src/ouiservice/lampshade/lampshade_bindings/liblampshade_bindings.so \\\n     \\\n     /usr/local/lib/\n# Update the dynamic linker cache after all non-system libraries have been copied.\nRUN ldconfig\n# GNUnet support has been temporarily removed.\n#COPY --from=builder /opt/ouinet/modules/gnunet-channels/gnunet-bin/share/gnunet/ modules/gnunet-channels/gnunet-bin/share/gnunet/\n#COPY --from=builder /opt/ouinet/modules/gnunet-channels/gnunet-bin/lib/ modules/gnunet-channels/gnunet-bin/lib/\nCOPY --from=builder /opt/ouinet/injector /opt/ouinet/client ./\nCOPY --from=builder /opt/ouinet/modules/obfs4proxy/obfs4proxy ./\nCOPY --from=builder /opt/ouinet/repo-templates/ repo-templates/\n# This ensures that we use the desired Docker-specific files.\nRUN echo \"$OUINET_DOCKER_VERSION\"\nCOPY --from=builder /usr/local/src/ouinet/scripts/ouinet-wrapper.sh ouinet\nCOPY --from=builder /opt/ouinet/licenses/ licenses/\nENTRYPOINT [\"/opt/ouinet/ouinet\"]\n"
+}

@@ -1,0 +1,12 @@
+FROM quay.io/centos/centos:stream9
+
+ENV KUBEVIRT_CLIENT_GO_SCHEME_REGISTRATION_VERSION=v1
+
+COPY hyperconverged-cluster-operator /usr/bin/
+COPY hack/testFiles/test_quickstart.yaml quickStart/
+COPY hack/testFiles/test_dashboard_cm.yaml dashboard/
+COPY assets/ .
+COPY ci-test-files/dataImportCronTemplatesWithImageStream.yaml dataImportCronTemplates/
+COPY ci-test-files/centos8-imagestream.yaml imageStreams/
+
+ENTRYPOINT /usr/bin/hyperconverged-cluster-operator

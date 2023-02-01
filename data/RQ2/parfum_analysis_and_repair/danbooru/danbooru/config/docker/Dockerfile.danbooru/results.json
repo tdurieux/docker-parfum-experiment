@@ -1,0 +1,26 @@
+{
+  "startTime": 1674252904618,
+  "endTime": 1674252905437,
+  "originalSmells": [
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 29,
+        "lineEnd": 29,
+        "columnStart": 2,
+        "columnEnd": 40
+      }
+    },
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 40,
+        "lineEnd": 40,
+        "columnStart": 4,
+        "columnEnd": 16
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM ubuntu:22.04 AS base\n\nWORKDIR /danbooru\nENV PATH=\"/root/.asdf/bin:/root/.asdf/shims:$PATH:/usr/lib/postgresql/14/bin\"\n\nCOPY config/docker/build-base-image.sh .\n\nRUN \\\n  ./build-base-image.sh && \\\n  chmod go+rx /root && \\\n  useradd --home-dir /root --user-group danbooru && \\\n  rm build-base-image.sh\n\n\n\nFROM base AS development\nARG NODE_VERSION=14.15.5\n\nRUN \\\n  apt-get update && \\\n  DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \\\n    build-essential libpq-dev libvips-dev zlib1g-dev \\\n    curl ca-certificates dirmngr git gpg && \\\n  rm -rf /var/lib/apt/lists/*\n\nRUN \\\n  asdf plugin add nodejs && \\\n  asdf install nodejs \"$NODE_VERSION\" && \\\n  asdf global nodejs \"$NODE_VERSION\" && \\\n  npm install --unsafe-perm=true -g yarn && \\\n  chmod -R go+rx /root/.config && npm cache clean --force; # make Yarn config dir readable for non-root\n\nCOPY Gemfile Gemfile.lock ./\nRUN \\\n  bundle install --jobs \"$(nproc)\" && \\\n  rm -rf \"$(gem environment gemdir)/cache\" && \\\n  find \"$(gem environment gemdir)\" -name \"*.o\" -delete\n\nCOPY .yarnrc.yml package.json yarn.lock ./\nCOPY .yarn/ ./.yarn/\nRUN yarn install && yarn cache clean;\n\nCOPY postcss.config.js Rakefile ./\nCOPY bin/rails bin/webpack ./bin/\nCOPY config/application.rb config/boot.rb config/danbooru_default_config.rb config/webpacker.yml ./config/\nCOPY config/webpack/ ./config/webpack/\nCOPY public/images ./public/images\nCOPY public/fonts ./public/fonts\nCOPY app/components/ ./app/components/\nCOPY app/javascript/ ./app/javascript/\n\nRUN \\\n  bin/rails assets:precompile && \\\n  rm -rf \\\n    node_modules .yarn/cache tmp /usr/local/share/.cache/yarn \\\n    /root/.yarn/berry/cache /root/.bundle/cache /root/.npm && \\\n  ln -s /tmp tmp && \\\n  ln -s packs public/packs-test\n\n\n\nFROM base as production\n\nENV LD_PRELOAD=libjemalloc.so.2\nENV MALLOC_CONF=background_thread:true,narenas:2,dirty_decay_ms:1000,muzzy_decay_ms:0,tcache:false\n\nCOPY --from=development /root /root\nCOPY --from=development /danbooru /danbooru\n\nCOPY . .\nARG SOURCE_COMMIT\nRUN echo \"$SOURCE_COMMIT\" > REVISION\n\nUSER danbooru\nENTRYPOINT [\"tini\", \"--\"]\nCMD [\"bin/rails\", \"server\"]\n\n# https://github.com/opencontainers/image-spec/blob/main/annotations.md\nLABEL org.opencontainers.image.source https://github.com/danbooru/danbooru\n"
+}

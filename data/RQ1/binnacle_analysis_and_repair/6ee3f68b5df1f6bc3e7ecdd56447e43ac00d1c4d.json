@@ -1,0 +1,17 @@
+{
+  "startTime": 1674253203459,
+  "endTime": 1674253203575,
+  "originalSmells": [
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 57,
+        "lineEnd": 57,
+        "columnStart": 2,
+        "columnEnd": 14
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# The version of Alpine to use for the final image\n# This should match the version of Alpine that the elixir image uses\nARG ALPINE_VERSION=3.9\n\nFROM elixir:1.8.1-alpine AS builder\n\nARG QL_MODE\nENV QL_MODE=$QL_MODE\n\n# The following are build arguments used to change variable parts of the image.\n# The name of your application/release (required)\nARG APP_NAME\n# The version of the application we are building (required)\nARG APP_VSN\n# The environment to build with\nARG MIX_ENV=prod\n# Set this to true if this release is not a Phoenix app\nARG SKIP_PHOENIX=false\n# If you are using an umbrella project, you can change this\n# argument to the directory the Phoenix app is in so that the assets\n# can be built\nARG PHOENIX_SUBDIR=.\n\nENV SKIP_PHOENIX=${SKIP_PHOENIX} \\\n    APP_NAME=${APP_NAME} \\\n    APP_VSN=${APP_VSN} \\\n    MIX_ENV=${MIX_ENV} \\\n    HEX_UNSAFE_HTTPS=${QL_MODE}\n\n# By convention, /opt is typically used for applications\nWORKDIR /opt/app\n\n# This step installs all the build tools we'll need\nRUN apk update && \\\n  apk upgrade --no-cache && \\\n  apk add --no-cache \\\n    nodejs \\\n    yarn \\\n    git \\\n    curl \\\n    build-base && \\\n  mix local.rebar --force && \\\n  mix local.hex --force\n\nCOPY assets/ops/setup_security.sh /\nRUN /setup_security.sh\n\n# This copies our app source code into the build container\nCOPY . .\n\nRUN mix do deps.get, deps.compile, compile\n\n# This step builds assets for the Phoenix app (if there is one)\n# If you aren't building a Phoenix app, pass `--build-arg SKIP_PHOENIX=true`\n# This is mostly here for demonstration purposes\nRUN if [ ! \"$SKIP_PHOENIX\" = \"true\" ]; then \\\n  cd ${PHOENIX_SUBDIR}/assets && \\\n  yarn install && \\\n  yarn deploy && \\\n  cd .. && \\\n  mix phx.digest; yarn cache clean; \\\nfi\n\nRUN \\\n  mkdir -p /opt/built && \\\n  mix release --verbose && \\\n  cp _build/${MIX_ENV}/rel/${APP_NAME}/releases/${APP_VSN}/${APP_NAME}.tar.gz /opt/built && \\\n  cd /opt/built && \\\n  tar -xzf ${APP_NAME}.tar.gz && \\\n  rm ${APP_NAME}.tar.gz\n\n# From this line onwards, we're in a new image, which will be the image used in production\nFROM alpine:${ALPINE_VERSION}\n\n# The name of your application/release (required)\nARG APP_NAME\n\nRUN apk update && \\\n    apk add --no-cache \\\n      bash \\\n      openssl-dev\n\nENV REPLACE_OS_VARS=true \\\n    APP_NAME=${APP_NAME}\n\nWORKDIR /opt/app\n\nCOPY --from=builder /opt/built .\n\nCMD trap 'exit' INT; /opt/app/bin/${APP_NAME} foreground\n"
+}

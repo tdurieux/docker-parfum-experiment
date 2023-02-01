@@ -1,0 +1,17 @@
+{
+  "startTime": 1674252505512,
+  "endTime": 1674252506237,
+  "originalSmells": [
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 24,
+        "lineEnd": 28,
+        "columnStart": 22,
+        "columnEnd": 11
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "ARG PYTHON_VERSION=3.9-slim-bullseye\n\n{% if cookiecutter.frontend_pipeline == 'Gulp' -%}\nFROM node:16-bullseye-slim as client-builder\n\nARG APP_HOME=/app\nWORKDIR ${APP_HOME}\n\nCOPY ./package.json ${APP_HOME}\nRUN npm install && npm cache clean --force\nCOPY . ${APP_HOME}\nRUN npm run build\n\n{%- endif %}\n\n# define an alias for the specfic python version used in this file.\nFROM python:${PYTHON_VERSION} as python\n\n# Python build stage\nFROM python as python-build-stage\n\nARG BUILD_ENVIRONMENT=production\n\n# Install apt packages\nRUN apt-get update && apt-get install --no-install-recommends -y \\\n  # dependencies for building Python packages\n  build-essential \\\n  # psycopg2 dependencies\n  libpq-dev && rm -rf /var/lib/apt/lists/*;\n\n# Requirements are installed here to ensure they will be cached.\nCOPY ./requirements .\n\n# Create Python Dependency and Sub-Dependency Wheels.\nRUN pip wheel --wheel-dir /usr/src/app/wheels  \\\n  -r ${BUILD_ENVIRONMENT}.txt\n\n\n# Python 'run' stage\nFROM python as python-run-stage\n\nARG BUILD_ENVIRONMENT=production\nARG APP_HOME=/app\n\nENV PYTHONUNBUFFERED 1\nENV PYTHONDONTWRITEBYTECODE 1\nENV BUILD_ENV ${BUILD_ENVIRONMENT}\n\nWORKDIR ${APP_HOME}\n\nRUN addgroup --system django \\\n    && adduser --system --ingroup django django\n\n\n# Install required system dependencies\nRUN apt-get update && apt-get install --no-install-recommends -y \\\n  # psycopg2 dependencies\n  libpq-dev \\\n  # Translations dependencies\n  gettext \\\n  # cleaning up unused files\n  && apt-get purge -y --auto-remove -o APT::AutoRemove::RecommendsImportant=false \\\n  && rm -rf /var/lib/apt/lists/*\n\n# All absolute dir copies ignore workdir instruction. All relative dir copies are wrt to the workdir instruction\n# copy python dependency wheels from python-build-stage\nCOPY --from=python-build-stage /usr/src/app/wheels  /wheels/\n\n# use wheels to install python dependencies\nRUN pip install --no-cache-dir --no-index --find-links=/wheels/ /wheels/* \\\n  && rm -rf /wheels/\n\n\nCOPY --chown=django:django ./compose/production/django/entrypoint /entrypoint\nRUN sed -i 's/\\r$//g' /entrypoint\nRUN chmod +x /entrypoint\n\n\nCOPY --chown=django:django ./compose/production/django/start /start\nRUN sed -i 's/\\r$//g' /start\nRUN chmod +x /start\n\n\n{%- if cookiecutter.use_celery == \"y\" %}\nCOPY --chown=django:django ./compose/production/django/celery/worker/start /start-celeryworker\nRUN sed -i 's/\\r$//g' /start-celeryworker\nRUN chmod +x /start-celeryworker\n\n\nCOPY --chown=django:django ./compose/production/django/celery/beat/start /start-celerybeat\nRUN sed -i 's/\\r$//g' /start-celerybeat\nRUN chmod +x /start-celerybeat\n\n\nCOPY ./compose/production/django/celery/flower/start /start-flower\nRUN sed -i 's/\\r$//g' /start-flower\nRUN chmod +x /start-flower\n{%- endif %}\n\n\n# copy application code to WORKDIR\n{%- if cookiecutter.frontend_pipeline == 'Gulp' %}\nCOPY --from=client-builder --chown=django:django ${APP_HOME} ${APP_HOME}\n{% else %}\nCOPY --chown=django:django . ${APP_HOME}\n{%- endif %}\n\n# make django owner of the WORKDIR directory as well.\nRUN chown django:django ${APP_HOME}\n\nUSER django\n\nENTRYPOINT [\"/entrypoint\"]\n"
+}

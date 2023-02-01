@@ -1,0 +1,95 @@
+# To test the container locally you can run:
+# docker build -f webserver/Dockerfile.webserver . -t webserver
+# docker run -p 5000:5000 -v $(pwd)/config_docker.py:/mnt/config/config.py-v $(pwd)/cache:/usr/src/app/cache webserver
+# Though I would suggest that you have a seperate config for docker
+# If not so replace -v $(pwd)/config_docker.py:/mnt/config/config.py with -v $(pwd)/config.py:/mnt/config/config.py
+
+# This build file is from https://www.rockyourcode.com/create-a-multi-stage-docker-build-for-python-flask-and-postgres/
+FROM osgeo/proj:8.2.0 as proj
+
+
+## Base image
+FROM python:3.10 AS compile-image
+
+# Install dependencies (libgeos in order for cartopy to work)
+RUN apt-get update
+RUN apt-get install --no-install-recommends -y gcc build-essential && rm -rf /var/lib/apt/lists/*;
+RUN apt-get install --no-install-recommends -y libgeos-dev && rm -rf /var/lib/apt/lists/*;
+
+COPY --from=proj  /usr/share/proj/ /usr/share/proj/
+COPY --from=proj  /usr/include/ /usr/include/
+COPY --from=proj  /usr/bin/ /usr/bin/
+COPY --from=proj  /usr/lib/ /usr/lib/
+
+## Virtualenv
+ENV VIRTUAL_ENV=/opt/venv
+RUN python3 -m venv $VIRTUAL_ENV
+ENV PATH="$VIRTUAL_ENV/bin:$PATH"
+
+## Add and install requirements
+RUN pip install --no-cache-dir --upgrade pip && pip install --no-cache-dir pip-tools
+COPY ./webserver/requirements.txt requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
+
+
+# Complie website
+FROM node:14-alpine as node-image
+WORKDIR /app
+COPY ./webserver/website/package*.json ./
+RUN npm install && npm cache clean --force;
+COPY ./webserver/website/ .
+RUN npm run build
+
+
+## runtime-image
+FROM python:3.10 AS runtime-image
+
+COPY --from=proj  /usr/share/proj/ /usr/share/proj/
+COPY --from=proj  /usr/include/ /usr/include/
+COPY --from=proj  /usr/bin/ /usr/bin/
+COPY --from=proj  /usr/lib/ /usr/lib/
+
+# Install dependencies (libgeos in order for cartopy to work)
+RUN apt-get update
+RUN apt-get install --no-install-recommends -y libgeos-dev && rm -rf /var/lib/apt/lists/*;
+
+## Virtualenv
+ENV VIRTUAL_ENV=/opt/venv
+RUN python3 -m venv $VIRTUAL_ENV
+ENV PATH="$VIRTUAL_ENV/bin:$PATH"
+
+## Copy Python dependencies from build image
+COPY --from=compile-image /opt/venv /opt/venv
+
+## set working directory
+WORKDIR /usr/src/app
+
+## Add User (a security measure)
+# We have to set a static user id, so that the user can read the files in virtual volumes
+# We use system accounts, but it's just symbolic
+RUN addgroup --system --gid 420 tcp && adduser --system --no-create-home --uid 420 --gid 420 tcp
+
+## Add webserver and librays
+COPY ./webserver/ /usr/src/app/webserver/
+COPY ./helpers/ /usr/src/app/helpers/
+COPY ./database/ /usr/src/app/database/
+COPY ./data_analysis/ /usr/src/app/data_analysis
+COPY ./webserverconfig.py /usr/src/app/webserverconfig.py
+
+## Copy website
+COPY --from=node-image /app/dist /usr/src/app/webserver/website/dist/
+
+## Switch to non-root user
+# for some reason doing this before the copy results in weird permissions # && chmod -R 775 /usr/src/app/
+RUN chown -R tcp:tcp /usr/src/app/
+USER tcp
+
+## Set environment variables
+ENV PYTHONDONTWRITEBYTECODE 1
+ENV PYTHONUNBUFFERED 1
+ENV PATH="/opt/venv/bin:$PATH"
+ENV MPLCONFIGDIR="/usr/src/app/cache"
+
+EXPOSE 5000
+
+CMD ["gunicorn","-b 0.0.0.0:5000", "webserver:create_app()", "-t 200"]

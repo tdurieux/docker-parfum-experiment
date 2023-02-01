@@ -1,0 +1,26 @@
+{
+  "startTime": 1674243300622,
+  "endTime": 1674243300786,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 3,
+        "lineEnd": 3,
+        "columnStart": 22,
+        "columnEnd": 75
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 3,
+        "lineEnd": 3,
+        "columnStart": 22,
+        "columnEnd": 75
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM golang:1.12.1-stretch AS builder\nMAINTAINER Filecoin Dev Team\n\nRUN apt-get update && apt-get install --no-install-recommends -y ca-certificates file sudo clang jq && rm -rf /var/lib/apt/lists/*;\nRUN curl -sSf https://sh.rustup.rs | sh -s -- -y\n\n# This docker file is a modified version of\n# https://github.com/ipfs/go-ipfs/blob/master/Dockerfile\n# Thanks Lars :)\n\nENV SRC_DIR /go/src/github.com/filecoin-project/go-filecoin\nENV GO111MODULE on\nARG FILECOIN_PARAMETER_CACHE=\"./tmp/filecoin-proof-parameters\"\nARG FILECOIN_USE_PRECOMPILED_RUST_PROOFS=yes\nARG FILECOIN_USE_PRECOMPILED_BLS_SIGNATURES=yes\n\nCOPY . $SRC_DIR\n\n# Build the thing.\nRUN cd $SRC_DIR \\\n  && . $HOME/.cargo/env \\\n  && go run ./build/*go deps \\\n  && go run ./build/*go build\n\n# Get su-exec, a very minimal tool for dropping privileges,\n# and tini, a very minimal init daemon for containers\nENV SUEXEC_VERSION v0.2\nENV TINI_VERSION v0.16.1\nRUN set -x \\\n  && cd /tmp \\\n  && git clone https://github.com/ncopa/su-exec.git \\\n  && cd su-exec \\\n  && git checkout -q $SUEXEC_VERSION \\\n  && make \\\n  && cd /tmp \\\n  && wget -q -O tini https://github.com/krallin/tini/releases/download/$TINI_VERSION/tini \\\n  && chmod +x tini\n\n\n# Now comes the actual target image, which aims to be as small as possible.\nFROM busybox:1-glibc AS filecoin\nMAINTAINER Filecoin Dev Team\n\n# Get the filecoin binary, entrypoint script, and TLS CAs from the build container.\nENV SRC_DIR /go/src/github.com/filecoin-project/go-filecoin\nCOPY --from=builder $SRC_DIR/tmp/filecoin-proof-parameters/* /tmp/filecoin-proof-parameters/\nCOPY --from=builder $SRC_DIR/go-filecoin /usr/local/bin/go-filecoin\nCOPY --from=builder $SRC_DIR/bin/container_daemon /usr/local/bin/start_filecoin\nCOPY --from=builder $SRC_DIR/bin/devnet_start /usr/local/bin/devnet_start\nCOPY --from=builder $SRC_DIR/bin/node_restart /usr/local/bin/node_restart\nCOPY --from=builder $SRC_DIR/fixtures/ /data/\nCOPY --from=builder $SRC_DIR/gengen/gengen /usr/local/bin/gengen\nCOPY --from=builder /tmp/su-exec/su-exec /sbin/su-exec\nCOPY --from=builder /tmp/tini /sbin/tini\nCOPY --from=builder /etc/ssl/certs /etc/ssl/certs\n\n# This shared lib (part of glibc) doesn't seem to be included with busybox.\nCOPY --from=builder /lib/x86_64-linux-gnu/libdl-2.24.so /lib/libdl.so.2\nCOPY --from=builder /lib/x86_64-linux-gnu/librt.so.1 /lib/librt.so.1\nCOPY --from=builder /lib/x86_64-linux-gnu/libgcc_s.so.1 /lib/libgcc_s.so.1\nCOPY --from=builder /lib/x86_64-linux-gnu/libutil.so.1 /lib/libutil.so.1\n\n# need jq for parsing genesis output\nRUN wget -q -O /usr/local/bin/jq https://github.com/stedolan/jq/releases/download/jq-1.5/jq-linux64 \\\n  && chmod +x /usr/local/bin/jq\n\n# Ports for Swarm and CmdAPI\nEXPOSE 6000\nEXPOSE 3453\n\n# Create the fs-repo directory and switch to a non-privileged user.\nENV FILECOIN_PATH /data/filecoin\nRUN mkdir -p $FILECOIN_PATH \\\n  && adduser -D -h $FILECOIN_PATH -u 1000 -G users filecoin \\\n  && chown filecoin:users $FILECOIN_PATH\n\n# Expose the fs-repo as a volume.\n# start_filecoin initializes an fs-repo if none is mounted.\n# Important this happens after the USER directive so permission are correct.\nVOLUME $FILECOIN_PATH\n\n# There's an fs-repo, and initializes one if there isn't.\nENTRYPOINT [\"/sbin/tini\", \"--\", \"/usr/local/bin/start_filecoin\"]\n\n# Execute the daemon subcommand by default\nCMD [\"daemon\"]\n"
+}

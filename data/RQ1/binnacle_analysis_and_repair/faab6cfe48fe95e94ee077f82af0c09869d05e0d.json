@@ -1,0 +1,35 @@
+{
+  "startTime": 1674243802196,
+  "endTime": 1674243802582,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 34,
+        "lineEnd": 34,
+        "columnStart": 7,
+        "columnEnd": 40
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 120,
+        "lineEnd": 120,
+        "columnStart": 7,
+        "columnEnd": 37
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 34,
+        "lineEnd": 34,
+        "columnStart": 7,
+        "columnEnd": 40
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Defining environment\nARG APP_ENV=dev\nARG BUILD_TYPE=Debug\n\nFROM scratch as spackbc\n\n#-----------------------------------\n# Base image\n#-----------------------------------\nFROM registry.gitlab.com/salus/tensorflow-salus AS base-prod\n\n# make gcc-7 and ld.gold the default\nRUN update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-5 10 \\\n    && update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-7 20 \\\n    && update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-5 10 \\\n    && update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-7 20 \\\n    && update-alternatives --install /usr/bin/cc cc /usr/bin/gcc 30 \\\n    && update-alternatives --set cc /usr/bin/gcc \\\n    && update-alternatives --install /usr/bin/c++ c++ /usr/bin/g++ 30 \\\n    && update-alternatives --set c++ /usr/bin/g++ \\\n    && update-alternatives --install /usr/bin/ld ld /usr/bin/ld.gold 20 \\\n    && update-alternatives --install /usr/bin/ld ld /usr/bin/ld.bfd 10\n\nENV SALUS_DEPS_DIR=/opt/salus-deps\n\n#-----------------------------------\n# Additional build server for CLion in base\n#-----------------------------------\n\nFROM base-prod AS base-dev\n\n# Install ssh server and other development tools\nRUN DEBIAN_FRONTEND=noninteractive apt-get update \\\n    && (echo 'debconf debconf/frontend select Noninteractive' | debconf-set-selections) \\\n    && apt-get install --no-install-recommends -y openssh-server && rm -rf /var/lib/apt/lists/*;\n\nRUN spack install gdb \\\n    && spack view -d false -v add $SPACK_PACKAGES gdb \\\n    && spack-pin gdb\n\n# Config the sshd server, the root password is 'root'.\n# For development use ONLY, NEVER expose this to the Internet!!!\nRUN mkdir /var/run/sshd \\\n    && echo 'root:root' | chpasswd \\\n    && sed -ri 's/^#?PermitRootLogin\\s+.*/PermitRootLogin yes/' /etc/ssh/sshd_config \\\n    && mkdir /root/.ssh\n\n#-----------------------------------\n# Dependencies\n#-----------------------------------\nFROM base-${APP_ENV} AS deps\n\nRUN spack install boost@1.66.0\nRUN spack install cppzmq@4.3.0 \\\n                  zeromq@4.2.5 \\\n                  nlohmann-json@3.1.2 \\\n                  protobuf@3.4.1 \\\n                  gperftools@2.7\n\nRUN spack view -v -d true hard \"$SALUS_DEPS_DIR\" boost@1.66.0 \\\n                                                 cppzmq@4.3.0 \\\n                                                 zeromq@4.2.5 \\\n                                                 nlohmann-json@3.1.2 \\\n                                                 protobuf@3.4.1 \\\n                                                 gperftools@2.7\n\nENV CMAKE_PREFIX_PATH=$SALUS_DEPS_DIR\n\n#-----------------------------------\n# Add in source code\n#-----------------------------------\nFROM deps AS sources\n\nCOPY . salus\n\n#-----------------------------------\n# Development image\n#-----------------------------------\nFROM sources AS dev\n\n# Make sure environment variables are set for ssh sessions\nRUN /bin/echo -e \"\\\nPATH=${PATH}\\n\\\nSALUS_WORK_ROOT=${SALUS_WORK_ROOT}\\n\\\nSPACK_HOME=${SPACK_HOME}\\n\\\nSPACK_PACKAGES=${SPACK_PACKAGES}\\n\\\nCUDA_HOME=${CUDA_HOME}\\n\\\nTensorFlow_DIR=${TensorFlow_DIR}\\n\\\nCMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH}\\n\\\n\" >> /etc/environment\n\nEXPOSE 22\n\nCMD [\"/usr/sbin/sshd\", \"-D\"]\n\n#-----------------------------------\n# Production image\n#-----------------------------------\n\nFROM sources as compile\n\nWORKDIR /salus/salus\n\nENV Salus_DIR=${SALUS_WORK_ROOT}/salus\n\nRUN cmake -H. -Bbuild -DCMAKE_BUILD_TYPE=${BUILD_TYPE} -DCMAKE_INSTALL_PREFIX=/usr/local -DSALUS_DEPS_PATH=$SALUS_DEPS_DIR\n\nRUN cmake --build build -- -j\n\nRUN cmake --build build --target install -- DESTDIR=/opt/salus\n\n# build a smaller image\nFROM nvidia/cuda:9.1-cudnn7-runtime-ubuntu16.04 as prod\n\n# gcc7 runtime library\nRUN DEBIAN_FRONTEND=noninteractive apt-get update \\\n    && (echo 'debconf debconf/frontend select Noninteractive' | debconf-set-selections) \\\n    && apt-get install -y --no-install-recommends software-properties-common gnupg-curl ca-certificates apt-transport-https \\\n    && add-apt-repository -y ppa:ubuntu-toolchain-r/test \\\n    && apt-get update \\\n    && apt-get install --no-install-recommends -y g++-7 gcc-7 \\\n    && apt-get purge -y software-properties-common gnupg-curl \\\n    && apt-get autoremove -y \\\n    && rm -rf /var/lib/apt/lists/*\n\nCOPY --from=deps /salus/tensorflow/bazel-bin/tensorflow/libtensorflow_kernels.so /salus/tensorflow/bazel-bin/tensorflow/\nCOPY --from=deps /opt/salus-deps/lib/*.so /usr/local/lib/\nCOPY --from=deps /opt/salus-deps/lib/*.so.* /usr/local/lib/\nCOPY --from=compile /opt/salus /\n\n# grab gosu for easy step-down from root\nENV GOSU_VERSION 1.11\nRUN set -x \\\n    && apt-get update && apt-get install -y --no-install-recommends ca-certificates wget && rm -rf /var/lib/apt/lists/* \\\n    && wget -O /usr/local/bin/gosu \"https://github.com/tianon/gosu/releases/download/$GOSU_VERSION/gosu-$(dpkg --print-architecture)\" \\\n    && wget -O /usr/local/bin/gosu.asc \"https://github.com/tianon/gosu/releases/download/$GOSU_VERSION/gosu-$(dpkg --print-architecture).asc\" \\\n    && export GNUPGHOME=\"$(mktemp -d)\" \\\n    && gpg --batch --keyserver ha.pool.sks-keyservers.net --recv-keys B42F6819007F00F88E364FD4036A9C25BF357DD4 \\\n    && gpg --batch --verify /usr/local/bin/gosu.asc /usr/local/bin/gosu \\\n    && { command -v gpgconf > /dev/null && gpgconf --kill all || :; } \\\n    && rm -rf \"$GNUPGHOME\" /usr/local/bin/gosu.asc \\\n    && chmod +x /usr/local/bin/gosu \\\n    && gosu nobody true \\\n    && apt-get purge -y --auto-remove ca-certificates wget\n\n# explicitly set user/group IDs\nRUN set -eux; \\\n\tgroupadd -r salus --gid=999; \\\n\tuseradd -r -g salus --uid=999 --home-dir=/var/lib/salus --shell=/bin/bash salus; \\\n\tmkdir -p /var/lib/salus; \\\n\tchown -R salus:salus /var/lib/salus\n\nCOPY docker-entrypoint.sh /usr/local/bin/\nENTRYPOINT [\"docker-entrypoint.sh\"]\n\nEXPOSE 5501\n\nCMD [\"salus-server\"]\n\n#-----------------------------------\n# Final image as a switch\n#-----------------------------------\nFROM ${APP_ENV} as final\n"
+}

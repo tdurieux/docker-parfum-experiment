@@ -1,0 +1,32 @@
+FROM ubuntu:20.04 as build
+ARG DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install --no-install-recommends -y curl bash && rm -rf /var/lib/apt/lists/*;
+RUN curl -f -sL https://deb.nodesource.com/setup_16.x | bash -
+RUN apt-get install --no-install-recommends -y nodejs gcc g++ make libpixman-1-dev libcairo2-dev libpango1.0-dev libjpeg8-dev libgif-dev && rm -rf /var/lib/apt/lists/*;
+
+WORKDIR /double-take/api
+COPY /api/package.json .
+RUN npm install --production && npm cache clean --force;
+
+WORKDIR /double-take/frontend
+COPY /frontend/package.json .
+RUN npm install && npm cache clean --force;
+
+WORKDIR /double-take/api
+COPY /api/server.js .
+COPY /api/src ./src
+
+WORKDIR /double-take/frontend
+COPY /frontend/src ./src
+COPY /frontend/public ./public
+COPY /frontend/.env.production ./frontend/vue.config.js ./
+
+WORKDIR /
+RUN mkdir /.storage
+RUN ln -s /.storage /double-take/.storage
+
+FROM ubuntu:20.04
+COPY --from=build . .
+ENV NODE_ENV=development
+WORKDIR /double-take

@@ -1,0 +1,98 @@
+{
+  "startTime": 1674248703170,
+  "endTime": 1674248704716,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 44,
+        "lineEnd": 44,
+        "columnStart": 4,
+        "columnEnd": 38
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 213,
+        "lineEnd": 213,
+        "columnStart": 4,
+        "columnEnd": 76
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 217,
+        "lineEnd": 217,
+        "columnStart": 4,
+        "columnEnd": 77
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 230,
+        "lineEnd": 230,
+        "columnStart": 4,
+        "columnEnd": 77
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 34,
+        "lineEnd": 42,
+        "columnStart": 4,
+        "columnEnd": 22
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 43,
+        "lineEnd": 43,
+        "columnStart": 4,
+        "columnEnd": 89
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 50,
+        "lineEnd": 53,
+        "columnStart": 4,
+        "columnEnd": 12
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 198,
+        "lineEnd": 204,
+        "columnStart": 4,
+        "columnEnd": 14
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 224,
+        "lineEnd": 224,
+        "columnStart": 4,
+        "columnEnd": 43
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 80,
+        "lineEnd": 80,
+        "columnStart": 4,
+        "columnEnd": 61
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "ARG BASE_REGISTRY=registry.access.redhat.com\nARG BASE_IMAGE=ubi8/ubi\nARG BASE_TAG=8.5\n\n#### Start first stage\n#### Anchore wheels, binary dependencies, etc. are staged to /build_output for second stage\nFROM ${BASE_REGISTRY}/${BASE_IMAGE}:${BASE_TAG} as anchore-engine-builder\n\nARG CLI_COMMIT\n\nENV LANG=en_US.UTF-8\nENV LC_ALL=C.UTF-8\n\n# environment variables for dependent binary versions\nENV SYFT_VERSION=v0.33.0\nENV GRYPE_VERSION=v0.27.3\nENV PIP_VERSION=21.0.1\n\n# setup build artifact directory\nRUN set -ex && \\\n    mkdir -p \\\n        /build_output/configs \\\n        /build_output/cli_wheels \\\n        /build_output/deps \\\n        /build_output/wheels\n\n# installing build dependencies\nRUN set -ex && \\\n    echo \"installing build dependencies\" && \\\n    # keepcache is used so that subsequent invocations of yum do not remove the cached RPMs in --downloaddir\n    echo \"keepcache = 1\" >> /etc/yum.conf && \\\n    yum update -y && \\\n    yum module disable -y python36 && \\\n    yum module enable -y python38 && \\\n    yum install -y \\\n        gcc \\\n        git \\\n        go \\\n        make \\\n        python38 \\\n        python38-devel \\\n        python38-psycopg2 \\\n        python38-wheel && \\\n    yum install -y https://dl.fedoraproject.org/pub/epel/epel-release-latest-8.noarch.rpm && \\\n    pip3 install --no-cache-dir pip==\"${PIP_VERSION}\" && rm -rf /var/cache/yum\n\n# stage dependent binaries into /build_output\nRUN set -ex && \\\n    echo \"downloading OS dependencies\" && \\\n    pip3 download -d /build_output/wheels pip==\"${PIP_VERSION}\" && \\\n    yum install -y --downloadonly --downloaddir=/build_output/deps/ \\\n        clamav \\\n        clamav-update \\\n        dpkg && rm -rf /var/cache/yum\n\nRUN set -ex && \\\n    echo \"downloading anchore-cli\" && \\\n    pip3 wheel --wheel-dir=/build_output/cli_wheels/ git+https://github.com/anchore/anchore-cli.git@\"${CLI_COMMIT}\"\\#egg=anchorecli\n\nRUN set -exo pipefail && \\\n    echo \"downloading Syft\" && \\\n    curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b /build_output/deps \"${SYFT_VERSION}\"\n\nRUN set -exo pipefail && \\\n    echo \"downloading Grype\" && \\\n    curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh | sh -s -- -b /build_output/deps \"${GRYPE_VERSION}\"\n\nCOPY . /buildsource\nWORKDIR /buildsource\n\n# stage anchore-engine wheels and default application configs into /build_output\nRUN set -ex && \\\n    echo \"creating anchore-engine wheels\" && \\\n    pip3 wheel --wheel-dir=/build_output/wheels . && \\\n    cp ./LICENSE /build_output/ && \\\n    cp ./conf/default_config.yaml /build_output/configs/default_config.yaml && \\\n    cp ./docker-entrypoint.sh /build_output/configs/docker-entrypoint.sh\n\n# create p1 buildblob & checksum\nRUN set -ex && \\\n    tar -z -c -v -C /build_output -f /anchore-buildblob.tgz . && \\\n    sha256sum /anchore-buildblob.tgz > /buildblob.tgz.sha256sum && rm /anchore-buildblob.tgz\n\n#### Start second stage\n#### Setup and install using first stage artifacts in /build_output\nFROM ${BASE_REGISTRY}/${BASE_IMAGE}:${BASE_TAG} as anchore-engine-final\n\nARG CLI_COMMIT\nARG ANCHORE_COMMIT\nARG ANCHORE_ENGINE_VERSION=\"1.1.0\"\nARG ANCHORE_ENGINE_RELEASE=\"r0\"\n\n# Container metadata section\nLABEL anchore_cli_commit=\"${CLI_COMMIT}\" \\\n      anchore_commit=\"${ANCHORE_COMMIT}\" \\\n      name=\"anchore-engine\" \\\n      maintainer=\"dev@anchore.com\" \\\n      vendor=\"Anchore Inc.\" \\\n      version=\"${ANCHORE_ENGINE_VERSION}\" \\\n      release=\"${ANCHORE_ENGINE_RELEASE}\" \\\n      summary=\"Anchore Engine - container image scanning service for policy-based security, best-practice and compliance enforcement.\" \\\n      description=\"Anchore is an open platform for container security and compliance that allows developers, operations, and security teams to discover, analyze, and certify container images on-premises or in the cloud. Anchore Engine is the on-prem, OSS, API accessible service that allows ops and developers to perform detailed analysis, run queries, produce reports and define policies on container images that can be used in CI/CD pipelines to ensure that only containers that meet your organization’s requirements are deployed into production.\"\n\n# Environment variables to be present in running environment\nENV AUTHLIB_INSECURE_TRANSPORT=true\nENV LANG=en_US.UTF-8\nENV LC_ALL=C.UTF-8\nENV PATH=\"${PATH}:/anchore-cli/bin\"\nENV SET_HOSTID_TO_HOSTNAME=false\n\n# Default values overrideable at runtime of the container\nENV ANCHORE_ADMIN_EMAIL=admin@myanchore \\\n    ANCHORE_ADMIN_PASSWORD=null \\\n    ANCHORE_AUTH_ENABLE_HASHED_PASSWORDS=false \\\n    ANCHORE_AUTH_PRIVKEY=null \\\n    ANCHORE_AUTH_PUBKEY=null \\\n    ANCHORE_AUTH_SECRET=null \\\n    ANCHORE_AUTHZ_HANDLER=native \\\n    ANCHORE_CATALOG_NOTIFICATION_INTERVAL_SEC=30 \\\n    ANCHORE_CLI_PASS=foobar \\\n    ANCHORE_CLI_USER=admin \\\n    ANCHORE_CLI_URL=\"http://localhost:8228\" \\\n    ANCHORE_CONFIG_DIR=/config \\\n    ANCHORE_DB_NAME=postgres \\\n    ANCHORE_DB_PORT=5432 \\\n    ANCHORE_DB_USER=postgres \\\n    ANCHORE_DISABLE_METRICS_AUTH=false \\\n    ANCHORE_ENABLE_METRICS=false \\\n    ANCHORE_ENABLE_PACKAGE_FILTERING=\"true\" \\\n    ANCHORE_ENDPOINT_HOSTNAME=localhost \\\n    ANCHORE_EVENTS_NOTIFICATIONS_ENABLED=false \\\n    ANCHORE_EXTERNAL_AUTHZ_ENDPOINT=null \\\n    ANCHORE_EXTERNAL_PORT=null \\\n    ANCHORE_EXTERNAL_TLS=false \\\n    ANCHORE_FEEDS_CLIENT_URL=\"https://ancho.re/v1/account/users\" \\\n    ANCHORE_FEEDS_ENABLED=true \\\n    ANCHORE_FEEDS_SSL_VERIFY=true \\\n    ANCHORE_FEED_SYNC_INTERVAL_SEC=21600 \\\n    ANCHORE_FEEDS_TOKEN_URL=\"https://ancho.re/oauth/token\" \\\n    ANCHORE_FEEDS_URL=\"https://ancho.re/v1/service/feeds\" \\\n    ANCHORE_GLOBAL_CLIENT_CONNECT_TIMEOUT=0 \\\n    ANCHORE_GLOBAL_CLIENT_READ_TIMEOUT=0 \\\n    ANCHORE_GLOBAL_SERVER_REQUEST_TIMEOUT_SEC=180 \\\n    ANCHORE_GRYPE_DB_URL=\"https://toolbox-data.anchore.io/grype/databases/listing.json\" \\\n    ANCHORE_HINTS_ENABLED=false \\\n    ANCHORE_HOST_ID=\"anchore-quickstart\" \\\n    ANCHORE_INTERNAL_SSL_VERIFY=false \\\n    ANCHORE_LOG_LEVEL=INFO \\\n    ANCHORE_MAX_COMPRESSED_IMAGE_SIZE_MB=-1 \\\n    ANCHORE_OAUTH_ENABLED=false \\\n    ANCHORE_OAUTH_TOKEN_EXPIRATION=3600 \\\n    ANCHORE_SERVICE_DIR=/anchore_service \\\n    ANCHORE_SERVICE_PORT=8228 \\\n    ANCHORE_VULNERABILITIES_PROVIDER=null \\\n    ANCHORE_WEBHOOK_DESTINATION_URL=null\n\n#### Perform OS setup\n\n# Setup container user/group and required application directories\nRUN set -ex && \\\n    groupadd --gid 1000 anchore && \\\n    useradd --uid 1000 --gid anchore --shell /bin/bash --create-home anchore && \\\n    mkdir -p \\\n        /analysis_scratch \\\n        \"${ANCHORE_SERVICE_DIR}\"/bundles \\\n        /config \\\n        /home/anchore/clamav/db \\\n        /licenses \\\n        /var/log/anchore \\\n        /var/run/anchore \\\n        /workspace \\\n        /workspace_preload && \\\n    chown -R 1000:0 \\\n        /analysis_scratch \\\n        \"${ANCHORE_SERVICE_DIR}\" \\\n        /config \\\n        /home/anchore \\\n        /licenses \\\n        /var/log/anchore \\\n        /var/run/anchore \\\n        /workspace \\\n        /workspace_preload && \\\n    chmod -R g+rwX \\\n        /analysis_scratch \\\n        \"${ANCHORE_SERVICE_DIR}\" \\\n        /config \\\n        /home/anchore \\\n        /licenses \\\n        /var/log/anchore \\\n        /var/run/anchore \\\n        /workspace \\\n        /workspace_preload\n\n# Install build dependencies\nRUN set -ex && \\\n    yum update -y && \\\n    yum module disable -y python36 && \\\n    yum module enable -y python38 && \\\n    yum install -y \\\n        procps \\\n        psmisc \\\n        python38 \\\n        python38-psycopg2 \\\n        python38-wheel \\\n        skopeo && \\\n    yum clean all && rm -rf /var/cache/yum\n\n# Copy the installed artifacts from the first stage\nCOPY --from=anchore-engine-builder /build_output /build_output\n\n# Install anchore-cli into a virtual environment\nRUN set -ex && \\\n    echo \"updating pip\" && \\\n    pip3 install --no-cache-dir --upgrade --no-index --find-links=/build_output/wheels/ pip && \\\n    echo \"installing anchore-cli into virtual environment\" && \\\n    python3 -m venv /anchore-cli && \\\n    source /anchore-cli/bin/activate && \\\n    pip3 install --no-cache-dir --no-index --find-links=/build_output/cli_wheels/ anchorecli && \\\n    deactivate\n\n# Install required OS deps & application config files\nRUN set -exo pipefail && \\\n    cp /build_output/deps/syft /usr/bin/syft && \\\n    cp /build_output/deps/grype /usr/bin/grype && \\\n    yum install -y /build_output/deps/*.rpm && \\\n    yum clean all && rm -rf /var/cache/yum\n\n# Install anchore-engine & cleanup filesystem\nRUN set -ex && \\\n    echo \"installing anchore-engine and required dependencies\" && \\\n    pip3 install --no-cache-dir --no-index --find-links=/build_output/wheels/ anchore-engine && \\\n    echo \"copying default application config files\" && \\\n    cp /build_output/LICENSE /licenses/ && \\\n    cp /build_output/configs/default_config.yaml /config/config.yaml && \\\n    md5sum /config/config.yaml > /config/build_installed && \\\n    cp /build_output/configs/docker-entrypoint.sh /docker-entrypoint.sh && \\\n    chmod +x /docker-entrypoint.sh && \\\n    cp -R $(pip3 show anchore-engine | grep Location: | cut -c 11-)/anchore_engine/conf/clamav/freshclam.conf /home/anchore/clamav/ && \\\n    chmod -R ug+rw /home/anchore/clamav && \\\n    echo \"cleaning up unneccesary files used for testing/cache/build\" && \\\n    rm -rf \\\n        /build_output \\\n        /root/.cache \\\n        /usr/local/lib64/python3.8/site-packages/twisted/test \\\n        /usr/local/lib64/python3.8/site-packages/Crypto/SelfTest \\\n        /usr/share/doc\n\n# Container runtime instructions\n\nHEALTHCHECK --start-period=20s \\\n    CMD curl -f http://localhost:8228/health || exit 1\n\nUSER 1000\n\nEXPOSE \"${ANCHORE_SERVICE_PORT}\"\n\nWORKDIR /anchore-engine\n\nENTRYPOINT [\"/docker-entrypoint.sh\"]\nCMD [\"anchore-manager\", \"service\", \"start\", \"--all\"]\n"
+}

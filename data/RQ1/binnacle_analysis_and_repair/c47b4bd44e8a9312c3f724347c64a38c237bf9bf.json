@@ -1,0 +1,44 @@
+{
+  "startTime": 1674239682638,
+  "endTime": 1674239683109,
+  "originalSmells": [
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 100,
+        "lineEnd": 100,
+        "columnStart": 1,
+        "columnEnd": 84
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 30,
+        "lineEnd": 49,
+        "columnStart": 1,
+        "columnEnd": 15
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 30,
+        "lineEnd": 49,
+        "columnStart": 1,
+        "columnEnd": 15
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 146,
+        "lineEnd": 148,
+        "columnStart": 1,
+        "columnEnd": 12
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# https://www.wihlidal.com/blog/pipeline/2018-09-15-linux-dxc-docker/\n# https://www.wihlidal.com/blog/pipeline/2018-09-16-dxil-signing-post-compile/\n# https://www.wihlidal.com/blog/pipeline/2018-09-17-linux-fxc-docker/\n# https://www.wihlidal.com/blog/pipeline/2018-12-28-containerized_shader_compilers/\n\nFROM ubuntu:bionic as builder\n\nENV DXC_BRANCH=master\nENV DXC_REPO=https://github.com/gwihlidal/DirectXShaderCompiler.git\nENV DXC_COMMIT=2eb78334942e0240b949189b2794b6bf74cb51af\n\nENV SHADERC_BRANCH=master\nENV SHADERC_REPO=https://github.com/google/shaderc.git\nENV SHADERC_COMMIT=b3523d57461c1460af68dbd6bec1e8dd5c7ce2e7\n\nENV WINE_BRANCH=master\nENV WINE_REPO=https://github.com/wine-mirror/wine.git\nENV WINE_COMMIT=cce8074aa9fb2191faba25ce7fd24e2678d3bd17\n\nENV SMOLV_BRANCH=master\nENV SMOLV_REPO=https://github.com/aras-p/smol-v.git\nENV SMOLV_COMMIT=ce2835a03fc17df4c08ae6433db02121e29f3c71\n\nENV VULKAN_SDK=1.1.106.0\n\n# Prevents annoying debconf errors during builds\nARG DEBIAN_FRONTEND=\"noninteractive\"\n\n# Download libraries and tools\nRUN apt-get update && \\\n\tDEBIAN_FRONTEND=noninteractive apt-get --no-install-recommends install -y \\\n\t\tsoftware-properties-common \\\n\t\tbuild-essential \\\n\t\tlocales \\\n\t\tgit \\\n\t\tcmake \\\n\t\tninja-build \\\n\t\tpython \\\n\t\tpython3-dev \\\n\t\tpython3-pip \\\n\t\twget \\\n\t\tunzip \\\n\t\t# Required for Wine\n\t\tflex \\\n\t\tbison \\\n\t\tlibpng-dev \\\n\t\t# Required for Vulkan\n\t\tlibwayland-dev \\\n\t\tlibx11-dev \\\n\t\tlibxrandr-dev \\\n\t# Clean up\n\t&& apt autoremove -y \\\n\t\tsoftware-properties-common \\\n\t&& apt autoclean \\\n\t&& apt clean \\\n\t&& apt autoremove && rm -rf /var/lib/apt/lists/*;\n\n# Download shaderc repository and dependencies\nRUN git clone --recurse-submodules -b ${SHADERC_BRANCH} ${SHADERC_REPO} /shaderc && cd /shaderc \\\n\tgit checkout ${SHADERC_COMMIT} && git reset --hard && \\\n\tpython3 ./utils/git-sync-deps\n\n# Set the locale (needed for python3 and shaderc build scripts)\nRUN sed -i -e 's/# en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/' /etc/locale.gen && \\\n\tdpkg-reconfigure --frontend=noninteractive locales && \\\n\tupdate-locale LANG=en_US.UTF-8\nENV LANG en_US.UTF-8\n\n# Build shaderc\nRUN mkdir -p /shaderc/build && cd /shaderc/build && \\\n\tcmake -GNinja \\\n\t-DCMAKE_BUILD_TYPE=Release \\\n\t-DCMAKE_INSTALL_PREFIX=/usr/local \\\n\t-DSHADERC_SKIP_TESTS=ON \\\n\t-DSPIRV_SKIP_TESTS=ON \\\n\t.. && \\\n\tninja install\n\n# Download and build Vulkan SDK\nWORKDIR /\nRUN wget -O vulkan.tgz https://sdk.lunarg.com/sdk/download/${VULKAN_SDK}/linux/vulkansdk-linux-x86_64-${VULKAN_SDK}.tar.gz && \\\n\ttar zxf vulkan.tgz && \\\n\tmv ${VULKAN_SDK} vulkan && \\\n\trm vulkan.tgz && \\\n\tcd /vulkan && \\\n\tchmod +x setup-env.sh && \\\n\tchmod +x build_tools.sh && \\\n\t./setup-env.sh && ./build_tools.sh\n\n# Download and build SMOL-V\nWORKDIR /smol-v\nRUN git clone --recurse-submodules -b ${SMOLV_BRANCH} ${SMOLV_REPO} /app/smol-v && cd /app/smol-v && \\\n\tgit checkout ${SMOLV_COMMIT} && git reset --hard && \\\n\tmake -f projects/Makefile -j 4\n\n# Download and install Wine (for running FXC, DXIL signing tool, RGA for Windows)\nWORKDIR /wine_src\nRUN git clone --recurse-submodules -b ${WINE_BRANCH} ${WINE_REPO} /wine_src && \\\n\tgit checkout ${WINE_COMMIT} && \\\n\tgit reset --hard && \\\n\t./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" --enable-win64 --with-png --without-freetype --without-x --prefix=/wine && \\\n\tmake -j8 && \\\n\tmake install\n\n# Download and build DXC\nRUN git clone --recurse-submodules -b ${DXC_BRANCH} ${DXC_REPO} /dxc && cd /dxc \\\n\tgit checkout ${DXC_COMMIT} && \\\n\tgit reset --hard && \\\n\tmkdir -p /dxc/build && cd /dxc/build && \\\n\tcmake ../ -GNinja -DCMAKE_BUILD_TYPE=Release $(cat ../utils/cmake-predefined-config-params) && \\\n\tninja\n\n# Download and extract signing tool\nWORKDIR /signing\nRUN wget -O signing.zip https://github.com/gwihlidal/dxil-signing/releases/download/0.1.4/dxil-signing-0_1_4.zip --no-check-certificate && \\\n\tunzip -q signing.zip; exit 0\nRUN rm signing.zip\n\n# Download and extract Linux and Windows binaries of AMD RGA\nWORKDIR /rga\nRUN wget -O rga_linux.tgz https://github.com/GPUOpen-Tools/RGA/releases/download/2.1/rga-linux-2.1.tgz --no-check-certificate && \\\n\ttar zxf rga_linux.tgz && \\\n\tmv rga-2.1.* linux && \\\n\trm rga_linux.tgz\n\nWORKDIR /rga/windows\nRUN wget -O rga_windows.zip https://github.com/GPUOpen-Tools/RGA/releases/download/2.1/rga-windows-x64-2.1.zip --no-check-certificate && \\\n\tunzip -q rga_windows.zip; exit 0\n\n# Remove GUI binaries\nRUN rm -f /rga/windows/rga_windows.zip && \\\n\trm -f /rga/windows/Qt* && \\\n\trm -f /rga/windows/RadeonGPUAnalyzerGUI.exe && \\\n\trm -fr /rga/windows/iconengines && \\\n\trm -fr /rga/windows/imageformats && \\\n\trm -fr /rga/windows/platforms && \\\n\trm -fr /rga/linux/Qt && \\\n\trm -fr /rga/linux/Documentation && \\\n\trm -f /rga/linux/RadeonGPUAnalyzerGUI-bin && \\\n\trm -f /rga/linux/RadeonGPUAnalyzerGUI\n\n# Start from a new image\nFROM ubuntu:bionic\n\n# Apply updates\nRUN apt update && \\\n\tapt install --no-install-recommends -y  \\\n\t\t# Required for Wine\n\t\tlibpng-dev \\\n\t# Clean up\n\t&& apt clean \\\n\t&& apt autoremove && rm -rf /var/lib/apt/lists/*;\n\n# Copy DXC binaries from `builder` stage into final stage\nWORKDIR /app/dxc\nCOPY --from=builder /dxc/build/bin/dxc-3.7 /app/dxc/bin/dxc-3.7\nCOPY --from=builder /dxc/build/lib/libdxcompiler.so.3.7 /app/dxc/lib/libdxcompiler.so.3.7\nRUN ln -s /app/dxc/bin/dxc-3.7 /app/dxc/bin/dxc\nRUN ln -s /app/dxc/lib/libdxcompiler.so.3.7 /app/dxc/lib/libdxcompiler.so\n\n# Copy glslc binary from `builder` stage into final stage\nWORKDIR /app/shaderc\nCOPY --from=builder /shaderc/build/glslc/glslc /app/shaderc/glslc\n\n# Copy SMOL-V binaries from `builder` stage into final stage\nWORKDIR /app/smol-v\nCOPY --from=builder /app/smol-v /app/smol-v\n\n# Copy Vulkan install binaries from `builder` stage into final stage\nWORKDIR /app/vulkan\nCOPY --from=builder /vulkan/x86_64/bin /app/vulkan\n\n# Copy Wine install from `builder` stage into final stage\nWORKDIR /app/wine\nCOPY --from=builder /wine /app/wine\n\n# Copy DXIL signing binaries from `builder` stage into final stage\nWORKDIR /app/signing\nCOPY --from=builder /signing /app/signing\n\n# Copy RGA binaries from `builder` stage into final stage\nWORKDIR /app/rga\nCOPY --from=builder /rga /app/rga\n\n# Copy local FXC binaries into container\nWORKDIR /app/fxc\nCOPY fxc_bin /app/fxc\n\n# Convenient path variables\nENV DXC_PATH=\"/app/dxc/bin/dxc\"\nENV FXC_PATH=\"/app/fxc/fxc.exe\"\nENV SIGN_PATH=\"/app/signing/dxil-val.exe\"\nENV RGA_WIN_PATH=\"/app/rga/windows/rga.exe\"\nENV RGA_NIX_PATH=\"/app/rga/linux/rga\"\nENV GLSLC_PATH=\"/app/shaderc/glslc\"\nENV SMOLV_PATH=\"/app/smol-v/smolv\"\nENV WINE_PATH=\"/app/wine/bin/wine64\"\nENV VULKAN_PATH=\"/app/vulkan\"\n\n# Configuration of Wine\nENV WINEARCH=win64\nENV WINEDEBUG=fixme-all\nRUN /app/wine/bin/winecfg\n\nWORKDIR /app\nENTRYPOINT [\"/bin/bash\"]"
+}

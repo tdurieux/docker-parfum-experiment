@@ -9,7 +9,7 @@ import { readFile } from "fs/promises";
 (async () => {
   const binnacleViolations = join(
     config.dataFolder,
-    "reproduction/results-github-individual.txt"
+    "dataset/binnacle/results-github-individual.txt"
   );
 
   const mapVuln = {};

@@ -1,0 +1,26 @@
+{
+  "startTime": 1674215191723,
+  "endTime": 1674215192806,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 66,
+        "lineEnd": 66,
+        "columnStart": 4,
+        "columnEnd": 84
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 74,
+        "lineEnd": 74,
+        "columnStart": 4,
+        "columnEnd": 84
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# To build the image, run `docker build` command from the root of the\n# repository:\n#\n#    docker build -f docker/Dockerfile .\n#\n# There is an optional PYTHON_VERSION build argument which sets the\n# version of python to build against. For example:\n#\n#    docker build -f docker/Dockerfile --build-arg PYTHON_VERSION=3.8 .\n#\n# An optional LIBOLM_VERSION build argument which sets the\n# version of libolm to build against. For example:\n#\n#    docker build -f docker/Dockerfile --build-arg LIBOLM_VERSION=3.1.4 .\n#\n\n\n##\n## Creating a builder container\n##\n\n# We use an initial docker container to build all of the runtime dependencies,\n# then transfer those dependencies to the container we're going to ship,\n# before throwing this one away\nARG PYTHON_VERSION=3.8\nFROM docker.io/python:${PYTHON_VERSION}-alpine3.11 as builder\n\n##\n## Build libolm for matrix-nio e2e support\n##\n\n# Install libolm build dependencies\nARG LIBOLM_VERSION=3.1.4\nRUN apk add --no-cache \\\n    make \\\n    cmake \\\n    gcc \\\n    g++ \\\n    git \\\n    libffi-dev \\\n    yaml-dev \\\n    python3-dev\n\n# Build libolm\n#\n# Also build the libolm python bindings and place them at /python-libs\n# We will later copy contents from both of these folders to the runtime\n# container\nCOPY docker/build_and_install_libolm.sh /scripts/\nRUN /scripts/build_and_install_libolm.sh ${LIBOLM_VERSION} /python-libs\n\n# Install Postgres dependencies\nRUN apk add --no-cache \\\n    musl-dev \\\n    libpq \\\n    postgresql-dev\n\n# Install python runtime modules. We do this before copying the source code\n# such that these dependencies can be cached\n# This speeds up subsequent image builds when the source code is changed\nRUN mkdir -p /src/middleman/migrations\nCOPY middleman/__init__.py /src/middleman/\nCOPY README.md middleman-bot /src/\n\n# Build the dependencies\nCOPY setup.py /src/setup.py\nRUN pip install --no-cache-dir --prefix=\"/python-libs\" --no-warn-script-location \"/src/.[postgres]\"\n\n# Now copy the source code\nCOPY *.py *.md /src/\nCOPY middleman/*.py /src/middleman/\nCOPY middleman/migrations/*.py /src/middleman/migrations/\n\n# And build the final module\nRUN pip install --no-cache-dir --prefix=\"/python-libs\" --no-warn-script-location \"/src/.[postgres]\"\n\n##\n## Creating the runtime container\n##\n\n# Create the container we'll actually ship. We need to copy libolm and any\n# python dependencies that we built above to this container\nFROM docker.io/python:${PYTHON_VERSION}-alpine3.11\n\n# Copy python dependencies from the \"builder\" container\nCOPY --from=builder /python-libs /usr/local\n\n# Copy libolm from the \"builder\" container\nCOPY --from=builder /usr/local/lib/libolm* /usr/local/lib/\n\n# Install any native runtime dependencies\nRUN apk add --no-cache \\\n    libstdc++ \\\n    libpq \\\n    postgresql-dev\n\n# Specify a volume that holds the SQLite3 database,\n# and the matrix-nio store\nVOLUME [\"/data\"]\n\n# Specify a volume that holds the config file\nVOLUME [\"/config\"]\n\n# Start the bot\nENTRYPOINT [\"middleman-bot\", \"/config/config.yaml\"]\n"
+}

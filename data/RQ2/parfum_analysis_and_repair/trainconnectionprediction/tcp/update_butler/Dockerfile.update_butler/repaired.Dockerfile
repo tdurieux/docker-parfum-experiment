@@ -1,0 +1,66 @@
+# To test the container locally you can run:
+# DOCKER_BUILDKIT=1 docker build -f update_butler/Dockerfile.update_butler . -t update_butler
+# docker run -v $(pwd)/config.py:/usr/src/app/config.py -v $(pwd)/cache:/usr/src/app/cache update_butler
+# Though I would suggest that you have a seperate config for docker
+# If not so replace -v $(pwd)/config_docker.py:/usr/src/app/config.py with -v $(pwd)/config.py:/usr/src/app/config.py
+
+# This build file is from https://www.rockyourcode.com/create-a-multi-stage-docker-build-for-python-flask-and-postgres/
+
+FROM osgeo/proj:8.2.0 as proj
+
+## Base image
+FROM python:3.10 AS compile-image
+
+## Virtualenv
+ENV VIRTUAL_ENV=/opt/venv
+RUN python3 -m venv $VIRTUAL_ENV
+ENV PATH="$VIRTUAL_ENV/bin:$PATH"
+
+## Add and install requirements
+RUN pip install --no-cache-dir --upgrade pip
+COPY ./update_butler/requirements.txt requirements.txt
+# RUN pip install pip-tools
+# RUN pip-compile requirements.txt > requirements.txt && pip-sync
+RUN pip install --no-cache-dir -r requirements.txt
+
+## Build-image
+FROM python:3.10 AS runtime-image
+
+COPY --from=proj  /usr/share/proj/ /usr/share/proj/
+COPY --from=proj  /usr/include/ /usr/include/
+COPY --from=proj  /usr/bin/ /usr/bin/
+COPY --from=proj  /usr/lib/ /usr/lib/
+
+## Copy Python dependencies from build image
+COPY --from=compile-image /opt/venv /opt/venv
+
+## Set working directory
+WORKDIR /usr/src/app
+
+## Add User (a security measure)
+# We have to set a static user id, so that the user can read the files in virtual volumes
+# We use system accounts, but it's just symbolic
+RUN addgroup --system --gid 420 tcp && adduser --system --no-create-home --uid 420 --gid 420 tcp
+
+## Add webserver and librays
+COPY ./helpers/ /usr/src/app/helpers/
+COPY ./database/ /usr/src/app/database/
+COPY ./data_analysis/ /usr/src/app/data_analysis/
+COPY ./rtd_crawler/ /usr/src/app/rtd_crawler/
+COPY ./update_butler/ /usr/src/app/update_butler/
+# Cache should be mounted seperatly
+# COPY ./cache/ /usr/src/app/cache/
+# Don't leak our secrets, pls
+# COPY ./config.py /usr/src/app/config.py
+
+## Switch to non-root user
+# for some reason doing this before the copy results in weird permissions # && chmod -R 775 /usr/src/app/
+RUN chown -R tcp:tcp /usr/src/app/
+USER tcp
+
+## Set environment variables
+ENV PYTHONDONTWRITEBYTECODE 1
+ENV PYTHONUNBUFFERED 1
+ENV PATH="/opt/venv/bin:$PATH"
+
+CMD ["python", "update_butler"]

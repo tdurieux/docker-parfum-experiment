@@ -1,0 +1,9 @@
+FROM {{ item.image }}
+
+RUN if [ $(command -v apt-get) ]; then \
+ apt-get update && apt-get upgrade -y && apt-get install --no-install-recommends -y python sudo bash ca-certificates && apt-get clean; rm -rf /var/lib/apt/lists/*; \
+    elif [ $(command -v yum) ]; then \
+    yum makecache fast && yum update -y && yum install -y python sudo yum-plugin-ovl bash && sed -i 's/plugins=0/plugins=1/g' /etc/yum.conf && yum clean all; rm -rf /var/cache/yum \
+    elif [ $(command -v zypper) ]; then zypper refresh && zypper update -y && zypper install -y python sudo bash python-xml && zypper clean -a; \
+    elif [ $(command -v apk) ]; then apk update && apk add --no-cache python sudo bash ca-certificates; \
+    elif [ $(command -v dnf) ]; then dnf makecache && dnf --assumeyes install python python-devel python2-dnf bash && dnf clean all; fi

@@ -1,0 +1,44 @@
+{
+  "startTime": 1674255038350,
+  "endTime": 1674255039599,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 20,
+        "lineEnd": 29,
+        "columnStart": 22,
+        "columnEnd": 5
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 88,
+        "lineEnd": 93,
+        "columnStart": 22,
+        "columnEnd": 6
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 20,
+        "lineEnd": 29,
+        "columnStart": 22,
+        "columnEnd": 5
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 88,
+        "lineEnd": 93,
+        "columnStart": 22,
+        "columnEnd": 6
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# ===========================================================\n# === BUILD STAGE - Development image with necessary deps ===\n# ===========================================================\n# Used for development purposes and as a base for pre-release\n\nFROM verybigthings/elixir:1.12.2 AS build\n\nARG WORKDIR=/opt/app\nARG APP_USER=user\n\nENV WORKDIR=$WORKDIR\nENV APP_USER=$APP_USER\nENV CACHE_DIR=/opt/cache\nENV MIX_HOME=$CACHE_DIR/mix\nENV HEX_HOME=$CACHE_DIR/hex\nENV BUILD_PATH=$CACHE_DIR/_build\nENV REBAR_CACHE_DIR=$CACHE_DIR/rebar\n\nRUN apt-get update && apt-get install --no-install-recommends -y \\\n  bash \\\n  git \\\n  inotify-tools \\\n  less \\\n  locales \\\n  make \\\n  postgresql-client \\\n  postgresql-contrib \\\n  vim && rm -rf /var/lib/apt/lists/*;\n\nWORKDIR $WORKDIR\n\nENV PHOENIX_VERSION 1.5.3\n\nRUN mix local.hex --force && \\\n  mix local.rebar --force\n\nRUN mix archive.install hex phx_new $PHOENIX_VERSION --force\n\nRUN mkdir -p -m 0600 ~/.ssh && ssh-keyscan github.com > ~/.ssh/known_hosts\n\n# Set entrypoint\nCOPY entrypoint.sh /usr/local/bin/entrypoint.sh\nRUN chmod +x /usr/local/bin/entrypoint.sh\nENTRYPOINT [\"/usr/local/bin/entrypoint.sh\"]\n\nCMD [\"/bin/bash\", \"-c\", \"while true; do sleep 10; done;\"]\n\n# =========================\n# === PRE-RELEASE STAGE ===\n# =========================\n# Compiles application code and bundles the application to Erlang/OTP release\n\nFROM build AS pre-release\n\n# Set SKIP_ASSETS to true (in your Makefile) if your Phoenix project does not have static assets\nARG SKIP_ASSETS=false\n\nENV SKIP_ASSETS=${SKIP_ASSETS}\n\n# First we're copying the minimal subset of the app needed to fetch and build the deps. This\n# allows us to use the cached docker layer in the cases where only the regular code is changed,\n# which means we avoid about extra 4 minutes during the docker build.\nCOPY mix.exs mix.lock ./\nCOPY config/prod.exs config/config.exs ./config/\nRUN --mount=type=ssh MIX_ENV=prod mix do deps.get, deps.compile\n\n# Now we copy the entire project and build the OTP release.\nCOPY . .\nRUN mix release\n\n############################################\n## RELEASE STAGE - production application ##\n############################################\n# Minimal (debian-slim) image for production purposes\n# Copies the bundle from pre-release image\n\nFROM debian:10-slim AS release\n\nARG APP_USER=user\nARG WORKDIR=/opt/app\n\nENV LANG C.UTF-8\nENV LC_ALL C.UTF-8\nENV WORKDIR=$WORKDIR\nENV APP_USER=$APP_USER\n\nRUN apt-get update && apt-get install --no-install-recommends -y \\\n  bash \\\n  git \\\n  libpq-dev \\\n  libjson-c-dev \\\n  curl && rm -rf /var/lib/apt/lists/*;\n\n# Create a non root user and the working folder\nRUN useradd --create-home ${APP_USER}\nWORKDIR $WORKDIR\nRUN chown ${APP_USER}: ${WORKDIR}\n\n# Copy over the build artifact from the previous step\nCOPY --chown=${APP_USER} --from=pre-release /opt/cache/_build/prod/rel/skafolder_tester .\n\nUSER ${APP_USER}\n\nCMD trap 'exit' INT; ${WORKDIR}/bin/skafolder_tester start\n\n\n#############################################################################################\n## RELEASE PHASE - check config and run migrations on Heroku before production application ##\n#############################################################################################\nFROM release AS release-phase\n\nCMD trap 'exit' INT; \\\n  /opt/app/bin/check_config.sh && \\\n  /opt/app/bin/migrate.sh\n"
+}

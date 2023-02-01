@@ -1,0 +1,1 @@
+# Based on https://github.com/kubernetes/autoscaler/blob/vertical-pod-autoscaler-0.9.0/vertical-pod-autoscaler/pkg/admission-controller/Dockerfile

@@ -1,0 +1,13 @@
+# Pushed to docker.io/projectsyn/kapitan:${KAPITAN_VERSION}
+
+FROM docker.io/alpine:3.16
+
+ENV KAPITAN_VERSION=v0.29.5
+
+RUN apk add --no-cache \
+        ca-certificates \
+        curl \
+ && curl -f -Lo /usr/local/bin/kapitan https://github.com/deepmind/kapitan/releases/download/${KAPITAN_VERSION}/kapitan-linux-amd64 \
+ && chmod +x /usr/local/bin/kapitan
+
+USER 10001

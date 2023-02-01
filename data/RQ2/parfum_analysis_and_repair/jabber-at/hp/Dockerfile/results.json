@@ -1,0 +1,62 @@
+{
+  "startTime": 1674217328224,
+  "endTime": 1674217329074,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 8,
+        "lineEnd": 8,
+        "columnStart": 4,
+        "columnEnd": 44
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 17,
+        "lineEnd": 17,
+        "columnStart": 4,
+        "columnEnd": 97
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 39,
+        "lineEnd": 39,
+        "columnStart": 4,
+        "columnEnd": 50
+      }
+    },
+    {
+      "rule": "mkdirUsrSrcThenRemove",
+      "position": {
+        "lineStart": 31,
+        "lineEnd": 31,
+        "columnStart": 4,
+        "columnEnd": 39
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 34,
+        "lineEnd": 34,
+        "columnStart": 4,
+        "columnEnd": 85
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 27,
+        "lineEnd": 27,
+        "columnStart": 4,
+        "columnEnd": 79
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "ARG IMAGE=python:3.8.2-slim-buster\n\nFROM $IMAGE as base\nWORKDIR /usr/src/hp\nRUN apt-get update && \\\n    apt-get -qy dist-upgrade && \\\n    apt-get -qy install --no-install-recommends netcat-openbsd libpq5 && \\\n    rm -rf /var/lib/apt/lists/*\nRUN pip install --no-cache-dir --no-cache -U pip setuptools\n\nFROM base as install\n# Install APT requirements\nRUN apt-get update && \\\n    apt-get install -qy --no-install-recommends build-essential libgpgme-dev git-core gettext libpq-dev && \\\n    rm -rf /var/lib/apt/lists/*\n\nADD requirements.txt requirements-docker.txt ./\nRUN pip install --no-cache-dir --no-cache --no-warn-script-location --prefix=/install -r requirements-docker.txt\n\n###############\n# Test stage #\n##############\nFROM base as test\n\n# Install APT requirements\nRUN apt-get update && \\\n    apt-get -qy dist-upgrade && \\\n    apt-get install --no-install-recommends -qy build-essential xvfb wget firefox-esr x11-utils gettext && \\\n    rm -rf /var/lib/apt/lists/*\n\n# Download Selenium: https://github.com/mozilla/geckodriver/releases\nRUN mkdir -p /usr/src/contrib/selenium/ && rm -rf /usr/src/contrib/selenium/\nRUN wget --quiet -O /usr/src/contrib/selenium/geckodriver.tar.gz \\\n        https://github.com/mozilla/geckodriver/releases/download/v0.26.0/geckodriver-v0.26.0-linux64.tar.gz\nRUN tar xf /usr/src/contrib/selenium/geckodriver.tar.gz -C /usr/src/contrib/selenium/ && rm /usr/src/contrib/selenium/geckodriver.tar.gz\n\n# Install pip requirements\nCOPY --from=install /install /usr/local\nADD requirements-dev.txt ./\nRUN pip install --no-cache-dir --no-cache -r requirements-dev.txt\n\n# Add source\nENV DJANGO_SETTINGS_MODULE=hp.test_settings\nADD tox.ini ./\nADD hp/ ./\n\n# Start testing\nRUN flake8 .\nRUN isort --check-only --diff -rc .\nRUN python -Wd manage.py check\nRUN python manage.py compilemessages -l de\nRUN python manage.py test\n\nFROM install as prepare\nADD hp/ ./\nRUN mv hp/dockersettings.py hp/localsettings.py\n\nCOPY --from=install /install /usr/local\nCOPY conf/build/localsettings.yaml /usr/src/conf/\nRUN python manage.py compilemessages -l de\nRUN python manage.py collectstatic --no-input\n\n# Cleanup source\nRUN rm -rf core/tests account/tests/ hp/test_settings.py \\\n        core/static/lib/tinymce/src/ conversejs/static/lib/converse.js/tests \\\n        conversejs/static/lib/converse.js/docs/\n\nRUN find . -type f -name \"tests.py\" -exec rm -rf {} \\;\nRUN find . -type f -name \"*.pyc\" -exec rm -rf {} \\;\nRUN find . -type f -name \"*.po\" -exec rm -rf {} \\;\nRUN find conversejs/static/lib -type f | \\\n    egrep -v '(converse.js/css/converse.css|converse.js/dist/converse.js)' | \\\n    xargs rm\nRUN find . -type d -empty -delete\n\n# We use the latest stable nginx based on alpine\n# https://hub.docker.com/_/nginx\nFROM nginx:1.16-alpine as nginx\nCOPY --from=prepare /var/www/hp/static /var/www/hp/static\nCOPY conf/nginx/ /etc/nginx/\nCMD /etc/nginx/nginx.sh\n\nFROM base\nCOPY celery.sh uwsgi.sh files/uwsgi/uwsgi.ini ./\nCOPY --from=install /install /usr/local\nCOPY --from=prepare /usr/src/hp /usr/src/hp\n\nVOLUME /var/lib/hp\n\nCMD /usr/src/hp/uwsgi.sh\n"
+}

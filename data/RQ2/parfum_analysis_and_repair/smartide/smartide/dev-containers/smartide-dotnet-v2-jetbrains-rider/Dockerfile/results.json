@@ -1,0 +1,53 @@
+{
+  "startTime": 1674215955811,
+  "endTime": 1674215957096,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 75,
+        "lineEnd": 75,
+        "columnStart": 62,
+        "columnEnd": 103
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 76,
+        "lineEnd": 76,
+        "columnStart": 64,
+        "columnEnd": 148
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 77,
+        "lineEnd": 77,
+        "columnStart": 62,
+        "columnEnd": 126
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 9,
+        "lineEnd": 9,
+        "columnStart": 22,
+        "columnEnd": 89
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 26,
+        "lineEnd": 26,
+        "columnStart": 22,
+        "columnEnd": 70
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "#################################################\n# SmartIDE Developer Container Image\n# Licensed under GPL v3.0\n# Copyright (C) leansoftX.com\n#################################################\n\nFROM ubuntu:20.04 AS ideDownloader\n# -------------下载IDE文件\n# prepare tools:\nRUN apt-get update && apt-get -y install --no-install-recommends wget ca-certificates tar && rm -rf /var/lib/apt/lists/*;\n# download IDE to the /ide dir:\nWORKDIR /download\n\n# https://download.jetbrains.com/idea/ideaIC-2021.2.3.tar.gz\nARG downloadUrl\nRUN wget -q $downloadUrl -O - | tar -xz\nRUN find . -maxdepth 1 -type d -name * -execdir mv {} /ide \\;\n\n# -------------构建projector-server库，运行依赖\nFROM smartide/projector-server:2021.2.2-1673 as projectorGradleBuilder\n\n\n# -------------处理IDE运行程序，和构建好的rojector-server库\nFROM ubuntu:20.04 AS projectorStaticFiles\n\n# prepare tools:\nRUN apt-get update && apt-get -y install --no-install-recommends unzip && rm -rf /var/lib/apt/lists/*;\n# create the Projector dir:\nENV PROJECTOR_DIR /projector\nRUN mkdir -p $PROJECTOR_DIR\n# copy IDE:\nCOPY --from=ideDownloader /ide $PROJECTOR_DIR/ide\n# copy projector files to the container:\nCOPY static $PROJECTOR_DIR\n# copy projector:\nCOPY --from=projectorGradleBuilder $PROJECTOR_DIR/projector-server/projector-server/build/distributions/projector-server.zip $PROJECTOR_DIR\n# prepare IDE - apply projector-server:\nRUN unzip $PROJECTOR_DIR/projector-server.zip\nRUN rm $PROJECTOR_DIR/projector-server.zip\nRUN find . -maxdepth 1 -type d -name projector-server-* -exec mv {} projector-server \\;\nRUN mv projector-server $PROJECTOR_DIR/ide/projector-server\nRUN mv $PROJECTOR_DIR/ide-projector-launcher.sh $PROJECTOR_DIR/ide/bin\nRUN chmod 644 $PROJECTOR_DIR/ide/projector-server/lib/*\n\n\n\n# -------------配置运行环境\n\nFROM registry.cn-hangzhou.aliyuncs.com/smartide/smartide-dotnet-v2:latest\n\nRUN true \\\n# Any command which returns non-zero exit code will cause this shell script to exit immediately:\n   && set -e \\\n# Activate debugging to show execution details: all commands will be printed before execution\n   && set -x \\\n# install packages:\n    && apt-get update \\\n# packages for awt:\n    && apt-get install --no-install-recommends libxext6 libxrender1 libxtst6 libxi6 libfreetype6 -y \\\n# packages for user convenience:\n    && apt-get install --no-install-recommends git wget curl bash-completion net-tools sudo ca-certificates procps -y \\\n# clean apt to reduce image size:\n    && rm -rf /var/lib/apt/lists/* \\\n    && rm -rf /var/cache/apt\n\n# \"https://download.jetbrains.com/idea/ideaIC-2021.2.3.tar.gz\"\nARG downloadUrl\n\nRUN true \\\n# 返回非零退出代码的任何命令都将导致此shell脚本立即退出：\n    && set -e \\\n# 激活调试以显示执行详细信息：在执行之前将打印所有命令\n    && set -x \\\n# 为IDE安装特定包：\n    && apt-get update \\\n    && if [ \"${downloadUrl#*CLion}\" != \"$downloadUrl\" ]; then \\\n    apt-get install --no-install-recommends build-essential clang -y; else echo \"-------------------------Not CLion\"; fi \\\n    && if [ \"${downloadUrl#*pycharm}\" != \"$downloadUrl\" ]; then \\\n    apt-get install --no-install-recommends python2 python3 python3-distutils python3-pip python3-setuptools -y; else echo \"-------------------------Not pycharm\"; fi \\\n    && if [ \"${downloadUrl#*rider}\" != \"$downloadUrl\" ]; then \\\n    apt install --no-install-recommends apt-transport-https dirmngr gnupg ca-certificates -y \\\n    && apt-key adv --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys 3FA7E0328081BFF6A14DA29AA6A19B38D3D831EF && echo \"deb https://download.mono-project.com/repo/ubuntu stable-focal main\" | tee /etc/apt/sources.list.d/mono-official-stable.list \\\n    && apt-get update && apt install mono-devel -y --no-install-recommends \\\n    && wget https://packages.microsoft.com/config/ubuntu/20.04/packages-microsoft-prod.deb -O packages-microsoft-prod.deb && dpkg -i packages-microsoft-prod.deb && rm packages-microsoft-prod.deb \\\n    && apt-get update && apt-get install -y --no-install-recommends apt-transport-https dotnet-sdk-6.0 dotnet-runtime-6.0; else echo \"-------------------------Not rider\"; fi \\\n# clean apt to reduce image size:\n    && rm -rf /var/lib/apt/lists/* \\\n    && rm -rf /var/cache/apt\n\n# copy the Projector dir:\nENV PROJECTOR_DIR /projector\nCOPY --from=projectorStaticFiles $PROJECTOR_DIR $PROJECTOR_DIR\n\nENV PROJECTOR_USER_NAME smartide\n\nRUN true \\\n# Any command which returns non-zero exit code will cause this shell script to exit immediately:\n    && set -e \\\n# Activate debugging to show execution details: all commands will be printed before execution\n    && set -x \\\n# move run scipt:\n    && mv $PROJECTOR_DIR/run.sh run.sh \\\n# change user to non-root (http://pjdietz.com/2016/08/28/nginx-in-docker-without-root.html):\n    # && mv $PROJECTOR_DIR/$PROJECTOR_USER_NAME /home \\\n    && chmod g+rw /home && mkdir -p /home/smartide && mkdir -p /home/project \\\n    # && useradd -d /home/$PROJECTOR_USER_NAME -s /bin/bash -G sudo $PROJECTOR_USER_NAME \\\n    && echo '%sudo ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers \\\n    && chown -R $PROJECTOR_USER_NAME.$PROJECTOR_USER_NAME /home/$PROJECTOR_USER_NAME \\\n    && chown -R $PROJECTOR_USER_NAME.$PROJECTOR_USER_NAME /home/project \\\n    && chown -R $PROJECTOR_USER_NAME.$PROJECTOR_USER_NAME $PROJECTOR_DIR/ide/bin \\\n    && chmod +x run.sh && chmod +x /projector/ide/bin/ide-projector-launcher.sh\n\nUSER $PROJECTOR_USER_NAME\nENV HOME /home/$PROJECTOR_USER_NAME\n\n# use sudo so that user does not get sudo usage info on (the first) login\nRUN sudo echo \"Running 'sudo' for smartide: success\" && \\\n    # create .bashrc.d folder and source it in the bashrc\n    mkdir -p /home/smartide/.bashrc.d && \\\n    (echo; echo \"for i in \\$(ls -A \\$HOME/.bashrc.d/); do source \\$HOME/.bashrc.d/\\$i; done\"; echo) >> /home/smartide/.bashrc\n\n\nEXPOSE 8887\n\n#CMD [\"bash\", \"-c\", \"/run.sh\"]\n\nUSER root\n\nEXPOSE 8887\n\n##CMD [\"bash\", \"-c\", \"/run.sh\"]\n\nCOPY gosu_entrypoint.sh /idesh/gosu_entrypoint.sh\nRUN chmod +x /idesh/gosu_entrypoint.sh\n\nENTRYPOINT [\"/idesh/gosu_entrypoint.sh\"]\n"
+}

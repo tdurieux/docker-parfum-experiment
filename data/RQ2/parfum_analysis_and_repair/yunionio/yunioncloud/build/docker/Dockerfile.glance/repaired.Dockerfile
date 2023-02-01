@@ -1,0 +1,5 @@
+FROM registry.cn-beijing.aliyuncs.com/yunionio/glance-base:v0.0.1
+
+ENV TZ UTC
+RUN mkdir -p /opt/yunion/bin
+ADD ./_output/alpine-build/bin/glance /opt/yunion/bin/glance

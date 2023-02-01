@@ -1,0 +1,53 @@
+{
+  "startTime": 1674235292676,
+  "endTime": 1674235292885,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 10,
+        "lineEnd": 10,
+        "columnStart": 4,
+        "columnEnd": 82
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 53,
+        "lineEnd": 53,
+        "columnStart": 12,
+        "columnEnd": 148
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 57,
+        "lineEnd": 57,
+        "columnStart": 12,
+        "columnEnd": 149
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 60,
+        "lineEnd": 60,
+        "columnStart": 8,
+        "columnEnd": 125
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 16,
+        "lineEnd": 16,
+        "columnStart": 4,
+        "columnEnd": 48
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Based on: https://github.com/znly/docker-protobuf/blob/master/Dockerfile\n# Modified to slim down the image and adjust for Istio\n\nFROM alpine:3.7 as protoc_builder\nRUN apk add --no-cache build-base curl automake autoconf libtool git zlib-dev\n\nENV GRPC_VERSION=1.8.3 \\\n    PROTOBUF_VERSION=3.5.1 \\\n    OUTDIR=/out\nRUN mkdir -p /protobuf && \\\n    curl -f -L https://github.com/google/protobuf/archive/v${PROTOBUF_VERSION}.tar.gz | tar xvz --strip-components=1 -C /protobuf\nRUN git clone --depth 1 --recursive -b v${GRPC_VERSION} https://github.com/grpc/grpc.git /grpc && \\\n    rm -rf grpc/third_party/protobuf && \\\n    ln -s /protobuf /grpc/third_party/protobuf\nRUN cd /protobuf && \\\n    autoreconf -f -i -Wall,no-obsolete && \\\n    ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" --prefix=/usr --enable-static=no && \\\n    make -j2 && make install\nRUN cd grpc && \\\n    make -j2 plugins\nRUN cd /protobuf && \\\n    make install DESTDIR=${OUTDIR}\nRUN cd /grpc && \\\n    make install-plugins prefix=${OUTDIR}/usr\nRUN find ${OUTDIR} -name \"*.a\" -delete -or -name \"*.la\" -delete\nRUN apk update\nRUN apk add --no-cache go>1.10\nENV GOPATH=/go \\\n    PATH=/go/bin/:$PATH\nRUN go get -u -v -ldflags '-w -s' \\\n        github.com/golang/protobuf/protoc-gen-go \\\n        github.com/gogo/protobuf/protoc-gen-gofast \\\n        github.com/gogo/protobuf/protoc-gen-gogo \\\n        github.com/gogo/protobuf/protoc-gen-gogofast \\\n        github.com/gogo/protobuf/protoc-gen-gogofaster \\\n        github.com/gogo/protobuf/protoc-gen-gogoslick \\\n        github.com/istio/tools/protoc-gen-docs \\\n        && install -c ${GOPATH}/bin/protoc-gen* ${OUTDIR}/usr/bin/\n\nFROM znly/upx as packer\nCOPY --from=protoc_builder /out/ /out/\nRUN upx --lzma \\\n        /out/usr/bin/protoc \\\n        /out/usr/bin/grpc_* \\\n        /out/usr/bin/protoc-gen-*\n\nFROM alpine:3.7\nRUN apk add --update --no-cache libstdc++ make bash git openssh\nCOPY --from=packer /out/ /\n\nRUN apk add --no-cache curl && \\\n    mkdir -p /protobuf/google/protobuf && \\\n        for f in any duration descriptor empty struct timestamp wrappers; do \\\n            curl -f -L -o /protobuf/google/protobuf/${f}.proto https://raw.githubusercontent.com/google/protobuf/master/src/google/protobuf/${f}.proto; \\\n        done && \\\n    mkdir -p /protobuf/google/rpc && \\\n        for f in code error_details status http; do \\\n            curl -f -L -o /protobuf/google/rpc/${f}.proto https://raw.githubusercontent.com/istio/gogo-genproto/master/googleapis/google/rpc/${f}.proto; \\\n        done && \\\n    mkdir -p /protobuf/gogoproto && \\\n        curl -f -L -o /protobuf/gogoproto/gogo.proto https://raw.githubusercontent.com/gogo/protobuf/master/gogoproto/gogo.proto && \\\n   apk del curl\n\nENTRYPOINT [\"/usr/bin/protoc\", \"-I/protobuf\"]\n"
+}

@@ -1,0 +1,59 @@
+FROM deepquestai/deepstack-base:gpu-jetpack as jetpack
+
+ENV SLEEP_TIME 0.01
+ENV TIMEOUT 60
+ENV SEND_LOGS True
+ENV CUDA_MODE True
+ENV APPDIR /app
+
+RUN mkdir /deeptemp
+RUN mkdir /datastore
+
+ENV DATA_DIR /datastore
+ENV TEMP_PATH /deeptemp/
+ENV PROFILE jetson
+
+WORKDIR /app
+
+RUN wget https://go.dev/dl/go1.17.6.linux-arm64.tar.gz
+RUN rm -rf /usr/local/go && tar -C /usr/local -xzf go1.17.6.linux-arm64.tar.gz && rm go1.17.6.linux-arm64.tar.gz
+ENV PATH=$PATH:/usr/local/go/bin
+RUN rm go1.17.6.linux-arm64.tar.gz
+
+RUN pip3 install --no-cache-dir redis
+RUN pip3 install --no-cache-dir Cython
+RUN pip3 install --no-cache-dir pillow
+RUN pip3 install --no-cache-dir scipy
+RUN pip3 install --no-cache-dir tqdm
+RUN pip3 install --no-cache-dir PyYAML
+RUN pip3 install --no-cache-dir easydict
+RUN pip3 install --no-cache-dir future
+RUN pip3 install --no-cache-dir numpy
+
+RUN wget https://nvidia.box.com/shared/static/6lxbakd8zaf2p5nkgcn7ih116iqm1wzm.whl -O onnxruntime_gpu-1.5.2-cp36-cp36m-linux_aarch64.whl
+RUN pip3 install --no-cache-dir onnxruntime_gpu-1.5.2-cp36-cp36m-linux_aarch64.whl
+
+RUN mkdir /app/sharedfiles
+COPY ./sharedfiles/yolov5s.pt /app/sharedfiles/yolov5s.pt
+COPY ./sharedfiles/face_lite.pt /app/sharedfiles/face_lite.pt
+COPY ./sharedfiles/facerec-high.model /app/sharedfiles/facerec-high.model
+COPY ./sharedfiles/scene.pt /app/sharedfiles/scene.pt
+COPY ./sharedfiles/categories_places365.txt /app/sharedfiles/categories_places365.txt
+COPY ./sharedfiles/bebygan_x4.pth /app/sharedfiles/bebygan_x4.pth
+
+RUN mkdir /app/server
+COPY ./server /app/server
+WORKDIR /app/server
+RUN go build
+WORKDIR /app
+
+RUN mkdir /app/intelligencelayer
+COPY ./intelligencelayer /app/intelligencelayer
+
+COPY ./init.py /app
+
+EXPOSE 5000
+
+WORKDIR /app/server
+
+CMD ["/app/server/server"]

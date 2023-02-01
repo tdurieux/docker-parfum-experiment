@@ -1,0 +1,58 @@
+FROM debian:buster-20190326-slim
+
+
+
+RUN apt-get update && apt-get install --no-install-recommends -y \
+      git \
+      `# build support` \
+      build-essential \
+      `# python support` \
+      cython3 \
+      python3-dev \
+      python3-pip \
+      python3-tk \
+      `# qt5 support` \
+      pyqt5-dev-tools \
+      python3-pyqt5 \
+      `# libEGL support` \
+      libgl1-mesa-dri \
+      mesa-utils \
+      `# usb support` \
+      libudev-dev \
+      libusb-1.0-0-dev \
+      `# protocol buffers` \
+      libprotoc-dev \
+      protobuf-compiler \
+      `# ssl support` \
+      libssl-dev \
+      && rm -rf /var/lib/apt/lists/*
+
+RUN pip3 install --no-cache-dir --upgrade setuptools pip
+
+# Install trezor
+RUN git clone --depth=1 --branch=v0.11.2 https://github.com/trezor/python-trezor /tmp/trezor
+WORKDIR /tmp/trezor
+
+RUN git submodule update --init
+RUN pip install --no-cache-dir -r requirements-dev.txt
+
+RUN python3 setup.py prebuild
+RUN python3 setup.py develop
+
+# Install electrum-sv
+ADD electrumsv-sv-1.2.0.tar.gz /
+
+WORKDIR "/electrumsv-sv-1.2.0"
+
+RUN pip install --no-cache-dir .
+RUN pip install --no-cache-dir electrumsv-secp256k1
+
+# Add user
+RUN useradd -ms /bin/bash electrum-sv
+RUN usermod -aG plugdev electrum-sv
+
+RUN mkdir /tmp/wallet
+RUN chown electrum-sv:electrum-sv /tmp/wallet
+
+
+USER electrum-sv

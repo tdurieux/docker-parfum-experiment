@@ -1,0 +1,99 @@
+{
+  "startTime": 1674251999787,
+  "endTime": 1674252000600,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 29,
+        "lineEnd": 29,
+        "columnStart": 4,
+        "columnEnd": 89
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 48,
+        "lineEnd": 48,
+        "columnStart": 4,
+        "columnEnd": 67
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 31,
+        "lineEnd": 31,
+        "columnStart": 4,
+        "columnEnd": 113
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 50,
+        "lineEnd": 50,
+        "columnStart": 4,
+        "columnEnd": 15
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 16,
+        "lineEnd": 20,
+        "columnStart": 36,
+        "columnEnd": 29
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 35,
+        "lineEnd": 39,
+        "columnStart": 2,
+        "columnEnd": 17
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 35,
+        "lineEnd": 39,
+        "columnStart": 2,
+        "columnEnd": 17
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 16,
+        "lineEnd": 20,
+        "columnStart": 36,
+        "columnEnd": 29
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 35,
+        "lineEnd": 39,
+        "columnStart": 2,
+        "columnEnd": 17
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 35,
+        "lineEnd": 39,
+        "columnStart": 2,
+        "columnEnd": 17
+      }
+    }
+  ],
+  "repairedDockerfile": "# Creates an image suitable for running the Rails stack for OD 1\n#\n# Build:\n#     docker build --rm -t oregondigital/od1 -f docker/Dockerfile .\n\n# TODO: Upgrade ubuntu!  Right now this just needs to work with what we have in\n# circleci, but longer-term this could get problematic when ubuntu 12 hits EOL.\n#\n# Known issues:\n# - VIPS install will need to be figured out for a newer Ubuntu\n# - Will need to test derivative generation for all types since CLI changes sometimes happen\n# - ffmpeg will need to be replaced, and libavcode-extra-53 definitely has to be replaced\nFROM ubuntu:16.04\nMAINTAINER Jeremy Echols <jechols@uoregon.edu>\n\n#apt won't find some libs if this isn't run\nRUN apt-get update --fix-missing && apt-get install --no-install-recommends -y pkg-config \\\n  python-software-properties software-properties-common automake \\\n  build-essential gtk-doc-tools libglib2.0-dev libjpeg-turbo8-dev libpng12-dev \\\n  libwebp-dev libtiff5-dev libexif-dev libgsf-1-dev liblcms2-dev libxml2-dev \\\n  swig libmagickcore-dev curl && mkdir -p /opt/libvips && rm -rf /var/lib/apt/lists/*;\n\n# Vips!\n#RUN apt-get install -y automake build-essential \\\n#                       gtk-doc-tools libglib2.0-dev \\\n#                       libjpeg-turbo8-dev libpng12-dev libwebp-dev libtiff5-dev libexif-dev \\\n#                       libgsf-1-dev liblcms2-dev libxml2-dev swig libmagickcore-dev curl\n\nWORKDIR /opt/libvips\nRUN curl -f -L https://github.com/libvips/libvips/releases/download/v8.6.3/vips-8.6.3.tar.gz | tar zx\nWORKDIR /opt/libvips/vips-8.6.3\nRUN ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" --enable-debug=no --enable-docs=no --enable-cxx=yes --without-python --without-orc --without-fftw && make && make install && ldconfig\n\n# Various derivative libs\nRUN apt-get purge libreoffice* && add-apt-repository -y ppa:libreoffice/ppa && \\\n  apt-get install --no-install-recommends -y poppler-utils poppler-data ghostscript libreoffice \\\n  libmagic-dev libmagickwand-dev ffmpeg libavcodec-ffmpeg-extra56 \\\n  libvorbis-dev graphicsmagick graphicsmagick-libmagick-dev-compat \\\n  libmysqlclient-dev libsqlite3-dev nodejs git tzdata libssl-dev \\\n  libreadline-dev && rm -rf /var/lib/apt/lists/*;\n\n# Grab Ruby manually - can't install the default for Ubuntu 12.04\n#\n# Make sure this comes after the big downloads, as it's more likely we'll\n# change our ruby version than, say, our vips version - at least until we deal\n# with a major change (like OS) that would require a ruby rebuild anyway\nRUN  mkdir -p /opt/ruby\nWORKDIR /opt/ruby\nRUN curl -f https://cache.ruby-lang.org/pub/ruby/2.3/ruby-2.3.8.tar.gz | tar zx\nWORKDIR /opt/ruby/ruby-2.3.8\nRUN ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" && make && make install && gem install bundler -v '1.17.3'\n\n# Set an environment variable to store where the app is installed to inside\n# of the Docker image\nENV INSTALL_PATH /oregondigital\nWORKDIR $INSTALL_PATH\n\n# Pull down set content first so code updates, which are more common than set\n# updates, don't re-run the set syncing process\nCOPY docker/sync-sets.sh /sync-sets.sh\nRUN chmod +x /sync-sets.sh && /sync-sets.sh\n\n# Grab the current code from github so we can use this directly or overlay our\n# own code on top of it - this makes it close to a production image *and*\n# ensures that changes to things like Gemfile and Gemfile.lock don't re-pull\n# the entire list of gems\nRUN cd / && git clone --depth 1 https://github.com/OregonDigital/oregondigital.git $INSTALL_PATH\n\n# Install gems\n\nRUN bash -lc 'PATH=\"/usr/lib/x86_64-linux-gnu/ImageMagick-6.8.9/bin-Q16:$PATH\"\\\n  gem install rmagick -v \"2.13.2\"' && bundle install --without development test\\\n  && bundle update --source=mysql2 --major && \\\n  ln -s /opt/od_set_content /oregondigital/set_content\n\n# Link the set content repo inside OD\nCOPY docker/entrypoint.sh /entrypoint.sh\n# /entrypoint.sh can be overwritten, but provides basic default behavior of\n# running the web server\nCOPY docker/link-set-content.sh /link-set-content.sh\nRUN chmod +x /link-set-content.sh && /link-set-content.sh && bundle exec \\\n  rake tmp:create && mkdir -p /oregondigital/media/thumbnails && \\\n  ln -s /oregondigital/media /oregondigital/public/media && \\\n  ln -s /oregondigital/media/thumbnails /oregondigital/public/thumbnails && \\\n  chmod +x /entrypoint.sh\n\n\n# Expose a volume so that the web server can read assets\nVOLUME [\"$INSTALL_PATH/public\"]\n\n# Allow devs to override the app code entirely\nVOLUME [\"$INSTALL_PATH/\"]\n\nENTRYPOINT [\"/entrypoint.sh\"]\n"
+}

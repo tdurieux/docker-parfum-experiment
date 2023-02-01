@@ -63,7 +63,7 @@ async function main() {
 
     const dockerhubInfoPath = join(
       config.dataFolder,
-      "evaluation/dockerhub_info",
+      "RQ4/dockerhub_info",
       `${owner}-${repo}.json`
     );
     let hubImage = undefined;
@@ -91,7 +91,7 @@ async function main() {
 
     const repoInfoPath = join(
       config.dataFolder,
-      "evaluation/repository_info",
+      "dataset/parfum/repository_info",
       `${owner}-${repo}.json`
     );
 

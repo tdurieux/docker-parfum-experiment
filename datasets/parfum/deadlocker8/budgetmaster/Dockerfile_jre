@@ -1,0 +1,16 @@
+FROM openjdk:17-bullseye
+
+ARG APP_DIR=/BudgetMaster
+
+RUN mkdir -p $APP_DIR
+RUN mkdir -p /root/.Deadlocker/BudgetMaster
+
+COPY BudgetMasterServer/build/2.10.0/BudgetMasterServer-v2.10.0.jar /BudgetMaster/BudgetMaster.jar
+COPY BudgetMasterServer/src/main/resources/config/templates/settings-docker.properties /root/.Deadlocker/BudgetMaster/settings.properties
+RUN echo "server.port=9000" > ~/.Deadlocker/BudgetMaster/settings.properties
+
+EXPOSE 9000
+
+ENV JAR_LOCATION=$APP_DIR/BudgetMaster.jar
+
+CMD ["bash", "-c", "java -jar ${JAR_LOCATION}"]

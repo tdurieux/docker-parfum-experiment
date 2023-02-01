@@ -1,0 +1,90 @@
+{
+  "startTime": 1674249536680,
+  "endTime": 1674249537146,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 56,
+        "lineEnd": 56,
+        "columnStart": 27,
+        "columnEnd": 69
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 18,
+        "lineEnd": 18,
+        "columnStart": 4,
+        "columnEnd": 144
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 21,
+        "lineEnd": 21,
+        "columnStart": 4,
+        "columnEnd": 117
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 18,
+        "lineEnd": 18,
+        "columnStart": 4,
+        "columnEnd": 144
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 21,
+        "lineEnd": 21,
+        "columnStart": 4,
+        "columnEnd": 117
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 18,
+        "lineEnd": 18,
+        "columnStart": 4,
+        "columnEnd": 144
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 21,
+        "lineEnd": 21,
+        "columnStart": 4,
+        "columnEnd": 117
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 18,
+        "lineEnd": 18,
+        "columnStart": 4,
+        "columnEnd": 168
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 21,
+        "lineEnd": 21,
+        "columnStart": 4,
+        "columnEnd": 141
+      }
+    }
+  ],
+  "repairedDockerfile": "FROM ubuntu:14.04\nMAINTAINER Alexey Masolov <alexey.masolov@gmail.com>\n\n# Keep upstart from complaining\nRUN dpkg-divert --local --rename --add /sbin/initctl\nRUN ln -sf /bin/true /sbin/initctl\n\n# Preparation for sshd\nRUN mkdir /var/run/sshd\n\n# Let the conatiner know that there is no tty\nENV DEBIAN_FRONTEND noninteractive\n\nRUN apt-get update\nRUN ln -sf /proc/mounts /etc/mtab\nRUN apt-get -y upgrade\n\n# Basic Requirements\nRUN apt-get -y --no-install-recommends install mysql-server mysql-client nginx php5-fpm php5-mysql php-apc pwgen python-setuptools curl git unzip openssh-server openssl && rm -rf /var/lib/apt/lists/*;\n\n# OctoberCMS Requirements\nRUN apt-get -y --no-install-recommends install php5-curl php5-gd php5-mcrypt php5-memcache php5-memcached php5-sqlite php5-json libphp-pclzip && rm -rf /var/lib/apt/lists/*;\n\n# Add october user for ssh access\nRUN sed -ri 's/UsePAM yes/#UsePAM yes/g' /etc/ssh/sshd_config\nRUN sed -ri 's/#UsePAM no/UsePAM no/g' /etc/ssh/sshd_config\nRUN sed -ri 's/#PermitRootLogin yes/PermitRootLogin no/g' /etc/ssh/sshd_config\nRUN useradd -m -d /home/october -p $(openssl passwd -1 'temp') -G sudo -s /bin/bash october\nRUN echo \"october ALL=(ALL:ALL) ALL\" >> /etc/sudoers\n\n# mysql config\nRUN sed -i -e\"s/^bind-address\\s*=\\s*127.0.0.1/bind-address = 0.0.0.0/\" /etc/mysql/my.cnf\n\n# nginx config\nRUN sed -i -e\"s/keepalive_timeout\\s*65/keepalive_timeout 2/\" /etc/nginx/nginx.conf\nRUN sed -i -e\"s/keepalive_timeout 2/keepalive_timeout 2;\\n\\tclient_max_body_size 100m/\" /etc/nginx/nginx.conf\nRUN echo \"daemon off;\" >> /etc/nginx/nginx.conf\n\n# php-fpm config\nRUN sed -i -e \"s/;cgi.fix_pathinfo=1/cgi.fix_pathinfo=0/g\" /etc/php5/fpm/php.ini\nRUN sed -i -e \"s/upload_max_filesize\\s*=\\s*2M/upload_max_filesize = 100M/g\" /etc/php5/fpm/php.ini\nRUN sed -i -e \"s/post_max_size\\s*=\\s*8M/post_max_size = 100M/g\" /etc/php5/fpm/php.ini\nRUN sed -i -e \"s/;daemonize\\s*=\\s*yes/daemonize = no/g\" /etc/php5/fpm/php-fpm.conf\nRUN sed -i -e \"s/;catch_workers_output\\s*=\\s*yes/catch_workers_output = yes/g\" /etc/php5/fpm/pool.d/www.conf\nRUN find /etc/php5/cli/conf.d/ -name \"*.ini\" -exec sed -i -re 's/^(\\s*)#(.*)/\\1;\\2/g' {} \\;\nRUN php5enmod mcrypt\n\n# nginx site conf\nADD ./nginx-site.conf /etc/nginx/sites-available/default\n\n# Supervisor Config\nRUN /usr/bin/easy_install supervisor\nRUN /usr/bin/easy_install supervisor-stdout\nADD ./supervisord.conf /etc/supervisord.conf\n\n# Install composer\nRUN cd /usr/local/sbin/ && curl -f -sS https://getcomposer.org/installer | php && mv composer.phar composer\n\n# Install OctoberCMS\nRUN cd /usr/share/nginx/ && composer -n create-project october/october october dev-master\nRUN mv /usr/share/nginx/html/5* /usr/share/nginx/october\nRUN rm -rf /usr/share/nginx/html/\nRUN mv /usr/share/nginx/october /usr/share/nginx/html\nRUN chown -R www-data:www-data /usr/share/nginx/html\n\n# Wordpress Initialization and Startup Script\nADD ./start.sh /start.sh\nRUN chmod 755 /start.sh\n\n# private expose\nEXPOSE 3306\nEXPOSE 80\nEXPOSE 22\n\nCMD [\"/bin/bash\", \"/start.sh\"]\n"
+}

@@ -1,0 +1,35 @@
+{
+  "startTime": 1674255927977,
+  "endTime": 1674255928705,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 85,
+        "lineEnd": 85,
+        "columnStart": 4,
+        "columnEnd": 45
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 86,
+        "lineEnd": 86,
+        "columnStart": 4,
+        "columnEnd": 30
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 17,
+        "lineEnd": 18,
+        "columnStart": 4,
+        "columnEnd": 34
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM centos:5\n\nWORKDIR /build\n\n# Install updates.\nRUN yum upgrade -y\n\n# curl == now we can download things\n# bzip2 == now we can download bz2 things\n# gcc == now we can build gcc\n# make == now we can build gcc\n# glibc-devel == libs for gcc to compile against\n# perl == run openssl configure script + runtime dep of git\n# zlib-devel == needed by basically everyone\n# file == needed by the rust build\n# xz == needed to extract LLVM sources\n# which, stunnel == needed by rust-buildbot startup scripts\nRUN yum install -y curl bzip2 gcc make glibc-devel perl zlib-devel file xz \\\n          which stunnel pkg-config && rm -rf /var/cache/yum\n\nENV PATH=/rustroot/bin:/rust/bin:$PATH\nENV LD_LIBRARY_PATH=/rustroot/lib64:/rustroot/lib\n\n# prep the buildslave user and some directories\nRUN groupadd -r rustbuild && useradd -r -g rustbuild rustbuild\nRUN mkdir /buildslave && chown rustbuild:rustbuild /buildslave\nRUN mkdir /home/rustbuild\nRUN chown rustbuild:rustbuild /home/rustbuild\n\n# We need a build of openssl which supports SNI to download artifacts from\n# static.rust-lang.org. This'll be used to link into libcurl below (and used\n# later as well), so build a copy of OpenSSL with dynamic libraries into our\n# generic root.\nCOPY dist/build_openssl.sh /build/\nRUN /bin/bash build_openssl.sh && rm -rf /build\n\n# The `curl` binary on CentOS doesn't support SNI which is needed for fetching\n# some https urls we have, so install a new version of libcurl + curl which is\n# using the openssl we just built previously.\n#\n# Note that we also disable a bunch of optional features of curl that we don't\n# really need.\nCOPY dist/build_curl.sh /build/\nRUN /bin/bash build_curl.sh\n\n# Install gcc 4.7 which has C++11 support which is required by LLVM\n#\n# After we're done building we erase the binutils/gcc installs from CentOS to\n# ensure that we always use the ones that we just built.\nCOPY dist/build_gcc.sh /build/\nRUN /bin/bash build_gcc.sh && rm -rf /build\n\n# binutils < 2.22 has a bug where the 32-bit executables it generates\n# immediately segfault in Rust, so we need to install our own binutils.\n#\n# See https://github.com/rust-lang/rust/issues/20440 for more info\nCOPY dist/build_binutils.sh /build/\nRUN /bin/bash build_binutils.sh && rm -rf /build\n\n# libssh2 (a dependency of Cargo) requires cmake 2.8.11 or higher but CentOS\n# only has 2.6.4, so build our own\nCOPY dist/build_cmake.sh /build/\nRUN /bin/bash build_cmake.sh && rm -rf /build\n\n# tar on CentOS is too old as it doesn't understand the --exclude-vcs option\n# that the Rust build system passes it, so install a new version.\nCOPY dist/build_tar.sh /build/\nRUN /bin/bash build_tar.sh && rm -rf /build\n\n# CentOS 5.5 has Python 2.4 by default, but LLVM needs 2.7+\nCOPY dist/build_python.sh /build/\nRUN /bin/bash build_python.sh && rm -rf /build\n\n# The Rust test suite requires a relatively new version of gdb, much newer than\n# CentOS has to offer by default, and we want it to use the newly installed\n# python so it's ordered here.\nCOPY dist/build_gdb.sh /build/\nRUN /bin/bash build_gdb.sh && rm -rf /build\n\n# Apparently CentOS 5.5 desn't have `git` in yum, but we're gonna need it for\n# cloning, so download and build it here.\nCOPY dist/build_git.sh /build/\nRUN /bin/bash build_git.sh && rm -rf /build\n\n# Install buildbot and prep it to run\nRUN curl -f https://bootstrap.pypa.io/get-pip.py | python\nRUN pip install --no-cache-dir buildbot-slave\n\n# Clean up after ourselves, make sure that `cc` is a thing, and then make the\n# default working directory a \"home-ish\" directory\nWORKDIR /buildslave\nRUN rm -rf /build\nUSER rustbuild\nCOPY start-docker-slave.sh start-docker-slave.sh\nENTRYPOINT [\"sh\", \"start-docker-slave.sh\"]\n"
+}

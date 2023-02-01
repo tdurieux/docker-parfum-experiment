@@ -1,0 +1,32 @@
+FROM node:17.3.1-alpine3.15
+LABEL maintainer="Daniel Rataj <daniel.rataj@centrum.cz>"
+LABEL org.opencontainers.image.source="https://github.com/whoopsmonitor/whoopsmonitor"
+
+RUN apk add --no-cache openssl=1.1.1l-r8 \
+  docker-cli=20.10.11-r0 \
+  bash=5.1.16-r0 \
+  && rm -rf /var/cache/apk/*
+
+WORKDIR /app
+
+COPY api/package.json .
+RUN npm install --quiet && npm cache clean --force;
+
+# copy required app files
+COPY api/api ./api
+COPY api/config/ ./config
+COPY api/static/ ./static
+COPY api/views/ ./views
+COPY api/test/ ./test
+COPY api/app.js ./app.js
+COPY api/.sailsrc ./.sailsrc
+
+# wait for container
+ADD https://raw.githubusercontent.com/vishnubob/wait-for-it/master/wait-for-it.sh /opt/bin/
+RUN chmod +x /opt/bin/wait-for-it.sh
+
+# start Sails app
+CMD ["/opt/bin/wait-for-it.sh", "mongo:27017", "--", "npm", "start"]
+
+# expose port for Node
+EXPOSE 1337

@@ -1,0 +1,26 @@
+{
+  "startTime": 1674255385836,
+  "endTime": 1674255386673,
+  "originalSmells": [
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 27,
+        "lineEnd": 27,
+        "columnStart": 4,
+        "columnEnd": 48
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 45,
+        "lineEnd": 49,
+        "columnStart": 4,
+        "columnEnd": 31
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "####################################################################\n# base image contains all the dependencies we need to build the code\nFROM valhalla/valhalla:build-3.1.5 as builder\nMAINTAINER Kevin Kreiser <kevinkreiser@gmail.com>\n\n# get the code into the right place and prepare to build it\nWORKDIR /usr/local/src/valhalla\nADD . /usr/local/src/valhalla\nRUN ls\nRUN git submodule sync && git submodule update --init --recursive\nRUN mkdir build\n\n# configure the build with symbols turned on so that crashes can be triaged\nWORKDIR /usr/local/src/valhalla/build\nRUN cmake .. -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_C_COMPILER=gcc\nRUN make all -j$(nproc)\nRUN make install\n\n# we wont leave the source around but we'll drop the commit hash we'll also keep the locales\nWORKDIR /usr/local/src\nRUN cd valhalla && echo \"https://github.com/valhalla/valhalla/tree/$(git rev-parse HEAD)\" > ../valhalla_version\nRUN for f in valhalla/locales/*.json; do cat ${f} | python3 -c 'import sys; import json; print(json.load(sys.stdin)[\"posix_locale\"])'; done > valhalla_locales\nRUN rm -rf valhalla\n\n# the binaries are huge with all the symbols so we strip them but keep the debug there if we need it\nWORKDIR /usr/local/bin\nRUN for f in valhalla_*; do objcopy --only-keep-debug $f $f.debug; done\nRUN tar -cvf valhalla.debug.tar valhalla_*.debug && gzip -9 valhalla.debug.tar && rm valhalla.debug.tar\nRUN rm -f valhalla_*.debug\nRUN strip --strip-debug --strip-unneeded valhalla_* || true\nRUN strip /usr/local/lib/libvalhalla.a\nRUN strip /usr/lib/python3/dist-packages/valhalla/python_valhalla.cpython-38-x86_64-linux-gnu.so\n\n####################################################################\n# copy the important stuff from the build stage to the runner image\nFROM ubuntu:20.04 as runner\nMAINTAINER Kevin Kreiser <kevinkreiser@gmail.com>\nCOPY --from=builder /usr/local /usr/local\nCOPY --from=builder /usr/bin/prime_* /usr/bin/\nCOPY --from=builder /usr/lib/x86_64-linux-gnu/libprime* /usr/lib/x86_64-linux-gnu/\nCOPY --from=builder /usr/lib/python3/dist-packages/valhalla/* /usr/lib/python3/dist-packages/valhalla/\n\n# we need to add back some runtime dependencies for binaries and scripts\n# install all the posix locales that we support\nRUN export DEBIAN_FRONTEND=noninteractive && apt update && \\\n    apt install --no-install-recommends -y \\\n      libcurl4 libczmq4 libluajit-5.1-2 \\\n      libprotobuf-lite17 libsqlite3-0 libsqlite3-mod-spatialite libzmq5 zlib1g \\\n      curl gdb locales parallel python3.8-minimal python3-distutils python-is-python3 \\\n      spatialite-bin unzip wget && \\\n    cat /usr/local/src/valhalla_locales | xargs -d '\\n' -n1 locale-gen && \\\n    rm -rf /var/lib/apt/lists/* && \\\n\n    # python smoke test\n    python3 -c \"import valhalla,sys; print (sys.version, valhalla)\""
+}

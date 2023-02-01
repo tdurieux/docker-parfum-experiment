@@ -1,0 +1,35 @@
+{
+  "startTime": 1674217915657,
+  "endTime": 1674217917296,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 108,
+        "lineEnd": 108,
+        "columnStart": 7,
+        "columnEnd": 135
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 98,
+        "lineEnd": 107,
+        "columnStart": 22,
+        "columnEnd": 42
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 53,
+        "lineEnd": 55,
+        "columnStart": 4,
+        "columnEnd": 27
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "ARG CUGRAPH_VERSION=22.02\nARG CUDA_VERSION=11.5\nARG CUDA_VERSION_MINOR=11.5.2\nARG PY_VERSION=3.8\nARG MG_VERSION=2.3.0\n\nFROM rapidsai/rapidsai:${CUGRAPH_VERSION}-cuda${CUDA_VERSION}-runtime-ubuntu20.04-py${PY_VERSION} as cugraph-dev\n\nFROM nvidia/cuda:${CUDA_VERSION_MINOR}-devel-ubuntu20.04 AS dev\n\nUSER root\n\nARG DEBIAN_FRONTEND=noninteractive\nARG MG_VERSION\nARG PY_VERSION\nENV MG_VERSION ${MG_VERSION}\nENV PY_VERSION ${PY_VERSION}\n\n# Copy RAPIDS libraries\nCOPY --from=cugraph-dev /opt/conda/envs/rapids/lib/libcugraph.so /opt/conda/envs/rapids/lib/libcugraph.so\nCOPY --from=cugraph-dev /opt/conda/envs/rapids/include /opt/conda/envs/rapids/include\n\n# Prevent from linking the Conda environment\nENV LD_LIBRARY_PATH=/usr/local/nvidia/lib:/usr/local/nvidia/lib64:/usr/local/cuda/lib64:/usr/local/lib\n\n# NVIDIA key rotation\nRUN rm /etc/apt/sources.list.d/cuda.list\n\n# Essentials for production/dev\nRUN apt-get update && apt-get install -y \\\n    libcurl4        `memgraph` \\\n    libpython${PY_VERSION}   `memgraph` \\\n    libssl1.1       `memgraph` \\\n    libssl-dev       `memgraph` \\\n    openssl         `memgraph` \\\n    build-essential `mage-memgraph` \\\n    curl            `mage-memgraph` \\\n    g++             `mage-memgraph` \\\n    python3         `mage-memgraph` \\\n    python3-pip     `mage-memgraph` \\\n    python3-setuptools     `mage-memgraph` \\\n    python3-dev     `mage-memgraph` \\\n    uuid-dev        `mage-memgraph` \\\n    clang           `mage-memgraph` \\\n    git             `mage-memgraph` \\\n    software-properties-common  `mage-cugraph` \\\n    lsb-release `mage-cugraph` \\\n    wget `mage-cugraph` \\\n    --no-install-recommends && \\\n    rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/* && \\\n    # Install newest CMake (cuGraph requires >= 20.01)\n    wget -qO - https://apt.kitware.com/keys/kitware-archive-latest.asc | apt-key add - && \\\n    apt-add-repository \"deb https://apt.kitware.com/ubuntu/ $(lsb_release -cs) main\" && \\\n    apt-get install -y \\\n    cmake           `mage-memgraph` \\\n    --no-install-recommends && rm -rf /var/lib/apt/lists/*;\n\nENV PATH=/usr/local/nvidia/bin:/usr/local/cuda/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/bin/cmake:/usr/lib/cmake\n\n# Memgraph listens for Bolt Protocol on this port by default.\nEXPOSE 7687\n\n# Copy and build MAGE\nWORKDIR /mage\nCOPY . /mage\n\nRUN curl https://sh.rustup.rs -sSf | sh -s -- -y && \\\n    export PATH=\"/root/.cargo/bin:${PATH}\" && \\ \n    python3 -m pip install -r /mage/python/requirements.txt && \\ \n    python3 /mage/setup build \\ \n    --gpu \\\n    --cpp-build-flags MAGE_CUGRAPH_ROOT=/opt/conda/envs/rapids/ \\\n    -p /usr/lib/memgraph/query_modules/\n\nUSER memgraph\nENTRYPOINT [\"/usr/lib/memgraph/memgraph\"]\n\nFROM nvidia/cuda:${CUDA_VERSION_MINOR}-runtime-ubuntu20.04 AS prod\n\nUSER root\n\nARG DEBIAN_FRONTEND=noninteractive\nARG MG_VERSION\nARG PY_VERSION\nENV MG_VERSION ${MG_VERSION}\nENV PY_VERSION ${PY_VERSION}\n\n# Copy modules\nCOPY --from=dev /usr/lib/memgraph/query_modules/ /usr/lib/memgraph/query_modules/\n# Copy cugraph library\nCOPY --from=dev /opt/conda/envs/rapids/lib/libcugraph.so /opt/conda/envs/rapids/lib/libcugraph.so\n# Copy python build\nCOPY --from=dev /usr/local/lib/python${PY_VERSION}/ /usr/local/lib/python${PY_VERSION}/\n\n# NVIDIA key rotation\nRUN rm /etc/apt/sources.list.d/cuda.list\n\n# Download and install Memgraph\nRUN apt-get update && apt-get install --no-install-recommends -y \\\n    libcurl4 `memgraph` \\\n    libpython${PY_VERSION} `memgraph` \\\n    libssl1.1 `memgraph` \\\n    libssl-dev `memgraph` \\\n    openssl `memgraph` \\\n    curl `mage-memgraph` \\\n    libgomp1 `mage-memgraph` \\\n    python3 `mage-memgraph` \\\n    python3-setuptools `mage-memgraph` \\\n    && curl -f https://download.memgraph.com/memgraph/v${MG_VERSION}/ubuntu-20.04/memgraph_${MG_VERSION}-1_amd64.deb --output memgraph.deb \\\n    && dpkg -i memgraph.deb \\\n    && rm memgraph.deb \\\n    && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*\n\nRUN export PATH=\"/usr/local/lib/python${PY_VERSION}:${PATH}\"\n\nRUN rm -rf /mage \\\n    && export PATH=\"/usr/local/lib/python${PY_VERSION}:${PATH}\" \\\n    && apt-get -y --purge autoremove curl python3-dev \\\n    && apt-get clean\n\nUSER memgraph\nENTRYPOINT [\"/usr/lib/memgraph/memgraph\"]"
+}

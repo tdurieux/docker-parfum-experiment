@@ -1,0 +1,35 @@
+FROM registry.access.redhat.com/ubi7/ubi-minimal:latest
+
+ARG AGENT_VERSION="5.21.0"
+LABEL name="SignalFx Smart Agent" \
+	  maintainer="SignalFx, Inc." \
+	  vendor="SignalFx, Inc." \
+	  version="${AGENT_VERSION}" \
+	  release="1" \
+	  summary="The SignalFx Smart Agent" \
+	  description="The SignalFx Smart Agent" \
+	  io.k8s.display-name="SignalFx Smart Agent" \
+	  io.k8s.description="The SignalFx Smart Agent" \
+	  io.openshift.tags=""
+
+RUN mkdir -p /licenses
+COPY LICENSE /licenses/
+
+USER root
+
+CMD ["/usr/bin/signalfx-agent"]
+
+COPY packaging/rpm/signalfx-agent.repo /etc/yum.repos.d/signalfx-agent.repo
+RUN rpm --import https://splunk.jfrog.io/splunk/signalfx-agent-rpm/splunk-B3CD4420.pub
+
+RUN microdnf install signalfx-agent-${AGENT_VERSION}-1 &&\
+    microdnf clean all
+
+RUN setcap -r /usr/lib/signalfx-agent/bin/signalfx-agent &&\
+    mkdir -p /var/run/signalfx-agent &&\
+    chown signalfx-agent.signalfx-agent /var/run/signalfx-agent &&\
+    chmod 777 /var/run/signalfx-agent
+
+COPY deployments/docker/agent.yaml /tmp/agent.yaml
+
+USER signalfx-agent

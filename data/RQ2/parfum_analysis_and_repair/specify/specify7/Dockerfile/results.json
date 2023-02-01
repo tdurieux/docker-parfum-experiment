@@ -1,0 +1,35 @@
+{
+  "startTime": 1674251443340,
+  "endTime": 1674251444719,
+  "originalSmells": [
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 33,
+        "lineEnd": 33,
+        "columnStart": 4,
+        "columnEnd": 15
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 44,
+        "lineEnd": 53,
+        "columnStart": 4,
+        "columnEnd": 21
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 150,
+        "lineEnd": 153,
+        "columnStart": 4,
+        "columnEnd": 12
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM ubuntu:18.04 AS common\n\nLABEL maintainer=\"Specify Collections Consortium <github.com/specify>\"\n\nRUN apt-get update \\\n && apt-get -y install --no-install-recommends \\\n        gettext \\\n        python3.6 \\\n        libldap-2.4-2 \\\n        libmariadbclient18 \\\n && apt-get clean \\\n && rm -rf /var/lib/apt/lists/*\n\nRUN groupadd -g 999 specify \\\n && useradd -r -u 999 -g specify specify\n\nRUN mkdir -p /home/specify \\\n && chown specify.specify /home/specify\nRUN mkdir -p /opt/specify7 \\\n && chown specify.specify /opt/specify7\n\n\n#####################################################################\n\n\nFROM node:16.1.0-alpine3.11 AS build-frontend\n\nLABEL maintainer=\"Specify Collections Consortium <github.com/specify>\"\n\nUSER node\nWORKDIR /home/node\n\nCOPY --chown=node:node specifyweb/frontend/js_src/package*.json ./\nRUN npm install && npm cache clean --force;\nRUN mkdir dist && chown node:node dist\nCOPY --chown=node:node specifyweb/frontend/js_src ./\nRUN npx webpack\n\n\n#####################################################################\n\nFROM common AS build-backend\n\nRUN apt-get update \\\n && apt-get -y install --no-install-recommends \\\n        build-essential \\\n        ca-certificates \\\n        curl \\\n        git \\\n        libldap2-dev \\\n        libmariadbclient-dev \\\n        libsasl2-dev \\\n        python3-venv \\\n        python3.6-dev && rm -rf /var/lib/apt/lists/*;\n\nUSER specify\nCOPY --chown=specify:specify requirements.txt /home/specify/\n\nWORKDIR /opt/specify7\nRUN python3.6 -m venv ve \\\n && ve/bin/pip install --no-cache-dir -r /home/specify/requirements.txt\nRUN ve/bin/pip install --no-cache-dir gunicorn\n\nCOPY --from=build-frontend /home/node/dist specifyweb/frontend/static/js\nCOPY --chown=specify:specify specifyweb /opt/specify7/specifyweb\nCOPY --chown=specify:specify manage.py /opt/specify7/\nCOPY --chown=specify:specify docker-entrypoint.sh /opt/specify7/\nCOPY --chown=specify:specify Makefile /opt/specify7/\nCOPY --chown=specify:specify specifyweb.wsgi /opt/specify7/\n\nARG BUILD_VERSION\nARG GIT_SHA\nENV BUILD_VERSION=$BUILD_VERSION\nRUN make specifyweb/settings/build_version.py\nRUN echo $BUILD_VERSION > specifyweb/frontend/static/build_version.txt\nRUN echo $GIT_SHA > specifyweb/frontend/static/git_sha.txt\nRUN date > specifyweb/frontend/static/build_date.txt\n\n# The following is needed to run manage.py compilemessages:\n# The secret key file needs to exist so it can be imported.\n# The INSTALLED_APPS needs to be cleared out so Django doesn't\n# try to import the Specify datamodel which isn't defined yet.\nRUN echo \"SECRET_KEY = 'bogus'\" > specifyweb/settings/secret_key.py\nRUN echo \"INSTALLED_APPS = ['specifyweb.frontend']\" >> specifyweb/settings/__init__.py\nRUN (cd specifyweb && ../ve/bin/python ../manage.py compilemessages)\n\n# Now put things back the way they were.\nRUN rm specifyweb/settings/secret_key.py\nCOPY --chown=specify:specify specifyweb/settings/__init__.py /opt/specify7/specifyweb/settings/__init__.py\n\n######################################################################\n\nFROM common AS run-common\n\nRUN apt-get update \\\n && apt-get -y install --no-install-recommends \\\n        rsync \\\n && apt-get clean \\\n && rm -rf /var/lib/apt/lists/*\n\nRUN mkdir -p /volumes/static-files/depository \\\n && chown -R specify.specify /volumes/static-files\n\nUSER specify\nCOPY --from=build-backend /opt/specify7 /opt/specify7\n\nWORKDIR /opt/specify7\nRUN cp -r specifyweb/settings .\n\nRUN echo \\\n        \"import os\" \\\n        \"\\nDATABASE_NAME = os.environ['DATABASE_NAME']\" \\\n        \"\\nDATABASE_HOST = os.environ['DATABASE_HOST']\" \\\n        \"\\nDATABASE_PORT = os.environ.get('DATABASE_PORT', '')\" \\\n        \"\\nMASTER_NAME = os.environ['MASTER_NAME']\" \\\n        \"\\nMASTER_PASSWORD = os.environ['MASTER_PASSWORD']\" \\\n        \"\\nDEPOSITORY_DIR = '/volumes/static-files/depository'\" \\\n        \"\\nREPORT_RUNNER_HOST = os.getenv('REPORT_RUNNER_HOST', '')\" \\\n        \"\\nREPORT_RUNNER_PORT = os.getenv('REPORT_RUNNER_PORT', '')\" \\\n        \"\\nWEB_ATTACHMENT_URL = os.getenv('ASSET_SERVER_URL', None)\" \\\n        \"\\nWEB_ATTACHMENT_KEY = os.getenv('ASSET_SERVER_KEY', None)\" \\\n        \"\\nWEB_ATTACHMENT_COLLECTION = os.getenv('ASSET_SERVER_COLLECTION', None)\" \\\n        \"\\nCELERY_BROKER_URL = os.getenv('CELERY_BROKER_URL', None)\" \\\n        \"\\nCELERY_RESULT_BACKEND = os.getenv('CELERY_RESULT_BACKEND', None)\" \\\n        \"\\nCELERY_TASK_DEFAULT_QUEUE = os.getenv('CELERY_TASK_QUEUE', DATABASE_NAME)\" \\\n        \"\\nANONYMOUS_USER = os.getenv('ANONYMOUS_USER', None)\" \\\n        > settings/local_specify_settings.py\n\nRUN echo \"import os \\nDEBUG = os.getenv('SP7_DEBUG', '').lower() == 'true'\\n\" \\\n        > settings/debug.py\n\nRUN echo \"import os \\nSECRET_KEY = os.environ['SECRET_KEY']\\n\" \\\n        > settings/secret_key.py\n\nENV LC_ALL=C.UTF-8\nENV LANG=C.UTF-8\nENV DJANGO_SETTINGS_MODULE='settings'\n\nENTRYPOINT [\"/opt/specify7/docker-entrypoint.sh\"]\n\nEXPOSE 8000\n\n\n######################################################################\n\nFROM run-common AS run-development\n\nUSER root\n\nRUN apt-get update \\\n && apt-get -y install --no-install-recommends \\\n        python3.6-distutils \\\n        ca-certificates \\\n        make && rm -rf /var/lib/apt/lists/*;\n\nUSER specify\n\nCOPY requirements-testing.txt /home/specify/\n\nRUN ve/bin/pip install --no-cache-dir -r /home/specify/requirements-testing.txt\n\nCOPY mypy.ini ./\n\n\n######################################################################\n\nFROM run-common AS run\n\nRUN mv specifyweb.wsgi specifyweb_wsgi.py\n\nCMD [\"ve/bin/gunicorn\", \"-w\", \"3\", \"-b\", \"0.0.0.0:8000\", \"-t\", \"300\", \"specifyweb_wsgi\"]\n\n\n"
+}

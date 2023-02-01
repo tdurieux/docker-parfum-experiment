@@ -1,0 +1,80 @@
+{
+  "startTime": 1674239369682,
+  "endTime": 1674239369996,
+  "originalSmells": [
+    {
+      "rule": "curlUseHttpsUrl",
+      "position": {
+        "lineStart": 42,
+        "lineEnd": 42,
+        "columnStart": 2,
+        "columnEnd": 70
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 99,
+        "lineEnd": 99,
+        "columnStart": 2,
+        "columnEnd": 53
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 100,
+        "lineEnd": 100,
+        "columnStart": 2,
+        "columnEnd": 52
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 28,
+        "lineEnd": 28,
+        "columnStart": 5,
+        "columnEnd": 53
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 36,
+        "lineEnd": 36,
+        "columnStart": 5,
+        "columnEnd": 95
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 49,
+        "lineEnd": 50,
+        "columnStart": 2,
+        "columnEnd": 22
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 73,
+        "lineEnd": 84,
+        "columnStart": 2,
+        "columnEnd": 20
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 18,
+        "lineEnd": 21,
+        "columnStart": 2,
+        "columnEnd": 8
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM lambci/lambda:build-python2.7\n\nARG http_proxy\nARG CURL_VERSION=7.59.0\nARG GDAL_VERSION=2.3.0\nARG LIBJPEG_TURBO_VERSION=1.5.90\nARG NGHTTP2_VERSION=1.31.1\nARG PROJ_VERSION=4.9.3\n\n# add gdal-config and curl to PATH for rasterio + libcurl usage\nENV PATH /var/task/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin\nENV LD_LIBRARY_PATH /lib64:/usr/lib64:/var/runtime:/var/runtime/lib:/var/task:/var/task/lib:/var/task/lib64\nENV LIBRARY_PATH /lib64:/usr/lib64:/var/runtime:/var/runtime/lib:/var/task:/var/task/lib:/var/task/lib64\n\n# Install deps\n\nRUN \\\n  rpm --rebuilddb && \\\n  yum install -y \\\n    automake16 \\\n    libpng-devel \\\n    nasm && rm -rf /var/cache/yum\n\n# Fetch and build nghttp2\n\nRUN mkdir /tmp/nghttp2 \\\n  && curl -sfL https://github.com/nghttp2/nghttp2/releases/download/v${NGHTTP2_VERSION}/nghttp2-${NGHTTP2_VERSION}.tar.gz | tar zxf - -C /tmp/nghttp2 --strip-components=1 \\\n  && cd /tmp/nghttp2 \\\n  && ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" --enable-lib-only --prefix=/var/task \\\n  && make -j $(nproc) install\n\n# Fetch and install libcurl\n\nRUN mkdir /tmp/curl \\\n  && curl -sfL https://curl.haxx.se/download/curl-${CURL_VERSION}.tar.gz | tar zxf - -C /tmp/curl --strip-components=1 \\\n  && cd /tmp/curl \\\n  && ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" --prefix=/var/task --disable-manual --disable-cookies --with-nghttp2=/var/task \\\n  && make -j $(nproc) install\n\n# Fetch PROJ.4\n\nRUN \\\n  curl -sfL https://download.osgeo.org/proj/proj-${PROJ_VERSION}.tar.gz | tar zxf - -C /tmp\n\n# Build and install PROJ.4\n\nWORKDIR /tmp/proj-${PROJ_VERSION}\n\nRUN \\\n  ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" \\\n    --prefix=/var/task && \\\n  make -j $(nproc) && \\\n  make install\n\n# Build and install libjpeg-turbo\n\nRUN mkdir -p /tmp/libjpeg-turbo \\\n  && curl -sfL https://github.com/libjpeg-turbo/libjpeg-turbo/archive/${LIBJPEG_TURBO_VERSION}.tar.gz | tar zxf - -C /tmp/libjpeg-turbo --strip-components=1 \\\n  && cd /tmp/libjpeg-turbo \\\n  && cmake -G\"Unix Makefiles\" -DCMAKE_INSTALL_PREFIX=/var/task . \\\n  && make -j $(nproc) install\n\n# Fetch GDAL\n\nRUN \\\n  mkdir -p /tmp/gdal \\\n  && curl -sfL https://github.com/OSGeo/gdal/archive/v${GDAL_VERSION}.tar.gz | tar zxf - -C /tmp/gdal --strip-components=2\n\n# Build + install GDAL\n\nWORKDIR /tmp/gdal\n\nRUN \\\n  ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" \\\n    --prefix=/var/task \\\n    --datarootdir=/var/task/share/gdal \\\n    --with-curl=/var/task/bin/curl-config \\\n    --without-qhull \\\n    --without-mrf \\\n    --without-grib \\\n    --without-pcraster \\\n    --without-png \\\n    --without-gif \\\n    --with-jpeg=/var/task \\\n    --without-pcidsk && \\\n  make -j $(nproc) && \\\n  make -j $(nproc) install\n\n# Install Python deps\n\nWORKDIR /var/task\n\nCOPY requirements-lambda.txt /var/task/\nCOPY requirements.txt /var/task/\n\nENV PYTHONPATH /var/task/.pypath\n\nRUN \\\n  mkdir -p .pypath && \\\n  pip install --no-cache-dir -U \"numpy == 1.13.1\" Cython -t .pypath/ && \\\n  pip install --no-cache-dir -r requirements-lambda.txt -t .pypath/\n\nRUN find . -name \\*.so\\* -exec strip {} \\;\n\nCOPY deps/required.txt /var/task/required.txt\nCOPY deps/prune.sh /var/task/prune.sh\n\nRUN /var/task/prune.sh\n"
+}

@@ -1,0 +1,53 @@
+{
+  "startTime": 1674254614744,
+  "endTime": 1674254615447,
+  "originalSmells": [
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 63,
+        "lineEnd": 63,
+        "columnStart": 4,
+        "columnEnd": 15
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 49,
+        "lineEnd": 49,
+        "columnStart": 1,
+        "columnEnd": 26
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 7,
+        "lineEnd": 8,
+        "columnStart": 1,
+        "columnEnd": 92
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 45,
+        "lineEnd": 47,
+        "columnStart": 1,
+        "columnEnd": 42
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 49,
+        "lineEnd": 49,
+        "columnStart": 1,
+        "columnEnd": 26
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "###########################\n# Archipel chain build step\n###########################\nFROM debian:buster as builder-chain\nWORKDIR /root/ \nCOPY ./chain .\nRUN apt-get -y update; \\\n\tapt-get install -y --no-install-recommends \\\n\tcmake pkg-config libssl-dev git gcc build-essential clang libclang-dev curl ca-certificates && rm -rf /var/lib/apt/lists/*;\nRUN curl https://sh.rustup.rs -sSf | sh -s -- -y\nENV PATH=\"/root/.cargo/bin:${PATH}\"\nRUN rustup update nightly\nRUN rustup update stable\nRUN rustup target add wasm32-unknown-unknown --toolchain nightly\nRUN cargo build --release\nRUN ./target/release/archipel build-spec --disable-default-bootnode --chain local > archipelTemplateSpec.json\nRUN ./target/release/archipel build-spec --disable-default-bootnode --chain local --raw > archipelTemplateSpecRaw.json\n\n###########################\n# Build subkey tool step\n###########################\nRUN git clone https://github.com/paritytech/substrate\nRUN cd substrate && git checkout v3.0.0 && cargo build -p subkey --release\n\n####################################\n# Create Archipel docker image\n####################################\nFROM node:14-buster\nWORKDIR /root/\n\n####################################\n# import chain build\n####################################\nRUN mkdir chain\nCOPY --from=builder-chain /root/target/release/archipel ./chain\nCOPY --from=builder-chain /root/archipelTemplateSpec.json ./chain\nCOPY --from=builder-chain /root/archipelTemplateSpecRaw.json ./chain\nCOPY --from=builder-chain /root/substrate/target/release/subkey /usr/local/bin/\n\n# Add debian unstable repo for wireguard packages\nRUN echo \"deb http://deb.debian.org/debian/ unstable main\" > /etc/apt/sources.list.d/unstable-wireguard.list && \\\n\tprintf 'Package: *\\nPin: release a=unstable\\nPin-Priority: 90\\n' > /etc/apt/preferences.d/limit-unstable\n\n# Installing necessary packages\nRUN apt-get -y update && \\\n\tapt-get install -y --no-install-recommends \\\n\tlibssl-dev curl supervisor jq build-essential \\\n\twireguard-tools iptables net-tools procps && \\\n\techo \"resolvconf resolvconf/linkify-resolvconf boolean false\" | debconf-set-selections && \\\n\tapt install --no-install-recommends -y resolvconf && \\\n\tapt clean && rm -rf /var/lib/apt/lists/*;\n\n#installl a static curl\nRUN wget https://github.com/moparisthebest/static-curl/releases/download/v7.74.0/curl-amd64\nRUN mv curl-amd64 /usr/local/bin/curl-static\nRUN chmod +x /usr/local/bin/curl-static\n\n####################################\n# import orchestrator\n####################################\nWORKDIR /usr/src/app \nCOPY orchestrator/package*.json ./\nCOPY orchestrator/ .\nRUN npm install && npm cache clean --force;\n\nWORKDIR /root/\n\n####################################\n# import scripts and supervisord conf \n####################################\nCOPY ./deployer/archipel/start-chain.sh /usr/local/bin/\nCOPY ./deployer/archipel/start-orchestrator.sh /usr/local/bin/\nCOPY ./deployer/archipel/start-wireguard.sh /usr/local/bin/\nCOPY ./deployer/archipel/wg-resolv-dns.sh /usr/local/bin/\nCOPY ./deployer/archipel/supervisord.conf /etc/supervisord/\n\nRUN chmod +x /usr/local/bin/start-chain.sh\nRUN chmod +x /usr/local/bin/start-orchestrator.sh\nRUN chmod +x /usr/local/bin/start-wireguard.sh\nRUN chmod +x /usr/local/bin/wg-resolv-dns.sh\n\nEXPOSE 51820/udp\n\nENTRYPOINT [\"supervisord\",\"-c\",\"/etc/supervisord/supervisord.conf\"]\n"
+}

@@ -1,0 +1,1 @@
+# Simple container to store assets for later use

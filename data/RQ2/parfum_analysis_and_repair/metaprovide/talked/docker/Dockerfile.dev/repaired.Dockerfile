@@ -1,0 +1,38 @@
+FROM ubuntu:20.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV POETRY_VIRTUALENVS_IN_PROJECT=false
+ENV TALKED_CONFIG_PATH=config.toml
+
+# hadolint ignore=DL3013
+RUN set -ex; \
+    groupadd talked; \
+    useradd --shell /bin/bash --gid talked --create-home talked; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends \
+        build-essential \
+        python3 \
+        python3-dev \
+        python3-pip \
+        firefox-geckodriver \
+        pulseaudio \
+        xvfb \
+        ffmpeg \
+        sudo \
+        uwsgi \
+    ; \
+    pip3 install --no-cache-dir poetry; \
+    rm -rf /var/lib/apt/lists/*; \
+    echo talked ALL=\(root\) NOPASSWD:ALL > /etc/sudoers.d/talked;
+
+RUN set -ex; \
+    mkdir -p /home/talked/talked; \
+    chown talked:talked /home/talked/talked; \
+    # Symlink python3 to python as poetry seems to be having some issues when python isn't present
+    ln -s /usr/bin/python3 /usr/bin/python;
+
+WORKDIR /home/talked/talked
+
+COPY entrypoint.sh /entrypoint.sh
+
+ENTRYPOINT [ "/entrypoint.sh" ]

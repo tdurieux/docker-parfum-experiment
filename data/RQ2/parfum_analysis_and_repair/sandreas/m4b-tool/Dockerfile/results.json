@@ -1,0 +1,53 @@
+{
+  "startTime": 1674249157822,
+  "endTime": 1674249158681,
+  "originalSmells": [
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 41,
+        "lineEnd": 41,
+        "columnStart": 5,
+        "columnEnd": 16
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 48,
+        "lineEnd": 48,
+        "columnStart": 37,
+        "columnEnd": 81
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 54,
+        "lineEnd": 54,
+        "columnStart": 24,
+        "columnEnd": 68
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 47,
+        "lineEnd": 47,
+        "columnStart": 5,
+        "columnEnd": 27
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 52,
+        "lineEnd": 52,
+        "columnStart": 7,
+        "columnEnd": 27
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "ARG FFMPEG_IMAGE=\"mwader/static-ffmpeg:5.0.1-3\"\nARG FFMPEG_PATH=\"/ffmpeg\"\n\n# this may work for arm32 and other more exotic platforms\n# see https://hub.docker.com/r/collelog/ffmpeg/tags\n# ARG FFMPEG_IMAGE=collelog/ffmpeg\n# ARG FFMPEG_PATH=/usr/local/bin/ffmpeg\n\nFROM ${FFMPEG_IMAGE} as ffmpeg_binary\nFROM sandreas/tone:v0.0.5 as tone_005\n\n##############################\n#\n#   m4b-tool build image\n#   alias m4b-tool='docker run -it --rm -u $(id -u):$(id -g) -v \"$(pwd)\":/mnt m4b-tool'\n#   alias m4b-tool='docker run -it --entrypoint=m4b-tool-pre --rm -u $(id -u):$(id -g) -v \"$(pwd)\":/mnt m4b-tool'\n##############################\nFROM alpine:3.14 as builder\n\nARG MP4V2_URL=\"https://github.com/enzo1982/mp4v2/archive/refs/tags/v2.1.1.zip\"\nARG FDK_AAC_VERSION=2.0.1\nARG FDK_AAC_URL=\"https://github.com/mstorsjo/fdk-aac/archive/v$FDK_AAC_VERSION.tar.gz\"\nARG FDK_AAC_SHA256=\"a4142815d8d52d0e798212a5adea54ecf42bcd4eec8092b37a8cb615ace91dc6\"\n\nRUN echo \"---- INSTALL BUILD DEPENDENCIES ----\" \\\n    && apk add --no-cache --update --upgrade --virtual=build-dependencies \\\n    autoconf \\\n    libtool \\\n    automake \\\n    boost-dev \\\n    build-base \\\n    gcc \\\n    git \\\n    tar \\\n    wget \\\n&& echo \"---- COMPILE MP4V2 ----\" \\\n  && cd /tmp/ \\\n  && wget \"${MP4V2_URL}\" -O mp4v2.zip \\\n  && unzip mp4v2.zip \\\n  && cd mp4v2* \\\n  && autoreconf -fiv \\\n  && ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" && \\\n  make -j$(nproc) && \\\n  make install && make distclean \\\n&& echo \"---- PREPARE FDKAAC-DEPENDENCIES ----\" \\\n  && cd /tmp/ \\\n  && wget -O fdk-aac.tar.gz \"$FDK_AAC_URL\" \\\n  && tar xfz fdk-aac.tar.gz \\\n  && cd fdk-aac-* && ./autogen.sh && ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" --enable-static --disable-shared && make -j$(nproc) install \\\n&& echo \"---- COMPILE FDKAAC ENCODER (executable binary for usage of --audio-profile) ----\" \\\n    && cd /tmp/ \\\n    && wget https://github.com/nu774/fdkaac/archive/1.0.0.tar.gz \\\n    && tar xzf 1.0.0.tar.gz \\\n    && cd fdkaac-1.0.0 \\\n    && autoreconf -i && ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" --enable-static --disable-shared && make -j$(nproc) && make install && rm -rf /tmp/* \\\n&& echo \"---- REMOVE BUILD DEPENDENCIES (to keep image small) ----\" \\\n    && apk del --purge build-dependencies && rm -rf /tmp/* && rm fdk-aac.tar.gz\n\n##############################\n#\n#   m4b-tool development image\n#\n##############################\nFROM alpine:3.14\nENV WORKDIR /mnt/\nENV M4BTOOL_TMP_DIR /tmp/m4b-tool/\n\n\nRUN echo \"---- INSTALL RUNTIME PACKAGES ----\" && \\\n  apk add --no-cache --update --upgrade \\\n  # mp4v2: required libraries\n  libstdc++ \\\n  # m4b-tool: php cli, required extensions and php settings\n  php8-cli \\\n  php8-dom \\\n  php8-json \\\n  php8-xml \\\n  php8-mbstring \\\n  php8-phar \\\n  php8-tokenizer \\\n  php8-xmlwriter \\\n  php8-openssl \\\n  && echo \"date.timezone = UTC\" >> /etc/php8/php.ini \\\n  && ln -s /usr/bin/php8 /bin/php\n\n\n\n# copy ffmpeg static with libfdk from configured docker image\nCOPY --from=ffmpeg_binary \"$FFMPEG_PATH\" /usr/local/bin/\nCOPY --from=tone_005 \"/usr/local/bin/tone\" /usr/local/bin/\n\n# copy compiled mp4v2 binaries, libs and fdkaac encoder to runtime image\nCOPY --from=builder /usr/local/bin/mp4* /usr/local/bin/fdkaac /usr/local/bin/\nCOPY --from=builder /usr/local/lib/libmp4v2* /usr/local/lib/\n\n\nARG M4B_TOOL_DOWNLOAD_LINK=\"https://github.com/sandreas/m4b-tool/releases/latest/download/m4b-tool.tar.gz\"\n\n# workaround to copy a local m4b-tool.phar IF it exists\nADD ./Dockerfile ./dist/m4b-tool.phar* /tmp/\nRUN echo \"---- INSTALL M4B-TOOL ----\" \\\n    && if [ ! -f /tmp/m4b-tool.phar ]; then \\\n            echo \"!!! DOWNLOADING ${M4B_TOOL_DOWNLOAD_LINK} !!!\" && wget \"${M4B_TOOL_DOWNLOAD_LINK}\" -O /tmp/m4b-tool.tar.gz && \\\n            if [ ! -f /tmp/m4b-tool.phar ]; then \\\n                tar xzf /tmp/m4b-tool.tar.gz -C /tmp/ && rm /tmp/m4b-tool.tar.gz ;\\\n            fi \\\n       fi \\\n    && mv /tmp/m4b-tool.phar /usr/local/bin/m4b-tool \\\n    && M4B_TOOL_PRE_RELEASE_LINK=$(wget -q -O - https://github.com/sandreas/m4b-tool/releases/tag/latest | grep -o 'M4B_TOOL_DOWNLOAD_LINK=[^ ]*' | head -1 | cut -d '=' -f 2) \\\n    && echo \"!!! DOWNLOADING PRE_RELEASE ${M4B_TOOL_DOWNLOAD_LINK} !!!\" && wget \"${M4B_TOOL_PRE_RELEASE_LINK}\" -O /tmp/m4b-tool.tar.gz \\\n    && tar xzf /tmp/m4b-tool.tar.gz -C /tmp/ && rm /tmp/m4b-tool.tar.gz \\\n    && mv /tmp/m4b-tool.phar /usr/local/bin/m4b-tool-pre \\\n    && chmod +x /usr/local/bin/m4b-tool /usr/local/bin/m4b-tool-pre\n\nWORKDIR ${WORKDIR}\nCMD [\"list\"]\nENTRYPOINT [\"m4b-tool\"]\n\n"
+}

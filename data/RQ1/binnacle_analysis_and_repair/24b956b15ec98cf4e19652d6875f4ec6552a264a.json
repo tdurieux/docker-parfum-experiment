@@ -1,0 +1,44 @@
+{
+  "startTime": 1674236561609,
+  "endTime": 1674236561991,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 31,
+        "lineEnd": 31,
+        "columnStart": 22,
+        "columnEnd": 60
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 38,
+        "lineEnd": 38,
+        "columnStart": 23,
+        "columnEnd": 56
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 31,
+        "lineEnd": 31,
+        "columnStart": 22,
+        "columnEnd": 60
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 38,
+        "lineEnd": 38,
+        "columnStart": 23,
+        "columnEnd": 56
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM jenkins/jenkins:2.150.1\nWORKDIR /tmp\n\n# Environment variables used throughout this Dockerfile\n#\n# $JENKINS_HOME     will be the final destination that Jenkins will use as its\n#                   data directory. This cannot be populated before Marathon\n#                   has a chance to create the host-container volume mapping.\n#\nENV JENKINS_FOLDER /usr/share/jenkins\n\n# Build Args\nARG LIBMESOS_DOWNLOAD_URL=https://downloads.mesosphere.io/libmesos-bundle/libmesos-bundle-1.12.0.tar.gz\nARG BLUEOCEAN_VERSION=1.9.0\nARG JENKINS_STAGING=/usr/share/jenkins/ref/\nARG MESOS_PLUG_HASH=347c1ac133dc0cb6282a0dde820acd5b4eb21133\nARG PROMETHEUS_PLUG_HASH=a347bf2c63efe59134c15b8ef83a4a1f627e3b5d\nARG STATSD_PLUG_HASH=929d4a6cb3d3ce5f1e03af73075b13687d4879c8\nARG JENKINS_DCOS_HOME=/var/jenkinsdcos_home\nARG user=nobody\nARG uid=99\nARG gid=99\n\nENV JENKINS_HOME $JENKINS_DCOS_HOME\nENV COPY_REFERENCE_FILE_LOG $JENKINS_HOME/copy_reference_file.log\n# Default policy according to https://wiki.jenkins.io/display/JENKINS/Configuring+Content+Security+Policy\nENV JENKINS_CSP_OPTS=\"sandbox; default-src 'none'; img-src 'self'; style-src 'self';\"\n\nUSER root\n\n# install dependencies\nRUN apt-get update && apt-get install --no-install-recommends -y nginx python zip jq && rm -rf /var/lib/apt/lists/*;\n# libmesos bundle\nRUN curl -fsSL \"$LIBMESOS_DOWNLOAD_URL\" -o libmesos-bundle.tar.gz  \\\n  && tar -C / -xzf libmesos-bundle.tar.gz  \\\n  && rm libmesos-bundle.tar.gz\n# update to newer git version\nRUN echo \"deb http://ftp.debian.org/debian testing main\" >> /etc/apt/sources.list \\\n  && apt-get update && apt-get -t testing --no-install-recommends install -y git && rm -rf /var/lib/apt/lists/*;\n\nRUN mkdir -p \"${JENKINS_HOME}\" \"${JENKINS_FOLDER}/war\"\n\n# Override the default property for DNS lookup caching\nRUN echo 'networkaddress.cache.ttl=60' >> ${JAVA_HOME}/jre/lib/security/java.security\n\n# bootstrap scripts and needed dir setup\nCOPY scripts/bootstrap.py /usr/local/jenkins/bin/bootstrap.py\nCOPY scripts/export-libssl.sh /usr/local/jenkins/bin/export-libssl.sh\nCOPY scripts/dcos-account.sh /usr/local/jenkins/bin/dcos-account.sh\nCOPY scripts/run.sh /usr/local/jenkins/bin/run.sh\n\n# nginx setup\nRUN mkdir -p /var/log/nginx/jenkins /var/nginx/\nCOPY conf/nginx/nginx.conf /var/nginx/nginx.conf\n\n# jenkins setup\nCOPY conf/jenkins/config.xml \"${JENKINS_STAGING}/config.xml\"\nCOPY conf/jenkins/jenkins.model.JenkinsLocationConfiguration.xml \"${JENKINS_STAGING}/jenkins.model.JenkinsLocationConfiguration.xml\"\nCOPY conf/jenkins/nodeMonitors.xml \"${JENKINS_STAGING}/nodeMonitors.xml\"\nCOPY scripts/init.groovy.d/mesos-auth.groovy \"${JENKINS_STAGING}/init.groovy.d/mesos-auth.groovy\"\n\n# add plugins\nCOPY plugins.conf /tmp/\nRUN sed -i \"s/\\${BLUEOCEAN_VERSION}/${BLUEOCEAN_VERSION}/g\" /tmp/plugins.conf\nRUN /usr/local/bin/install-plugins.sh < /tmp/plugins.conf\n\n# add mesos plugin\nADD https://infinity-artifacts.s3.amazonaws.com/mesos-jenkins/mesos.hpi-${MESOS_PLUG_HASH} \"${JENKINS_STAGING}/plugins/mesos.hpi\"\nADD https://infinity-artifacts.s3.amazonaws.com/prometheus-jenkins/prometheus.hpi-${PROMETHEUS_PLUG_HASH} \"${JENKINS_STAGING}/plugins/prometheus.hpi\"\nADD https://infinity-artifacts.s3.amazonaws.com/statsd-jenkins/metrics-graphite.hpi-${STATSD_PLUG_HASH} \"${JENKINS_STAGING}/plugins/metrics-graphite.hpi\"\n\n# change the config for $user\n# alias uid to $uid - should match nobody for host\n# set home directory to JENKINS_HOME\n# change gid to $gid\nRUN groupadd -g ${gid} nobody \\\n    && usermod -u ${uid} -g ${gid} ${user} \\\n    && usermod -a -G users nobody \\\n    && echo \"nobody:x:65534:65534:nobody:/nonexistent:/usr/sbin/nologin\" >> /etc/passwd\n\nRUN chmod -R ugo+rw \"$JENKINS_HOME\" \"${JENKINS_FOLDER}\" \\\n    && chmod -R ugo+r \"${JENKINS_STAGING}\" \\\n    && chmod -R ugo+rx /usr/local/jenkins/bin/ \\\n    && chmod -R ugo+rw /var/jenkins_home/ \\\n    && chmod -R ugo+rw /var/lib/nginx/ /var/nginx/ /var/log/nginx \\\n    && chmod ugo+rx /usr/local/jenkins/bin/*\n\nUSER ${user}\n\n# disable first-run wizard\nRUN echo 2.0 > /usr/share/jenkins/ref/jenkins.install.UpgradeWizard.state\n\nCMD /usr/local/jenkins/bin/run.sh\n"
+}

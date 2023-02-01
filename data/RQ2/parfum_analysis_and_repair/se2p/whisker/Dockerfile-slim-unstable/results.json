@@ -1,0 +1,44 @@
+{
+  "startTime": 1674251746357,
+  "endTime": 1674251746871,
+  "originalSmells": [
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 81,
+        "lineEnd": 81,
+        "columnStart": 4,
+        "columnEnd": 16
+      }
+    },
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 89,
+        "lineEnd": 89,
+        "columnStart": 7,
+        "columnEnd": 32
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 48,
+        "lineEnd": 50,
+        "columnStart": 7,
+        "columnEnd": 12
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 60,
+        "lineEnd": 62,
+        "columnStart": 7,
+        "columnEnd": 11
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "################################################################################\n# Dockerfile to build a headless image of Whisker.\n# https://docs.docker.com/language/nodejs/build-images/#create-a-dockerfile-for-nodejs\n# https://nodejs.org/en/docs/guides/nodejs-docker-webapp/#creating-a-dockerfile\n################################################################################\n# Considered unstable because we don't use the Chromium instance bundled with\n# Puppeteer but the one that comes with the docker base image.\n# https://github.com/puppeteer/puppeteer/#q-why-doesnt-puppeteer-vxxx-work-with-chromium-vyyy\n################################################################################\n#\n# This Dockerfile is organized as a multi-stage build, which enables us to\n# reduce the size of the final image while still allowing us to use intermediate\n# layers and files without regret.\n#\n# We have the following stages:\n# (1) Build stage:\n#     (a) Prepare base image\n#     (b) Install or update build/library dependencies (via apt-get)\n#     (c) Install or update build/library dependencies (via yarn)\n#     (d) Build Whisker from its sources and dependencies\n# (2) Execution stage:\n#     Only copy files necessary to run Whisker and set the entry point to\n#     Whisker's servant in headless mode\n#\n# Because an image is built during the final sub-stage (d) of the build stage we\n# can minimize the size of image layers by leveraging a build cache. The\n# sub-stages are ordered from the less frequently changed (to ensure the build\n# cache is not busted) to the more frequently changed.\n#\n# Note: if you need to modify or debug this Dockerfile, you can build the image\n# only up until one of the (sub)stages by specifying \"--target <stage name>\".\n# To inspect the contents of the container at a specific stage, stop building\n# at that stage and run the container in interactive mode:\n# `docker run -it --entrypoint /bin/sh <image name>`\n################################################################################\n\n\n#-------------------------------------------------------------------------------\n# (1) Build Stage\n#-------------------------------------------------------------------------------\n\n# (a) We use a slim base image that already includes Node.JS, install Chromium\n#     for Puppeteer, and a minimal set of packages required to run it.\nFROM node:lts-buster-slim as base\nRUN apt-get update \\\n    && apt-get install --no-install-recommends --no-install-suggests -y \\\n        chromium \\\n        tini \\\n    && rm -rf /usr/share/icons \\\n    && rm -rf /usr/local/lib/node_modules && rm -rf /var/lib/apt/lists/*;\n\n# (b) Install packages only required to build Whisker, not to run it.\n#     We need git because we have a dependency to another git repository\n#     (the Scratch VM), and ca-certificates because otherwise git cannot verfiy\n#     the server certificate.\nFROM base as build\nRUN apt-get update \\\n    && apt-get install --no-install-recommends --no-install-suggests -y \\\n        ca-certificates \\\n        git && rm -rf /var/lib/apt/lists/*;\n\n# (c) Copy manifest files and install dependencies. We don't download the\n#     bundled Chromium instance of Puppeteer but reuse the one installed via\n#     apt-get. This makes for a smaller docker image and simplifies dependency\n#     management since apt-get automatically pulls in all system libraries needed to\n#     run Puppeteer. If you want to use bundled Chromium, just remove the ENV\n#     instruction below (or set it to false).\n#     Unfortunately, we need a separate COPY command for every manifest file\n#     because docker flattens the subdirectory structure when using wildcards.\n#     This layer is only rebuilt when a manifest file changes.\nWORKDIR /whisker-build/\nENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true\nCOPY package.json ./\nCOPY scratch-analysis/package.json ./scratch-analysis/\nCOPY servant/package.json ./servant/\nCOPY whisker-web/package.json ./whisker-web/\nCOPY whisker-main/package.json ./whisker-main/\nCOPY yarn.lock ./\nRUN yarn install && yarn cache clean;\n\n# (d) Copy source files (as governed by .dockerignore), build Whisker and drop\n#     build dependencies from the node_modules folder, keeping only the ones\n#     necessary for execution. This layer is only rebuilt when a source file\n#     changes.\nCOPY ./ ./\nRUN yarn build \\\n    && yarn install --production && yarn cache clean;\n\n\n#-------------------------------------------------------------------------------\n# (2) Execution Stage\n#-------------------------------------------------------------------------------\n\n# We use the base image again to drop build dependencies (installed via apt-get)\n# and the yarn build cache from the final image.\nFROM base as execute\n\n# https://nodejs.dev/learn/nodejs-the-difference-between-development-and-production\n# Also, update the path to Chromium since we don't use the instance bundled with\n# Puppeteer.\nENV NODE_ENV=production \\\n    CHROME_BIN=/usr/bin/chromium\n\n# Copy the build of Whisker from the build layer to the execution layer.\n# (devDependencies have already been excluded from the node_modules folder.)\nCOPY --from=build /whisker-build /whisker\n\n# Whisker's servant requires this as working directory, as it uses relative\n# and not absolute paths:\nWORKDIR /whisker/servant/\n\n# Set the image's main command, allowing the image to be run as though it was\n# that command. We use a wrapper script instead of invoking Whisker directly.\n# The script makes sure Whisker runs in headless mode, forwards console output,\n# etc. It uses the `exec` bash command [1] so that Whisker is not spawned as\n# child process of the wrapper script, but instead takes over the current process,\n# making it the container's PID 1. This is important as Unix signals (such as\n# SIGINT) sent to the container would otherwise not be received by the\n# application [2]. Yet, a Node.JS application only responds to signals when\n# **NOT** running as PID 1 [3]. Thus, we use a leightweight init system called\n# \"tini\" as entrypoint [4] that spawns Whisker as child process and forwards\n# all signals properly.\n#\n# [1] https://wiki.bash-hackers.org/commands/builtin/exec\n# [2] https://docs.docker.com/develop/develop-images/dockerfile_best-practices/#entrypoint\n# [3] https://github.com/nodejs/docker-node/blob/main/docs/BestPractices.md#handling-kernel-signals\n# [4] https://github.com/krallin/tini#existing-entrypoint\nENTRYPOINT [\"tini\", \"--\", \"/whisker/servant/whisker-docker.sh\"]\n"
+}

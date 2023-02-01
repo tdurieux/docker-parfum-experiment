@@ -1,0 +1,20 @@
+FROM alpine:3.11
+
+ENV DOCKER_CONFIG='/kaniko/.docker'
+ENV GOOGLE_APPLICATION_CREDENTIALS='/kaniko/.docker/config.json'
+ENV PATH=/kaniko:$PATH
+ENV SSL_CERT_DIR=/kaniko/ssl/certs
+
+RUN apk --no-cache add \
+      bash \
+      git \
+      grep \
+      openssh-client \
+      perl \
+      rsync \
+      sed \
+      tree
+
+COPY --from=gcr.io/kaniko-project/executor /kaniko /kaniko
+
+ENTRYPOINT ["/kaniko/executor"]

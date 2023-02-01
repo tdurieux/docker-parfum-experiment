@@ -1,0 +1,32 @@
+# Rebuild with this image with the following commande:
+#    docker build -f Dockerfile.tuto-mc -t simgrid/tuto-mc .
+# Launch it as follows:
+#    docker run -it simgrid/tuto-mc bash
+
+# Base image
+FROM debian:testing
+
+RUN apt update && apt -y upgrade
+
+# - Install SimGrid's dependencies
+# - Compile and install SimGrid itself.
+# - Get the tutorial files (with an empty makefile advising to run cmake before make, just in case)
+# - Remove everything that was installed, and re-install what's needed by the SimGrid libraries before the Gran Final Cleanup
+# - Keep g++ gcc gfortran as any MC user will use (some of) them
+RUN apt install --no-install-recommends -y g++ gcc git valgrind gfortran libboost-dev libeigen3-dev libboost-stacktrace-dev cmake dpkg-dev libunwind-dev libdw-dev libelf-dev libevent-dev python3-dev && \
+    mkdir /source/ && cd /source && git clone --depth=1 https://framagit.org/simgrid/simgrid.git simgrid.git && \
+    cd simgrid.git && \
+    cmake -DCMAKE_INSTALL_PREFIX=/usr/ -Denable_model-checking=ON -Denable_documentation=OFF -Denable_java=OFF -Denable_smpi=ON -Denable_compile_optimizations=ON . && \
+    make -j6 install && \
+    git clone --depth=1 https://framagit.org/simgrid/tutorial-model-checking /source/tuto-mc.git && \
+    printf "ndet-receive-s4u:\n\t@echo \"Please run the following command before make:\";echo \"    cmake .\"; exit 1" > /source/tuto-mc.git/Makefile && \
+    mkdir debian/ && touch debian/control && dpkg-shlibdeps --ignore-missing-info lib/*.so -llib/ -O/tmp/deps && \
+    apt remove -y dpkg-dev libunwind-dev libdw-dev libelf-dev libevent-dev && \
+    apt install --no-install-recommends -y `sed -e 's/shlibs:Depends=//' -e 's/([^)]*)//g' -e 's/,//g' /tmp/deps` && rm /tmp/deps && \
+    apt autoremove -y && apt autoclean && apt clean && rm -rf /var/lib/apt/lists/*;
+
+# The build and dependencies are not cleaned in this image since it's it's experimental so far
+#    git reset --hard master && git clean -dfx && \
+
+
+CMD ["/bin/bash"]

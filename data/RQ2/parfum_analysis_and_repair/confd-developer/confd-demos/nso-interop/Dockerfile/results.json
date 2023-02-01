@@ -1,0 +1,44 @@
+{
+  "startTime": 1674216189001,
+  "endTime": 1674216190473,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 11,
+        "lineEnd": 19,
+        "columnStart": 22,
+        "columnEnd": 16
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 87,
+        "lineEnd": 98,
+        "columnStart": 22,
+        "columnEnd": 16
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 11,
+        "lineEnd": 19,
+        "columnStart": 22,
+        "columnEnd": 16
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 87,
+        "lineEnd": 98,
+        "columnStart": 22,
+        "columnEnd": 16
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# NETCONF/YANG interoperability testing container with NSO\n#\n# We use the standard ubuntu bas image.\nFROM ubuntu:20.04\nLABEL description=\"Docker image for NETCONF and YANG interop testing with NSO.\" maintainer=\"jojohans@cisco.com\"\n\n# Install the extra packages we need to run NSO, pioneer and DrNED\n# Examiner. Only libssl is actually necessary for NSO itself, the\n# python packages and xsltproc and libxml2-utils are needed by DrNED\n# Examiner and DrNED.\nARG DEBIAN_FRONTEND=noninteractive\nRUN apt-get update && apt-get install --no-install-recommends -y \\\n        git \\\n        libssl-dev \\\n        make \\\n        openssh-client \\\n        python-is-python3 \\\n        python3-lxml \\\n        libxml2-utils \\\n        xsltproc && rm -rf /var/lib/apt/lists/*;\n\n# Default to latest NSO version.  Override on the command line with\n# --build-arg ver=<version>.\n#\n# Note: host.docker.internal is the only way to get to the host (the\n# Mac) when running Docker Desktop on macOS. In a more realistic\n# setting dev_ip should be set to the IP of the device.\nARG dev_ip=host.docker.internal\nARG dev_name=nc0\nARG dev_pass=admin\nARG dev_port=2022\nARG dev_user=admin\nARG ned_name=router\nARG ned_vendor=cisco\nARG ned_ver=1.0\nARG nso_ver=5.4.1\n\n# What ncsrc usually does...\nENV NCS_DIR=/nso LD_LIBRARY_PATH=/nso/lib PATH=/nso/bin:$PATH PYTHONPATH=/nso/src/ncs/pyapi\nENV PACKAGES=/packages\n\n# Install NSO in the container and create a workspace.\nCOPY resources/NSO-$nso_ver/nso-$nso_ver.linux.x86_64.signed.bin /tmp\nRUN (cd /tmp && ./nso-$nso_ver.linux.x86_64.signed.bin)\nRUN /tmp/nso-$nso_ver.linux.x86_64.installer.bin $NCS_DIR\n\n# Create a NETCONF NED based on the YANG-models we supply\nCOPY resources/yangs/ /tmp\nRUN ncs-make-package --netconf-ned /tmp $ned_name --dest $PACKAGES/$ned_name-nc-$ned_ver --no-fail-on-warnings --no-java --no-netsim --no-python --vendor $ned_vendor --package-version $ned_ver\nRUN make -C $PACKAGES/$ned_name-nc-$ned_ver/src clean all\n\n# Install drned-xmnr\nRUN (cd $PACKAGES && git clone --depth 1 -q https://github.com/NSO-developer/drned-xmnr.git)\nRUN make -C $PACKAGES/drned-xmnr/src clean all\n\n# Support mounting workspace directory from the host.\nRUN mkdir /interop\nRUN ncs-setup --dest /interop --package $PACKAGES/drned-xmnr --package $PACKAGES/$ned_name-nc-$ned_ver --use-copy --no-netsim\n\n# Allow connections to the NSO IPC-port from any IP-address\nRUN sed -i 's/  <load-path>/  <ncs-ipc-address>\\n    <ip>0.0.0.0<\\/ip>\\n  <\\/ncs-ipc-address>\\n\\n  <load-path>/' interop/ncs.conf\nRUN sed -i 's/  <cli>/  <cli>\\n    <style>c<\\/style>\\n  /' interop/ncs.conf\n\n# DrNED Examiner configuration state directory\nRUN mkdir interop/states interop/xmnr interop/yangs\n\n# Enable verbose logging\nCOPY resources/inits/init.xml interop/ncs-cdb\n\n# Copy parameters to init file\nRUN sed -i \"s/DEVUSER/$dev_user/; \\\n            s/DEVPASS/$dev_pass/; \\\n            s/DEVNAME/$dev_name/; \\\n            s/DEVIP/$dev_ip/;     \\\n            s/DEVPORT/$dev_port/; \\\n            s/NEDNAME/$ned_name/; \\\n            s/NEDVER/$ned_ver/;   \\\n            s/NEDVENDOR/$ned_vendor/\" interop/ncs-cdb/init.xml\n\n# Cleanup\nRUN apt-get autoremove -y && apt-get clean && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/* /nso/doc /nso/examples.ncs /nso/man /nso/netsim /nso/packages\n\nRUN mkdir /interop/bin\nCOPY resources/scripts/* /interop/bin\n\nFROM ubuntu:20.04\nARG DEBIAN_FRONTEND=noninteractive\nRUN apt-get update && apt-get install --no-install-recommends -y \\\n        apt-utils \\\n        libssl-dev \\\n        make \\\n        openssh-client \\\n        python-is-python3 \\\n        python3-lxml \\\n        python3-paramiko \\\n        python3-pexpect \\\n        python3-pytest \\\n        libxml2-utils \\\n        xsltproc && rm -rf /var/lib/apt/lists/*;\n\nRUN ln -sv /usr/bin/pytest-3 /usr/bin/pytest\nCOPY --from=0 /nso /nso\nCOPY --from=0 /interop /interop\nWORKDIR /interop\nVOLUME /interop/logs /interop/states /interop/yangs /interop/xmnr\nEXPOSE 2022 2023 2024 4569\nENV NCS_DIR=/nso LD_LIBRARY_PATH=/nso/lib PATH=/nso/bin:/interop/bin:$PATH PYTHONPATH=/nso/src/ncs/pyapi\nRUN echo 'export PS1=\"$ \"' >> /root/.profile\nRUN apt-get autoremove -y && apt-get clean && rm -rf /var/lib/apt/lists/* /tmp/*\nCMD [\"/nso/bin/ncs\", \"--foreground\", \"-v\", \"--addloadpath\", \"/nso/interop\"]\n"
+}

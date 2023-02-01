@@ -1,0 +1,65 @@
+ARG HElib_tag
+FROM $HElib_tag
+ARG HElib_cmake_lists_version
+ENV container docker
+ENV HELIB_CMAKE_LISTS_VERSON=$HElib_cmake_lists_version
+LABEL maintainer="Gregory Boland <boland@us.ibm.com>"
+
+# Docker Container for Alpine FHE IDE and Example Code Toolkit
+
+# The code-server runs on HTTPS port 8443 so expose it
+EXPOSE 8443/tcp
+
+# Set root user for installation
+USER root
+WORKDIR /root
+
+# Install pre-reqs for building code-server
+RUN apk add --no-cache openssl python3 pkgconfig xterm libx11-dev libxkbfile-dev libsecret-dev nodejs yarn
+
+# Install code-server so we can access vscode from a container context...
+RUN yarn global add node-gyp 
+RUN yarn global add node-pty 
+RUN yarn global add code-server
+#Install cpptools from the latest vsix version which we are pinning to because we have issues getting it to install normally - 12.03.2020 - greg
+#Previously this was version 1.1.2 and we update to 1.3.1 - 06.02.2021 - greg
+#Note that when I try to update to 1.4.0 or 1.4.1 the cpptools plugin does not load, and there's an error on setup - 06.09.21
+ADD https://github.com/microsoft/vscode-cpptools/releases/download/1.3.1/cpptools-linux.vsix /opt/IBM/FHE-Workspace/
+
+# Create a directory to hold the VSCode user data when running as root
+RUN mkdir -p /opt/IBM/IDE-Data
+RUN chown -R fhe:fhe /opt/IBM/IDE-Data
+
+# Create a directory to hold the user FHE workspace to contain project/sample code
+RUN mkdir -p /opt/IBM/FHE-Workspace
+RUN chown -R fhe:fhe /opt/IBM/FHE-Workspace
+
+# Set fhe user for the remaining of the installation
+USER fhe
+WORKDIR /home/fhe
+
+RUN mkdir /opt/IBM/FHE-Workspace/.vscode
+COPY --chown=fhe:fhe ./IDE_Config /opt/IBM/FHE-Workspace/.vscode 
+RUN mkdir -p /opt/IBM/FHE-Workspace/examples
+RUN cp -rp /opt/IBM/FHE-distro/HElib/examples /opt/IBM/FHE-Workspace
+
+# Copy over additional examples into the FHE-Workspace from the github checkout on this host
+COPY --chown=fhe:fhe ./samples/ /opt/IBM/FHE-Workspace/examples/
+
+ENV HELAYERS_DATA_SETS_DIR="/opt/IBM/FHE-Workspace/examples/data/"
+ENV HELAYERS_EXAMPLES_DIR="/opt/IBM/FHE-Workspace/examples/"
+
+# Install VSCode extensions
+RUN code-server --user-data-dir=/opt/IBM/IDE-Data/ --install-extension /opt/IBM/FHE-Workspace/cpptools-linux.vsix --force; exit 0
+RUN code-server --user-data-dir=/opt/IBM/IDE-Data/ --install-extension ms-vscode.cmake-tools --force
+RUN code-server --user-data-dir=/opt/IBM/IDE-Data/ --install-extension twxs.cmake --force
+
+# set code-server to create a self signed cert
+RUN sed -i.bak 's/cert: false/cert: true/' /home/fhe/.config/code-server/config.yaml
+
+# Update VSCode user settings
+RUN echo "{\"extensions.autoUpdate\": false,\n\"workbench.colorTheme\": \"Dark\"}" > /opt/IBM/IDE-Data/User/settings.json
+
+# Set the default command to launch the VS Project as a web application
+CMD ["code-server",  "--bind-addr", "0.0.0.0:8443", "--user-data-dir", "/opt/IBM/IDE-Data/", "/opt/IBM/FHE-Workspace", "--auth", "none", "--disable-telemetry"]
+

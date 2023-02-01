@@ -1,0 +1,1 @@
+# This image is used in `gen-examples.sh` script to prettify our GraphQL examples

@@ -1,0 +1,91 @@
+ARG PLATFORM
+ENV PLATFORM $PLATFORM
+
+ARG VERSIONS
+ENV VERSIONS $VERSIONS
+
+ARG OLED
+ENV OLED $OLED
+
+ARG FAN
+ENV FAN $FAN
+
+RUN echo $PLATFORM $VERSIONS
+
+RUN pacman --noconfirm --ask=4 -Syu \
+	&& case "$ARCH" in \
+		arm) pacman --noconfirm --ask=4 -S pikvm-os-raspberrypi;; \
+		aarch64) true;; \
+		*) echo "Unknown architecture: $ARCH"; exit 1;; \
+	esac \
+	&& (mv /boot/config.txt.pacsave /boot/config.txt || true) \
+	&& (mv /boot/cmdline.txt.pacsave /boot/cmdline.txt || true) \
+	&& rm -rf /var/cache/pacman/pkg/* /boot/*.pacnew
+
+RUN pkg-install --assume-installed tessdata \
+	kvmd-platform-$PLATFORM-$BOARD \
+	kvmd-webterm \
+	kvmd-oled \
+	kvmd-fan \
+	tesseract \
+	tesseract-data-eng \
+	wiringpi \
+	pastebinit \
+	dhclient \
+	tmate \
+	vi-vim-symlink \
+	nano-syntax-highlighting \
+	hostapd
+
+ENV PART_OPTS nodev,nosuid,noexec,ro,errors=remount-ro,data=journal
+RUN echo "LABEL=PIPST /var/lib/kvmd/pst  ext4  $PART_OPTS,X-kvmd.pst-user=kvmd-pst  0 0" >> /etc/fstab
+RUN systemctl enable kvmd-bootconfig \
+	&& systemctl enable kvmd \
+	&& systemctl enable kvmd-pst \
+	&& systemctl enable kvmd-nginx \
+	&& systemctl enable kvmd-webterm \
+	&& ([[ ! $PLATFORM =~ ^.*-hdmi$ ]] || systemctl enable kvmd-tc358743) \
+	&& ([[ ! $PLATFORM =~ ^v[01]-.*$ ]] || systemctl mask serial-getty@ttyAMA0.service) \
+	&& ([[ ! $PLATFORM =~ ^v[23]-.*$ ]] || ( \
+		systemctl enable kvmd-otg \
+		&& echo "LABEL=PIMSD /var/lib/kvmd/msd  ext4  $PART_OPTS,X-kvmd.otgmsd-user=kvmd  0 0" >> /etc/fstab \
+	)) \
+	&& ([[ $BOARD =~ ^rpi4|zero2w$ && $PLATFORM =~ ^v[23]-hdmi$ ]] && systemctl enable kvmd-janus || true) \
+	&& ([[ $PLATFORM != v3-hdmi ]] || systemctl enable kvmd-watchdog) \
+	&& ([[ -z "$OLED" ]] || systemctl enable kvmd-oled kvmd-oled-reboot kvmd-oled-shutdown) \
+	&& ([[ -z "$FAN" ]] || systemctl enable kvmd-fan)
+
+COPY stages/pikvm/nanorc /etc/skel/.nanorc
+RUN cp -a /etc/skel/.nanorc /root \
+	&& cp -a /etc/skel/.nanorc /home/kvmd-webterm \
+	&& chown kvmd-webterm:kvmd-webterm /home/kvmd-webterm/.nanorc
+
+COPY stages/pikvm/motd /etc/
+COPY stages/pikvm/issue /etc/
+
+RUN sed -i -f /usr/share/kvmd/configs.default/os/cmdline/$PLATFORM-$BOARD.sed /boot/cmdline.txt \
+	&& cp /usr/share/kvmd/configs.default/os/boot-config/$PLATFORM-$BOARD.txt /boot/config.txt
+
+RUN sed -i -e '/\<pam_systemd\.so\>/ s/^#*/#/' /etc/pam.d/system-login \
+	&& sed -i -e '/\<pam_systemd_home\.so\>/ s/^#*/#/' /etc/pam.d/system-auth
+
+ADD stages/pikvm/eth0.network /etc/systemd/network/eth0.network
+
+ARG ROOT_PASSWD
+ENV ROOT_PASSWD $ROOT_PASSWD
+RUN echo "root:$ROOT_PASSWD" | chpasswd \
+	&& echo "PermitRootLogin yes" >> /etc/ssh/sshd_config \
+	&& userdel -r -f alarm
+
+ARG WEBUI_ADMIN_PASSWD
+ENV WEBUI_ADMIN_PASSWD $WEBUI_ADMIN_PASSWD
+RUN echo "$WEBUI_ADMIN_PASSWD" | kvmd-htpasswd set --read-stdin admin
+
+ARG IPMI_ADMIN_PASSWD
+ENV IPMI_ADMIN_PASSWD $IPMI_ADMIN_PASSWD
+RUN sed -i "\$d" /etc/kvmd/ipmipasswd \
+	&& echo "admin:$IPMI_ADMIN_PASSWD -> admin:$WEBUI_ADMIN_PASSWD" >> /etc/kvmd/ipmipasswd
+
+RUN rm -f /etc/ssh/ssh_host_* /etc/kvmd/nginx/ssl/* /etc/kvmd/vnc/ssl/*
+
+RUN echo "FIRST_BOOT=1" > /boot/pikvm.txt

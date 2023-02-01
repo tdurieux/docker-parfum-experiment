@@ -1,0 +1,80 @@
+{
+  "startTime": 1674249520028,
+  "endTime": 1674249520861,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 22,
+        "lineEnd": 22,
+        "columnStart": 4,
+        "columnEnd": 85
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 31,
+        "lineEnd": 31,
+        "columnStart": 4,
+        "columnEnd": 76
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 47,
+        "lineEnd": 47,
+        "columnStart": 2,
+        "columnEnd": 112
+      }
+    },
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 34,
+        "lineEnd": 34,
+        "columnStart": 2,
+        "columnEnd": 21
+      }
+    },
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 101,
+        "lineEnd": 101,
+        "columnStart": 4,
+        "columnEnd": 16
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 4,
+        "lineEnd": 10,
+        "columnStart": 22,
+        "columnEnd": 7
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 44,
+        "lineEnd": 45,
+        "columnStart": 22,
+        "columnEnd": 10
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 53,
+        "lineEnd": 93,
+        "columnStart": 22,
+        "columnEnd": 11
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# this dockerfile is not for production, its for QA and CI\nFROM debian:buster AS utils\n\n# general utils\nRUN apt-get update && apt-get install --no-install-recommends -y \\\n  curl \\\n  git \\\n  jq \\\n  locales \\\n  procps \\\n  unzip \\\n  && rm -rf /var/lib/apt/lists/*\n\n# using an UTF-8 locale is required for the aws cli\n# to successfully list S3 objects with unicode characters\n# setup from https://stackoverflow.com/a/28406007\nRUN sed -i '/en_US.UTF-8/s/^# //g' /etc/locale.gen && locale-gen\nENV LANG en_US.UTF-8\nENV LANGUAGE en_US:en\nENV LC_ALL en_US.UTF-8\n\n# AWS CLI\nRUN curl -f \"https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip\" -o \"awscliv2.zip\" && \\\n  unzip awscliv2.zip && \\\n  ./aws/install && \\\n  rm -rf awscliv2.zip aws\n\n# node\n# this is really excessively complicated logic just so the .nvmrc can be\n# the source of truth about our supported node version\nCOPY .nvmrc /root/.\nRUN curl -f -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.35.3/install.sh | bash && \\\n  NVM_DIR=\"$HOME/.nvm\" && . $HOME/.nvm/nvm.sh && \\\n  cd && nvm install && \\\n  npm install -g yarn && \\\n  mv $(dirname $(dirname $(which node))) /usr/local/node && \\\n  rm -r \"$NVM_DIR\" && npm cache clean --force;\n\nENV PATH /usr/local/node/bin:$PATH\n\nFROM utils AS ci\n\n# shellcheck (apt version is very old)\n# includes crazy hack around some linking issue from https://github.com/koalaman/shellcheck/issues/1053#issuecomment-357816927\nrun apt-get update && apt-get install --no-install-recommends -y \\\n  xz-utils && \\\n  rm -rf /var/lib/apt/lists/* && \\\n  curl -f -Ls https://github.com/koalaman/shellcheck/releases/download/stable/shellcheck-stable.linux.x86_64.tar.xz | tar -Jxf - --strip-components=1 -C $HOME shellcheck-stable/shellcheck && \\\n  touch /tmp/libc.so.6 && \\\n  echo \"LD_LIBRARY_PATH=/tmp $HOME/shellcheck \\\"\\$@\\\"\" > /usr/bin/shellcheck && \\\n  chmod a+x /usr/bin/shellcheck\n\n# debian deps from https://github.com/GoogleChrome/puppeteer/blob/master/docs/troubleshooting.md#chrome-headless-doesnt-launch\nRUN apt-get update && apt-get install --no-install-recommends -y \\\n  ca-certificates \\\n  fonts-liberation \\\n  gconf-service \\\n  libappindicator1 \\\n  libasound2 \\\n  libatk-bridge2.0-0 \\\n  libatk1.0-0 \\\n  libc6 \\\n  libcairo2 \\\n  libcups2 \\\n  libdbus-1-3 \\\n  libexpat1 \\\n  libfontconfig1 \\\n  libgbm1 \\\n  libgcc1 \\\n  libgconf-2-4 \\\n  libgdk-pixbuf2.0-0 \\\n  libglib2.0-0 \\\n  libgtk-3-0 \\\n  libnspr4 \\\n  libnss3 \\\n  libpango-1.0-0 \\\n  libpangocairo-1.0-0 \\\n  libstdc++6 \\\n  libx11-6 \\\n  libx11-xcb1 \\\n  libxcb1 \\\n  libxcomposite1 \\\n  libxcursor1 \\\n  libxdamage1 \\\n  libxext6 \\\n  libxfixes3 \\\n  libxi6 \\\n  libxrandr2 \\\n  libxrender1 \\\n  libxss1 \\\n  libxtst6 \\\n  lsb-release \\\n  wget \\\n  xdg-utils \\\n  && rm -rf /var/lib/apt/lists/*\n\nFROM utils AS release\n\n# Docker trickery so we can reuse the yarn install layer until package.json or yarn.lock change\nCOPY package.json yarn.lock /code/\nWORKDIR /code\nRUN yarn install && yarn cache clean;\n\nCOPY . /code\n\nARG BOOKS\nENV BOOKS=${BOOKS}\n\nARG IMAGE_TAG\nENV IMAGE_TAG=${IMAGE_TAG}\n\nARG PUBLIC_URL\nENV PUBLIC_URL=${PUBLIC_URL}\n\nARG REACT_APP_CODE_VERSION\nENV REACT_APP_CODE_VERSION=${REACT_APP_CODE_VERSION}\n\nARG REACT_APP_RELEASE_ID\nENV REACT_APP_RELEASE_ID=${REACT_APP_RELEASE_ID}\n\nARG REACT_APP_ENV\nENV REACT_APP_ENV=${REACT_APP_ENV}\n\nRUN yarn build:clean\n"
+}

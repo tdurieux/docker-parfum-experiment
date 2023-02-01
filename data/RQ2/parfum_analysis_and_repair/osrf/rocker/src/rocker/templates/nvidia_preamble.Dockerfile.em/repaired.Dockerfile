@@ -1,0 +1,1 @@
+# Ubuntu 16.04 with nvidia-docker2 beta opengl support

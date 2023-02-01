@@ -1,0 +1,98 @@
+{
+  "startTime": 1674251257265,
+  "endTime": 1674251257514,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 18,
+        "lineEnd": 18,
+        "columnStart": 4,
+        "columnEnd": 70
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 26,
+        "lineEnd": 26,
+        "columnStart": 4,
+        "columnEnd": 71
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 47,
+        "lineEnd": 47,
+        "columnStart": 4,
+        "columnEnd": 46
+      }
+    },
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 73,
+        "lineEnd": 73,
+        "columnStart": 4,
+        "columnEnd": 16
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 13,
+        "lineEnd": 15,
+        "columnStart": 22,
+        "columnEnd": 27
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 39,
+        "lineEnd": 43,
+        "columnStart": 2,
+        "columnEnd": 17
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 99,
+        "lineEnd": 99,
+        "columnStart": 2,
+        "columnEnd": 39
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 13,
+        "lineEnd": 15,
+        "columnStart": 22,
+        "columnEnd": 27
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 39,
+        "lineEnd": 43,
+        "columnStart": 2,
+        "columnEnd": 17
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 99,
+        "lineEnd": 99,
+        "columnStart": 2,
+        "columnEnd": 39
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM php:7.2.0-apache-stretch as builder\n\n# The version and repository to clone koel from.\nARG KOEL_CLONE_SOURCE=https://github.com/phanan/koel.git\nARG KOEL_VERSION_REF=v3.7.2\n\n# The version of php-composer to install.\nARG COMPOSER_VERSION=1.1.2\n\n# The version of nodejs to install.\nARG NODE_VERSION=node_8.x\n\n# Install dependencies to install dependencies.\nRUN apt-get update && apt-get install --no-install-recommends --yes \\\n  gnupg2=2.1.18-8~deb9u1 \\\n  apt-transport-https=1.4.8 && rm -rf /var/lib/apt/lists/*;\n\n# Add node repository.\nRUN curl -f --silent https://deb.nodesource.com/gpgkey/nodesource.gpg.key \\\n    | apt-key add - && \\\n  echo \"deb https://deb.nodesource.com/${NODE_VERSION} stretch main\" \\\n    | tee /etc/apt/sources.list.d/nodesource.list && \\\n  echo \"deb-src https://deb.nodesource.com/${NODE_VERSION} stretch main\" \\\n    | tee --append /etc/apt/sources.list.d/nodesource.list\n\n# Add yarn repository.\nRUN curl -f --silent --show-error https://dl.yarnpkg.com/debian/pubkey.gpg \\\n    | apt-key add - && \\\n  echo \"deb https://dl.yarnpkg.com/debian/ stable main\" \\\n    | tee /etc/apt/sources.list.d/yarn.list\n\n# These are dependencies needed both at build time and at runtime.\nARG RUNTIME_DEPS=\"\\\n  libxml2-dev \\\n  zlib1g-dev \\\n  libcurl4-openssl-dev\"\n\n# Install dependencies.\nRUN apt-get update && \\\n  apt-get install --no-install-recommends --yes \\\n  nodejs \\\n  yarn \\\n  git \\\n  ${RUNTIME_DEPS} && rm -rf /var/lib/apt/lists/*;\n\n# Install composer from getcomposer.org. An apk package is only available in\n# edge (> 3.7).\nRUN curl -f -sS https://getcomposer.org/installer \\\n    | php -- \\\n          --install-dir=/usr/local/bin \\\n          --filename=composer \\\n          --version=${COMPOSER_VERSION} && \\\n\tchmod +x /usr/local/bin/composer && \\\n  composer --version\n\nARG PHP_BUILD_DEPS=\"zip mbstring curl xml\"\n\n# The repo version wasn't working so using docker-php-ext-install instead. Not\n# using docker-php-ext-install for every extension because it is badly\n# documented.\nRUN docker-php-ext-install ${PHP_BUILD_DEPS}\n\n# Change to a restricted user.\nUSER www-data\n\n# Clone the koel repository.\nRUN git clone ${KOEL_CLONE_SOURCE} -b ${KOEL_VERSION_REF} /tmp/koel\n\n# Place artifacts here.\nWORKDIR /tmp/koel\n\n# Install runtime dependencies.\nRUN composer install\nRUN yarn install && yarn cache clean;\n\n# The runtime image.\nFROM php:7.2.0-apache-stretch\n\n# These are dependencies needed both at build time and at runtime. This is\n# repeated because docker doesn't seem to have a way to share args across build\n# contexts.\nARG RUNTIME_DEPS=\"\\\n  libcurl4-openssl-dev \\\n  zlib1g-dev \\\n  libxml2-dev \\\n  faad \\\n  ffmpeg\"\n\nARG PHP_RUNTIME_DEPS=\"\\\n  mbstring \\\n  curl \\\n  xml \\\n  zip \\\n  pdo \\\n  pdo_mysql \\\n  exif\"\n\n# Install dependencies.\nRUN apt-get update && \\\n  apt-get install --no-install-recommends --yes ${RUNTIME_DEPS} && \\\n  docker-php-ext-install ${PHP_RUNTIME_DEPS} && \\\n  apt-get clean && rm -rf /var/lib/apt/lists/*;\n\n# Copy artifacts from build stage.\nCOPY --from=builder /tmp/koel /var/www/html\n\n# Remove configuration file. All configuration should be passed in as\n# environment variables or a bind mounted file at runtime.\nRUN rm /var/www/html/.env\n\n# Koel makes use of Larvel's pretty URLs. This requires some additional\n# configuration: https://laravel.com/docs/4.2#pretty-urls\nCOPY ./.htaccess /var/www/html\n\n# Fix permissions.\nRUN chown -R www-data:www-data /var/www/html\nRUN a2enmod rewrite\n\n# Setup bootstrap script.\nCOPY koel-entrypoint /usr/local/bin/\nENTRYPOINT [\"koel-entrypoint\"]\nCMD [\"apache2-foreground\"]\n\nEXPOSE 80\n"
+}

@@ -1,0 +1,53 @@
+{
+  "startTime": 1674255842533,
+  "endTime": 1674255843317,
+  "originalSmells": [
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 58,
+        "lineEnd": 58,
+        "columnStart": 4,
+        "columnEnd": 52
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 43,
+        "lineEnd": 43,
+        "columnStart": 4,
+        "columnEnd": 22
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 26,
+        "lineEnd": 26,
+        "columnStart": 4,
+        "columnEnd": 22
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 38,
+        "lineEnd": 41,
+        "columnStart": 4,
+        "columnEnd": 61
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 91,
+        "lineEnd": 91,
+        "columnStart": 4,
+        "columnEnd": 60
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# = CHANGELOG =\n#\n# 2021-02-19:\n#\n#  - Use a multi-stage build to keep the application image small\n#\n# 2021-01-15:\n#\n#  - This Dockerfile was derived from Gūnáhà:\n#    https://github.com/UAlbertaALTLab/gunaha/blob/master/Dockerfile\n#  - use Gunicorn instead of uwsgi; I'm not sure why I chose uwsgi for Gūnáhà,\n#    but I've got itwêwina working with Gunicorn, so I'm gonna stick with that\n#\n\n################################ Build stage #################################\nFROM python:3.9-slim-buster AS builder\n\nLABEL maintainer=\"Eddie Antonio Santos <Eddie.Santos@nrc-cnrc.gc.ca>\"\n\nARG MORPHODICT_UID_GID=60006\nARG NODE_VERSION=v12.20.2\n\n# Install Node + npm\n# (note: default npm is too old for the apt install'd version of NodeJS??!?!?!)\nWORKDIR /tmp\nADD https://nodejs.org/dist/${NODE_VERSION}/node-${NODE_VERSION}-linux-x64.tar.gz /tmp/node.tar.gz\nRUN tar xf node.tar.gz \\\n && mv node-${NODE_VERSION}-linux-x64 /opt/node && rm node.tar.gz\nENV PATH=\"/opt/node/bin:${PATH}\"\n\n# Create the non-root user/group that will own the application code\nRUN groupadd --gid ${MORPHODICT_UID_GID} morphodict \\\n && useradd --no-log-init --gid morphodict \\\n    --uid ${MORPHODICT_UID_GID} morphodict --create-home\n# Install and build dependencies,\n# then remove build-time dependencies to keep the image slim!\nRUN set -ex \\\n && apt-get update \\\n && apt-get install -y --no-install-recommends \\\n    build-essential \\\n    libfoma0 \\\n    git `# for installing python packages direct from github` \\\n && rm -rf /var/cache/apt \\\n && pip install --no-cache-dir pipenv \\\n && mkdir /app/ \\\n && chown morphodict /app && rm -rf /var/lib/apt/lists/*;\n\nUSER morphodict\n\nWORKDIR /app/\n\n# Install Python and NodeJS dependencies\nADD Pipfile Pipfile.lock package.json package-lock.json /app/\n# On Andrew’s linux machine, docker builds were sometimes ridiculously slow\n# without this option. npm would try to download/install(?) too many packages\n# all at once and some sort of resource would get exhausted leading to hangs.\nRUN echo maxsockets=4 > ~/.npmrc\nRUN PIPENV_VENV_IN_PROJECT=1 pipenv install --deploy \\\n && npm install --loglevel=verbose --only=production && npm cache clean --force;\n\n# Add everything else now:\nADD --chown=morphodict . /app/\n\n# pre-compile all .py files\nRUN python -m compileall -q .\n\n# Build the application:\nENV NODE_ENV=production\nRUN npm run build \\\n && set -eu \\\n `# the docker image contains assets for all language pairs` \\\n && for MANAGE_COMMAND in *-manage; do \\\n        echo ${MANAGE_COMMAND} collectstatic && \\\n        /app/.venv/bin/python `# .venv python sees libs from pipenv` \\\n            ./${MANAGE_COMMAND} collectstatic --noinput; \\\n    done\n\n############################# Application image ##############################\n\nFROM python:3.9-slim-buster\nLABEL maintainer=\"Eddie Antonio Santos <Eddie.Santos@nrc-cnrc.gc.ca>\"\n\n# Choose an ID that will be consistent across all machines in the network\n# To avoid overlap with user IDs, use an ID over\n# /etc/login.defs:/UID_MAX/, which defaults to 60,000\nARG MORPHODICT_UID_GID=60006\nARG MORPHODICT_RUN_UID_GID=60007\nARG TINI_VERSION=v0.19.0\n\nRUN set -ex \\\n && apt-get update \\\n && apt-get install -y --no-install-recommends tini libfoma0 \\\n && rm -rf /var/cache/apt && rm -rf /var/lib/apt/lists/*;\n\n# Create the user/group that will run the application code\nRUN set -xv ; groupadd --gid ${MORPHODICT_RUN_UID_GID} morphodict-run \\\n && useradd --no-log-init --gid morphodict-run \\\n    --uid ${MORPHODICT_RUN_UID_GID} morphodict-run --create-home\n# Create the non-root user/group that will own the application code;\n# this user also belongs to the runtime group\nRUN set -xv ; groupadd --gid ${MORPHODICT_UID_GID} morphodict \\\n && useradd --no-log-init --gid morphodict -G morphodict-run \\\n    --uid ${MORPHODICT_UID_GID} morphodict --create-home\n\n# Copy over the built application from the builder:\nCOPY --from=builder --chown=morphodict /app /app\n\nCOPY docker/app.sh /app\n\nUSER morphodict-run\nWORKDIR /app\n# Activate the Python virtual environment\nENV VIRTUAL_ENV=\"/app/.venv\"\nENV PATH=\"${VIRTUAL_ENV}/bin:${PATH}\"\nENV PYTHONPATH=\"/app/src\"\n\n# uWSGI will bind HTTP to this port:\nEXPOSE 8000\n# uWSGI stats are accessible on this port\n# I view them with this command:\n#\n#    $ nc 127.0.0.1 9191 | jq\n#\nEXPOSE 9191\n\n# Among other things, tini makes typing Ctrl-C into docker-compose work\n# see: https://github.com/krallin/tini#tini---a-tiny-but-valid-init-for-containers\nENTRYPOINT [\"tini\", \"--\"]\n# Startup takes a bit of conditional logic, which we wrap it into a shell script\n# instead of inlining it here.\nCMD [\"/app/app.sh\"]\n"
+}

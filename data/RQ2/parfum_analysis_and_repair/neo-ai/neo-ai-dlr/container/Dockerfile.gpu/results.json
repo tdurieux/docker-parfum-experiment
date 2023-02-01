@@ -1,0 +1,44 @@
+{
+  "startTime": 1674249600854,
+  "endTime": 1674249601600,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 26,
+        "lineEnd": 26,
+        "columnStart": 7,
+        "columnEnd": 70
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 29,
+        "lineEnd": 29,
+        "columnStart": 4,
+        "columnEnd": 40
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 80,
+        "lineEnd": 80,
+        "columnStart": 7,
+        "columnEnd": 48
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 11,
+        "lineEnd": 11,
+        "columnStart": 7,
+        "columnEnd": 82
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "### Multi-stage Docker image. See https://docs.docker.com/develop/develop-images/multistage-build/\n### Run \"docker build\" at the root directory of neo-ai-dlr\n\n### Stage 0: Base image\nFROM nvidia/cuda:10.2-cudnn8-devel-ubuntu18.04 AS base\n\nENV DEBIAN_FRONTEND noninteractive\n\nRUN mkdir -p /packages\nCOPY container/TensorRT-7.1.3.4.Ubuntu-18.04.x86_64-gnu.cuda-10.2.cudnn8.0.tar.gz /packages/TensorRT-7.1.3.4.Ubuntu-18.04.x86_64-gnu.cuda-10.2.cudnn8.0.tar.gz\nRUN cd /packages \\\n    && tar xzvf TensorRT-7.1.3.4.Ubuntu-18.04.x86_64-gnu.cuda-10.2.cudnn8.0.tar.gz && rm TensorRT-7.1.3.4.Ubuntu-18.04.x86_64-gnu.cuda-10.2.cudnn8.0.tar.gz\nENV LD_LIBRARY_PATH=/packages/TensorRT-7.1.3.4/lib:$LD_LIBRARY_PATH\n\nRUN apt-get update && \\\n    apt-get install -y --no-install-recommends \\\n    python3 \\\n    python3-distutils \\\n    wget \\\n    curl \\\n    ca-certificates \\\n    openssl \\\n    libnettle6 \\\n    libssl1.1 \\\n    libzstd1 \\\n    && rm -rf /var/lib/apt/lists/* \\\n    && curl -f https://bootstrap.pypa.io/pip/3.6/get-pip.py -o get-pip.py && python3 get-pip.py && rm get-pip.py \\\n    && rm -rf /root/.cache/pip\n\nRUN pip3 install --no-cache-dir -U pip setuptools wheel\n\n### Stage 1: Build\nFROM base AS builder\nWORKDIR /workspace\n\nENV DEBIAN_FRONTEND noninteractive\n\nRUN apt-get update && \\\n    apt-get install -y --no-install-recommends \\\n    build-essential \\\n    git \\\n    && rm -rf /var/lib/apt/lists/*\n\nRUN wget https://cmake.org/files/v3.22/cmake-3.22.0-linux-x86_64.sh \\\n    && bash cmake-3.22.0-linux-x86_64.sh --skip-license --prefix=/usr/local\n\nCOPY CMakeLists.txt /workspace/\nCOPY Config.cmake.in /workspace/\nCOPY README.md /workspace/\nCOPY include/ /workspace/include/\nCOPY src/ /workspace/src/\nCOPY python/ /workspace/python/\nCOPY cmake/ /workspace/cmake/\nCOPY 3rdparty/ /workspace/3rdparty/\n\nRUN rm -rf /workspace/python/dist && \\\n    mkdir /workspace/build && cd /workspace/build && \\\n    cmake .. -DUSE_CUDA=ON -DUSE_CUDNN=ON -DUSE_TENSORRT=/packages/TensorRT-7.1.3.4 && \\\n    make -j15 && cd ../python && \\\n    python3 setup.py bdist_wheel\n\n### Stage 2: Run\n### Stage 2-1: Runner base (everything except the APP-specific handler)\nFROM base AS runner_base\n\nENV DEBIAN_FRONTEND noninteractive\n\n# python3-dev and gcc are required by multi-model-server\nRUN apt-get update && \\\n    apt-get install -y --no-install-recommends \\\n    openjdk-8-jdk-headless \\\n    python3-dev \\\n    gcc \\\n    libgtk2.0-dev \\\n    && rm -rf /var/lib/apt/lists/*\n\nCOPY --from=builder /workspace/python/dist/*.whl /home/model-server/\n\nRUN pip3 install --pre --no-cache-dir multi-model-server \\\n    && pip3 install --no-cache-dir --prefer-binary numpy scipy xlrd Pillow boto3 six requests mxnet-cu102 tensorflow_gpu opencv-python \\\n    && pip3 install --no-cache-dir /home/model-server/dlr-*.whl \\\n    && rm -rf /root/.cache/pip\n\n### Stage 2-2: Runner (APP-specific handler)\nFROM runner_base AS runner\nARG APP=image_classification\n\nENV PYTHONUNBUFFERED TRUE\n\n# Disable thread pinning in TVM and Treelite\nENV TVM_BIND_THREADS 0\nENV TREELITE_BIND_THREADS 0\n\nENV USE_GPU 1\n\nRUN useradd -m model-server \\\n    && mkdir -p /home/model-server/tmp \\\n    && mkdir -p /home/model-server/model\n\nCOPY container/dockerd-entrypoint.sh /usr/local/bin/dockerd-entrypoint.sh\nCOPY container/config.properties /home/model-server/config.properties\n\nCOPY container/neo_template_$APP.py /home/model-server/neo_template.py\nCOPY container/mms_config_$APP.sh /home/model-server/mms_config.sh\n\nRUN chmod +x /usr/local/bin/dockerd-entrypoint.sh \\\n    && chown -R model-server /home/model-server\n\nEXPOSE 8080 8081\n\nWORKDIR /home/model-server\nENV TEMP=/home/model-server/tmp\nENTRYPOINT [\"/usr/local/bin/dockerd-entrypoint.sh\"]\nCMD [\"serve\"]\n\nLABEL maintainer=\"guas@amazon.com, chyunsu@amazon.com\"\n"
+}

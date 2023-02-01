@@ -1,0 +1,58 @@
+FROM python:3.8-alpine
+LABEL maintainer="libreliu@foxmail.com"
+
+WORKDIR /app
+COPY ./ /app
+
+# Ref on pycryptodome: https://github.com/furritos/docker-pycryptodome/blob/master/3.8-alpine/Dockerfile
+# Ref on mysqlclient: https://stackoverflow.com/questions/56048631/docker-alpine-error-loading-mysqldb-module
+
+ARG USE_PIP_MIRROR=no
+ARG USE_APK_MIRROR=no
+ARG USE_MYSQL=no
+RUN (test ${USE_PIP_MIRROR} = yes \
+       && \
+       (pip config set global.index-url https://mirrors.aliyun.com/pypi/simple/) \
+       || \
+       (echo "pip mirror config untouched.");) \
+    && (test ${USE_APK_MIRROR} = yes \
+       && \
+       (sed -i 's/dl-cdn.alpinelinux.org/mirrors.ustc.edu.cn/g' /etc/apk/repositories) \
+       || \
+       (echo "apk mirror config untouched.");) \
+    && (apk add --update --no-cache mariadb-connector-c-dev \
+            && apk add --no-cache --virtual .build-deps \
+                mariadb-dev \
+                gcc \
+                musl-dev \
+                g++ \
+                make \
+                libffi-dev \
+                openssl-dev \
+                git \
+        ) \
+    && pip install --no-cache-dir -r requirements.txt \
+    && ( test ${USE_MYSQL} = yes \
+          && pip install --no-cache-dir mysqlclient==2.0.1 \
+          || echo "Skipped MySQL setup.") \
+
+    && pip install --no-cache-dir gunicorn==20.0.4 \
+    && apk del .build-deps \
+    && VERILOG_OJ_DEV=TRUE DOCKER_JUDGER_HOST_PATH=233 DOCKER_HOST_DIR=233 python manage.py collectstatic --noinput
+
+# MySQL Stuff
+# RUN (test ${USE_MYSQL} = yes \
+#        &&  \
+#         (apk add --update --no-cache mariadb-connector-c-dev \
+#             && apk add --no-cache --virtual .build-deps \
+#                 mariadb-dev \
+#                 gcc \
+#                 musl-dev \
+#             && pip install mysqlclient==2.0.1 \
+#             && apk del .build-deps \
+#         )  \
+#        ||  \
+#        (echo "Skipped MySQL setup."))
+
+# Make sure env are set before you do this
+ENTRYPOINT ["gunicorn", "--workers=4", "--log-file=-", "--error-logfile=-", "--capture-output", "--access-logfile=-", "-b", "0.0.0.0:8000", "backend.wsgi:application"]

@@ -1,0 +1,1 @@
+# MS-DOS build with DJGPP.  Uses g++ 7.3.0 and CMake 3.13.4.

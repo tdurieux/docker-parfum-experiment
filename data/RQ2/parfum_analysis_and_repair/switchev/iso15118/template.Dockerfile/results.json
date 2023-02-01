@@ -1,0 +1,35 @@
+{
+  "startTime": 1674253111907,
+  "endTime": 1674253112954,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 16,
+        "lineEnd": 16,
+        "columnStart": 4,
+        "columnEnd": 63
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 55,
+        "lineEnd": 55,
+        "columnStart": 18,
+        "columnEnd": 44
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 55,
+        "lineEnd": 55,
+        "columnStart": 18,
+        "columnEnd": 44
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Build image\nFROM python:3.10.0-buster as build\n\nWORKDIR /usr/src/app\n\nENV PYTHONFAULTHANDLER=1 \\\n  PYTHONUNBUFFERED=1 \\\n  PYTHONHASHSEED=random \\\n  PIP_NO_CACHE_DIR=1 \\\n  PIP_DISABLE_PIP_VERSION_CHECK=1 \\\n  PIP_DEFAULT_TIMEOUT=100 \\\n  POETRY_VERSION=1.1.11 \\\n  VIRTUALENV_PIP=21.2.1 \\\n  MYPY_VERSION=0.930\n\n\nRUN pip install --no-cache-dir \"poetry==$POETRY_VERSION\" \"mypy==$MYPY_VERSION\"\n# pylintrc, coveragerc, poetry.lock and pyproject.toml shall not change very\n# often, so it is a good idea to add them as soon as possible\nCOPY .coveragerc mypy.ini .flake8  ./\nCOPY poetry.lock pyproject.toml ./\n# During make build this sed command is substituted by 's/secc/evcc/g'\nRUN sed -i 's/secc/secc/g' pyproject.toml\n\n# Due to an issue with Python 3.10 and poetry, if we use a poetry virtual env,\n# we need to disable the option: poetry config experimental.new-installer false\n# check https://github.com/python-poetry/poetry/issues/4210\n# However, if we run poetry config virtualenvs.create false, then we dont.\n# Do not create a virtual poetry env as we already are in an isolated container\nRUN poetry config virtualenvs.create false\n# Install dependencies and the project in the venv\nRUN poetry install --no-interaction --no-ansi\n\n# Copy the project to the system\nCOPY iso15118/ iso15118/\n\n# Run the tests and linting\nCOPY tests/ tests/\nRUN poetry run black --check --diff --line-length=88 iso15118 tests\nRUN poetry run flake8 --config .flake8 iso15118 tests\n# RUN poetry run mypy --config-file mypy.ini iso15118 tests\nRUN poetry run pytest -vv --cov-config .coveragerc --cov-report term-missing  --durations=3 --cov=.\n\n\n# Generate the wheel to be used by next stage\nRUN poetry build\n\n# The following command when issued leaves the container running forever\n# which may be useful for debugging reasons, so it stays here as reference\n# CMD exec /bin/bash -c \"trap : TERM INT; sleep infinity & wait\"\n\n# Runtime image (which is smaller than the build one)\nFROM python:3.10.0-buster\nWORKDIR /usr/src/app\n# Installs Java\nRUN apt update && apt install --no-install-recommends -y default-jre && rm -rf /var/lib/apt/lists/*;\n# create virtualenv\nRUN python -m venv /venv\n# copy dependencies and wheel from the build stage\nCOPY --from=build /usr/src/app/dist/ dist/\n# This will install the wheel in the venv\nRUN /venv/bin/pip install dist/*.whl\n\n\n# Generating the certs inside the container didn't work (error: Certificate verification failed), but the command is kept\n# here so we can investigate this issue later on\n# RUN cd /venv/lib/python3.10/site-packages/iso15118/shared/pki && ./create_certs.sh -v iso-2\n\n# This is not the ideal way to provide the certificate chain to the container, but for now it works\nCOPY --from=build /usr/src/app/iso15118/shared/pki/ /usr/src/app/iso15118/shared/pki/\n\n\n# This will run the entrypoint script defined in the pyproject.toml\nCMD /venv/bin/iso15118\n"
+}

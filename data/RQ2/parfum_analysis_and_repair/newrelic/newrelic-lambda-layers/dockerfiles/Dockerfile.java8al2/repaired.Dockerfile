@@ -1,0 +1,29 @@
+FROM openjdk:8 as builder
+
+RUN apt-get update \
+    && apt-get install --no-install-recommends -y curl unzip zip && rm -rf /var/lib/apt/lists/*;
+
+RUN useradd -m newrelic-lambda-layers
+USER newrelic-lambda-layers
+WORKDIR /home/newrelic-lambda-layers
+
+COPY --chown=newrelic-lambda-layers libBuild.sh .
+COPY --chown=newrelic-lambda-layers java java/
+
+WORKDIR java
+RUN ./publish-layers.sh build-java8al2
+
+FROM python:3.8
+
+RUN useradd -m newrelic-lambda-layers
+USER newrelic-lambda-layers
+WORKDIR /home/newrelic-lambda-layers
+RUN pip3 install --no-cache-dir -U awscli --user
+ENV PATH /home/newrelic-lambda-layers/.local/bin/:$PATH
+
+COPY libBuild.sh .
+COPY java java/
+COPY --from=builder /home/newrelic-lambda-layers/java/dist java/dist
+
+WORKDIR java
+CMD ./publish-layers.sh publish-java8al2

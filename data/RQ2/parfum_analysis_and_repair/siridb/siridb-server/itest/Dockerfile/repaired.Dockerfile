@@ -1,0 +1,35 @@
+FROM ubuntu:18.04 as builder
+RUN apt-get update && \
+    apt-get install --no-install-recommends -y \
+        libcleri-dev \
+        libuv1-dev \
+        libpcre2-dev \
+        libyajl-dev \
+        uuid-dev \
+        build-essential && rm -rf /var/lib/apt/lists/*;
+COPY ./main.c ./main.c
+COPY ./src/ ./src/
+COPY ./include/ ./include/
+COPY ./Release/ ./Release/
+RUN cd ./Release && \
+    make clean && \
+    CFLAGS="-Werror -std=gnu89" make
+
+FROM python
+RUN apt-get update && \
+    apt-get install --no-install-recommends -y \
+        valgrind \
+        libuv1 \
+        libpcre2-8-0 \
+        libyajl2 && \
+    wget https://github.com/SiriDB/siridb-admin/releases/download/1.2.0/siridb-admin_1.2.0_linux_amd64.bin -O /usr/local/bin/siridb-admin && \
+    chmod +x /usr/local/bin/siridb-admin && rm -rf /var/lib/apt/lists/*;
+COPY --from=builder ./Release/siridb-server /Release/siridb-server
+COPY --from=builder /usr/lib/x86_64-linux-gnu/libcleri* /usr/lib/x86_64-linux-gnu/
+COPY ./itest/ /itest/
+COPY ./help/ /help/
+COPY ./grammar/grammar.py /grammar/grammar.py
+COPY ./grammar/siridbhelp.py /grammar/siridbhelp.py
+WORKDIR /itest
+RUN pip install --no-cache-dir -r requirements.txt
+CMD [ "python", "run_all.py", "-m", "-b=Release" ]

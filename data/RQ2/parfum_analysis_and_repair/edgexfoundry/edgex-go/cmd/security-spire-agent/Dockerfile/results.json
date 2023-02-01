@@ -1,0 +1,17 @@
+{
+  "startTime": 1674215010985,
+  "endTime": 1674215011969,
+  "originalSmells": [
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 39,
+        "lineEnd": 39,
+        "columnStart": 4,
+        "columnEnd": 61
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "#  ----------------------------------------------------------------------------------\n#  Copyright 2022 Intel Corporation\n#\n#  Licensed under the Apache License, Version 2.0 (the \"License\");\n#  you may not use this file except in compliance with the License.\n#  You may obtain a copy of the License at\n#\n#      http://www.apache.org/licenses/LICENSE-2.0\n#\n#   Unless required by applicable law or agreed to in writing, software\n#   distributed under the License is distributed on an \"AS IS\" BASIS,\n#   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.\n#   See the License for the specific language governing permissions and\n#   limitations under the License.\n#\n#  ----------------------------------------------------------------------------------\n\n# Build utility container\nARG BUILDER_BASE=golang:1.18-alpine3.16\nFROM ${BUILDER_BASE} AS builder\n\nWORKDIR /edgex-go\n\nRUN sed -e 's/dl-cdn[.]alpinelinux.org/dl-4.alpinelinux.org/g' -i~ /etc/apk/repositories\n\nRUN apk add --update --no-cache make git build-base curl\n\nCOPY go.mod vendor* ./\nRUN [ ! -d \"vendor\" ] && go mod download all || echo \"skipping...\"\n\nCOPY . .\n\nARG SPIRE_RELEASE=1.2.1\n\n# build spire from the source in order to be compatible with arch arm64 as well\n# in CI the BUILDER_BASE will already contain a compiled spire-server/agent\n# so we check to see if the binary is already in the image before compilation\nWORKDIR /edgex-go/spire-build\nRUN if ! test -f /usr/local/bin/spire-server; then \\\n wget -q \"https://github.com/spiffe/spire/archive/refs/tags/v${SPIRE_RELEASE}.tar.gz\" && \\\n    tar xv --strip-components=1 -f \"v${SPIRE_RELEASE}.tar.gz\" && \\\n    echo \"building spire from source...\" && \\\n    make bin/spire-server bin/spire-agent && \\\n    cp bin/spire* /usr/local/bin/; rm \"v${SPIRE_RELEASE}.tar.gz\" \\\n    fi\n\nWORKDIR /edgex-go\n\n# Deployment image\nFROM alpine:3.15\n\nLABEL license='SPDX-License-Identifier: Apache-2.0' \\\n      copyright='Copyright (c) 2022 Intel Corporation'\n\nRUN sed -e 's/dl-cdn[.]alpinelinux.org/dl-4.alpinelinux.org/g' -i~ /etc/apk/repositories\nRUN apk update && apk --no-cache --update add dumb-init openssl gcompat\n\nCOPY --from=builder /usr/local/bin/spire-agent /usr/local/bin\nCOPY --from=builder /usr/local/bin/spire-server /usr/local/bin\nCOPY --from=builder /edgex-go/cmd/security-spire-agent/docker-entrypoint.sh /usr/local/bin/\nCOPY --from=builder /edgex-go/cmd/security-spire-agent/agent.conf /usr/local/etc/spire/agent.conf.tpl\nCOPY --from=builder /edgex-go/cmd/security-spire-agent/openssl.conf /usr/local/etc/\n\nENTRYPOINT [ \"/usr/bin/dumb-init\" ]\nCMD [ \"--verbose\", \"docker-entrypoint.sh\" ]\n"
+}

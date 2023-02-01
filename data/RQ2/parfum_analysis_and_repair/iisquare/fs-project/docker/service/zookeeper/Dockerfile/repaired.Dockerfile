@@ -1,0 +1,7 @@
+ARG ZOOKEEPER_VERSION
+
+FROM zookeeper:${ZOOKEEPER_VERSION}
+
+CMD ["zkServer.sh", "start-foreground"]
+
+EXPOSE 2181 2888 3888 8080

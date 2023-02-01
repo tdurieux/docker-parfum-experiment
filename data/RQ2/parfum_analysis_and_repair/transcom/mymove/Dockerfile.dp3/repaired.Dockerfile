@@ -1,0 +1,28 @@
+# hadolint ignore=DL3007
+FROM gcr.io/distroless/base:latest
+
+#AWS GovCloud RDS cert
+COPY bin/rds-ca-rsa4096-g1.pem /bin/rds-ca-rsa4096-g1.pem
+
+COPY bin/milmove /bin/milmove
+
+# Demo Environment certs
+COPY config/tls/api.demo.dp3.us.p7b /config/tls/api.demo.dp3.us.p7b
+COPY config/tls/api.demo.dp3.us.crt /config/tls/api.demo.dp3.us.crt
+
+# Loadtesting Environment Certs
+COPY config/tls/api.loadtest.dp3.us.chain.der.p7b /config/tls/api.loadtest.dp3.us.chain.der.p7b
+COPY config/tls/api.loadtest.dp3.us.crt /config/tls/api.loadtest.dp3.us.crt
+
+# Exp Environment Certs
+COPY config/tls/api.exp.dp3.us.chain.der.p7b /config/tls/api.exp.dp3.us.chain.der.p7b
+COPY config/tls/api.exp.dp3.us.crt /config/tls/api.exp.dp3.us.crt
+
+COPY swagger/* /swagger/
+COPY build /build
+
+ENTRYPOINT ["/bin/milmove"]
+
+CMD ["serve", "--logging-level=debug"]
+
+EXPOSE 8080

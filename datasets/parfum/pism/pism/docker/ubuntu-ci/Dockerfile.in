@@ -1,0 +1,104 @@
+FROM ubuntu:21.04
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install required packages listed in the manual. This is done separately so that we can
+# re-use this fs layer.
+RUN set -eux; \
+        apt-get update && apt-get install -y \
+        ${PISM_DEBIAN_PACKAGE_LIST} \
+        ; \
+        rm -rf /var/lib/apt/lists/*
+
+# Install tools:
+# - ccache and lld to speed up builds,
+# - Cython to build PETSc
+# - wget to download sources of I/O libraries
+# - NumPy is used by petsc4py and PISM's scripts
+# - SciPy is used by at least one regression test
+# - python-netcdf4 is use by many regression tests
+# - NCO is used by many regression tests
+# - PROJ is used by PISM's code computing lon,lat coordinates
+# - python3-dev is needed to build Python bindings
+# - python3-nose is used to run some regression tests
+# - SWIG is needed to build Python bindings
+# - MPICH is needed to build PETSc and PISM
+# - doxygen and graphviz are needed to build the source code browser
+# - python2 is needed to install old PETSc
+RUN set -eux; \
+        apt-get update && apt-get install -y \
+        apt-utils \
+        ccache \
+        clang \
+        cython3 \
+        doxygen \
+        graphviz \
+        latexmk \
+        libmpich-dev \
+        libproj-dev \
+        lld \
+        m4 \
+        nco \
+        python2 \
+        python3-dev \
+        python3-netcdf4 \
+        python3-nose \
+        python3-numpy \
+        python3-pip \
+        python3-scipy \
+        python3-sphinx \
+        python3-sphinxcontrib.bibtex \
+        swig \
+        texlive-latex-extra \
+        texlive-latex-recommended \
+        wget \
+        ; \
+        rm -rf /var/lib/apt/lists/*
+
+RUN useradd --create-home --system --shell=/bin/false builder && usermod --lock builder
+USER builder
+
+# Install parallel HDF5, NetCDF, PnetCDF, and ParallelIO by building them from sources.
+#
+# Uses wget installed above.
+#
+# This step uses scripts that are used to describe how to install these libraries in the
+# manual. Re-using them here makes it easier to keep this part of the manual up to date.
+
+COPY hdf5.sh /tmp/
+COPY netcdf.sh /tmp/
+COPY pnetcdf.sh /tmp/
+COPY parallelio.sh /tmp/
+
+RUN set -eux; \
+        cd /tmp && \
+        ./hdf5.sh && \
+        ./netcdf.sh && \
+        ./pnetcdf.sh && \
+        ./parallelio.sh && \
+        rm -rf ~/local/build
+
+# Build the current PETSc version
+COPY petsc.sh /tmp/
+RUN set -eux;\
+        cd /tmp && \
+        ./petsc.sh && \
+        rm -rf ~/local/build
+
+# Build the oldest supported PETSc version. The goal is to check if PISM's C++ code
+# compiles with PETSc 3.7. We do not support PISM's Python bindings with old PETSc
+# versions, so we build PETSc without petsc4py here.
+COPY petsc-3_7_0.sh /tmp/
+RUN set -eux;\
+        cd /tmp && \
+        ./petsc-3_7_0.sh && \
+        rm -rf ~/local/build
+
+# Build the oldest supported CMake version
+COPY cmake-3_3_0.sh /tmp/
+RUN set -eux;\
+        cd /tmp && \
+        ./cmake-3_3_0.sh && \
+        rm -rf ~/local/build
+
+ENV PETSC_DIR="/home/builder/local/petsc" \
+    PYTHONPATH="/home/builder/local/petsc/lib"

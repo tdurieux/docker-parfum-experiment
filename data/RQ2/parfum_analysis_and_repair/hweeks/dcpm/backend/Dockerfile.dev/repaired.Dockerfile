@@ -1,0 +1,17 @@
+FROM node:12
+
+EXPOSE 3000
+EXPOSE 9229
+
+ARG NODE_ENV=development
+
+USER root
+
+COPY . /app/be/
+
+RUN cd /app/be && yarn install && yarn cache clean;
+
+ENV NODE_ENV=${NODE_ENV}
+WORKDIR /app/be
+
+USER root

@@ -1,0 +1,7 @@
+ARG BASE_IMAGE_VERSION
+FROM base-image:${BASE_IMAGE_VERSION}
+ENV APP_ENV=development
+
+COPY main.go .
+
+RUN go mod init main && go build -o main .

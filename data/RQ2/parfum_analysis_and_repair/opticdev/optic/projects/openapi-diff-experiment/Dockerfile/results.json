@@ -1,0 +1,35 @@
+{
+  "startTime": 1674251372529,
+  "endTime": 1674251373295,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 29,
+        "lineEnd": 29,
+        "columnStart": 4,
+        "columnEnd": 32
+      }
+    },
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 39,
+        "lineEnd": 39,
+        "columnStart": 4,
+        "columnEnd": 55
+      }
+    },
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 54,
+        "lineEnd": 54,
+        "columnStart": 4,
+        "columnEnd": 72
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# This container can be attached to various docker networks to sniff traffic and\n# create the OpenAPI spec.\n# There are 3 environment values, set with -e for docker run to customize with:\n#   SNIFF_PORT: The port to sniff. This is the internal port of the container,\n#       not the host-side value (e.g. 80 for a --expose 8000:80).\n#   SNIFF_INTERFACE: The interface to sniff. In containers, this is almost\n#       always eth0.\n#   OPTIC_OPENAPI_PATH: The in-container path for the OpenAPI spec. The\n#      directory that contains this needs to be mounted with a --mount.\n#\n# Example:\n#   docker run -it -e SNIFF_PORT=80 -e SNIFF_INTERFACE=any \\\n#     --network=container:4dd7916f077e \\\n#     --mount type=bind,source=`pwd`,target=/out \\\n#     baseline:latest\n#\n# where --network=container:4dd7916f077e uses the container ID from docker ps\n\n# This image builds the npm pcap binding, and includes all the compile dependencies\nFROM node:14-alpine as build\n\nRUN apk --no-cache --update upgrade && \\\n    apk add --no-cache curl ca-certificates \\\n        python3 build-base make gcc g++ musl-dev libpcap-dev\n\n# install dumb-init in the build stage to keep the next stage clean\nENV DUMB_INIT_CHECKSUM=e874b55f3279ca41415d290c512a7ba9d08f98041b28ae7c2acb19a545f1c4df \\\n    DUMB_INIT_URL=https://github.com/Yelp/dumb-init/releases/download/v1.2.5/dumb-init_1.2.5_x86_64\n\nRUN curl -f -LOs \"${DUMB_INIT_URL}\" && \\\n    echo \"${DUMB_INIT_CHECKSUM}  dumb-init_1.2.5_x86_64\" | sha256sum -c - && \\\n    mv dumb-init_1.2.5_x86_64 /usr/local/bin/dumb-init && \\\n    chmod +x /usr/local/bin/dumb-init\n\nENV NODE_ENV=production\n# --unsafe-perm is needed because we are installing as root. Without it, we get a\n#   #5 23.78 gyp WARN EACCES current user (\"nobody\") does not have permission to access the dev dir \"/root/.cache/node-gyp/14.18.1\"\n# error. When running as user node we get\n#   #6 20.47 npm ERR! Error: EACCES: permission denied, symlink '../lib/node_modules/@useoptic/openapi-diff/build/cli/index.js' -> '/usr/local/bin/optic'\nRUN npm install -g @useoptic/openapi-diff --unsafe-perm && npm cache clean --force;\n\n# This is the released image. It should stay as small as possible.\nFROM node:14-alpine\n\nRUN apk add --no-cache libpcap\n\nENV NODE_ENV=production\n# --unsafe-perm is needed because we are installing as root. Without it, we get a\n#   #5 23.78 gyp WARN EACCES current user (\"nobody\") does not have permission to access the dev dir \"/root/.cache/node-gyp/14.18.1\"\n# error. When running as user node we get\n#   #6 20.47 npm ERR! Error: EACCES: permission denied, symlink '../lib/node_modules/@useoptic/openapi-diff/build/cli/index.js' -> '/usr/local/bin/optic'\n# --ignore-scripts suppresses the pcap package C++ build, which relies on all\n# the extra stuff we installed in the build image. We copy over the built\n# node_modules directory.\nRUN npm install -g @useoptic/openapi-diff --unsafe-perm --ignore-scripts && npm cache clean --force;\nCOPY --from=build /usr/local/lib/node_modules/@useoptic/openapi-diff/node_modules/pcap /usr/local/lib/node_modules/@useoptic/openapi-diff/node_modules/pcap\n\nCOPY --from=build /usr/local/bin/dumb-init /usr/local/bin/\n\n# The user is already root in this image, but it's worth highlighting that\n# sniffing is a privileged behaviour. Outside a container, you would need to be\n# root, have CAP_NET_RAW and CAP_NET_ADMIN, or CAP_SYS_ADMIN (CAP_BPF on kernel\n# 5.8+) to do this.\n# See https://man7.org/linux/man-pages/man7/capabilities.7.html for some\n# background (this may vary based on distro).\nUSER root\nENV SNIFF_PORT=80\nENV SNIFF_INTERFACE=eth0\nENV OPTIC_OPENAPI_PATH=/out/optic.openapi.yaml\nENTRYPOINT [\"dumb-init\", \"--\"]\nCMD [\"/bin/sh\", \"-c\", \"exec optic baseline --sniff-port ${SNIFF_PORT} --sniff-interface ${SNIFF_INTERFACE} ${OPTIC_OPENAPI_PATH}\"]"
+}

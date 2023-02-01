@@ -1,0 +1,17 @@
+{
+  "startTime": 1674215779810,
+  "endTime": 1674215780488,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 25,
+        "lineEnd": 25,
+        "columnStart": 4,
+        "columnEnd": 84
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "#=============== Sidecar Injector Build Container ===================\nFROM golang:1.17-stretch as mutating-webhook-service-builder\n\nARG GIT_COMMIT_SHORT=\"dev\"\nARG KUBECTL_VERSION=1.22.0\n\n# On CyberArk dev laptops, golang module dependencies are downloaded with a\n# corporate proxy in the middle. For these connections to succeed we need to\n# configure the proxy CA certificate in build containers.\n#\n# To allow this script to also work on non-CyberArk laptops where the CA\n# certificate is not available, we copy the (potentially empty) directory\n# and update container certificates based on that, rather than rely on the\n# CA file itself.\nADD build_ca_certificate /usr/local/share/ca-certificates/\nRUN update-ca-certificates\n\nRUN mkdir -p /work\nWORKDIR /work\n\nENV GOOS=linux \\\n    GOARCH=amd64 \\\n    CGO_ENABLED=0\n\n# Download kubectl CLI\nRUN curl -f -LO https://dl.k8s.io/release/v\"${KUBECTL_VERSION}\"/bin/linux/amd64/kubectl && \\\n    chmod +x kubectl\n\nCOPY go.mod go.sum ./\nRUN go mod download\n\n# sidecar-injector source files\nCOPY pkg ./pkg\nCOPY cmd ./cmd\n\n# The `gitCommitShort` override is there to provide the git commit information in the final\n# binary.\nRUN go build \\\n    -ldflags=\"-X github.com/cyberark/sidecar-injector/pkg/version.gitCommitShort=$GIT_COMMIT_SHORT\" \\\n    -o cyberark-sidecar-injector \\\n    ./cmd/sidecar-injector\n\n#=============== Sidecar Injector Container =========================\nFROM alpine:3.14\n\nRUN apk add -u shadow libc6-compat curl openssl && \\\n    rm -rf /var/cache/apk/*\n\n# Add Limited user\nRUN groupadd -r sidecar-injector \\\n             -g 777 && \\\n    useradd -c \"sidecar-injector runner account\" \\\n            -g sidecar-injector \\\n            -u 777 \\\n            -m \\\n            -r \\\n            sidecar-injector\n\nUSER sidecar-injector\n\nCOPY --from=mutating-webhook-service-builder \\\n     /work/cyberark-sidecar-injector \\\n     /work/kubectl \\\n     /usr/local/bin/\n\nENTRYPOINT [\"/usr/local/bin/cyberark-sidecar-injector\"]\n"
+}

@@ -1,0 +1,29 @@
+FROM ghcr.io/clearmatics/zeth:0.0.2-base AS stage1
+
+LABEL org.opencontainers.image.source https://github.com/clearmatics/zeth
+
+ENV ZETH_PATH=/home/zeth
+# Copy necessary files in the docker container
+COPY . ${ZETH_PATH}
+
+# Install the submodules
+RUN cd ${ZETH_PATH} \
+    && git submodule update --init --recursive
+
+# Build `prover-server`
+RUN cd ${ZETH_PATH} \
+    && mkdir build \
+    && cd build \
+    && cmake -DMPC=OFF -DSTATIC_BUILD=ON .. \
+    && make -j"$($(nprocs)+1)" prover-server
+
+##
+
+FROM alpine:3.12
+
+LABEL org.opencontainers.image.source https://github.com/clearmatics/zeth
+
+RUN apk add --no-cache bash
+## Move `prover-server` from previous image and put it in the PATH
+COPY --from=stage1 /home/zeth/build/prover_server/prover-server /usr/local/bin
+CMD ["/bin/bash"]

@@ -1,0 +1,17 @@
+{
+  "startTime": 1674256056083,
+  "endTime": 1674256056662,
+  "originalSmells": [
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 45,
+        "lineEnd": 45,
+        "columnStart": 5,
+        "columnEnd": 95
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "ARG GO_VERSION=1.18\nARG XX_VERSION=1.1.0\n\nFROM --platform=$BUILDPLATFORM tonistiigi/xx:${XX_VERSION} AS xx\nFROM --platform=$BUILDPLATFORM golang:${GO_VERSION}-alpine AS base\nCOPY --from=xx / /\nRUN apk add --no-cache bash coreutils file git\nENV GO111MODULE=auto\nENV CGO_ENABLED=0\nWORKDIR /src\n\nFROM base AS version\nARG PKG=github.com/distribution/distribution/v3\nRUN --mount=target=. \\\n  VERSION=$(git describe --match 'v[0-9]*' --dirty='.m' --always --tags) REVISION=$(git rev-parse HEAD)$(if ! git diff --no-ext-diff --quiet --exit-code; then echo .m; fi); \\\n  echo \"-X ${PKG}/version.Version=${VERSION#v} -X ${PKG}/version.Revision=${REVISION} -X ${PKG}/version.Package=${PKG}\" | tee /tmp/.ldflags; \\\n  echo -n \"${VERSION}\" | tee /tmp/.version;\n\nFROM base AS build\nARG TARGETPLATFORM\nARG LDFLAGS=\"-s -w\"\nARG BUILDTAGS=\"include_oss include_gcs\"\nRUN --mount=type=bind,target=/src,rw \\\n  --mount=type=cache,target=/root/.cache/go-build \\\n  --mount=target=/go/pkg/mod,type=cache \\\n  --mount=type=bind,source=/tmp/.ldflags,target=/tmp/.ldflags,from=version \\\n  set -x ; xx-go build -trimpath -ldflags \"$(cat /tmp/.ldflags) ${LDFLAGS}\" -o /usr/bin/registry ./cmd/registry \\\n  && xx-verify --static /usr/bin/registry\n\nFROM scratch AS binary\nCOPY --from=build /usr/bin/registry /\n\nFROM base AS releaser\nARG TARGETOS\nARG TARGETARCH\nARG TARGETVARIANT\nWORKDIR /work\nRUN --mount=from=binary,target=/build \\\n  --mount=type=bind,target=/src \\\n  --mount=type=bind,source=/tmp/.version,target=/tmp/.version,from=version \\\n  VERSION=$(cat /tmp/.version) \\\n  && mkdir -p /out \\\n  && cp /build/registry /src/README.md /src/LICENSE . \\\n  && tar -czvf \"/out/registry_${VERSION#v}_${TARGETOS}_${TARGETARCH}${TARGETVARIANT}.tar.tgz\" * \\\n  && sha256sum -z \"/out/registry_${VERSION#v}_${TARGETOS}_${TARGETARCH}${TARGETVARIANT}.tar.tgz\" | awk '{ print $1 }' > \"/out/registry_${VERSION#v}_${TARGETOS}_${TARGETARCH}${TARGETVARIANT}.tar.tgz.sha256\" && rm \"/out/registry_${VERSION#v}_${TARGETOS}_${TARGETARCH}${TARGETVARIANT}.tar.tgz\"\n\nFROM scratch AS artifact\nCOPY --from=releaser /out /\n\nFROM alpine:3.16\nRUN apk add --no-cache ca-certificates\nCOPY cmd/registry/config-dev.yml /etc/docker/registry/config.yml\nCOPY --from=binary /registry /bin/registry\nVOLUME [\"/var/lib/registry\"]\nEXPOSE 5000\nENTRYPOINT [\"registry\"]\nCMD [\"serve\", \"/etc/docker/registry/config.yml\"]\n"
+}

@@ -1,0 +1,23 @@
+FROM adoptopenjdk/maven-openjdk11 as BUILD
+ 
+COPY src /usr/src/app/src
+COPY pom.xml /usr/src/app
+WORKDIR /usr/src/app
+RUN mvn package
+
+
+FROM open-liberty:19.0.0.9-kernel-java11
+
+COPY liberty-opentracing-zipkintracer /opt/ol/wlp/usr/
+
+COPY liberty/server.xml /config/
+
+COPY --from=BUILD /usr/src/app/target/articles.war /config/dropins/
+
+COPY --from=BUILD /usr/src/app/target/jcc-11.1.4.4.jar /opt/ol/wlp/usr/shared/resources/
+
+# This script will add the requested XML snippets, grow image to be fit-for-purpose and apply interim fixes
+# https://github.com/WASdev/ci.docker
+RUN configure.sh
+
+EXPOSE 8080

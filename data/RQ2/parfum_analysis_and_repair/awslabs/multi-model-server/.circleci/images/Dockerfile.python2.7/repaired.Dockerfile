@@ -1,0 +1,61 @@
+# Copyright 2018 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# Licensed under the Apache License, Version 2.0 (the "License").
+# You may not use this file except in compliance with the License.
+# A copy of the License is located at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# or in the "license" file accompanying this file. This file is distributed
+# on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either
+# express or implied. See the License for the specific language governing
+# permissions and limitations under the License.
+#
+
+FROM awsdeeplearningteam/mms-build:python2.7@sha256:2b743d6724dead806873cce1330f7b8a0197399a35af47dfd7035251fdade122
+
+# 2020 - Updated Build and Test dependencies
+
+# Python packages for MMS Server
+RUN pip install --no-cache-dir psutil \
+    && pip install --no-cache-dir future \
+    && pip install --no-cache-dir Pillow \
+    && pip install --no-cache-dir wheel \
+    && pip install --no-cache-dir twine \
+    && pip install --no-cache-dir requests \
+    && pip install --no-cache-dir mock \
+    && pip install --no-cache-dir numpy \
+    && pip install --no-cache-dir Image \
+    && pip install --no-cache-dir mxnet==1.5.0 \
+    && pip install --no-cache-dir enum34
+
+# Python packages for pytests
+RUN pip install --no-cache-dir pytest==4.0.0 \
+    && pip install --no-cache-dir pytest-cov \
+    && pip install --no-cache-dir pytest-mock
+
+# Python packages for benchmark
+RUN pip install --no-cache-dir pandas
+
+# Install NodeJS and packages for API tests
+RUN curl -f -sL https://deb.nodesource.com/setup_14.x | sudo -E bash - \
+    && sudo apt-get install --no-install-recommends -y nodejs \
+    && sudo npm install -g newman newman-reporter-html && npm cache clean --force; && rm -rf /var/lib/apt/lists/*;
+
+# Install jmeter for benchmark
+# ToDo: Remove --no-check-certificate; temporarily added to bypass jmeter-plugins.org's expired certificate
+RUN cd /opt \
+    && wget https://archive.apache.org/dist/jmeter/binaries/apache-jmeter-5.3.tgz \
+    && tar -xzf apache-jmeter-5.3.tgz \
+    && cd apache-jmeter-5.3 \
+    && ln -s /opt/apache-jmeter-5.3/bin/jmeter /usr/local/bin/jmeter \
+    && wget --no-check-certificate https://jmeter-plugins.org/get/ -O lib/ext/jmeter-plugins-manager-1.4.jar \
+    && wget https://search.maven.org/remotecontent?filepath=kg/apc/cmdrunner/2.2/cmdrunner-2.2.jar -O lib/cmdrunner-2.2.jar \
+    && java -cp lib/ext/jmeter-plugins-manager-1.4.jar org.jmeterplugins.repository.PluginManagerCMDInstaller \
+    && bin/PluginsManagerCMD.sh install jpgc-synthesis=2.1,jpgc-filterresults=2.1,jpgc-mergeresults=2.1,jpgc-cmd=2.1,jpgc-perfmon=2.1 && rm apache-jmeter-5.3.tgz
+
+# bzt is used for performance regression test suite
+# bzt requires python 3.6 runtime.
+# Download pyenv, use pyenv to download python 3.6.5.
+# The downloaded python 3.6.5 is isolated and doesn't interfere with default python(2.7)
+# Only before starting the performance regression suite, py 3.6.5 is local installed(pyenv local 3.6.5) in test dir
+# !! MMS server will continue using Python 2.7 !!
+RUN curl -f https://pyenv.run | bash \
+    && $HOME/.pyenv/bin/pyenv install 3.6.5

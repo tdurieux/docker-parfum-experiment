@@ -1,0 +1,43 @@
+FROM azul/zulu-openjdk-alpine:17 as builder
+LABEL maintainer="dlmcpaul@gmail.com"
+
+ENV JAVA_MINIMAL=/opt/jre
+
+# Generate a minimal java runtime using the latest azul/zulu-openjdk-alpine
+ARG JAR_FILE
+COPY ${JAR_FILE} /app.jar
+
+RUN MODULES=$("$JAVA_HOME/bin/jdeps" --print-module-deps /app.jar) \
+    && echo modules identified = "$MODULES" \
+    && "$JAVA_HOME/bin/jlink" \
+    --verbose \
+    --add-modules \
+        "$MODULES",java.sql,java.naming,java.desktop,java.management,java.security.jgss,java.instrument,jdk.unsupported \
+    --compress 2 \
+    --strip-debug \
+    --no-header-files \
+    --no-man-pages \
+    --output "$JAVA_MINIMAL"
+
+# Start with fresh copy of alpine linux
+FROM alpine:3
+LABEL maintainer="dlmcpaul@gmail.com"
+
+ARG JAR_FILE
+
+# copy our minimal runtime
+ENV JAVA_MINIMAL=/opt/jre
+ENV PATH="$PATH:$JAVA_MINIMAL/bin"
+COPY --from=builder "$JAVA_MINIMAL" "$JAVA_MINIMAL"
+
+# copy our application
+COPY ${JAR_FILE} /app.jar
+
+# Override these for your timezone and language
+ENV TZ="Australia/Sydney" \
+    LANG="en_AU.UTF-8"
+
+# expose the internal endpoint
+EXPOSE 8080
+
+ENTRYPOINT ["java", "-Djava.security.egd=file:/dev/./urandom", "-Dspring.jmx.enabled=false", "-jar", "/app.jar"]

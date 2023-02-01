@@ -1,0 +1,53 @@
+{
+  "startTime": 1674250209380,
+  "endTime": 1674250210948,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 19,
+        "lineEnd": 19,
+        "columnStart": 7,
+        "columnEnd": 54
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 29,
+        "lineEnd": 29,
+        "columnStart": 7,
+        "columnEnd": 48
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 30,
+        "lineEnd": 30,
+        "columnStart": 7,
+        "columnEnd": 54
+      }
+    },
+    {
+      "rule": "aptGetInstallUseY",
+      "position": {
+        "lineStart": 18,
+        "lineEnd": 18,
+        "columnStart": 25,
+        "columnEnd": 60
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 18,
+        "lineEnd": 18,
+        "columnStart": 25,
+        "columnEnd": 60
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "#######################\n# Common dependencies #\n#######################\nFROM python:3.10-bullseye AS base\n\nWORKDIR /app\nEXPOSE 8000\n\nENV LANG=C.UTF-8 \\\n    PYTHONDONTWRITEBYTECODE=1 \\\n    PYTHONUNBUFFERED=1 \\\n    PATH=\"/venv/bin:$PATH\" \\\n    POETRY_VERSION=1.1.12 \\\n    PIP_VERSION=21.3.1\n\nRUN useradd -d /app -M --uid 1000 --shell /usr/sbin/nologin kitsune\n\nRUN set -xe \\\n    && apt-get update && apt-get install -y --no-install-recommends apt-transport-https \\\n    && curl -f -sL https://deb.nodesource.com/setup_lts.x | bash - \\\n    && apt-get update \\\n    && apt-get install -y --no-install-recommends \\\n    gettext build-essential \\\n    libxml2-dev libxslt1-dev zlib1g-dev git \\\n    libjpeg-dev libffi-dev libssl-dev libxslt1.1 \\\n    libmariadb3 mariadb-client \\\n    optipng nodejs zip \\\n    # python\n    && python -m venv /venv \\\n    && pip install --no-cache-dir --upgrade pip==${PIP_VERSION} \\\n    && pip install --no-cache-dir --upgrade poetry==${POETRY_VERSION} \\\n    && poetry config virtualenvs.create false \\\n    # clean up\n    && rm -rf /var/lib/apt/lists/*\n\nCOPY pyproject.toml poetry.lock ./\nRUN poetry install\n\n#########################\n# Frontend dependencies #\n#########################\nFROM base AS base-frontend\n\nCOPY package*.json ./\nRUN npm run install-prod\n\nCOPY . .\nRUN cp .env-build .env && \\\n    npm run webpack:build:prod\n\n\n#################\n# Testing image #\n#################\nFROM base-frontend AS test\n\nRUN cp .env-test .env && \\\n    ./manage.py compilejsi18n && \\\n    ./manage.py collectstatic --noinput\n\n\n##########################\n# Production dependences #\n##########################\nFROM base-frontend AS prod-deps\n\nRUN ./scripts/l10n-fetch-lint-compile.sh && \\\n    find ./locale ! -name '*.mo' -type f -delete && \\\n    ./manage.py compilejsi18n && \\\n    # minify jsi18n files:\n    find jsi18n/ -name \"*.js\" -exec sh -c 'npx terser \"$1\" -o \"${1%.js}-min.js\"' sh {} \\; && \\\n    ./manage.py collectstatic --noinput\nRUN poetry install --no-dev\n\n\n##########################\n# Clean production image #\n##########################\nFROM python:3.10-slim-bullseye AS prod\n\nWORKDIR /app\n\nEXPOSE 8000\n\nENV PATH=\"/venv/bin:$PATH\" \\\n    LANG=C.UTF-8 \\\n    PYTHONDONTWRITEBYTECODE=1 \\\n    PYTHONUNBUFFERED=1\n\nRUN groupadd --gid 1000 kitsune && useradd -g kitsune --uid 1000 --shell /usr/sbin/nologin kitsune\n\nCOPY --from=prod-deps --chown=kitsune:kitsune /venv /venv\nCOPY --from=prod-deps --chown=kitsune:kitsune /app/locale /app/locale\nCOPY --from=prod-deps --chown=kitsune:kitsune /app/static /app/static\nCOPY --from=prod-deps --chown=kitsune:kitsune /app/dist /app/dist\n\nCOPY --chown=kitsune:kitsune . .\n\n# apt-get after copying everything to ensure we're always getting the latest packages in the prod image\nRUN apt-get update && \\\n    apt-get upgrade -y && \\\n    apt-get install -y --no-install-recommends \\\n    libmariadb3 optipng mariadb-client \\\n    libxslt1.1 && \\\n    rm -rf /var/lib/apt/lists/*\n\nRUN mkdir /app/media && chown kitsune:kitsune /app/media\n\nUSER kitsune\n\nARG GIT_SHA=head\nENV GIT_SHA ${GIT_SHA}\n"
+}

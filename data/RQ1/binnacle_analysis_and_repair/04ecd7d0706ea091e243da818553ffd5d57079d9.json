@@ -1,0 +1,99 @@
+{
+  "startTime": 1674249329767,
+  "endTime": 1674249330073,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 30,
+        "lineEnd": 30,
+        "columnStart": 4,
+        "columnEnd": 48
+      }
+    },
+    {
+      "rule": "wgetUseHttpsUrl",
+      "position": {
+        "lineStart": 82,
+        "lineEnd": 82,
+        "columnStart": 4,
+        "columnEnd": 218
+      }
+    },
+    {
+      "rule": "wgetUseHttpsUrl",
+      "position": {
+        "lineStart": 85,
+        "lineEnd": 85,
+        "columnStart": 4,
+        "columnEnd": 84
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 35,
+        "lineEnd": 35,
+        "columnStart": 4,
+        "columnEnd": 102
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 43,
+        "lineEnd": 43,
+        "columnStart": 4,
+        "columnEnd": 50
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 41,
+        "lineEnd": 41,
+        "columnStart": 4,
+        "columnEnd": 32
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 71,
+        "lineEnd": 71,
+        "columnStart": 4,
+        "columnEnd": 76
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 12,
+        "lineEnd": 26,
+        "columnStart": 22,
+        "columnEnd": 35
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 71,
+        "lineEnd": 71,
+        "columnStart": 4,
+        "columnEnd": 76
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 71,
+        "lineEnd": 71,
+        "columnStart": 4,
+        "columnEnd": 76
+      }
+    }
+  ],
+  "repairedDockerfile": "FROM nvidia/cuda:9.0-devel-ubuntu16.04\n\n# TensorFlow version is tightly coupled to CUDA and cuDNN so it should be selected carefully\nENV TENSORFLOW_VERSION=1.10.0\nENV PYTORCH_VERSION=0.4.1\nENV CUDNN_VERSION=7.3.1.20-1+cuda9.0\nENV NCCL_VERSION=2.3.5-2+cuda9.0\n\n# Python 2.7 or 3.5 is supported by Ubuntu Xenial out of the box\nARG python=2.7\nENV PYTHON_VERSION=${python}\n\nRUN apt-get update && apt-get install -y --no-install-recommends \\\n        build-essential \\\n        cmake \\\n        git \\\n        curl \\\n        vim \\\n        wget \\\n        ca-certificates \\\n        libcudnn7=${CUDNN_VERSION} \\\n        libnccl2=${NCCL_VERSION} \\\n        libnccl-dev=${NCCL_VERSION} \\\n        libjpeg-dev \\\n        libpng-dev \\\n        python${PYTHON_VERSION} \\\n        python${PYTHON_VERSION}-dev && rm -rf /var/lib/apt/lists/*;\n\nRUN ln -s /usr/bin/python${PYTHON_VERSION} /usr/bin/python\n\nRUN curl -f -O https://bootstrap.pypa.io/get-pip.py && \\\n    python get-pip.py && \\\n    rm get-pip.py\n\n# Install TensorFlow, Keras and PyTorch\nRUN pip install --no-cache-dir tensorflow-gpu==${TENSORFLOW_VERSION} keras h5py torch==${PYTORCH_VERSION} torchvision\n\n# Install Open MPI\nRUN mkdir /tmp/openmpi && \\\n    cd /tmp/openmpi && \\\n    wget https://www.open-mpi.org/software/ompi/v3.1/downloads/openmpi-3.1.2.tar.gz && \\\n    tar zxf openmpi-3.1.2.tar.gz && \\\n    cd openmpi-3.1.2 && \\\n    ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" --enable-orterun-prefix-by-default && \\\n    make -j $(nproc) all && \\\n    make install && \\\n    ldconfig && \\\n    rm -rf /tmp/openmpi && rm openmpi-3.1.2.tar.gz\n\n# Install Horovod, temporarily using CUDA stubs\nRUN ldconfig /usr/local/cuda-9.0/targets/x86_64-linux/lib/stubs && \\\n    HOROVOD_GPU_ALLREDUCE=NCCL HOROVOD_WITH_TENSORFLOW=1 HOROVOD_WITH_PYTORCH=1 pip install --no-cache-dir horovod && \\\n    ldconfig\n\n# Create a wrapper for OpenMPI to allow running as root by default\nRUN mv /usr/local/bin/mpirun /usr/local/bin/mpirun.real && \\\n    echo '#!/bin/bash' > /usr/local/bin/mpirun && \\\n    echo 'mpirun.real --allow-run-as-root \"$@\"' >> /usr/local/bin/mpirun && \\\n    chmod a+x /usr/local/bin/mpirun\n\n# Configure OpenMPI to run good defaults:\n#   --bind-to none --map-by slot --mca btl_tcp_if_exclude lo,docker0\nRUN echo \"hwloc_base_binding_policy = none\" >> /usr/local/etc/openmpi-mca-params.conf && \\\n    echo \"rmaps_base_mapping_policy = slot\" >> /usr/local/etc/openmpi-mca-params.conf && \\\n    echo \"btl_tcp_if_exclude = lo,docker0\" >> /usr/local/etc/openmpi-mca-params.conf\n\n# Set default NCCL parameters\nRUN echo NCCL_DEBUG=INFO >> /etc/nccl.conf && \\\n    echo NCCL_SOCKET_IFNAME=^docker0 >> /etc/nccl.conf\n\n# Install OpenSSH for MPI to communicate between containers\nRUN apt-get install -y --no-install-recommends openssh-client openssh-server && \\\n    mkdir -p /var/run/sshd && rm -rf /var/lib/apt/lists/*;\n\n# Allow OpenSSH to talk to containers without asking for confirmation\nRUN cat /etc/ssh/ssh_config | grep -v StrictHostKeyChecking > /etc/ssh/ssh_config.new && \\\n    echo \"    StrictHostKeyChecking no\" >> /etc/ssh/ssh_config.new && \\\n    mv /etc/ssh/ssh_config.new /etc/ssh/ssh_config\n\nWORKDIR \"/root\"\n\n# Download jdk\nRUN wget --no-check-certificate --no-cookies --header \"Cookie: oraclelicense=accept-securebackup-cookie\" https://download.oracle.com/otn-pub/java/jdk/8u191-b12/2787e4a523244c269598db4e85c51e0c/jdk-8u191-linux-x64.tar.gz && tar xvf jdk-8u191-linux-x64.tar.gz && rm jdk-8u191-linux-x64.tar.gz\n\n# Download hadoop\nRUN wget https://archive.apache.org/dist/hadoop/core/hadoop-3.1.1/hadoop-3.1.1.tar.gz && tar zxvf hadoop-3.1.1.tar.gz && rm hadoop-3.1.1.tar.gz\n\n# Set java and hdfs env\nENV JAVA_HOME=/root/jdk1.8.0_191 \\\n    HADOOP_HOME=/root/hadoop-3.1.1\n\nENV PATH=$HADOOP_HOME/bin:$PATH\n\nENV HADOOP_HDFS_HOME=${HADOOP_HOME} \\\n    LD_LIBRARY_PATH=${LD_LIBRARY_PATH}:${JAVA_HOME}/jre/lib/amd64/server \\\n    PATH=$JAVA_HOME:$PATH\n\n"
+}

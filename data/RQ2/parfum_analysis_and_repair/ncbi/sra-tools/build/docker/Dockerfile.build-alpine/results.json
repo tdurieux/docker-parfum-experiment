@@ -1,0 +1,17 @@
+{
+  "startTime": 1674220141747,
+  "endTime": 1674220142993,
+  "originalSmells": [
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 1,
+        "lineEnd": 1,
+        "columnStart": 4,
+        "columnEnd": 79
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM alpine:latest AS build\nRUN apk add --no-cache build-base util-linux linux-headers g++ ninja cmake git libquadmath\nRUN ln -fs /usr/lib/libquadmath.so.0.0.0 /usr/lib/libquadmath.so\n\nARG CMAKE_BUILD_SHARED_LIBS=1\nARG VDB_BRANCH=engineering\nARG SRA_BRANCH=${VDB_BRANCH}\nWORKDIR /root\nRUN git clone -b ${VDB_BRANCH} --depth 1 https://github.com/ncbi/ncbi-vdb.git\nWORKDIR ncbi-vdb\nRUN sed -e '/add_subdirectory\\s*\\(\\s*vdb3\\s*\\)/ d' -i CMakeLists.txt && \\\n    sed -e '/^#undef memcpy/,/^#endif/ d' -i interfaces/kfc/defs.h && \\\n    sed -e '/gnu\\/libc-version.h/ d' -e '/gnu_get_libc_version/ d' -i libs/kns/manager.c\nWORKDIR /root\nRUN cmake -GNinja -DCMAKE_BUILD_TYPE=Release \\\n          -S ncbi-vdb -B build/ncbi-vdb && \\\n    cmake --build build/ncbi-vdb\nRUN git clone -b ${SRA_BRANCH} --depth 1 https://github.com/ncbi/sra-tools.git\nWORKDIR sra-tools\nRUN sed -e'/execinfo.h/ s/^/\\/\\//' -e'/backtrace/ s/^/\\/\\//' -i tools/driver-tool/secure/except.cpp && \\\n    sed -e'/config->noInstallID/,/^\\s*$/ d' -i tools/driver-tool/sratools.cpp\nWORKDIR /root\nRUN cmake -GNinja -DCMAKE_BUILD_TYPE=Release \\\n          -DVDB_INCDIR=/root/ncbi-vdb/interfaces \\\n          -DVDB_LIBDIR=/root/build/ncbi-vdb/lib \\\n          -S sra-tools -B build/sra-tools && \\\n    cmake --build build/sra-tools\nRUN cmake -P build/sra-tools/cmake_install.cmake\nRUN mkdir -p /root/.ncbi\nRUN printf '/LIBS/IMAGE_GUID = \"%s\"\\n' `uuidgen` > /root/.ncbi/user-settings.mkfg && \\\n    printf '/libs/cloud/report_instance_identity = \"true\"\\n' >> /root/.ncbi/user-settings.mkfg\n\nFROM alpine:latest\nLABEL author=\"Kenneth Durbrow\" \\\n      maintainer=\"kenneth.durbrow@nih.gov\" \\\n      vendor=\"NCBI/NLM/NIH\" \\\n      url=\"https://trace.ncbi.nlm.nih.gov/Traces/sra/sra.cgi?view=software\" \\\n      vcs-url=\"https://github.com/ncbi/sra-tools/\" \\\n      description=\"NCBI SRA Toolkit + a working default configuration.\" \\\n      notice=\"WHEN USING THIS IMAGE IN A CLOUD ENVIRONMENT, YOU WILL BE SENDING YOUR CLOUD INSTANCE IDENTITY TO NCBI.\"\nRUN apk add --no-cache libstdc++ libgcc\nCOPY --from=build /usr/local/bin /usr/local/bin\nCOPY --from=build /root/.ncbi /root/.ncbi\n# everyone needs to be able to list and read it\nRUN chmod go+rx /root /root/.ncbi && chmod go+r /root/.ncbi/user-settings.mkfg\n#  very basic smoke test to check if runnable\nRUN touch foo && srapath ./foo >/dev/null 2>/dev/null && rm foo\n"
+}

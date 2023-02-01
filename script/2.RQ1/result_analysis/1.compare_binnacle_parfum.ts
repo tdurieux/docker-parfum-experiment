@@ -42,7 +42,7 @@ function distribution(vulnerabilityDistribution) {
 (async () => {
   const binnacleViolations = join(
     config.dataFolder,
-    "reproduction/results-github-individual.txt"
+    "dataset/binnacle/results-github-individual.txt"
   );
 
   const binnacleVulnerabilityCount = {};

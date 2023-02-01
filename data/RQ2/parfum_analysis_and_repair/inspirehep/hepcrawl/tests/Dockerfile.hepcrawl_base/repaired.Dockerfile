@@ -1,0 +1,23 @@
+# -*- coding: utf-8 -*-
+#
+# This file is part of hepcrawl.
+# Copyright (C) 2017 CERN.
+#
+# hepcrawl is a free software; you can redistribute it and/or modify it
+# under the terms of the Revised BSD License; see LICENSE file for
+# more details.
+
+FROM python:2.7
+
+ENV PYTHONDONTWRITEBYTECODE=1
+RUN mkdir /code /var/lib/scrapy /venv
+
+copy . /code
+
+ENV PATH="/home/test/.local/bin:${PATH}"
+
+WORKDIR /code
+RUN pip install --no-cache-dir --upgrade wheel setuptools idutils rfc3987 bleach jsonschema inspire-utils web-pdb
+RUN pip install --no-cache-dir -e .[all]
+
+CMD true

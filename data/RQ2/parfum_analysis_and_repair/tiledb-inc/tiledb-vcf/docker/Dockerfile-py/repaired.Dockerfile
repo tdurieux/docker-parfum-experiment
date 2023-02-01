@@ -1,0 +1,96 @@
+FROM ubuntu:20.04
+
+ENV AWS_EC2_METADATA_DISABLED true
+ENV LANG=C.UTF-8 LC_ALL=C.UTF-8
+
+# Install some dependencies
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+    cmake \
+    wget \
+    git \
+    tar \
+    gzip \
+    unzip \
+    libz-dev \
+    libssl-dev \
+    libbz2-dev \
+    libcurl4-openssl-dev \
+    xz-utils \
+    liblzma-dev \
+    make \
+    automake \
+    autoconf \
+    patch \
+    build-essential \
+    python3 \
+    python3-dev \
+    python3-pip \
+    python-is-python3 \
+    ## arrow build dependencies
+    flex \
+    gettext \
+    libjemalloc-dev \
+    libsnappy-dev \
+    bison \
+    libboost-all-dev \
+    zlib1g-dev \
+    libbz2-dev \
+    liblzma-dev \
+    llvm-7 \
+    llvm-7-dev \
+    clang-7 \
+    libgrpc-dev \
+    libssl-dev \
+    libboost-dev \
+    libboost-filesystem-dev \
+    libboost-system-dev \
+    libboost-regex-dev \
+    && apt-get clean \
+    && apt-get purge -y \
+    && rm -rf /var/lib/apt/lists*
+
+# avoid --home to prevent issues with singularity
+RUN pip install --no-cache-dir cython pandas>=1.21.0 tiledb==0.11.3
+
+# Build arrow
+ENV ARROW_HOME=/usr/local
+
+RUN cd /tmp \
+    && git clone https://github.com/apache/arrow.git -b apache-arrow-5.0.0 \
+    && cd arrow/cpp \
+    && mkdir build \
+    && cd build \
+    && cmake .. -DCMAKE_INSTALL_PREFIX=/usr/local \
+                -DARROW_FLIGHT=ON \
+                -DARROW_GANDIVA=ON \
+                -DARROW_ORC=ON \
+                -DARROW_WITH_BZ2=ON \
+                -DARROW_WITH_ZLIB=ON \
+                -DARROW_WITH_ZSTD=ON \
+                -DARROW_WITH_LZ4=ON \
+                -DARROW_WITH_SNAPPY=ON \
+                -DARROW_WITH_BROTLI=ON \
+                -DARROW_PARQUET=ON \
+                -DARROW_PYTHON=ON \
+                -DARROW_PLASMA=ON \
+    && make -j$(nproc) \
+    && make install \
+    && cd /tmp/arrow/python \
+    && python3 setup.py install \
+    && cd /tmp \
+    && rm -r arrow
+
+RUN ldconfig
+
+# Build TileDB-VCF
+WORKDIR /tmp
+COPY . TileDB-VCF
+
+WORKDIR /tmp/TileDB-VCF/apis/python
+
+RUN python setup.py install
+
+RUN rm -r /tmp/TileDB-VCF
+
+WORKDIR /data
+ENTRYPOINT ["python3"]

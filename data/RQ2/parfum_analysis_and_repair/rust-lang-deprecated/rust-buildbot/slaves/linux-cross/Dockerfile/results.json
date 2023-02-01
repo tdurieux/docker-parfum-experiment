@@ -1,0 +1,72 @@
+{
+  "startTime": 1674253251939,
+  "endTime": 1674253253359,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 30,
+        "lineEnd": 30,
+        "columnStart": 4,
+        "columnEnd": 30
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 3,
+        "lineEnd": 14,
+        "columnStart": 4,
+        "columnEnd": 18
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 160,
+        "lineEnd": 162,
+        "columnStart": 4,
+        "columnEnd": 35
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 3,
+        "lineEnd": 14,
+        "columnStart": 4,
+        "columnEnd": 18
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 160,
+        "lineEnd": 162,
+        "columnStart": 4,
+        "columnEnd": 35
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 3,
+        "lineEnd": 14,
+        "columnStart": 4,
+        "columnEnd": 18
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 160,
+        "lineEnd": 162,
+        "columnStart": 4,
+        "columnEnd": 35
+      }
+    }
+  ],
+  "repairedDockerfile": "FROM ubuntu:16.04\n\nRUN apt-get update\nRUN apt-get install -y --force-yes --no-install-recommends \\\n        curl make cmake git wget file \\\n        python-dev python-pip python-setuptools stunnel \\\n        zlib1g-dev \\\n        bzip2 xz-utils \\\n        g++ libc6-dev \\\n        bsdtar \\\n        cmake \\\n        rpm2cpio cpio \\\n        g++-5-mips-linux-gnu libc6-dev-mips-cross \\\n        g++-5-mipsel-linux-gnu libc6-dev-mipsel-cross \\\n        pkg-config && rm -rf /var/lib/apt/lists/*;\n\n# Rename compilers to variants without version numbers so the build\n# configuration in the standard library can pick them up.\nRUN                                              \\\n  for f in `ls /usr/bin/mips*-linux-*-*-5`; do   \\\n    ln -vs $f `echo $f | sed -e 's/-5$//'`;      \\\n  done &&                                        \\\n  for f in `ls /usr/bin/*-linux-*-*-4.8`; do     \\\n    ln -vs $f `echo $f | sed -e 's/-4.8$//'`;    \\\n  done &&                                        \\\n  for f in `ls /usr/bin/*-linux-*-*-4.7`; do     \\\n    ln -vs $f `echo $f | sed -e 's/-4.7$//'`;    \\\n  done\n\n# Install buildbot and prep it to run\nRUN pip install --no-cache-dir buildbot-slave\nRUN groupadd -r rustbuild && useradd -m -r -g rustbuild rustbuild\nRUN mkdir /buildslave && chown rustbuild:rustbuild /buildslave\n\n# Install rumprun cross compiler\nWORKDIR /build\nCOPY linux-cross/build_rumprun.sh /build/\nRUN /bin/bash build_rumprun.sh && rm -rf /build\n\n# Build/install crosstool-ng cross compilers\n# NOTE crosstool-ng can't be executed by root so we execute it under the\n# rustbuild user. /x-tools is the crosstool-ng output directory and /build is\n# the crosstool-ng build directory so both must be writable by rustbuild\nWORKDIR /build\nCOPY linux-cross/build_toolchain_root.sh /build/\nRUN /bin/bash build_toolchain_root.sh && \\\n    mkdir /x-tools && \\\n    chown rustbuild:rustbuild /build && \\\n    chown rustbuild:rustbuild /x-tools\nCOPY linux-cross/build_toolchain.sh \\\n    linux-cross/aarch64-linux-gnu.config \\\n    linux-cross/arm-linux-gnueabi.config \\\n    linux-cross/arm-linux-musleabi.config \\\n    linux-cross/arm-linux-gnueabihf.config \\\n    linux-cross/arm-linux-musleabihf.config \\\n    linux-cross/mips-linux-musl.config \\\n    linux-cross/mipsel-linux-musl.config \\\n    linux-cross/armv7-linux-gnueabihf.config \\\n    linux-cross/armv7-linux-musleabihf.config \\\n    linux-cross/powerpc-linux-gnu.config \\\n    linux-cross/powerpc64-linux-gnu.config \\\n    linux-cross/s390x-linux-gnu.config \\\n    /build/\nCOPY linux-cross/patches /build/patches\nUSER rustbuild\n\n# Build three full toolchains for the `arm-unknown-linux-gneuabi`,\n# `arm-unknown-linux-gnueabihf` and `aarch64-unknown-linux-gnu` targets. We\n# build toolchains from scratch to primarily move to an older glibc. Ubuntu\n# does indeed have these toolchains in its repositories (so we could install\n# that package), but they package a relatively newer version of glibc. In order\n# for the binaries we produce to be maximall compatible, we push the glibc\n# version back to 2.14 for arm and 2.17 for aarch64\nRUN /bin/bash build_toolchain.sh arm-linux-gnueabi\nRUN /bin/bash build_toolchain.sh arm-linux-gnueabihf\nRUN /bin/bash build_toolchain.sh aarch64-linux-gnu\n\n# Also build two full toolchains for the `{mips,mipsel}-unknown-linux-musl`\n# targets. Currently these are essentially aliases to run on OpenWRT devices and\n# are different from the x86_64/i686 MUSL targets in that MUSL is dynamically\n# linked instead of statically. As a result, we also need to dynamically link to\n# an unwinder and other various runtime bits.\n#\n# We in theory could *only* build the MUSL library itself and use the standard\n# MIPS toolchains installed above to link against the library, except it gets\n# difficult figuring out how to link, for example, `gcc_s` dynamically. For that\n# reason we just give up and build a whole toolchain which is dedicated to\n# targeting this triple.\nRUN /bin/bash build_toolchain.sh mips-linux-musl\nRUN /bin/bash build_toolchain.sh mipsel-linux-musl\n\n# Also build a toolchain tuned for the armv7 architecture which is going to be\n# used with the armv7-unknown-linux-gnueabihf target.\n#\n# Why are we not using the arm-linux-gnueabihf toolchain with the armv7 target?\n# We actually tried that setup but we hit `ar` errors caused by the different\n# codegen options used by crosstool-ng and the rust build system. crosstool-ng\n# uses `-march=armv6` to build the toolchain and related C(++) libraries, like\n# libstdc++ which gets statically linked to LLVM; on the other hand the rust\n# build system builds its C(++) libraries, like LLVM, with `-march=armv7-a`.\n#\n# By using this armv7 compiler we can ensure the same codegen options are used\n# everywhere and avoid these codegen mismatch issues. Also compiling libstdc++\n# for armv7 instead of for armv6 should make rustc (slightly) faster.\nRUN /bin/bash build_toolchain.sh armv7-linux-gnueabihf\n\n# Build a bunch of toolchains for ARM musl targets\nRUN /bin/bash build_toolchain.sh arm-linux-musleabi\nRUN /bin/bash build_toolchain.sh arm-linux-musleabihf\nRUN /bin/bash build_toolchain.sh armv7-linux-musleabihf\n\n# Also build toolchains for {powerpc{,64},s390x}-unknown-linux-gnu,\n# primarily to support older glibc than found in the Ubuntu root.\nRUN /bin/bash build_toolchain.sh powerpc-linux-gnu\nRUN /bin/bash build_toolchain.sh powerpc64-linux-gnu\nRUN /bin/bash build_toolchain.sh s390x-linux-gnu\n\nUSER root\n\n# Rename all the compilers we just built into /usr/bin and also without\n# `-unknown-` in the name because it appears lots of other compilers in Ubuntu\n# don't have this name in the component by default either.\n# Also rename `-ibm-` out of the s390x compilers.\n# Also the aarch64 compiler is prefixed with `aarch64-unknown-linux-gnueabi`\n# by crosstool-ng, but Ubuntu just prefixes it with `aarch64-linux-gnu` so\n# we'll, additionally, strip the eabi part from its binaries.\nRUN                                                                           \\\n  for f in `ls /x-tools/*-unknown-linux-*/bin/*-unknown-linux-*`; do          \\\n    g=`basename $f`;                                                          \\\n    ln -vs $f /usr/bin/`echo $g | sed -e 's/-unknown//'`;                     \\\n  done && \\\n  for f in `ls /x-tools/*-ibm-linux-*/bin/*-ibm-linux-*`; do                  \\\n    g=`basename $f`;                                                          \\\n    ln -vs $f /usr/bin/`echo $g | sed -e 's/-ibm//'`;                         \\\n  done && \\\n  for f in `ls /usr/bin/aarch64-linux-gnueabi-*`; do                          \\\n    g=`basename $f`;                                                          \\\n    mv -v $f /usr/bin/`echo $g | sed -e 's/eabi//'`;                          \\\n  done\n\nCOPY linux-cross/build_freebsd_toolchain.sh /tmp/\nRUN bash /tmp/build_freebsd_toolchain.sh i686\nRUN bash /tmp/build_freebsd_toolchain.sh x86_64\nCOPY linux-cross/build_dragonfly_toolchain.sh /tmp/\nRUN bash /tmp/build_dragonfly_toolchain.sh\nCOPY linux-cross/build_netbsd_toolchain.sh /tmp/\nRUN bash /tmp/build_netbsd_toolchain.sh\n\n# powerpc64le is built using centos7 glibc, because that has\n# backports that weren't committed upstream until glibc-2.19.\nCOPY linux-cross/build_powerpc64le_linux_toolchain.sh /tmp/\nRUN bash /tmp/build_powerpc64le_linux_toolchain.sh\n\n# Also build libunwind.a for the ARM musl targets\nCOPY linux-cross/build-libunwind.sh \\\n    /build/\nRUN /bin/bash build-libunwind.sh arm-unknown-linux-musleabi\nRUN /bin/bash build-libunwind.sh arm-unknown-linux-musleabihf\nRUN /bin/bash build-libunwind.sh armv7-unknown-linux-musleabihf\n\nRUN apt-get install -y --force-yes --no-install-recommends \\\n        g++-mips64-linux-gnuabi64 \\\n        g++-mips64el-linux-gnuabi64 && rm -rf /var/lib/apt/lists/*;\n\n# Instruct rustbuild to use the armv7-linux-gnueabihf toolchain instead of the\n# default arm-linux-gnueabihf one\nENV AR_armv7_unknown_linux_gnueabihf=armv7-linux-gnueabihf-ar \\\n    CC_armv7_unknown_linux_gnueabihf=armv7-linux-gnueabihf-gcc \\\n    CXX_armv7_unknown_linux_gnueabihf=armv7-linux-gnueabihf-g++ \\\n    AR_arm_unknown_linux_musleabi=arm-linux-musleabi-ar \\\n    CC_arm_unknown_linux_musleabi=arm-linux-musleabi-gcc \\\n    CXX_arm_unknown_linux_musleabi=arm-linux-musleabi-g++ \\\n    AR_arm_unknown_linux_musleabihf=arm-linux-musleabihf-ar \\\n    CC_arm_unknown_linux_musleabihf=arm-linux-musleabihf-gcc \\\n    CXX_arm_unknown_linux_musleabihf=arm-linux-musleabihf-g++ \\\n    AR_armv7_unknown_linux_musleabihf=armv7-linux-musleabihf-ar \\\n    CC_armv7_unknown_linux_musleabihf=armv7-linux-musleabihf-gcc \\\n    CXX_armv7_unknown_linux_musleabihf=armv7-linux-musleabihf-g++ \\\n    AR_x86_64_unknown_freebsd=x86_64-unknown-freebsd10-ar \\\n    CC_x86_64_unknown_freebsd=x86_64-unknown-freebsd10-gcc \\\n    CXX_x86_64_unknown_freebsd=x86_64-unknown-freebsd10-g++ \\\n    AR_i686_unknown_freebsd=i686-unknown-freebsd10-ar \\\n    CC_i686_unknown_freebsd=i686-unknown-freebsd10-gcc \\\n    CXX_i686_unknown_freebsd=i686-unknown-freebsd10-g++ \\\n    AR_x86_64_unknown_netbsd=x86_64-unknown-netbsd-ar \\\n    CC_x86_64_unknown_netbsd=x86_64-unknown-netbsd-gcc \\\n    CXX_x86_64_unknown_netbsd=x86_64-unknown-netbsd-g++ \\\n    AR_x86_64_unknown_dragonfly=x86_64-unknown-dragonfly-ar \\\n    CC_x86_64_unknown_dragonfly=x86_64-unknown-dragonfly-gcc \\\n    CXX_x86_64_unknown_dragonfly=x86_64-unknown-dragonfly-g++ \\\n    AR_mips_unknown_linux_gnu=mips-linux-gnu-ar \\\n    CC_mips_unknown_linux_gnu=mips-linux-gnu-gcc-5 \\\n    CXX_mips_unknown_linux_gnu=mips-linux-gnu-g++-5 \\\n    AR_mips_unknown_linux_musl=mips-linux-musl-ar \\\n    CC_mips_unknown_linux_musl=mips-linux-musl-gcc \\\n    CXX_mips_unknown_linux_musl=mips-linux-musl-g++ \\\n    AR_mipsel_unknown_linux_gnu=mipsel-linux-gnu-ar \\\n    CC_mipsel_unknown_linux_gnu=mipsel-linux-gnu-gcc-5 \\\n    CXX_mipsel_unknown_linux_gnu=mipsel-linux-gnu-g++-5 \\\n    AR_mipsel_unknown_linux_musl=mipsel-linux-musl-ar \\\n    CC_mipsel_unknown_linux_musl=mipsel-linux-musl-gcc \\\n    CXX_mipsel_unknown_linux_musl=mipsel-linux-musl-g++ \\\n    AR_powerpc_unknown_linux_gnu=powerpc-linux-gnu-ar \\\n    CC_powerpc_unknown_linux_gnu=powerpc-linux-gnu-gcc \\\n    CXX_powerpc_unknown_linux_gnu=powerpc-linux-gnu-g++ \\\n    AR_powerpc64_unknown_linux_gnu=powerpc64-linux-gnu-ar \\\n    CC_powerpc64_unknown_linux_gnu=powerpc64-linux-gnu-gcc \\\n    CXX_powerpc64_unknown_linux_gnu=powerpc64-linux-gnu-g++ \\\n    AR_powerpc64le_unknown_linux_gnu=powerpc64le-linux-gnu-ar \\\n    CC_powerpc64le_unknown_linux_gnu=powerpc64le-linux-gnu-gcc \\\n    CXX_powerpc64le_unknown_linux_gnu=powerpc64le-linux-gnu-g++ \\\n    AR_s390x_unknown_linux_gnu=s390x-linux-gnu-ar \\\n    CC_s390x_unknown_linux_gnu=s390x-linux-gnu-gcc \\\n    CXX_s390x_unknown_linux_gnu=s390x-linux-gnu-g++ \\\n    AR_mips64_unknown_linux_gnuabi64=mips64-linux-gnuabi64-ar \\\n    CC_mips64_unknown_linux_gnuabi64=mips64-linux-gnuabi64-gcc \\\n    CXX_mips64_unknown_linux_gnuabi64=mips64-linux-gnuabi64-g++ \\\n    AR_mips64el_unknown_linux_gnuabi64=mips64el-linux-gnuabi64-ar \\\n    CC_mips64el_unknown_linux_gnuabi64=mips64el-linux-gnuabi64-gcc \\\n    CXX_mips64el_unknown_linux_gnuabi64=mips64el-linux-gnuabi64-g++\n\n# When running this container, startup buildbot\nWORKDIR /buildslave\nUSER rustbuild\nCOPY start-docker-slave.sh start-docker-slave.sh\nENTRYPOINT [\"sh\", \"start-docker-slave.sh\"]\n"
+}

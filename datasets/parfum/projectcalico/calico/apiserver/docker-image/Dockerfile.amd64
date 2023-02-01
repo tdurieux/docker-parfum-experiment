@@ -1,0 +1,31 @@
+ARG UBI_IMAGE
+
+FROM ${UBI_IMAGE} as ubi
+
+RUN microdnf update
+
+# At runtime, apiserver generate certificates in /code directory
+# hence, provide RW permission for user 1001
+RUN mkdir /code
+RUN rm -rf /tmp
+RUN mkdir /tmp
+
+FROM scratch
+COPY  --from=ubi /code /code
+COPY  --from=ubi /tmp /tmp
+
+# Copy the shared linux libs requred by apiserver identified by ldd bin/apiserver-ARCH`
+COPY --from=ubi /lib64/ld-linux-x86-64.so.2 /lib64/ld-linux-x86-64.so.2
+COPY --from=ubi /lib64/libpthread.so.0 /lib64/libpthread.so.0
+COPY --from=ubi /lib64/libc.so.6 /lib64/libc.so.6
+
+# Copy hostname configuration files from UBI so glibc hostname lookups work.
+COPY --from=ubi /etc/host.conf /etc/host.conf
+COPY --from=ubi /etc/nsswitch.conf /etc/nsswitch.conf
+
+ADD  bin/apiserver-amd64 /code/apiserver
+ADD  bin/filecheck-amd64 /code/filecheck
+
+WORKDIR /code
+
+ENTRYPOINT ["./apiserver"]

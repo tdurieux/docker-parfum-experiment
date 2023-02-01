@@ -1,0 +1,23 @@
+FROM node:latest
+
+ARG mongo_addr=localhost
+ARG mongo_port=27017
+
+WORKDIR /zoia
+
+COPY ["package.json", "package-lock.json*", "package-core.json*", "./"]
+RUN npm i && npm cache clean --force;
+
+COPY . .
+
+RUN npm run config
+RUN npm run build-dev
+RUN npm run cli -- --patch MONGO_URL=mongodb://$mongo_addr:$mongo_port
+RUN npm run cli -- --demo on
+RUN npm run cli -- --acl admin --permissions r
+RUN npm run cli -- --patch WEBSERVER_IP=0.0.0.0
+
+RUN apt-get update && apt-get upgrade -y
+RUN npm install pm2 -g && npm cache clean --force;
+
+CMD [ "pm2-runtime", "npm", "--", "start" ]

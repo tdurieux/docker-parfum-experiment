@@ -1,0 +1,35 @@
+{
+  "startTime": 1674221155166,
+  "endTime": 1674221156340,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 49,
+        "lineEnd": 49,
+        "columnStart": 5,
+        "columnEnd": 143
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 56,
+        "lineEnd": 56,
+        "columnStart": 5,
+        "columnEnd": 123
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 60,
+        "lineEnd": 60,
+        "columnStart": 5,
+        "columnEnd": 50
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# This Dockerfile uses multi-stage build to customize DEV and PROD images:\n# https://docs.docker.com/develop/develop-images/multistage-build/\n\nFROM python:3.9.13-slim-buster AS development_build\n\nLABEL maintainer=\"mail@sobolevn.me\"\nLABEL vendor=\"wemake.services\"\n\nARG DJANGO_ENV\n\n# Needed for fixing permissions of files created by Docker\nARG UID=1000\nARG GID=1000\n\nENV DJANGO_ENV=${DJANGO_ENV} \\\n  # python:\n  PYTHONFAULTHANDLER=1 \\\n  PYTHONUNBUFFERED=1 \\\n  PYTHONHASHSEED=random \\\n  PYTHONDONTWRITEBYTECODE=1 \\\n  # pip:\n  PIP_NO_CACHE_DIR=1 \\\n  PIP_DISABLE_PIP_VERSION_CHECK=1 \\\n  PIP_DEFAULT_TIMEOUT=100 \\\n  # dockerize:\n  DOCKERIZE_VERSION=v0.6.1 \\\n  # tini:\n  TINI_VERSION=v0.19.0 \\\n  # poetry:\n  POETRY_VERSION=1.1.13 \\\n  POETRY_NO_INTERACTION=1 \\\n  POETRY_VIRTUALENVS_CREATE=false \\\n  POETRY_CACHE_DIR='/var/cache/pypoetry' \\\n  POETRY_HOME='/usr/local'\n\nSHELL [\"/bin/bash\", \"-eo\", \"pipefail\", \"-c\"]\n\n# System deps, we don't use exact versions because it is hard to update them, pin when needed:\n# hadolint ignore=DL3008\nRUN apt-get update && apt-get upgrade -y \\\n  && apt-get install --no-install-recommends -y \\\n    bash \\\n    build-essential \\\n    curl \\\n    gettext \\\n    git \\\n    libpq-dev \\\n  # Installing `dockerize` utility:\n  # https://github.com/jwilder/dockerize \\\n  && curl -f -sSLO \"https://github.com/jwilder/dockerize/releases/download/${DOCKERIZE_VERSION}/dockerize-linux-amd64-${DOCKERIZE_VERSION}.tar.gz\" \\\n  && tar -C /usr/local/bin -xzvf \"dockerize-linux-amd64-${DOCKERIZE_VERSION}.tar.gz\" \\\n  && rm \"dockerize-linux-amd64-${DOCKERIZE_VERSION}.tar.gz\" && dockerize --version \\\n  # Installing `tini` utility:\n  # https://github.com/krallin/tini\n  # Get architecture to download appropriate tini release: See https://github.com/wemake-services/wemake-django-template/issues/1725\n  && dpkgArch=\"$(dpkg --print-architecture | awk -F- '{ print $NF }')\" \\\n  && curl -f -o /usr/local/bin/tini -sSLO \"https://github.com/krallin/tini/releases/download/${TINI_VERSION}/tini-${dpkgArch}\" \\\n  && chmod +x /usr/local/bin/tini && tini --version \\\n  # Installing `poetry` package manager:\n  # https://github.com/python-poetry/poetry\n  && curl -f -sSL 'https://install.python-poetry.org' | python - \\\n  && poetry --version \\\n  # Cleaning cache:\n  && apt-get purge -y --auto-remove -o APT::AutoRemove::RecommendsImportant=false \\\n  && apt-get clean -y && rm -rf /var/lib/apt/lists/*\n\nWORKDIR /code\n\nRUN groupadd -g \"${GID}\" -r web \\\n  && useradd -d /code -g web -l -r -u \"${UID}\" web \\\n  && chown web:web -R /code \\\n  && mkdir -p /var/www/django/static /var/www/django/media \\\n  && chown web:web /var/www/django/static /var/www/django/media\n\n# Copy only requirements, to cache them in docker layer\nCOPY --chown=web:web ./poetry.lock ./pyproject.toml /code/\n\n# Project initialization:\n# hadolint ignore=SC2046\nRUN echo \"$DJANGO_ENV\" && poetry version \\\n  # Install deps:\n  && poetry run pip install -U pip \\\n  && poetry install \\\n    $(if [ \"$DJANGO_ENV\" = 'production' ]; then echo '--no-dev'; fi) \\\n    --no-interaction --no-ansi \\\n  # Cleaning poetry installation's cache for production:\n  && if [ \"$DJANGO_ENV\" = 'production' ]; then rm -rf \"$POETRY_CACHE_DIR\"; fi\n\n# This is a special case. We need to run this script as an entry point:\nCOPY ./docker/django/entrypoint.sh /docker-entrypoint.sh\n\n# Setting up proper permissions:\nRUN chmod +x '/docker-entrypoint.sh'\n\n# Running as non-root user:\nUSER web\n\n# We customize how our app is loaded with the custom entrypoint:\nENTRYPOINT [\"tini\", \"--\", \"/docker-entrypoint.sh\"]\n\n\n# The following stage is only for production:\n# https://wemake-django-template.readthedocs.io/en/latest/pages/template/production.html\nFROM development_build AS production_build\nCOPY --chown=web:web . /code\n"
+}

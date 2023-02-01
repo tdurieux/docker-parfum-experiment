@@ -1,0 +1,54 @@
+{
+  "startTime": 1674214945131,
+  "endTime": 1674214945991,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseY",
+      "position": {
+        "lineStart": 46,
+        "lineEnd": 46,
+        "columnStart": 4,
+        "columnEnd": 23
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 46,
+        "lineEnd": 46,
+        "columnStart": 4,
+        "columnEnd": 23
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 46,
+        "lineEnd": 46,
+        "columnStart": 4,
+        "columnEnd": 23
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 46,
+        "lineEnd": 46,
+        "columnStart": 4,
+        "columnEnd": 23
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 46,
+        "lineEnd": 46,
+        "columnStart": 4,
+        "columnEnd": 50
+      }
+    }
+  ],
+  "repairedDockerfile": "# This is the same as CI-Env but it pulls from an old\n# environment-CI-Linux.yml file instead of letting conda try to\n# re-resolve the environment.  This is really useful for when that\n# process is broken...\n\n# Does everything through running tests...\n#\n# Stage 1 -- setup base CI environment\n#\nFROM condaforge/mambaforge:4.12.0-0 AS ww_env_base_ci\nLABEL Description=\"Base env for CI of Watershed Workflow\"\n\nARG env_name=watershed_workflow_CI\nENV CONDA_BIN=mamba\n\nWORKDIR /ww/tmp\nCOPY environments/create_envs.py /ww/tmp/create_envs.py\nRUN mkdir environments\nCOPY environments/environment-CI-Linux.yml /ww/tmp/environments/environment-CI-Linux.yml\nRUN ${CONDA_BIN} env create -f /ww/tmp/environments/environment-CI-Linux.yml\n\nRUN --mount=type=cache,target=/opt/conda/pkgs \\\n    /opt/conda/bin/python create_envs.py --manager=${CONDA_BIN} --without-ww-env \\\n        --with-tools-env --tools-env-name=watershed_workflow_tools Linux\n\n#\n# Stage 2 -- add in the pip\n#\nFROM ww_env_base_ci AS ww_env_pip_ci\n\nWORKDIR /ww/tmp\nCOPY requirements.txt /ww/tmp/requirements.txt\nRUN ${CONDA_BIN} run -n ${env_name} python -m pip install -r requirements.txt\n\n\n#\n# Stage 3 -- add in Exodus\n#\nFROM ww_env_pip_ci AS ww_env_exodus_ci\n\nENV PATH=/opt/conda/envs/watershed_workflow_tools/bin:${PATH}\nENV SEACAS_DIR=\"/opt/conda/envs/${env_name}\"\nENV CONDA_PREFIX=\"/opt/conda/envs/${env_name}\"\n\n# get the source\nWORKDIR /opt/conda/envs/${env_name}/src\nRUN apt-get install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/*;\nRUN git clone -b v2021-10-11 --depth=1 https://github.com/gsjaardema/seacas/ seacas\n\n# configure\nWORKDIR /ww/tmp\nCOPY docker/configure-seacas.sh /ww/tmp/configure-seacas.sh\nRUN chmod +x /ww/tmp/configure-seacas.sh\nWORKDIR /ww/tmp/seacas-build\nRUN ${CONDA_BIN} run -n watershed_workflow_tools ../configure-seacas.sh\nRUN make -j install\n\n# exodus installs its wrappers in an invalid place for python...\n# -- get and save the python version\nRUN cp /opt/conda/envs/${env_name}/lib/exodus3.py \\\n       /opt/conda/envs/${env_name}/lib/python3.10/site-packages/\n\n#\n# Stage 4 -- move the whole thing to make simpler containers\n#\nFROM ww_env_exodus_ci AS ww_env_ci_moved\n\n# add conda-pack to the base env\nRUN conda install -n base -c conda-forge --yes --freeze-installed conda-pack\nRUN conda-pack -n ${env_name} -o /tmp/env.tar && \\\n    mkdir /ww_env && cd /ww_env && tar xf /tmp/env.tar && \\\n    rm /tmp/env.tar\nRUN /ww_env/bin/conda-unpack\n\n\n#\n# Stage 5 -- copy over just what we need for CI\n#\nFROM ubuntu:20.04 AS ww_env_ci\nCOPY --from=ww_env_ci_moved /ww_env /ww_env\nENV PATH=\"/ww_env/bin:${PATH}\"\n\n# #\n# # Stage 6 -- run tests!\n# #\n# # Note, this is in CI.Dockerfile as well\n# #\n# FROM ww_env_ci AS ww_ci\n\n# WORKDIR /ww\n\n# # copy over source code\n# COPY . /ww\n# RUN python -m pip install -e .\n\n# # create a watershed_workflowrc that will be picked up\n# RUN cp watershed_workflowrc .watershed_workflowrc\n\n# # run the tests\n# RUN python -m pytest watershed_workflow/test/\n\n\n\n\n"
+}

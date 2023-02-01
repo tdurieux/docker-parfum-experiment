@@ -1,0 +1,1 @@
+# to build this, use the 'make packagemanifests-build' command

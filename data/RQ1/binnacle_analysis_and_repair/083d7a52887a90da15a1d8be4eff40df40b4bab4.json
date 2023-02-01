@@ -1,0 +1,80 @@
+{
+  "startTime": 1674253208526,
+  "endTime": 1674253208808,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 21,
+        "lineEnd": 21,
+        "columnStart": 4,
+        "columnEnd": 100
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 77,
+        "lineEnd": 77,
+        "columnStart": 7,
+        "columnEnd": 50
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 2,
+        "lineEnd": 5,
+        "columnStart": 22,
+        "columnEnd": 11
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 42,
+        "lineEnd": 46,
+        "columnStart": 22,
+        "columnEnd": 8
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 70,
+        "lineEnd": 75,
+        "columnStart": 22,
+        "columnEnd": 14
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 99,
+        "lineEnd": 101,
+        "columnStart": 22,
+        "columnEnd": 9
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 110,
+        "lineEnd": 110,
+        "columnStart": 22,
+        "columnEnd": 44
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 99,
+        "lineEnd": 101,
+        "columnStart": 22,
+        "columnEnd": 9
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM ubuntu:xenial as base\n\nRUN apt-get update && apt-get -y --no-install-recommends install \\\n    sudo \\\n    curl \\\n    locales \\\n    && rm -rf /var/lib/apt/lists/*\nRUN locale-gen en_US.UTF-8\nENV LANG=en_US.UTF-8 \\\n    LANGUAGE=en_US:en \\\n    LC_ALL=en_US.UTF-8\n\n# Add fixuid to change permissions for bind-mounts. Set uid to same as host with -u <uid>:<guid>\nRUN addgroup --gid 1000 docker && \\\n    adduser --uid 1000 --ingroup docker --home /home/docker --shell /bin/sh --disabled-password --gecos \"\" docker && \\\n    usermod -aG sudo docker && \\\n    sed -i.bkp -e \\\n      's/%sudo\\s\\+ALL=(ALL\\(:ALL\\)\\?)\\s\\+ALL/%sudo ALL=NOPASSWD:ALL/g' \\\n      /etc/sudoers\nRUN USER=docker && \\\n    GROUP=docker && \\\n    curl -f -SsL https://github.com/boxboat/fixuid/releases/download/v0.3/fixuid-0.3-linux-amd64.tar.gz | tar -C /usr/local/bin -xzf - && \\\n    chown root:root /usr/local/bin/fixuid && \\\n    chmod 4755 /usr/local/bin/fixuid && \\\n    mkdir -p /etc/fixuid && \\\n    printf \"user: $USER\\ngroup: $GROUP\\npaths:\\n  - /service\\n\" > /etc/fixuid/config.yml\n\nRUN echo \"LANG=C.UTF-8\" > /etc/default/locale\n\n# TAG can be specified when building with --build-arg TAG=..., this is redeclared in the source-build stage\nARG BRANCH=dev\nARG REPO=hioa-cs\nENV BRANCH=$BRANCH\nENV REPO=$REPO\n\nLABEL dockerfile.version=1 \\\n      includeos.version=$BRANCH\nWORKDIR /service\n\n#########################\nFROM base as source-build\n\nRUN apt-get update && apt-get -y --no-install-recommends install \\\n    git \\\n    lsb-release \\\n    net-tools \\\n    wget \\\n    && rm -rf /var/lib/apt/lists/*\n\n# Triggers new build if there are changes to head\n#ADD https://api.github.com/repos/$REPO/IncludeOS/git/refs/heads/$BRANCH version.json\n\nRUN echo \"cloning $BRANCH\"\n\nRUN cd ~ && pwd && \\\n  git clone https://github.com/$REPO/IncludeOS.git && \\\n  cd IncludeOS && \\\n  git checkout $BRANCH && \\\n  git submodule update --init --recursive && \\\n  git fetch --tags\n\nRUN cd ~ && pwd && \\\n  cd IncludeOS && \\\n  ./install.sh -n\n\nRUN git -C /root/IncludeOS describe --tags > /ios_version.txt\n\n###########################\nFROM base as build\n\nRUN apt-get update && apt-get -y --no-install-recommends install \\\n    git \\\n    clang-5.0 \\\n    cmake \\\n    nasm \\\n    python-pip \\\n    && rm -rf /var/lib/apt/lists/* \\\n    && pip install --no-cache-dir pystache antlr4-python2-runtime && \\\n    apt-get remove -y python-pip && \\\n    apt autoremove -y\n\nCOPY --from=source-build  /usr/local/includeos /usr/local/includeos/\nCOPY --from=source-build  /usr/local/bin/boot /usr/local/bin/boot\nCOPY --from=source-build  /root/IncludeOS/etc/install_dependencies_linux.sh /\nCOPY --from=source-build  /root/IncludeOS/etc/use_clang_version.sh /\nCOPY --from=source-build  /root/IncludeOS/lib/uplink/starbase /root/IncludeOS/lib/uplink/starbase/\nCOPY --from=source-build  /ios_version.txt /\nCOPY  entrypoint.sh /\nENTRYPOINT [\"/entrypoint.sh\"]\n\nCMD mkdir -p build && \\\n  cd build && \\\n  cp $(find /usr/local/includeos -name chainloader) /service/build/chainloader && \\\n  cmake .. && \\\n  make\n\n#############################\nFROM base as grubify\n\nRUN apt-get update && apt-get -y --no-install-recommends install \\\n  dosfstools \\\n  grub-pc && rm -rf /var/lib/apt/lists/*;\n\nCOPY --from=source-build /usr/local/includeos/scripts/grubify.sh /home/ubuntu/IncludeOS_install/includeos/scripts/grubify.sh\n\nENTRYPOINT [\"fixuid\", \"/home/ubuntu/IncludeOS_install/includeos/scripts/grubify.sh\"]\n\n###############################\nFROM build as webserver\n\nRUN apt-get update && apt-get -y --no-install-recommends install git \\\n    && rm -rf /var/lib/apt/lists/*\n\nCOPY --from=source-build /root/IncludeOS/examples/acorn /acorn\n\nWORKDIR /acorn\n\nCOPY entrypoint.sh /\nENTRYPOINT [\"/entrypoint.sh\"]\nCMD mkdir build && cd build && \\\n  rm -rf /acorn/disk1/public/* && \\\n  cp -a -v /public/. /acorn/disk1/public && \\\n  cmake .. && \\\n  make && \\\n  cp acorn /public\n"
+}

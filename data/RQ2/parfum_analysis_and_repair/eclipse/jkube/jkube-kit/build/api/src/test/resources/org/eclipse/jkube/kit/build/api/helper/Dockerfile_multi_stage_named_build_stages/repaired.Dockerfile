@@ -1,0 +1,1 @@
+# Dockerfile with multi-stage builds with named stages

@@ -1,0 +1,33 @@
+FROM {{ "sury-php" | image_tag }}
+
+# zip is needed for composer to install things from dist
+# others are libraries/MediaWiki related
+{% set packages|replace('\n', ' ') -%}
+php8.0-ast
+php8.0-cli
+php8.0-zip
+php8.0-bcmath
+php8.0-curl
+php8.0-dba
+php8.0-gd
+php8.0-gmp
+php8.0-intl
+php8.0-mbstring
+php8.0-redis
+php8.0-sqlite3
+php8.0-xdebug
+php8.0-xml
+php8.0-yaml
+zip
+unzip
+{%- endset -%}
+
+RUN {{ packages | apt_install }}
+
+# Disable xdebug by default due to its performance impact
+RUN phpdismod xdebug
+
+USER nobody
+
+ENTRYPOINT ["php"]
+CMD ["--help"]

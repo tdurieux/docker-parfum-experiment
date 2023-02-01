@@ -1,0 +1,44 @@
+{
+  "startTime": 1674255515342,
+  "endTime": 1674255516255,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 21,
+        "lineEnd": 21,
+        "columnStart": 4,
+        "columnEnd": 61
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 69,
+        "lineEnd": 69,
+        "columnStart": 4,
+        "columnEnd": 58
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 70,
+        "lineEnd": 70,
+        "columnStart": 4,
+        "columnEnd": 52
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 16,
+        "lineEnd": 16,
+        "columnStart": 4,
+        "columnEnd": 60
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Copyright 2018-present Open Networking Foundation\n# SPDX-License-Identifier: Apache-2.0\n\n# This Dockerfile expects the stratum root as its scope, hence you should build\n# from root e.g.:\n# docker build -t <some tag> -f tools/mininet/Dockerfile .\n\n# We use a 2-stage build. Build all tools first, then copy only the strict necessary\n# to a new image with runtime dependencies.\nFROM stratumproject/build:build as builder\n\nENV BUILD_DEPS \\\n    python-setuptools \\\n    python-pip \\\n    help2man\nRUN apt-get update && \\\n    apt-get install -y --no-install-recommends ${BUILD_DEPS} && rm -rf /var/lib/apt/lists/*;\n\n# Build Mininet\nRUN mkdir /tmp/mininet\nWORKDIR /tmp/mininet\nRUN curl -f -L https://github.com/mininet/mininet/tarball/master | \\\n    tar xz --strip-components 1\n# Install in a special directory that we will copy to the runtime image.\nRUN mkdir -p /output\nRUN PREFIX=/output make install-mnexec install-manpages\nRUN python setup.py install --root /output\n# Install `m` utility so user can attach to a mininet host directly\nRUN cp util/m /output/bin/m && sed -i 's#sudo##g' /output/bin/m\n\n# Copy Stratum souce to build additionally needed targets.\nCOPY . /tmp/stratum\nWORKDIR /tmp/stratum\n\n# As well as the P4Runtime Python bindings installed by PI. This is not needed\n# to run mininet, but it's useful to execute Python scripts acting as a\n# P4Runtime client, e.g. control plane apps or PTF tests.\nRUN bazel build @com_github_p4lang_p4runtime//:p4runtime_proto \\\n    @com_google_protobuf//:protobuf_python \\\n    @com_google_googleapis//google/rpc:status_cc_proto \\\n    @com_google_googleapis//google/rpc:status_proto \\\n    @com_google_googleapis//google/rpc:error_details_cc_proto \\\n    @com_google_googleapis//google/rpc:error_details_proto \\\n    @com_google_googleapis//google/rpc:code_cc_proto \\\n    @com_google_googleapis//google/rpc:code_proto \\\n    @com_github_grpc_grpc//src/compiler:grpc_python_plugin\nENV PYTHON_PACKAGE_BASE /output/usr/local/lib/python2.7/dist-packages\nRUN ./bazel-out/host/bin/external/com_google_protobuf/protoc \\\n    ./bazel-stratum/external/com_github_p4lang_p4runtime/p4/v1/p4data.proto \\\n    ./bazel-stratum/external/com_github_p4lang_p4runtime/p4/v1/p4runtime.proto \\\n    ./bazel-stratum/external/com_github_p4lang_p4runtime/p4/config/v1/p4info.proto \\\n    ./bazel-stratum/external/com_github_p4lang_p4runtime/p4/config/v1/p4types.proto \\\n    ./bazel-stratum/external/com_google_googleapis/google/rpc/status.proto \\\n    ./bazel-stratum/external/com_google_googleapis/google/rpc/code.proto \\\n    -I./bazel-stratum/external/com_google_googleapis -I./bazel-stratum/external/com_github_p4lang_p4runtime \\\n    -I./bazel-stratum/external/com_google_protobuf/src \\\n    --python_out $PYTHON_PACKAGE_BASE --grpc_out $PYTHON_PACKAGE_BASE  \\\n    --plugin=protoc-gen-grpc=./bazel-bin/external/com_github_grpc_grpc/src/compiler/grpc_python_plugin\nRUN touch $PYTHON_PACKAGE_BASE/p4/__init__.py && \\\n    touch $PYTHON_PACKAGE_BASE/p4/v1/__init__.py && \\\n    touch $PYTHON_PACKAGE_BASE/p4/config/__init__.py && \\\n    touch $PYTHON_PACKAGE_BASE/p4/config/v1/__init__.py && \\\n    touch $PYTHON_PACKAGE_BASE/google/__init__.py && \\\n    touch $PYTHON_PACKAGE_BASE/google/rpc/__init__.py\n\n# Install a version of the protobuf and grpc python bindings that is\n# compatible to that used to generate the P4Runtime ones.\nARG PROTOBUF_VER=3.14.0\nARG GRPC_VER=1.33.2\nRUN pip install --no-cache-dir --root /output \"protobuf<=${PROTOBUF_VER}\"\nRUN pip install --no-cache-dir --root /output \"grpcio<=${GRPC_VER}\"\n\n# Final stage, runtime.\nFROM bitnami/minideb:stretch as runtime\n\nLABEL maintainer=\"Stratum dev <stratum-dev@lists.stratumproject.org>\"\nLABEL description=\"Docker-based Mininet image that uses stratum_bmv2 as the default switch\"\n\n# Mininet and BMv2 simple_switch runtime dependencies\nENV RUNTIME_DEPS \\\n    iproute2 \\\n    iputils-ping \\\n    net-tools \\\n    ethtool \\\n    socat \\\n    psmisc \\\n    procps \\\n    iperf \\\n    arping \\\n    telnet \\\n    python-pexpect \\\n    tcpdump \\\n    screen\nRUN install_packages $RUNTIME_DEPS\n\nCOPY --from=builder /output /\n\nADD ./stratum_bmv2_deb.deb /\nRUN install_packages /stratum_bmv2_deb.deb\nRUN ldconfig\n\nWORKDIR /root\nCOPY stratum/hal/bin/bmv2/dummy.json ./dummy.json\nCOPY tools/mininet/stratum.py ./stratum.py\nENV PYTHONPATH $PYTHONPATH:/root\n\n# We need to expose one port per stratum_bmv2 instance, hence the number of\n# exposed ports limit the number of switches that can be controlled from an\n# external P4Runtime controller.\nEXPOSE 50001-50100\n\nENTRYPOINT [\"mn\", \"--custom\", \"/root/stratum.py\", \"--switch\", \"stratum-bmv2\", \"--host\", \"no-offload-host\", \"--controller\", \"none\"]\n"
+}

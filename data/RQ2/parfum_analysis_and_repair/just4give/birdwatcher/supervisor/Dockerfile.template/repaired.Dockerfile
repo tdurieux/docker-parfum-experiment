@@ -1,0 +1,13 @@
+FROM balenalib/%%BALENA_ARCH%%-python as builder
+
+RUN install_packages dnsmasq wireless-tools git rsync binutils busybox-static jq
+
+
+WORKDIR /usr/src/app
+
+
+COPY start.sh ./
+
+
+
+CMD ["/bin/busybox","sh", "start.sh"]

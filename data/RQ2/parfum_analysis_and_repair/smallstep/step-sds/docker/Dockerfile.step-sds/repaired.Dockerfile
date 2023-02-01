@@ -1,0 +1,8 @@
+FROM smallstep/step-cli:0.20.0
+
+ARG BINPATH="bin/step-sds"
+COPY $BINPATH "/usr/local/bin/step-sds"
+
+STOPSIGNAL SIGTERM
+
+CMD /bin/bash

@@ -1,0 +1,89 @@
+{
+  "startTime": 1674234703088,
+  "endTime": 1674234703265,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 24,
+        "lineEnd": 24,
+        "columnStart": 52,
+        "columnEnd": 83
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 42,
+        "lineEnd": 42,
+        "columnStart": 7,
+        "columnEnd": 39
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 55,
+        "lineEnd": 55,
+        "columnStart": 7,
+        "columnEnd": 25
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 6,
+        "lineEnd": 6,
+        "columnStart": 4,
+        "columnEnd": 35
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 7,
+        "lineEnd": 7,
+        "columnStart": 4,
+        "columnEnd": 36
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 8,
+        "lineEnd": 8,
+        "columnStart": 4,
+        "columnEnd": 25
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 10,
+        "lineEnd": 10,
+        "columnStart": 4,
+        "columnEnd": 28
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 12,
+        "lineEnd": 12,
+        "columnStart": 4,
+        "columnEnd": 26
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 56,
+        "lineEnd": 56,
+        "columnStart": 7,
+        "columnEnd": 42
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM alpine:3.7\n\nARG django_secret_key\nENV DJANGO_SECRET_KEY $django_secret_key\n\n# Add requirements for python and pip\nRUN apk add --no-cache --update python3 pytest\nRUN apk add --no-cache --update postgresql-libs\nRUN apk add --no-cache --update curl\n# Add envsubts\nRUN apk add --no-cache --update gettext\n# Add nginx\nRUN apk add --no-cache --update nginx\nRUN mkdir -p /run/nginx\n\nRUN mkdir -p /opt/code\nWORKDIR /opt/code\n\nADD requirements.txt /opt/code\n\n# Try to use local wheels. Even if not present, it will proceed\nADD ./vendor /opt/vendor\nADD ./deps /opt/deps\n# Only install them if there's any\nRUN if ls /opt/vendor/*.whl 1> /dev/null 2>&1; then \\\n pip3 install --no-cache-dir /opt/vendor/*.whl; fi\n\n# Add uwsgi and nginx configuration\nRUN mkdir -p /opt/server\nRUN mkdir -p /opt/static\n\n\n# Add fix for stack for Python3.6\nADD ./docker/server/stack-fix.c /opt/server\n\n# Some Docker-fu. In one step install the compile packages, install the\n# dependencies and then remove them. That skims the image size quite\n# sensibly.\nRUN apk add --no-cache --virtual .build-deps \\\n  python3-dev build-base linux-headers gcc postgresql-dev \\\n    # Hack to fix the problem with runserver\n    && gcc  -shared -fPIC /opt/server/stack-fix.c -o /opt/server/stack-fix.so \\\n    # Installing python requirements \\\n    && pip3 install --no-cache-dir -r requirements.txt \\\n    && find /usr/local \\\n        \\( -type d -a -name test -o -name tests \\) \\\n        -o \\( -type f -a -name '*.pyc' -o -name '*.pyo' \\) \\\n        -exec rm -rf '{}' + \\\n    && runDeps=\"$( \\\n        scanelf --needed --nobanner --recursive /usr/local \\\n                | awk '{ gsub(/,/, \"\\nso:\", $2); print \"so:\" $2 }' \\\n                | sort -u \\\n                | xargs -r apk info --installed \\\n                | sort -u \\\n    )\" \\\n    # Install uwsgi, from python\n    && pip3 install --no-cache-dir uwsgi \\\n    && apk add --no-cache --virtual .rundeps $runDeps \\\n    && apk del .build-deps\n\n\nADD ./docker/server/uwsgi.ini.template /opt/server\nADD ./docker/server/nginx.conf.template /opt/server\nADD ./docker/server/start_server.sh /opt/server\n\n# Add code\nADD ./src/ /opt/code/\n\n# Generate static files\nRUN python3 manage.py collectstatic\n\nEXPOSE 80\nCMD [\"/bin/sh\", \"/opt/server/start_server.sh\"]\nHEALTHCHECK CMD curl --fail http://localhost/healthcheck/\n"
+}

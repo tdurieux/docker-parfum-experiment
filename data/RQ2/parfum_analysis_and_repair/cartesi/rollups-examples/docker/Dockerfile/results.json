@@ -1,0 +1,53 @@
+{
+  "startTime": 1674251208070,
+  "endTime": 1674251208802,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 62,
+        "lineEnd": 62,
+        "columnStart": 4,
+        "columnEnd": 25
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 34,
+        "lineEnd": 34,
+        "columnStart": 4,
+        "columnEnd": 45
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 29,
+        "lineEnd": 29,
+        "columnStart": 4,
+        "columnEnd": 44
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 10,
+        "lineEnd": 19,
+        "columnStart": 7,
+        "columnEnd": 14
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 10,
+        "lineEnd": 19,
+        "columnStart": 7,
+        "columnEnd": 14
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# layers for caching and versioning\nFROM cartesi/toolchain:0.10.0 as toolchain\nFROM cartesi/rootfs:0.12.0 as rootfs\nFROM cartesi/server-manager:0.3.0 as server-manager\n\nFROM rootfs as toolchain-python\n\nENV DEBIAN_FRONTEND=noninteractive\nRUN apt update \\\n    && apt install --no-install-recommends -y \\\n    libncurses-dev \\\n    libgdbm-dev \\\n    libz-dev \\\n    tk-dev \\\n    libsqlite3-dev \\\n    libreadline-dev \\\n    liblzma-dev \\\n    libffi-dev \\\n    libssl-dev && rm -rf /var/lib/apt/lists/*;\n\nENV PYTHON_VERSION=3.10\nENV PYTHON_VERSION_FULL=3.10.1\nENV BUILD_PYTHON_PREFIX=/opt/build-python\nENV HOST_PYTHON_PREFIX=/mnt/python-dapp\n\n# Download Python source\nWORKDIR /tmp\nRUN wget https://www.python.org/ftp/python/$PYTHON_VERSION_FULL/Python-$PYTHON_VERSION_FULL.tgz\nRUN tar zxfv Python-$PYTHON_VERSION_FULL.tgz && rm Python-$PYTHON_VERSION_FULL.tgz\n\n# Build build-python from source\nRUN cp -r Python-$PYTHON_VERSION_FULL build-python\nWORKDIR /tmp/build-python\nRUN ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" --prefix=$BUILD_PYTHON_PREFIX\nRUN make -j$(nproc)\nRUN make install\n\nENV PATH=$BUILD_PYTHON_PREFIX/bin:$PATH\n\n# Build host-python\nWORKDIR /tmp\nRUN cp -r Python-$PYTHON_VERSION_FULL host-python\nWORKDIR /tmp/host-python\nRUN CPPFLAGS=\"-I/opt/riscv/rootfs/buildroot/work/staging/usr/include\" \\\n    LDFLAGS=\"-L/opt/riscv/rootfs/buildroot/work/staging/usr/lib\" \\\n    ./configure \\\n    --enable-shared \\\n    --enable-optimizations \\\n    --prefix=$HOST_PYTHON_PREFIX \\\n    --host=riscv64-cartesi-linux-gnu \\\n    --build=x86_64-linux-gnu \\\n    --without-ensurepip \\\n    --disable-test-modules \\\n    ac_cv_buggy_getaddrinfo=no \\\n    ac_cv_file__dev_ptmx=yes \\\n    ac_cv_file__dev_ptc=no\nWORKDIR /tmp/host-python\nRUN make -j$(nproc)\nRUN make install\n\nWORKDIR /tmp\nRUN pip3 install --no-cache-dir crossenv\nRUN rm -rf Python-$PYTHON_VERSION_FULL*\n\n# download standard machine drives\nFROM busybox as machine-core\n\nWORKDIR /opt/cartesi/share\n\n# download dependencies\nCOPY dependencies .\nCOPY shasumfile .\nRUN cat dependencies | xargs wget\nRUN sha1sum -c shasumfile\n\n\n# stage to build the dapp ext2 filesystem\nFROM toolchain as dapp-fs-build\n\n# install jq\nRUN <<EOF\napt-get update\nDEBIAN_FRONTEND=\"noninteractive\" apt-get install -y jq\nrm -rf /var/lib/apt/lists/*\nEOF\n\nWORKDIR /opt/cartesi/dapp\nCOPY --from=dapp-build /opt/cartesi/dapp .\nCOPY build-dapp-fs.sh /usr/local/bin\nCOPY default.json /opt/cartesi/\n\nRUN build-dapp-fs.sh /opt/cartesi/default.json dapp.json dapp.ext2\n\n\n# stage to build the initial cartesi machine\nFROM server-manager as machine-server\n\nWORKDIR /opt/cartesi/dapp\n\n# copy dapp ext2 from dapp stage\nCOPY --from=dapp-fs-build /opt/cartesi/dapp/dapp.ext2 .\n\n# copy rootfs, linux, rom\nCOPY --from=machine-core /opt/cartesi/share/* .\n\n# build machine\nCOPY build-machine.sh /usr/local/bin\nRUN build-machine.sh /opt/cartesi/share/dapp-bin\n\n# switch back to server-manager workdir\nWORKDIR /opt/cartesi/bin\n\n\n# stage to run machine shell\nFROM server-manager as machine-console\n\nWORKDIR /opt/cartesi/dapp\n\n# copy dapp ext2 from stage 1\nCOPY --from=dapp-fs-build /opt/cartesi/dapp/dapp.ext2 .\n\n# copy rootfs, kernel, rom\nCOPY --from=machine-core /opt/cartesi/share/* .\n\nCOPY run-machine-console.sh /usr/local/bin\nCMD [\"run-machine-console.sh\"]\n\n\n# stage to copy the stored machine\nFROM busybox as machine-standalone\n\nWORKDIR /opt/cartesi/share/dapp-bin\nCOPY --from=machine-server /opt/cartesi/share/dapp-bin .\n\nCMD [\"xxd\", \"-c\", \"256\", \"-p\", \"hash\"]\n"
+}

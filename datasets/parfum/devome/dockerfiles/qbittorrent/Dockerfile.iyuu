@@ -1,0 +1,33 @@
+FROM nevinee/qbittorrent
+ENV IYUU_REPO_URL=https://gitee.com/ledc/iyuuplus.git
+RUN apk add --no-cache \
+       tar \
+       libressl \
+       zip \
+       unzip \
+       git \
+       composer \
+       php8 \
+       php8-curl \
+       php8-dom \
+       php8-json \
+       php8-mbstring \
+       php8-openssl \
+       php8-opcache \
+       php8-pdo \
+       php8-pdo_sqlite \
+       php8-phar \
+       php8-pcntl \
+       php8-posix \
+       php8-simplexml \
+       php8-sockets \
+       php8-session \
+       php8-zip \
+       php8-zlib \
+       php8-xml \
+    && git config --global pull.ff only \
+    && git clone https://github.com/ledccn/IYUUPlus.git /iyuu \
+    && echo -e "upload_max_filesize=100M\npost_max_size=108M\nmemory_limit=1024M\ndate.timezone=${TZ}" > /etc/php8/conf.d/99-overrides.ini \
+    && rm -rf /var/cache/apk/* /tmp/*
+COPY s6-overlay-iyuu /
+VOLUME ["/iyuu"]

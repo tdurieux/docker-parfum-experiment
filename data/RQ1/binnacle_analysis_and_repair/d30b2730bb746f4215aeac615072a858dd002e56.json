@@ -1,0 +1,26 @@
+{
+  "startTime": 1674249536540,
+  "endTime": 1674249536673,
+  "originalSmells": [
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 66,
+        "lineEnd": 66,
+        "columnStart": 4,
+        "columnEnd": 15
+      }
+    },
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 67,
+        "lineEnd": 67,
+        "columnStart": 4,
+        "columnEnd": 30
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Copyright © 2018-2019 Stanislav Valasek <valasek@gmail.com>\n\n# Accept the Go version for the image to be set as a build argument.\n# Default to Go 1.12\nARG GO_VERSION=1.12\n\n###########################################\n# First stage: build the backend executable.\n# FROM golang:${GO_VERSION}-alpine AS builder\nFROM golang:alpine AS backend\n\n# Create the user and group files that will be used in the running container to\n# run the process as an unprivileged user.\nRUN mkdir /user && \\\n    echo 'nobody:x:65534:65534:nobody:/:' > /user/passwd && \\\n    echo 'nobody:x:65534:' > /user/group\n\n# Install the Certificate-Authority certificates for the app to be able to make\n# calls to HTTPS endpoints.\n# Git is required for fetching the dependencies.\nRUN apk add --no-cache ca-certificates git\n\n# Set the working directory outside $GOPATH to enable the support for modules.\nWORKDIR /src\n\n# Fetch dependencies first; they are less susceptible to change on every build\n# and will therefore be cached for speeding up the next build\nCOPY ./server/go.mod ./go.mod\nRUN go mod download\nADD ./server/data/ /data\nRUN chmod -R ug+rw /data\nADD ./server/documentation/ /documentation\nADD ./server/documentation/ /documentation/statics\nRUN chmod -R ug+rw /documentation\nADD ./server/logs/ /logs\nRUN chmod -R ug+rwx /logs\nCOPY ./docker-entrypoint.sh /docker-entrypoint.sh\nCOPY ./server/timesheet-dataarch.yaml /timesheet.yaml\nRUN chmod +x /docker-entrypoint.sh\n\n# Import the code from the context.\nCOPY ./server/ ./\n\n# Build the executable to `/app`. Mark the build as statically linked.\n# RUN GOOS=linux GOARCH=amd64 go build -ldflags=\"-w -s\" CGO_ENABLED=0 \\\n#     -installsuffix 'static' \\\n#     -o /app .\nRUN GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build \\\n-ldflags \"-X github.com/valasek/timesheet/server/version.Version=1.4.0\" \\\n-installsuffix 'static' -o /timesheet.bin .\n# RUN ls -la .\n\n##############################################\n# Second stage: build the frontend executable.\nFROM node:lts-alpine AS frontend\n# fix due to optipng-bin in icon-factory - https://github.com/imagemin/optipng-bin/issues/84\nRUN apk --no-cache add pkgconfig autoconf automake libtool nasm build-base zlib-dev\n\n# make the 'client' folder the current working directory\nWORKDIR /client\n\n# copy both 'package.json' and 'package-lock.json' (if available)\nCOPY ./client/package*.json ./\nCOPY ./client/ ./\n\n# install project dependencies\nRUN npm install && npm cache clean --force;\nRUN npm install -g @quasar/cli && npm cache clean --force;\nRUN quasar upgrade -i\n\n# copy project files and folders to the current working directory (i.e. 'app' folder)\nCOPY ./client ./\n\n# build app for production with minification\nRUN npm run build-da\n# RUN ls -la ./\n# RUN ls -la ./dist\n# RUN chmod -R ug+rw ./dist\n\n# EXPOSE 8080\n# CMD [ \"http-server\", \"dist\" ]\n\n#####################################\n# Final stage: the running container.\n# FROM scratch AS final\nFROM alpine AS final\n\n# Import the user and group files from the first stage.\nCOPY --from=backend /user/group /user/passwd /etc/\n\n# Import the Certificate-Authority certificates for enabling HTTPS.\nCOPY --from=backend /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/\n\n# Import the compiled executable from the first stage.\nCOPY --from=backend /timesheet.bin /timesheet.bin\n# Copy data folder\nCOPY --from=backend /data /data\n# Copy documentation folder\nCOPY --from=backend /documentation /documentation\n# Copy log folder\nCOPY --from=backend /logs /logs\n# Copy compiled frontend files\nCOPY --from=frontend /client/dist/spa /client/dist\n\n# Declare the port on which the webbackend will be exposed.\n# As we're going to run the executable as an unprivileged user, we can't bind\n# to ports below 1024.\n# Expose is NOT supported by Heroku\n# EXPOSE 3000\n\n# Perform any further action as an unprivileged user.\n# USER nobody:nobody\n\nCOPY --from=backend /docker-entrypoint.sh /docker-entrypoint.sh\nCOPY --from=backend /timesheet.yaml /timesheet.yaml\n# Run the compiled binary.\nENTRYPOINT [\"/docker-entrypoint.sh\"]\nCMD [\"/docker-entrypoint.sh --debug=5\"]\n"
+}

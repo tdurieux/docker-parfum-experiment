@@ -1,0 +1,53 @@
+{
+  "startTime": 1674253099715,
+  "endTime": 1674253100108,
+  "originalSmells": [
+    {
+      "rule": "wgetUseHttpsUrl",
+      "position": {
+        "lineStart": 18,
+        "lineEnd": 18,
+        "columnStart": 4,
+        "columnEnd": 52
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 13,
+        "lineEnd": 13,
+        "columnStart": 7,
+        "columnEnd": 66
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 47,
+        "lineEnd": 47,
+        "columnStart": 7,
+        "columnEnd": 40
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 6,
+        "lineEnd": 8,
+        "columnStart": 8,
+        "columnEnd": 39
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 6,
+        "lineEnd": 8,
+        "columnStart": 8,
+        "columnEnd": 39
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM peetonn/ndn-docker:latest\nLABEL maintainer \"Peter Gusev <peter@remap.ucla.edu>\"\n\nARG BRANCH=master\n\nRUN apt-get update \\\n     && apt-get install --no-install-recommends -y libssl-dev libboost-all-dev libprotobuf-dev libsqlite3-dev sudo \\\n     libconfig++9v5 libconfig++-dev wget autoconf automake libtool cmake git build-essential \\\n     lsb-release protobuf-compiler gawk && rm -rf /var/lib/apt/lists/*;\n\n# NDN-CPP\nRUN git clone https://github.com/named-data/ndn-cpp \\\n    && cd ndn-cpp \\\n    && ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" --with-std-shared-ptr=no --with-std-function=no \\\n    && make && make install \\\n    && rm -Rf /ndn-cpp\n\n# OpenFEC\nRUN wget https://openfec.org/files/openfec_v1_4_2.tgz \\\n    && tar -xvf openfec_v1_4_2.tgz && rm openfec_v1_4_2.tgz \\\n    && mkdir -p openfec_v1.4.2/build && cd openfec_v1.4.2/ \\\n    && wget https://raw.githubusercontent.com/remap/ndnrtc/master/cpp/resources/ndnrtc-openfec.patch \\\n    && patch src/CMakeLists.txt ndnrtc-openfec.patch \\\n    && cd build && cmake .. -DDEBUG:STRING=OFF \\\n    && make\n\n# This line accepts the Microsoft End User License Agreement allowing use of\n#   the MS True Type core fonts\nRUN echo ttf-mscorefonts-installer msttcorefonts/accepted-mscorefonts-eula select true | debconf-set-selections\n\n# WebRTC & NDN-RTC (doing in one step to avoid large image size)\nRUN git clone https://chromium.googlesource.com/chromium/tools/depot_tools.git \\\n    && export PATH=$PATH:`pwd`/depot_tools \\\n    && mkdir webrtc-checkout && cd webrtc-checkout \\\n    && fetch --nohooks webrtc \\\n    && cd src && ./build/install-build-deps.sh --no-syms --no-prompt \\\n    && git checkout -b branch-heads-59 refs/remotes/branch-heads/59 \\\n    && gclient sync \\\n    && gn gen out/Default --args='is_debug=false' \\\n    && ninja -C out/Default \\\n    && cd / \\\n    && git clone --recursive https://github.com/remap/ndnrtc.git \\\n    && cd /ndnrtc/cpp && mkdir -p build/share \\\n    && git checkout $BRANCH \\\n    && echo 'CPPFLAGS=\"-g -O2 -DWEBRTC_POSIX\" CXXFLAGS=\"-g -O2 -DWEBRTC_POSIX\"' > build/share/config.site \\\n    && echo OPENFECDIR=/openfec_v1.4.2 >> build/share/config.site \\\n    && echo WEBRTCDIR=/webrtc-checkout/src >> build/share/config.site \\\n    && ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" --prefix=$(pwd)/build \\\n    && make && make install && make ndnrtc-client \\\n    && rm -Rf /webrtc-checkout \\\n    && rm -Rf /depot_tools\n\n# cleanup\nRUN apt autoremove \\\n    && apt-get remove -y wget autoconf automake libtool cmake git build-essential \\\n                         lsb-release protobuf-compiler\n\n# Setup image for ndnrtc-client Simple Example (https://github.com/remap/ndnrtc/tree/master/cpp/client#simple-example)\nRUN ndnsec-keygen /ndnrtc-test | ndnsec-install-cert - \\\n    && ndnsec-dump-certificate -i /ndnrtc-test > /ndnrtc/cpp/tests/policy_config/signing.cert\n\nENV START_CLIENT=yes\nENV NFD_LOG=/tmp/nfd.log\nENV RUNTIME=10000\nENV SIGNING_IDENTITY=/ndnrtc-test\nENV CONFIG_FILE=tests/sample-producer.cfg\nENV POLICY_FILE=tests/policy_config/rule.conf\nENV INSTANCE_NAME=instance1\nENV STAT_SAMPLING=100\n\nCOPY run.sh /ndnrtc/cpp\nRUN chmod +x /ndnrtc/cpp/run.sh\n\nWORKDIR /ndnrtc/cpp\nCMD ./run.sh"
+}

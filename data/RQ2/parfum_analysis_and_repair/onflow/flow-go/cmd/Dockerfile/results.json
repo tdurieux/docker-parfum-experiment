@@ -1,0 +1,35 @@
+{
+  "startTime": 1674249624391,
+  "endTime": 1674249625556,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 6,
+        "lineEnd": 6,
+        "columnStart": 4,
+        "columnEnd": 32
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 6,
+        "lineEnd": 6,
+        "columnStart": 4,
+        "columnEnd": 32
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 6,
+        "lineEnd": 6,
+        "columnStart": 4,
+        "columnEnd": 32
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# NOTE: Must be run in the context of the repo's root directory\n\nFROM golang:1.18-bullseye AS build-setup\n\nRUN apt-get update && apt-get -y --no-install-recommends install cmake zip && rm -rf /var/lib/apt/lists/*;\n\n## (2) Build the app binary\nFROM build-setup AS build-env\n\n# Build the app binary in /app\nRUN mkdir /app\nWORKDIR /app\n\nARG TARGET\nARG COMMIT\nARG VERSION\n\nCOPY . .\n\nRUN --mount=type=cache,sharing=locked,target=/go/pkg/mod \\\n    --mount=type=cache,target=/root/.cache/go-build \\\n    make crypto_setup_gopath\n\nFROM build-env as build-production\nWORKDIR /app\nARG GOARCH=amd64\n# Keep Go's build cache between builds.\n# https://github.com/golang/go/issues/27719#issuecomment-514747274\nRUN --mount=type=cache,sharing=locked,target=/go/pkg/mod \\\n    --mount=type=cache,target=/root/.cache/go-build \\\n    GO111MODULE=on CGO_ENABLED=1 GOOS=linux go build --tags \"relic,netgo\" -ldflags \"-extldflags -static \\\n    -X 'github.com/onflow/flow-go/cmd/build.commit=${COMMIT}' -X  'github.com/onflow/flow-go/cmd/build.semver=${VERSION}'\" \\\n    -o ./app ${TARGET}\n\nRUN chmod a+x /app/app\n\n## (3) Add the statically linked binary to a distroless image\nFROM gcr.io/distroless/base-debian11 as production\n\nCOPY --from=build-production /app/app /bin/app\n\nENTRYPOINT [\"/bin/app\"]\n\n\nFROM build-env as build-debug\nWORKDIR /app\nARG GOARCH=amd64\nRUN --mount=type=ssh \\\n    --mount=type=cache,sharing=locked,target=/go/pkg/mod \\\n    --mount=type=cache,target=/root/.cache/go-build \\\n    GO111MODULE=on CGO_ENABLED=1 GOOS=linux go build --tags \"relic,netgo\" -ldflags \"-extldflags -static \\\n    -X 'github.com/onflow/flow-go/cmd/build.commit=${COMMIT}' -X  'github.com/onflow/flow-go/cmd/build.semver=${VERSION}'\" \\\n    -gcflags=\"all=-N -l\" -o ./app ${TARGET}\n\nRUN chmod a+x /app/app\n\nFROM golang:1.18-bullseye as debug\n\nRUN go get -u github.com/go-delve/delve/cmd/dlv\n\nCOPY --from=build-debug /app/app /bin/app\n\nENTRYPOINT [\"dlv\", \"--listen=:2345\", \"--headless=true\", \"--api-version=2\", \"--accept-multiclient\", \"exec\", \"/bin/app\", \"--\"]\n\n## (3) Add the statically linked binary to a distroless image\nFROM gcr.io/distroless/base-debian11 as production-transit-nocgo\n\nCOPY --from=build-transit-production-nocgo /app/app /bin/app\n\nENTRYPOINT [\"/bin/app\"]\n"
+}

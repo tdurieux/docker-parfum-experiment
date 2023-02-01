@@ -1,0 +1,1 @@
+# allow ssl conncections to the testing db container

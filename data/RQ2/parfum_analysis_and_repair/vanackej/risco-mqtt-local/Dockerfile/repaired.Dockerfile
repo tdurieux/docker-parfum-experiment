@@ -1,0 +1,33 @@
+ARG NODE_VERSION="16"
+ARG BASE_IMAGE="node:${NODE_VERSION}-alpine"
+
+FROM ${BASE_IMAGE} AS build
+
+WORKDIR /workspace
+
+COPY package.json yarn.lock ./
+
+RUN yarn --frozen-lockfile && yarn cache clean;
+
+COPY . ./
+
+RUN yarn run build \
+    && yarn install --production && yarn cache clean;
+
+
+FROM scratch AS rootfs
+
+COPY --from=build /workspace/node_modules /app/node_modules
+
+COPY --from=build /workspace/dist /app/dist
+
+COPY --from=build /workspace/config-sample.json /app/
+
+
+FROM ${BASE_IMAGE}
+
+WORKDIR /data
+
+COPY --from=rootfs / /
+
+CMD [ "node", "/app/dist/main.js" ]

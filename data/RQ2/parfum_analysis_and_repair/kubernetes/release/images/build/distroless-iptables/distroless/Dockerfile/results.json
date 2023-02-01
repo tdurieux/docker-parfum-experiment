@@ -1,0 +1,35 @@
+{
+  "startTime": 1674219846791,
+  "endTime": 1674219848070,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 45,
+        "lineEnd": 45,
+        "columnStart": 4,
+        "columnEnd": 157
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 26,
+        "lineEnd": 26,
+        "columnStart": 4,
+        "columnEnd": 28
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 26,
+        "lineEnd": 26,
+        "columnStart": 4,
+        "columnEnd": 28
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Copyright 2022 The Kubernetes Authors.\n#\n# Licensed under the Apache License, Version 2.0 (the \"License\");\n# you may not use this file except in compliance with the License.\n# You may obtain a copy of the License at\n#\n#     http://www.apache.org/licenses/LICENSE-2.0\n#\n# Unless required by applicable law or agreed to in writing, software\n# distributed under the License is distributed on an \"AS IS\" BASIS,\n# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.\n# See the License for the specific language governing permissions and\n# limitations under the License.\n\nARG BASEIMAGE\nARG GORUNNERIMAGE\n# Using directly debian base, as we are going to just copy the required binaries\nFROM ${BASEIMAGE} as build\n\nCOPY stage-binary-and-deps.sh /\nCOPY stage-binaries-from-package.sh /\nCOPY package-utils.sh /\n\n\nARG STAGE_DIR=\"/opt/stage\"\nRUN apt -y update && \\\n    apt -y --no-install-recommends install bash curl && \\\n    mkdir -p \"${STAGE_DIR}\" && \\\n    /stage-binaries-from-package.sh \"${STAGE_DIR}\" conntrack \\\n    ebtables    \\\n    ipset       \\\n    iptables    \\\n    kmod && \\\n    `# below binaries and dash are used by iptables-wrapper-installer.sh` \\\n    /stage-binary-and-deps.sh \"${STAGE_DIR}\" /bin/dash \\\n    /bin/cat \\\n    /bin/chmod \\\n    /bin/grep \\\n    /bin/ln  \\\n    /bin/rm \\\n    /bin/sleep \\\n    /usr/bin/wc && rm -rf /var/lib/apt/lists/*;\n\n# A comment on the above: /bin/sleep is used by a specific e2e test\n\nRUN curl -f -o \"${STAGE_DIR}\"/iptables-wrapper-installer.sh https://raw.githubusercontent.com/kubernetes-sigs/iptables-wrappers/v2/iptables-wrapper-installer.sh && \\\n    chmod +x \"${STAGE_DIR}\"/iptables-wrapper-installer.sh && \\\n    ln -sf /bin/dash \"${STAGE_DIR}\"/bin/sh\n\n# we're going to borrow the /go-runner binary in the final image\n# dedupe this binary by just copying it from the go-runner image\nFROM ${GORUNNERIMAGE} as gorunner\n\n# We need to use distroless:base here as tzdata, glibc and some other base packages\n# are required\nFROM gcr.io/distroless/base as intermediate\n\nARG SKIP_WRAPPER_CHECK\n\nCOPY clean-distroless.sh /clean-distroless.sh\nCOPY --from=build /opt/stage /\nCOPY --from=gorunner /go-runner /go-runner\n# iptables-wrapper-installer needs to know that iptables exists before doing all its magic\nRUN echo \"\" >  /usr/sbin/iptables && \\\n    `# We skip sanity check in iptables-wrapper-installer due to qemu multiarch problems `\\\n    /iptables-wrapper-installer.sh ${SKIP_WRAPPER_CHECK} && \\\n    /clean-distroless.sh\n\nFROM scratch\nCOPY --from=intermediate / /\n"
+}

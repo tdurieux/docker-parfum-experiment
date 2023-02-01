@@ -1,0 +1,1 @@
+# A copy of robertdebock/github-action-rpmbuild because that one don't work

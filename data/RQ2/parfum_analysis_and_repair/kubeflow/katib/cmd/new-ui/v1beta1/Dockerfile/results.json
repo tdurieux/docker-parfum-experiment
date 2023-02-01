@@ -1,0 +1,26 @@
+{
+  "startTime": 1674215224507,
+  "endTime": 1674215225513,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 3,
+        "lineEnd": 3,
+        "columnStart": 22,
+        "columnEnd": 44
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 3,
+        "lineEnd": 3,
+        "columnStart": 22,
+        "columnEnd": 44
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# --- Clone the kubeflow/kubeflow code ---\nFROM ubuntu AS fetch-kubeflow-kubeflow\n\nRUN apt-get update && apt-get install --no-install-recommends git -y && rm -rf /var/lib/apt/lists/*;\n\nWORKDIR /kf\nRUN git clone https://github.com/kubeflow/kubeflow.git && \\\n    cd kubeflow && \\\n    git checkout ecb72c2\n\n# --- Build the frontend kubeflow library ---\nFROM node:12 AS frontend-kubeflow-lib\n\nWORKDIR /src\n\nARG LIB=/kf/kubeflow/components/crud-web-apps/common/frontend/kubeflow-common-lib\nCOPY --from=fetch-kubeflow-kubeflow $LIB/package*.json ./\nRUN npm ci\n\nCOPY --from=fetch-kubeflow-kubeflow $LIB/ ./\nRUN npm run build\n\n# --- Build the frontend ---\nFROM node:12 AS frontend\n\nWORKDIR /src\nCOPY ./pkg/new-ui/v1beta1/frontend/package*.json ./\nRUN npm ci\n\nCOPY ./pkg/new-ui/v1beta1/frontend/ .\nCOPY --from=frontend-kubeflow-lib /src/dist/kubeflow/ ./node_modules/kubeflow/\n\nRUN npm run build:prod\n\n# --- Build the backend ---\nFROM golang:alpine AS go-build\n\nWORKDIR /go/src/github.com/kubeflow/katib\n\n# Download packages.\nCOPY go.mod .\nCOPY go.sum .\nRUN go mod download -x\n\n# Copy sources.\nCOPY cmd/ cmd/\nCOPY pkg/ pkg/\n\n# Build the binary.\nRUN if [ \"$(uname -m)\" = \"ppc64le\" ]; then \\\n    CGO_ENABLED=0 GOOS=linux GOARCH=ppc64le go build -a -o katib-ui  ./cmd/new-ui/v1beta1; \\\n    elif [ \"$(uname -m)\" = \"aarch64\" ]; then \\\n    CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -a -o katib-ui  ./cmd/new-ui/v1beta1; \\\n    else \\\n    CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -a -o katib-ui  ./cmd/new-ui/v1beta1; \\\n    fi\n\n# --- Compose the web app ---\nFROM alpine:3.15\nWORKDIR /app\nCOPY --from=go-build /go/src/github.com/kubeflow/katib/katib-ui /app/\nCOPY --from=frontend /src/dist/static /app/build/static/\nENTRYPOINT [\"./katib-ui\"]\n"
+}

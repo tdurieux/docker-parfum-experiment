@@ -1,0 +1,26 @@
+{
+  "startTime": 1674215697331,
+  "endTime": 1674215698047,
+  "originalSmells": [
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 24,
+        "lineEnd": 24,
+        "columnStart": 4,
+        "columnEnd": 64
+      }
+    },
+    {
+      "rule": "gpgUseBatchFlag",
+      "position": {
+        "lineStart": 52,
+        "lineEnd": 52,
+        "columnStart": 4,
+        "columnEnd": 38
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Docker Container that runs the Nebra Diagnostics Tool\n\n####################################################################################################\n################################## Stage: builder ##################################################\n\nFROM balenalib/raspberry-pi-debian-python:buster-run-20211014 as builder\n\nENV PYTHON_DEPENDENCIES_DIR=/opt/python-dependencies\n\nRUN mkdir /tmp/build\nCOPY ./ /tmp/build\nWORKDIR /tmp/build\n\n\n\nRUN \\\n    install_packages \\\n            build-essential \\\n            libdbus-glib-1-dev\n\nRUN pip3 install --no-cache-dir --target=\"$PYTHON_DEPENDENCIES_DIR\" .\n\n# firehose build, the tar is obtained from  quectel.\n# there is no install target in Makefile, doing manual copy\nRUN tar -xf quectel/qfirehose/QFirehose_Linux_Android_V1.4.9.tar && rm quectel/qfirehose/QFirehose_Linux_Android_V1.4.9.tar\n# docker linter wants WORKDIR for changing directory\nWORKDIR /tmp/build/QFirehose_Linux_Android_V1.4.9\nRUN make && \\\n    cp QFirehose /usr/sbin/QFirehose && \\\n    rm -rf quectel/qfirehose\n\n# No need to cleanup the builder\n\n####################################################################################################\n################################### Stage: runner ##################################################\n\nFROM balenalib/raspberry-pi-debian-python:buster-run-20211014 as runner\n\nENV PYTHON_DEPENDENCIES_DIR=/opt/python-dependencies\n\nRUN \\\n    install_packages \\\n        wget \\\n        i2c-tools \\\n        libdbus-1-3 \\\n        gpg\n\n# Nebra uses /opt by convention\nWORKDIR /opt/\n\n# Import gpg key\nCOPY keys/manufacturing-key.gpg ./\nRUN gpg --batch --import manufacturing-key.gpg\nRUN rm manufacturing-key.gpg\n\n# @TODO: Re-enable health-check once Balena supports it fully.\n# HEALTHCHECK \\\n#    --interval=120s \\\n#    --timeout=5s \\\n#    --start-period=15s \\\n#    --retries=10 \\\n#  CMD wget -q -O - http://0.0.0.0:5000/initFile.txt || exit 1\n\n# Copy packages from builder\nCOPY --from=builder \"$PYTHON_DEPENDENCIES_DIR\" \"$PYTHON_DEPENDENCIES_DIR\"\n\n# copy modem flashing tool\nCOPY --from=builder /usr/sbin/QFirehose /usr/sbin/QFirehose\n\n# copy firmware files\nCOPY --from=builder /tmp/build/quectel /quectel\n\n# Add python dependencies to PYTHONPATH\nENV PYTHONPATH=\"${PYTHON_DEPENDENCIES_DIR}:${PYTHONPATH}\"\nENV PATH=\"${PYTHON_DEPENDENCIES_DIR}/bin:${PATH}\"\n\nENTRYPOINT [\"gunicorn\", \"--bind\", \"0.0.0.0:5000\", \"--timeout\", \"300\", \"hw_diag:wsgi_app\"]\n"
+}

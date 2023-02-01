@@ -1,0 +1,35 @@
+{
+  "startTime": 1674239157470,
+  "endTime": 1674239157578,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 58,
+        "lineEnd": 58,
+        "columnStart": 4,
+        "columnEnd": 174
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 58,
+        "lineEnd": 58,
+        "columnStart": 73,
+        "columnEnd": 149
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 19,
+        "lineEnd": 21,
+        "columnStart": 4,
+        "columnEnd": 8
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Copyright 2018 The Gluster Mixins Authors.\n\n# Licensed under GNU LESSER GENERAL PUBLIC LICENSE Version 3, 29 June 2007\n# You may obtain a copy of the License at\n#    https://opensource.org/licenses/lgpl-3.0.html\n\n# Unless required by applicable law or agreed to in writing, software\n# distributed under the License is distributed on an \"AS IS\" BASIS,\n# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.\n# See the License for the specific language governing permissions and\n# limitations under the License.\n\n#-- Create build environment\n\nFROM docker.io/openshift/origin-release:golang-1.10 as build\n\nMAINTAINER Ankush Behl anbehl@redhat.com\n\n# install clang and gcc-c++ required for jsonnet to build\nRUN yum install -y clang \\\n    gcc-c++ \\\n    make && rm -rf /var/cache/yum\n\n# get required go packages for building k8s objects\nRUN go get github.com/jsonnet-bundler/jsonnet-bundler/cmd/jb \\\n    github.com/brancz/gojsontoyaml \\\n    github.com/prometheus/prometheus/cmd/promtool\n\n# building jsonnet\nRUN git clone https://github.com/google/jsonnet && \\\n    git --git-dir=jsonnet/.git checkout v0.10.0 && \\\n    make -C jsonnet CC=clang CXX=clang++ && \\\n    cp jsonnet/jsonnet /usr/bin\n\n# cloning the gluster-mixins project and making gluster-mixins as working dir\nCOPY . /gluster/gluster-mixins/\nWORKDIR /gluster/gluster-mixins/\n\n# make will run tests and generate the intermidiate files\nRUN make\n\nWORKDIR /gluster/gluster-mixins/extras\n#installing required dependency from jsonnetfile.json and building k8s objects\nRUN jb install\nRUN ./build.sh example.jsonnet\n\n# Copy generated files to /\nRUN cp -r manifests /\n\n\n#-- Final container\n\nFROM docker.io/centos:7 as final\n\nRUN yum update -y \\\n    && yum clean all\n\n# install kubectl package in container\nRUN curl -f -LO https://storage.googleapis.com/kubernetes-release/release/$( curl -f -s https://storage.googleapis.com/kubernetes-release/release/stable.txt)/bin/linux/amd64/kubectl && \\\n    chmod +x ./kubectl && \\\n    mv ./kubectl /usr/local/bin\n\n# copy required files from build to final container\nCOPY --from=build /manifests /manifests\n\n# shell script to apply the k8s object to underlying cluster\nCOPY docker/entry.sh /\nRUN chmod 755 /entry.sh\n\nARG builddate=\"(unknown)\"\nARG version=\"(unknown)\"\n\nLABEL build-date=\"${builddate}\" \\\n      io.k8s.description=\"Mixins will deploy Grafana dashboards and Prometheus alerts for Gluster.\" \\\n      name=\"Gluster Mixins\" \\\n      Summary=\"Gluster Mixins will deploy Grafana dashboards and Prometheus alerts for Gluster.\" \\\n      vcs-type=\"git\" \\\n      vcs-url=\"https://github.com/gluster/gluster-mixins\" \\\n      vendor=\"gluster.org\" \\\n      version=\"${version}\"\n\nENTRYPOINT [ \"/entry.sh\" ]\n"
+}

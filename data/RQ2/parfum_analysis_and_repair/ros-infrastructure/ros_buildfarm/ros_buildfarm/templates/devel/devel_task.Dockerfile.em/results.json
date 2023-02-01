@@ -1,0 +1,35 @@
+{
+  "startTime": 1674254506842,
+  "endTime": 1674254507625,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 77,
+        "lineEnd": 77,
+        "columnStart": 4,
+        "columnEnd": 77
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 66,
+        "lineEnd": 66,
+        "columnStart": 4,
+        "columnEnd": 59
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 83,
+        "lineEnd": 83,
+        "columnStart": 4,
+        "columnEnd": 36
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# generated from @template_name\n\n@(TEMPLATE(\n    'snippet/from_base_image.Dockerfile.em',\n    os_name=os_name,\n    os_code_name=os_code_name,\n    arch=arch,\n))@\n\nVOLUME [\"/var/cache/apt/archives\"]\n\nENV DEBIAN_FRONTEND noninteractive\n\n@(TEMPLATE(\n    'snippet/old_release_set.Dockerfile.em',\n    os_name=os_name,\n    os_code_name=os_code_name,\n))@\n\n@(TEMPLATE(\n    'snippet/setup_locale.Dockerfile.em',\n    timezone=timezone,\n))@\n\nRUN useradd -u @uid -l -m buildfarm\n\n@(TEMPLATE(\n    'snippet/setup_nvidia_docker2.Dockerfile.em'\n))@\n\n@(TEMPLATE(\n    'snippet/add_distribution_repositories.Dockerfile.em',\n    distribution_repository_keys=distribution_repository_keys,\n    distribution_repository_urls=distribution_repository_urls,\n    os_name=os_name,\n    os_code_name=os_code_name,\n    add_source=False,\n))@\n\n@(TEMPLATE(\n    'snippet/add_additional_repositories.Dockerfile.em',\n    os_name=os_name,\n    os_code_name=os_code_name,\n    arch=arch,\n))@\n\n@(TEMPLATE(\n    'snippet/add_wrapper_scripts.Dockerfile.em',\n    wrapper_scripts=wrapper_scripts,\n))@\n\n# automatic invalidation once every day\nRUN echo \"@today_str\"\n\n@(TEMPLATE(\n    'snippet/install_python3.Dockerfile.em',\n    os_name=os_name,\n    os_code_name=os_code_name,\n))@\n\nRUN python3 -u /tmp/wrapper_scripts/apt.py update-install-clean -q -y git python3-yaml\n\n@[if build_tool == 'colcon']@\nRUN python3 -u /tmp/wrapper_scripts/apt.py update-install-clean -q -y python3-pip\n@# colcon-core.package_identification.python needs at least setuptools 30.3.0\n@# pytest-rerunfailures enables usage of --retest-until-pass\nRUN pip3 install --no-cache-dir -U setuptools==59.6.0 pytest-rerunfailures\n@[end if]@\nRUN python3 -u /tmp/wrapper_scripts/apt.py update-install-clean -q -y ccache\n\n@[if run_abichecker]@\nRUN python3 -u /tmp/wrapper_scripts/apt.py update-install-clean -q -y python3-catkin-pkg-modules python3-pip\n@[if os_name == 'ubuntu' and os_code_name not in ('xenial', 'bionic')]@\n# Focal/Groovy abi-compliance-checker package has a bug that breaks python invocation\n# See: https://github.com/lvc/abi-compliance-checker/pull/80#issuecomment-652521014\n# Install 2.3 version from source, needs perl\nRUN python3 -u /tmp/wrapper_scripts/apt.py update-install-clean -q -y curl make perl\nRUN curl -f -sL https://github.com/lvc/abi-compliance-checker/archive/2.3.tar.gz | tar xvz -C /tmp && \\\n    make install prefix=/usr -C /tmp/abi-compliance-checker-2.3 && \\\n    rm -fr /tmp/abi-compliance\n@[else]@\nRUN python3 -u /tmp/wrapper_scripts/apt.py update-install-clean -q -y abi-compliance-checker\n@[end if]@\nRUN pip3 install --no-cache-dir -U auto_abi_checker\n@[end if]@\n\n@(TEMPLATE(\n    'snippet/set_environment_variables.Dockerfile.em',\n    environment_variables=build_environment_variables,\n))@\n\n@(TEMPLATE(\n    'snippet/install_dependencies.Dockerfile.em',\n    dependencies=dependencies,\n    dependency_versions=dependency_versions,\n))@\n\n@(TEMPLATE(\n    'snippet/install_dependencies_from_file.Dockerfile.em',\n    install_lists=install_lists,\n))@\n\n# After all dependencies are installed, update ccache symlinks.\n# This command is supposed to be invoked whenever a new compiler is installed\n# but that isn't happening. So we invoke it here to make sure all compilers are\n# picked up.\n# TODO(nuclearsandwich) add link to Debian bug report when one is opened.\nRUN which update-ccache-symlinks >/dev/null 2>&1 && update-ccache-symlinks\n\nUSER buildfarm\nENTRYPOINT [\"sh\", \"-c\"]\n@{\ncmd = \\\n    'PATH=/usr/lib/ccache:$PATH' + \\\n    ' PYTHONPATH=/tmp/ros_buildfarm:$PYTHONPATH python3 -u'\nif not testing:\n    cmd += \\\n        ' /tmp/ros_buildfarm/scripts/devel/build_and_install.py' + \\\n        ' --rosdistro-name ' + rosdistro_name + \\\n        ' --ros-version ' + str(ros_version) + \\\n        ' --clean-before'\n    if run_abichecker:\n        cmd += ' --run-abichecker'\nelse:\n    cmd += \\\n        ' /tmp/ros_buildfarm/scripts/devel/build_and_test.py' + \\\n        ' --rosdistro-name %s' % rosdistro_name + \\\n        ' --ros-version ' + str(ros_version)\n    if require_gpu_support:\n        cmd += ' --require-gpu-support'\ncmd += \\\n    ' --build-tool ' + build_tool + \\\n    ' --workspace-root ' + workspace_root + \\\n    ' --parent-result-space' + ''.join([' %s/install_isolated' % (space) for space in parent_result_space])\nif vars().get('build_tool_args'):\n    cmd += ' --build-tool-args ' + ' '.join(build_tool_args)\nif vars().get('build_tool_test_args'):\n    cmd += ' --build-tool-test-args ' + ' '.join(\n        a if ' ' not in a else '\"%s\"' % a for a in build_tool_test_args)\n}@\nCMD [\"@(cmd.replace('\"', '\\\\\"'))\"]\n"
+}

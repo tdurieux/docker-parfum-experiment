@@ -1,0 +1,21 @@
+FROM node:12-alpine AS static
+WORKDIR "/app"
+COPY . /app
+RUN npm install --no-audit && npx gulp --production && npm cache clean --force;
+
+FROM ghcr.io/emfcamp/website-base:latest
+
+COPY . /app/
+WORKDIR /app
+
+RUN poetry install --no-dev && poetry run pyppeteer-install && mkdir /var/prometheus \
+	&& rm -Rf ./static
+
+COPY --from=static /app/static /app/static
+
+# The settings file doesn't matter for the purposes of the below command,
+# but it's needed for it to run.
+RUN SETTINGS_FILE=/app/config/test.cfg poetry run flask digest compile
+
+ENV SHELL=/bin/bash
+ENTRYPOINT ["./docker/prod_entrypoint.sh"]

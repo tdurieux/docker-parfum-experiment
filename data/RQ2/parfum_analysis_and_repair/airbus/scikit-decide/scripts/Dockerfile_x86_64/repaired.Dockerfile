@@ -1,0 +1,18 @@
+ARG BASE_IMAGE=skdecide_dev
+
+FROM $BASE_IMAGE as build
+
+ENV PLAT=manylinux2014_x86_64
+
+RUN mkdir -p /io/
+COPY . /io/
+WORKDIR /io/
+
+ARG CONDA_PREFIX=/opt/conda
+ARG PYTHON_VERSION=3.8
+ARG SKDECIDE_SKIP_DEPS=0
+ARG BOOST_DIR=3rdparty/boost
+ENV SKDECIDE_SKIP_DEPS=$SKDECIDE_SKIP_DEPS
+ENV BOOST_ROOT=/io/$BOOST_DIR
+#
+RUN ./scripts/build-manylinux-wheels.sh $PYTHON_VERSION

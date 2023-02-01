@@ -1,0 +1,53 @@
+{
+  "startTime": 1674216250774,
+  "endTime": 1674216252070,
+  "originalSmells": [
+    {
+      "rule": "sha256sumEchoOneSpaces",
+      "position": {
+        "lineStart": 18,
+        "lineEnd": 18,
+        "columnStart": 4,
+        "columnEnd": 105
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 23,
+        "lineEnd": 23,
+        "columnStart": 4,
+        "columnEnd": 82
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 31,
+        "lineEnd": 31,
+        "columnStart": 4,
+        "columnEnd": 82
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 46,
+        "lineEnd": 46,
+        "columnStart": 4,
+        "columnEnd": 104
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 7,
+        "lineEnd": 11,
+        "columnStart": 1,
+        "columnEnd": 4
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM ubuntu:22.04 as builder\n\nARG perf_test_binary=\"target/rabbitmq-perf-test-*-bin.tar.gz\"\n\nRUN set -eux; \\\n\n\tapt-get update; \\\n\tapt-get install --yes --no-install-recommends \\\n\t\tca-certificates \\\n\t\twget \\\n\t\tgnupg \\\n\t\tjq && rm -rf /var/lib/apt/lists/*;\n\nARG JAVA_VERSION=\"17\"\n\nRUN if [ \"$(uname -m)\" = \"aarch64\" ] || [ \"$(uname -m)\" = \"arm64\" ] ; then echo \"ARM\"; ARCH=\"arm\"; BUNDLE=\"jdk\"; else echo \"x86\"; ARCH=\"x86\"; BUNDLE=\"jdk\"; fi \\\n    && wget \"https://api.azul.com/zulu/download/community/v1.0/bundles/latest/?java_version=$JAVA_VERSION&ext=tar.gz&os=linux&arch=$ARCH&hw_bitness=64&release_status=ga&bundle_type=$BUNDLE\" -O jdk-info.json\nRUN wget --progress=bar:force:noscroll -O \"jdk.tar.gz\" $(cat jdk-info.json | jq --raw-output .url)\nRUN echo \"$(cat jdk-info.json | jq --raw-output .sha256_hash)  *jdk.tar.gz\" | sha256sum --check --strict -\n\nRUN set -eux; \\\n    if [ \"$(uname -m)\" = \"x86_64\" ] ; then \\\n    JAVA_PATH=\"/usr/lib/jdk-$JAVA_VERSION\"; \\\n    mkdir $JAVA_PATH && \\\n    tar --extract  --file jdk.tar.gz --directory \"$JAVA_PATH\" --strip-components 1; rm jdk.tar.gz \\\n    $JAVA_PATH/bin/jlink --compress=2 --output /jre --add-modules java.base,java.management,java.xml,java.naming,java.sql,jdk.crypto.cryptoki; \\\n\t\t\t/jre/bin/java -version; \\\n\t\t\tfi\n\nRUN set -eux; \\\n    if [ \"$(uname -m)\" = \"aarch64\" ] || [ \"$(uname -m)\" = \"arm64\" ] ; then \\\n    JAVA_PATH=\"/jre\"; \\\n    mkdir $JAVA_PATH && \\\n    tar --extract  --file jdk.tar.gz --directory \"$JAVA_PATH\" --strip-components 1; rm jdk.tar.gz \\\n\t\t\tfi\n\nRUN rm jdk.tar.gz\n\nENV PERF_TEST_HOME=\"/perf_test\"\nENV PERF_TEST_PATH=\"/usr/local/src/perf-test\"\n\nADD $perf_test_binary /\n\nRUN if ls rabbitmq-perf-test-*.tar.gz 1> /dev/null 2>&1; then \\\n    set -eux; \\\n\n    mv rabbitmq-perf-test-*.tar.gz rabbitmq-perf-test.tar.gz; \\\n    mkdir -p \"$PERF_TEST_HOME\"; \\\n    tar --extract --file \"rabbitmq-perf-test.tar.gz\" --directory \"$PERF_TEST_HOME\" --strip-components 1; rm \"rabbitmq-perf-test.tar.gz\" \\\n    else \\\n    mv rabbitmq-perf-test-* \"$PERF_TEST_HOME\"; \\\n    fi\n\nFROM ubuntu:22.04\n\n# we need locales support for characters like µ to show up correctly in the console\nRUN set -eux; \\\n\tapt-get update; \\\n\tapt-get install -y --no-install-recommends \\\n\t\tlocales \\\n\t; \\\n\trm -rf /var/lib/apt/lists/*; \\\n\tlocale-gen en_US.UTF-8\n\nENV LANG en_US.UTF-8\nENV LANGUAGE en_US:en\nENV LC_ALL en_US.UTF-8\n\nENV JAVA_HOME=/usr/lib/jvm/java-17-openjdk/jre\nRUN mkdir -p $JAVA_HOME\nCOPY --from=builder /jre $JAVA_HOME/\nRUN ln -svT $JAVA_HOME/bin/java /usr/local/bin/java\n\nRUN mkdir -p /perf_test\nWORKDIR /perf_test\nCOPY --from=builder /perf_test ./\n\nRUN set -eux; \\\n    if [ \"$(uname -m)\" = \"x86_64\" ] ; then bin/runjava com.rabbitmq.perf.PerfTest --version ; \\\n\t  fi\n\nRUN set -eux; \\\n    if [ \"$(uname -m)\" = \"x86_64\" ] ; then bin/runjava com.rabbitmq.perf.PerfTest --help ; \\\n\t  fi\n\nRUN groupadd --gid 1000 perf-test\nRUN useradd --uid 1000 --gid perf-test --comment \"perf-test user\" perf-test\n\nUSER perf-test:perf-test\n\nENTRYPOINT [\"bin/runjava\", \"com.rabbitmq.perf.PerfTest\"]\n"
+}

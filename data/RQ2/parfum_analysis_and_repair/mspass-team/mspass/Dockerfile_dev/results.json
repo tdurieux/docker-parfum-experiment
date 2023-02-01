@@ -1,0 +1,26 @@
+{
+  "startTime": 1674255884954,
+  "endTime": 1674255886659,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 83,
+        "lineEnd": 83,
+        "columnStart": 4,
+        "columnEnd": 73
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 8,
+        "lineEnd": 14,
+        "columnStart": 7,
+        "columnEnd": 16
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "#Image: mspass/mspass\n#Version: 0.0.1\n\nFROM mongo:4.4.0\n\nLABEL maintainer=\"Ian Wang <yinzhi.wang.cug@gmail.com>\"\n\nRUN apt-get update \\\n    && apt-get install --no-install-recommends -y wget ssh rsync vim-tiny less \\\n       build-essential python3-setuptools \\\n       python3-dev python3-pip \\\n       openjdk-8-jdk \\\n       git cmake gfortran gdb \\\n       liblapack-dev libboost-dev libboost-serialization-dev libyaml-dev \\\n       zip unzip \\\n    && apt-get clean \\\n    && rm -rf /var/lib/apt/lists/*\n\n# Prepare the environment\nENV SPARK_VERSION 3.0.0\n\nENV JAVA_HOME /usr/lib/jvm/java-8-openjdk-amd64\nENV SPARK_HOME /usr/local/spark\nENV PYSPARK_PYTHON python3\n\nENV DOCKERIZE_VERSION v0.6.1\nENV DOCKERIZE_URL https://github.com/jwilder/dockerize/releases/download/${DOCKERIZE_VERSION}/dockerize-linux-amd64-${DOCKERIZE_VERSION}.tar.gz\n\nENV APACHE_MIRROR https://archive.apache.org/dist\nENV SPARK_URL ${APACHE_MIRROR}/spark/spark-${SPARK_VERSION}/spark-${SPARK_VERSION}-bin-hadoop2.7.tgz\n\n\n# Download & install Dockerize\nRUN wget -qO - ${DOCKERIZE_URL} | tar -xz -C /usr/local/bin\n\n# Download & install Spark\nRUN wget -qO - ${SPARK_URL} | tar -xz -C /usr/local/ \\\n    && cd /usr/local && ln -s spark-${SPARK_VERSION}-bin-hadoop2.7 spark\nRUN ln -s /usr/local/spark/bin/pyspark /usr/bin/pyspark\nRUN ln -s /usr/local/spark/python/pyspark /usr/local/lib/python3.6/dist-packages/pyspark\nRUN unzip /usr/local/spark/python/lib/py4j-0.10.9-src.zip -d /usr/local/lib/python3.6/dist-packages/\n\n# Patch pyspark for machines don't have localhost defined in /etc/hosts\nRUN sed -i 's/localhost/127.0.0.1/' /usr/local/spark/python/pyspark/accumulators.py\nRUN unzip /usr/local/spark/python/lib/pyspark.zip \\\n    && sed -i 's/localhost/127.0.0.1/' ./pyspark/accumulators.py \\\n    && zip /usr/local/spark/python/lib/pyspark.zip pyspark/accumulators.py \\\n    && rm -r ./pyspark\n\n# Install Python dependencies through pip\nADD requirements.txt requirements.txt\nRUN pip3 --no-cache-dir install --upgrade pip\nRUN pip3 --no-cache-dir install numpy \\\n    && pip3 --no-cache-dir install -r requirements.txt \\\n    && rm -f requirements.txt\n\n# Download & install pybind11\nENV PYBIND11_VERSION 2.6.0\nENV PYBIND11_URL https://github.com/pybind/pybind11/archive/v${PYBIND11_VERSION}.tar.gz\nRUN wget -qO - ${PYBIND11_URL} | tar -xz -C /usr/local/ \\\n    && cd /usr/local/pybind11-${PYBIND11_VERSION} \\\n    && mkdir build && cd build && cmake .. -DPYBIND11_TEST=OFF && make install\nRUN rm -r /usr/local/pybind11-${PYBIND11_VERSION}\n\n# Upgrade setuptools to enable namespace package\nRUN pip3 --no-cache-dir install --upgrade setuptools\n\n# Add cxx library\nADD cxx /mspass/cxx\nRUN cd /mspass/cxx \\\n    && mkdir build && cd build \\\n    && cmake -DCMAKE_BUILD_TYPE=Debug .. \\\n    && make \\\n    && make install \\ \n    && rm -rf ../build\n\n# Add data and env variable for the MetadataDefinition class\nADD data /mspass/data\nENV MSPASS_HOME /mspass\n\n# Add setup.py to install python components\nADD setup.py /mspass/setup.py\nADD python /mspass/python\nRUN pip3 install --no-cache-dir --global-option build --global-option --debug /mspass -v\n\n# Install Jupyter notebook\nRUN pip3 --no-cache-dir install jedi==0.17.2 notebook==6.2.0\n\n# Tini operates as a process subreaper for jupyter.\nENV TINI_VERSION v0.19.0\nADD https://github.com/krallin/tini/releases/download/${TINI_VERSION}/tini /usr/sbin/tini\nRUN chmod +x /usr/sbin/tini\n\n# Add startup script\nADD scripts/start-mspass.sh /usr/sbin/start-mspass.sh\nRUN chmod +x /usr/sbin/start-mspass.sh\nRUN sed -i '/set -- mongod \"$@\"/i [[ -d data ]] || mkdir data' /usr/local/bin/docker-entrypoint.sh\n\n# Set the default behavior of this container\nENV SPARK_MASTER_PORT 7077\nENV DASK_SCHEDULER_PORT 8786\nENV MONGODB_PORT 27017\nENV JUPYTER_PORT 8888\nENV MSPASS_ROLE all\nENV MSPASS_SCHEDULER dask\n\nENTRYPOINT [\"/usr/sbin/tini\", \"-s\", \"-g\", \"--\", \"/usr/sbin/start-mspass.sh\"]\n"
+}

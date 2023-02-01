@@ -1,0 +1,284 @@
+# Copyright 2021-2022 Matteo Grasso
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+
+ARG OS_IMAGE
+FROM ${OS_IMAGE} AS base
+
+ARG OS_NAME
+ARG OS_VERSION
+ENV O3TANKS_CONTAINER_OS="${OS_NAME}:${OS_VERSION}"
+
+ENV O3TANKS_PACKAGES_DIR="/tmp/o3tanks/packages"
+ENV O3TANKS_EXTERNAL_PACKAGES_DIR="${O3TANKS_PACKAGES_DIR}/external"
+ENV O3TANKS_PACKAGE_MANAGER="${O3TANKS_PACKAGES_DIR}/package_manager.sh"
+
+COPY "packages" "${O3TANKS_PACKAGES_DIR}"
+
+RUN mkdir --parents "${O3TANKS_EXTERNAL_PACKAGES_DIR}" \
+ && "${O3TANKS_PACKAGE_MANAGER}" install system base
+
+ARG LOCALE
+ENV LC_ALL=${LOCALE}
+
+ARG USER_NAME
+ARG USER_GROUP
+ARG USER_UID
+ARG USER_GID
+ARG USER_HOME=/home/${USER_NAME}
+RUN if [ -z "${USER_NAME}" ] || [ -z "${USER_GROUP}" ] || [ -z "${USER_UID}" ] || [ -z "${USER_GID}" ]; then \
+		echo 'ERROR: At least one user property is missing. Please check your --build-arg values' \
+	 && exit 1 \
+  ; fi \
+ && if [ ${USER_GID} -gt 0 ]; then \
+ 		groupadd \
+			--gid "${USER_GID}" \
+			"${USER_GROUP}" \
+  ; fi \
+ && if [ ${USER_UID} -gt 0 ]; then \
+		useradd \
+ 			--uid "${USER_UID}" \
+			--gid "${USER_GID}" \
+			--create-home \
+			--home-dir "${USER_HOME}" \
+			"${USER_NAME}" \
+  ; fi
+
+ENV O3DE_DIR=${USER_HOME}/o3de
+
+ENV O3DE_ENGINE_DIR=${O3DE_DIR}/engine
+ENV O3DE_GEMS_DIR=${O3DE_DIR}/gems
+ENV O3DE_GEMS_EXTERNAL_DIR=${O3DE_GEMS_DIR}/.external
+ENV O3DE_PACKAGES_DIR=${O3DE_DIR}/packages
+ENV O3DE_PROJECT_DIR=${O3DE_DIR}/project
+
+ENV O3TANKS_DIR=${USER_HOME}/o3tanks
+
+RUN mkdir --parents "${O3DE_ENGINE_DIR}" \
+ && mkdir --parents "${O3DE_GEMS_DIR}" \
+ && mkdir --parents "${O3DE_GEMS_EXTERNAL_DIR}" \
+ && mkdir --parents "${O3DE_PACKAGES_DIR}" \
+ && mkdir --parents "${O3DE_PROJECT_DIR}" \
+ && mkdir --parents "${O3TANKS_DIR}" \
+ && chown --recursive ${USER_NAME}:${USER_GROUP} "${O3DE_DIR}" \
+ && chown --recursive ${USER_NAME}:${USER_GROUP} "${O3TANKS_DIR}"
+
+WORKDIR ${USER_HOME}
+
+# ---
+
+FROM base AS scripts
+
+RUN "${O3TANKS_PACKAGE_MANAGER}" install system scripts
+
+# ---
+
+FROM scripts AS cli_dev
+
+ENTRYPOINT [ "python3", "-u", "-m", "o3tanks.cli" ]
+
+RUN "${O3TANKS_PACKAGE_MANAGER}" install python cli
+
+
+FROM cli_dev AS cli
+
+ARG USER_NAME
+ARG USER_GROUP
+ARG O3TANKS_SCRIPTS_DIR="o3tanks"
+COPY --chown=${USER_NAME}:${USER_GROUP} "${O3TANKS_SCRIPTS_DIR}/globals" "${O3TANKS_DIR}/globals"
+COPY --chown=${USER_NAME}:${USER_GROUP} "${O3TANKS_SCRIPTS_DIR}/utils" "${O3TANKS_DIR}/utils"
+COPY --chown=${USER_NAME}:${USER_GROUP} [ \
+	"${O3TANKS_SCRIPTS_DIR}/__init__.py", \
+	"${O3TANKS_SCRIPTS_DIR}/builder.py", \
+	"${O3TANKS_SCRIPTS_DIR}/cli.py", \
+	"${O3TANKS_SCRIPTS_DIR}/runner.py", \
+	"${O3TANKS_SCRIPTS_DIR}/updater.py", \
+	\
+	"${O3TANKS_DIR}/" ]
+COPY --chown=${USER_NAME}:${USER_GROUP} "Dockerfile.linux" "${O3TANKS_DIR}/../"
+
+RUN cd "${O3TANKS_DIR}/.." \
+ && chown --recursive  ${USER_NAME}:${USER_GROUP} "${O3TANKS_PACKAGES_DIR}" \
+ && mv "${O3TANKS_PACKAGES_DIR}" "." \
+ && ARCHIVE_FILE="context.tar" \
+ && tar --create --file "${ARCHIVE_FILE}" --verbose "packages" "${O3TANKS_SCRIPTS_DIR}" "Dockerfile.linux" \
+ && rm --recursive "packages" \
+ && rm "${O3TANKS_SCRIPTS_DIR}/builder.py" \
+ && rm "${O3TANKS_SCRIPTS_DIR}/runner.py" \
+ && rm "${O3TANKS_SCRIPTS_DIR}/updater.py" \
+ && rm "Dockerfile.linux" \
+ && mv "${ARCHIVE_FILE}" "${O3TANKS_SCRIPTS_DIR}" \
+ && python3 -m compileall -f -d "${O3TANKS_DIR}" "${O3TANKS_SCRIPTS_DIR}" \
+ && chown --recursive ${USER_NAME}:${USER_GROUP} "${O3TANKS_DIR}"
+ENV O3TANKS_PACKAGES_DIR=''
+ENV O3TANKS_EXTERNAL_PACKAGES_DIR=''
+ENV O3TANKS_PACKAGE_MANAGER=''
+
+# ---
+
+FROM scripts AS updater_dev
+
+ENTRYPOINT [ "python3", "-u", "-m", "o3tanks.updater" ]
+
+RUN "${O3TANKS_PACKAGE_MANAGER}" install python updater \
+ && rm --recursive "${O3TANKS_PACKAGES_DIR}"
+ENV O3TANKS_PACKAGES_DIR=''
+ENV O3TANKS_EXTERNAL_PACKAGES_DIR=''
+ENV O3TANKS_PACKAGE_MANAGER=''
+
+ARG USER_NAME
+USER ${USER_NAME}
+
+
+FROM updater_dev AS updater
+
+ARG USER_NAME
+ARG USER_GROUP
+ARG O3TANKS_SCRIPTS_DIR="o3tanks"
+COPY --chown=${USER_NAME}:${USER_GROUP} "${O3TANKS_SCRIPTS_DIR}/globals" "${O3TANKS_DIR}/globals"
+COPY --chown=${USER_NAME}:${USER_GROUP} "${O3TANKS_SCRIPTS_DIR}/utils" "${O3TANKS_DIR}/utils"
+COPY --chown=${USER_NAME}:${USER_GROUP} [ \
+	"${O3TANKS_SCRIPTS_DIR}/__init__.py", \
+	"${O3TANKS_SCRIPTS_DIR}/updater.py", \
+	\
+	"${O3TANKS_DIR}/" ]
+RUN python3 -m compileall -f -d "${O3TANKS_DIR}" "${O3TANKS_SCRIPTS_DIR}"
+
+# ---
+
+FROM base AS external_runtime_files
+
+RUN "${O3TANKS_PACKAGE_MANAGER}" install --no-external system runtime_external
+
+# ---
+
+FROM base AS runtime_dependencies
+
+COPY --from=external_runtime_files "${O3TANKS_EXTERNAL_PACKAGES_DIR}" "${O3TANKS_EXTERNAL_PACKAGES_DIR}"
+
+RUN "${O3TANKS_PACKAGE_MANAGER}" install system runtime
+
+# ---
+
+FROM runtime_dependencies AS runner_dev
+
+ENTRYPOINT [ "python3", "-u", "-m", "o3tanks.runner" ]
+
+RUN "${O3TANKS_PACKAGE_MANAGER}" install system runner
+
+ARG USER_NAME
+ARG INSTALL_GPU_AMD=false
+ARG INSTALL_GPU_INTEL=false
+ARG RENDER_GROUP_ID
+ARG RENDER_GROUP_NAME
+ARG VIDEO_GROUP_ID
+ARG VIDEO_GROUP_NAME
+RUN GROUPS_FILE="/etc/group" \
+ && if [ ${RENDER_GROUP_ID} -gt 0 ]; then \
+		if ! grep --quiet "${RENDER_GROUP_NAME}:x:" "${GROUPS_FILE}"; then \
+			groupadd \
+				--gid "${RENDER_GROUP_ID}" \
+				"${RENDER_GROUP_NAME}" \
+	  ; elif ! grep --quiet "${RENDER_GROUP_NAME}:x:${RENDER_GROUP_ID}:" "${GROUPS_FILE}"; then \
+			groupadd \
+				--gid "${RENDER_GROUP_ID}" \
+				"${RENDER_GROUP_NAME}-host" \
+	  ; fi \
+	  && usermod --append --groups "${RENDER_GROUP_ID}","${RENDER_GROUP_NAME}" "${USER_NAME}" \
+  ; fi \
+ && if [ ${VIDEO_GROUP_ID} -gt 0 ]; then \
+		if ! grep --quiet "${VIDEO_GROUP_NAME}:x:" "${GROUPS_FILE}"; then \
+			groupadd \
+				--gid "${VIDEO_GROUP_ID}" \
+				"${VIDEO_GROUP_NAME}" \
+	  ; elif ! grep --quiet "${VIDEO_GROUP_NAME}:x:${VIDEO_GROUP_ID}:" "${GROUPS_FILE}"; then \
+			groupadd \
+				--gid "${VIDEO_GROUP_ID}" \
+				"${VIDEO_GROUP_NAME}-host" \
+	  ; fi \
+	  && usermod --append --groups "${VIDEO_GROUP_ID},${VIDEO_GROUP_NAME}" "${USER_NAME}" \
+  ; fi \
+ && if [ "${INSTALL_GPU_AMD}" = "true" ]; then \
+ 		"${O3TANKS_PACKAGE_MANAGER}" install system gpu_amd \
+  ; fi \
+ && if [ "${INSTALL_GPU_INTEL}" = "true" ]; then \
+ 		"${O3TANKS_PACKAGE_MANAGER}" install system gpu_intel \
+  ; fi \
+ && rm --recursive "${O3TANKS_PACKAGES_DIR}"
+ENV O3TANKS_PACKAGES_DIR=''
+ENV O3TANKS_EXTERNAL_PACKAGES_DIR=''
+ENV O3TANKS_PACKAGE_MANAGER=''
+
+USER ${USER_NAME}
+
+
+FROM runner_dev AS runner
+
+ARG USER_NAME
+ARG USER_GROUP
+ARG O3TANKS_SCRIPTS_DIR="o3tanks"
+COPY --chown=${USER_NAME}:${USER_GROUP} "${O3TANKS_SCRIPTS_DIR}/globals" "${O3TANKS_DIR}/globals"
+COPY --chown=${USER_NAME}:${USER_GROUP} "${O3TANKS_SCRIPTS_DIR}/utils" "${O3TANKS_DIR}/utils"
+COPY --chown=${USER_NAME}:${USER_GROUP} [ \
+	"${O3TANKS_SCRIPTS_DIR}/__init__.py", \
+	"${O3TANKS_SCRIPTS_DIR}/runner.py", \
+	\
+	"${O3TANKS_DIR}/" ]
+RUN python3 -m compileall -f -d "${O3TANKS_DIR}" "${O3TANKS_SCRIPTS_DIR}"
+
+# ---
+
+FROM base AS external_development_files
+
+RUN "${O3TANKS_PACKAGE_MANAGER}" install --no-external system development_external
+
+# ---
+
+FROM runtime_dependencies AS development_dependencies
+
+COPY --from=external_development_files "${O3TANKS_EXTERNAL_PACKAGES_DIR}" "${O3TANKS_EXTERNAL_PACKAGES_DIR}"
+
+RUN "${O3TANKS_PACKAGE_MANAGER}" install system development
+
+#---
+
+FROM development_dependencies AS builder_dev
+
+ENTRYPOINT [ "python3", "-u", "-m", "o3tanks.builder" ]
+
+RUN rm --recursive "${O3TANKS_PACKAGES_DIR}"
+ENV O3TANKS_PACKAGES_DIR=''
+ENV O3TANKS_EXTERNAL_PACKAGES_DIR=''
+ENV O3TANKS_PACKAGE_MANAGER=''
+
+ARG USER_NAME
+USER ${USER_NAME}
+
+
+FROM builder_dev AS builder
+
+ARG USER_NAME
+ARG USER_GROUP
+ARG O3TANKS_SCRIPTS_DIR="o3tanks"
+RUN mkdir --parents "${O3DE_ENGINE_DIR}/build" \
+ && mkdir --parents "${O3DE_ENGINE_DIR}/install"
+
+COPY --chown=${USER_NAME}:${USER_GROUP} "${O3TANKS_SCRIPTS_DIR}/globals" "${O3TANKS_DIR}/globals"
+COPY --chown=${USER_NAME}:${USER_GROUP} "${O3TANKS_SCRIPTS_DIR}/utils" "${O3TANKS_DIR}/utils"
+COPY --chown=${USER_NAME}:${USER_GROUP} [ \
+	"${O3TANKS_SCRIPTS_DIR}/__init__.py", \
+	"${O3TANKS_SCRIPTS_DIR}/builder.py", \
+	\
+	"${O3TANKS_DIR}/" ]
+RUN python3 -m compileall -f -d "${O3TANKS_DIR}" "${O3TANKS_SCRIPTS_DIR}"

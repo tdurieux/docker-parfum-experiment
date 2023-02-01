@@ -1,0 +1,26 @@
+{
+  "startTime": 1674239131911,
+  "endTime": 1674239132271,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 24,
+        "lineEnd": 24,
+        "columnStart": 2,
+        "columnEnd": 37
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 54,
+        "lineEnd": 54,
+        "columnStart": 2,
+        "columnEnd": 54
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM debian:jessie-slim\nEXPOSE 8389\n\nLABEL maintainer \"infrastructure@orangebus.co.uk\"\n\nENV LDAP_PORT=8389 \\\n    LDAP_BASE_DN=\"dc=nodomain\" \\\n    LDAP_PASSWORD=\"@auth_ldap_password@\" \\\n    LDAP_ENCRYPTION_KEY=\"@auth_ldap_encryption_key@\" \\\n    LDAP_ENCRYPTION_CERTIFICATE=\"@auth_ldap_encryption_certificate@\" \\\n    DEBIAN_FRONTEND=noninteractive\n\nCOPY scripts/* /usr/local/bin/\nWORKDIR /usr/local/bin\n\nRUN apt-get update --fix-missing && \\\n\n# preconfigure openldap \\\n  echo \"slapd slapd/password1 password $LDAP_PASSWORD\" | debconf-set-selections && \\\n  echo \"slapd slapd/password2 password $LDAP_PASSWORD\" | debconf-set-selections && \\\n  echo \"slapd slapd/internal/adminpw password $LDAP_PASSWORD\" | debconf-set-selections && \\\n  echo \"slapd slapd/internal/generated_adminpw password $LDAP_PASSWORD\" | debconf-set-selections && \\\n\n# install openldap \\\n  apt-get -y --no-install-recommends install slapd ldap-utils && \\\n  apt-get autoclean && apt-get --purge -y autoremove && rm -rf /var/lib/apt/lists/* && \\\n\n  /usr/sbin/slapd -h \"ldapi:///\" -g openldap -u openldap -F /etc/ldap/slapd.d && \\\n  sleep 3 && \\\n# configure password policy \\\n  ldapadd -Y EXTERNAL -H ldapi:/// -f /etc/ldap/schema/ppolicy.ldif && \\\n  ldapadd -Y EXTERNAL -H ldapi:/// -f ppolicymod.ldif && \\\n  ldapadd -Y EXTERNAL -H ldapi:/// -f ppolicy.ldif && \\\n  ldapadd -H ldapi:/// -f ppolicy_ou.ldif -D cn=admin,$LDAP_BASE_DN -w $LDAP_PASSWORD && \\\n  ldapadd -H ldapi:/// -f ppolicy_cn.ldif -D cn=admin,$LDAP_BASE_DN -w $LDAP_PASSWORD && \\\n  ldapmodify -H ldapi:/// -f ppolicy_cn_attribs.ldif -D cn=admin,$LDAP_BASE_DN -w $LDAP_PASSWORD && \\\n# enable & enforce SSL, be lax about self-signed certificates \\\n  echo \"$LDAP_ENCRYPTION_KEY\" > /etc/ldap/ldap-encryption.key && \\\n  echo \"$LDAP_ENCRYPTION_CERTIFICATE\" > /etc/ldap/ldap-encryption.crt && \\\n  ldapmodify -Y EXTERNAL -H ldapi:/// -f mod_ssl.ldif && \\\n  sed -i 's#/etc/ssl/certs/ca-certificates.crt#/etc/ldap/ldap-encryption.crt##' /etc/ldap/ldap.conf && \\\n  echo \"TLS_REQCERT allow\" >> /etc/ldap/ldap.conf && \\\n# allow unlimited search results \\\n  ldapmodify -Y EXTERNAL -H ldapi:/// -f mod_search_limit.ldif && \\\n# allow unlimited search results -frontend \\\n  ldapmodify -Y EXTERNAL -H ldapi:/// -f mod_search_limit_frontend.ldif && \\\n\n# run openldap as its own user \\\n  ldapmodify -Y EXTERNAL -H ldapi:/// -f openldap_user_access.ldif && \\\n  chown -R openldap:0 /etc/ldap /var/lib/ldap /var/run/slapd && \\\n  chmod -R g+rw /etc/ldap /var/lib/ldap /var/run/slapd\n\n# install dev tools and test ldap entries \\\nRUN apt-get update --fix-missing && \\\n  apt-get -y --no-install-recommends install grep mysql-client net-tools rsync && \\\n  apt-get autoclean && apt-get --purge -y autoremove && rm -rf /var/lib/apt/lists/* && \\\n  rm -f ppolicy*.ldif\n\n#USER openldap\nHEALTHCHECK --interval=15s --timeout=8s \\\n  CMD ldapsearch -H ldaps://localhost:8389 -b dc=nodomain -x -LLL -s base || exit 1\nENTRYPOINT [ \"run-openldap.sh\" ]\n"
+}

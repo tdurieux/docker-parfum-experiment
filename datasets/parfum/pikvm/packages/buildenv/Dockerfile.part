@@ -1,0 +1,74 @@
+# https://lists.gnu.org/archive/html/qemu-devel/2017-10/msg03681.html
+RUN echo "$LOCALE.UTF-8 UTF-8" > /etc/locale.gen \
+	&& ([ "$LOCALE" == "en_US" ] || echo "en_US.UTF-8 UTF-8" >> /etc/locale.gen) \
+	&& locale-gen
+ENV LC_ALL $LOCALE.UTF-8
+
+RUN rm -f /etc/localtime \
+	&& ln -s "/usr/share/zoneinfo/$TIMEZONE" /etc/localtime
+
+RUN echo "HOOKS=(base udev block filesystems)" >> /etc/mkinitcpio.conf
+
+RUN sed -i -e "s/^CheckSpace/#CheckSpace/g" /etc/pacman.conf
+
+RUN echo "Server = $REPO_URL/\$arch/\$repo" > /etc/pacman.d/mirrorlist \
+	&& pacman-key --init \
+	&& pacman-key --populate archlinuxarm
+
+RUN pacman --noconfirm -Syy \
+	&& pacman --needed --noconfirm -S \
+		glibc \
+		pacman \
+	&& pacman-db-upgrade \
+	&& pacman --noconfirm -Syu \
+	&& pacman --needed --noconfirm -S \
+		p11-kit \
+		archlinux-keyring \
+		ca-certificates \
+		ca-certificates-mozilla \
+		ca-certificates-utils \
+	&& pacman --needed --noconfirm -S \
+		base \
+		base-devel \
+		devtools \
+		vim \
+		wget \
+		git \
+		python \
+		raspberrypi-firmware \
+	&& case "$BOARD" in \
+			rpi|zero|zerow) pacman --needed --noconfirm --ask=4 -S linux-rpi-legacy linux-rpi-legacy-headers;; \
+			rpi2|rpi3|rpi4|zero2w) pacman --needed --noconfirm --ask=4 -S linux-rpi linux-rpi-headers;; \
+			*) echo "Unknown board: $BOARD"; exit 1;; \
+		esac \
+	&& (pacman --noconfirm -Sc || true)
+
+COPY stages/buildenv/semop-wrapper.c /tmp
+RUN gcc -fPIC -shared -o /usr/local/lib/libpreload-semop.so /tmp/semop-wrapper.c \
+	&& echo /usr/local/lib/libpreload-semop.so >> /etc/ld.so.preload
+
+ARG REPO_NAME
+ENV REPO_NAME $REPO_NAME
+RUN echo $REPO_NAME
+
+ARG REPO_KEY
+ENV REPO_KEY $REPO_KEY
+RUN ( \
+		pacman-key --keyserver hkps://keyserver.ubuntu.com:443 -r $REPO_KEY \
+		|| pacman-key --keyserver hkps://keys.gnupg.net:443 -r $REPO_KEY \
+		|| pacman-key --keyserver hkps://pgp.mit.edu:443 -r $REPO_KEY \
+	) \
+	&& pacman-key --lsign-key $REPO_KEY
+
+ARG ALARM_UID
+ENV ALARM_UID $ALARM_UID
+ARG ALARM_GID
+ENV ALARM_GID $ALARM_GID
+RUN usermod -u $ALARM_UID alarm \
+	&& groupmod -g $ALARM_GID alarm \
+	&& chown -R $ALARM_UID:$ALARM_GID /home/alarm \
+	&& mkdir -p /run/user/$ALARM_UID \
+	&& chown alarm:alarm /run/user/$ALARM_UID
+
+RUN mkdir /tools
+COPY stages/buildenv/buildpkg /tools/

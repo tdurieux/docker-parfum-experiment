@@ -1,0 +1,45 @@
+{
+  "startTime": 1674246426171,
+  "endTime": 1674246427268,
+  "originalSmells": [
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 42,
+        "lineEnd": 54,
+        "columnStart": 4,
+        "columnEnd": 19
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 23,
+        "lineEnd": 35,
+        "columnStart": 4,
+        "columnEnd": 12
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 42,
+        "lineEnd": 54,
+        "columnStart": 4,
+        "columnEnd": 19
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 42,
+        "lineEnd": 54,
+        "columnStart": 4,
+        "columnEnd": 19
+      }
+    }
+  ],
+  "repairedDockerfile": "#\n# Copyright (c) Dell Inc., or its subsidiaries. All Rights Reserved.\n#\n# Licensed under the Apache License, Version 2.0 (the \"License\");\n# you may not use this file except in compliance with the License.\n# You may obtain a copy of the License at\n#\n#     http://www.apache.org/licenses/LICENSE-2.0\n#\n\n# This Docker container can be used for interactive development environments including Visual Studio Code.\n# See associated Helm chart in ../k8s/charts/deepstream-dev-pod.\n\nARG FROM_IMAGE=nvcr.io/nvidia/deepstream:5.1-21.02-devel\n\nFROM ${FROM_IMAGE}\n\nCOPY docker/ca-certificates /usr/local/share/ca-certificates/\nRUN update-ca-certificates\n\nRUN apt-key adv --fetch-keys http://developer.download.nvidia.com/compute/cuda/repos/ubuntu1804/x86_64/3bf863cc.pub\n\nRUN apt-get update && \\\n    apt-get install -y --no-install-recommends \\\n        curl \\\n        dnsutils \\\n        iproute2 \\\n        iputils-ping \\\n        less \\\n        nano \\\n        netcat \\\n        net-tools \\\n        openjdk-11-jdk \\\n        openssh-server \\\n        sudo \\\n        wget && rm -rf /var/lib/apt/lists/*;\n\nRUN mkdir /var/run/sshd\nRUN useradd -rm -d /home/ubuntu -s /bin/bash -g root -G sudo -u 1001 ubuntu\nRUN echo \"ubuntu ALL=(ALL) NOPASSWD: ALL\" >> /etc/sudoers\n\n# Install Python Bindings for DeepStream.\nRUN apt-get install -y --no-install-recommends \\\n        gir1.2-gst-rtsp-server-1.0 \\\n        gobject-introspection \\\n        gstreamer1.0-rtsp \\\n        libgirepository1.0-dev \\\n        libgstrtspserver-1.0-0 \\\n        python3-configargparse \\\n        python3-dev \\\n        python3-gi \\\n        python3-gst-1.0 \\\n        python3-numpy \\\n        python3-opencv \\\n        python3-pip && rm -rf /var/lib/apt/lists/*;\n\nRUN cd /opt/nvidia/deepstream/deepstream/lib && \\\n    python3 setup.py install && \\\n    cd /opt/nvidia/deepstream/deepstream/sources && \\\n    git clone https://github.com/NVIDIA-AI-IOT/deepstream_python_apps\n\n# Install Rust compiler.\n# Based on:\n#   - https://github.com/rust-lang/docker-rust-nightly/blob/master/buster/Dockerfile\n#   - https://hub.docker.com/layers/rust/library/rust/1.49.0/images/sha256-71e239392f5a70bc034522a089175bd36d1344205625047ed42722a205b683b2?context=explore\n\nENV RUSTUP_HOME=/usr/local/rustup \\\n    CARGO_HOME=/usr/local/cargo \\\n    PATH=/usr/local/cargo/bin:$PATH \\\n    RUST_VERSION=1.54.0\n\nRUN set -eux; \\\n    rustArch=\"x86_64-unknown-linux-gnu\"; \\\n    url=\"https://static.rust-lang.org/rustup/archive/1.23.1/${rustArch}/rustup-init\"; \\\n    wget --quiet \"$url\"; \\\n    chmod +x rustup-init; \\\n    ./rustup-init -y --no-modify-path --default-toolchain $RUST_VERSION --default-host ${rustArch}; \\\n    rm rustup-init; \\\n    chmod -R a+w $RUSTUP_HOME $CARGO_HOME; \\\n    rustup --version; \\\n    cargo --version; \\\n    rustc --version;\n\n# Switch to non-root user.\nUSER ubuntu\n\nARG RUST_JOBS=4\n\nWORKDIR /home/ubuntu\n\n# Build gstreamer-pravega components.\n# We'll start with a clone of the Github repo to allow developers to push changes.\n\nRUN git clone --recursive https://github.com/pravega/gstreamer-pravega\nWORKDIR /home/ubuntu/gstreamer-pravega\nRUN cargo build --package gst-plugin-pravega --locked --release --jobs ${RUST_JOBS}\nRUN cargo build --package pravega_protocol_adapter --locked --release --jobs ${RUST_JOBS}\n\n# Copy any changes and rebuild. This should be fast because only updated files will be compiled.\nCOPY Cargo.toml .\nCOPY Cargo.lock .\nCOPY apps apps\nCOPY deepstream/pravega_protocol_adapter deepstream/pravega_protocol_adapter\nCOPY gst-plugin-pravega gst-plugin-pravega\nCOPY integration-test integration-test\nCOPY pravega-video pravega-video\nCOPY pravega-video-server pravega-video-server\nRUN cargo build --package gst-plugin-pravega --locked --release --jobs ${RUST_JOBS}\nRUN cargo build --package pravega_protocol_adapter --locked --release --jobs ${RUST_JOBS}\n\n# Install compiled gstreamer-pravega libraries.\nUSER 0\nRUN mv -v target/release/libgstpravega.so /usr/lib/x86_64-linux-gnu/gstreamer-1.0/\nRUN mv -v target/release/libnvds_pravega_proto.so /opt/nvidia/deepstream/deepstream/lib/\nUSER ubuntu\n\n# Entrypoint will start sshd.\nCOPY docker/devpod-entrypoint.sh /entrypoint.sh\nCOPY --chown=ubuntu:root docker/sshd_config /home/ubuntu/.ssh/sshd_config\nCMD [\"/entrypoint.sh\"]\n\nWORKDIR /home/ubuntu\n"
+}

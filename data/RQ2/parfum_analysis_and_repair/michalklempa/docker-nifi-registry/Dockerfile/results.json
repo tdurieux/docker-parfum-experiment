@@ -1,0 +1,26 @@
+{
+  "startTime": 1674220648373,
+  "endTime": 1674220649346,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 22,
+        "lineEnd": 22,
+        "columnStart": 15,
+        "columnEnd": 59
+      }
+    },
+    {
+      "rule": "sha256sumEchoOneSpaces",
+      "position": {
+        "lineStart": 22,
+        "lineEnd": 22,
+        "columnStart": 7,
+        "columnEnd": 144
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# build phase\nFROM alpine:3.9 as build\nLABEL stage=build\n\nRUN apk --update add --no-cache \\\n  &&   apk add --no-cache ca-certificates openssl curl wget \\\n  &&   update-ca-certificates \\\n  &&   rm -rf /var/lib/apt/lists/* \\\n  &&   rm -f /var/cache/apk/*\n\nARG UPSTREAM_VERSION\nARG MIRROR\n\nENV PROJECT_BASE_DIR /opt/nifi-registry\nENV PROJECT_HOME ${PROJECT_BASE_DIR}/nifi-registry-${UPSTREAM_VERSION}\n\nENV UPSTREAM_BINARY_URL nifi/nifi-registry/nifi-registry-${UPSTREAM_VERSION}/nifi-registry-${UPSTREAM_VERSION}-bin.tar.gz\nENV DOCKERIZE_VERSION v0.6.1\n\n# Download, validate, and expand Apache NiFi-Registry binary.\nRUN mkdir -p ${PROJECT_BASE_DIR} \\\n    && curl -fSL ${MIRROR}/${UPSTREAM_BINARY_URL} -o ${PROJECT_BASE_DIR}/nifi-registry-${UPSTREAM_VERSION}-bin.tar.gz \\\n    && echo \"$( curl -f ${MIRROR}/${UPSTREAM_BINARY_URL}.sha256)  *${PROJECT_BASE_DIR}/nifi-registry-${UPSTREAM_VERSION}-bin.tar.gz\" | sha256sum -c - \\\n    && tar -xvzf ${PROJECT_BASE_DIR}/nifi-registry-${UPSTREAM_VERSION}-bin.tar.gz -C ${PROJECT_BASE_DIR} \\\n    && rm ${PROJECT_BASE_DIR}/nifi-registry-${UPSTREAM_VERSION}-bin.tar.gz \\\n    && rm -fr ${PROJECT_HOME}/docs\n\nRUN wget https://github.com/jwilder/dockerize/releases/download/$DOCKERIZE_VERSION/dockerize-alpine-linux-amd64-$DOCKERIZE_VERSION.tar.gz \\\n    && tar -C /usr/local/bin -xzvf dockerize-alpine-linux-amd64-$DOCKERIZE_VERSION.tar.gz \\\n    && rm dockerize-alpine-linux-amd64-$DOCKERIZE_VERSION.tar.gz\n\n# base phase\nFROM openjdk:8-jdk-alpine as base\n\nRUN apk --update add --no-cache ca-certificates bash git less openssh sshpass \\\n  && update-ca-certificates \\\n  &&   rm -rf /var/lib/apt/lists/* \\\n  &&   rm -f /var/cache/apk/*\n\nARG BUILD_RFC3339\nARG COMMIT\nARG VERSION\n\nLABEL \\\n      org.opencontainers.image.ref.name=\"michalklempa/nifi-registry\" \\\n      org.opencontainers.image.title=\"Unofficial Docker Image For NiFi Registry\" \\\n      org.opencontainers.image.created=$BUILD_RFC3339 \\\n      org.opencontainers.image.authors=\"Michal Klempa <michal.klempa@gmail.com>\" \\\n      org.opencontainers.image.documentation=\"https://github.com/michalklempa/docker-nifi-registry/blob/master/README.md\" \\\n      org.opencontainers.image.description=\"michalklempa/nifi-registry docker image is an alternative and unofficial image for NiFi Registry project\" \\\n      org.opencontainers.image.licenses=\"Apache-2.0\" \\\n      org.opencontainers.image.source=\"https://github.com/michalklempa/docker-nifi-registry/\" \\\n      org.opencontainers.image.revision=$COMMIT \\\n      org.opencontainers.image.version=$VERSION \\\n      org.opencontainers.image.url=\"https://hub.docker.com/r/michalklempa/nifi-registry\" \\\n      org.label-schema.schema-version=\"1.0\" \\\n      org.label-schema.docker.cmd='docker run -p 18080:18080 --name nifi-registry -d michalklempa/nifi-registry:latest' \\\n      org.label-schema.docker.cmd.devel='docker run -p 8000:8000 -p 18080:18080 -e''BOOTSTRAP_JAVA_ARG_DEBUG=-agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=8000'' --name nifi-registry -d michalklempa/nifi-registry:latest'\n\nARG UPSTREAM_VERSION\n\nENV PROJECT_BASE_DIR /opt/nifi-registry\nENV PROJECT_HOME ${PROJECT_BASE_DIR}/nifi-registry-${UPSTREAM_VERSION}\n\nENV PROJECT_TEMPLATE_DIR ${PROJECT_BASE_DIR}/templates\n\nENV PROJECT_CONF_DIR ${PROJECT_HOME}/conf\n\n# Setup NiFi-Registry user\nRUN mkdir -p ${PROJECT_BASE_DIR}\n\nCOPY --from=build ${PROJECT_HOME} ${PROJECT_HOME}\nCOPY --from=build /usr/local/bin/dockerize /usr/local/bin/dockerize\nCOPY ./templates ${PROJECT_TEMPLATE_DIR}\n\nCOPY sh/ ${PROJECT_BASE_DIR}/scripts/\n\nRUN mkdir -p ${PROJECT_HOME}/docs\n\n# Web HTTP(s) ports\nEXPOSE 18080 18443\n\nWORKDIR ${PROJECT_HOME}\n\nFROM base as plain\n\n# Apply configuration and start NiFi Registry\nCMD ${PROJECT_BASE_DIR}/scripts/start-plain.sh\n\nFROM plain as plainuser\nARG UID=1000\nARG GID=1000\n\nRUN addgroup -g ${GID} nifi \\\n    && adduser -s /bin/bash -u ${UID} -G nifi -D nifi \\\n    && chown -R nifi:nifi ${PROJECT_BASE_DIR}\nUSER nifi\n\nFROM base as default\n\nENV FLOW_PROVIDER file\nENV FLOW_PROVIDER_GIT_FLOW_STORAGE_DIRECTORY $PROJECT_BASE_DIR/flow-storage\nENV FLOW_PROVIDER_FILE_FLOW_STORAGE_DIRECTORY $PROJECT_BASE_DIR/flow-storage\n\nENV EXTENSION_BUNDLE_PROVIDER file\nENV EXTENSION_BUNDLE_PROVIDER_FILE_EXTENSION_BUNDLE_STORAGE_DIRECTORY $PROJECT_BASE_DIR/extension-bundle-storage\n\n# Apply configuration and start NiFi Registry\nCMD ${PROJECT_BASE_DIR}/scripts/start.sh\n\nFROM default as defaultuser\nARG UID=1000\nARG GID=1000\n\nRUN addgroup -g ${GID} nifi \\\n    && adduser -s /bin/bash -u ${UID} -G nifi -D nifi \\\n    && chown -R nifi:nifi ${PROJECT_BASE_DIR}\nUSER nifi\n\n"
+}

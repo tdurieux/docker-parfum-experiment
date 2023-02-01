@@ -1,0 +1,13 @@
+FROM debian:9.11
+VOLUME /foo1
+RUN echo "hello" > /foo1/hello
+WORKDIR /foo1/bar
+ADD context/foo /foo1/foo
+COPY context/foo /foo1/foo2
+RUN mkdir /bar1
+VOLUME /foo2
+VOLUME /foo3
+RUN echo "bar2"
+VOLUME /foo4
+RUN mkdir /bar3
+VOLUME /foo5

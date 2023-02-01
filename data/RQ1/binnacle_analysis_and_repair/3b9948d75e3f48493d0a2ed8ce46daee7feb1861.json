@@ -1,0 +1,53 @@
+{
+  "startTime": 1674239660207,
+  "endTime": 1674239660452,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 5,
+        "lineEnd": 5,
+        "columnStart": 4,
+        "columnEnd": 101
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 3,
+        "lineEnd": 3,
+        "columnStart": 4,
+        "columnEnd": 29
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 3,
+        "lineEnd": 3,
+        "columnStart": 4,
+        "columnEnd": 29
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 3,
+        "lineEnd": 3,
+        "columnStart": 4,
+        "columnEnd": 29
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 13,
+        "lineEnd": 13,
+        "columnStart": 4,
+        "columnEnd": 24
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM golang:1.11 as api\nWORKDIR /go/src/github.com/logicmonitor/k8s-collectorset-controller\nRUN apt-get update && apt-get -y --no-install-recommends install bsdtar && rm -rf /var/lib/apt/lists/*;\nRUN go get github.com/golang/protobuf/protoc-gen-go\nRUN curl -f -L https://github.com/google/protobuf/releases/download/v3.3.0/protoc-3.3.0-linux-x86_64.zip | bsdtar -xf - --strip-components=1 -C /bin bin/protoc \\\n  && chmod +x /bin/protoc\nCOPY ./proto ./proto\nRUN mkdir api\nRUN protoc -I proto proto/api.proto \\\n  --go_out=plugins=grpc:api\n\nFROM golang:1.11-alpine as codegen\nRUN apk add --no-cache --update git\nRUN go get github.com/kubernetes/code-generator/cmd/deepcopy-gen || true \\\n  && cd /go/src/github.com/kubernetes/code-generator \\\n  && git checkout remotes/origin/release-1.8 \\\n  && go get -d ./... \\\n  && go install ./cmd/deepcopy-gen\nWORKDIR $GOPATH/src/github.com/logicmonitor/k8s-collectorset-controller\nCOPY ./ ./\nRUN deepcopy-gen \\\n  --go-header-file=\"hack/boilerplate.go.txt\" \\\n  --input-dirs=\"github.com/logicmonitor/k8s-collectorset-controller/pkg/apis/v1alpha1\" \\\n  --bounding-dirs \"github.com/logicmonitor/k8s-collectorset-controller/pkg/apis/v1alpha1\" \\\n  --output-file-base zz_generated.deepcopy\n\nFROM golang:1.11 as build\nWORKDIR $GOPATH/src/github.com/logicmonitor/k8s-collectorset-controller\nCOPY --from=codegen $GOPATH/src/github.com/logicmonitor/k8s-collectorset-controller ./\nARG VERSION\nRUN GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o /collectorset-controller -ldflags \"-X \\\"github.com/logicmonitor/k8s-collectorset-controller/pkg/constants.Version=${VERSION}\\\"\"\n\nFROM golang:1.11 as test\nWORKDIR $GOPATH/src/github.com/logicmonitor/k8s-collectorset-controller\nRUN go get -u github.com/alecthomas/gometalinter\nRUN gometalinter --install\nCOPY --from=build $GOPATH/src/github.com/logicmonitor/k8s-collectorset-controller ./\nRUN chmod +x ./scripts/test.sh; sync; ./scripts/test.sh\nRUN cp coverage.txt /coverage.txt\n\nFROM alpine:3.6\nLABEL maintainer=\"LogicMonitor <argus@logicmonitor.com>\"\nRUN apk --update add ca-certificates \\\n  && rm -rf /var/cache/apk/* \\\n  && rm -rf /var/lib/apk/*\nWORKDIR /app\nCOPY --from=api /go/src/github.com/logicmonitor/k8s-collectorset-controller/api/* /tmp/\nCOPY --from=codegen /go/src/github.com/logicmonitor/k8s-collectorset-controller/pkg/apis/v1alpha1/zz_generated.deepcopy.go /tmp/\nCOPY --from=build /collectorset-controller /bin\nCOPY --from=test /coverage.txt /coverage.txt\n\nENTRYPOINT [\"collectorset-controller\"]\nCMD [\"watch\"]\n"
+}

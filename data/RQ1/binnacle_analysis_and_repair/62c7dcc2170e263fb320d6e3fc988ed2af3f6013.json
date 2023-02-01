@@ -1,0 +1,44 @@
+{
+  "startTime": 1674252854933,
+  "endTime": 1674252855168,
+  "originalSmells": [
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 35,
+        "lineEnd": 35,
+        "columnStart": 7,
+        "columnEnd": 35
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 81,
+        "lineEnd": 81,
+        "columnStart": 4,
+        "columnEnd": 22
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 33,
+        "lineEnd": 33,
+        "columnStart": 4,
+        "columnEnd": 39
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 49,
+        "lineEnd": 49,
+        "columnStart": 7,
+        "columnEnd": 49
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM amazonlinux:latest AS builder\n\nARG SRC\n\nENV BUILD_DIR=/build \\\n    OUTPUT_DIR=/output \\\n    RUST_BACKTRACE=1 \\\n    RUSTUP_HOME=/usr/local/rustup \\\n    CARGO_HOME=/usr/local/cargo \\\n    PATH=/usr/local/cargo/bin:$PATH \\\n    PREFIX=/musl \\\n    MUSL_VERSION=1.1.19 \\\n    OPENSSL_VERSION=1.1.0i\n\nRUN mkdir -p /usr/local/cargo/bin \\\n  && mkdir -p $BUILD_DIR \\\n  && mkdir -p $OUTPUT_DIR \\\n  && mkdir -p $PREFIX\n\nRUN curl https://sh.rustup.rs -sSf | sh -s -- --default-toolchain stable -y\n\nENV BUILD_TARGET=x86_64-unknown-linux-musl\n\nRUN rustup target add $BUILD_TARGET\n\nRUN yum -y groupinstall \"Development Tools\"\n\nWORKDIR $PREFIX\n\n# Build any dependencies that aren't part of your build, e.g. thrift compiler\n\n# Build Musl\nADD http://www.musl-libc.org/releases/musl-$MUSL_VERSION.tar.gz .\nRUN tar -xvzf musl-$MUSL_VERSION.tar.gz \\\n    && cd musl-$MUSL_VERSION \\\n    && ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" --prefix=$PREFIX \\\n    && make install \\\n    && cd .. && rm musl-$MUSL_VERSION.tar.gz\n\n# Set environment for musl\nENV CC=$PREFIX/bin/musl-gcc \\\n    C_INCLUDE_PATH=$PREFIX/include/ \\\n    CPPFLAGS=-I$PREFIX/include \\\n    LDFLAGS=-L$PREFIX/lib\n\n# Build OpenSSL\nADD https://www.openssl.org/source/openssl-$OPENSSL_VERSION.tar.gz .\n\nRUN echo \"Building OpenSSL\" \\\n    && tar -xzf \"openssl-$OPENSSL_VERSION.tar.gz\" \\\n    && cd openssl-$OPENSSL_VERSION \\\n    && ./Configure no-async no-afalgeng no-shared no-zlib -fPIC --prefix=$PREFIX --openssldir=$PREFIX/ssl linux-x86_64 \\\n    && make depend \\\n    && make install && rm \"openssl-$OPENSSL_VERSION.tar.gz\"\n\nWORKDIR $BUILD_DIR\n\nRUN mkdir .cargo\nADD docker/cargo_config .cargo/config\n\nENV OPENSSL_DIR=$PREFIX \\\n    OPENSSL_STATIC=true\n\nADD $SRC/src src\nADD $SRC/Cargo.toml .\n\nRUN cargo build --target $BUILD_TARGET --release\n\nRUN find target/$BUILD_TARGET/release -maxdepth 1 -type f -executable -exec cp '{}' $OUTPUT_DIR \\;\n\nFROM amazonlinux:latest AS package\n\nENV OUTPUT_DIR=/output \\\n    ARTIFACTS_DIR=/artifacts\n\nRUN mkdir -p $ARTIFACTS_DIR\n\nCOPY --from=builder $OUTPUT_DIR $ARTIFACTS_DIR\n\nWORKDIR $ARTIFACTS_DIR\n\nRUN yum -y install zip && rm -rf /var/cache/yum\n\nRUN find . -maxdepth 1 -type f -executable -exec zip aws_lambda.zip '{}' \\;\n\nRUN ls -a $ARTIFACTS_DIR\n\nFROM package\n\nENV ARTIFACTS_DIR=/artifacts \\\n    EXPORT_DIR=/export\n\nRUN mkdir -p $EXPORT_DIR\n\n#Snapshot the directory\nVOLUME $EXPORT_DIR\n\nCMD find $ARTIFACTS_DIR -type f -name \"aws_lambda.zip\" -exec cp '{}' $EXPORT_DIR \\;\n"
+}

@@ -1,0 +1,53 @@
+{
+  "startTime": 1674238519849,
+  "endTime": 1674238520049,
+  "originalSmells": [
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 7,
+        "lineEnd": 7,
+        "columnStart": 4,
+        "columnEnd": 65
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 12,
+        "lineEnd": 12,
+        "columnStart": 4,
+        "columnEnd": 37
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 13,
+        "lineEnd": 13,
+        "columnStart": 4,
+        "columnEnd": 56
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 73,
+        "lineEnd": 73,
+        "columnStart": 4,
+        "columnEnd": 24
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 78,
+        "lineEnd": 78,
+        "columnStart": 4,
+        "columnEnd": 31
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM centos:centos7\n\n#\n#  Install devtools like make and git and the EPEL\n#  repository for freetds and hiredis\n#\nRUN yum update -y\nRUN yum install -y rpmdevtools openssl epel-release git yum-utils && rm -rf /var/cache/yum\n\n#\n#  Install GCC that has the requisite support for C11 keywords and atomics\n#\nRUN yum install -y centos-release-scl && rm -rf /var/cache/yum\nRUN yum install -y devtoolset-6-gcc devtoolset-6-gcc-c++ && rm -rf /var/cache/yum\nENV CC=/opt/rh/devtoolset-6/root/usr/bin/gcc\n\n#\n#  Setup a src dir in /usr/local\n#\nRUN mkdir -p /usr/local/src/repositories\nWORKDIR /usr/local/src/repositories\n\n#\n#  Get a modern version of cmake.  We need 3.8.2 or later to build libkqueue rpms\n#\nRUN curl -f -o cmake.sh https://cmake.org/files/v3.8/cmake-3.8.2-Linux-x86_64.sh\nRUN [ \"$(cat cmake.sh | openssl sha256 | sed 's/^.* //')\" = \"bb26b1871f9e5c2fb73476186cc94d03b674608f704b48b94d617340b87b4d73\" ]\nRUN sh cmake.sh --skip-license --prefix=/usr/local\n\n#\n#  Grab libkqueue and build\n#\nWORKDIR /usr/local/src/repositories\nRUN git clone --branch master --depth=1 https://github.com/mheily/libkqueue.git\n\nWORKDIR libkqueue\nRUN cmake -G \"Unix Makefiles\" -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_INSTALL_LIBDIR=lib ./ && \\\n    make && \\\n    cpack -G RPM && \\\n    yum localinstall -y *.rpm\n\n#\n#  Use LTB's openldap packages intead of the distribution version to avoid linking against NSS\n#\nRUN echo $'[ltb-project]\\n\\\nname=LTB project packages\\n\\\nbaseurl=https://ltb-project.org/rpm/$releasever/$basearch\\n\\\nenabled=1\\n\\\ngpgcheck=1\\n\\\ngpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-LTB-project'\\\n> /etc/yum.repos.d/ltb-project.repo\nRUN rpm --import https://ltb-project.org/lib/RPM-GPG-KEY-LTB-project\n\n#\n#  Shallow clone the FreeRADIUS source\n#\nWORKDIR /usr/local/src/repositories\nARG source=https://github.com/FreeRADIUS/freeradius-server.git\nRUN git clone --depth 1 --no-single-branch ${source}\n\n#\n#  Install build dependencies for all branches from v3 onwards\n#\nWORKDIR freeradius-server\nRUN for i in $(git for-each-ref --format='%(refname:short)' refs/remotes/origin 2>/dev/null | sed -e 's#origin/##' | egrep \"^(v[3-9]*\\.[0-9x]*\\.x|master)$\");\\\n\tdo \\\n\t\tgit checkout $i; \\\n\t\t[ -e redhat/freeradius.spec ] && yum-builddep -y redhat/freeradius.spec; \\\n\tdone\n\n#\n#  Which is required by fixture setup utilities\n#\nRUN yum install -y which && rm -rf /var/cache/yum\n\n#\n#  Explicitly install libnl3-devel which is required for the EAP tests\n#\nRUN yum install -y libnl3-devel && rm -rf /var/cache/yum\n\n#\n#  Create the RPM build tree\n#\nENV BUILDDIR=/root/rpmbuild\nRUN rpmdev-setuptree\n"
+}

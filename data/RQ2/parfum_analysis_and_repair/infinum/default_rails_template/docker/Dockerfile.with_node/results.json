@@ -1,0 +1,99 @@
+{
+  "startTime": 1674214921038,
+  "endTime": 1674214922878,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 9,
+        "lineEnd": 9,
+        "columnStart": 5,
+        "columnEnd": 65
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 59,
+        "lineEnd": 59,
+        "columnStart": 4,
+        "columnEnd": 59
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 60,
+        "lineEnd": 60,
+        "columnStart": 4,
+        "columnEnd": 52
+      }
+    },
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 74,
+        "lineEnd": 74,
+        "columnStart": 4,
+        "columnEnd": 16
+      }
+    },
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 95,
+        "lineEnd": 95,
+        "columnStart": 5,
+        "columnEnd": 21
+      }
+    },
+    {
+      "rule": "curlUseHttpsUrl",
+      "position": {
+        "lineStart": 60,
+        "lineEnd": 60,
+        "columnStart": 4,
+        "columnEnd": 52
+      }
+    },
+    {
+      "rule": "gemUpdateSystemRmRootGem",
+      "position": {
+        "lineStart": 37,
+        "lineEnd": 37,
+        "columnStart": 4,
+        "columnEnd": 23
+      }
+    },
+    {
+      "rule": "gemUpdateNoDocument",
+      "position": {
+        "lineStart": 37,
+        "lineEnd": 37,
+        "columnStart": 4,
+        "columnEnd": 23
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 79,
+        "lineEnd": 79,
+        "columnStart": 47,
+        "columnEnd": 63
+      }
+    },
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 107,
+        "lineEnd": 107,
+        "columnStart": 60,
+        "columnEnd": 76
+      }
+    }
+  ],
+  "repairedDockerfile": "ARG RUBY_VERSION=3.1.1\nFROM ruby:$RUBY_VERSION-slim-buster as base\n\nCOPY .docker/Aptfile /tmp/Aptfile\n\nARG PG_MAJOR=13\nENV DEBIAN_FRONTEND=noninteractive\nRUN apt-get update -qq \\\n  && apt-get install -yq --no-install-recommends curl gnupg2 \\\n  && curl -f -sSL https://www.postgresql.org/media/keys/ACCC4CF8.asc | apt-key add - \\\n  && echo 'deb http://apt.postgresql.org/pub/repos/apt/ buster-pgdg main' $PG_MAJOR > /etc/apt/sources.list.d/pgdg.list \\\n  && apt-get update -qq \\\n  && apt-get -yq dist-upgrade \\\n  && apt-get install -yq --no-install-recommends \\\n    libpq-dev \\\n    postgresql-client-$PG_MAJOR \\\n  $(cat /tmp/Aptfile | xargs) \\\n  && apt-get purge -y curl gnupg2 \\\n  && apt-get clean \\\n  && rm -rf /var/cache/apt/archives/* \\\n  && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/* \\\n  && truncate -s 0 /var/log/*log\n\nARG BUNDLER_VERSION=2.3.\nENV GEM_HOME=/usr/local/bundle\nENV BUNDLE_PATH=$GEM_HOME\nENV BUNDLE_APP_CONFIG=$BUNDLE_PATH\nENV BUNDLE_BIN=/usr/local/bin \\\n  BUNDLE_JOBS=4 \\\n  BUNDLE_RETRY=3 \\\n  MAKE=\"make --jobs 8\" \\\n  LANG=C.UTF-8 \\\n  PATH=/app/bin:$PATH\n\nRUN groupadd --gid 1001 nonroot \\\n  && useradd --uid 1001 --gid nonroot --shell /bin/bash --create-home nonroot\nRUN mkdir -p /usr/local/etc \\\n  && { \\\n    echo 'install: --no-document'; \\\n    echo 'update: --no-document'; \\\n  } >> /usr/local/etc/gemrc;\n\nRUN gem update --system && \\\n  rm -f /usr/local/bin/ruby/gems/*/specifications/default/bundler-*.gemspec && \\\n  gem install bundler -v $BUNDLER_VERSION && rm -rf /root/.gem;\n\n# chown /app so it's writable by yarn & bootsnap\nRUN mkdir /app && chown -R nonroot:nonroot /app\n\nWORKDIR /app\n\nFROM base as builder\n# current LTS as default\nARG NODE_MAJOR=16\nARG YARN_VERSION=1.22.15\n\nRUN apt-get update -qq \\\n  && apt-get install -yq --no-install-recommends build-essential git curl gnupg2 \\\n  && apt-get clean \\\n  && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/* \\\n  && truncate -s 0 /var/log/*log\n\n# add node and yarn\n# TODO: can we somehow pin Node to a specific version?\nRUN curl -f -sL https://deb.nodesource.com/setup_$NODE_MAJOR.x | bash -\nRUN curl -f -sS https://dl.yarnpkg.com/debian/pubkey.gpg | apt-key add - \\\n  && echo 'deb http://dl.yarnpkg.com/debian/ stable main' > /etc/apt/sources.list.d/yarn.list\nRUN apt-get update -qq \\\n  && apt-get install -yq --no-install-recommends \\\n    nodejs \\\n    yarn=$YARN_VERSION-1 \\\n  && apt-get clean \\\n  && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/* \\\n  && truncate -s 0 /var/log/*log\n\nFROM builder as gems_and_npm_packages\n\nCOPY --chown=nonroot:nonroot package.json yarn.lock /app/\nENV NODE_ENV=production\nRUN yarn install && (rm -rf /tmp/* || true) && yarn cache clean;\n\nCOPY --chown=nonroot:nonroot .bundle/ci-deploy/config /app/.bundle/config\nCOPY --chown=nonroot:nonroot Gemfile* /app/\nRUN bundle install\n\nFROM gems_and_npm_packages as test\nCOPY --chown=nonroot:nonroot .bundle/ci-build/config /app/.bundle/config\nENV RAILS_ENV=test \\\n  NODE_ENV=test\n\nRUN bundle install\nCOPY --chown=nonroot:nonroot . /app\n\nFROM gems_and_npm_packages as gems_and_assets\n\nCOPY --chown=nonroot:nonroot . /app\nCOPY --chown=nonroot:nonroot .docker/application.yml /app/config\nARG RAILS_ENV=production\n\nRUN --mount=type=secret,id=app_secrets,target=/app/config/application.yml bundle exec rails assets:precompile \\\n  && yarn cache clean \\\n  && (rm -rf /tmp/* || true) \\\n  && rm -rf $BUNDLE_PATH/*.gem \\\n  && find $BUNDLE_PATH/ruby -name \"*.c\" -delete \\\n  && find $BUNDLE_PATH/ruby -name \"*.o\" -delete \\\n  && find $BUNDLE_PATH/ruby -name \".git\"  -type d -prune -execdir rm -rf {} + \\\n  && bundle exec rails tmp:clear \\\n  && bundle exec bootsnap precompile --gemfile app/ lib/ && yarn cache clean;\n\n# https://github.com/rubygems/rubygems/issues/3225\nRUN rm -rf /usr/local/bundle/ruby/*/cache\n\nFROM base as deploy\n\n# copy the gems\nCOPY --chown=nonroot:nonroot --from=gems_and_assets $BUNDLE_PATH $BUNDLE_PATH\n# copy app code\nCOPY --chown=nonroot:nonroot . /app\n# copy bootsnap cache\nCOPY --chown=nonroot:nonroot --from=gems_and_assets /app/tmp /app/tmp\n# copy assets\nCOPY --chown=nonroot:nonroot --from=gems_and_assets /app/public/assets /app/public/assets\n\nUSER nonroot\nENV RAILS_LOG_TO_STDOUT=true\n\nCMD bundle exec rails s -b 0.0.0.0\n"
+}

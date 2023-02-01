@@ -1,0 +1,26 @@
+{
+  "startTime": 1674215949341,
+  "endTime": 1674215950011,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 35,
+        "lineEnd": 37,
+        "columnStart": 4,
+        "columnEnd": 9
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 68,
+        "lineEnd": 81,
+        "columnStart": 4,
+        "columnEnd": 23
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "#/*\n# * Licensed to the OpenAirInterface (OAI) Software Alliance under one or more\n# * contributor license agreements.  See the NOTICE file distributed with\n# * this work for additional information regarding copyright ownership.\n# * The OpenAirInterface Software Alliance licenses this file to You under\n# * the terms found in the LICENSE file in the root of this source tree.\n# *\n# * Unless required by applicable law or agreed to in writing, software\n# * distributed under the License is distributed on an \"AS IS\" BASIS,\n# * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.\n# * See the License for the specific language governing permissions and\n# * limitations under the License.\n# *-------------------------------------------------------------------------------\n# * For more information about the OpenAirInterface (OAI) Software Alliance:\n# *      contact@openairinterface.org\n# */\n#---------------------------------------------------------------------\n#\n# Dockerfile for the Open-Air-Interface HSS service\n#   Valid for Ubuntu-18.04 (bionic)\n#\n#---------------------------------------------------------------------\n\n#---------------------------------------------------------------------\n# BUILDER IMAGE\n#---------------------------------------------------------------------\nFROM ubuntu:bionic as oai-hss-builder\n\nARG EURECOM_PROXY\n\nENV DEBIAN_FRONTEND=noninteractive\nENV TZ=Europe\nRUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone\nRUN apt-get update && \\\n    DEBIAN_FRONTEND=noninteractive apt-get upgrade --yes && \\\n    DEBIAN_FRONTEND=noninteractive apt-get --no-install-recommends install --yes \\\n      psmisc \\\n      git && \\\n    rm -rf /var/lib/apt/lists/*\n\n# Some GIT configuration command quite useful\nRUN /bin/bash -c \"if [[ -v EURECOM_PROXY ]]; then git config --global http.proxy $EURECOM_PROXY; fi\" && \\\n    git config --global https.postBuffer 123289600 && \\\n    git config --global http.sslverify false\n\n# wait for it\nworkdir /\nRUN git clone https://github.com/vishnubob/wait-for-it.git\n\n# Copy the workspace as is\nWORKDIR /openair-hss\nCOPY . .\n\n# Installing and Building HSS\nWORKDIR /openair-hss/scripts\nRUN ./build_hss_rel14 --check-installed-software --force\nRUN ./build_hss_rel14 --clean --build-type Release && \\\n    mv /openair-hss/build/hss_rel14/bin/hss /openair-hss/build/hss_rel14/bin/oai_hss\n\n#---------------------------------------------------------------------\n# TARGET IMAGE\n#---------------------------------------------------------------------\nFROM ubuntu:bionic as oai-hss\nENV DEBIAN_FRONTEND=noninteractive\nENV TZ=Europe/Paris\n# We install some debug tools for the moment in addition of mandatory libraries\nRUN apt-get update && \\\n    DEBIAN_FRONTEND=noninteractive apt-get upgrade --yes && \\\n    DEBIAN_FRONTEND=noninteractive apt-get --no-install-recommends install --yes \\\n      tzdata \\\n      psmisc \\\n      openssl \\\n      net-tools \\\n      tshark \\\n      libsctp1 \\\n      libuv1 \\\n      libconfig9 \\\n      libidn11 \\\n      python \\\n      python3 \\\n      python-cassandra \\\n      python3-cassandra && \\\n    rm -rf /var/lib/apt/lists/*\n\n# Copying executable and generated libraries\nWORKDIR /openair-hss/bin\nCOPY --from=oai-hss-builder \\\n    /openair-hss/build/hss_rel14/bin/oai_hss \\\n    /openair-hss/scripts/entrypoint.sh \\\n    ./\n\nCOPY --from=oai-hss-builder \\\n    /usr/local/lib/libfd* \\\n    /usr/local/lib/x86_64-linux-gnu/libcassandra* \\\n    /usr/local/lib/\nCOPY --from=oai-hss-builder /usr/local/lib/freeDiameter/* /usr/local/lib/freeDiameter/\n\n# Copying template configuration files\n# The configuration folder will be flat\nWORKDIR /openair-hss/etc\nCOPY --from=oai-hss-builder \\\n    /openair-hss/etc/hss_rel14.conf \\\n    /openair-hss/etc/hss_rel14.json \\\n    /openair-hss/etc/acl.conf \\\n    /openair-hss/etc/oss.json \\\n    /openair-hss/etc/hss_rel14_fd.conf \\\n    ./\nRUN sed -i -e 's#freeDiameter##' hss_rel14.json && \\\n    sed -i -e \"s#@PREFIX@/freeDiameter#@PREFIX@#g\" hss_rel14_fd.conf\n\n# Copy the certificate generation script\nWORKDIR /openair-hss/scripts\nCOPY --from=oai-hss-builder \\\n    /openair-hss/src/hss_rel14/bin/make_certs.sh \\\n    /openair-hss/scripts/data_provisioning_users \\\n    /openair-hss/scripts/data_provisioning_mme \\\n    /wait-for-it/wait-for-it.sh \\\n    ./\nRUN sed -i -e \"s@/freeDiameter@@\" make_certs.sh\n\nWORKDIR /openair-hss\nRUN openssl rand -out /root/.rnd 128\n\n# expose ports configured in hss_fd.conf\nEXPOSE 9042/tcp 5868/tcp 9080/tcp 9081/tcp\n\nCMD [\"/openair-hss/bin/oai_hss\", \"-j\", \"/openair-hss/etc/hss_rel14.json\", \"--reloadkey\", \"true\"]\nENTRYPOINT [\"/openair-hss/bin/entrypoint.sh\"]\n"
+}

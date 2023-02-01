@@ -1,0 +1,44 @@
+{
+  "startTime": 1674218540731,
+  "endTime": 1674218543241,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 4,
+        "lineEnd": 12,
+        "columnStart": 2,
+        "columnEnd": 16
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 70,
+        "lineEnd": 70,
+        "columnStart": 2,
+        "columnEnd": 33
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 4,
+        "lineEnd": 12,
+        "columnStart": 2,
+        "columnEnd": 16
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 70,
+        "lineEnd": 70,
+        "columnStart": 2,
+        "columnEnd": 33
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "ARG ARCH=\nFROM ${ARCH}debian:bullseye AS builder\n\nRUN apt-get -y update && \\\n  apt-get -y --no-install-recommends install \\\n    build-essential git-core \\\n    lintian pkg-config quilt patch cargo \\\n    nodejs node-colors node-commander \\\n    libudev-dev libapt-pkg-dev \\\n    libacl1-dev libpam0g-dev libfuse3-dev \\\n    libsystemd-dev uuid-dev libssl-dev \\\n    libclang-dev libjson-perl libcurl4-openssl-dev \\\n    dh-exec wget && rm -rf /var/lib/apt/lists/*;\n\nRUN wget https://static.rust-lang.org/rustup/rustup-init.sh && \\\n  chmod +x rustup-init.sh && \\\n  ./rustup-init.sh -y --default-toolchain nightly\n\nWORKDIR /src\n\nRUN /usr/bin/rustc --version\nRUN /root/.cargo/bin/rustc --version\nRUN git config --global user.email \"docker@compile.dev\" && \\\n  git config --global user.name \"Docker Compile\"\n\n# Clone all sources\nARG VERSION=master\nADD /versions/${VERSION}/ /patches/\nRUN /patches/clone.bash\n\n# Apply all patches\nADD /scripts/ /scripts/\nRUN /scripts/apply-patches.bash /patches/server/*.patch\nRUN /scripts/strip-cargo.bash\n\n# A first required dep\nRUN apt-get -y build-dep $PWD/pve-eslint\nRUN cd pve-eslint/ && make dinstall\n\n# Install dev dependencies of widget toolkit\nRUN apt-get -y build-dep $PWD/proxmox-widget-toolkit\nRUN cd proxmox-widget-toolkit/ && make deb && dpkg -i proxmox-widget-toolkit-dev*.deb && mv *.deb ../\n\n# Deps for all rest\nRUN apt-get -y build-dep $PWD/proxmox-backup\nRUN apt-get -y build-dep $PWD/proxmox-mini-journalreader\nRUN apt-get -y build-dep $PWD/extjs\nRUN apt-get -y build-dep $PWD/proxmox-i18n\nRUN apt-get -y build-dep $PWD/pve-xtermjs\nRUN apt-get -y build-dep $PWD/libjs-qrcodejs\nRUN apt-get -y build-dep $PWD/proxmox-acme\n\n# Compile ALL\nRUN . /root/.cargo/env && cd proxmox-backup/ && dpkg-buildpackage -us -uc -b\nRUN cd extjs/ && make deb && mv *.deb ../\nRUN cd proxmox-i18n/ && make deb && mv *.deb ../\nRUN ln -sf /bin/true /usr/share/cargo/bin/dh-cargo-built-using # license is fine (but due to how we compile it, help dpkg for xtermjs)\nRUN cd pve-xtermjs/ && dpkg-buildpackage -us -uc -b\nRUN cd proxmox-mini-journalreader/ && make deb && mv *.deb ../\nRUN cd libjs-qrcodejs/ && make deb && mv *.deb ../\nRUN export DEB_BUILD_OPTIONS=nocheck && cd proxmox-acme/ && make deb && rm libproxmox-acme-perl* && mv *.deb ../\n\n#=================================\n\nFROM ${ARCH}debian:bullseye\nCOPY --from=builder /src/*.deb /src/\n\n# Install all packages\nRUN export DEBIAN_FRONTEND=noninteractive && \\\n  apt update -y && \\\n  apt install --no-install-recommends -y runit /src/*.deb && rm -rf /var/lib/apt/lists/*;\n\n# Add default configs\nADD /pbs/ /etc/proxmox-backup-default/\n\nVOLUME /etc/proxmox-backup\nVOLUME /var/log/proxmox-backup\nVOLUME /var/lib/proxmox-backup\n\nADD runit/ /runit/\nCMD [\"runsvdir\", \"/runit\"]\n"
+}

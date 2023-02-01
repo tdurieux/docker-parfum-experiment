@@ -1,0 +1,44 @@
+{
+  "startTime": 1674250457365,
+  "endTime": 1674250458208,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 56,
+        "lineEnd": 56,
+        "columnStart": 4,
+        "columnEnd": 69
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 75,
+        "lineEnd": 75,
+        "columnStart": 11,
+        "columnEnd": 138
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 81,
+        "lineEnd": 81,
+        "columnStart": 11,
+        "columnEnd": 93
+      }
+    },
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 118,
+        "lineEnd": 118,
+        "columnStart": 7,
+        "columnEnd": 35
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM php:7.4-fpm-alpine AS withoutsources\n\nENV TZ UTC\nENV APP_ENV prod\nENV APP_DEBUG '0'\nENV COMPOSER_MEMORY_LIMIT -1\nENV COMPOSER_ALLOW_SUPERUSER 1\nENV COMPOSER_HOME /.composer\n\nARG DEBUG_TOOLS\n\nRUN apk add --update --no-cache \\\n    openssl \\\n    ca-certificates \\\n    curl \\\n    fcgi \\\n    su-exec \\\n    acl \\\n    file \\\n    gettext \\\n    git\n\nRUN set -eux; \\\n  apk add --no-cache --virtual .build-deps \\\n    $PHPIZE_DEPS \\\n    icu-dev \\\n    libzip-dev \\\n    postgresql-dev \\\n  ; \\\n  \\\n  docker-php-ext-configure zip; \\\n  docker-php-ext-install -j$(nproc) \\\n    intl \\\n    pdo_pgsql \\\n    zip \\\n    sockets \\\n  ; \\\n  pecl install \\\n    apcu-5.1.18 \\\n  ; \\\n  pecl clear-cache; \\\n  docker-php-ext-enable \\\n    apcu \\\n    opcache \\\n  ; \\\n  \\\n  runDeps=\"$( \\\n    scanelf --needed --nobanner --format '%n#p' --recursive /usr/local/lib/php/extensions \\\n      | tr ',' '\\n' \\\n      | sort -u \\\n      | awk 'system(\"[ -e /usr/local/lib/\" $1 \" ]\") == 0 { next } { print \"so:\" $1 }' \\\n  )\"; \\\n  apk add --no-cache --virtual .api-phpexts-rundeps $runDeps; \\\n  \\\n  apk del .build-deps\n\nRUN curl -f https://getcomposer.org/composer-1.phar -o /usr/bin/composer \\\n    && chmod +x /usr/bin/composer \\\n    && mkdir /.composer \\\n    && chown -R www-data:www-data /.composer \\\n    && setfacl -R -m o::rwX /.composer \\\n    && setfacl -dR -m o::rwX /.composer \\\n    && su-exec www-data composer global require \"hirak/prestissimo\" \"jderusse/composer-warmup\" --prefer-dist --no-progress --no-suggest --classmap-authoritative \\\n    && su-exec www-data composer clear-cache -n\n\nRUN test -z \"$DEBUG_TOOLS\" || ( \\\n        apk add --no-cache --virtual .build-deps $PHPIZE_DEPS \\\n        && pecl install pcov-1.0.6 \\\n        && pecl clear-cache \\\n        && docker-php-ext-enable pcov \\\n        && apk del .build-deps \\\n    )\n\nRUN test -z \"$DEBUG_TOOLS\" || ( version=$(php -r \"echo PHP_MAJOR_VERSION.PHP_MINOR_VERSION;\") \\\n        && curl -f -A \"Docker\" -o /tmp/blackfire-probe.tar.gz -D - -L -s https://blackfire.io/api/v1/releases/probe/php/alpine/amd64/$version \\\n        && mkdir -p /tmp/blackfire \\\n        && tar zxpf /tmp/blackfire-probe.tar.gz -C /tmp/blackfire \\\n        && mv /tmp/blackfire/blackfire-*.so $(php -r \"echo ini_get('extension_dir');\")/blackfire.so \\\n        && printf \"extension=blackfire.so\\nblackfire.agent_socket=tcp://blackfire:8707\\n\" > /usr/local/etc/php/conf.d/blackfire.ini \\\n        && rm -rf /tmp/blackfire-probe.tar.gz \\\n        && curl -f -A \"Docker\" -L https://blackfire.io/api/v1/releases/client/linux_static/amd64 | tar zxp -C /tmp/blackfire \\\n        && mv /tmp/blackfire/blackfire /usr/bin/blackfire \\\n        && rm -Rf /tmp/blackfire)\n\nRUN test -z \"$DEBUG_TOOLS\" || ( \\\n        apk add --no-cache \\\n            chromium \\\n            chromium-chromedriver \\\n    )\n\nCOPY ./docker/php-flex/files/. /\n\nWORKDIR /srv\n\n# ================================================\n\nFROM withoutsources AS withoutsources-fpm\n\nEXPOSE 9000\nENTRYPOINT [\"entrypoint\"]\nCMD []\nHEALTHCHECK --interval=5s --timeout=5s --start-period=5s --retries=3 CMD REDIRECT_STATUS=true SCRIPT_FILENAME=/srv/public/ping.php REQUEST_URI=/ REQUEST_METHOD=GET cgi-fcgi -bind -connect 127.0.0.1:9000\nSTOPSIGNAL SIGQUIT\n\n# ================================================\n\nFROM node:13-alpine AS withsources-npm\n\nWORKDIR /srv\n\nCOPY package.json webpack.config.js yarn.lock ./\n\nRUN apk --no-cache --update --virtual build-dependencies add \\\n    python \\\n    make \\\n    g++ \\\n    && yarn install --pure-lockfile \\\n    && apk del build-dependencies && yarn cache clean;\n\nCOPY assets assets/\nRUN yarn encore production\n\n# ================================================\n\nFROM withoutsources AS withsources\n\nARG BUILD_TAG=dev\nENV IMAGE_BUILD_TAG=$BUILD_TAG\n\nCOPY --chown=www-data:www-data composer.* symfony.lock /srv/\n\nRUN chown -R www-data:www-data /srv\nUSER www-data\n\nRUN composer install --no-dev --no-scripts --prefer-dist --no-suggest && composer clear-cache -n\n\nCOPY --chown=www-data:www-data .env ./\nRUN composer dump-env prod && rm .env\n\nCOPY --chown=www-data:www-data assets assets/\nCOPY --chown=www-data:www-data bin bin/\nCOPY --chown=www-data:www-data config config/\nCOPY --chown=www-data:www-data public public/\nCOPY --chown=www-data:www-data templates templates/\nCOPY --chown=www-data:www-data translations translations/\nCOPY --chown=www-data:www-data src src/\nCOPY --from=withsources-npm --chown=www-data:www-data /srv/public/build public/build/\n\nRUN set -eux; \\\n  mkdir -p var/cache var/log; \\\n  composer dump-autoload --optimize --apcu --classmap-authoritative --no-dev; \\\n  composer run-script --no-dev post-install-cmd; \\\n  chmod +x bin/console; sync\n\nRUN set -eux; \\\n  bin/console cache:warmup;\n\n# TODO Add the opcache dump when opcache.preload will be fixed (see php.ini);\n\nUSER root\n\n# ================================================\n# Stop the build here if you want an image with sources and fpm\n\nFROM withsources AS withsources-fpm\n\nENTRYPOINT [\"entrypoint\"]\nCMD []\nHEALTHCHECK --interval=5s --timeout=5s --start-period=5s --retries=3 CMD REDIRECT_STATUS=true SCRIPT_FILENAME=/srv/public/ping.php REQUEST_URI=/ REQUEST_METHOD=GET cgi-fcgi -bind -connect 127.0.0.1:9000\nSTOPSIGNAL SIGQUIT\n\n# ================================================\n# Stop the build here if you want an image with sources, fpm AND nginx\n\nFROM withsources-fpm AS withsources-nginx\n\nRUN apk add --no-cache nginx\n\nCOPY ./docker/nginx/files/etc/nginx /etc/nginx\n\nRUN echo \"upstream php-upstream { server 127.0.0.1:9000; }\" > /etc/nginx/conf.d/upstream.conf\nRUN sed -i 's/listen = 0.0.0.0:9000/listen = 127.0.0.1:9000/g' /usr/local/etc/php-fpm.conf\n\nEXPOSE 80\n\nHEALTHCHECK --interval=5s --timeout=5s --start-period=5s --retries=3 CMD curl -s http://0.0.0.0/ping.php 1>/dev/null || exit 1\n"
+}

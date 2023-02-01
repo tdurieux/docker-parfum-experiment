@@ -1,0 +1,17 @@
+{
+  "startTime": 1674249795581,
+  "endTime": 1674249796072,
+  "originalSmells": [
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 40,
+        "lineEnd": 46,
+        "columnStart": 4,
+        "columnEnd": 27
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM alpine:3.15 AS builder\n\nARG PDNS_VERSION=\"latest\"\n\nARG COMPILER_FLAGS=\"-Os -fomit-frame-pointer\"\nARG LINKER_FLAGS=\"-Wl,--as-needed\"\n\n# Get dependencies\nRUN apk add --no-cache \\\n        autoconf \\\n        automake \\\n        bison \\\n        boost-dev \\\n        curl \\\n        curl-dev \\\n        file \\\n        flex \\\n        g++ \\\n        git \\\n        libsodium-dev \\\n        libtool \\\n        lua-dev \\\n        make \\\n        openssl-dev \\\n        postgresql-dev \\\n        protobuf-dev \\\n        py3-virtualenv \\\n        ragel\n\n# Download sources\nRUN git clone -n https://github.com/PowerDNS/pdns.git /build && \\\n    cd /build && \\\n    git checkout $([ \"${PDNS_VERSION}\" = \"latest\" ] && echo \"master\" || echo \"auth-${PDNS_VERSION}\")\n\nWORKDIR /build\n\n# Compile\nRUN export BUILDER_VERSION=$([ \"${PDNS_VERSION}\" = \"latest\" ] && echo `date +%Y-%m-%d` || echo \"${PDNS_VERSION}\") && \\\n    tee docs/Makefile.am && \\\n    autoreconf -vif && \\\n    CFLAGS=${COMPILER_FLAGS} CXXFLAGS=${COMPILER_FLAGS} LDFLAGS=${LINKER_FLAGS} ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" \\\n            --sysconfdir=/etc/pdns \\\n            --with-dynmodules= \\\n            --with-libsodium \\\n            --with-modules=\"gpgsql\" \\\n            --disable-shared \\\n            --enable-static && \\\n    make dist -j $(nproc) && \\\n    make install-strip && \\\n    mkdir /etc/pdns/conf.d\n\n\n# Build image\nFROM alpine:3.15\n\nRUN apk add --no-cache boost-program_options libcurl libsodium lua postgresql-client postgresql-libs protobuf && \\\n    addgroup -S pdns && \\\n    adduser -S -D -G pdns pdns\n\nCOPY --from=builder /usr/local/bin /usr/bin/\nCOPY --from=builder /usr/local/sbin /usr/sbin/\nCOPY --from=builder /usr/local/share/doc/pdns /usr/share/doc/pdns/\nCOPY --from=builder /etc/pdns /etc/pdns/\nCOPY ./docker-entrypoint.sh /usr/bin/\n\nEXPOSE 53/tcp 53/udp 8081/tcp\n\nHEALTHCHECK CMD [\"pdns_control\", \"rping\", \"||\", \"exit\", \"1\"]\nENTRYPOINT [\"docker-entrypoint.sh\"]\nCMD [\"pdns_server\", \"--setuid=pdns\", \"--setgid=pdns\"]\n"
+}

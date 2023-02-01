@@ -1,0 +1,26 @@
+{
+  "startTime": 1674255535689,
+  "endTime": 1674255536412,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 25,
+        "lineEnd": 25,
+        "columnStart": 21,
+        "columnEnd": 53
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 25,
+        "lineEnd": 25,
+        "columnStart": 21,
+        "columnEnd": 53
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM golang:1.11-stretch AS build\n\n# Копируем исходный код в Docker-контейнер\nADD golang/ /opt/build/golang/\nADD common/ /opt/build/common/\n\n# Собираем генераторы\nWORKDIR /opt/build/golang\nRUN go mod vendor\nRUN go install ./vendor/github.com/go-swagger/go-swagger/cmd/swagger\nRUN go install ./vendor/github.com/jteeuwen/go-bindata/go-bindata\n\n# Собираем и устанавливаем пакет\nRUN go generate -x tools.go\nRUN go install ./cmd/hello-server\n\n\nFROM ubuntu:18.04 AS release\n\nMAINTAINER Artem V. Navrotskiy\n\n#\n# Установка postgresql\n#\nENV PGVER 10\nRUN apt -y update && apt install --no-install-recommends -y postgresql-$PGVER && rm -rf /var/lib/apt/lists/*;\n\n# Run the rest of the commands as the ``postgres`` user created by the ``postgres-$PGVER`` package when it was ``apt-get installed``\nUSER postgres\n\n# Create a PostgreSQL role named ``docker`` with ``docker`` as the password and\n# then create a database `docker` owned by the ``docker`` role.\nRUN /etc/init.d/postgresql start &&\\\n    psql --command \"CREATE USER docker WITH SUPERUSER PASSWORD 'docker';\" &&\\\n    createdb -O docker docker &&\\\n    /etc/init.d/postgresql stop\n\n# Adjust PostgreSQL configuration so that remote connections to the\n# database are possible.\nRUN echo \"host all  all    0.0.0.0/0  md5\" >> /etc/postgresql/$PGVER/main/pg_hba.conf\n\n# And add ``listen_addresses`` to ``/etc/postgresql/$PGVER/main/postgresql.conf``\nRUN echo \"listen_addresses='*'\" >> /etc/postgresql/$PGVER/main/postgresql.conf\n\n# Expose the PostgreSQL port\nEXPOSE 5432\n\n# Add VOLUMEs to allow backup of config, logs and databases\nVOLUME  [\"/etc/postgresql\", \"/var/log/postgresql\", \"/var/lib/postgresql\"]\n\n# Back to the root user\nUSER root\n\n# Объявлем порт сервера\nEXPOSE 5000\n\n# Собранный ранее сервер\nCOPY --from=build go/bin/hello-server /usr/bin/\n\n#\n# Запускаем PostgreSQL и сервер\n#\nCMD service postgresql start && hello-server --scheme=http --port=5000 --host=0.0.0.0 --database=postgres://docker:docker@localhost/docker\n"
+}

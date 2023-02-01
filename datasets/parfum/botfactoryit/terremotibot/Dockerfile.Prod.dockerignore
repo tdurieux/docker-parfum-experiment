@@ -1,0 +1,9 @@
+node_modules
+scripts
+test
+.*
+Dockerfile*
+docker-compose.*.yml
+README.md
+LICENSE
+mocha.opts

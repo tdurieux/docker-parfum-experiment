@@ -1,0 +1,17 @@
+{
+  "startTime": 1674255788072,
+  "endTime": 1674255788997,
+  "originalSmells": [
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 6,
+        "lineEnd": 6,
+        "columnStart": 4,
+        "columnEnd": 39
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# -- stage 1: build static routinator with musl libc for alpine\nFROM d_base:latest as build\n\n# Specify what version of routinator should be built.\nARG ROUTINATOR_VERSION=0.10.2\n\nRUN apk add --no-cache wget openssl-dev rust cargo\n\nWORKDIR /tmp/routinator\n\nRUN wget \"https://github.com/NLnetLabs/routinator/archive/refs/tags/v${ROUTINATOR_VERSION}.tar.gz\" -O - | tar -xz --strip-components=1\nRUN cargo build \\\n    --target x86_64-alpine-linux-musl \\\n    --features socks,native-tls \\\n    --release \\\n    --locked\n\n# -- stage 2: create image with the static routinator executable\nFROM d_base_supervisor:latest\nCOPY --from=build /tmp/routinator/target/x86_64-alpine-linux-musl/release/routinator /usr/local/bin/\n\n# Install rsync and ca-certificates as routinator depends on it\n# Use Tini to ensure that Routinator responds to CTRL-C when run in the\n# foreground without the Docker argument \"--init\" (which is actually another\n# way of activating Tini, but cannot be enabled from inside the Docker image).\nRUN apk add --no-cache curl rsync libgcc ca-certificates openssl openssh-server \\\n    && ssh-keygen -A \\\n    && sed -i 's/#PasswordAuthentication yes/PasswordAuthentication no/g' /etc/ssh/sshd_config \\\n    && sed -i 's/#PrintMotd yes/PrintMotd no/g' /etc/ssh/sshd_config \\\n    # Unlocks the root user so that ssh login is allowed.\n    && sed -i s/root:!/\"root:*\"/g /etc/shadow \\\n    && mkdir -p /var/run/sshd /root/.ssh \\\n    && chmod 0755 /var/run/sshd\n\n# Create the repository and TAL directories\nRUN mkdir -p /root/.rpki-cache/repository /root/.rpki-cache/tals\n\nEXPOSE 3323/tcp\nEXPOSE 9556/tcp\nEXPOSE 22/tcp\n\nCOPY routinator.conf /root/.routinator.conf\nCOPY supervisord.conf /etc/supervisor/conf.d/processes.conf\n\n# Add startup script and set it as entrypoint\nCOPY docker-start /docker-start\nRUN chmod +x /docker-start\n\nENTRYPOINT [ \"/docker-start\" ]\nCMD [\"/usr/bin/supervisord\", \"-c\", \"/etc/supervisor/supervisord.conf\"]\n"
+}

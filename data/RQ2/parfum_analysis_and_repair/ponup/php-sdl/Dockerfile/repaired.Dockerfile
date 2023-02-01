@@ -1,0 +1,23 @@
+FROM debian:11
+
+ARG TARGET_PHP_VERSION=8.1
+
+RUN apt-get update
+RUN apt-get install --no-install-recommends -y make build-essential wget && rm -rf /var/lib/apt/lists/*;
+RUN apt-get install --no-install-recommends -y lsb-release apt-transport-https ca-certificates && rm -rf /var/lib/apt/lists/*;
+RUN wget -O /etc/apt/trusted.gpg.d/php.gpg https://packages.sury.org/php/apt.gpg
+RUN echo "deb https://packages.sury.org/php/ $(lsb_release -sc) main" | tee /etc/apt/sources.list.d/php.list
+RUN apt-get update
+RUN apt-get install --no-install-recommends -y php${TARGET_PHP_VERSION}-dev && rm -rf /var/lib/apt/lists/*;
+RUN apt-get install --no-install-recommends -y libsdl2-dev && rm -rf /var/lib/apt/lists/*;
+RUN apt-get install --no-install-recommends -y xvfb && rm -rf /var/lib/apt/lists/*;
+COPY . /opt/php-sdl
+WORKDIR /opt/php-sdl
+RUN phpize
+RUN ./configure --build="$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)"
+RUN make
+RUN make install
+RUN echo "extension=sdl.so" >> /etc/php/${TARGET_PHP_VERSION}/cli/php.ini
+
+ENTRYPOINT ["/opt/php-sdl/docker-entrypoint.sh"]
+

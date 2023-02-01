@@ -1,0 +1,35 @@
+{
+  "startTime": 1674235518359,
+  "endTime": 1674235518553,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 47,
+        "lineEnd": 47,
+        "columnStart": 4,
+        "columnEnd": 27
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 24,
+        "lineEnd": 24,
+        "columnStart": 26,
+        "columnEnd": 71
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 27,
+        "lineEnd": 41,
+        "columnStart": 26,
+        "columnEnd": 18
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Licensed under the Apache License, Version 2.0 (the \"License\");\n# you may not use this file except in compliance with the License.\n# You may obtain a copy of the License at\n#\n#     https://www.apache.org/licenses/LICENSE-2.0\n#\n# Unless required by applicable law or agreed to in writing, software\n# distributed under the License is distributed on an \"AS IS\" BASIS,\n# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.\n# See the License for the specific language governing permissions and\n# limitations under the License.\n\nARG base_image=nvidia/cuda:8.0-cudnn6-devel-ubuntu16.04\nFROM $base_image\n\nARG tf_version=1.6.0\nARG cuda_version=8.0\nARG cudnn_version=6\nARG bazel_version=0.5.4\nARG tf_cuda_compatibility=3.5,5.2,6.1\nARG cuda_config_version=8-0\n\nMAINTAINER Jingtian Peng <pjt73651@gmail.com>\n\nRUN apt-get update && apt-get install --no-install-recommends -y software-properties-common && \\\n        # TODO (pmackinn) see if explicit libstdc++6 is still really required with next pin\n        add-apt-repository ppa:ubuntu-toolchain-r/test -y && \\\n        apt-get update && apt-get install --no-install-recommends -y \\\n        build-essential \\\n        curl \\\n        libcurl3-dev \\\n        git \\\n        libfreetype6-dev \\\n        libpng12-dev \\\n        libzmq3-dev \\\n        pkg-config \\\n        python-dev \\\n        python-numpy \\\n        python-pip \\\n        swig \\\n        zip \\\n        zlib1g-dev \\\n        && \\\n    apt-get clean && \\\n    rm -rf /var/lib/apt/lists/*\n\n# Set up grpc\nRUN pip install --no-cache-dir mock grpcio\n\n# Set up all envs\nENV BAZELRC=/root/.bazelrc \\\n    TF_SERVING_VERSION=tags/$tf_version \\\n    TF_CUDA_VERSION=$cuda_version \\\n    TF_CUDNN_VERSION=$cudnn_version \\\n    BAZEL_VERSION=$bazel_version \\\n    TF_NEED_CUDA=1 \\\n    TF_NEED_S3=1 \\\n    TF_CUDA_COMPUTE_CAPABILITIES=$tf_cuda_compatibility \\\n    TF_NEED_GCP=1 \\\n    TF_NEED_JEMALLOC=0 \\\n    TF_NEED_HDFS=1 \\\n    TF_NEED_OPENCL=0 \\\n    TF_NEED_MKL=0 \\\n    TF_NEED_VERBS=0 \\\n    TF_NEED_MPI=0 \\\n    TF_NEED_GDR=0 \\\n    TF_ENABLE_XLA=1 \\\n    TF_CUDA_CLANG=0 \\\n    TF_NEED_OPENCL_SYCL=0 \\\n    CUDA_TOOLKIT_PATH=/usr/local/cuda \\\n    CUDNN_INSTALL_PATH=/usr/lib/x86_64-linux-gnu \\\n    GCC_HOST_COMPILER_PATH=/usr/bin/gcc \\\n    PYTHON_BIN_PATH=/usr/bin/python \\\n    CC_OPT_FLAGS=\"-march=native\" \\\n    PYTHON_LIB_PATH=/usr/local/lib/python2.7/dist-packages\n\n# Install the most recent bazel release.\nRUN mkdir /bazel && \\\n    cd /bazel && \\\n    curl -fSsL -O https://github.com/bazelbuild/bazel/releases/download/$BAZEL_VERSION/bazel-$BAZEL_VERSION-installer-linux-x86_64.sh && \\\n    curl -fSsL -o /bazel/LICENSE.txt https://raw.githubusercontent.com/bazelbuild/bazel/master/LICENSE && \\\n    chmod +x bazel-*.sh && \\\n    ./bazel-$BAZEL_VERSION-installer-linux-x86_64.sh && \\\n    rm -f /bazel/bazel-$BAZEL_VERSION-installer-linux-x86_64.sh\n\n# Clone TensorFlow Serving repo and get submodules\nRUN cd /root && \\\n    git clone --recurse-submodules https://github.com/tensorflow/serving && \\\n    cd serving && \\\n    git checkout $TF_SERVING_VERSION && \\\n    git submodule init && \\\n    git submodule update --recursive\n\n# Compile TF serving with CUDA support\nRUN cd /root/serving && \\\n    bazel build -c opt --copt=-mavx --copt=-mavx2 --copt=-mfma --copt=-mfpmath=both --copt=-msse4.2 --config=cuda -k --verbose_failures --crosstool_top=@local_config_cuda//crosstool:toolchain tensorflow_serving/model_servers:tensorflow_model_server\n\n# Make a copy to /usr/bin instead of making softlinks because /root has 700 permissions\nRUN cp /root/serving/bazel-bin/tensorflow_serving/model_servers/tensorflow_model_server /usr/bin/tensorflow_model_server\n\n# This seems to be some magic provided by nvidia-docker but we must be explicit\n# There didn't seem to be any special flags in the TF Dockerfile.devel-gpu to cover this either\nRUN ln -s /usr/local/cuda/lib64/stubs/libcuda.so /usr/local/cuda/lib64/stubs/libcuda.so.1 && \\\n    sed -i '$ a /usr/local/cuda/lib64/stubs' /etc/ld.so.conf.d/cuda-$cuda_config_version.conf && ldconfig\n\nWORKDIR /root\n\nCMD [\"/bin/bash\"]\n\nENV MS_USER=model-server\n\nRUN set -x \\\n    && useradd $MS_USER \\\n    && [ `id -u $MS_USER` -eq 1000 ] \\\n    && [ `id -g $MS_USER` -eq 1000 ]\n\nENV TINI_VERSION v0.18.0\n\nADD https://github.com/krallin/tini/releases/download/${TINI_VERSION}/tini /tini\n\nRUN chmod +x /tini\n\nENTRYPOINT [\"/tini\", \"--\"]\n"
+}

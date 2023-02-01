@@ -1,0 +1,80 @@
+{
+  "startTime": 1674238536296,
+  "endTime": 1674238536468,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 40,
+        "lineEnd": 40,
+        "columnStart": 4,
+        "columnEnd": 90
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 73,
+        "lineEnd": 73,
+        "columnStart": 4,
+        "columnEnd": 162
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 79,
+        "lineEnd": 79,
+        "columnStart": 20,
+        "columnEnd": 91
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 89,
+        "lineEnd": 89,
+        "columnStart": 4,
+        "columnEnd": 35
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 90,
+        "lineEnd": 90,
+        "columnStart": 4,
+        "columnEnd": 21
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 19,
+        "lineEnd": 26,
+        "columnStart": 4,
+        "columnEnd": 13
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 19,
+        "lineEnd": 26,
+        "columnStart": 4,
+        "columnEnd": 13
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 19,
+        "lineEnd": 26,
+        "columnStart": 4,
+        "columnEnd": 13
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# This Source Code Form is subject to the terms of the Mozilla Public\n# License, v. 2.0. If a copy of the MPL was not distributed with this\n# file, You can obtain one at http://mozilla.org/MPL/2.0/.\n\n# Inspired by:\n# https://hub.docker.com/r/runmymind/docker-android-sdk/~/dockerfile/\n\nFROM ubuntu:18.04\n\nMAINTAINER Sebastian Kaspari \"skaspari@mozilla.com\"\n\n# -- Configuration ----------------------------------------------------------------------\n\nENV GOOGLE_SDK_VERSION 233\n\n# -- System -----------------------------------------------------------------------------\n\nRUN apt-get update -qq && apt-get install --no-install-recommends -y openjdk-8-jdk \\\n\t\t\t\t\t\t\t\tcurl \\\n\t\t\t\t\t\t\t\twget \\\n\t\t\t\t\t\t\t\tgit \\\n\t\t\t\t\t\t\t\tpython \\\n\t\t\t\t\t\t\t\tpython-pip \\\n\t\t\t\t\t\t\t\tlocales \\\n\t\t\t\t\t\t\t\tunzip && rm -rf /var/lib/apt/lists/*;\n\nRUN locale-gen en_US.UTF-8\n\n# -- Android SDK ------------------------------------------------------------------------\n\nRUN mkdir -p /opt/android-sdk\nWORKDIR /opt\n\nENV ANDROID_BUILD_TOOLS \"28.0.3\"\nENV ANDROID_HOME /opt/android-sdk\nENV ANDROID_SDK_HOME /opt/android-sdk\nENV PATH ${PATH}:${ANDROID_SDK_HOME}/tools:${ANDROID_SDK_HOME}/tools/bin:${ANDROID_SDK_HOME}/platform-tools:/opt/tools:${ANDROID_SDK_HOME}/build-tools/${ANDROID_BUILD_TOOLS}\n\nRUN curl -f -L https://dl.google.com/android/repository/sdk-tools-linux-4333796.zip > sdk.zip \\\n\t&& unzip sdk.zip -d ${ANDROID_SDK_HOME} \\\n\t&& rm sdk.zip\n\nRUN mkdir -p /opt/android-sdk/.android/\nRUN touch /opt/android-sdk/.android/repositories.cfg\n\nRUN yes | sdkmanager --licenses\n\nRUN sdkmanager --verbose \"platform-tools\" \\\n    \"platforms;android-28\" \\\n    \"build-tools;${ANDROID_BUILD_TOOLS}\" \\\n    \"extras;android;m2repository\" \\\n    \"extras;google;m2repository\"\n\n# Checkout source code\n#RUN git clone https://github.com/mozilla-mobile/fenix.git\nRUN git clone https://github.com/rpappalax/fenix.git -b dockerfile-add-test-deps --single-branch\n\n# Build project and run gradle tasks once to pull all dependencies\nWORKDIR /opt/fenix\nRUN ./gradlew -PversionName=0.0 --no-daemon assemble test lint\n\n# -- Test tools -------------------------------------------------------------------------\n\nRUN mkdir -p /build/test-tools\n\nWORKDIR /build\n\nENV TEST_TOOLS /build/test-tools\nENV GOOGLE_SDK_DOWNLOAD ./gcloud.tar.gz\nENV PATH ${PATH}:${TEST_TOOLS}:${TEST_TOOLS}/google-cloud-sdk/bin\n\nRUN curl -f https://dl.google.com/dl/cloudsdk/channels/rapid/downloads/google-cloud-sdk-${GOOGLE_SDK_VERSION}.0.0-linux-x86_64.tar.gz --output ${GOOGLE_SDK_DOWNLOAD} \\\n    && tar -xvf ${GOOGLE_SDK_DOWNLOAD} -C ${TEST_TOOLS} \\\n    && rm -f ${GOOGLE_SDK_DOWNLOAD} \\\n    && ${TEST_TOOLS}/google-cloud-sdk/install.sh --quiet \\\n    && ${TEST_TOOLS}/google-cloud-sdk/bin/gcloud --quiet components update\n\nRUN URL_FLANK_BIN=$( curl -f -s \"https://api.github.com/repos/TestArmada/flank/releases/latest\" | grep \"browser_download_url*\" | sed -r \"s/\\\"//g\" | cut -d \":\" -f3) \\\n    && wget \"https:${URL_FLANK_BIN}\" -O ${TEST_TOOLS}/flank.jar \\\n    && chmod +x ${TEST_TOOLS}/flank.jar\n\n# -- Post setup -------------------------------------------------------------------------\n\n# Install taskcluster python library (used by decision tasks)\n# 5.0.0 is still incompatible with taskclusterProxy, meaning no decision task is able\n# to schedule the rest of the Taskcluster tasks. Please upgrade to taskcluster>=5 once\n# https://bugzilla.mozilla.org/show_bug.cgi?id=1460015 is fixed\nRUN pip install --no-cache-dir 'taskcluster>=4,<5'\nRUN pip install --no-cache-dir arrow\n\n# -- Cleanup ----------------------------------------------------------------------------\n\nRUN apt-get clean\n"
+}

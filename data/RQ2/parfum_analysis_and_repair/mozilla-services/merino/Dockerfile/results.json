@@ -1,0 +1,35 @@
+{
+  "startTime": 1674251605167,
+  "endTime": 1674251605789,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseY",
+      "position": {
+        "lineStart": 56,
+        "lineEnd": 56,
+        "columnStart": 4,
+        "columnEnd": 39
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 56,
+        "lineEnd": 56,
+        "columnStart": 4,
+        "columnEnd": 39
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 56,
+        "lineEnd": 56,
+        "columnStart": 4,
+        "columnEnd": 39
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# This Dockerfile uses multi-stage builds to produce very small deployed images\n# and optimize usage of layer caching. Docker 17.05 or higher required for\n# multi-stage builds.\n\n# Updating this argument will clear the cache of the package installations\n# below. This will cause a full rebuild, but it is the only way to get package\n# updates with out changing the base image.\nARG APT_CACHE_BUST=\"2021-05-13\"\n\n# =============================================================================\n# Pull in the version of cargo-chef we plan to use, so that all the below steps\n# use a consistent set of versions.\nFROM lukemathwalker/cargo-chef:0.1.35-rust-1.61-buster as chef\nWORKDIR /app\n\n# =============================================================================\n# Analyze the project, and produce a plan to compile its dependcies. This will\n# be run every time. The output should only change if the dependencies of the\n# project change, or if significant details of the build process change.\nFROM chef as planner\nCOPY . .\nRUN cargo chef prepare --recipe-path recipe.json\n\n# =============================================================================\n# Use the plan from above to build only the dependencies of the project. This\n# should almost always be pulled straight from cache unless dependencies or the\n# build process change.\nFROM chef as cacher\nCOPY --from=planner /app/recipe.json recipe.json\nRUN cargo chef cook --release --recipe-path recipe.json -p merino\n\n# =============================================================================\n# Now build the project, taking advantage of the cached dependencies from above.\nFROM chef as builder\nARG APT_CACHE_BUST\n\nRUN mkdir -m 755 bin\nRUN apt-get -qq update && \\\n    apt-get -qq upgrade\nRUN cargo --version && \\\n    rustc --version\nCOPY . .\nCOPY --from=cacher /app/target target\nCOPY --from=cacher $CARGO_HOME $CARGO_HOME\n\nRUN cargo build --release -p merino\nRUN cp /app/target/release/merino /app/bin\n\n# =============================================================================\n# Finally prepare a Docker image based on a slim image that only contains the\n# files needed to run the project.\nFROM debian:buster-slim as runtime\nARG APT_CACHE_BUST\n\nRUN apt-get -qq update && \\\n    apt-get -qq upgrade && \\\n    apt-get -qq -y --no-install-recommends install ca-certificates && \\\n    rm -rf /var/lib/apt/lists && rm -rf /var/lib/apt/lists/*;\nRUN groupadd --gid 10001 app && \\\n    useradd --uid 10001 --gid 10001 --home /app --create-home app\n\nCOPY --from=builder /app/bin /app/bin\nCOPY --from=builder /app/version.json /app\nCOPY --from=builder /app/config /app/config\n\nWORKDIR /app\nUSER app\n\nCMD [\"/app/bin/merino\"]\n"
+}

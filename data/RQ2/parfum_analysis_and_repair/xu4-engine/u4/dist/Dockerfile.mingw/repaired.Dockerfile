@@ -1,0 +1,1 @@
+# Image for building Windows programs using the MinGW cross compiler.

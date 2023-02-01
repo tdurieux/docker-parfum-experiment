@@ -1,0 +1,17 @@
+{
+  "startTime": 1674221281759,
+  "endTime": 1674221283084,
+  "originalSmells": [
+    {
+      "rule": "wgetUseHttpsUrl",
+      "position": {
+        "lineStart": 40,
+        "lineEnd": 40,
+        "columnStart": 4,
+        "columnEnd": 69
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Build stage\nFROM debian:buster-slim AS build\n\nENV NGINX_VERSION=1.18.0-2~buster\n\n# Install dependencies\nRUN apt-get update \\\n    && apt-get install --no-install-recommends -y gnupg2 ca-certificates wget git mercurial build-essential lsb-release devscripts fakeroot quilt libssl-dev libpcre3-dev zlib1g-dev debhelper libxml2-utils xsltproc \\\n    && rm -rf /var/lib/apt/lists/*\n\n# Add Nginx repository and install\nRUN wget -qO - https://nginx.org/keys/nginx_signing.key | apt-key add - \\\n    && echo \"deb http://nginx.org/packages/debian/ buster nginx\" > /etc/apt/sources.list.d/nginx.list \\\n    && apt-get update && apt-get install --no-install-recommends -y nginx=$NGINX_VERSION \\\n    && rm -rf /var/lib/apt/lists/*\n\n# Install pkg-oss\nWORKDIR /root/\nRUN mkdir -p /root/nginx-modules/deb/ \\\n    && wget -qO tip.tar.gz https://hg.nginx.org/pkg-oss/archive/tip.tar.gz \\\n    && tar -xvf tip.tar.gz && mv pkg-oss-* pkg-oss/ && rm -f tip.tar.gz\n\n# Build Nginx modules\nRUN pkg-oss/build_module.sh --skip-depends -y -o /root/nginx-modules/deb/ -n shibboleth -v `nginx -v 2>&1 | sed -n -e 's|^.*/||p' | tr -d '\\n'` https://github.com/nginx-shib/nginx-http-shibboleth.git \\\n    && pkg-oss/build_module.sh --skip-depends -y -o /root/nginx-modules/deb/ -n headersmore -v `nginx -v 2>&1 | sed -n -e 's|^.*/||p' | tr -d '\\n'` https://github.com/openresty/headers-more-nginx-module.git \\\n    && rm -f /root/nginx-modules/deb/*-dbg_*.deb\n\n# Production stage\nFROM debian:buster-slim\n\nLABEL maintainer=\"Penn Labs\"\n\nENV NGINX_VERSION=1.18.0-2~buster\n\n# Install dependencies\nRUN apt-get update \\\n    && apt-get install --no-install-recommends -y gnupg2 wget ca-certificates \\\n    && rm -rf /var/lib/apt/lists/*\n\n# Add Shibboleth and Nginx repositories\nRUN wget -qO - https://pkg.switch.ch/switchaai/SWITCHaai-swdistrib.asc | apt-key add - \\\n    && wget -qO - https://nginx.org/keys/nginx_signing.key | apt-key add - \\\n    && echo \"deb http://pkg.switch.ch/switchaai/debian/ buster main\" > /etc/apt/sources.list.d/switch-shibboleth.list \\\n    && echo \"deb http://nginx.org/packages/debian/ buster nginx\" > /etc/apt/sources.list.d/nginx.list\n\n# Install Shibboleth, Nginx, and Supervisor\nRUN apt-get update && apt-get install --no-install-recommends -y shibboleth=3.0.4+switchaai2~buster1 supervisor nginx=$NGINX_VERSION \\\n    && rm -rf /var/lib/apt/lists/*\n\n# Install Nginx modules\nCOPY --from=build /root/nginx-modules/deb/*.deb /tmp/\nRUN dpkg -i /tmp/*.deb\n\n# Copy config files\nCOPY nginx-default.conf /etc/nginx/conf.d/default.conf\nCOPY supervisord.conf /etc/supervisor/\nCOPY nginx/ /etc/nginx/\nCOPY shibd.logger /etc/shibboleth/\n\n# Set up Shibboleth directories\nRUN mkdir /opt/shibboleth && chown _shibd:_shibd /opt/shibboleth\nRUN mkdir /run/shibboleth && chown _shibd:_shibd /run/shibboleth\n\n# Allow Nginx to access Shibboleth sockets\nRUN adduser nginx _shibd\n\nEXPOSE 80 443\n\nCMD [\"/usr/bin/supervisord\", \"-c\", \"/etc/supervisor/supervisord.conf\"]\n"
+}

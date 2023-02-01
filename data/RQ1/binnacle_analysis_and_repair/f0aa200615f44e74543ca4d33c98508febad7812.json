@@ -1,0 +1,44 @@
+{
+  "startTime": 1674234340177,
+  "endTime": 1674234340401,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 37,
+        "lineEnd": 37,
+        "columnStart": 4,
+        "columnEnd": 46
+      }
+    },
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 5,
+        "lineEnd": 5,
+        "columnStart": 4,
+        "columnEnd": 87
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 46,
+        "lineEnd": 46,
+        "columnStart": 3,
+        "columnEnd": 97
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 25,
+        "lineEnd": 25,
+        "columnStart": 4,
+        "columnEnd": 32
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM node:alpine as builder\n\nWORKDIR /smr/\n\n# See https://github.com/hollandben/grunt-cache-bust/issues/236\nRUN npm i --save grunt grunt-contrib-uglify grunt-contrib-cssmin grunt-cache-bust@1.4.1 && npm cache clean --force;\n\n# Copy the SMR source code directories\nCOPY admin admin\nCOPY engine engine\nCOPY htdocs htdocs\nCOPY lib lib\nCOPY templates templates\n\n# Perform CSS/JS minification and cache busting\nCOPY Gruntfile.js .\nRUN npx grunt\n\n# Remove local grunt install so it is not copied to the next build stage\nRUN rm -rf node_modules\n\n#---------------------------\n\nFROM php:7.3-apache\nRUN apt-get update \\\n\t&& apt-get install --no-install-recommends -y zip unzip \\\n\t&& rm -rf /var/lib/apt/lists/* \\\n\t&& docker-php-ext-install mysqli opcache\n\n# Disable apache access logging (error logging is still enabled)\nRUN sed -i 's|CustomLog.*|CustomLog /dev/null common|' /etc/apache2/sites-enabled/000-default.conf\n\n# Disable apache .htaccess files (suggested optimization)\nRUN sed -i 's/AllowOverride All/AllowOverride None/g' /etc/apache2/conf-enabled/docker-php.conf\n\nWORKDIR /smr/\n\nRUN curl -f -sS https://getcomposer.org/installer | php -- --install-dir=/usr/local/bin --filename=composer\n\nCOPY composer.json .\nRUN composer install --no-interaction\n\n# Use the production php.ini unless PHP_DEBUG=1 (defaults to 0)\nARG PHP_DEBUG=0\nRUN [ \"$PHP_DEBUG\" = \"1\" ] && echo \"Using development php.ini\" || \\\n\t{ echo \"Using production php.ini\" && \\\n\t  tar -xOvf /usr/src/php.tar.xz php-$PHP_VERSION/php.ini-production > /usr/local/etc/php/php.ini; \\\n\t} && rm /usr/src/php.tar.xz\n\nCOPY --from=builder /smr .\nRUN rm -rf /var/www/html/ && ln -s \"$(pwd)/htdocs\" /var/www/html\n\n# Make the upload directory writable by the apache user\nRUN chown www-data ./htdocs/upload\n\n# Leverage browser caching of static assets using apache's mod_headers\nCOPY apache/cache-static.conf /etc/apache2/conf-enabled/cache-static.conf\nRUN a2enmod headers\n\n# Store the git commit hash of the repo in the final image\nCOPY .git/HEAD .git/HEAD\nCOPY .git/refs .git/refs\nRUN cat .git/$(cat .git/HEAD | awk '{print $2}') > git-commit\n"
+}

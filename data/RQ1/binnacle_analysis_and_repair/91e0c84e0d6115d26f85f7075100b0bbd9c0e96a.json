@@ -1,0 +1,71 @@
+{
+  "startTime": 1674251153049,
+  "endTime": 1674251153683,
+  "originalSmells": [
+    {
+      "rule": "curlUseHttpsUrl",
+      "position": {
+        "lineStart": 23,
+        "lineEnd": 23,
+        "columnStart": 4,
+        "columnEnd": 126
+      }
+    },
+    {
+      "rule": "curlUseHttpsUrl",
+      "position": {
+        "lineStart": 24,
+        "lineEnd": 24,
+        "columnStart": 12,
+        "columnEnd": 95
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 17,
+        "lineEnd": 17,
+        "columnStart": 17,
+        "columnEnd": 28
+      }
+    },
+    {
+      "rule": "sha256sumEchoOneSpaces",
+      "position": {
+        "lineStart": 24,
+        "lineEnd": 24,
+        "columnStart": 4,
+        "columnEnd": 163
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 66,
+        "lineEnd": 66,
+        "columnStart": 1,
+        "columnEnd": 21
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 2,
+        "lineEnd": 6,
+        "columnStart": 22,
+        "columnEnd": 32
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 2,
+        "lineEnd": 6,
+        "columnStart": 22,
+        "columnEnd": 32
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM debian:wheezy\n\nRUN apt-get update && apt-get -y --no-install-recommends install \\\n\t\tautoconf build-essential curl \\\n\t\tlibxml2-dev libssl-dev \\\n\t\tp7zip-full \\\n\t\thfsplus hfsutils hfsprogs cpio && rm -rf /var/lib/apt/lists/*;\n\n# We need the bomutils to create the Mac OS X Bill of Materials (BOM) files.\n# https://github.com/hogliux/bomutils\nRUN curl -fsSL https://github.com/hogliux/bomutils/archive/0.2.tar.gz | tar xvz && \\\n\tcd bomutils-* && \\\n\tmake && make install\n\n# Needed to pack/unpack the .pkg files\nRUN curl -fsSL https://github.com/mackyle/xar/archive/xar-1.6.1.tar.gz | tar xvz && \\\n\tcd xar-*/xar && \\\n\t./autogen.sh && ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" && \\\n\tmake && make install\n\nENV VBOX_VERSION 5.0.0\nENV VBOX_REV 101573\n\nRUN curl -fsSL -o /vbox.dmg https://download.virtualbox.org/virtualbox/$VBOX_VERSION/VirtualBox-$VBOX_VERSION-$VBOX_REV-OSX.dmg \\\n\t&& echo \"$( curl -fsSL 'https://download.virtualbox.org/virtualbox/'\"$VBOX_VERSION\"'/SHA256SUMS' | awk '$2 ~ /-OSX.dmg$/ { print $1 }')  */vbox.dmg\" | sha256sum -c -\n\n# Download the Docker parts\n\nENV DOCKER_VERSION 1.8.0\nRUN curl -fsSL -o /docker.tgz https://get.docker.com/builds/Darwin/x86_64/docker-$DOCKER_VERSION.tgz\n\nENV BOOT2DOCKER_CLI_VERSION ${DOCKER_VERSION}\nRUN curl -fsSL -o /boot2docker https://github.com/boot2docker/boot2docker-cli/releases/download/v${BOOT2DOCKER_CLI_VERSION}/boot2docker-v${BOOT2DOCKER_CLI_VERSION}-darwin-amd64\n\nENV BOOT2DOCKER_ISO_VERSION $DOCKER_VERSION\nRUN curl -fsSL -o /boot2docker.iso https://github.com/boot2docker/boot2docker/releases/download/v${BOOT2DOCKER_ISO_VERSION}/boot2docker.iso\n\nENV INSTALLER_VERSION $DOCKER_VERSION\n\n# Start building package\n\nCOPY mpkg /mpkg\n\n#  Extract the VirtualBox .pkg\nRUN mkdir -p /mpkg/vbox && \\\n\tcd /mpkg/vbox && \\\n\t7z x /vbox.dmg -ir'!*.hfs' && \\\n\t7z x `find . -name '*.hfs'` -ir'!*.pkg' && \\\n\tmv VirtualBox/VirtualBox.pkg . && \\\n\trm -rf vbox.dmg && \\\n\trm -rf `find . -name '*.hfs'`\n\n# Extract the .pkg files\nRUN cd /mpkg/vbox && \\\n\tmv VirtualBox.pkg /tmp && \\\n\txar -xf /tmp/VirtualBox.pkg && \\\n\trm -rf /tmp/VirtualBox.pkg\n\nRUN cd /mpkg/vbox && \\\n\tmv *.pkg .. && \\\n\trm -rf vbox\n\n# docker.pkg\nRUN cd /mpkg/docker.pkg && \\\n\tmkdir rootfs && \\\n\tcd rootfs && \\\n\ttar xvzf /docker.tgz && \\\n\tfind . | cpio -o --format odc | gzip -c > ../Payload && \\\n\tmkbom . ../Bom && \\\n\tsed -i \\\n\t\t-e \"s/%DOCKER_NUMBER_OF_FILES%/`find . | wc -l`/g\" \\\n\t\t-e \"s/%DOCKER_INSTALL_KBYTES%/`du -sk | cut -f1`/g\" \\\n\t\t-e \"s/%DOCKER_VERSION%/$DOCKER_VERSION/g\" \\\n\t\t../PackageInfo /mpkg/Distribution && \\\n\tcd .. && \\\n\trm -rf ./rootfs && rm /docker.tgz\n\n# boot2docker.pkg\nRUN cd /mpkg/boot2docker.pkg && \\\n\tmkdir ./rootfs && \\\n\tcd ./rootfs && \\\n\tcp /boot2docker . && \\\n\tchmod +x boot2docker && \\\n\tfind . | cpio -o --format odc | gzip -c > ../Payload && \\\n\tmkbom . ../Bom && \\\n\tsed -i \\\n\t\t-e \"s/%BOOT2DOCKER_NUMBER_OF_FILES%/`find . | wc -l`/g\" \\\n\t\t-e \"s/%BOOT2DOCKER_INSTALL_KBYTES%/`du -sk | cut -f1`/g\" \\\n\t\t-e \"s/%BOOT2DOCKER_VERSION%/$BOOT2DOCKER_CLI_VERSION/g\" \\\n\t\t../PackageInfo /mpkg/Distribution && \\\n\tcd .. && \\\n\trm -rf ./rootfs\n\n# boot2dockeriso.pkg\nRUN cd /mpkg/boot2dockeriso.pkg && \\\n\tmkdir ./rootfs && \\\n\tcd ./rootfs && \\\n\tcp /boot2docker.iso . && \\\n\tfind . | cpio -o --format odc | gzip -c > ../Payload && \\\n\tmkbom . ../Bom && \\\n\tsed -i \\\n\t\t-e \"s/%BOOT2DOCKER_ISO_NUMBER_OF_FILES%/`find . | wc -l`/g\" \\\n\t\t-e \"s/%BOOT2DOCKER_ISO_INSTALL_KBYTES%/`du -sk | cut -f1`/g\" \\\n\t\t-e \"s/%BOOT2DOCKER_ISO_VERSION%/$BOOT2DOCKER_ISO_VERSION/g\" \\\n\t\t../PackageInfo /mpkg/Distribution && \\\n\tcd .. && \\\n\trm -rf ./rootfs\n\n# boot2dockerapp.pkg\nRUN cd /mpkg/boot2dockerapp.pkg && \\\n\tmkdir ./rootfs && \\\n\tcd ./rootfs && \\\n\tmv /mpkg/boot2docker.app . && \\\n\tfind . | cpio -o --format odc | gzip -c > ../Payload && \\\n\tmkbom . ../Bom && \\\n\tsed -i \\\n\t\t-e \"s/%BOOT2DOCKERAPP_NUMBER_OF_FILES%/`find . | wc -l`/g\" \\\n\t\t-e \"s/%BOOT2DOCKERAPP_INSTALL_KBYTES%/`du -sk | cut -f1`/g\" \\\n\t\t-e \"s/%BOOT2DOCKERAPP_VERSION%/$INSTALLER_VERSION/g\" \\\n\t\t../PackageInfo /mpkg/Distribution && \\\n\tcd .. && \\\n\trm -rf ./rootfs\n\nRUN sed -i \\\n\t\t-e \"s/%INSTALLER_VERSION%/$INSTALLER_VERSION/g\" \\\n\t\tmpkg/Resources/en.lproj/Welcome.html\nRUN sed -i \\\n\t\t-e \"s/%INSTALLER_VERSION%/$INSTALLER_VERSION/g\" \\\n\t\tmpkg/Resources/en.lproj/Installed.html\nRUN sed -i \\\n\t\t-e \"s/%INSTALLER_VERSION%/$INSTALLER_VERSION/g\" \\\n\t\t/mpkg/Distribution && \\\n\t\tsed -i \\\n\t\t-e \"s/%VBOX_VERSION%/$VBOX_VERSION/g\" \\\n\t\t/mpkg/Distribution && \\\n\t\tsed -i \\\n\t\t-e \"s/%VBOX_VERSION%/$VBOX_VERSION/g\" \\\n\t\tmpkg/Resources/en.lproj/Localizable.strings\n\n# Make DMG rootfs\nRUN mkdir -p /dmg\n\n# Repackage back. Yes, --compression=none is mandatory.\n# or this won't install in OSX.\nRUN cd /mpkg && \\\n\txar -c --compression=none -f /dmg/Docker.pkg .\n\nCOPY makedmg.sh /\n\nCMD [\"/makedmg.sh\", \"docker.dmg\", \"Docker\", \"/dmg\"]\n"
+}

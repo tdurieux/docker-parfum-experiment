@@ -1,0 +1,80 @@
+{
+  "startTime": 1674219097107,
+  "endTime": 1674219098737,
+  "originalSmells": [
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 16,
+        "lineEnd": 16,
+        "columnStart": 4,
+        "columnEnd": 56
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 38,
+        "lineEnd": 38,
+        "columnStart": 4,
+        "columnEnd": 60
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 50,
+        "lineEnd": 50,
+        "columnStart": 4,
+        "columnEnd": 63
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 7,
+        "lineEnd": 7,
+        "columnStart": 4,
+        "columnEnd": 93
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 31,
+        "lineEnd": 31,
+        "columnStart": 4,
+        "columnEnd": 129
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 81,
+        "lineEnd": 81,
+        "columnStart": 4,
+        "columnEnd": 71
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 7,
+        "lineEnd": 7,
+        "columnStart": 4,
+        "columnEnd": 93
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 31,
+        "lineEnd": 31,
+        "columnStart": 4,
+        "columnEnd": 129
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM debian:buster as builder\n\nARG VERSION=1.14.0\n\nENV DEBIAN_FRONTEND noninteractive\nRUN apt-get update \\\n && apt-get -y upgrade \\\n && apt-get -y --no-install-recommends install build-essential git default-jdk-headless dh-systemd gradle python3-all && rm -rf /var/lib/apt/lists/*;\n\nRUN git clone https://github.com/LINBIT/linstor-server.git /linstor-server\nWORKDIR /linstor-server\nRUN git checkout v${VERSION}\n\nRUN make debrelease \\\n && rm -rf /root/.gradle/caches/ \\\n && mv linstor-server-${VERSION}.tar.gz /linstor-server_${VERSION}.orig.tar.gz \\\n && tar -C / -xvf /linstor-server_${VERSION}.orig.tar.gz && rm /linstor-server_${VERSION}.orig.tar.gz\n\nWORKDIR /linstor-server-${VERSION}\nRUN dpkg-buildpackage -us -uc\n\n# ------------------------------------------------------------------------------\n\nFROM debian:buster as client-builder\n\nARG API_VERSION=1.9.0\nARG CLIENT_VERSION=1.9.0\n\nENV DEBIAN_FRONTEND noninteractive\nRUN apt-get update \\\n && apt-get -y upgrade \\\n && apt-get -y --no-install-recommends install build-essential debhelper git python3-all python3-setuptools help2man bash-completion docbook-xsl xsltproc && rm -rf /var/lib/apt/lists/*;\n\nRUN git clone --recurse-submodules https://github.com/LINBIT/linstor-api-py /linstor-api-py\nWORKDIR /linstor-api-py\nRUN git checkout v${API_VERSION} \\\n && make debrelease \\\n && mv ./dist/python-linstor-${API_VERSION}.tar.gz ../python-linstor_${API_VERSION}.orig.tar.gz \\\n && tar -C / -xvf /python-linstor_${API_VERSION}.orig.tar.gz && rm /python-linstor_${API_VERSION}.orig.tar.gz\nWORKDIR /python-linstor-${API_VERSION}\nRUN dpkg-buildpackage -us -uc\n\nRUN rm -rf /linstor-api-py \\\n && mv /python-linstor-${API_VERSION} /linstor-api-py\n\nRUN git clone https://github.com/LINBIT/linstor-client.git /linstor-client\nWORKDIR /linstor-client\nRUN git checkout v${CLIENT_VERSION} \\\n && make debrelease \\\n && mv dist/linstor-client-${CLIENT_VERSION}.tar.gz /linstor-client_${CLIENT_VERSION}.orig.tar.gz \\\n && tar -C / -xvf /linstor-client_${CLIENT_VERSION}.orig.tar.gz && rm /linstor-client_${CLIENT_VERSION}.orig.tar.gz\nWORKDIR /linstor-client-${CLIENT_VERSION}\nRUN dpkg-buildpackage -us -uc\n\n# ------------------------------------------------------------------------------\n\nFROM golang:1.15 as k8s-await-election-builder\n\nRUN git clone https://github.com/LINBIT/k8s-await-election/ /usr/local/go/k8s-await-election/ \\\n && cd /usr/local/go/k8s-await-election \\\n && git reset --hard v0.2.4 \\\n && make \\\n && mv ./out/k8s-await-election-amd64 /k8s-await-election\n\n# ------------------------------------------------------------------------------\n\nFROM debian:buster\n\nCOPY --from=builder /linstor-common_*_all.deb /linstor-controller_*_all.deb /packages/\nCOPY --from=client-builder /python-linstor_*_all.deb /linstor-client_*_all.deb /packages/\nCOPY --from=k8s-await-election-builder /k8s-await-election /k8s-await-election\n\n# Install repos and system upgrade\nENV DEBIAN_FRONTEND noninteractive\nRUN apt-get -y update \\\n && apt-get -y upgrade \\\n && apt-get clean \\\n && rm -rf /var/lib/apt/lists/*\n\n# Install linstor-controller\nRUN apt-get update \\\n && apt-get install --no-install-recommends -y default-jre-headless python3-all python3-natsort \\\n && dpkg -i packages/*.deb \\\n && sed -i \"s|'$| \\\"-Djdk.tls.acknowledgeCloseNotify=true\\\"'|\" \\\n      /usr/share/linstor-server/bin/Controller \\\n && apt-get clean \\\n && rm -rf /var/lib/apt/lists/* \\\n && mkdir -p /config /logs \\\n && /usr/share/linstor-server/bin/linstor-config create-db-file \\\n      /data/linstordb > /config/linstor.toml\n\nENTRYPOINT [ \"/usr/share/linstor-server/bin/Controller\", \"--logs=/logs\", \"--config-directory=/config\" ]\n"
+}

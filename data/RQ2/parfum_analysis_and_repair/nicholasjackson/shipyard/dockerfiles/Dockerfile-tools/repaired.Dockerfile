@@ -1,0 +1,55 @@
+FROM nicholasjackson/shipyard-init:latest
+
+ENV TERM=xterm-256color
+ENV DOCKER_VERSION=18.03.1-ce
+ENV CONSUL_VERSION=1.6.1
+ENV VAULT_VERSION=1.3.0
+ENV HELM_VERSION=v3.0.0-beta.4
+ENV SQUASH_VERSION=v0.5.18
+ENV LOOP_VERSION=v0.0.1
+ENV GLOO_VERSION=v0.20.8
+
+RUN apt-get update && \
+    apt-get upgrade -y && \
+    apt-get install --no-install-recommends -y \
+      vim \
+      net-tools \
+      dnsutils \
+      ngrep \
+      iputils-ping \
+      gnupg-agent \
+      bsdtar \
+      jq && \
+      apt-get clean && \
+      apt-get autoremove --purge && rm -rf /var/lib/apt/lists/*;
+
+# Install Docker CLI
+RUN curl -fsSL https://download.docker.com/linux/static/stable/x86_64/docker-$DOCKER_VERSION.tgz | \
+tar zxvf - --strip 1 -C /usr/bin docker/docker
+
+# Install Consul CLI
+RUN curl -f -sL https://releases.hashicorp.com/consul/${CONSUL_VERSION}/consul_${CONSUL_VERSION}_linux_amd64.zip -o consul.zip && \
+    unzip consul.zip && \
+    mv consul /usr/local/bin && \
+    rm consul.zip
+
+# Install Vault CLI
+RUN curl -f -sL https://releases.hashicorp.com/vault/${VAULT_VERSION}/vault_${VAULT_VERSION}_linux_amd64.zip -o vault.zip && \
+    unzip vault.zip && \
+    mv vault /usr/local/bin && \
+    rm vault.zip
+
+# Install Squash
+RUN curl -f -sL https://github.com/solo-io/squash/releases/download/$SQUASH_VERSION/squashctl-linux -o squashctl && \
+    mv squashctl /usr/local/bin && \
+    chmod +x /usr/local/bin/squashctl
+
+# Install Gloo CLI
+RUN curl -f -sL https://github.com/solo-io/gloo/releases/download/$GLOO_VERSION/glooctl-linux-amd64 -o glooctl && \
+    mv glooctl /usr/local/bin && \
+    chmod +x /usr/local/bin/glooctl
+
+# Install preview of Loop CLI
+RUN curl -f -sL https://github.com/solo-io/demos-gloo/releases/download/$LOOP_VERSION/loopctl-linux-amd64 -o  loopctl && \
+    mv loopctl /usr/local/bin && \
+    chmod +x /usr/local/bin/loopctl

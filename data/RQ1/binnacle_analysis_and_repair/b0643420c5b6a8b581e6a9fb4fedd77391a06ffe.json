@@ -1,0 +1,26 @@
+{
+  "startTime": 1674252160341,
+  "endTime": 1674252160449,
+  "originalSmells": [
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 19,
+        "lineEnd": 19,
+        "columnStart": 4,
+        "columnEnd": 37
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 21,
+        "lineEnd": 21,
+        "columnStart": 4,
+        "columnEnd": 81
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# 3scale Backend CentOS image for release\n#\n# This is based on and tracking the behavior of the more generic Dockerfile.\n#\n# Knobs you should know about:\n#\n# - RUBY_SCL: Software Collections Library for the Ruby version used.\n# - BUILD_DEP_PKGS: Packages needed to build/install the project.\n# - PUMA_WORKERS: Default number of Puma workers to serve the app.\n#\nFROM centos:7\n\nARG RUBY_SCL=rh-ruby23\n\n# Configure yum, install SCL, update, install Ruby and clean.\nRUN sed -i /etc/yum.conf -e \\\n      '/^\\(clean_requirements_on_remove\\|history_record\\|tsflags\\|logfile\\)=/d' -e \\\n      's/^\\(\\[main\\]\\b.*\\)$/\\1\\nclean_requirements_on_remove=1\\nhistory_record=0\\ntsflags=nodocs\\nlogfile=\\/dev\\/null\\n/' \\\n      /etc/yum.conf \\\n && yum install -y centos-release-scl \\\n && yum -y update \\\n && yum -y install ${RUBY_SCL} ${RUBY_SCL}-ruby-devel ${RUBY_SCL}-rubygem-bundler \\\n && yum -y autoremove \\\n && yum -y clean all && rm -rf /var/cache/yum\n\nWORKDIR /tmp/app\n\n# Install and/or update Rubygems and Bundler, and configure the latter.\nRUN source scl_source enable ${RUBY_SCL} \\\n && gem env \\\n && echo Using $(bundle --version) \\\n && bundle config --local silence_root_warning 1 \\\n && bundle config --local disable_shared_gems 1 \\\n && bundle config --local without development:test \\\n && bundle config --local gemfile Gemfile.on_prem\n\nCOPY . ./\n\nARG BUILD_DEP_PKGS=\"make gcc git\"\n\n# Builds a clean source tree and deploys it with Bundler.\n# Sets the right configuration and permissions.\nRUN source scl_source enable ${RUBY_SCL} \\\n && cp -n openshift/3scale_backend.conf /etc/ \\\n && chmod 644 /etc/3scale_backend.conf \\\n && BACKEND_VERSION=$(gem build 3scale_backend.gemspec | \\\n      sed -n -e 's/^\\s*Version\\:\\s*\\([^[:space:]]*\\)$/\\1/p') \\\n && gem unpack \"3scale_backend-${BACKEND_VERSION}.gem\" --target=/opt/ruby \\\n && cd \"/opt/ruby/3scale_backend-${BACKEND_VERSION}\" \\\n && cp -a /tmp/app/.bundle \"/opt/ruby/3scale_backend-${BACKEND_VERSION}/\" \\\n && echo \"Deleting the following unused Gemfile files:\" \\\n && find . -maxdepth 1 -regex \\./Gemfile\"\\(\\..*\\)?\" \\\n      ! -regex \\./$(sed -e 's/[^^]/[&]/g; s/\\^/\\\\^/g' <<< Gemfile.on_prem)\"\\(\\.lock\\)?\" \\\n      ! -name Gemfile.base -print -delete \\\n && yum -y install ${BUILD_DEP_PKGS} \\\n && bundle install --deployment --jobs $(grep -c processor /proc/cpuinfo) \\\n# Bundler < 1.12.0 needs fixing for git gems with extensions (Puma)\n && if ruby -e \"begin; require 'rubygems'; Gem::Specification.find_by_name('bundler').version < Gem::Version.new('1.12.0') && exit(0); rescue; end; exit(1)\"; then \\\n      echo \"[WARNING] Old Bundler requires fixing git gems with extensions (Puma)\" ; \\\n      PUMA_DIR=$(bundle show puma) \\\n      && ln -s $(find \"${PUMA_DIR}\" -name puma_http11.so) \"${PUMA_DIR}\"/lib/puma ; \\\n    fi \\\n && yum -y remove ${BUILD_DEP_PKGS} \\\n && yum -y autoremove \\\n && yum -y clean all \\\n && ln -s ${PWD} /opt/app \\\n && cp /tmp/app/openshift/config/puma.rb ./config/ \\\n && cp -n /tmp/app/openshift/backend-cron /usr/local/sbin/backend-cron \\\n && cp -n /tmp/app/openshift/entrypoint.sh ./ \\\n && rm -rf /tmp/app \\\n && mkdir -p -m 0770 /var/run/3scale/ \\\n && mkdir -p -m 0770 /var/log/backend/ \\\n && touch /var/log/backend/3scale_backend{,_worker}.log \\\n && chmod g+rw /var/log/backend/3scale_backend{,_worker}.log\n\nEXPOSE 3000\n\nUSER 1001\n\nWORKDIR /opt/app\n\nARG PUMA_WORKERS=1\n\n# Set TZ to avoid glibc wasting time with unneeded syscalls\nENV TZ=:/etc/localtime \\\n    HOME=/tmp/ \\\n    ENV_SETUP=\". scl_source enable ${RUBY_SCL}\" \\\n    # App-specific env\n    RACK_ENV=production \\\n    CONFIG_SAAS=false \\\n    CONFIG_LOG_PATH=/tmp/ \\\n    CONFIG_NOTIFICATION_BATCH=1 \\\n    CONFIG_WORKERS_LOG_FILE=/dev/stdout \\\n    PUMA_WORKERS=${PUMA_WORKERS}\n\nENTRYPOINT [\"/bin/bash\", \"--\", \"/opt/app/entrypoint.sh\"]\n"
+}

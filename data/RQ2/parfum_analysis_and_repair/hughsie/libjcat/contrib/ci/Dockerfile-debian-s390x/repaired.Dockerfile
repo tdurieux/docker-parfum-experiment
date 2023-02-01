@@ -1,0 +1,23 @@
+FROM debian:testing
+RUN echo fubar > /etc/machine-id
+
+RUN cat /etc/apt/sources.list | sed "s/deb/deb-src/" >> /etc/apt/sources.list
+RUN dpkg --add-architecture s390x
+
+RUN apt update -qq && apt install -yq --no-install-recommends \
+	build-essential \
+	binutils-multiarch \
+	dpkg-dev \
+	gcc \
+	gcc-multilib-s390x-linux-gnu \
+	gnutls-bin \
+	gnutls-dev:s390x \
+	libglib2.0-dev:s390x \
+	libglib2.0-dev-bin:s390x \
+	libgpgme11-dev:s390x \
+	libjson-glib-dev:s390x \
+	meson \
+	qemu-user \
+	-o APT::Immediate-Configure=0 && rm -rf /var/lib/apt/lists/*;
+
+WORKDIR /build

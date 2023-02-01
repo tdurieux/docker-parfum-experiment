@@ -1,0 +1,62 @@
+#syntax=docker/dockerfile:1.2
+# 
+# BUILDER_BASE is a multi-platform image with all the build tools
+#
+ARG BUILDER_BASE=quay.io/cilium/cilium-envoy-builder:bazel-4.2.1@sha256:276e98a3d74571eab05553787c1b6108d94027ad12820c483a1086f6c4813469
+
+#
+# BUILDER_IMAGE defaults to the result of the first stage below,
+# refreshing the build caches from Envoy dependencies before the final
+# build stage. This can be overridden on docker build command line to
+# use pre-built dependencies. Note that if cross-compiling, these
+# pre-built dependencies will include BUILDPLATFORM build tools and
+# TARGETPLATFORM build artifacts, and thus can only be reused when
+# building on the same BUILDPLATFORM.
+#
+ARG BUILDER_IMAGE=builder-fresh
+
+FROM --platform=$BUILDPLATFORM $BUILDER_BASE as builder-fresh
+LABEL maintainer="maintainer@cilium.io"
+WORKDIR /cilium/proxy
+COPY . ./
+ARG V
+ARG BAZEL_BUILD_OPTS
+ARG BUILDARCH
+ARG TARGETARCH
+ENV TARGETARCH=$TARGETARCH
+
+#
+# Build dependencies
+#
+RUN BAZEL_BUILD_OPTS="${BAZEL_BUILD_OPTS} --disk_cache=/tmp/bazel-cache" PKG_BUILD=1 V=$V make envoy-test-deps
+
+# By default this stage picks up the result of the build above, but BUILDER_IMAGE can be
+# overridden to point to a saved image of an earlier run of that stage.
+FROM $BUILDER_IMAGE as builder-cache
+
+#
+# Bazel > 4.2.2 needed to run the tests under QEMU,
+# see https://github.com/bazelbuild/bazel/pull/14391
+#
+# For now only native execution of the tests is supported.
+#
+FROM --platform=$TARGETPLATFORM $BUILDER_BASE as builder
+LABEL maintainer="maintainer@cilium.io"
+WORKDIR /cilium/proxy
+COPY . ./
+ARG V
+ARG COPY_CACHE_EXT
+ARG BAZEL_BUILD_OPTS
+
+RUN --mount=target=/tmp/bazel-cache,source=/tmp/bazel-cache,from=builder-cache,rw BAZEL_BUILD_OPTS="${BAZEL_BUILD_OPTS} --disk_cache=/tmp/bazel-cache" PKG_BUILD=1 V=$V COPY_CACHE_EXT=$COPY_CACHE_EXT make envoy-tests
+
+# This stage retains only the build caches from the previous step. This is used as the target for persisting
+# Bazel build caches for later re-use.
+FROM scratch as builder-archive
+LABEL maintainer="maintainer@cilium.io"
+ARG COPY_CACHE_EXT
+COPY --from=builder /tmp/bazel-cache${COPY_CACHE_EXT}/ /tmp/bazel-cache/
+
+#
+# Keep only the test logs
+#

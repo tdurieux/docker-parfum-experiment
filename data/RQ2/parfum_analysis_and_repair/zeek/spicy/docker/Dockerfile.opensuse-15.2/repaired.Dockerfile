@@ -1,0 +1,23 @@
+FROM opensuse/leap:15.2
+
+RUN zypper addrepo https://download.opensuse.org/repositories/openSUSE:Leap:15.2:Update/standard/openSUSE:Leap:15.2:Update.repo \
+ && zypper refresh \
+ && zypper install -y \
+      bison \
+      ccache \
+      cmake \
+      flex \
+      gcc9-c++ \
+      git \
+      ninja \
+      python3 \
+      python3-pip \
+      rpmbuild \
+      which \
+      zlib-devel \
+ && zypper clean
+
+RUN pip3 install --no-cache-dir "btest>=0.66" sphinx-rtd-theme
+
+ENV CXX g++-9
+ENV CC gcc-9

@@ -1,0 +1,62 @@
+{
+  "startTime": 1674256302141,
+  "endTime": 1674256302982,
+  "originalSmells": [
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 65,
+        "lineEnd": 65,
+        "columnStart": 4,
+        "columnEnd": 58
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 66,
+        "lineEnd": 66,
+        "columnStart": 4,
+        "columnEnd": 72
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 69,
+        "lineEnd": 69,
+        "columnStart": 4,
+        "columnEnd": 46
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 86,
+        "lineEnd": 86,
+        "columnStart": 4,
+        "columnEnd": 62
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 87,
+        "lineEnd": 87,
+        "columnStart": 4,
+        "columnEnd": 56
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 88,
+        "lineEnd": 88,
+        "columnStart": 4,
+        "columnEnd": 28
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "#\n# The Alluxio Open Foundation licenses this work under the Apache License, version 2.0\n# (the \"License\"). You may not use this work except in compliance with the License, which is\n# available at www.apache.org/licenses/LICENSE-2.0\n#\n# This software is distributed on an \"AS IS\" basis, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND,\n# either express or implied, as more fully set forth in the License.\n#\n# See the NOTICE file distributed with this work for information regarding copyright ownership.\n#\n\n# ARG defined before the first FROM can be used in FROM lines\nARG JAVA_VERSION=8\n\n# setup CSI\n# Make sure any changes to CSI installation are made in Dockerfile as well\nFROM golang:1.15.13-alpine AS csi-dev\nENV GO111MODULE=on\nRUN mkdir -p /alluxio-csi\nCOPY ./csi /alluxio-csi\nRUN cd /alluxio-csi && \\\n    CGO_ENABLED=0 go build -o /usr/local/bin/alluxio-csi\n\n# We have to do an ADD to put the tarball into extractor, then do a COPY with chown into final\n# ADD then chown in two steps will double the image size\n#   See - https://stackoverflow.com/questions/30085621/why-does-chown-increase-size-of-docker-image\n#       - https://github.com/moby/moby/issues/5505\n#       - https://github.com/moby/moby/issues/6119\n# ADD with chown doesn't chown the files inside tarball\n#   See - https://github.com/moby/moby/issues/35525\nFROM alpine:3.10.2 AS alluxio-extractor\n# Note that downloads for *-SNAPSHOT tarballs are not available.\nARG ALLUXIO_TARBALL=http://downloads.alluxio.io/downloads/files/2.9.0-SNAPSHOT/alluxio-2.9.0-SNAPSHOT-bin.tar.gz\n# (Alert):It's not recommended to set this Argument to true, unless you know exactly what you are doing\nARG ENABLE_DYNAMIC_USER=false\n\nADD ${ALLUXIO_TARBALL} /opt/\n# Remote tarball needs to be untarred. Local tarball is untarred automatically.\n# Use ln -s instead of mv to avoid issues with Centos (see https://github.com/moby/moby/issues/27358)\nRUN cd /opt && \\\n    (if ls | grep -q \".tar.gz\"; then tar -xzf *.tar.gz && rm *.tar.gz; fi) && \\\n    ln -s alluxio-* alluxio\n\nRUN if [ ${ENABLE_DYNAMIC_USER} = \"true\" ] ; then \\\n       chmod -R 777 /opt/* ; \\\n    fi\n\n# Configure JAVA_HOME\nFROM centos:7 as build_java8\nENV JAVA_HOME /usr/lib/jvm/java-1.8.0-openjdk\n\nFROM centos:7 as build_java11\nENV JAVA_HOME /usr/lib/jvm/java-11-openjdk\n\nFROM build_java${JAVA_VERSION} AS final\n\nADD dockerfile-common.sh /\n\n# Install libfuse2 and libfuse3. Libfuse2 setup is modified from cheyang/fuse2:ubuntu1604-customize to be applied on centOS\nWORKDIR /\n\nENV MAX_IDLE_THREADS \"64\"\n\nRUN \\\n    yum update -y && yum upgrade -y && \\\n    yum install -y ca-certificates pkgconfig wget udev git && \\\n    yum install -y gcc gcc-c++ make cmake gettext-devel libtool autoconf && \\\n    yum clean all && \\\n    ./dockerfile-common.sh install-libfuse2 && \\\n    yum install -y fuse3 fuse3-devel fuse3-lib && rm -rf /var/cache/yum\n\nENV LD_LIBRARY_PATH \"/usr/local/lib:${LD_LIBRARY_PATH}\"\n\nARG ALLUXIO_USERNAME=alluxio\nARG ALLUXIO_GROUP=alluxio\nARG ALLUXIO_UID=1000\nARG ALLUXIO_GID=1000\nARG ENABLE_DYNAMIC_USER=true\n\n# Add Tini for alluxio helm charts (https://github.com/Alluxio/alluxio/pull/12233)\n# - https://github.com/krallin/tini\nENV TINI_VERSION v0.18.0\nADD https://github.com/krallin/tini/releases/download/${TINI_VERSION}/tini /usr/local/bin/tini\nRUN chmod +x /usr/local/bin/tini\n\nRUN \\\n    yum install -y java-1.8.0-openjdk-devel java-1.8.0-openjdk && \\\n    yum install -y java-11-openjdk-devel java-11-openjdk && \\\n    yum install -y unzip vim && \\\n    yum clean all && rm -rf /var/cache/yum\n\n# Install arthas(https://github.com/alibaba/arthas) for analyzing performance bottleneck\nRUN wget -qO /tmp/arthas.zip \"https://github.com/alibaba/arthas/releases/download/arthas-all-3.4.6/arthas-bin.zip\" && \\\n    mkdir -p /opt/arthas && \\\n    unzip /tmp/arthas.zip -d /opt/arthas && \\\n    rm /tmp/arthas.zip\n\n# Install async-profiler(https://github.com/jvm-profiling-tools/async-profiler/releases/tag/v1.8.3)\nRUN wget -qO /tmp/async-profiler-1.8.3-linux-x64.tar.gz \"https://github.com/jvm-profiling-tools/async-profiler/releases/download/v1.8.3/async-profiler-1.8.3-linux-x64.tar.gz\" && \\\n    tar -xvf /tmp/async-profiler-1.8.3-linux-x64.tar.gz -C /opt && \\\n    mv /opt/async-profiler-* /opt/async-profiler && \\\n    rm /tmp/async-profiler-1.8.3-linux-x64.tar.gz\n\n# Disable JVM DNS cache in both java8 and java11 (https://github.com/Alluxio/alluxio/pull/9452)\nRUN echo \"networkaddress.cache.ttl=0\" >> /usr/lib/jvm/java-1.8.0-openjdk/jre/lib/security/java.security\nRUN echo \"networkaddress.cache.ttl=0\" >> /usr/lib/jvm/java-11-openjdk/conf/security/java.security\n\n# Add the following for native libraries needed by rocksdb\nENV LD_LIBRARY_PATH /lib64:${LD_LIBRARY_PATH}\n\n# If Alluxio user, group, gid, and uid aren't root|0, create the alluxio user and set file permissions accordingly\nRUN ./dockerfile-common.sh user-operation ${ALLUXIO_USERNAME} ${ALLUXIO_GROUP} ${ALLUXIO_UID} ${ALLUXIO_GID} centos\n\n# Docker 19.03+ required to expand variables in --chown argument\n# https://github.com/moby/buildkit/pull/926#issuecomment-503943557\nCOPY --from=alluxio-extractor --chown=${ALLUXIO_USERNAME}:${ALLUXIO_GROUP} /opt /opt/\nCOPY --chown=${ALLUXIO_USERNAME}:${ALLUXIO_GROUP} conf /opt/alluxio/conf/\nCOPY --chown=${ALLUXIO_USERNAME}:${ALLUXIO_GROUP} entrypoint.sh /\nCOPY --from=csi-dev /usr/local/bin/alluxio-csi /usr/local/bin/\n\nRUN ./dockerfile-common.sh enable-dynamic-user ${ENABLE_DYNAMIC_USER}\n\nUSER ${ALLUXIO_UID}\n\nWORKDIR /opt/alluxio\n\nENV PATH=\"/opt/alluxio/bin:${PATH}\"\n\nENTRYPOINT [\"/entrypoint.sh\"]\n"
+}

@@ -1,0 +1,17 @@
+{
+  "startTime": 1674253576120,
+  "endTime": 1674253576812,
+  "originalSmells": [
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 47,
+        "lineEnd": 47,
+        "columnStart": 4,
+        "columnEnd": 32
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Licensed to the Apache Software Foundation (ASF) under one or more\n# contributor license agreements.  See the NOTICE file distributed with\n#  this work for additional information regarding copyright ownership.\n#  The ASF licenses this file to You under the Apache License, Version 2.0\n#  (the \"License\"); you may not use this file except in compliance with\n#  the License.  You may obtain a copy of the License at\n#\n#         http://www.apache.org/licenses/LICENSE-2.0\n#\n#  Unless required by applicable law or agreed to in writing, software\n#  distributed under the License is distributed on an \"AS IS\" BASIS,\n#  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.\n#  See the License for the specific language governing permissions and\n#  limitations under the License.\n\n## Stage 1 : build with maven builder image with native capabilities\nFROM quay.io/quarkus/ubi-quarkus-native-image:21.3.0-java11 AS build-gen\n\n## rsync required for npm to build frontend\nUSER root\nRUN microdnf install rsync\n\n## Copy code\nCOPY --chown=quarkus:quarkus karavan-generator/mvnw /code/mvnw\nCOPY --chown=quarkus:quarkus karavan-generator/.mvn /code/.mvn\nCOPY --chown=quarkus:quarkus karavan-generator/ /code/karavan-generator/\nCOPY --chown=quarkus:quarkus karavan-core/ /code/karavan-core/\nCOPY --chown=quarkus:quarkus karavan-app/ /code/karavan-app/\nCOPY --chown=quarkus:quarkus karavan-designer/ /code/karavan-designer/\n# Required as output for KameletGenerator:\nCOPY --chown=quarkus:quarkus karavan-vscode/ /code/karavan-vscode/\n\nUSER quarkus\nWORKDIR /code\n\n# Generate Camel definitions\nRUN ./mvnw clean compile exec:java -Dexec.mainClass=\"org.apache.camel.karavan.generator.KaravanGenerator\" -f karavan-generator\n\n## Stage 2 : build karavan-core\nFROM node:16-alpine AS build-node\n# Root user as we will not be running this image anyway\nUSER root\nWORKDIR /code/karavan-core\n\nCOPY --chown=root karavan-core/tsconfig.json /code/karavan-core/\nCOPY --chown=root karavan-core/package.json /code/karavan-core/\nCOPY --chown=root karavan-core/package-lock.json /code/karavan-core/\nRUN npm install --ignore-scripts && npm cache clean --force;\n\nCOPY --chown=root --from=build-gen /code/karavan-core/ /code/karavan-core/\nRUN npm run build\n\n## Stage 3 : build karavan-app\nFROM build-gen as build-app\nCOPY --chown=quarkus:quarkus --from=build-node /code/karavan-core/lib/ /code/karavan-core/lib/\nCOPY --chown=quarkus:quarkus --from=build-node /code/karavan-core/node_modules/ /code/karavan-core/node_modules/\nRUN ./mvnw clean package -Pnative -f karavan-app\n\n## Stage 4 : create the docker final image\nFROM quay.io/quarkus/quarkus-distroless-image:1.0\nCOPY --chown=nonroot --from=build-app /code/karavan-app/target/*-runner /deployments/application\n\nEXPOSE 8080\nUSER nonroot\nWORKDIR /deployments\nCMD [\"./application\", \"-Dquarkus.http.host=0.0.0.0\"]\n"
+}

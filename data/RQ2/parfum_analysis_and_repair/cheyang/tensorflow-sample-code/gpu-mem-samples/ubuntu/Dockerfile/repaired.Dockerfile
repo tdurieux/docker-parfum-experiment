@@ -1,0 +1,1 @@
+# docker build -t registry.cn-shanghai.aliyuncs.com/tensorflow-samples/tensorflow-gpu-mem:debian .

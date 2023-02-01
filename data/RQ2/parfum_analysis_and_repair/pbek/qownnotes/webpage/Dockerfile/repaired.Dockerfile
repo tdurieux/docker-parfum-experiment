@@ -1,0 +1,1 @@
+# Dockerfile to create image for static webpage

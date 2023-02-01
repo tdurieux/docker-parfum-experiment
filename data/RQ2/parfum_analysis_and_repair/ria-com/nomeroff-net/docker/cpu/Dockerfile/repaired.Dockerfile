@@ -1,0 +1,44 @@
+FROM python:3.7-slim
+ENV DEBIAN_FRONTEND noninteractive
+ENV TZ=Europe/Kiev
+RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
+
+RUN mkdir -p /var/www
+WORKDIR /var/www
+
+RUN apt-get update
+
+RUN apt-get install --no-install-recommends -y build-essential && rm -rf /var/lib/apt/lists/*;
+RUN apt-get install --no-install-recommends -y manpages-dev && rm -rf /var/lib/apt/lists/*;
+
+# For opencv
+RUN apt-get install --no-install-recommends -y libglib2.0 && rm -rf /var/lib/apt/lists/*;
+
+# For pip modules
+RUN apt-get install --no-install-recommends -y git && rm -rf /var/lib/apt/lists/*;
+RUN apt-get install --no-install-recommends -y libgl1-mesa-glx && rm -rf /var/lib/apt/lists/*;
+
+RUN python3 -m pip install setuptools
+RUN python3 -m pip install "PyYAML>=5.3"
+RUN python3 -m pip install scikit_image
+RUN python3 -m pip install Cython
+RUN python3 -m pip install pycocotools
+RUN python3 -m pip install matplotlib
+RUN python3 -m pip install seaborn
+RUN python3 -m pip install 'opencv_python<4.5.5'
+RUN python3 -m pip install "numpy>=1.16.*"
+RUN python3 -m pip install imgaug
+RUN python3 -m pip install pillow
+RUN python3 -m pip install scipy
+RUN python3 -m pip install gevent
+RUN python3 -m pip install asyncio
+RUN python3 -m pip install termcolor
+RUN python3 -m pip install ujson
+RUN python3 -m pip install GitPython
+RUN python3 -m pip install tqdm
+RUN python3 -m pip install pytorch_lightning
+RUN python3 -m pip install -U "git+https://github.com/lilohuang/PyTurboJPEG.git"
+RUN python3 -m pip install -U "git+https://github.com/ria-com/modelhub-client.git"
+RUN pip3 install --no-cache-dir torch==1.10.0 torchvision==0.11.0 -f https://download.pytorch.org/whl/torch_stable.html
+
+WORKDIR /var/www/nomeroff-net

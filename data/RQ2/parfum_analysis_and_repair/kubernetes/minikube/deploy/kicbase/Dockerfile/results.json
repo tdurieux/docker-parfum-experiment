@@ -1,0 +1,98 @@
+{
+  "startTime": 1674219724976,
+  "endTime": 1674219726705,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 126,
+        "lineEnd": 126,
+        "columnStart": 1,
+        "columnEnd": 144
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 127,
+        "lineEnd": 127,
+        "columnStart": 1,
+        "columnEnd": 157
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 128,
+        "lineEnd": 128,
+        "columnStart": 1,
+        "columnEnd": 159
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 145,
+        "lineEnd": 145,
+        "columnStart": 4,
+        "columnEnd": 70
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 154,
+        "lineEnd": 154,
+        "columnStart": 7,
+        "columnEnd": 126
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 158,
+        "lineEnd": 158,
+        "columnStart": 7,
+        "columnEnd": 191
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 159,
+        "lineEnd": 159,
+        "columnStart": 7,
+        "columnEnd": 189
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 171,
+        "lineEnd": 171,
+        "columnStart": 4,
+        "columnEnd": 121
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 182,
+        "lineEnd": 182,
+        "columnStart": 4,
+        "columnEnd": 148
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 189,
+        "lineEnd": 189,
+        "columnStart": 4,
+        "columnEnd": 121
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Copyright 2018 The Kubernetes Authors.\n#\n# Licensed under the Apache License, Version 2.0 (the \"License\");\n# you may not use this file except in compliance with the License.\n# You may obtain a copy of the License at\n#\n#     http://www.apache.org/licenses/LICENSE-2.0\n#\n# Unless required by applicable law or agreed to in writing, software\n# distributed under the License is distributed on an \"AS IS\" BASIS,\n# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.\n# See the License for the specific language governing permissions and\n# limitations under the License.\n\n# kind node base image\n#\n# For systemd + docker configuration used below, see the following references:\n# https://systemd.io/CONTAINER_INTERFACE/\n\n\n# multi-stage docker build so we can build auto-pause for arm64\nFROM golang:1.18 as auto-pause\nWORKDIR /src\n# auto-pause depends on core minikube code so we need to pass the whole source code as the context\n# copy in the minimal amount of source code possible\nCOPY pkg/ ./pkg\nCOPY cmd/ ./cmd\nCOPY deploy/addons ./deploy/addons\nCOPY translations/ ./translations\nCOPY third_party/ ./third_party\nCOPY go.mod go.sum ./\nARG TARGETARCH\nENV GOARCH=${TARGETARCH}\nARG PREBUILT_AUTO_PAUSE\nRUN if [ \"$PREBUILT_AUTO_PAUSE\" != \"true\" ]; then cd ./cmd/auto-pause/ && go build -o auto-pause-${TARGETARCH}; fi\n\n# start from ubuntu 20.04, this image is reasonably small as a starting point\n# for a kubernetes node image, it doesn't contain much we don't need\nFROM ubuntu:focal-20220531 as kicbase\n\nARG BUILDKIT_VERSION=\"v0.10.3\"\nARG FUSE_OVERLAYFS_VERSION=\"v1.7.1\"\nARG CONTAINERD_FUSE_OVERLAYFS_VERSION=\"1.0.3\"\nARG CRIO_VERSION=\"1.24\"\nARG CRI_DOCKERD_VERSION=\"0737013d3c48992724283d151e8a2a767a1839e9\"\nARG TARGETARCH\n\n# copy in static files (configs, scripts)\nCOPY deploy/kicbase/10-network-security.conf /etc/sysctl.d/10-network-security.conf\nCOPY deploy/kicbase/11-tcp-mtu-probing.conf /etc/sysctl.d/11-tcp-mtu-probing.conf\nCOPY deploy/kicbase/02-crio.conf /etc/crio/crio.conf.d/02-crio.conf\nCOPY deploy/kicbase/containerd.toml /etc/containerd/config.toml\nCOPY deploy/kicbase/clean-install /usr/local/bin/clean-install\nCOPY deploy/kicbase/entrypoint /usr/local/bin/entrypoint\nCOPY --from=auto-pause /src/cmd/auto-pause/auto-pause-${TARGETARCH} /bin/auto-pause\n\n\n# Install dependencies, first from apt, then from release tarballs.\n# NOTE: we use one RUN to minimize layers.\n#\n# First we must ensure that our util scripts are executable.\n#\n# The base image already has: ssh, apt, snapd, but we need to install more packages.\n# Packages installed are broken down into (each on a line):\n# - packages needed to run services (systemd)\n# - packages needed for kubernetes components\n# - packages needed by the container runtime\n# - misc packages kind uses itself\n# - packages that provide semi-core kubernetes functionality\n# After installing packages we cleanup by:\n# - removing unwanted systemd services\n# - disabling kmsg in journald (these log entries would be confusing)\n#\n# Next we ensure the /etc/kubernetes/manifests directory exists. Normally\n# a kubeadm debian / rpm package would ensure that this exists but we install\n# freshly built binaries directly when we build the node image.\n#\n# Finally we adjust tempfiles cleanup to be 1 minute after \"boot\" instead of 15m\n# This is plenty after we've done initial setup for a node, but before we are\n# likely to try to export logs etc.\nRUN echo \"Ensuring scripts are executable ...\" \\\n    && chmod +x /usr/local/bin/clean-install /usr/local/bin/entrypoint \\\n && echo \"Installing Packages ...\" \\\n    && DEBIAN_FRONTEND=noninteractive clean-install \\\n      systemd \\\n      conntrack iptables iproute2 ethtool socat util-linux mount ebtables udev kmod \\\n      libseccomp2 pigz \\\n      bash ca-certificates curl rsync \\\n      nfs-common \\\n      iputils-ping netcat-openbsd vim-tiny \\\n    && find /lib/systemd/system/sysinit.target.wants/ -name \"systemd-tmpfiles-setup.service\" -delete \\\n    && rm -f /lib/systemd/system/multi-user.target.wants/* \\\n    && rm -f /etc/systemd/system/*.wants/* \\\n    && rm -f /lib/systemd/system/local-fs.target.wants/* \\\n    && rm -f /lib/systemd/system/sockets.target.wants/*udev* \\\n    && rm -f /lib/systemd/system/sockets.target.wants/*initctl* \\\n    && rm -f /lib/systemd/system/basic.target.wants/* \\\n    && echo \"ReadKMsg=no\" >> /etc/systemd/journald.conf \\\n    && ln -s \"$(which systemd)\" /sbin/init \\\n && echo \"Ensuring /etc/kubernetes/manifests\" \\\n    && mkdir -p /etc/kubernetes/manifests \\\n && echo \"Adjusting systemd-tmpfiles timer\" \\\n    && sed -i /usr/lib/systemd/system/systemd-tmpfiles-clean.timer -e 's#OnBootSec=.*#OnBootSec=1min#' \\\n && echo \"Disabling udev\" \\\n    && systemctl disable udev.service \\\n && echo \"Modifying /etc/nsswitch.conf to prefer hosts\" \\\n    && sed -i /etc/nsswitch.conf -re 's#^(hosts:\\s*).*#\\1dns files#'\n\n# tell systemd that it is in docker (it will check for the container env)\n# https://systemd.io/CONTAINER_INTERFACE/\nENV container docker\n# systemd exits on SIGRTMIN+3, not SIGTERM (which re-executes it)\n# https://bugzilla.redhat.com/show_bug.cgi?id=1201657\nSTOPSIGNAL SIGRTMIN+3\n# NOTE: this is *only* for documentation, the entrypoint is overridden later\nENTRYPOINT [ \"/usr/local/bin/entrypoint\", \"/sbin/init\" ]\n\nARG COMMIT_SHA\n# using base image created by kind https://github.com/kubernetes-sigs/kind/blob/b6bc1125/images/base/Dockerfile\n# available as a docker image: docker.io/kindest/base:v20210402-3d9112b0\n# which is an ubuntu 20.10 with an entry-point that helps running systemd\n# could be changed to any debian that can run systemd\nUSER root\n\n# Install cri-dockerd from pre-compiled binaries stored in GCS, this is way faster than building from source in multi-arch\nRUN echo \"Installing cri-dockerd\" && \\\n\tcurl -f -L \"https://storage.googleapis.com/kicbase-artifacts/cri-dockerd/${CRI_DOCKERD_VERSION}/${TARGETARCH}/cri-dockerd\" -o /usr/bin/cri-dockerd && chmod +x /usr/bin/cri-dockerd && \\\n\tcurl -f -L \"https://storage.googleapis.com/kicbase-artifacts/cri-dockerd/${CRI_DOCKERD_VERSION}/cri-docker.socket\" -o /usr/lib/systemd/system/cri-docker.socket && \\\n\tcurl -f -L \"https://storage.googleapis.com/kicbase-artifacts/cri-dockerd/${CRI_DOCKERD_VERSION}/cri-docker.service\" -o /usr/lib/systemd/system/cri-docker.service\n\n# install system requirements from the regular distro repositories\nRUN clean-install \\\n    lz4 \\\n    gnupg \\ \n    sudo \\\n    openssh-server \\\n    dnsutils \\\n    # libglib2.0-0 is required for conmon, which is required for podman\n    libglib2.0-0\n\n# install docker\n# use the bionic packages for arm32\nRUN export ARCH=$(dpkg --print-architecture | sed 's/armhf/arm-v7/') && \\\n    if [ \"$ARCH\" == \"arm-v7\" ]; then export DIST=\"bionic\"; else export DIST=\"focal\"; fi && \\\n    sh -c \"echo 'deb https://download.docker.com/linux/ubuntu ${DIST} stable' > /etc/apt/sources.list.d/docker.list\" && \\\n    curl -f -L https://download.docker.com/linux/ubuntu/gpg -o docker.key && \\\n    apt-key add - < docker.key && \\\n    clean-install docker-ce docker-ce-cli containerd.io\n\n# install buildkit\nRUN export ARCH=$(dpkg --print-architecture | sed 's/ppc64el/ppc64le/' | sed 's/armhf/arm-v7/') \\\n && echo \"Installing buildkit ...\" \\\n    && addgroup --system buildkit \\\n    && export BUILDKIT_BASE_URL=\"https://github.com/moby/buildkit/releases/download/${BUILDKIT_VERSION}\" \\\n    && curl -f -sSL --retry 5 --output /tmp/buildkit.tgz \"${BUILDKIT_BASE_URL}/buildkit-${BUILDKIT_VERSION}.linux-${ARCH}.tar.gz\" \\\n    && tar -C /usr/local -xzvf /tmp/buildkit.tgz \\\n    && rm -rf /tmp/buildkit.tgz \\\n    && mkdir -p /usr/local/lib/systemd/system \\\n    && curl -f -L --retry 5 --output /usr/local/lib/systemd/system/buildkit.service \"https://raw.githubusercontent.com/moby/buildkit/${BUILDKIT_VERSION}/examples/systemd/system/buildkit.service\" \\\n    && curl -f -L --retry 5 --output /usr/local/lib/systemd/system/buildkit.socket \"https://raw.githubusercontent.com/moby/buildkit/${BUILDKIT_VERSION}/examples/systemd/system/buildkit.socket\" \\\n    && mkdir -p /etc/buildkit \\\n    && echo \"[worker.oci]\\n  enabled = false\\n[worker.containerd]\\n  enabled = true\\n  namespace = \\\"k8s.io\\\"\" > /etc/buildkit/buildkitd.toml \\\n    && chmod 755 /usr/local/bin/buildctl \\\n    && chmod 755 /usr/local/bin/buildkit-runc \\\n    && chmod 755 /usr/local/bin/buildkit-qemu-* \\\n    && chmod 755 /usr/local/bin/buildkitd \\\n    && systemctl enable buildkit.socket\n\n# Install cri-o/podman dependencies:\nRUN export ARCH=$(dpkg --print-architecture | sed 's/ppc64el/ppc64le/') && \\\n    sh -c \"echo 'deb https://downloadcontent.opensuse.org/repositories/devel:/kubic:/libcontainers:/stable/xUbuntu_20.04/ /' > /etc/apt/sources.list.d/devel:kubic:libcontainers:stable.list\" && \\\n    curl -f -LO https://downloadcontent.opensuse.org/repositories/devel:kubic:libcontainers:stable/xUbuntu_20.04/Release.key && \\\n    apt-key add - < Release.key && \\\n    if [ \"$ARCH\" != \"ppc64le\" ]; then \\\n        clean-install containers-common catatonit conmon containernetworking-plugins cri-tools podman-plugins crun; \\\n    else \\\n       \tclean-install containers-common conmon containernetworking-plugins crun; \\\n    fi\n\n# install cri-o based on https://github.com/cri-o/cri-o/blob/release-1.24/README.md#installing-cri-o\nRUN export ARCH=$(dpkg --print-architecture | sed 's/ppc64el/ppc64le/' | sed 's/armhf/arm-v7/') && \\\n    if [ \"$ARCH\" != \"ppc64le\" ] && [ \"$ARCH\" != \"arm-v7\" ]; then \\\n    sh -c \"echo 'deb https://downloadcontent.opensuse.org/repositories/devel:/kubic:/libcontainers:/stable:/cri-o:/${CRIO_VERSION}/xUbuntu_20.04/ /' > /etc/apt/sources.list.d/devel:kubic:libcontainers:stable:cri-o:${CRIO_VERSION}.list\" && \\\n    curl -f -LO https://downloadcontent.opensuse.org/repositories/devel:/kubic:/libcontainers:/stable:/cri-o:/${CRIO_VERSION}/xUbuntu_20.04/Release.key && \\\n    apt-key add - < Release.key && \\\n    clean-install cri-o cri-o-runc; fi\n\n# install podman\nRUN export ARCH=$(dpkg --print-architecture | sed 's/ppc64el/ppc64le/') && \\\n    if [ \"$ARCH\" != \"ppc64le\" ]; then \\\n    sh -c \"echo 'deb http://downloadcontent.opensuse.org/repositories/devel:/kubic:/libcontainers:/stable/xUbuntu_20.04/ /' > /etc/apt/sources.list.d/devel:kubic:libcontainers:stable.list\" && \\\n    curl -f -LO https://downloadcontent.opensuse.org/repositories/devel:kubic:libcontainers:stable/xUbuntu_20.04/Release.key && \\\n    apt-key add - < Release.key && \\\n    clean-install podman && \\\n    addgroup --system podman && \\\n    mkdir -p /etc/systemd/system/podman.socket.d && \\\n    printf \"[Socket]\\nSocketMode=0660\\nSocketUser=root\\nSocketGroup=podman\\n\" \\\n           > /etc/systemd/system/podman.socket.d/override.conf && \\\n    mkdir -p /etc/tmpfiles.d && \\\n    echo \"d /run/podman 0770 root podman\" > /etc/tmpfiles.d/podman.conf && \\\n    systemd-tmpfiles --create; fi\n\n# automount service\nCOPY deploy/kicbase/automount/minikube-automount /usr/sbin/minikube-automount\nCOPY deploy/kicbase/automount/minikube-automount.service /usr/lib/systemd/system/minikube-automount.service\nRUN ln -fs /usr/lib/systemd/system/minikube-automount.service \\\n    /etc/systemd/system/multi-user.target.wants/minikube-automount.service\n\n# scheduled stop service\nCOPY deploy/kicbase/scheduled-stop/minikube-scheduled-stop /var/lib/minikube/scheduled-stop/minikube-scheduled-stop\nCOPY deploy/kicbase/scheduled-stop/minikube-scheduled-stop.service /usr/lib/systemd/system/minikube-scheduled-stop.service\nRUN  chmod +x /var/lib/minikube/scheduled-stop/minikube-scheduled-stop\n\n# disable non-docker runtimes by default\nRUN systemctl disable containerd\n# disable crio for archs that support it\nRUN export ARCH=$(dpkg --print-architecture | sed 's/ppc64el/ppc64le/' | sed 's/armhf/arm-v7/') && \\\n    if [ \"$ARCH\" != \"ppc64le\" ] && [ \"$ARCH\" != \"arm-v7\" ]; then systemctl disable crio && rm /etc/crictl.yaml; fi\n# enable podman socket on archs that support it\nRUN export ARCH=$(dpkg --print-architecture | sed 's/ppc64el/ppc64le/') && if [ \"$ARCH\" != \"ppc64le\" ]; then systemctl enable podman.socket; fi\n# enable docker which is default\nRUN systemctl enable docker.service\n# making SSH work for docker container\n# based on https://github.com/rastasheep/ubuntu-sshd/blob/master/18.04/Dockerfile\nRUN mkdir /var/run/sshd\nRUN echo 'root:root' |chpasswd\nRUN sed -ri 's/^#?PermitRootLogin\\s+.*/PermitRootLogin yes/' /etc/ssh/sshd_config\nRUN sed -ri 's/UsePAM yes/#UsePAM yes/g' /etc/ssh/sshd_config\n\n# minikube relies on /etc/hosts for control-plane discovery. This prevents nefarious DNS servers from breaking it.\nRUN sed -ri 's/dns files/files dns/g' /etc/nsswitch.conf\n\n# metacopy breaks crio on certain OS and isn't necessary for minikube\n# https://github.com/kubernetes/minikube/issues/10520\nRUN sed -ri 's/mountopt = \"nodev,metacopy=on\"/mountopt = \"nodev\"/g' /etc/containers/storage.conf\n\nEXPOSE 22\n# create docker user for minikube ssh. to match VM using \"docker\" as username\nRUN adduser --ingroup docker --disabled-password --gecos '' docker\nRUN adduser docker sudo\nRUN export ARCH=$(dpkg --print-architecture | sed 's/ppc64el/ppc64le/') && if [ \"$ARCH\" != \"ppc64le\" ]; then adduser docker podman; fi\nRUN adduser docker buildkit\nRUN echo '%sudo ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers\nUSER docker\nRUN mkdir /home/docker/.ssh\nUSER root\n# kind base-image entry-point expects a \"kind\" folder for product_name,product_uuid\n# https://github.com/kubernetes-sigs/kind/blob/master/images/base/files/usr/local/bin/entrypoint\nRUN mkdir -p /kind\n# Deleting leftovers\nRUN rm -rf \\\n  /usr/share/doc/* \\\n  /usr/share/man/* \\\n  /usr/share/local/*\nRUN echo \"kic! Build: ${COMMIT_SHA} Time :$(date)\" > \"/kic.txt\"\n"
+}

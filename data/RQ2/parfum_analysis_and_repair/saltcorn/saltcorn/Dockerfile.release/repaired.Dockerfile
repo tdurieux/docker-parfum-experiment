@@ -1,0 +1,8 @@
+FROM node:16
+
+ENV NODE_ENV "production"
+ENV SALTCORN_DISABLE_UPGRADE "true"
+
+RUN npm install -g @saltcorn/cli@0.7.3-beta.6 --unsafe && npm cache clean --force;
+
+ENTRYPOINT ["/usr/local/bin/saltcorn"]

@@ -1,0 +1,33 @@
+ARG EVE_BUILDER_IMAGE=lfedge/eve-alpine:6.7.0
+FROM ${EVE_BUILDER_IMAGE} as tools
+ENV PKGS qemu-img tar uboot-tools coreutils
+RUN eve-alpine-deploy.sh
+
+# hadolint ignore=DL3006
+FROM MKISO_TAG as iso
+# hadolint ignore=DL3006
+FROM IPXE_TAG as ipxe
+# hadolint ignore=DL3006
+FROM MKRAW_TAG as raw
+# we need to get rid of embedded initrd & installer.img since we will get them from outside
+RUN rm /initrd.img /installer.img
+# hadolint ignore=DL3006
+FROM MKCONF_TAG as conf
+
+COPY --from=iso / /
+COPY --from=raw / /
+COPY --from=ipxe / /
+COPY --from=tools /out/ /
+COPY installer /bits
+COPY runme.sh /
+RUN mkdir /in /out
+
+
+# These labels indicate where each component type is.
+# These must be updated if we change filenames or locations.
+# The annotations to be used are available at https://github.com/lf-edge/edge-containers/blob/master/docs/annotations.md
+LABEL org.lfedge.eci.artifact.root="/bits/rootfs.img"
+LABEL org.lfedge.eci.artifact.initrd="/bits/initrd.img"
+
+WORKDIR /bits
+ENTRYPOINT ["/runme.sh"]

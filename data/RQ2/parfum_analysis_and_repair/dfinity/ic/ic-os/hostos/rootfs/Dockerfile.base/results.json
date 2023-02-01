@@ -1,0 +1,80 @@
+{
+  "startTime": 1674251262388,
+  "endTime": 1674251263934,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 33,
+        "lineEnd": 33,
+        "columnStart": 4,
+        "columnEnd": 58
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 39,
+        "lineEnd": 39,
+        "columnStart": 4,
+        "columnEnd": 114
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 45,
+        "lineEnd": 45,
+        "columnStart": 4,
+        "columnEnd": 122
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 72,
+        "lineEnd": 72,
+        "columnStart": 4,
+        "columnEnd": 73
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 70,
+        "lineEnd": 70,
+        "columnStart": 4,
+        "columnEnd": 29
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 26,
+        "lineEnd": 29,
+        "columnStart": 47,
+        "columnEnd": 8
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 57,
+        "lineEnd": 65,
+        "columnStart": 47,
+        "columnEnd": 11
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 99,
+        "lineEnd": 99,
+        "columnStart": 4,
+        "columnEnd": 117
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# HostOS - Base Image\n#\n# Build steps:\n# - `docker build -t dfinity/hostos-base:<tag> -f Dockerfile.base .`\n# - `docker push/pull dfinity/hostos-base:<tag>`\n# - `docker build -t dfinity/hostos-base-dev:<tag> --build-arg PACKAGE_FILES=\"packages.common packages.dev\" -f Dockerfile.base .`\n# - `docker push/pull dfinity/hostos-base-dev:<tag>`\n#\n# NOTE:\n# If you edit this file, you will need to perform the following operations\n# to get your changes deployed.\n#\n# 1. Get your MR approved and merged into master\n# 2. On the next hourly master pipeline, click the \"deploy-host-os-baseimg\" job\n# 3. Note down the sha256 and update the sha256 reference in the neighboring\n#    Dockerfiles\n#\n\n#\n# First build stage:\n# - Download 3rd party tools\n#\nFROM ubuntu:20.04 AS download\n\nENV TZ=UTC\nRUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone\nRUN apt-get -y update && apt-get -y upgrade && apt-get -y --no-install-recommends install \\\n    ca-certificates \\\n    curl \\\n    perl && rm -rf /var/lib/apt/lists/*;\n\n# Download and verify QEMU\nRUN cd /tmp/ && \\\n    curl -f -L -O https://download.qemu.org/qemu-6.2.0.tar.xz && \\\n    echo \"68e15d8e45ac56326e0b9a4afa8b49a3dfe8aba3488221d098c84698bca65b45  qemu-6.2.0.tar.xz\" > qemu.sha256 && \\\n    shasum -c qemu.sha256\n\n# Download and verify journalbeat\nRUN cd /tmp/ && \\\n    curl -f -L -O https://artifacts.elastic.co/downloads/beats/journalbeat/journalbeat-oss-7.14.0-linux-x86_64.tar.gz && \\\n    echo \"3c97e8706bd0d2e30678beee7537b6fe6807cf858a0dd2e7cfce5beccb621eb0fefe6871027bc7b55e2ea98d7fe2ca03d4d92a7b264abbb0d6d54ecfa6f6a305  journalbeat-oss-7.14.0-linux-x86_64.tar.gz\" > journalbeat.sha512 && \\\n    shasum -c journalbeat.sha512\n\n# Download and verify node_exporter\nRUN cd /tmp/ && \\\n    curl -f -L -O https://github.com/prometheus/node_exporter/releases/download/v1.3.1/node_exporter-1.3.1.linux-amd64.tar.gz && \\\n    echo \"68f3802c2dd3980667e4ba65ea2e1fb03f4a4ba026cca375f15a0390ff850949  node_exporter-1.3.1.linux-amd64.tar.gz\" > node_exporter.sha256 && \\\n    shasum -c node_exporter.sha256\n\n#\n# Second build stage:\n# - Compile downloaded archives from first build stage\n#\nFROM ubuntu:20.04 AS build\n\nENV TZ=UTC\nRUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone\nRUN apt-get -y update && apt-get -y upgrade && apt-get -y --no-install-recommends install \\\n    ca-certificates \\\n    build-essential \\\n    libglib2.0-dev \\\n    libpixman-1-dev \\\n    libusb-1.0-0-dev \\\n    ninja-build \\\n    pkg-config \\\n    python3 && rm -rf /var/lib/apt/lists/*;\n\n# Configure and compile QEMU\nCOPY --from=download /tmp/qemu-6.2.0.tar.xz /tmp/qemu-6.2.0.tar.xz\nRUN cd /tmp/ && \\\n    tar xJf qemu-6.2.0.tar.xz && \\\n    cd /tmp/qemu-6.2.0 && \\\n    ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" --target-list=x86_64-softmmu --enable-kvm --enable-libusb && \\\n    echo \"Compiling qemu...\" && \\\n    make -j 2 >/dev/null 2>&1 && \\\n    DESTDIR=\"/out\" ninja -C build install && rm qemu-6.2.0.tar.xz\n\n#\n# Third build stage:\n# - Download and cache minimal Ubuntu Server 20.04 LTS Docker image.\n# - Install and cache upstream packages from built-in Ubuntu repositories.\n# - Install compiled packages from the second stage.\n#\nFROM ubuntu:20.04\n\nENV SOURCE_DATE_EPOCH=0\nENV TZ=UTC\nENV DEBIAN_FRONTEND=noninteractive\n\n\n# For the prod image, just use packages.common to define the packages installed\n# on target.\n# For the dev image, use both \"packages.common\" and \"packages.dev\" -- this can\n# be set via docker build args (see above).\nARG PACKAGE_FILES=packages.common\nRUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone\nCOPY packages.* /tmp/\nRUN apt-get -y update && \\\n    apt-get -y upgrade && \\\n    apt-get -y --no-install-recommends install $(for P in ${PACKAGE_FILES}; do cat /tmp/$P | sed -e \"s/#.*//\" ; done) && \\\n    rm /tmp/packages.* && rm -rf /var/lib/apt/lists/*;\n\n# Install QEMU\nCOPY --from=build /out/usr/local/bin/qemu-system-x86_64 /usr/local/bin/\nCOPY --from=build /out/usr/local/share/qemu /usr/local/share/qemu\n\n# Install journalbeat\nCOPY --from=download /tmp/journalbeat-oss-7.14.0-linux-x86_64.tar.gz /tmp/journalbeat-oss-7.14.0-linux-x86_64.tar.gz\nRUN cd /tmp/ && \\\n    mkdir -p /etc/journalbeat \\\n             /var/lib/journalbeat \\\n             /var/log/journalbeat && \\\n    tar --strip-components=1 -C /etc/journalbeat/ -zvxf journalbeat-oss-7.14.0-linux-x86_64.tar.gz journalbeat-7.14.0-linux-x86_64/fields.yml && \\\n    tar --strip-components=1 -C /etc/journalbeat/ -zvxf journalbeat-oss-7.14.0-linux-x86_64.tar.gz journalbeat-7.14.0-linux-x86_64/journalbeat.reference.yml && \\\n    tar --strip-components=1 -C /usr/local/bin/ -zvxf journalbeat-oss-7.14.0-linux-x86_64.tar.gz journalbeat-7.14.0-linux-x86_64/journalbeat && \\\n    rm /tmp/journalbeat-oss-7.14.0-linux-x86_64.tar.gz\n\n# Install node_exporter\nCOPY --from=download /tmp/node_exporter-1.3.1.linux-amd64.tar.gz /tmp/node_exporter-1.3.1.linux-amd64.tar.gz\nRUN cd /tmp/ && \\\n    mkdir -p /etc/node_exporter && \\\n    tar --strip-components=1 -C /usr/local/bin/ -zvxf node_exporter-1.3.1.linux-amd64.tar.gz node_exporter-1.3.1.linux-amd64/node_exporter && \\\n    rm /tmp/node_exporter-1.3.1.linux-amd64.tar.gz\n"
+}

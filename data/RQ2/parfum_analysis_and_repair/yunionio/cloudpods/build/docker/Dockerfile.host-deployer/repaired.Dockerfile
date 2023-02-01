@@ -1,0 +1,9 @@
+FROM registry.cn-beijing.aliyuncs.com/yunionio/host-deployer-base:1.1
+
+MAINTAINER "Yaoqi Wan wanyaoqi@yunionyun.com"
+
+ENV TZ UTC
+
+RUN mkdir -p /opt/yunion/bin
+
+ADD ./_output/centos-build/bin/host-deployer /opt/yunion/bin/host-deployer

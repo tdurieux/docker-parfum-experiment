@@ -1,0 +1,53 @@
+{
+  "startTime": 1674252278835,
+  "endTime": 1674252279060,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 31,
+        "lineEnd": 31,
+        "columnStart": 32,
+        "columnEnd": 68
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 8,
+        "lineEnd": 8,
+        "columnStart": 112,
+        "columnEnd": 154
+      }
+    },
+    {
+      "rule": "aptGetInstallUseY",
+      "position": {
+        "lineStart": 3,
+        "lineEnd": 4,
+        "columnStart": 26,
+        "columnEnd": 45
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 3,
+        "lineEnd": 4,
+        "columnStart": 26,
+        "columnEnd": 45
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 3,
+        "lineEnd": 4,
+        "columnStart": 26,
+        "columnEnd": 45
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM ubuntu:18.04\n\nrun echo \"travis_fold:start:Dapt\\033[33;1mservice Dockerfile apt\\033[0m\" && \\\n    apt-get -qq update && apt-get install -y --no-install-recommends -qq clang python3 python3-dev python3-openssl xinetd firefox build-essential python3-virtualenv \\\n    python3-setuptools wget sqlite3 cron sudo && \\\n    echo \"\\ntravis_fold:end:Dapt\\r\" && rm -rf /var/lib/apt/lists/*;\n\n# Install geckodriver\nRUN wget https://github.com/mozilla/geckodriver/releases/download/v0.24.0/geckodriver-v0.24.0-linux64.tar.gz && tar xvf geckodriver-v0.24.0-linux64.tar.gz && mv geckodriver /usr/local/bin && rm geckodriver-v0.24.0-linux64.tar.gz\n\n# Install phantomjs\nRUN wget https://bitbucket.org/ariya/phantomjs/downloads/phantomjs-2.1.1-linux-x86_64.tar.bz2 -O phantomjs.tar.bz2 && \\\n  tar xvf phantomjs.tar.bz2 && \\\n  cp phantomjs-2.1.1-linux-x86_64/bin/phantomjs /usr/bin/ && \\\n  chmod ugo+x /usr/bin/phantomjs && \\\n  rm -rf phantomjs-2.1.1-linux-x86_64 phantomjs.tar.bz2\n\n# Setup users (TODO, use the users)\n#   www runs public proxy\n#   internal-www runs internal-only website\n#   internal visits user provided urls\nRUN useradd www\nRUN useradd internalwww\nRUN useradd internal\n\n# Build root directory for our files\nRUN mkdir /app\n\n# Set up virtualenv and install dependencies\nCOPY files/requirements.txt /app/\nRUN python3 -m virtualenv --python=/usr/bin/python3 /app/venv\nRUN . /app/venv/bin/activate && pip install --no-cache-dir -r /app/requirements.txt\n\n# Parse arguments. proxy_port default 8080, admin_www_port default 5000\nARG PROXY_PORT\nENV PROXY_PORT ${PROXY_PORT:-8080}\n\nARG ADMIN_WWW_PORT\nENV ADMIN_WWW_PORT ${ADMIN_WWW_PORT:-5000}\n\n# Expose proxy port and admin_WWW (just to give a hint about local connections)\nexpose $PROXY_PORT $ADMIN_WWW_PORT\n\n# Cron to cleanup unchecked captchas\nADD files/proxy/captcha_clean_cron /etc/cron.d/captcha_clean_cron\nRUN chmod 0644 /etc/cron.d/captcha_clean_cron\n\n# Setup ssl certs into /app/cert/ca.crt, and /app/cert/ca.key\nRUN mkdir /app/cert\nCOPY files/cert/ /app/cert/\nRUN /app/cert/make_cert.sh\n\n# Create empty requests table and non-empty flag table\nCOPY files/db_init.sql /app/\nRUN sqlite3 /app/database.sqlite < /app/db_init.sql\n\n# Only www and internal can write. internalwww can only read\n#RUN groupadd db_writers\n#RUN usermod -a -G db_writers www\n#RUN usermod -a -G db_writers internal\n#RUN chown root:db_writers /app/database.sqlite\n#RUN chmod 774 /app/database.sqlite\n#RUN chmod 777 /app/database.sqlite\n\n# Copy in our start script\nCOPY files/run.sh /app/\n\n# Copy in each of the 3 applications\nRUN mkdir /app/internalwww\nCOPY files/internalwww/ /app/internalwww/\n\nRUN mkdir /app/proxy\nCOPY files/proxy/ /app/proxy/\n\nRUN mkdir /app/admin\nCOPY files/admin/ /app/admin/\n\nRUN chown -R www /app/proxy\nRUN chown -R internalwww /app/internalwww\nRUN chown -R internal /app/admin\n\nRUN touch ghostdriver.log && chmod 777 ghostdriver.log\n\nHEALTHCHECK --interval=10s --timeout=10s CMD http_proxy=http://OnlyOne:Overflow@127.0.0.1:8080/ wget -qO - http://overflow.example.com/ | grep -q 'Page Blocked' || exit 1\n\n# Start script which runs all 3 components\nRUN chmod +x /app/run.sh\nCMD [\"/bin/sh\", \"-c\", \"/app/run.sh $ADMIN_WWW_PORT $PROXY_PORT\"]\n"
+}

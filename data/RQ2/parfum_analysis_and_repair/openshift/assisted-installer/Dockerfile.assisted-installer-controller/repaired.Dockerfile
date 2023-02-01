@@ -1,0 +1,22 @@
+FROM quay.io/openshift/origin-cli:4.11.0 AS cli
+
+FROM registry.ci.openshift.org/openshift/release:golang-1.17 AS builder
+ENV GOFLAGS=-mod=mod
+WORKDIR /go/src/github.com/openshift/assisted-installer
+
+# Bring in the go dependencies before anything else so we can take
+# advantage of caching these layers in future builds.
+COPY go.mod go.mod
+COPY go.sum go.sum
+RUN go mod download
+
+COPY . .
+RUN make controller
+
+FROM quay.io/centos/centos:stream8
+
+RUN yum -y install make gcc unzip wget curl rsync && yum clean all && rm -rf /var/cache/yum
+COPY --from=builder /go/src/github.com/openshift/assisted-installer/build/assisted-installer-controller /usr/bin/assisted-installer-controller
+COPY --from=cli /usr/bin/oc /usr/bin/oc
+
+ENTRYPOINT ["/usr/bin/assisted-installer-controller"]

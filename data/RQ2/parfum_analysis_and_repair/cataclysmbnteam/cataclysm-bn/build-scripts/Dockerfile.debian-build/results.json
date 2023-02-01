@@ -1,0 +1,44 @@
+{
+  "startTime": 1674219252582,
+  "endTime": 1674219254103,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 15,
+        "lineEnd": 15,
+        "columnStart": 4,
+        "columnEnd": 33
+      }
+    },
+    {
+      "rule": "aptGetInstallUseY",
+      "position": {
+        "lineStart": 13,
+        "lineEnd": 13,
+        "columnStart": 4,
+        "columnEnd": 86
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 13,
+        "lineEnd": 13,
+        "columnStart": 4,
+        "columnEnd": 86
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 13,
+        "lineEnd": 13,
+        "columnStart": 4,
+        "columnEnd": 86
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "#HOWTO:\n# run this from the root of the cdda repo using `docker build -f build-scripts/Dockerfile.debian-build . -t cdda`\n# (note: the -t cdda is optional but convenient. It tags the resulting image with `cdda`)\n# (note: the `.` is required and orients Docker to the file/dir struture you want to bring into the image with COPY once the setup is done)\n\n# basing the build on debian testing is an easy way to bring in clang-6.0. Debian testing is quite stable.\n# (We want clang for faster builds, and clang 6 is latest)\nFROM debian:testing\n\n# read latest package index on repos\nRUN apt-get -qq update && apt-get -qq -y install curl openssl ca-certificates sudo wget --no-install-recommends && rm -rf /var/lib/apt/lists/*; # we want apt-fast because it makes apt installs way faster by downloading many packages at once, and these packages are used for a fast/easy install of apt-fast\n\n# we strip 'sudo' calls out of the script so we don't have to bother with sudo even though it's installed, and we avoid the recommended packages from the apt install in the script as they tend to be bloat on a server-like setup like this build image\nRUN curl -f -sL https://git.io/vokNn | sed s/'sudo '//g | sed s/'apt-get install'/'apt-get install --no-install-recommends'/g | bash && echo \"DOWNLOADBEFORE=true\" >> /etc/apt-fast.conf\n\n# ensure we know about the latest packages\nRUN apt-fast -qq update\n\n# random convenience packages\nRUN apt-fast -qq install --no-install-recommends aptitude man software-properties-common gpg\n\n# CDDA: for building\nRUN apt-fast -qq install --no-install-recommends build-essential clang-6.0 cmake ccache\n# we probably don't want gcc/g++ so we don't accidentally build with them; note, we may find that we might actually want them\nRUN apt-get -qq remove gcc g++ && apt-get -qq autoremove\n\n# CDDA: general stuff; gettext is required for localization\nRUN apt-fast -qq install --no-install-recommends gettext\n\n# CDDA: libraries for curses-based terminal cdda\nRUN apt-fast -qq install --no-install-recommends libncurses5-dev libncursesw5-dev\n\n# CDDA: libraries for tiles build\nRUN apt-fast -qq install --no-install-recommends  libsdl2-dev libsdl2-ttf-dev libsdl2-image-dev libsdl2-mixer-dev libfreetype6-dev\n\n# general packages for a much nicer time inside the container (we install psmisc for `killall`)\nRUN apt-fast -qq install --no-install-recommends tree watch tmux fish colormake vim emacs git silversearcher-ag lsof psmisc dstat\n\n# install opensssh-server and prepare for running it\n#TODO: find a nice way of getting ssh keys into the image - by grabbing .pub keys from somewhere?\nRUN apt-fast -qq install --no-install-recommends openssh-server && mkdir -p /run/sshd\n\n\n# experimental: trying to get X11 forwarding or x2go to run; xauth seems to be required\nRUN apt-fast install -qq --no-install-recommends xauth\n\n# install lldb, the llvm debugger (lldb is quite good, and the clang compiler is based on llvm so it's kinda connected)\n# NOTE: we have to add `--privileged` to `docker run` to be able to debug inside the container, or else we get a pretty cryptic error once we `run` inside the debugger\n# NOTE: we can probably run an external debugger and attach it to the process inside the container somehow, to be able to debug inside the container using a full IDE on the host\nRUN apt-fast -qq install --no-install-recommends lldb-6.0\n\n\n# we prefer to build as a regular user (cdda) rather than root\nRUN mkdir /cdda\n# --disabled-password is a way to rush through the user generation (it's inelegant though), and then we set the password 'lol'\n#TODO: bring the password in as an ARG with an option\nRUN adduser cdda --disabled-password && echo cdda:lol | chpasswd\nUSER cdda\nWORKDIR /home/cdda\n\n# copy everything from the source directory on the host (the `.` in docker build) - except the contents of .dockerignore\nCOPY --chown=cdda:cdda . .\n\n# we build in build dirs rather than at the repo root\n# TODO: move build dirs to a directory ABOVE the source so we can Docker mount in the source dir for 'live' builds of code you're hacking on on the host\nRUN mkdir cmake-build-debug cmake-build-debug-tiles\n\nWORKDIR /home/cdda/cmake-build-debug\n\n\nWORKDIR /home/cdda/cmake-build-debug\n\nRUN env CC=clang-6.0 CXX=clang++-6.0 cmake ..\n\nRUN echo `pwd` configured for build; to actually build, run \"make -j`nproc --all`\" here\n\nWORKDIR /home/cdda/cmake-build-debug-tiles\n\nRUN env CC=clang-6.0 CXX=clang++-6.0 cmake -DTILES=ON ..\n\nRUN echo `pwd` configured for build; to actually build, run \"make -j`nproc --all`\" here\n\n\n## ssh server stuff (experimental and not needed except for testing ssh stuff with CDDA! you don't need ssh to get a shell inside the container!)\n## uncomment this to get ssh\n##\n## tell Docker to expose port 22 by default on `docker run` (the result is that it's mapped to a random port on the host so you can ssh in with ssh cdda@localhost:{RANDOMPORT}. Running `docker ps` will reveal the external port.\n## Note that you DO NOT need SSH to get a shell inside the container. This is for testing only.\n## Crash course: The usual way into the container is `docker {run or exec} -it {container/image name} bash` (or better yet, tmux or fish rather than bash). Docker run is to start a running container from an image, docker exec is to execute a process inside an already-started container.\n## TODO: expose 22 to fixed port by default, perhaps with an ARG?\n#EXPOSE 22\n##\n## the CMD entry tells Docker to run that command by default when you `docker run` the image as a container\n## NOTE: disabled as it's probably not a good default for the container. However, when enabled, `docker run` gives you a somewhat persistent container that accepts SSH connections, and then for a regular shell inside the container you do `docker exec -it {containername} bash` (or ssh if you wish)\n#USER root\n#WORKDIR /run/sshd\n#CMD [\"/usr/sbin/sshd\", \"-De\", \"-f\", \"/etc/ssh/sshd_config\"]\n"
+}

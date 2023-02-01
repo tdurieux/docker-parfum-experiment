@@ -1,0 +1,14 @@
+FROM golang:1.18.3 AS build
+
+ARG TAG
+ENV TAG=${TAG:-dev}
+
+COPY . /go/src/metacontroller/
+WORKDIR /go/src/metacontroller/
+ENV CGO_ENABLED=0
+RUN make install
+
+FROM gcr.io/distroless/base-debian10:nonroot
+USER nonroot:nonroot
+COPY --from=build /go/bin/metacontroller /usr/bin/metacontroller
+CMD ["/usr/bin/metacontroller"]

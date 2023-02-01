@@ -1,0 +1,72 @@
+{
+  "startTime": 1674248898696,
+  "endTime": 1674248899377,
+  "originalSmells": [
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 29,
+        "lineEnd": 29,
+        "columnStart": 83,
+        "columnEnd": 94
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 22,
+        "lineEnd": 22,
+        "columnStart": 18,
+        "columnEnd": 59
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 41,
+        "lineEnd": 41,
+        "columnStart": 4,
+        "columnEnd": 62
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 41,
+        "lineEnd": 41,
+        "columnStart": 4,
+        "columnEnd": 62
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 22,
+        "lineEnd": 22,
+        "columnStart": 18,
+        "columnEnd": 59
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 41,
+        "lineEnd": 41,
+        "columnStart": 4,
+        "columnEnd": 62
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 41,
+        "lineEnd": 41,
+        "columnStart": 4,
+        "columnEnd": 86
+      }
+    }
+  ],
+  "repairedDockerfile": "# global ARG ARCH to set target ARCH\nARG BINARCH\nARG REPOARCH\n\n## build the go binary\n# build container runs on local arch\nFROM golang:1.12.6 as build\nARG BINARCH\n\nARG pkgpath=/go/src/github.com/packethost/csi-packet/\nENV GO111MODULE=on\nRUN mkdir -p $pkgpath\nWORKDIR $pkgpath\n# separate steps to avoid cache busting\nCOPY go.mod go.sum $pkgpath\nRUN go mod download\nCOPY . $pkgpath\nRUN make build install DESTDIR=/dist ARCH=${BINARCH}\n\n## build iscsi\nFROM ${REPOARCH}/gcc:9.2.0 as iscsi-build\n\nRUN apt update && apt install --no-install-recommends -y libkmod-dev libsystemd-dev && rm -rf /var/lib/apt/lists/*;\nRUN mkdir /src\n\nWORKDIR /src\nRUN git clone https://github.com/open-iscsi/open-isns.git\nWORKDIR /src/open-isns\nCOPY isns-build.sh /tmp\nRUN git checkout cfdbcff867ee580a71bc9c18c3a38a6057df0150 && /tmp/isns-build.sh && ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" && make && make install install_hdrs install_lib\n\nWORKDIR /src\nRUN git clone https://github.com/open-iscsi/open-iscsi.git\nWORKDIR /src/open-iscsi\n# install to a fresh tree under /dist\nRUN mkdir /dist && git checkout 288add22d6b61cc68ede358faeec9affb15019cd && make && make install DESTDIR=/dist\n\nFROM ${REPOARCH}/ubuntu:18.04\nARG BINARCH\n\nRUN apt-get update\nRUN apt-get install --no-install-recommends -y wget multipath-tools open-iscsi curl jq && rm -rf /var/lib/apt/lists/*;\n\n# now install latest open-iscsi, ensuring it is *after* the apt install is done\n# we need to use the tmpdir, because some archs install in /usr/lib, and others in /usr/lib64\nCOPY --from=iscsi-build /dist /tmp/distiscsi\nWORKDIR /tmp/distiscsi\nRUN mv sbin/* /sbin\nRUN if [ -d usr/lib64 ]; then mkdir -p /usr/lib64; mv usr/lib64/* /usr/lib64; fi\nRUN if [ -d usr/lib ]; then mkdir -p /usr/lib; mv usr/lib/* /usr/lib; fi\nWORKDIR /\nRUN rm -rf /tmp/distiscsi\n\n# we need to do use the tmpdir, because the COPY command cannot run $(..) and save the output\nCOPY --from=build /dist/packet-cloud-storage-interface-${BINARCH} /packet-cloud-storage-interface\n\nENV LD_LIBRARY_PATH=/usr/lib64:$LD_LIBRARY_PATH\n\nENTRYPOINT [\"/packet-cloud-storage-interface\"]\n"
+}

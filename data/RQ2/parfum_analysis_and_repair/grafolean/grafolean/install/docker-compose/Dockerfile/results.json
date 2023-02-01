@@ -1,0 +1,62 @@
+{
+  "startTime": 1674216837436,
+  "endTime": 1674216838270,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 32,
+        "lineEnd": 32,
+        "columnStart": 4,
+        "columnEnd": 22
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 68,
+        "lineEnd": 68,
+        "columnStart": 4,
+        "columnEnd": 32
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 75,
+        "lineEnd": 75,
+        "columnStart": 4,
+        "columnEnd": 36
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 31,
+        "lineEnd": 31,
+        "columnStart": 4,
+        "columnEnd": 29
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 31,
+        "lineEnd": 31,
+        "columnStart": 4,
+        "columnEnd": 29
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 67,
+        "lineEnd": 67,
+        "columnStart": 4,
+        "columnEnd": 96
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Prepare (build) frontend:\nFROM node:12.22-buster-slim as build-frontend\nWORKDIR /usr/src/app\n# first copy just package.json & lock, so we don't re-install packages on every change:\nCOPY frontend/package.json frontend/package-lock.json ./\nRUN npm ci\nCOPY frontend/. ./\nARG REACT_APP_BACKEND_ROOT_URL=/api\n# block \"zloirock is looking for a good job\" core-js message:\nENV ADBLOCK=yes\nRUN npm run build\n# until we find a better solution, manually search and replace https://storage.googleapis.com/workbox-cdn/releases/3.6.2/workbox-sw.js\n# with a local copy of the file: (to avoid using CDN)\n#RUN sed -i -e 's#https://storage[.]googleapis[.]com/workbox-cdn/releases/[0-9.]*/workbox-sw.js#/workbox/workbox-sw.js#g' build/service-worker.js\nRUN rm -rf build/workbox\n\n\nFROM python:3.8-slim-buster as python-requirements\nWORKDIR /grafolean/backend\nCOPY ./backend/Pipfile ./backend/Pipfile.lock /grafolean/backend/\n\n\n# Prepare backend:\n#  - /requirements.txt\n#  - /api-doc.yml\n#  - /grafolean/backend/\nFROM python:3.8-slim-buster as build-backend\nARG VERSION=\"0.0.0\"\nWORKDIR /grafolean/backend\nRUN \\\n    apt-get update && \\\n    apt-get install --no-install-recommends -q -y git && \\\n    pip install --no-cache-dir pipenv && rm -rf /var/lib/apt/lists/*;\n# - prepare pip requirements.txt for backend:\nCOPY ./backend/Pipfile ./backend/Pipfile.lock /grafolean/backend/\nRUN \\\n    pipenv lock -r > /requirements.txt && \\\n    pipenv install --dev\n# - build .py files to .pyc:\nCOPY ./backend/ /grafolean/backend/\nRUN \\\n    find ./ -not -path \"./static/*\" -not -name '*.py' -type f -exec rm '{}' ';' && \\\n    rm -rf tests/ .vscode/ .pytest_cache/ __pycache__/ && \\\n    python3.8 -m compileall -b ./ && \\\n    find ./ -name '*.py' -exec rm '{}' ';'\n\n\n\nFROM python:3.8-slim-buster\nARG VERSION\nARG VCS_REF\nARG BUILD_DATE\nLABEL org.label-schema.vendor=\"Grafolean\" \\\n      org.label-schema.url=\"https://grafolean.com/\" \\\n      org.label-schema.name=\"Grafolean\" \\\n      org.label-schema.description=\"Easy to use monitoring system\" \\\n      org.label-schema.version=$VERSION \\\n      org.label-schema.vcs-url=\"https://github.com/grafolean/grafolean/\" \\\n      org.label-schema.vcs-ref=$VCS_REF \\\n      org.label-schema.build-date=$BUILD_DATE \\\n      org.label-schema.docker.schema-version=\"1.0\"\nARG MQTT_HOSTNAME=\"\"\nARG MQTT_PORT=1883\nENV MQTT_HOSTNAME=${MQTT_HOSTNAME}\nENV MQTT_PORT=${MQTT_PORT}\nRUN \\\n    apt-get update && \\\n    apt-get install --no-install-recommends -q -y nginx git build-essential supervisor curl cron && \\\n    pip install --no-cache-dir gunicorn uvicorn && \\\n    apt-get purge -y build-essential && \\\n    apt-get clean autoclean && \\\n    apt-get autoremove --yes && \\\n    rm -rf /var/lib/{apt,dpkg,cache,log}/ /var/cache/apt/* /tmp/* && \\\n    echo \"alias l='ls -altr'\" >> /root/.bashrc && rm -rf /var/lib/apt/lists/*;\nCOPY --from=build-backend /requirements.txt /requirements.txt\nRUN pip install --no-cache-dir -r /requirements.txt\nCOPY --from=build-frontend /usr/src/app/build /var/www/html\n# nginx makes life complex when serving gzip content-encoded files, so we\n# gzip them ahead of time and serve them with appropriate header:\nRUN find /var/www/html/ -type f -exec gzip '{}' ';' -exec mv '{}'.gz '{}' ';'\nCOPY ./install/docker-compose/nginx.conf /etc/nginx/nginx.conf\nCOPY ./install/docker-compose/apply_env.sh /grafolean/apply_env.sh\nCOPY ./install/docker-compose/gunicorn.conf.py /etc/gunicorn.conf.py\nCOPY ./install/docker-compose/grafolean.nginx.conf.http /etc/nginx/grafolean.http.conf.disabled\nCOPY ./install/docker-compose/grafolean.nginx.conf.https /etc/nginx/grafolean.https.conf.disabled\nCOPY ./install/docker-compose/supervisord.conf /etc/supervisor/conf.d/supervisord.conf\nCOPY --from=build-backend /grafolean/backend/ /grafolean/backend/\nRUN chmod +x /grafolean/apply_env.sh\nWORKDIR /grafolean/backend\nCMD [\"supervisord\"]\n\n"
+}

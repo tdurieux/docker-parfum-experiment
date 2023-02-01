@@ -1,0 +1,89 @@
+{
+  "startTime": 1674243345878,
+  "endTime": 1674243346238,
+  "originalSmells": [
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 8,
+        "lineEnd": 8,
+        "columnStart": 4,
+        "columnEnd": 15
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 4,
+        "lineEnd": 4,
+        "columnStart": 22,
+        "columnEnd": 115
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 31,
+        "lineEnd": 31,
+        "columnStart": 22,
+        "columnEnd": 55
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 38,
+        "lineEnd": 38,
+        "columnStart": 22,
+        "columnEnd": 67
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 60,
+        "lineEnd": 60,
+        "columnStart": 22,
+        "columnEnd": 56
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 4,
+        "lineEnd": 4,
+        "columnStart": 22,
+        "columnEnd": 115
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 31,
+        "lineEnd": 31,
+        "columnStart": 22,
+        "columnEnd": 55
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 38,
+        "lineEnd": 38,
+        "columnStart": 22,
+        "columnEnd": 67
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 60,
+        "lineEnd": 60,
+        "columnStart": 22,
+        "columnEnd": 56
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM golang:1.11 AS build\n\nARG GOOS\nARG GOARCH\nRUN apt-get update && apt-get install --no-install-recommends -y git make curl build-essential git autoconf automake libtool unzip file bzr && rm -rf /var/lib/apt/lists/*;\nRUN git clone https://github.com/google/protobuf /tmp/protobuf && \\\n    cd /tmp/protobuf && \\\n    ./autogen.sh && \\\n    ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" && make install\nRUN go get -v github.com/LK4D4/vndr\nRUN go get -v github.com/golang/protobuf/protoc-gen-go\nRUN go get -v github.com/gogo/protobuf/protoc-gen-gofast\nRUN go get -v github.com/gogo/protobuf/proto\nRUN go get -v github.com/gogo/protobuf/gogoproto\nRUN go get -v github.com/gogo/protobuf/protoc-gen-gogo\nRUN go get -v github.com/gogo/protobuf/protoc-gen-gogofast\nRUN go get -v github.com/stevvooe/protobuild\nRUN go get -v golang.org/x/lint/golint\nRUN go get -v github.com/tebeka/go2xunit\n\nFROM build as stellar\nENV APP stellar\nENV REPO ehazlett/$APP\nARG BUILD\nCOPY . /go/src/github.com/$REPO\nWORKDIR /go/src/github.com/$REPO\nRUN make\nRUN date > /release.txt\nRUN git rev-parse HEAD >> /release.txt\n\nFROM build as runc\nRUN apt-get update && apt-get install --no-install-recommends -y libseccomp-dev && rm -rf /var/lib/apt/lists/*;\nRUN git clone https://github.com/opencontainers/runc /go/src/github.com/opencontainers/runc\nWORKDIR /go/src/github.com/opencontainers/runc\nRUN git reset --hard 20aff4f0488c6d4b8df4d85b4f63f1f704c11abd\nRUN make\n\nFROM build as containerd\nRUN apt-get update && apt-get install --no-install-recommends -y libseccomp-dev btrfs-tools && rm -rf /var/lib/apt/lists/*;\nRUN git clone https://github.com/containerd/containerd /go/src/github.com/containerd/containerd\nWORKDIR /go/src/github.com/containerd/containerd\nRUN make\n\nFROM build as buildkit\nRUN git clone https://github.com/moby/buildkit /go/src/github.com/moby/buildkit\nWORKDIR /go/src/github.com/moby/buildkit\nRUN mkdir .tmp; \\\n    PKG=github.com/moby/buildkit VERSION=$(git describe --match 'v[0-9]*' --dirty='.m' --always) REVISION=$(git rev-parse HEAD)$(if ! git diff --no-ext-diff --quiet --exit-code; then echo .m; fi); \\\n    echo \"-X ${PKG}/version.Version=${VERSION} -X ${PKG}/version.Revision=${REVISION} -X ${PKG}/version.Package=${PKG}\" | tee .tmp/ldflags\n\nFROM buildkit as buildctl\nENV CGO_ENABLED=0\nRUN go build -ldflags \"$(cat .tmp/ldflags) -d\" -o /usr/bin/buildctl ./cmd/buildctl\n\nFROM buildkit as buildkitd\nENV CGO_ENABLED=1\nRUN go build -installsuffix netgo -ldflags \"$(cat .tmp/ldflags) -w -extldflags -static\" -tags 'seccomp netgo cgo static_build' -o /usr/bin/buildkitd ./cmd/buildkitd\n\n\nFROM build as cni\nRUN apt-get update && apt-get install --no-install-recommends -y build-essential && rm -rf /var/lib/apt/lists/*;\nRUN git clone https://github.com/containernetworking/plugins /go/src/github.com/containernetworking/plugins\nWORKDIR /go/src/github.com/containernetworking/plugins\nRUN ./build_linux.sh\n\nFROM scratch as rootfs\nCOPY --from=stellar /release.txt /\nCOPY --from=stellar /go/src/github.com/ehazlett/stellar/bin/sctl /usr/local/bin/\nCOPY --from=stellar /go/src/github.com/ehazlett/stellar/bin/stellar /usr/local/bin/\nCOPY --from=stellar /go/src/github.com/ehazlett/stellar/bin/stellar-cni-ipam /opt/containerd/bin/\nCOPY --from=stellar /go/src/github.com/ehazlett/stellar/contrib/containerd.service /etc/systemd/system/\nCOPY --from=stellar /go/src/github.com/ehazlett/stellar/contrib/buildkit.service /etc/systemd/system/\nCOPY --from=stellar /go/src/github.com/ehazlett/stellar/contrib/stellar.service /etc/systemd/system/\nCOPY --from=stellar /go/src/github.com/ehazlett/stellar/contrib/stellar.conf /etc/stellar.conf\nCOPY --from=runc /go/src/github.com/opencontainers/runc/runc /usr/local/bin/\nCOPY --from=containerd /go/src/github.com/containerd/containerd/bin/ctr /usr/local/bin/\nCOPY --from=containerd /go/src/github.com/containerd/containerd/bin/containerd /usr/local/bin/\nCOPY --from=containerd /go/src/github.com/containerd/containerd/bin/containerd-shim /usr/local/bin/\nCOPY --from=containerd /go/src/github.com/containerd/containerd/bin/containerd-shim-runc-v1 /usr/local/bin/\nCOPY --from=buildctl /usr/bin/buildctl /usr/local/bin/\nCOPY --from=buildkitd /usr/bin/buildkitd /usr/local/bin/\nCOPY --from=cni /go/src/github.com/containernetworking/plugins/bin/bridge /opt/containerd/bin/\nCOPY --from=cni /go/src/github.com/containernetworking/plugins/bin/loopback /opt/containerd/bin/\n\nFROM build as release\nCOPY --from=rootfs / /package\nWORKDIR /package\nRUN tar czvf /stellar.tar.gz .\nRUN chmod 777 /stellar.tar.gz\n\nFROM scratch\nCOPY --from=release /stellar.tar.gz /\n"
+}

@@ -1,0 +1,26 @@
+{
+  "startTime": 1674250344407,
+  "endTime": 1674250345666,
+  "originalSmells": [
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 21,
+        "lineEnd": 21,
+        "columnStart": 4,
+        "columnEnd": 17
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 149,
+        "lineEnd": 149,
+        "columnStart": 1,
+        "columnEnd": 35
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Credits: https://github.com/dunglas/symfony-docker/blob/master/Dockerfile\n\n# the different stages of this Dockerfile are meant to be built into separate images\n# https://docs.docker.com/develop/develop-images/multistage-build/#stop-at-a-specific-build-stage\n# https://docs.docker.com/compose/compose-file/#target\n\n\n# https://docs.docker.com/engine/reference/builder/#understand-how-arg-and-from-interact\nARG PHP_VERSION=8.1\nARG APACHE_VERSION=2.4\nARG NODE_VERSION=14\n\n###############################################\n# \"node\" stage\nFROM node:${NODE_VERSION} AS idea_node\n\nWORKDIR /srv/app\n\nCOPY package.json yarn.lock webpack.config.js ./\n\nRUN set -eux; \\\n    yarn install; yarn cache clean;\n\nCOPY assets assets/\n\nRUN set -eux; \\\n    yarn run build --mode production\n\n###############################################\n# \"php\" stage\nFROM php:${PHP_VERSION}-fpm-alpine AS idea_php\n\n# persistent / runtime deps\nRUN apk add --no-cache \\\n\tacl \\\n\tfcgi \\\n\tfile \\\n\tgettext \\\n\tgit \\\n\tjq \\\n\t;\n\nARG APCU_VERSION=5.1.18\nRUN set -eux; \\\n\tapk add --no-cache --virtual .build-deps \\\n\t$PHPIZE_DEPS \\\n\ticu-dev \\\n\tlibjpeg-turbo-dev \\\n\tlibpng-dev \\\n\tlibzip-dev \\\n\tzlib-dev \\\n\tlibxslt-dev \\\n\t; \\\n\t\\\n\tdocker-php-ext-configure gd  --with-jpeg; \\\n\tdocker-php-ext-configure zip; \\\n\tdocker-php-ext-install -j$(nproc) \\\n\tgd \\\n\tintl \\\n\tpdo_mysql \\\n\txsl \\\n\tzip \\\n\t; \\\n\tpecl install \\\n\tapcu-${APCU_VERSION} \\\n\t; \\\n\tpecl clear-cache; \\\n\tdocker-php-ext-enable \\\n\tapcu \\\n\topcache \\\n\t; \\\n\t\\\n\trunDeps=\"$( \\\n\tscanelf --needed --nobanner --format '%n#p' --recursive /usr/local/lib/php/extensions \\\n\t| tr ',' '\\n' \\\n\t| sort -u \\\n\t| awk 'system(\"[ -e /usr/local/lib/\" $1 \" ]\") == 0 { next } { print \"so:\" $1 }' \\\n\t)\"; \\\n\tapk add --no-cache --virtual .phpexts-rundeps $runDeps; \\\n\t\\\n\tapk del .build-deps\n\nCOPY --from=composer:latest /usr/bin/composer /usr/bin/composer\n\nRUN ln -s $PHP_INI_DIR/php.ini-production $PHP_INI_DIR/php.ini\nCOPY docker/php/conf.d/symfony.ini $PHP_INI_DIR/conf.d/symfony.ini\n\nRUN set -eux; \\\n\t{ \\\n\techo '[www]'; \\\n\techo 'ping.path = /ping'; \\\n\t} | tee /usr/local/etc/php-fpm.d/docker-healthcheck.conf\n\n# https://getcomposer.org/doc/03-cli.md#composer-allow-superuser\nENV COMPOSER_ALLOW_SUPERUSER=1\n# install Symfony Flex globally to speed up download of Composer packages (parallelized prefetching)\nRUN set -eux; \\\n\tcomposer global require \"symfony/flex\" --prefer-dist --no-progress --no-suggest --classmap-authoritative; \\\n\tcomposer clear-cache\nENV PATH=\"${PATH}:/root/.composer/vendor/bin\"\n\nWORKDIR /srv/app\n\n# build for production\nENV APP_ENV=prod\nENV ROUTER_REQUEST_CONTEXT_HOST=ideas.aulasoftwarelibre.uco.es\n\nCOPY composer.json composer.lock symfony.lock ./\nRUN set -eux; \\\n\tcomposer install --no-dev --prefer-dist --no-progress --no-scripts --no-interaction; \\\n\tcomposer clear-cache\n\nCOPY .env ./\nCOPY bin bin/\nCOPY config config/\nCOPY migrations migrations/\nCOPY public public/\nCOPY assets assets/\nCOPY --from=idea_node /srv/app/public/build public/build/\nCOPY templates templates/\nCOPY translations translations/\nCOPY src src/\n\nRUN set -eux; \\\n\tmkdir -p var/cache var/log; \\\n\tcomposer dump-autoload --classmap-authoritative --no-scripts --no-dev --optimize; \\\n\tcomposer run-script post-install-cmd --no-dev; sync\n\nVOLUME [\"/srv/app/var\", \"/srv/app/public/cache\", \"/srv/app/public/images\"]\n\n# healthcheck\nCOPY docker/php/docker-healthcheck.sh /usr/local/bin/docker-healthcheck\nRUN chmod +x /usr/local/bin/docker-healthcheck\nHEALTHCHECK --interval=10s --timeout=3s --retries=3 CMD [\"docker-healthcheck\"]\n\n# entrypoint\nCOPY docker/php/docker-entrypoint.sh /usr/local/bin/docker-entrypoint\nRUN chmod +x /usr/local/bin/docker-entrypoint\n\nENTRYPOINT [\"docker-entrypoint\"]\nCMD [\"php-fpm\"]\n\n###############################################\n# \"apache\" stage\nFROM httpd:${APACHE_VERSION} AS idea_httpd\n\nEXPOSE 80\n\nRUN apt-get update; \\\n\tapt-get install --no-install-recommends -y liblasso3 curl; \\\n\tapt-get clean && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*; \\\n\tmkdir -p /srv/app/public/cache /srv/app/public/images\n\nCOPY docker/httpd/conf.d/httpd.conf /usr/local/apache2/conf/httpd.conf\n\nWORKDIR /srv/app\n\nCOPY --from=idea_php /srv/app/public public/\n"
+}

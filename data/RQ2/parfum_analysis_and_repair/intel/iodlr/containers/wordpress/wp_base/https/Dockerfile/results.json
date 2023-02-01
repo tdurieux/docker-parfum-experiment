@@ -1,0 +1,62 @@
+{
+  "startTime": 1674252574379,
+  "endTime": 1674252575385,
+  "originalSmells": [
+    {
+      "rule": "wgetUseHttpsUrl",
+      "position": {
+        "lineStart": 65,
+        "lineEnd": 65,
+        "columnStart": 4,
+        "columnEnd": 68
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 51,
+        "lineEnd": 57,
+        "columnStart": 4,
+        "columnEnd": 49
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 68,
+        "lineEnd": 68,
+        "columnStart": 4,
+        "columnEnd": 43
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 66,
+        "lineEnd": 66,
+        "columnStart": 4,
+        "columnEnd": 38
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 13,
+        "lineEnd": 15,
+        "columnStart": 4,
+        "columnEnd": 16
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 13,
+        "lineEnd": 15,
+        "columnStart": 4,
+        "columnEnd": 16
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "ARG baseimage=wp_base\nFROM $baseimage\n\nLABEL authors=\"nitin.tekchandani@intel.com,lin.a.yang@intel.com,uttam.c.pawar@intel.com\"\n\nENV OPENSSL_TAG=OpenSSL_1_1_1f\nENV NGINX_ARCHIVE_NAME=release-1.18.0\nENV SIEGE_ARCHIVE_NAME='siege-4.0.9'\n\nUSER root\n\nRUN apt-get update -y && \\\n    apt-get remove nginx -y && \\\n    apt-get install --no-install-recommends -y \\\n    libpcre3 \\\n    libpcre3-dev && rm -rf /var/lib/apt/lists/*;\n\n\n# Build/Install openssl\nRUN mkdir /home/${USERNAME}/openssl_build\nWORKDIR /home/${USERNAME}/openssl_build\nRUN git clone https://github.com/openssl/openssl.git && \\\n    cd openssl && \\\n    git checkout $OPENSSL_TAG && \\\n    mkdir -p /home/${USERNAME}/openssl_install/lib/engines-1.1 && \\\n    ./config --prefix=/home/${USERNAME}/openssl_install \\\n             -Wl,-rpath=/home/${USERNAME}/openssl && \\\n     make update && \\\n     make -j 10 &&  \\\n     make install\nWORKDIR /home/${USERNAME}\nRUN rm -rf /home/${USERNAME}/openssl_build\n\n# Comment out RANDFILE entry in /etc/ssl/openssl.cnf\nRUN sed -iE 's/RANDFILE\\(\\s+\\=\\s\\$ENV\\:\\:HOME\\/\\.rnd\\)/#RANDFILE\\1/' /etc/ssl/openssl.cnf\n\n# Create required certificates for https\nRUN mkdir -p /home/${USERNAME}/certificates/ssl\nWORKDIR /home/${USERNAME}/certificates\nRUN openssl req -x509 -sha256 -nodes -days 365 -newkey rsa:2048 -keyout server.key -out server.crt -subj \"/C=US/ST=OR/L=IN/O=IN/OU=IN/CN=$(hostname)\"\nRUN openssl ecparam -genkey -out key.pem -name secp384r1\nRUN openssl req -x509 -new -key key.pem -out cert.pem  -subj \"/C=US/ST=OR/L=IN/O=IN/OU=IN/CN=$(hostname)\"\nWORKDIR /home/${USERNAME}/certificates/ssl\nRUN chown -R ${USERNAME} /home/${USERNAME}/certificates\n\n\n# Build/Install AYNCH NGINX, no QAT\nWORKDIR /home/${USERNAME}/nginx_build\nRUN git clone https://github.com/intel/asynch_mode_nginx.git nginx && \\\n    cd nginx && \\\n    git checkout $ASYNCH_NGINX_TAG && \\\n    ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" --prefix=/usr/ \\\n        --with-http_ssl_module \\\n        '--with-cc-opt=-DNGX_SECURE_MEM \\\n        -I /home/${USERNAME}/openssl_install/include \\\n        -Wno-error=deprecated-declarations -Wimplicit-fallthrough=0' \\\n        '--with-ld-opt=-Wl,-rpath=/home/${USERNAME}/openssl_install/lib \\\n        -L /home/${USERNAME}/openssl_install/lib' && \\\n    make -j && \\\n    make install\nWORKDIR /home/${USERNAME}\nRUN rm -rf ./nginx_build\n\n# Rebuild siege with ssl, Uninstall Reinstall\nWORKDIR /home/${USERNAME}\nRUN wget https://download.joedog.org/siege/$SIEGE_ARCHIVE_NAME.tar.gz\nRUN tar zxf $SIEGE_ARCHIVE_NAME.tar.gz && rm $SIEGE_ARCHIVE_NAME.tar.gz\nWORKDIR /home/${USERNAME}/$SIEGE_ARCHIVE_NAME\nRUN ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" --with-ssl=/usr/bin/openssl && \\\n    make -j8 && \\\n    sudo make uninstall && \\\n    sudo make install\nWORKDIR /home/${USERNAME}\nRUN rm -rf ./$SIEGE_ARCHIVE_NAME\n\nWORKDIR /home/${USERNAME}/oss-performance\n\n# Modify WordPressTarget urls for https\nRUN sed -i 's/http/https/' /home/${USERNAME}/oss-performance/targets/wordpress/WordpressTarget.urls\n\n# Temporary fix\nRUN sed -i ':currentline;N;$!bcurrentline;s/invariant.*);//g' /home/${USERNAME}/oss-performance/targets/wordpress/WordpressTarget.php\n\n# Patch https into oss-performance\nCOPY --chown=${USERNAME}:root files/https_oss_performance.patch /home/${USERNAME}/oss-performance\nCOPY --chown=${USERNAME}:root files/update_nginx_workers.sh /usr/local/bin/update_nginx_workers.sh\nRUN git apply https_oss_performance.patch\n\nRUN sed -r --expression='s/(exec \"\\$\\@\")/\\/usr\\/local\\/bin\\/update_nginx_workers\\.sh\\n\\1/g' -i /usr/local/bin/entrypoint.sh\n\nCOPY --chown=${USERNAME}:root files/ssl-params.conf /home/${USERNAME}/certificates/ssl\nCOPY --chown=${USERNAME}:root files/nginx.conf.in /home/${USERNAME}/oss-performance/conf/nginx\n\nUSER ${USERNAME}\n"
+}

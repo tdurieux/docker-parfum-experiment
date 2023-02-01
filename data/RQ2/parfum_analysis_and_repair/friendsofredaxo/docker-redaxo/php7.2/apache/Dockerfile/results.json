@@ -1,0 +1,26 @@
+{
+  "startTime": 1674251982425,
+  "endTime": 1674251983151,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 86,
+        "lineEnd": 86,
+        "columnStart": 4,
+        "columnEnd": 125
+      }
+    },
+    {
+      "rule": "mkdirUsrSrcThenRemove",
+      "position": {
+        "lineStart": 43,
+        "lineEnd": 43,
+        "columnStart": 4,
+        "columnEnd": 38
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM php:7.2-apache\n\n# install persistent PHP extensions (they won't get purged afterwards)\nRUN set -eux; \\\n    apt-get update; \\\n    apt-get install -y --quiet --no-install-recommends \\\n        ghostscript \\\n        unzip \\\n    ; \\\n    rm -rf /var/lib/apt/lists/*\n\n# install PHP extensions\nRUN set -ex; \\\n\n    # mark packages as being manually installed\n    # see https://manpages.debian.org/stretch/apt/apt-mark.8.en.html\n    savedAptMark=\"$(apt-mark showmanual)\"; \\\n\n    # install via apt-get\n    # see https://manpages.debian.org/stretch/apt/apt-get.8.en.html\n    apt-get update; \\\n    apt-get install -y --quiet --no-install-recommends \\\n        libfreetype6-dev \\\n        libjpeg-dev \\\n        libmagickwand-dev \\\n        libmcrypt-dev \\\n        libpng-dev \\\n    ; \\\n\n    # install and configure via docker-php-ext\n    # see https://github.com/docker-library/docs/tree/master/php#how-to-install-more-php-extensions\n    docker-php-ext-configure gd --with-freetype-dir=/usr --with-jpeg-dir=/usr --with-png-dir=/usr; \\\n    docker-php-ext-install -j \"$(nproc)\" \\\n        gd \\\n        intl \\\n        pdo_mysql \\\n        zip \\\n    # delete output (except errors)\n    > /dev/null \\\n    ; \\\n\n    # install imagick\n    # use github version for now until release from https://pecl.php.net/get/imagick is ready for PHP 8\n    mkdir -p /usr/src/php/ext/imagick; rm -rf /usr/src/php/ext/imagick \\\n    curl -fsSL https://github.com/Imagick/imagick/archive/06116aa24b76edaf6b1693198f79e6c295eda8a9.tar.gz | tar xvz -C \"/usr/src/php/ext/imagick\" --strip 1; \\\n    docker-php-ext-install imagick; \\\n\n    # reset apt-mark's \"manual\" list so that \"purge --auto-remove\" will remove all build dependencies\n    # see https://github.com/docker-library/wordpress/blob/master/Dockerfile-debian.template\n    apt-mark auto '.*' > /dev/null; \\\n    apt-mark manual $savedAptMark; \\\n    ldd \"$(php -r 'echo ini_get(\"extension_dir\");')\"/*.so \\\n        | awk '/=>/ { print $3 }' \\\n        | sort -u \\\n        | xargs -r dpkg-query -S \\\n        | cut -d: -f1 \\\n        | sort -u \\\n        | xargs -rt apt-mark manual; \\\n\n    apt-get purge -y --auto-remove -o APT::AutoRemove::RecommendsImportant=false; \\\n    rm -rf /var/lib/apt/lists/*\n\n# enable OPcache\n# see https://secure.php.net/manual/en/opcache.installation.php\nRUN set -eux; \\\n    docker-php-ext-enable opcache; \\\n    { \\\n        echo 'opcache.memory_consumption=128'; \\\n        echo 'opcache.interned_strings_buffer=8'; \\\n        echo 'opcache.max_accelerated_files=4000'; \\\n        echo 'opcache.revalidate_freq=2'; \\\n        echo 'opcache.fast_shutdown=1'; \\\n    } > /usr/local/etc/php/conf.d/opcache-recommended.ini\n\n# enable apache modules\nRUN set -eux; \\\n    a2enmod expires headers rewrite\n\n# create mount point for web root\nVOLUME /var/www/html\n\n# declare REDAXO version and checksum\nENV REDAXO_VERSION=5.11.2 REDAXO_SHA=44fca196316606b1a64ba34f873bfc886d3cbbb5\n\n# fetch REDAXO, validate checksum and extract to tmp folder\nRUN set -e; \\\n    curl -f -Ls -o redaxo.zip https://github.com/redaxo/redaxo/releases/download/${REDAXO_VERSION}/redaxo_${REDAXO_VERSION}.zip; \\\n    echo \"${REDAXO_SHA} *redaxo.zip\" | shasum -c -a 256; \\\n    unzip -oq redaxo.zip -d /usr/src/redaxo; \\\n    rm redaxo.zip; \\\n    chown -R www-data:www-data /usr/src/redaxo\n\n# copy and run entrypoint\nCOPY docker-entrypoint.sh /usr/local/bin/\nENTRYPOINT [\"docker-entrypoint.sh\"]\n\n# run CMD\nCMD [\"apache2-foreground\"]\n"
+}

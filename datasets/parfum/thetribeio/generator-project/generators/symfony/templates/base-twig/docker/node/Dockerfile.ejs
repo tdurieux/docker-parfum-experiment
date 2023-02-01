@@ -1,0 +1,8 @@
+FROM node:16.15.1
+
+# Configure permissions
+ARG UID
+RUN useradd --non-unique --uid $UID --create-home user
+USER user
+
+WORKDIR /usr/src/project/<%= packagePath %>

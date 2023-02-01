@@ -1,0 +1,47 @@
+FROM bbernhard/imagemonkey-buildbase2:latest
+
+ENV SENTRY_DSN=
+ENV X_CLIENT_ID=
+ENV X_CLIENT_SECRET=
+ENV JWT_SECRET=
+ENV USE_SENTRY=false
+ENV IMAGEMONKEY_DB_CONNECTION_STRING=
+ENV REDIS_ADDRESS=:6379
+ENV DB_HOST=127.0.0.1
+ENV DB_PORT=5433
+
+RUN mkdir -p /home/go/bin
+ENV GOPATH=/home/go
+ENV GOBIN=/home/go/bin
+
+COPY src/go.mod /tmp/src/go.mod
+COPY src/go.sum /tmp/src/go.sum
+
+COPY src/api.go /tmp/src/api.go
+COPY src/label_graph.go /tmp/src/label_graph.go
+COPY src/auth.go /tmp/src/auth.go
+COPY src/commons /tmp/src/commons
+COPY src/image /tmp/src/image
+COPY src/languages /tmp/src/languages
+COPY src/database /tmp/src/database
+COPY src/parser /tmp/src/parser
+COPY src/datastructures /tmp/src/datastructures
+COPY src/labels_merger.go /tmp/src/labels_merger.go
+
+
+RUN cd /tmp/src/ \
+	&& go install api.go label_graph.go auth.go \
+	&& go install labels_merger.go
+
+RUN mkdir -p /home/imagemonkey/bin/ \
+	&& mv /home/go/bin/api /home/imagemonkey/bin/api \
+	&& mv /home/go/bin/labels_merger /home/imagemonkey/bin/labels_merger 
+
+WORKDIR /home/imagemonkey/bin/
+
+
+
+COPY env/docker/run_api.sh /home/imagemonkey/bin/run_api.sh
+RUN chmod u+rx ./run_api.sh
+
+ENTRYPOINT ["./run_api.sh"]

@@ -1,0 +1,42 @@
+FROM --platform="${BUILDPLATFORM:-linux/amd64}" docker.io/goreleaser/goreleaser-cross:v1.18.3 AS builder
+# TODO(kakkoyun): parca-dev/cross-builder!
+RUN apt-get update -y && \
+    apt-get install --no-install-recommends -yq libelf-dev zlib1g-dev \
+    libelf-dev:arm64 zlib1g-dev:arm64 \
+    lld && rm -rf /var/lib/apt/lists/*;
+
+ARG TARGETARCH=amd64
+ARG TARGETOS=linux
+ARG TARGETVARIANT
+
+WORKDIR /__w/parca-agent/parca-agent
+
+COPY go.mod go.sum ./
+RUN go mod download
+
+# renovate: datasource=go depName=github.com/go-delve/delve
+ARG DELVE_VERSION=v1.9.0
+# hadolint ignore=DL3059
+RUN go install "github.com/go-delve/delve/cmd/dlv@${DELVE_VERSION}"
+
+COPY . ./
+RUN goreleaser build --rm-dist --skip-validate --snapshot --debug --id parca-agent-"${TARGETARCH}"
+
+RUN mkdir -p /app
+# NOTICE: See goreleaser.yml for the build paths.
+RUN if [ "${TARGETARCH}" == 'amd64' ]; then \
+        cp "goreleaser/dist/parca-agent-${TARGETARCH}_${TARGETOS}_${TARGETARCH}_${TARGETVARIANT:-v1}/parca-agent" /app/ ; \
+    elif [ "${TARGETARCH}" == 'arm' ]; then \
+        cp "goreleaser/dist/parca-agent-${TARGETARCH}_${TARGETOS}_${TARGETARCH}_${TARGETVARIANT##v}/parca-agent" /app/ ; \
+    else \
+        cp "goreleaser/dist/parca-agent-${TARGETARCH}_${TARGETOS}_${TARGETARCH}/parca-agent" /app/ ; \
+    fi
+
+FROM --platform="${TARGETPLATFORM:-linux/amd64}" gcr.io/distroless/base-debian11
+
+COPY --chown=0:0 --from=builder /go/bin/dlv /bin/dlv
+COPY --chown=0:0 --from=builder /app/parca-agent /bin/parca-agent
+
+EXPOSE 7071
+
+ENTRYPOINT ["/bin/dlv", "--listen=:40000", "--headless=true", "--api-version=2", "--accept-multiclient", "exec", "--continue", "--"]

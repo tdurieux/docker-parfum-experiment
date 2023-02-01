@@ -1,0 +1,53 @@
+{
+  "startTime": 1674235175928,
+  "endTime": 1674235176153,
+  "originalSmells": [
+    {
+      "rule": "wgetUseHttpsUrl",
+      "position": {
+        "lineStart": 44,
+        "lineEnd": 44,
+        "columnStart": 4,
+        "columnEnd": 74
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 62,
+        "lineEnd": 62,
+        "columnStart": 4,
+        "columnEnd": 47
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 6,
+        "lineEnd": 6,
+        "columnStart": 4,
+        "columnEnd": 35
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 77,
+        "lineEnd": 77,
+        "columnStart": 4,
+        "columnEnd": 36
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 45,
+        "lineEnd": 45,
+        "columnStart": 4,
+        "columnEnd": 33
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM nexusjpl/nexusbase\n\nMAINTAINER Joseph Jacob \"Joseph.Jacob@jpl.nasa.gov\"\n\n# Install packages needed for builds\n\nRUN yum install -y gcc python-devel && rm -rf /var/cache/yum\n\n# Set environment variables.  For Mesos, I used MESOS_VER because MESOS_VERSION\n# is expected to be a logical TRUE/FALSE flag that tells Mesos whether or not\n# to simply print the version number and exit.\n\nENV INSTALL_LOC=/usr/local \\\n    HADOOP_VERSION=2.7.3 \\\n    SPARK_VERSION=2.1.0 \\\n    MESOS_VER=1.2.0 \\\n    MESOS_MASTER_PORT=5050 \\\n    MESOS_AGENT_PORT=5051 \\\n    MESOS_WORKDIR=/var/lib/mesos \\\n    MESOS_IP=0.0.0.0 \\\n    MESOS_MASTER_NAME=mesos-master \\\n    PYTHON_EGG_CACHE=/tmp\n\nENV CONDA_HOME=${INSTALL_LOC}/anaconda2 \\\n    MESOS_HOME=${INSTALL_LOC}/mesos-${MESOS_VER} \\\n    SPARK_DIR=spark-${SPARK_VERSION} \\\n    SPARK_PACKAGE=spark-${SPARK_VERSION}-bin-hadoop2.7 \\\n    MESOS_MASTER=mesos://${MESOS_IP}:${MESOS_PORT} \\\n    MESOS_PACKAGE=mesos-${MESOS_VER}.tar.gz\n\nENV SPARK_HOME=${INSTALL_LOC}/${SPARK_DIR} \\\n    PYSPARK_DRIVER_PYTHON=${CONDA_HOME}/bin/python \\\n    PYSPARK_PYTHON=${CONDA_HOME}/bin/python \\\n    PYSPARK_SUBMIT_ARGS=\"--driver-memory=4g pyspark-shell\"\n\nENV PYTHONPATH=${PYTHONPATH}:${SPARK_HOME}/python:${SPARK_HOME}/python/lib/py4j-0.10.4-src.zip:${SPARK_HOME}/python/lib/pyspark.zip \\\n    MESOS_NATIVE_JAVA_LIBRARY=${INSTALL_LOC}/lib/libmesos.so \\\n    \n    SPARK_EXECUTOR_URI=${INSTALL_LOC}/${SPARK_PACKAGE}.tgz\n\nWORKDIR ${INSTALL_LOC}\n\n# Set up Spark\n\nRUN wget --quiet https://d3kbcqa49mib13.cloudfront.net/${SPARK_PACKAGE}.tgz && \\\n    tar -xzf ${SPARK_PACKAGE}.tgz && \\\n    chown -R root.root ${SPARK_PACKAGE} && \\\n    ln -s ${SPARK_PACKAGE} ${SPARK_DIR} && rm ${SPARK_PACKAGE}.tgz\n\n# Set up Mesos\n\nCOPY install_mesos.sh .\n\nRUN source ./install_mesos.sh && \\\n    mkdir ${MESOS_WORKDIR}\n\n# Set up Anaconda environment\n\nENV PATH=${CONDA_HOME}/bin:${PATH}:${HADOOP_HOME}/bin:${SPARK_HOME}/bin\n\nRUN conda install -c conda-forge -y netCDF4 && \\\n    conda install -y numpy cython mpld3 scipy basemap gdal matplotlib && \\\n    pip install --no-cache-dir shapely cassandra-driver==3.5.0 && \\\n    conda install -c conda-forge backports.functools_lru_cache=1.3\n\n# Workaround missing libcom_err.so (needed for gdal)\n\nRUN cd /usr/lib64 && ln -s libcom_err.so.2 libcom_err.so.3\n\n# Workaround missing conda libs needed for gdal\n\nRUN cd ${CONDA_HOME}/lib && \\\n    ln -s libnetcdf.so.11 libnetcdf.so.7 && \\\n    ln -s libkea.so.1.4.6 libkea.so.1.4.5 && \\\n    ln -s libhdf5_cpp.so.12 libhdf5_cpp.so.10 && \\\n    ln -s libjpeg.so.9 libjpeg.so.8\n\nRUN yum install -y mesa-libGL.x86_64 && rm -rf /var/cache/yum\n\n# Retrieve NEXUS code and build it.\n\nWORKDIR /\n\nRUN git clone https://github.com/dataplumber/nexus.git\n\nRUN sed -i 's/,webservice.algorithms.doms//g' /nexus/analysis/webservice/config/web.ini && \\\n    sed -i 's/127.0.0.1/nexus-webapp/g' /nexus/analysis/webservice/config/web.ini && \\\n    sed -i 's/127.0.0.1/cassandra1,cassandra2,cassandra3,cassandra4,cassandra5,cassandra6/g' /nexus/data-access/nexustiles/config/datastores.ini && \\\n    sed -i 's/localhost:8983/solr1:8983/g' /nexus/data-access/nexustiles/config/datastores.ini\n\nWORKDIR /nexus/nexus-ingest/nexus-messages\n\nRUN ./gradlew clean build install\n\nWORKDIR /nexus/nexus-ingest/nexus-messages/build/python/nexusproto\n\nRUN python setup.py install\n\nWORKDIR /nexus/data-access\n\nRUN python setup.py install\n\nWORKDIR /nexus/analysis\n\nRUN python setup.py install\n\nWORKDIR /tmp\n\nCMD [\"/bin/bash\"]\n"
+}

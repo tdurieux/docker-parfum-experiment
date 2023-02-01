@@ -1,0 +1,9 @@
+FROM megflow:latest as stage
+
+# build .whl
+RUN cd flow-python \
+    && python3 setup.py bdist_wheel -p linux-x86_64 -d ../dist
+
+# copy back to host
+FROM scratch AS export-stage
+COPY --from=stage /megflow-runspace/dist/ .

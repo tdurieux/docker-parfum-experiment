@@ -1,0 +1,1 @@
+# dotnet 通过 DockerfileContext 解决项目放在里层文件夹导致 VisualStudio 构建失败

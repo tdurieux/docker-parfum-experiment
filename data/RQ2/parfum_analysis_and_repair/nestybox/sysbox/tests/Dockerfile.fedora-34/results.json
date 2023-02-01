@@ -1,0 +1,35 @@
+{
+  "startTime": 1674254517420,
+  "endTime": 1674254518811,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 118,
+        "lineEnd": 118,
+        "columnStart": 7,
+        "columnEnd": 121
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 128,
+        "lineEnd": 128,
+        "columnStart": 4,
+        "columnEnd": 83
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 93,
+        "lineEnd": 93,
+        "columnStart": 4,
+        "columnEnd": 60
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "#\n# Sysbox Test Container Dockerfile (Fedora-34 image)\n#\n# This Dockerfile creates the sysbox test container image. The image\n# contains all dependencies needed to build, run, and test sysbox.\n#\n# The image does not contain sysbox itself; the sysbox repo\n# must be bind mounted into the image. It can then be built,\n# installed, and executed within the container.\n#\n# The image must be run as a privileged container (i.e., docker run --privileged ...)\n# Refer to the sysbox Makefile test targets.\n#\n# This Dockerfile is based on a similar Dockerfile in the OCI runc\n# github repo, but adapted to sysbox testing.\n#\n# Instructions:\n#\n# docker build -t sysbox-test .\n#\n\nFROM fedora:34\n\n# Desired platform architecture to build upon.\nARG sys_arch\nENV SYS_ARCH=${sys_arch}\nARG target_arch\nENV TARGET_ARCH=${target_arch}\n\nARG k8s_version=v1.20.2\n\nRUN dnf update -y && dnf install -y \\\n    acl \\\n    yum-utils \\\n    automake \\\n    autoconf \\\n    libtool \\\n    procps \\\n    psmisc \\\n    nano \\\n    less \\\n    curl \\\n    sudo \\\n    gawk \\\n    git \\\n    iptables \\\n    iproute \\\n    jq \\\n    pkg-config \\\n    libaio-devel \\\n    libcap-devel \\\n    libnl3-devel \\\n    libseccomp \\\n    libseccomp-devel \\\n    python3 \\\n    kmod \\\n    unzip \\\n    time \\\n    net-tools \\\n    wget \\\n    lsof \\\n    iputils \\\n    ca-certificates \\\n    bc \\\n    # sysbox deps\n    fuse \\\n    rsync \\\n    redhat-lsb-core \\\n    bash-completion \\\n    attr \\\n    tree \\\n    strace \\\n    && echo \". /etc/bash_completion\" >> /etc/bash.bashrc \\\n    && ssh-keygen -t rsa -N \"\" -f ~/.ssh/id_rsa \\\n    && echo \"    StrictHostKeyChecking accept-new\" >> /etc/ssh/ssh_config\n\n# install cross compile tool chains\nRUN dnf copr enable -y lantw44/aarch64-linux-gnu-toolchain \\\n    && dnf copr enable -y lantw44/arm-linux-gnueabi-toolchain \\\n    && dnf copr enable -y lantw44/arm-linux-gnueabihf-toolchain \\\n    && dnf install -y \\\n    arm-linux-gnueabi-gcc \\\n    arm-linux-gnueabi-glibc \\\n    arm-linux-gnueabi-binutils \\\n    arm-linux-gnueabihf-gcc \\\n    arm-linux-gnueabihf-glibc \\\n    arm-linux-gnueabihf-binutils \\\n    aarch64-linux-gnu-gcc \\\n    aarch64-linux-gnu-glibc \\\n    aarch64-linux-gnu-binutils\n\n# Install Golang 1.16.4 release and explicitly activate modules functionality.\nRUN wget https://golang.org/dl/go1.16.4.linux-${sys_arch}.tar.gz && \\\n    tar -C /usr/local -xzf go1.16.4.linux-${sys_arch}.tar.gz && \\\n    /usr/local/go/bin/go env -w GONOSUMDB=/root/nestybox && rm go1.16.4.linux-${sys_arch}.tar.gz\n\nENV GOPATH /go\nENV PATH $GOPATH/bin:/usr/local/go/bin:$PATH\nRUN go env -w GONOSUMDB=/root/nestybox && \\\n    mkdir -p \"$GOPATH/src\" \"$GOPATH/bin\" && \\\n    chmod -R 777 \"$GOPATH\"\n\n# Add a dummy user for the rootless integration tests; needed by the\n# `git clone` operations below.\nRUN useradd -u1000 -m -d/home/rootless -s/bin/bash rootless\n\n# install bats\nRUN cd /tmp \\\n    && git clone https://github.com/sstephenson/bats.git \\\n    && cd bats \\\n    && git reset --hard 03608115df2071fff4eaaff1605768c275e5f81f \\\n    && ./install.sh /usr/local \\\n    && rm -rf /tmp/bats\n\n# install protoc compiler for gRPC\nRUN if [ \"$sys_arch\" = \"amd64\" ] ; then arch_str=\"x86_64\"; \\\n    elif [ \"$sys_arch\" = \"arm64\" ]; then arch_str=\"aarch_64\"; \\\n    else echo \"Unsupported platform: ${sys_arch}\"; exit; fi \\\n    && curl -f -LO https://github.com/protocolbuffers/protobuf/releases/download/v3.15.8/protoc-3.15.8-linux-${arch_str}.zip \\\n    && unzip protoc-3.15.8-linux-${arch_str}.zip -d $HOME/.local \\\n    && export PATH=\"$PATH:$HOME/.local/bin\" \\\n     && ln -s $HOME/.local/bin/protoc /usr/local/bin/protoc \\\n    && go install github.com/golang/protobuf/protoc-gen-go@latest \\\n    && export PATH=\"$PATH:$(go env GOPATH)/bin\"\n\n# Install Kubectl for K8s integration-testing. Notice that we are explicitly\n# stating the kubectl version to download, which should match the K8s release\n# deployed in K8s (L2) nodes.\nRUN curl -f -LO https://dl.k8s.io/release/${k8s_version}/bin/linux/${sys_arch}/kubectl \\\n    && install -o root -g root -m 0755 kubectl /usr/bin/kubectl\n\n# install Docker (used by most sysbox tests to launch sys containers)\nRUN dnf update -y \\\n    && dnf config-manager --add-repo=https://download.docker.com/linux/fedora/docker-ce.repo \\\n    && dnf install -y docker-ce --nobest\nADD https://raw.githubusercontent.com/docker/docker-ce/master/components/cli/contrib/completion/bash/docker \\\n    /etc/bash_completion.d/docker.sh\n\n# Go Dlv for debugging\nRUN go get github.com/go-delve/delve/cmd/dlv\n\n# Use the old definition for SECCOMP_NOTIF_ID_VALID in /usr/include/linux/seccomp.h\n#\n# This is needed because the definition changed in the mainline kernel\n# on 06/2020 (from SECCOMP_IOR -> SECCOMP_IOW), and some distros we\n# support have picked it up in their latest releases / kernels\n# updates. The kernel change was backward compatible, so by using the\n# old definition, we are guaranteed it will work on kernels before and\n# after the change. On the other hand, if we were to use the new\n# definition, seccomp notify would fail when sysbox runs in old\n# kernels.\nRUN sed -i 's/^#define SECCOMP_IOCTL_NOTIF_ID_VALID[ \\t]*SECCOMP_IOW(2, __u64)/#define SECCOMP_IOCTL_NOTIF_ID_VALID   SECCOMP_IOR(2, __u64)/g' /usr/include/linux/seccomp.h\n\n# sysbox env\nRUN useradd sysbox \\\n    && mkdir -p /var/lib/sysboxfs\n\n# test scripts\nCOPY scr/testContainerInit /usr/bin\nCOPY scr/testContainerCleanup /usr/bin\nCOPY scr/buildContainerInit /usr/bin\nCOPY scr/sindTestContainerInit /usr/bin\nCOPY bin/userns_child_exec_${sys_arch} /usr/bin\n\nRUN mkdir -p /root/nestybox\nWORKDIR /root/nestybox/sysbox\nCMD /bin/bash\n"
+}

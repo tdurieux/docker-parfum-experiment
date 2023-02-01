@@ -1,0 +1,53 @@
+{
+  "startTime": 1674255474202,
+  "endTime": 1674255474919,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 79,
+        "lineEnd": 79,
+        "columnStart": 4,
+        "columnEnd": 88
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 76,
+        "lineEnd": 76,
+        "columnStart": 22,
+        "columnEnd": 52
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 91,
+        "lineEnd": 91,
+        "columnStart": 22,
+        "columnEnd": 59
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 76,
+        "lineEnd": 76,
+        "columnStart": 22,
+        "columnEnd": 52
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 91,
+        "lineEnd": 91,
+        "columnStart": 22,
+        "columnEnd": 59
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# BUILD STAGE ---------------------------------------\n# split this stage to save time and reduce image size\n# ---------------------------------------------------\nFROM python:3.10 as BuildStage\n# from now on, work in the /app directory\nWORKDIR /app/\n# Layer dependency install (for caching)\nCOPY ./packages/requires.txt ./base_requires.txt\nCOPY ./packages/opal-common/requires.txt ./common_requires.txt\nCOPY ./packages/opal-client/requires.txt ./client_requires.txt\nCOPY ./packages/opal-server/requires.txt ./server_requires.txt\n# install python deps\nRUN pip install --no-cache-dir --upgrade pip && pip install --no-cache-dir -r ./base_requires.txt -r ./common_requires.txt -r ./client_requires.txt -r ./server_requires.txt\n\n# COMMON IMAGE --------------------------------------\n# ---------------------------------------------------\nFROM python:3.10-slim as common\n\n# copy libraries from build stage (This won't copy redundant libraries we used in BuildStage)\nCOPY --from=BuildStage /usr/local /usr/local\n\n# Add non-root user (with home dir at /opal)\nRUN useradd -m -b / -s /bin/bash opal\nWORKDIR /opal\n\n# copy wait-for script (create link at old path to maintain backward compatibility)\nCOPY scripts/wait-for.sh .\nRUN chmod +x ./wait-for.sh\nRUN ln -s /opal/wait-for.sh /usr/wait-for.sh\n# copy startup script (create link at old path to maintain backward compatibility)\nCOPY ./scripts/start.sh .\nRUN chmod +x ./start.sh\nRUN ln -s /opal/start.sh /start.sh\n# copy gunicorn_config\nCOPY ./scripts/gunicorn_conf.py .\n# copy app code\nCOPY . ./\n# install the opal-common package\nRUN cd ./packages/opal-common && python setup.py install\n# Make sure scripts in .local are usable:\nENV PATH=/opal:/root/.local/bin:$PATH\n# run gunicorn\nCMD [\"./start.sh\"]\n\n\n# STANDALONE IMAGE ----------------------------------\n# ---------------------------------------------------\nFROM common as client-standalone\n# uvicorn config ------------------------------------\n# install the opal-client package\nRUN cd ./packages/opal-client && python setup.py install\n\n# WARNING: do not change the number of workers on the opal client!\n# only one worker is currently supported for the client.\n\n# number of uvicorn workers\nENV UVICORN_NUM_WORKERS=1\n# uvicorn asgi app\nENV UVICORN_ASGI_APP=opal_client.main:app\n# uvicorn port\nENV UVICORN_PORT=7000\n# disable inline OPA\nENV OPAL_INLINE_OPA_ENABLED=false\n\n# expose opal client port\nEXPOSE 7000\nUSER opal\n\n# CLIENT IMAGE --------------------------------------\n# Using standalone image as base --------------------\n# ---------------------------------------------------\nFROM client-standalone as client\n\n# Temporarily move back to root for additional setup\nUSER root\n\nRUN apt-get update && apt-get install --no-install-recommends -y curl netcat && apt-get clean && rm -rf /var/lib/apt/lists/*;\n\n# copy opa from official image (main binary and lib for web assembly)\nRUN curl -f -L -o ./opa https://openpolicyagent.org/downloads/latest/opa_linux_amd64_static && chmod 755 ./opa\n# enable inline OPA\nENV OPAL_INLINE_OPA_ENABLED=true\n# expose opa port\nEXPOSE 8181\nUSER opal\n\n\n# SERVER IMAGE --------------------------------------\n# ---------------------------------------------------\nFROM common as server\n\nRUN apt-get update && apt-get install --no-install-recommends -y openssh-client git && apt-get clean && rm -rf /var/lib/apt/lists/*;\n\nUSER opal\n\n# Potentially trust POLICY REPO HOST ssh signature --\n# opal trackes a remote (git) repository and fetches policy (e.g rego) from it.\n# however, if the policy repo uses an ssh url scheme, authentication to said repo\n# is done via ssh, and without adding the repo remote host (i.e: github.com) to\n# the ssh known hosts file, ssh will issue output an interactive prompt that\n# looks something like this:\n#   The authenticity of host 'github.com (192.30.252.131)' can't be established.\n#   RSA key fingerprint is 16:27:ac:a5:76:28:1d:52:13:1a:21:2d:bz:1d:66:a8.\n#   Are you sure you want to continue connecting (yes/no)?\n# if the docker build arg `TRUST_POLICY_REPO_HOST_SSH_FINGERPRINT` is set to `true`\n# (default), the host specified by `POLICY_REPO_HOST` build arg (i.e: `github.com`)\n# will be added to the known ssh hosts file at build time and prevent said prompt\n# from showing.\nARG TRUST_POLICY_REPO_HOST_SSH_FINGERPRINT=\"true\"\nARG POLICY_REPO_HOST=\"github.com\"\n\nRUN if [ \"$TRUST_POLICY_REPO_HOST_SSH_FINGERPRINT\" = \"true\" ] ; then \\\n  mkdir -p ~/.ssh && \\\n  chmod 0700 ~/.ssh && \\\n  ssh-keyscan -t rsa ${POLICY_REPO_HOST} >> ~/.ssh/known_hosts ; fi\n\nUSER root\n\n# install the opal-server package\nRUN cd ./packages/opal-server && python setup.py install\n\n# uvicorn config ------------------------------------\n\n# number of uvicorn workers\nENV UVICORN_NUM_WORKERS=1\n# uvicorn asgi app\nENV UVICORN_ASGI_APP=opal_server.main:app\n# uvicorn port\nENV UVICORN_PORT=7002\n\n# opal configuration --------------------------------\n# if you are not setting OPAL_DATA_CONFIG_SOURCES for some reason,\n# override this env var with the actual public address of the server\n# container (i.e: if you are running in docker compose and the server\n# host is `opalserver`, the value will be: http://opalserver:7002/policy-data)\n# `host.docker.internal` value will work better than `localhost` if you are\n# running dockerized opal server and client on the same machine\nENV OPAL_ALL_DATA_URL=http://host.docker.internal:7002/policy-data\n# Use fixed path for the policy repo - so new leader would use the same directory without re-cloning it.\n# That's ok when running in docker and fs is ephemeral (repo in a bad state would be fixed by restarting container).\nENV OPAL_POLICY_REPO_REUSE_CLONE_PATH=true\n\n# expose opal server port\nEXPOSE 7002\nUSER opal\n"
+}

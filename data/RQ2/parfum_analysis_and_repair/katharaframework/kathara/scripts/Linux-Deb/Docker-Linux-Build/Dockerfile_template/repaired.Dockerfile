@@ -1,0 +1,43 @@
+FROM ubuntu:__DISTRO__
+
+ENV TZ=Europe/Rome
+ENV RUBYOPT="-KU -E utf-8:utf-8"
+ENV LANG="C.UTF-8"
+ENV LC_ALL="C.UTF-8"
+
+RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
+
+ARG DEBIAN_FRONTEND="noninteractive"
+RUN apt update && \
+    apt upgrade -y && \
+	apt install --no-install-recommends -y \
+		apt-utils \
+		debhelper \
+		libxml2-dev \
+		zlib1g-dev \
+		build-essential \
+		lintian \
+		devscripts \
+		git \
+		ruby-full \
+		bash-completion \
+		software-properties-common \
+        patchelf && rm -rf /var/lib/apt/lists/*;
+
+
+RUN add-apt-repository ppa:deadsnakes/ppa \
+	&& DEBIAN_FRONTEND=noninteractive apt --no-install-recommends install -y \
+		python3.9 \
+		python3.9-dev \
+		python3.9-venv \
+		python3-pip \
+		python3.9-distutils \
+	&& python3.9 -m pip install --upgrade pip && rm -rf /var/lib/apt/lists/*;
+
+__NOKOGIRI__
+RUN gem install ronn-ng
+RUN mkdir /root/.gnupg && chmod 700 /root/.gnupg
+
+COPY dput.cf /root/.dput.cf
+
+WORKDIR /opt/kathara/scripts/Linux-Deb

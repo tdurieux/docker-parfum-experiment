@@ -1,0 +1,71 @@
+{
+  "startTime": 1674248808268,
+  "endTime": 1674248809728,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 89,
+        "lineEnd": 89,
+        "columnStart": 4,
+        "columnEnd": 72
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 106,
+        "lineEnd": 106,
+        "columnStart": 4,
+        "columnEnd": 35
+      }
+    },
+    {
+      "rule": "gpgUseHaPools",
+      "position": {
+        "lineStart": 58,
+        "lineEnd": 58,
+        "columnStart": 9,
+        "columnEnd": 84
+      }
+    },
+    {
+      "rule": "gpgUseHaPools",
+      "position": {
+        "lineStart": 59,
+        "lineEnd": 59,
+        "columnStart": 9,
+        "columnEnd": 86
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 15,
+        "lineEnd": 15,
+        "columnStart": 2,
+        "columnEnd": 40
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 4,
+        "lineEnd": 9,
+        "columnStart": 5,
+        "columnEnd": 20
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 15,
+        "lineEnd": 15,
+        "columnStart": 2,
+        "columnEnd": 40
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM python:3.8\n\n# Install general dependencies\nRUN apt-get update \\\n  && apt-get install -y --no-install-recommends \\\n  apt-utils build-essential git curl libssl-dev \\\n  libreadline-dev zlib1g-dev libffi-dev libgl1-mesa-glx \\\n  sudo \\\n  # Ruby deps\n  gawk bison sqlite3 && rm -rf /var/lib/apt/lists/*;\n\n# Install and setup en_US.UTF-8 locale\n# This is necessary so that output from node/ruby/python\n# won't break or have weird indecipherable characters\nRUN apt-get update && \\\n  apt-get install --no-install-recommends --reinstall -y locales && \\\n  sed -i 's/# en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/' /etc/locale.gen && \\\n  locale-gen en_US.UTF-8 && rm -rf /var/lib/apt/lists/*;\n\n# Install headless chrome\nRUN wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | apt-key add - \\\n  && echo 'deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main' >> /etc/apt/sources.list.d/google.list \\\n  && apt-get update \\\n  && apt-get install -y google-chrome-unstable --no-install-recommends \\\n  && rm -rf /var/lib/apt/lists/*\n\nENV LANG en_US.UTF-8\nENV LANGUAGE en_US\nENV LC_ALL en_US.UTF-8\n\nRUN dpkg-reconfigure --frontend noninteractive locales\n\nSHELL [\"/bin/bash\", \"-c\"]\n\n# Disable ipv6 to enable fetching gpg keys for rvm\n# http://rvm.io/rvm/security#ipv6-issues\nRUN mkdir -p /root/.gnupg \\\n  && echo 'disable-ipv6' >> /root/.gnupg/dirmngr.conf \\\n  && echo 'rvm_silence_path_mismatch_check_flag=1' >> /etc/rvmrc \\\n  && echo 'install: --no-document\\nupdate: --no-document' >> /etc/.gemrc\n\nRUN useradd --no-log-init --system --create-home --groups sudo system \\\n  && echo 'system ALL=(ALL:ALL) NOPASSWD:ALL' >> /etc/sudoers.d/system\n\nRUN useradd --no-log-init --system --create-home customer\n\n###############################################################\n# Run these steps as the 'system' user\n#\nUSER system\n\n# Install rvm\nRUN set -ex \\\n  && for key in \\\n    409B6B1796C275462A1703113804BB82D39DC0E3 \\\n    7D2BAF1CF37B13E2069D6956105BD0E739499BDB; \\\n  do \\\n    sudo gpg --batch --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys \"$key\" || \\\n    sudo gpg --batch --keyserver hkp://ha.pool.sks-keyservers.net:80 --recv-keys \"$key\" || \\\n    sudo gpg --batch --keyserver hkp://ipv4.ha.pool.sks-keyservers.net --recv-keys \"$key\" || \\\n    sudo gpg --batch --keyserver hkp://pgp.mit.edu:80 --recv-keys \"$key\" || \\\n    sudo gpg --batch --keyserver hkp://keyserver.pgp.com --recv-keys \"$key\"; \\\n  done \\\n  # We use 'sudo' here to support multi-user install\n  # http://rvm.io/rvm/install#1-download-and-run-the-rvm-installation-script\n  && \\curl -sSL https://get.rvm.io | sudo -n bash -s stable\n\n# Add 'customer' user to rvm group\nRUN sudo usermod --append --groups rvm customer\n\n\n###############################################################\n# Run these steps as the customer user\n#\nUSER customer\n\n# Configure rvm and install default Ruby\nENV RUBY_VERSION 2.7.5\nENV RUBY_VERSION_MIN 2.6.6\nRUN source /usr/local/rvm/scripts/rvm \\\n  # Fail if deps are missing, won't prompt for sudo\n  && rvm autolibs read-fail \\\n  && rvm install --no-docs $RUBY_VERSION \\\n  && rvm use --default $RUBY_VERSION \\\n  # Make rvm available in non-login bash shells\n  && echo 'source /usr/local/rvm/scripts/rvm' >> ~/.bashrc\n\n# Default to Node 16\nENV NODE_VERSION lts/gallium\nRUN curl -f https://raw.githubusercontent.com/nvm-sh/nvm/v0.37.2/install.sh | bash \\\n  && \\. \"$HOME/.nvm/nvm.sh\" \\\n  && nvm install $NODE_VERSION\n\n\n###############################################################\n# Run these steps and the container as the 'root' user\n#\n# This is necessary because the build code needs to have\n# rights to switch to 'customer' user\n#\nUSER root\n\nWORKDIR /app\n\nCOPY ./requirements.txt ./requirements.txt\n\nRUN pip install --no-cache-dir -r requirements.txt \\\n  && rm ./requirements.txt\n\nCOPY ./src ./\n"
+}

@@ -1,0 +1,56 @@
+# Default base images. If you update them don't forgot to update variables in our build pipelines. Default values can be found in internal wiki. External can use ubuntu 18.04 and golang 1.18.3
+ARG GOLANG_BASE_IMAGE=
+ARG CI_BASE_IMAGE=
+
+FROM --platform=$BUILDPLATFORM ${GOLANG_BASE_IMAGE} AS builder
+ARG TARGETOS TARGETARCH
+RUN /usr/bin/apt-get update && /usr/bin/apt-get install git g++ make pkg-config libssl-dev libpam0g-dev rpm librpm-dev uuid-dev libkrb5-dev python sudo gcc-aarch64-linux-gnu -y
+
+COPY build /src/build
+COPY source /src/source
+RUN cd /src/build/linux && make arch=${TARGETARCH}
+
+
+FROM ${CI_BASE_IMAGE} AS base_image
+ARG TARGETOS TARGETARCH
+MAINTAINER OMSContainers@microsoft.com
+LABEL vendor=Microsoft\ Corp \
+    com.microsoft.product="Azure Monitor for containers"
+ENV tmpdir /opt
+ENV APPLICATIONINSIGHTS_AUTH NzAwZGM5OGYtYTdhZC00NThkLWI5NWMtMjA3ZjM3NmM3YmRi
+ENV MALLOC_ARENA_MAX 2
+ENV HOST_MOUNT_PREFIX /hostfs
+ENV HOST_PROC /hostfs/proc
+ENV HOST_SYS /hostfs/sys
+ENV HOST_ETC /hostfs/etc
+ENV HOST_VAR /hostfs/var
+ENV AZMON_COLLECT_ENV False
+ENV KUBE_CLIENT_BACKOFF_BASE 1
+ENV KUBE_CLIENT_BACKOFF_DURATION 0
+ENV RUBY_GC_HEAP_OLDOBJECT_LIMIT_FACTOR 0.9
+RUN /usr/bin/apt-get update && /usr/bin/apt-get install -y libc-bin wget openssl curl sudo python python-ctypes init-system-helpers  net-tools rsyslog cron vim dmidecode apt-transport-https gnupg make && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /src/kubernetes/linux/Linux_ULINUX_1.0_*_64_Release/docker-cimprov-*.*.*-*.*.sh $tmpdir/
+COPY kubernetes/linux/setup.sh kubernetes/linux/main.sh kubernetes/linux/defaultpromenvvariables kubernetes/linux/defaultpromenvvariables-rs kubernetes/linux/defaultpromenvvariables-sidecar kubernetes/linux/mdsd.xml kubernetes/linux/envmdsd kubernetes/linux/logrotate.conf $tmpdir/
+
+ARG IMAGE_TAG=ciprod06272022
+ENV AGENT_VERSION ${IMAGE_TAG}
+
+WORKDIR ${tmpdir}
+
+RUN chmod 775 $tmpdir/*.sh; sync; $tmpdir/setup.sh ${TARGETARCH}
+
+# Do vulnerability scan in a seperate stage to avoid adding layer
+FROM base_image AS vulnscan
+COPY .trivyignore .trivyignore
+RUN curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin v0.28.1
+RUN trivy rootfs --ignore-unfixed --no-progress --severity HIGH,CRITICAL,MEDIUM --skip-files "/usr/local/bin/trivy" /
+RUN trivy rootfs --ignore-unfixed --no-progress --severity HIGH,CRITICAL,MEDIUM /usr/lib
+RUN trivy rootfs --exit-code 1 --ignore-unfixed --no-progress --severity HIGH,CRITICAL,MEDIUM --skip-files "/usr/local/bin/trivy" / > /dev/null 2>&1 && trivy rootfs --exit-code 1 --ignore-unfixed --no-progress --severity HIGH,CRITICAL,MEDIUM /usr/lib > /dev/null 2>&1
+
+# Revert to base layer before vulnscan
+FROM base_image AS ContainerInsights
+# force the trivy stage to run
+# docker buildx (BUILDKIT) does not build stages which do not affect the final stage
+# by copying over a file we create a dependency
+# see: https://github.com/docker/build-push-action/issues/377

@@ -1,0 +1,13 @@
+FROM balenalib/%%BALENA_MACHINE_NAME%%-debian:latest
+
+ENV DBUS_SYSTEM_BUS_ADDRESS=unix:path=/host/run/dbus/system_bus_socket
+
+RUN install_packages wget jq openjdk-17-jre
+
+COPY . /
+
+COPY start.sh /usr/src/
+
+RUN chmod +x /usr/src/start.sh
+
+CMD [ "/bin/bash", "/usr/src/start.sh" ]

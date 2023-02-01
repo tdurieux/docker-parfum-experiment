@@ -1,0 +1,1 @@
+FROM --platform=linux/%%BALENA_ARCH%% influxdb:1.7.8

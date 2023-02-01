@@ -1,0 +1,53 @@
+{
+  "startTime": 1674215638515,
+  "endTime": 1674215639249,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 14,
+        "lineEnd": 14,
+        "columnStart": 4,
+        "columnEnd": 59
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 46,
+        "lineEnd": 46,
+        "columnStart": 4,
+        "columnEnd": 54
+      }
+    },
+    {
+      "rule": "gpgUseBatchFlag",
+      "position": {
+        "lineStart": 14,
+        "lineEnd": 14,
+        "columnStart": 62,
+        "columnEnd": 123
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 13,
+        "lineEnd": 13,
+        "columnStart": 4,
+        "columnEnd": 73
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 20,
+        "lineEnd": 28,
+        "columnStart": 4,
+        "columnEnd": 72
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# This is a dockerfile to run the unit tests against the Travis Ubuntu version,\n# to allow debugging proj/gdal differences between your local machine and Travis.\nFROM ubuntu:focal\nARG POSTGRES_VERSION=13\nARG POSTGIS_VERSION=3\nARG DEBIAN_FRONTEND=noninteractive\nARG PG_CTL=/usr/lib/postgresql/${POSTGRES_VERSION}/bin/pg_ctl\n\n# Allow pg_ctl to work without -D\nENV PGDATA=/var/lib/postgresql/${POSTGRES_VERSION}/main/\n\n# Install PostgreSQL apt repository\nRUN apt-get update \\\n && apt-get install -y --no-install-recommends curl ca-certificates gnupg \\\n && curl -f https://www.postgresql.org/media/keys/ACCC4CF8.asc | gpg --batch --dearmor > /etc/apt/trusted.gpg.d/apt.postgresql.org.gpg \\\n && echo \"deb http://apt.postgresql.org/pub/repos/apt focal-pgdg main\" > /etc/apt/sources.list.d/pgdg.list && rm -rf /var/lib/apt/lists/*;\n\n# No longer using ppa:ubuntugis repo, everything is part of ubuntu:focal\n# python3-dev is needed for lru_dict\nRUN apt-get update \\\n && apt-get install -y --no-install-recommends \\\n       python3 \\\n       python3-pip \\\n       python3-setuptools \\\n       python3-wheel \\\n       python3-dev gcc \\\n       make \\\n       postgresql-${POSTGRES_VERSION}-postgis-${POSTGIS_VERSION} \\\n       postgresql-${POSTGRES_VERSION}-postgis-${POSTGIS_VERSION}-scripts \\\n && echo \"PostGIS is linked to:\" \\\n && ldd /usr/lib/postgresql/*/lib/postgis-*.so | grep -E '(libproj|libgeos)' && rm -rf /var/lib/apt/lists/*;\n\n# Install dependencies first (so layer is cached for fast rebuilds)\n# Need to create some stubs for setup.py to run.\nWORKDIR /host/\nCOPY setup.py setup.cfg ./\nRUN mkdir gisserver \\\n && touch README.md \\\n && echo '__version__ = \"0.1.dev0\"' > gisserver/__init__.py \\\n && sed -i -e 's/ >= / == /' ./setup.py \\\n && pip3 wheel --no-cache-dir --wheel-dir=/wheelhouse/ .[tests] \\\n && rm -vf /wheelhouse/django_gisserver* \\\n && pip3 install --no-cache-dir /wheelhouse/*\n\n# Install app\nCOPY . /host/\nRUN pip3 install --no-cache-dir --find-links=/wheelhouse/ -e .[tests]\nENV LANG=C.UTF-8 DATABASE_URL=postgresql://postgres@localhost/django-gisserver\n\n# Make sure Postgres starts on startup\nRUN echo   > ${PGDATA}/pg_ident.conf   \"\" \\\n && echo   > ${PGDATA}/postgresql.conf \"listen_addresses '127.0.0.1'\" \\\n && printf > ${PGDATA}/pg_hba.conf     \"# host-based-access controls\\n\\\nlocal  all  all                trust\\n\\\nhost   all  all  127.0.0.1/32  trust\\n\" \\\n && printf > /entrypoint.sh \"#!/bin/sh\\n\\\nsu postgres -c '${PG_CTL} status || ${PG_CTL} start'\\n\\\nexec \\\"\\$@\\\"\\n\" \\\n && chmod +x /entrypoint.sh\n\nENTRYPOINT [\"/entrypoint.sh\"]\n"
+}

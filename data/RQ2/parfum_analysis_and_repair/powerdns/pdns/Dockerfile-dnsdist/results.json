@@ -1,0 +1,99 @@
+{
+  "startTime": 1674251838197,
+  "endTime": 1674251839692,
+  "originalSmells": [
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 44,
+        "lineEnd": 52,
+        "columnStart": 4,
+        "columnEnd": 16
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 74,
+        "lineEnd": 74,
+        "columnStart": 4,
+        "columnEnd": 99
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 81,
+        "lineEnd": 81,
+        "columnStart": 4,
+        "columnEnd": 52
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 74,
+        "lineEnd": 74,
+        "columnStart": 4,
+        "columnEnd": 99
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 81,
+        "lineEnd": 81,
+        "columnStart": 4,
+        "columnEnd": 52
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 11,
+        "lineEnd": 11,
+        "columnStart": 49,
+        "columnEnd": 114
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 74,
+        "lineEnd": 74,
+        "columnStart": 4,
+        "columnEnd": 99
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 81,
+        "lineEnd": 81,
+        "columnStart": 4,
+        "columnEnd": 52
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 74,
+        "lineEnd": 74,
+        "columnStart": 4,
+        "columnEnd": 123
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 81,
+        "lineEnd": 81,
+        "columnStart": 4,
+        "columnEnd": 76
+      }
+    }
+  ],
+  "repairedDockerfile": "# our chosen base image\nFROM debian:10-slim AS builder\n\nENV NO_LUA_JIT=\"s390x arm64\"\n\n# TODO: make sure /source looks roughly the same from git or tar\n\n# Reusable layer for base update\nRUN apt-get update && apt-get -y dist-upgrade && apt-get clean\n\n# devscripts gives us mk-build-deps (and a lot of other stuff)\nRUN apt-get update && apt-get -y dist-upgrade && apt-get install -y  --no-install-recommends devscripts equivs git && apt-get clean && rm -rf /var/lib/apt/lists/*;\n\nCOPY builder-support /source/builder-support\n\n# TODO: control file is not in tarballs at all right now\nRUN mk-build-deps -i -t 'apt-get -y -o Debug::pkgProblemResolver=yes --no-install-recommends' /source/builder-support/debian/dnsdist/debian-buster/control && \\\n    apt-get clean\n\nCOPY pdns /source/pdns\nCOPY build-aux /source/build-aux\nCOPY m4 /source/m4\nCOPY ext /source/ext\nCOPY builder/helpers/set-configure-ac-version.sh /usr/local/bin\nCOPY .git /source/.git\n\n# build and install (TODO: before we hit this line, rearrange /source structure if we are coming from a tarball)\nWORKDIR /source/pdns/dnsdistdist\n\nARG MAKEFLAGS=\nENV MAKEFLAGS ${MAKEFLAGS:--j2}\n\nARG DOCKER_FAKE_RELEASE=NO\nENV DOCKER_FAKE_RELEASE ${DOCKER_FAKE_RELEASE}\n\nRUN touch dnsdist.1 # avoid having to install pandoc and venv\n\nRUN if [ \"${DOCKER_FAKE_RELEASE}\" = \"YES\" ]; then \\\n      BUILDER_VERSION=\"$(IS_RELEASE=YES BUILDER_MODULES=dnsdist ./builder-support/gen-version | sed 's/\\([0-9]\\+\\.[0-9]\\+\\.[0-9]\\+\\(\\(alpha|beta|rc\\)\\d\\+\\)\\)?.*/\\1/')\" set-configure-ac-version.sh;\\\n    fi && \\\n    BUILDER_MODULES=dnsdist autoreconf -vfi\n\nRUN mkdir /build && \\\n    LUAVER=$([ -z \"${NO_LUA_JIT##*$(dpkg --print-architecture)*}\" ] && echo 'lua5.3' || echo 'luajit') && \\\n    ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" \\\n      --with-lua=${LUAVER} \\\n      LDFLAGS=-rdynamic \\\n      --sysconfdir=/etc/dnsdist \\\n      --enable-option-checking=fatal \\\n      --enable-dnscrypt \\\n      --enable-dns-over-tls \\\n      --enable-dns-over-https \\\n      --with-re2 && \\\n    make clean && \\\n    make $MAKEFLAGS install DESTDIR=/build && make clean && \\\n    strip /build/usr/local/bin/*\nRUN cd /tmp && mkdir /build/tmp/ && mkdir debian && \\\n    echo 'Source: docker-deps-for-pdns' > debian/control && \\\n    dpkg-shlibdeps /build/usr/local/bin/dnsdist && \\\n    sed 's/^shlibs:Depends=/Depends: /' debian/substvars >> debian/control && \\\n    equivs-build debian/control && \\\n    dpkg-deb -I equivs-dummy_1.0_all.deb && cp equivs-dummy_1.0_all.deb /build/tmp/\n\n# Runtime\n\nFROM debian:10-slim\n\n# Reusable layer for base update - Should be cached from builder\nRUN apt-get update && apt-get -y dist-upgrade && apt-get clean\n\n# - python3 and jinja2 (for startup script)\n# - python3-atomicwrites (for backend management)\n# - tini (for signal management)\n# - ca-certificates (for verifying downstream DoH/DoT certificates)\nRUN apt-get install --no-install-recommends -y python3 python3-jinja2 python3-atomicwrites tini libcap2-bin ca-certificates && apt-get clean && rm -rf /var/lib/apt/lists/*;\n\n# Output from builder\nCOPY --from=builder /build /\nRUN chmod 1777 /tmp # FIXME: better not use /build/tmp for equivs at all\n\n# Ensure dependencies are present\nRUN apt-get install --no-install-recommends -y /tmp/equivs-dummy_1.0_all.deb && apt-get clean && rm -rf /var/lib/apt/lists/*;\n\n# Config\nRUN mkdir -p /etc/dnsdist/conf.d /etc/dnsdist/templates.d\nCOPY dockerdata/dnsdist.conf /etc/dnsdist/\n\n# Start script\nCOPY dockerdata/startup.py /usr/local/bin/dnsdist-startup\n\n# Work with pdns user - not root\nRUN adduser --system --disabled-password --disabled-login --no-create-home --group pdns --uid 953\nRUN chown pdns:pdns /etc/dnsdist/conf.d /etc/dnsdist/templates.d\nUSER pdns\n\n# Default DNS ports\nEXPOSE 53/udp\nEXPOSE 53/tcp\n# Default console port\nEXPOSE 5199/tcp\n# Default webserver port\nEXPOSE 8083/tcp\n\nWORKDIR /etc/dnsdist\n\nCOPY dockerdata/dnsdist-resolver.lua /etc/dnsdist/\nCOPY dockerdata/dnsdist-resolver.py /usr/local/bin/dnsdist-resolver\n\nENTRYPOINT [\"/usr/bin/tini\", \"--\", \"/usr/local/bin/dnsdist-startup\"]\n"
+}

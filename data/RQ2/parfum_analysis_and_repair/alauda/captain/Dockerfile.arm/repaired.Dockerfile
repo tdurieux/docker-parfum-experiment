@@ -1,0 +1,10 @@
+FROM arm64v8/alpine:3.15
+
+RUN sed -i 's/dl-cdn.alpinelinux.org/mirrors.ustc.edu.cn/g' /etc/apk/repositories && apk update && apk add --no-cache subversion
+RUN  echo 'hosts: files dns' > /etc/nsswitch.conf
+
+WORKDIR /
+COPY ./bin/arm64/manager /
+# USER nonroot:nonroot
+
+ENTRYPOINT ["/manager"]

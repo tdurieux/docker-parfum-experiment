@@ -1,0 +1,26 @@
+{
+  "startTime": 1674217865459,
+  "endTime": 1674217866514,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 12,
+        "lineEnd": 12,
+        "columnStart": 5,
+        "columnEnd": 30
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 13,
+        "lineEnd": 13,
+        "columnStart": 5,
+        "columnEnd": 36
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "#-------------------------------------------------------------------------------\n# Builder container for reproducible build environment\n\nFROM python:3.10-alpine as builder\n\nWORKDIR /usr/src/app\nCOPY ./docs /usr/src/app/build-temp/api-docs/docs\nCOPY ./mkdocs.yml /usr/src/app/build-temp/api-docs\nCOPY ./requirements.txt /usr/src/app/build-temp/api-docs\n\nRUN apk add --no-cache build-base\nRUN cd /usr/src/app/build-temp/api-docs \\\n  && pip install --no-cache-dir --upgrade pip \\\n  && pip install --no-cache-dir -r requirements.txt\nRUN cd /usr/src/app/build-temp/api-docs \\\n  && sed -i \"s/{{TIMESTAMP}}/$(date +%s)/g\" docs/content/explorer/index.md \\\n  && sed -i \"s/{{TIMESTAMP}}/$(date +%s)/g\" docs/content/graphql/explorer/index.md \\\n  && sed -i \"s/{{COPYRIGHT_YEAR}}/$(date +%Y)/g\" mkdocs.yml \\\n  && mkdocs build --config-file mkdocs.yml \\\n  && mv /usr/src/app/build-temp/api-docs/site /usr/src/app/ \\\n  && rm -rf /usr/src/app/build-temp\n\n#-------------------------------------------------------------------------------\n# Builder container for reproducible build environment\n\nFROM golang:1.17-alpine as go-builder\n\nWORKDIR /go/src/app\n\nCOPY ./server/server.go .\nCOPY ./server/go.mod .\nCOPY --from=builder /usr/src/app .\n\nRUN go mod verify \\\n  && go build server.go \\\n  && rm server.go \\\n  && rm go.mod\n\n#-------------------------------------------------------------------------------\n# Build production container with only necessary artifacts\n\nFROM alpine:3.15\n\n# Traefik auto discover labels\nLABEL \\\n  traefik.http.services.portal-public-api-docs.loadbalancer.server.port=\"3020\" \\\n  traefik.http.services.portal-public-api-docs.loadbalancer.healthcheck.path=\"/health\" \\\n  traefik.http.services.portal-public-api-docs.loadbalancer.healthcheck.interval=\"10s\" \\\n  traefik.http.services.portal-public-api-docs.loadbalancer.healthcheck.timeout=\"5s\"\n\nEXPOSE 3020\n\n# Copy build artifacts from builder container\nWORKDIR /go/src/app\nCOPY --from=go-builder /go/src/app .\n\n# Set app wide env variables\nENV PORTAL_CLIENT_ROUTE=\"/\"\nENV PORTAL_PORT=3020\n\nRUN addgroup -S go \\\n  && adduser -S -G go go \\\n  && chown -R go:go /go/src/app\n\n# Run as the go user\nUSER go\n\nCMD [\"./server\"]\n"
+}

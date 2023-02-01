@@ -1,0 +1,35 @@
+{
+  "startTime": 1674214943716,
+  "endTime": 1674214944558,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 5,
+        "lineEnd": 5,
+        "columnStart": 22,
+        "columnEnd": 83
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 24,
+        "lineEnd": 24,
+        "columnStart": 22,
+        "columnEnd": 76
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 5,
+        "lineEnd": 5,
+        "columnStart": 22,
+        "columnEnd": 83
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM debian:buster-20210721@sha256:cc58a29c333ee594f7624d968123429b26916face46169304f07580644dde6b2 AS toolchain\n\n# To use http/https proxy while building, use:\n# docker build --build-arg https_proxy=http://fwdproxy:8080 --build-arg http_proxy=http://fwdproxy:8080\n\nRUN apt-get update && apt-get install --no-install-recommends -y cmake curl clang git pkg-config libssl-dev && rm -rf /var/lib/apt/lists/*;\n\nRUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain none\nENV PATH \"$PATH:/root/.cargo/bin\"\n\nWORKDIR /diem\nCOPY rust-toolchain /diem/rust-toolchain\nRUN rustup install $(cat rust-toolchain)\n\nFROM toolchain AS builder\n\nARG ENABLE_FAILPOINTS\nCOPY . /diem\n\nRUN IMAGE_TARGETS=\"release\" ./docker/build-common.sh\n\n### Production Image ###\nFROM debian:buster-20210721@sha256:cc58a29c333ee594f7624d968123429b26916face46169304f07580644dde6b2  AS pre-prod\n\nRUN apt-get update && apt-get -y --no-install-recommends install libssl1.1 wget busybox gettext-base && apt-get clean && rm -r /var/lib/apt/lists/*\nRUN cd /usr/local/bin && wget \"https://storage.googleapis.com/kubernetes-release/release/v1.18.6/bin/linux/amd64/kubectl\" -O kubectl && chmod +x kubectl\nRUN cd /usr/local/bin && wget \"https://releases.hashicorp.com/vault/1.5.0/vault_1.5.0_linux_amd64.zip\" -O- | busybox unzip - && chmod +x vault\n\nRUN mkdir -p /opt/diem/bin\nCOPY --from=builder /diem/target/release/diem-genesis-tool /usr/local/bin\nCOPY --from=builder /diem/target/release/diem-operational-tool /usr/local/bin\n\n### Get Move modules bytecodes for genesis ceremony\nRUN mkdir -p /diem/move\nCOPY --from=builder /diem/language/diem-framework/releases/artifacts/current /diem/move\n\nFROM pre-prod as testing\n\nRUN /usr/local/bin/diem-genesis-tool -h\nRUN /usr/local/bin/diem-operational-tool -h\n\nFROM pre-prod as prod\n\nARG BUILD_DATE\nARG GIT_REV\nARG GIT_UPSTREAM\n\nLABEL org.label-schema.schema-version=\"1.0\"\nLABEL org.label-schema.build-date=$BUILD_DATE\nLABEL org.label-schema.vcs-ref=$GIT_REV\n"
+}

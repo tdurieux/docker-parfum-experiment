@@ -1,0 +1,17 @@
+{
+  "startTime": 1674221121983,
+  "endTime": 1674221123190,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 15,
+        "lineEnd": 15,
+        "columnStart": 7,
+        "columnEnd": 32
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM python:3.7-alpine3.11\n\nARG EMAIL\nARG UID=1000\nARG GID=1000\n\nENV PYTHON_EGG_CACHE=/home/syncano/.python-eggs \\\n    ACME_VERSION=2.8.3 \\\n    LE_WORKING_DIR=/acme/home \\\n    LE_CONFIG_HOME=/acme/config \\\n    CERT_HOME=/acme/certs \\\n    GDAL_LIBRARY_PATH=/usr/lib/libgdal.so.26 \\\n    GEOS_LIBRARY_PATH=/usr/lib/libgeos_c.so.1\n\nRUN set -ex \\\n    && pip install --no-cache-dir --upgrade pip \\\n    && addgroup -S -g $GID syncano \\\n    && adduser -S -D -G syncano -s /bin/bash -u $UID syncano \\\n    && apk add --no-cache \\\n        bash \\\n        coreutils \\\n        curl \\\n        supervisor \\\n        postgresql-client \\\n        make \\\n        libxml2 \\\n        # openssl support\n        ca-certificates \\\n        openssl \\\n        # unzip and mksquashfs for env zip processing\n        squashfs-tools \\\n        unzip \\\n        # tini to avoid zombies\n        tini \\\n        # usermod\n        shadow \\\n        # more correct su\n        su-exec \\\n        # real ps\n        procps \\\n        # pdf rendering\n        wkhtmltopdf \\\n        ttf-freefont \\\n        # postgis dependencies\n        geos \\\n        gdal \\\n        # nginx\n        nginx \\\n\n    # Set nginx and acme permissions\n    && ln -sf /dev/stdout /var/log/nginx/access.log \\\n    && ln -sf /dev/stderr /var/log/nginx/error.log \\\n    && chown syncano:syncano -R /var/lib/nginx \\\n\n    # Symlink libgeos so it gets picked up correctly\n    && ln -s /usr/lib/libgeos_c.so.1 /usr/lib/libgeos_c.so \\\n\n    # Install acme.sh\n    && wget https://github.com/Neilpang/acme.sh/archive/${ACME_VERSION}.zip \\\n    && unzip ${ACME_VERSION}.zip \\\n    && cd acme.sh-${ACME_VERSION} \\\n    && mkdir -p ${LE_WORKING_DIR} ${LE_CONFIG_HOME} ${CERT_HOME} \\\n    && ./acme.sh --install --nocron --home ${LE_WORKING_DIR} --config-home ${LE_CONFIG_HOME} --cert-home ${CERT_HOME} \\\n        --accountemail \"${EMAIL}\" --accountkey \"/acme/config/account.key\" \\\n    && ln -s ${LE_WORKING_DIR}/acme.sh /usr/bin/acme.sh \\\n    && cd .. \\\n    && rm -rf ${ACME_VERSION}.zip acme.sh-${ACME_VERSION} \\\n    && chown syncano:syncano -R /acme\n\n# Install python dependencies\nCOPY ./requirements.txt /home/syncano/app/\nCOPY ./modules /home/syncano/app/modules\nWORKDIR /home/syncano/app\nRUN set -ex \\\n    && apk add --no-cache --virtual .build-deps \\\n        linux-headers \\\n        build-base \\\n        make \\\n        pcre-dev \\\n        libffi-dev \\\n        musl-dev \\\n        postgresql-dev \\\n        libxml2-dev \\\n        libxslt-dev \\\n        git \\\n    && pip3 install --no-cache-dir -r requirements.txt modules/serializer \\\n    && apk del .build-deps\n\n# Copy the application folder inside the container\nCOPY --chown=syncano . /home/syncano/app\nRUN python manage.py collectstatic --noinput \\\n    && chown syncano:syncano /home/syncano/app \\\n    && chown syncano:syncano -R /home/syncano/app/static\nUSER syncano\n\n# Set the default command to execute\n# when creating a new container\nCMD [\"/home/syncano/app/run.sh\"]\nENTRYPOINT [\"/sbin/tini\", \"--\"]\n"
+}

@@ -1,0 +1,71 @@
+{
+  "startTime": 1674219812855,
+  "endTime": 1674219813993,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 49,
+        "lineEnd": 49,
+        "columnStart": 4,
+        "columnEnd": 92
+      }
+    },
+    {
+      "rule": "wgetUseHttpsUrl",
+      "position": {
+        "lineStart": 68,
+        "lineEnd": 68,
+        "columnStart": 4,
+        "columnEnd": 73
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 71,
+        "lineEnd": 75,
+        "columnStart": 4,
+        "columnEnd": 73
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 69,
+        "lineEnd": 69,
+        "columnStart": 4,
+        "columnEnd": 24
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 31,
+        "lineEnd": 31,
+        "columnStart": 26,
+        "columnEnd": 54
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 35,
+        "lineEnd": 35,
+        "columnStart": 4,
+        "columnEnd": 41
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 62,
+        "lineEnd": 63,
+        "columnStart": 4,
+        "columnEnd": 52
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM balenalib/armv7hf-debian:buster\n\nENTRYPOINT [ \"/usr/bin/supervisord\", \"-c\", \"/etc/supervisor/supervisord.conf\" ]\n\n# Default values for config environment variables\nENV OPENSEEDBOX_JDBC_URL=jdbc:postgresql://openseedboxdb/openseedbox\nENV OPENSEEDBOX_JDBC_DRIVER=org.postgresql.Driver\nENV OPENSEEDBOX_JDBC_USER=openseedbox\nENV OPENSEEDBOX_JDBC_PASS=openseedbox\nENV OPENSEEDBOX_CONTEXT_PATH=\n\nEXPOSE 443\n\nENV JAVA_HOME=/java\n\nRUN [ \"cross-build-start\" ]\n\n# See https://github.com/resin-io-library/base-images/issues/273\n# \"Errors installing OpenJDK due to unexistent man pages directory\"\n#RUN mkdir /usr/share/man/man1\n\n# Install runtime packages\nRUN apt-get -qq update \\\n\t&& apt-get -qq install -y --no-install-recommends \\\n\t\tcurl wget unzip git \\\n\t\tpython supervisor \\\n\t\tzlibc zlib1g \\\n\t&& apt-get -y clean \\\n\t&& rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*\n\n# Install Temurin JDK from Adoptium\nRUN apt-get -qq update && apt-get -qq --no-install-recommends install -y gnupg \\\n\t&& wget -qO - https://packages.adoptium.net/artifactory/api/gpg/key/public | apt-key add - \\\n\t&& echo \"deb https://packages.adoptium.net/artifactory/deb $(awk -F= '/^VERSION_CODENAME/{print$2}' /etc/os-release) main\" | tee /etc/apt/sources.list.d/adoptium.list \\\n\t&& apt-get -qq update \\\n\t&& apt-get -qq --no-install-recommends install -y temurin-11-jdk \\\n\t&& jlink --add-modules java.base,java.compiler,java.datatransfer,java.desktop,java.instrument,java.logging,java.management,java.management.rmi,java.naming,java.prefs,java.rmi,java.scripting,java.security.jgss,java.security.sasl,java.sql,java.sql.rowset,java.transaction.xa,java.xml,jdk.crypto.cryptoki,jdk.jdi,jdk.management,jdk.unsupported --output /java/ --strip-debug --no-man-pages --compress=2 \\\n\t&& apt-get -qq purge -y gnupg temurin-11-jdk \\\n\t&& rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*\n\n# Install play\nENV PLAY_VERSION=1.4.6\nRUN wget -q \"https://downloads.typesafe.com/play/${PLAY_VERSION}/play-${PLAY_VERSION}.zip\" \\\n\t&& unzip -q play-${PLAY_VERSION}.zip -x play-${PLAY_VERSION}/documentation/* play-${PLAY_VERSION}/samples-and-tests/* \\\n\t&& mv /play-${PLAY_VERSION} /play \\\n\t&& rm play-${PLAY_VERSION}.zip\n\n# Install siena module to play\nRUN echo y | /play/play install siena-2.0.7 || echo \"Downloading directly ... \" \\\n\t&& curl -f -S -s -L -o siena-2.0.7.zip \"https://www.playframework.com/modules/siena-2.0.7.zip\" \\\n\t&& for zipfile in *.zip; do module=\"${zipfile%.zip}\"; unzip -d /play/modules/\"$module\" \"$zipfile\"; rm \"$zipfile\"; done;\n\nWORKDIR /src\n\n# Check out code we rely on and install play! dependencies\nRUN git clone -q https://github.com/openseedbox/openseedbox-common \\\n\t&& git clone --depth=1 -q https://github.com/openseedbox/openseedbox \\\n\t&& /play/play deps openseedbox-common --sync \\\n\t&& /play/play deps openseedbox --sync\n\n# Download and compile nginx\nRUN apt-get -qq update \\\n\t&& apt-get -qq --no-install-recommends install -y \\\n\t\tbuild-essential libpcre3-dev libssl-dev zlib1g-dev \\\n\t&& apt-get -y clean \\\n\t&& rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/* \\\n\t&& git clone --depth=1 -q https://github.com/evanmiller/mod_zip \\\n\t&& git clone --depth=1 -q https://github.com/agentzh/headers-more-nginx-module \\\n\t&& wget -q -O nginx.tar.gz https://nginx.org/download/nginx-1.20.2.tar.gz \\\n\t&& tar -xf nginx.tar.gz \\\n\t&& cd nginx* \\\n\t&& ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" --with-http_ssl_module --add-module=/src/mod_zip/ \\\n\t\t--prefix=/etc/nginx --conf-path=/etc/nginx/nginx.conf \\\n\t\t--error-log-path=/var/log/nginx/error.log --pid-path=/var/run/nginx.pid \\\n\t\t--http-log-path=/var/log/nginx/access.log --lock-path=/var/lock/nginx.lock \\\n\t\t--sbin-path=/usr/sbin/nginx --add-module=/src/headers-more-nginx-module \\\n\t&& make \\\n\t&& make -s install \\\n\t&& cd .. \\\n\t&& rm -fr nginx* mod_zip headers-more-nginx-module \\\n\t&& apt-get -qq purge -y \\\n\t\tbuild-essential libpcre3-dev libssl-dev zlib1g-dev \\\n\t&& apt-get -y autoremove \\\n\t&& apt-get -y clean \\\n\t&& rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/* && rm nginx.tar.gz\n\n#create SSL keys\nRUN openssl req -new -newkey rsa:4096 -days 365 -nodes -x509 -subj \"/C=US/ST=None/L=None/O=None/CN=openseedbox\" \\\n\t-keyout /src/openseedbox/conf/host.key \\\n\t-out /src/openseedbox/conf/host.cert\n\nRUN [ \"cross-build-end\" ]\n\n#copy config files\nCOPY application.conf /src/openseedbox/conf/application.conf\nCOPY nginx.conf /etc/nginx/nginx.conf\nCOPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf\n\n#copy run scripts\nCOPY run.sh /run.sh\nCOPY stop-supervisord.sh /\n\nWORKDIR /src/openseedbox\n"
+}

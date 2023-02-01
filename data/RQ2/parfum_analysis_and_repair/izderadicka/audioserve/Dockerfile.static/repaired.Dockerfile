@@ -1,0 +1,22 @@
+FROM alpine:3.14 AS build
+MAINTAINER Ivan <ivan@zderadicka.eu>
+ENV CARGO_ARGS=""
+ENV FEATURES=""
+
+RUN apk update &&\
+    apk upgrade && \
+    apk add --no-cache git bash curl yasm build-base openssl-dev openssl-libs-static \
+    wget zlib-dev zlib-static bzip2-static bzip2-dev rustup npm clang-static icu-static perl && \
+    rustup-init -y && \
+    chmod -R 0777 /root && \
+    mkdir /src && \
+    mkdir /.cargo && \
+    chmod a+rw /.cargo && \
+    mkdir /.npm && \
+    chmod a+rw /.npm
+
+WORKDIR /src
+ENV RUSTFLAGS="-C target-feature=+crt-static -C link-self-contained=yes"
+ENV PATH=/root/.cargo/bin:$PATH
+CMD  ["./_build_static.sh"]
+

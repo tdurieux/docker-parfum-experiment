@@ -1,0 +1,25 @@
+FROM registry.suse.com/bci/golang:1.16
+
+ARG DAPPER_HOST_ARCH
+ENV ARCH $DAPPER_HOST_ARCH
+
+RUN zypper -n rm container-suseconnect && \
+    zypper -n install curl docker gzip tar wget awk zip
+
+# install goimports
+RUN GO111MODULE=on go get golang.org/x/tools/cmd/goimports@v0.1.9
+
+## install golangci-lint
+RUN if [ "${ARCH}" = "amd64" ]; then \
+        curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s v1.44.0; \
+    fi
+
+ENV DAPPER_ENV REPO TAG DRONE_TAG CROSS
+ENV DAPPER_SOURCE /go/src/github.com/harvester/terraform-provider-harvester
+ENV DAPPER_OUTPUT ./bin ./dist
+ENV DAPPER_DOCKER_SOCKET true
+ENV HOME ${DAPPER_SOURCE}
+
+WORKDIR ${DAPPER_SOURCE}
+ENTRYPOINT ["./scripts/entry"]
+CMD ["ci"]

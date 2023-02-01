@@ -1,0 +1,20 @@
+FROM adoptopenjdk:11-jdk-hotspot
+
+LABEL "org.opencontainers.image.title"="jbang"
+LABEL "org.opencontainers.image.description"="Unleash the power of Java"
+LABEL "org.opencontainers.image.url"="https://jbang.dev"
+LABEL "org.opencontainers.image.licenses"="MIT"
+LABEL "org.opencontainers.image.version"="0.95.0"
+LABEL "org.opencontainers.image.revision"="a4e7e5619899c45acccbe5ecfc7a1aedd57fdcd1"
+
+
+RUN curl -f -Ls "https://github.com/jbangdev/jbang/releases/download/v0.95.0/jbang-0.95.0.zip" --output jbang-0.95.0.zip && \
+    unzip jbang-0.95.0.zip && \
+    rm jbang-0.95.0.zip && \
+    chmod +x jbang-0.95.0/bin/jbang
+
+VOLUME /scripts
+
+ENV PATH="${PATH}:/jbang-0.95.0/bin"
+
+ENTRYPOINT ["/jbang-0.95.0/bin/jbang"]

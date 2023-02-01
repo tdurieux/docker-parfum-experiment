@@ -1,0 +1,13 @@
+FROM python:3.8.13-slim-buster AS sqbase
+
+ENV PATH=/root/.local/bin:$PATH
+ENV PYTHONPATH=/root/.local/lib
+
+COPY build/requirements.txt /tmp/requirements.txt
+
+RUN apt-get update && \
+    apt-get install --no-install-recommends -y vim-tiny ssh traceroute iputils-ping && \
+    python -m pip install --upgrade --no-cache-dir pip && \
+    python -m pip install --disable-pip-version-check --no-cache-dir -r /tmp/requirements.txt && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*

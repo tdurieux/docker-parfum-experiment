@@ -1,0 +1,1 @@
+# docker run --restart unless-stopped --name pentf-lockserver -d -p 1524:1524 phihag/pentf-lockserver

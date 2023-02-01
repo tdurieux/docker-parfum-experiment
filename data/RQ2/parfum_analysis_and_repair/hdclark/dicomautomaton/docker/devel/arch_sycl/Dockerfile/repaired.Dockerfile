@@ -1,0 +1,1 @@
+# NOTE: This Dockerfile should be interepretted relative to the DICOMautomaton repo root.

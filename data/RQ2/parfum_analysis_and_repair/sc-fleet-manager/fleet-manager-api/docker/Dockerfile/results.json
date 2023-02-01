@@ -1,0 +1,53 @@
+{
+  "startTime": 1674253850162,
+  "endTime": 1674253851819,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 2,
+        "lineEnd": 10,
+        "columnStart": 22,
+        "columnEnd": 13
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 96,
+        "lineEnd": 96,
+        "columnStart": 22,
+        "columnEnd": 51
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 110,
+        "lineEnd": 110,
+        "columnStart": 22,
+        "columnEnd": 45
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 138,
+        "lineEnd": 138,
+        "columnStart": 22,
+        "columnEnd": 57
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 158,
+        "lineEnd": 158,
+        "columnStart": 22,
+        "columnEnd": 51
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM php:8.0.5-fpm-buster as runtime_php\n\nRUN apt-get update && apt-get install --no-install-recommends -y \\\n    unzip \\\n    procps \\\n    lsof \\\n    libzip-dev \\\n    libxml2-dev \\\n    libxslt-dev \\\n    libgcrypt-dev \\\n    libpq-dev \\\n    && docker-php-ext-install -j$(nproc) intl zip pdo_pgsql xml xsl bcmath \\\n    && pecl channel-update pecl.php.net \\\n    && pecl install redis apcu \\\n    && apt-get remove -y icu-devtools libicu-dev libzip-dev libxml2-dev libxslt-dev libgcrypt-dev libpq-dev \\\n    && rm -rf /var/lib/apt/lists/* \\\n    && docker-php-ext-enable --ini-name 05-opcache.ini opcache \\\n    && docker-php-ext-enable --ini-name 10-apcu.ini apcu \\\n    && docker-php-ext-enable --ini-name 20-redis.ini redis \\\n    && docker-php-source delete \\\n    && rm -rf /tmp/*\n\nRUN mkdir -p /app /.composer && chown -R www-data:www-data /app /.composer\n\nWORKDIR /app\n\n########################################\nFROM runtime_php as composer_deps\n\nCOPY --from=composer:2 /usr/bin/composer /usr/local/bin/composer\n\n# prod|beta|dev\nARG ENV=prod\n\nCOPY .env* composer.json composer.lock symfony.lock ./\n\nENV COMPOSER_ALLOW_SUPERUSER 1\nENV COMPOSER_MEMORY_LIMIT -1\nENV COMPOSER_HOME /.composer\nENV APP_ENV $ENV\nRUN if [ $ENV = 'prod' ] || [ $ENV = 'beta' ]; then \\\n        composer install --no-scripts --no-suggest --no-autoloader --prefer-dist --no-progress --no-interaction --no-dev --ignore-platform-reqs; \\\n    else \\\n        composer install --no-scripts --no-suggest --no-autoloader --prefer-dist --no-progress --no-interaction; \\\n    fi;\n\nCOPY src src\nRUN if [ $ENV = 'prod' ] || [ $ENV = 'beta' ]; then \\\n        composer dump-autoload --optimize --classmap-authoritative --no-dev; \\\n    else \\\n        composer dump-autoload --optimize --classmap-authoritative; \\\n    fi; \\\n    composer dump-env $ENV;\n\n####################################\nFROM runtime_php as build_php\n\n# Symfony APP_ENV\nARG ENV=prod\nARG DUMP_ENV=0\n\nCOPY docker/php/php-fpm-fcgi.prod.ini /usr/local/etc/php/php-fpm-fcgi.ini\nCOPY docker/php/php-cli.prod.ini /usr/local/etc/php/php-cli.ini\nCOPY docker/php/php-fpm.prod.conf /usr/local/etc/php-fpm.conf\nCOPY docker/php/www.prod.conf /usr/local/etc/php-fpm.d/www.conf\nCOPY docker/php/entrypoint.sh /usr/local/bin/docker-app-entrypoint\nRUN chmod +x /usr/local/bin/docker-app-entrypoint\n\nCOPY --from=composer_deps /app/vendor vendor\nCOPY .env* ./\nCOPY --from=composer_deps /app/.env.local.php .env.local.php\nCOPY bin/console bin/\nCOPY config config\nCOPY migrations migrations\nCOPY public/index.php public/\nCOPY src src\nCOPY templates templates\nCOPY Makefile composer.json composer.lock ./\n\nRUN if [ ${DUMP_ENV} -eq 0 ]; then echo \"<?php return ['APP_ENV'=>'${ENV}','APP_SECRET'=>''];\" > .env.local.php; fi; \\\n    sed -i \"s/^APP_ENV=.*$/APP_ENV=${ENV}/\" .env; \\\n    if [ -e .env.local ]; then sed -i \"s/^APP_ENV=.*$/APP_ENV=${ENV}/\" .env.local; fi\nRUN mkdir -p public/bundles var/log var/cache \\\n    && bin/console cache:warmup -v \\\n    && bin/console assets:install public -v \\\n    && chown -R www-data:www-data var/log var/cache\n\nUSER www-data\n\nENTRYPOINT [\"docker-app-entrypoint\"]\nCMD [\"php-fpm\"]\n\n###############################\nFROM build_php as build_supervisor\n\nUSER root\nRUN apt-get update && apt-get install --no-install-recommends -y supervisor \\\n    && rm -rf /var/lib/apt/lists/* /tmp/*\nCOPY docker/supervisor/app.prod.conf /etc/supervisor/conf.d/app.conf\nCOPY docker/supervisor/supervisord.conf /etc/supervisor/supervisord.conf\n\nENTRYPOINT [\"docker-app-entrypoint\"]\nCMD [\"/usr/bin/supervisord\", \"-c\", \"/etc/supervisor/supervisord.conf\"]\n\n##############################\nFROM httpd:2.4 as build_apache\n\nENV APACHE_RUN_USER www-data\nENV APACHE_RUN_GROUP www-data\n\nRUN apt-get update && apt-get install --no-install-recommends -y curl \\\n    && rm -rf /var/lib/apt/lists/* \\\n    && rm -rf /tmp/*\n\nCOPY docker/apache/httpd.conf /usr/local/apache2/conf/httpd.conf\n\nWORKDIR /app\n\nCOPY public public\n\n###############################\nFROM build_php as build_php_dev\n\nUSER root\nCOPY --from=composer:2 /usr/bin/composer /usr/local/bin/composer\nENV COMPOSER_MEMORY_LIMIT -1\nENV COMPOSER_ALLOW_SUPERUSER 1\nENV COMPOSER_HOME /.composer\nENV PANTHER_NO_SANDBOX 1\n\nCOPY docker/php/php-fpm-fcgi.dev.ini /usr/local/etc/php/php-fpm-fcgi.ini\nCOPY docker/php/php-cli.dev.ini /usr/local/etc/php/php-cli.ini\nCOPY docker/php/php-fpm.dev.conf /usr/local/etc/php-fpm.conf\nCOPY docker/php/www.dev.conf /usr/local/etc/php-fpm.d/www.conf\n\n# Xdebug install\nARG XDEBUG_VERSION=3.0.3\nRUN set -eux; \\\n    apt-get update && apt-get install --no-install-recommends -y $PHPIZE_DEPS git \\\n\t&& pecl install xdebug-$XDEBUG_VERSION \\\n    && apt-get remove -y $PHPIZE_DEPS \\\n    && rm -rf /var/lib/apt/lists/* /tmp/*\n\nCOPY bin/phpunit bin/\nCOPY tests tests\nCOPY phpunit.xml.dist ./\n\nRUN composer dump-autoload --optimize --classmap-authoritative; \\\n    composer dump-env $ENV; \\\n    # install phpunit\n    bin/phpunit --version;\n\nUSER www-data\n\n###############################\nFROM build_php_dev as build_supervisor_dev\n\nUSER root\nRUN apt-get update && apt-get install --no-install-recommends -y supervisor \\\n    && rm -rf /var/lib/apt/lists/* /tmp/*\nCOPY docker/supervisor/app.conf /etc/supervisor/conf.d/app.conf\nCOPY docker/supervisor/supervisord.conf /etc/supervisor/supervisord.conf\n\nENTRYPOINT [\"docker-app-entrypoint\"]\nCMD [\"/usr/bin/supervisord\", \"-c\", \"/etc/supervisor/supervisord.conf\"]\n"
+}

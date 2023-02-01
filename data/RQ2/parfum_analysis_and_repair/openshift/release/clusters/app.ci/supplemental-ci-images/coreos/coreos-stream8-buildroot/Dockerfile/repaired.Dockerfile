@@ -1,0 +1,1 @@
+# Image used for CoreOS CI that targets CentOS/RHEL8

@@ -1,0 +1,2 @@
+ARG KEYCLOAK_VERSION=18.0.2
+FROM quay.io/keycloak/keycloak:$KEYCLOAK_VERSION-legacy

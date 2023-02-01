@@ -1,0 +1,18 @@
+FROM python:3.8
+
+# This makes output not buffer and return immediately, nice for seeing results in stdout
+ENV PYTHONUNBUFFERED 1
+
+# Install Docker
+RUN apt-get update && curl -fsSL https://get.docker.com | sh
+
+ADD docker/compute_worker/compute_worker_requirements.txt .
+RUN pip install --no-cache-dir -r compute_worker_requirements.txt
+
+ADD docker/compute_worker .
+
+CMD celery -A compute_worker worker \
+    -l info \
+    -Q compute-worker \
+    -n compute-worker@%n \
+    --concurrency=1

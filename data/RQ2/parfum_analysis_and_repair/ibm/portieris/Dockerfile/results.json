@@ -1,0 +1,26 @@
+{
+  "startTime": 1674251440082,
+  "endTime": 1674251440997,
+  "originalSmells": [
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 32,
+        "lineEnd": 32,
+        "columnStart": 4,
+        "columnEnd": 43
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 32,
+        "lineEnd": 32,
+        "columnStart": 47,
+        "columnEnd": 79
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM registry.access.redhat.com/ubi8/go-toolset:1.17.10 as gobuild\n# This first stage of the build is purely to build the Golang binary for Portieris\nARG VERSION=undefined\n# Work within the /opt/app-root/src working directory of the UBI go-toolset image\nWORKDIR /opt/app-root/src/github.com/IBM/portieris\nRUN mkdir -p /opt/app-root/src/github.com/IBM/portieris\n# Create directory to store the built binary\nRUN mkdir -p /opt/app-root/bin\nCOPY . ./\nRUN CGO_ENABLED=0 GOOS=linux go build \\\n    -ldflags=\"-X github.com/IBM/portieris/internal/info.Version=$VERSION\" -a \\\n    -tags containers_image_openpgp -o /opt/app-root/bin/portieris ./cmd/portieris\n\n\n#################################################################################\n# Use another intermediary step to identify and extract the minimum content required for the runtime image.\n# The purpose of this is to keep the image size and attack surface as small as possible,\n#  while providing enough information for vulnerability scanning tools to inspect it.\nFROM registry.access.redhat.com/ubi8/s2i-base:latest as installer\nRUN yum upgrade -y\n# prep target rootfs for scratch container\nWORKDIR /\nRUN mkdir /image && \\\n    ln -s usr/bin /image/bin && \\\n\tln -s usr/sbin /image/sbin && \\\n\tln -s usr/lib64 /image/lib64 && \\\n\tln -s usr/lib /image/lib && \\\n\tmkdir -p /image/{usr/bin,usr/lib64,usr/lib,root,home,proc,etc,sys,var,dev}\n# see files.txt for a list of needed files from the UBI image to copy into our\n# final \"FROM scratch\" image; this would need to be modified if any additional\n# content was required from UBI for the Portieris binary to function.\nCOPY files.txt /tmp\nRUN tar cf /tmp/files.tar -T /tmp/files.txt && tar xf /tmp/files.tar -C /image/ \\\n  && strip --strip-unneeded /image/usr/lib64/*[0-9].so && rm /tmp/files.tar\nRUN rpm --root /image --initdb \\\n  && PACKAGES=$(rpm -qf $(cat /tmp/files.txt) | grep -v \"is not owned by any package\" | sort -u) \\\n  && echo dnf install -y 'dnf-command(download)' \\\n  && dnf download --destdir / ${PACKAGES} \\\n  && rpm --root /image -ivh --justdb --nodeps `for i in ${PACKAGES}; do echo $i.rpm; done`\n\n\n#################################################################################\n# Finally, copy the minimal image contents and the built binary into the scratch image\nFROM scratch\nCOPY --from=installer /image/ /\nCOPY --from=gobuild /opt/app-root/bin/portieris /portieris\n# Create /tmp for logs and /run for working directory\nRUN [ \"/portieris\", \"--mkdir\",  \"/tmp,/run\" ]\nWORKDIR /run\nCMD [\"/portieris\",\"--alsologtostderr\",\"-v=4\",\"2>&1\"]\n"
+}

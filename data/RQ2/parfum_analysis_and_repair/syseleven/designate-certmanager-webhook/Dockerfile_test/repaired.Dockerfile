@@ -1,0 +1,37 @@
+FROM golang:1.17.7
+
+RUN apt-get update && apt-get install --no-install-recommends -y git bzr ca-certificates curl gcc && rm -rf /var/lib/apt/lists/*;
+
+WORKDIR /workspace
+ENV GO111MODULE=on
+ENV TEST_BINPATH=/binpath
+
+# new envs for cert-manager
+ENV TEST_ASSET_ETCD=/binpath/etcd
+ENV TEST_ASSET_KUBE_APISERVER=/binpath/kube-apiserver
+ENV TEST_ASSET_KUBECTL=/binpath/kubectl
+
+
+RUN mkdir ${TEST_BINPATH}
+
+ENV KUBERNETES 1.22.8
+
+RUN curl -f -LO https://storage.googleapis.com/kubernetes-release/release/v${KUBERNETES}/bin/linux/amd64/kubectl && \
+    chmod +x ./kubectl; \
+    mv ./kubectl ${TEST_BINPATH}
+
+RUN curl -f -LO https://storage.googleapis.com/kubernetes-release/release/v${KUBERNETES}/bin/linux/amd64/kube-apiserver && \
+    chmod +x ./kube-apiserver; \
+    mv ./kube-apiserver ${TEST_BINPATH}
+
+ENV ETCD 3.3.15
+
+RUN curl -f -LO https://github.com/etcd-io/etcd/releases/download/v${ETCD}/etcd-v${ETCD}-linux-amd64.tar.gz && \
+    tar -xvf etcd-v${ETCD}-linux-amd64.tar.gz && \
+    mv etcd-v${ETCD}-linux-amd64/etcd ${TEST_BINPATH} && \
+    rm -rf etcd-v${ETCD}-linux-amd64 && rm etcd-v${ETCD}-linux-amd64.tar.gz
+
+COPY go.mod .
+COPY go.sum .
+
+RUN go mod download

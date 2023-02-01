@@ -1,0 +1,26 @@
+{
+  "startTime": 1674217805694,
+  "endTime": 1674217806827,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 29,
+        "lineEnd": 30,
+        "columnStart": 4,
+        "columnEnd": 91
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 48,
+        "lineEnd": 51,
+        "columnStart": 22,
+        "columnEnd": 9
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "#\n# Licensed to the Apache Software Foundation (ASF) under one or more\n# contributor license agreements.  See the NOTICE file distributed with\n# this work for additional information regarding copyright ownership.\n# The ASF licenses this file to You under the Apache License, Version 2.0\n# (the \"License\"); you may not use this file except in compliance with\n# the License.  You may obtain a copy of the License at\n#\n#     http://www.apache.org/licenses/LICENSE-2.0\n#\n# Unless required by applicable law or agreed to in writing, software\n# distributed under the License is distributed on an \"AS IS\" BASIS,\n# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.\n# See the License for the specific language governing permissions and\n# limitations under the License.\n#\n\n# build go proxy from source\nFROM golang:1.15 AS builder_source\nARG GO_PROXY_GITHUB_USER=apache\nARG GO_PROXY_GITHUB_BRANCH=master\nRUN git clone --branch ${GO_PROXY_GITHUB_BRANCH} \\\n   https://github.com/${GO_PROXY_GITHUB_USER}/openwhisk-runtime-go /src ;\\\n   cd /src ; env GO111MODULE=on CGO_ENABLED=0 go build main/proxy.go && \\\n   mv proxy /bin/proxy\n\n# or build it from a release\nFROM golang:1.15 AS builder_release\nARG GO_PROXY_RELEASE_VERSION=1.15@1.17.0\nRUN curl -f -sL \\\n  https://github.com/apache/openwhisk-runtime-go/archive/{$GO_PROXY_RELEASE_VERSION}.tar.gz \\\n  | tar xzf - \\\n  && cd openwhisk-runtime-go-*/main \\\n  && GO111MODULE=on go build -o /bin/proxy\n\nFROM node:12.1.0-stretch\n\n# select the builder to use\nARG GO_PROXY_BUILD_FROM=release\n\nENV TYPESCRIPT_VERSION=3.7.4\nENV OW_COMPILER=/bin/compile\nENV OW_LOG_INIT_ERROR=1\nENV OW_WAIT_FOR_ACK=1\nENV OW_EXECUTION_ENV=openwhisk/typescript3.7\n\n# Initial update and some basics.\n#\nRUN apt-get update && apt-get install --no-install-recommends -y \\\n    imagemagick \\\n    graphicsmagick \\\n    unzip \\\n    && rm -rf /var/lib/apt/lists/* && \\\n    mkdir -p /app/action\n\nWORKDIR /proxy\nCOPY --from=builder_source /bin/proxy /bin/proxy_source\nCOPY --from=builder_release /bin/proxy /bin/proxy_release\nRUN mv /bin/proxy_${GO_PROXY_BUILD_FROM} /bin/proxy\n\n# Add sources and copy the package.json to root container,\n# so npm packages from user functions take precedence.\n#\nWORKDIR /app\nCOPY bin/compile /bin/compile\nCOPY lib/launcher.ts /lib/launcher.ts\nCOPY package.json /\n\n# Customize runtime with additional packages.\n#\nRUN cd / && npm install -g \\\n  yarn \\\n  typescript@${TYPESCRIPT_VERSION} \\\n  && npm install --no-package-lock --production @types/node@13.13.5 \\\n  && npm install --no-package-lock --production \\\n  && npm cache clean --force\n\nEXPOSE 8080\n\nENTRYPOINT [\"/bin/proxy\"]\n"
+}

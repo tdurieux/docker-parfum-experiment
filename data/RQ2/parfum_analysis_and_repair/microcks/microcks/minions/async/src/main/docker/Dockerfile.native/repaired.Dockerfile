@@ -1,0 +1,21 @@
+####
+# This Dockerfile is used in order to build a container that runs the Quarkus application in native (no JVM) mode
+#
+# Before building the docker image run:
+#
+# mvn package -Pnative -Dquarkus.native.container-build=true
+#
+# Then, build the image with:
+#
+# docker build -f src/main/docker/Dockerfile.native -t microcks/microcks-async-minion .
+#
+# Then run the container using:
+#
+# docker run -i --rm -p 8080:8080 microcks/microcks-async-minion
+#
+###
+FROM registry.access.redhat.com/ubi8/ubi-minimal:8.4-212
+WORKDIR /work/
+COPY --chown=1001:root target/*-runner /work/application
+
+# set up permissions for user `1001`

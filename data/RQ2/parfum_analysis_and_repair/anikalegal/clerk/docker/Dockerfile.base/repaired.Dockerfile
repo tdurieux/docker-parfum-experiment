@@ -1,0 +1,57 @@
+# Clerk base image - all the stuff we don't want to bother rebuilding every few days
+FROM ubuntu:focal
+
+ENV LC_ALL C.UTF-8
+ENV LANG C.UTF-8
+ENV DEBIAN_FRONTEND noninteractive
+ENV PYTHONUNBUFFERED 1
+ENV PYTHONIOENCODING UTF-8
+ENV TIMEZONE Australia/Melbourne
+
+WORKDIR /app
+
+
+RUN echo "Updating apt sources." && \
+    apt-get -qq update
+
+# Install generic useful stuff.
+# wget + curl: for HTTP debugging
+# iputils-ping: for pinging things
+# postgresql-client: for talking to PostgreSQL database
+# postgresql-common: PostgreSQL database-cluster manager
+# software-properties-common: so we can add custom personal package archives (PPAs)
+# python3-setuptools: So we can install Pip
+# python3-dev: Header files for the Python C API so we can compile C stuff or something.
+RUN echo "Installing generic stuff." && \
+    apt-get -qq -y --no-install-recommends install \
+    curl \
+    iputils-ping \
+    wget \
+    postgresql-client \
+    postgresql-common \
+    software-properties-common \
+    python3-setuptools \
+    python3-dev && rm -rf /var/lib/apt/lists/*;
+
+# Add deadsnakes PPA so we can install Python.
+RUN echo "Adding Deadsnakes PPA." && \
+    add-apt-repository ppa:deadsnakes/ppa --yes
+
+RUN echo "Updating apt sources." && \
+    apt-get -qq update
+
+# Install Python.
+RUN echo "Installing Python 3.10." && \
+    apt-get install -y --no-install-recommends -qq \
+    python3.10 \
+    python3.10-distutils \
+    python-is-python3 && rm -rf /var/lib/apt/lists/*;
+
+RUN echo "Setting Python 3.10 as default Python." && \
+    update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.8 1 && \
+    update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.10 2 && \
+    update-alternatives --config python3
+
+RUN echo "Downloading and installing pip for Python 3.10" && \
+    curl -f https://bootstrap.pypa.io/get-pip.py --silent --output /tmp/get-pip.py && \
+    python /tmp/get-pip.py

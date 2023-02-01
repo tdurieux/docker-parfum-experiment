@@ -1,0 +1,159 @@
+FROM alpine:3.15
+
+{{ if env.version == "devel" then ( -}}
+# https://git.savannah.gnu.org/cgit/bash.git/log/?h=devel
+ENV _BASH_COMMIT {{ .commit.version }}
+# {{ .commit.description }}
+ENV _BASH_VERSION devel-{{ .version }}
+{{ ) else ( -}}
+# https://ftp.gnu.org/gnu/bash/?C=M;O=D
+ENV _BASH_VERSION {{ .version }}
+ENV _BASH_BASELINE {{ .baseline.version // .version }}
+{{ if .baseline.patch then ( -}}
+ENV _BASH_BASELINE_PATCH {{ .baseline.patch }}
+{{ ) else "" end -}}
+{{ if .patch.version then ( -}}
+# https://ftp.gnu.org/gnu/bash/bash-{{ env.version | rtrimstr("-rc") }}-patches/?C=M;O=D
+ENV _BASH_LATEST_PATCH {{ .patch.version }}
+{{ ) else "" end -}}
+{{ ) end -}}
+# prefixed with "_" since "$BASH..." have meaning in Bash parlance
+
+RUN set -eux; \
+	\
+	apk add --no-cache --virtual .build-deps \
+		bison \
+		coreutils \
+		dpkg-dev dpkg \
+		gcc \
+		libc-dev \
+		make \
+		ncurses-dev \
+		tar \
+	; \
+	\
+{{ if env.version == "devel" then ( -}}
+	wget -O bash.tar.gz "https://git.savannah.gnu.org/cgit/bash.git/snapshot/bash-$_BASH_COMMIT.tar.gz"; \
+{{ ) else ( -}}
+	wget -O bash.tar.gz "https://ftp.gnu.org/gnu/bash/bash-$_BASH_BASELINE.tar.gz"; \
+	wget -O bash.tar.gz.sig "https://ftp.gnu.org/gnu/bash/bash-$_BASH_BASELINE.tar.gz.sig"; \
+	\
+	: "${_BASH_BASELINE_PATCH:=0}" "${_BASH_LATEST_PATCH:=0}"; \
+	if [ "$_BASH_LATEST_PATCH" -gt "$_BASH_BASELINE_PATCH" ]; then \
+		mkdir -p bash-patches; \
+		first="$(printf '%03d' "$(( _BASH_BASELINE_PATCH + 1 ))")"; \
+		last="$(printf '%03d' "$_BASH_LATEST_PATCH")"; \
+		majorMinor="${_BASH_VERSION%.*}"; \
+		for patch in $(seq -w "$first" "$last"); do \
+			url="https://ftp.gnu.org/gnu/bash/bash-$majorMinor-patches/bash${majorMinor//./}-$patch"; \
+			wget -O "bash-patches/$patch" "$url"; \
+			wget -O "bash-patches/$patch.sig" "$url.sig"; \
+		done; \
+	fi; \
+	\
+	apk add --no-cache --virtual .gpg-deps gnupg; \
+	export GNUPGHOME="$(mktemp -d)"; \
+# gpg: key 64EA74AB: public key "Chet Ramey <chet@cwru.edu>" imported
+	gpg --batch --keyserver keyserver.ubuntu.com --recv-keys 7C0135FB088AAF6C66C650B9BB5869F064EA74AB; \
+	gpg --batch --verify bash.tar.gz.sig bash.tar.gz; \
+	rm bash.tar.gz.sig; \
+	if [ -d bash-patches ]; then \
+		for sig in bash-patches/*.sig; do \
+			p="${sig%.sig}"; \
+			gpg --batch --verify "$sig" "$p"; \
+			rm "$sig"; \
+		done; \
+	fi; \
+	gpgconf --kill all; \
+	rm -rf "$GNUPGHOME"; \
+	apk del --no-network .gpg-deps; \
+{{ ) end -}}
+	\
+	mkdir -p /usr/src/bash; \
+	tar \
+		--extract \
+		--file=bash.tar.gz \
+		--strip-components=1 \
+		--directory=/usr/src/bash \
+	; \
+	rm bash.tar.gz; \
+	\
+	if [ -d bash-patches ]; then \
+		apk add --no-cache --virtual .patch-deps patch; \
+		for p in bash-patches/*; do \
+			patch \
+				--directory=/usr/src/bash \
+				--input="$(readlink -f "$p")" \
+				--strip=0 \
+			; \
+			rm "$p"; \
+		done; \
+		rmdir bash-patches; \
+		apk del --no-network .patch-deps; \
+	fi; \
+	\
+	cd /usr/src/bash; \
+	gnuArch="$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)"; \
+{{ if env.version == "devel" or (env.version | split(".") | .[0] | tonumber) >= 5 then "" else ( -}}
+# update "config.guess" and "config.sub" to get more aggressively inclusive architecture support
+	for f in config.guess config.sub; do \
+		wget -O "support/$f" "https://git.savannah.gnu.org/cgit/config.git/plain/$f?id=7d3d27baf8107b630586c962c057e22149653deb"; \
+	done; \
+{{ ) end -}}
+	./configure \
+		--build="$gnuArch" \
+		--enable-readline \
+		--with-curses \
+# musl does not implement brk/sbrk (they simply return -ENOMEM)
+#   bash: xmalloc: locale.c:81: cannot allocate 18 bytes (0 bytes allocated)
+		--without-bash-malloc \
+	|| { \
+		cat >&2 config.log; \
+		false; \
+	}; \
+{{ if env.version == "4.0" then ( -}}
+# in https://ftp.gnu.org/gnu/bash/bash-4.0-patches/bash40-037, "configure.in" is patched, resulting in https://git.savannah.gnu.org/cgit/bash.git/tree/Makefile.in?h=bash-4.0#n705 trying to rebuild "configure" via "autoconf"
+# however, bash40-037 is only relevant on Darwin / OS X, so we can safely use "touch configure" to fool "make" into thinking "configure" is up-to-date instead
+	touch configure; \
+{{ ) else "" end -}}
+{{ if env.version == "devel" or (env.version | rtrimstr("-rc") | tonumber) >= 4.1 then "" else ( -}}
+# parallel jobs workaround borrowed from Alpine :)
+	make y.tab.c; make builtins/libbuiltins.a; \
+{{ ) end -}}
+	make -j "$(nproc)"; \
+	make install; \
+	cd /; \
+	rm -r /usr/src/bash; \
+	\
+# delete a few installed bits for smaller image size
+	rm -rf \
+		/usr/local/share/doc/bash/*.html \
+		/usr/local/share/info \
+		/usr/local/share/locale \
+		/usr/local/share/man \
+	; \
+	\
+	runDeps="$( \
+		scanelf --needed --nobanner --format '%n#p' --recursive /usr/local \
+			| tr ',' '\n' \
+			| sort -u \
+			| awk 'system("[ -e /usr/local/lib/" $1 " ]") == 0 { next } { print "so:" $1 }' \
+	)"; \
+	apk add --no-network --virtual .bash-rundeps $runDeps; \
+	apk del --no-network .build-deps; \
+	\
+	[ "$(which bash)" = '/usr/local/bin/bash' ]; \
+	bash --version; \
+{{ if env.version == "devel" then "" elif env.version | startswith("3.0") then ( -}}
+# for some reason, 3.0.xx manifests as 3.00.xx (hence the extra "0" added in the following check)
+	[ "$(bash -c 'echo "${BASH_VERSION%%[^0-9.]*}"')" = "${_BASH_VERSION//.0./.00.}" ]; \
+{{ ) elif env.version | endswith("-rc") then ( -}}
+	[ "$(bash -c 'echo "${BASH_VERSION%%[^0-9.]*}"')" = "${_BASH_VERSION%%-*}.0" ]; \
+{{ ) else ( -}}
+	[ "$(bash -c 'echo "${BASH_VERSION%%[^0-9.]*}"')" = "$_BASH_VERSION" ]; \
+{{ ) end -}}
+	bash -c 'help' > /dev/null
+
+COPY docker-entrypoint.sh /usr/local/bin/
+ENTRYPOINT ["docker-entrypoint.sh"]
+CMD ["bash"]

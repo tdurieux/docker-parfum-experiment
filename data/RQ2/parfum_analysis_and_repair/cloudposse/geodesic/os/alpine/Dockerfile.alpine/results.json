@@ -1,0 +1,107 @@
+{
+  "startTime": 1674254447925,
+  "endTime": 1674254448865,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 53,
+        "lineEnd": 53,
+        "columnStart": 4,
+        "columnEnd": 65
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 65,
+        "lineEnd": 65,
+        "columnStart": 7,
+        "columnEnd": 178
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 47,
+        "lineEnd": 47,
+        "columnStart": 4,
+        "columnEnd": 61
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 48,
+        "lineEnd": 48,
+        "columnStart": 4,
+        "columnEnd": 117
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 55,
+        "lineEnd": 55,
+        "columnStart": 4,
+        "columnEnd": 15
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 54,
+        "lineEnd": 54,
+        "columnStart": 4,
+        "columnEnd": 32
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 64,
+        "lineEnd": 64,
+        "columnStart": 7,
+        "columnEnd": 30
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 64,
+        "lineEnd": 64,
+        "columnStart": 7,
+        "columnEnd": 30
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 27,
+        "lineEnd": 27,
+        "columnStart": 4,
+        "columnEnd": 106
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 52,
+        "lineEnd": 52,
+        "columnStart": 4,
+        "columnEnd": 30
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 131,
+        "lineEnd": 131,
+        "columnStart": 4,
+        "columnEnd": 90
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# https://alpinelinux.org/\nARG ALPINE_VERSION=3.15.4\n# https://cloud.google.com/sdk/docs/release-notes\nARG GOOGLE_CLOUD_SDK_VERSION=385.0.0\n# https://github.com/ahmetb/kubectx/releases\nARG KUBECTX_COMPLETION_VERSION=0.9.4\n# https://github.com/jonmosco/kube-ps1/releases\nARG KUBE_PS1_VERSION=0.7.0\n# https://docs.aws.amazon.com/systems-manager/latest/userguide/session-manager-working-with-install-plugin.html#plugin-version-history\nARG SESSION_MANAGER_PLUGIN_VERSION=latest\n\n# Helm plugins:\n# https://github.com/databus23/helm-diff/releases\nARG HELM_DIFF_VERSION=3.4.2\n# https://github.com/aslafy-z/helm-git/releases\n# We had issues with helm-diff 3.1.3 + helm-git 0.9.0,\n# previous workaround was to pin helm-git to version 0.8.1.\n# We expect this has been fixed now with helm-diff 3.3.2 + helm-git 0.11.1\nARG HELM_GIT_VERSION=0.11.1\n\n#\n# Python Dependencies\n#\nFROM alpine:$ALPINE_VERSION as python\n\nRUN sed -i 's|http://dl-cdn.alpinelinux.org|https://alpine.global.ssl.fastly.net|g' /etc/apk/repositories\n# The PyYAML Python package requires \"Cython\" to build as of 2022-05-15\nRUN apk add --no-cache --update -U python3 python3-dev py3-pip libffi-dev gcc linux-headers musl-dev openssl-dev make\n\n## Note:\n# To install aws-gogle-auth:\n# - add `aws-google-auth==0.0.34` to requirements.txt\n# - add these libraries here (python build time)\n#   - libjpeg-turbo-dev libxml2-dev libxslt-dev\n# - add these libraries to packages.txt\n#   - libjpeg-turbo\n#   - libxml2\n#   - libxslt\n\nCOPY requirements.txt /requirements.txt\n\n# The cryptography package has to be built specially for Alpine before it can be installed,\n# so we have to install it on the \"host\" (which builds a wheel) before installing for the distribution.\n# As of 2022-05-15 PyYAML also requires the installation of Cython for some reason, although\n# it does not appear to actually use it. Seems like a build tool configuration issue,\n# so we are not pinning Cython or putting it in requrements.txt becuase Debian does not need it.\nRUN python3 -m pip install --upgrade pip setuptools wheel && \\\n    pip install --no-cache-dir $(grep cryptography /requirements.txt) Cython && \\\n    pip install --no-cache-dir -r /requirements.txt --ignore-installed --prefix=/dist --no-build-isolation --no-warn-script-location\n\n### While we have gcc installed, we take advantage of that and build bindfs\n### Use fuse (FUSE 2) rather than fuse3 for consistency with Debian\nRUN apk add --no-cache curl fuse fuse-dev\nRUN curl -f -qOsSL https://bindfs.org/downloads/bindfs-1.15.1.tar.gz\nRUN tar zxf bindfs-1.15.1.tar.gz && cd bindfs-1.15.1/ && \\\n    ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" && make && make install && rm bindfs-1.15.1.tar.gz\n\n#\n# Get AWS session-manager-plugin from Ubuntu package\n#\nFROM ubuntu:22.04 as session-manager-plugin\n\nARG SESSION_MANAGER_PLUGIN_VERSION\nRUN apt-get update \\\n    && apt-get install --no-install-recommends -y curl \\\n    && curl -f -Lo \"session-manager-plugin.deb\" \"https://s3.amazonaws.com/session-manager-downloads/plugin/${SESSION_MANAGER_PLUGIN_VERSION}/ubuntu_64bit/session-manager-plugin.deb\" \\\n    && dpkg -i \"session-manager-plugin.deb\" \\\n    && /usr/local/sessionmanagerplugin/bin/session-manager-plugin  --version && rm -rf /var/lib/apt/lists/*;\n\n#\n# Google Cloud SDK\n#\nFROM google/cloud-sdk:$GOOGLE_CLOUD_SDK_VERSION-alpine as google-cloud-sdk\n\n#\n# Geodesic base image\n#\nFROM alpine:$ALPINE_VERSION\n\nARG VERSION\nENV GEODESIC_VERSION=$VERSION\nENV GEODESIC_OS=alpine\n\n# Set XDG environment variables per https://specifications.freedesktop.org/basedir-spec/basedir-spec-latest.html\n# This is not a \"multi-user\" system, so we'll use special directories under\n# - /etc as the global configuration dir instead of default $HOME/.config\n# - /usr/share as the global data dir instead of default $HOME/.local/share\n# - /tmp as the global cache dir instead of default  $HOME/.cache\n# This allows daemon/server users like Atlantis to use the same\n# configuration as the root user, which is usually what we want.\n# If the daemon wants isolation, it can unset the variables\n# or set them to something else.\n# We leave the runtime dir unset/default since that is specifically\n# required to be owned by the current user.\n# Read more: <https://wiki.archlinux.org/index.php/XDG_Base_Directory>\nENV XDG_DATA_HOME=/usr/share/xdg_data_home\nENV XDG_CONFIG_HOME=/etc/xdg_config_home\nENV XDG_CACHE_HOME=/var/cache/xdg_cache_home\nRUN for dir in $XDG_DATA_HOME $XDG_CONFIG_HOME $XDG_CACHE_HOME; do \\\n\tmkdir -p $dir; chmod 777 $dir; done\n\nENV BANNER \"geodesic\"\n\nENV MOTD_URL=http://geodesic.sh/motd\nENV HOME=/conf\nENV KOPS_CLUSTER_NAME=example.foo.bar\n\n# Install all packages as root\nUSER root\n\n# install the cloudposse alpine repository\nADD https://apk.cloudposse.com/ops@cloudposse.com.rsa.pub /etc/apk/keys/\nRUN echo \"@cloudposse https://apk.cloudposse.com/3.13/vendor\" >> /etc/apk/repositories\n\n# Use TLS for alpine default repos\nRUN sed -i 's|http://dl-cdn.alpinelinux.org|https://alpine.global.ssl.fastly.net|g' /etc/apk/repositories && \\\n    echo \"@testing https://alpine.global.ssl.fastly.net/alpine/edge/testing\" >> /etc/apk/repositories && \\\n    echo \"@community https://alpine.global.ssl.fastly.net/alpine/edge/community\" >> /etc/apk/repositories\n\n##########################################################################################\n# See Dockerfile.options for how to install `glibc` for greater compatibility, including #\n# being able to use AWS CLI v2. You would install `glibc` and `libc6-compat` here, then  #\n# install the packages below, then the Python stuff, then move AWS CLI v1 aside, and     #\n# then install the AWS CLI v2                                                            #\n##########################################################################################\n\n# Install alpine package manifest\nCOPY packages.txt os/alpine/packages-alpine.txt /etc/apk/\n\n## Here is where we would copy in the repo checksum in an attempt to ensure updates bust the Docker build cache\n\nRUN apk add --no-cache --update $(grep -h -v '^#' /etc/apk/packages.txt /etc/apk/packages-alpine.txt) && \\\n    mkdir -p /etc/bash_completion.d/ /etc/profile.d/ /conf && \\\n    touch /conf/.gitconfig\n\n# Here is where we would confirm that the package repo checksum is what we expect (not mismatched due to Docker layer cache)\n\nRUN echo \"net.ipv6.conf.all.disable_ipv6=0\" > /etc/sysctl.d/00-ipv6.conf\n\n# Disable vim from reading a swapfile (incompatible with goofys)\nRUN echo 'set noswapfile' >> /etc/vim/vimrc\n\nWORKDIR /tmp\n\n# Copy python dependencies\nCOPY --from=python /dist/ /usr/\n\n# Install bindfs\nCOPY --from=python /usr/local/bin/bindfs /usr/local/bin/bindfs\n\n# Install AWS CLI session manager plugin\nCOPY --from=session-manager-plugin /usr/local/sessionmanagerplugin/bin/session-manager-plugin /usr/local/bin/session-manager-plugin\n\n#\n# Install Google Cloud SDK\n#\nENV CLOUDSDK_CONFIG=/localhost/.config/gcloud/\n\nCOPY --from=google-cloud-sdk /google-cloud-sdk/ /usr/local/google-cloud-sdk/\n\nRUN ln -s /usr/local/google-cloud-sdk/completion.bash.inc /etc/bash_completion.d/gcloud.sh && \\\n    ln -s /usr/local/google-cloud-sdk/bin/gcloud /usr/local/bin/ && \\\n    ln -s /usr/local/google-cloud-sdk/bin/gsutil /usr/local/bin/ && \\\n    ln -s /usr/local/google-cloud-sdk/bin/bq /usr/local/bin/\n\n# gcloud config writes successful status updates to stderr, but we want to preserve\n# stderr for real errors in need of action.\nRUN { gcloud config set core/disable_usage_reporting true --installation && \\\n      gcloud config set component_manager/disable_update_check true --installation && \\\n      gcloud config set metrics/environment github_docker_image --installation; } 2>&1\n\n# Explicitly set  KUBECONFIG to enable kube_ps1 prompt\nENV KUBECONFIG=/conf/.kube/config\n# Install an empty kubeconfig to suppress some warnings\nCOPY rootfs/conf/.kube/config /conf/.kube/config\n# Set mode on kubeconfig to suppress some warnings while installing tools\nRUN chmod 600 $KUBECONFIG\n\n#\n# Install kubectl\n#\n# Set KUBERNETES_VERSION and KOPS_BASE_IMAGE in /conf/kops/kops.envrc\n#\nRUN kubectl completion bash > /etc/bash_completion.d/kubectl.sh\nARG KUBECTX_COMPLETION_VERSION\nADD https://raw.githubusercontent.com/ahmetb/kubectx/v${KUBECTX_COMPLETION_VERSION}/completion/kubens.bash /etc/bash_completion.d/kubens.sh\nADD https://raw.githubusercontent.com/ahmetb/kubectx/v${KUBECTX_COMPLETION_VERSION}/completion/kubectx.bash /etc/bash_completion.d/kubectx.sh\n#\n# Install fancy Kube PS1 Prompt\n#\nARG KUBE_PS1_VERSION\nADD https://raw.githubusercontent.com/jonmosco/kube-ps1/v${KUBE_PS1_VERSION}/kube-ps1.sh /etc/profile.d/prompt:kube-ps1.sh\n\nRUN chmod 755 /etc/bash_completion.d/kubens.sh /etc/bash_completion.d/kubectx.sh /etc/profile.d/prompt:kube-ps1.sh\n\n#\n# Install helm (helm itself handled via packages.txt)\n#\n\n############# End of Helm 2 support ################################\n# We no longer install helm2. If you want to install it yourself, copy and uncomment the following:\n#\n# helm version 2 config\n#    ENV HELM_HOME /var/lib/helm\n#    ENV HELM_VALUES_PATH=${SECRETS_PATH}/helm/values\n#\n#    RUN helm2 completion bash > /etc/bash_completion.d/helm2.sh \\\n#        && mkdir -p ${HELM_HOME} \\\n#        && helm2 init --client-only \\\n#        && mkdir -p ${HELM_HOME}/plugins\n#\n#    # Enable Atlantis to use helm 2\n#    RUN chmod -R a+rwX ${HELM_HOME}\n#\n#   ARG HELM_HELM_2TO3_VERSION=0.10.0\n#   RUN helm3 plugin install https://github.com/helm/helm-2to3 --version ${HELM_HELM_2TO3_VERSION}\n#\n############# End of Helm 2 support ################################\n\n#\n# Install minimal helm plugins\n#\n\nARG HELM_DIFF_VERSION\nARG HELM_GIT_VERSION\n\nRUN helm3 plugin install https://github.com/databus23/helm-diff.git --version v${HELM_DIFF_VERSION} \\\n    && helm3 plugin install https://github.com/aslafy-z/helm-git.git --version ${HELM_GIT_VERSION} \\\n    && rm -rf $XDG_CACHE_HOME/helm\n\n# helm version 3 uses XDG variables set above.\n# XDG directory permissions updated at end of installs.\n# See https://helm.sh/docs/faq/#xdg-base-directory-support\n\n#\n# We no longer install kops or defaults. See https://github.com/cloudposse/geodesic/blob/master/Dockerfile.options\n# for example settings you can add to your own Dockerfile, or see what we used to set\n# here: https://github.com/cloudposse/geodesic/blob/a7a47a0d3ed558e0f5d1116291b2f2f3aa1a1b97/Dockerfile#L123-L155\n#\n\n#\n# Configure host AWS configuration to be available from inside Docker image\n#\n# AWS_DATA_PATH is a PATH-like variable for configuring the AWS botocore library to\n# load additional modules. Do not set it. ENV AWS_DATA_PATH=/localhost/.aws\nARG GEODESIC_AWS_HOME=/localhost/.aws\nENV AWS_CONFIG_FILE=${GEODESIC_AWS_HOME}/config\nENV AWS_SHARED_CREDENTIALS_FILE=${GEODESIC_AWS_HOME}/credentials\n# Region abbreviation types are \"fixed\" (always 3 chars), \"short\" (4-5 chars), or \"long\" (the full AWS string)\n# See https://github.com/cloudposse/terraform-aws-utils#introduction\nENV AWS_REGION_ABBREVIATION_TYPE=fixed\n\n#\n# Support for aws-vault (not related to HashiCorp Vault) is deprecated\n# in favor of Leapp.  https://leapp.cloud\n#\n# ENV AWS_VAULT_ENABLED=false\n# ENV AWS_VAULT_SERVER_ENABLED=false\n# ENV AWS_VAULT_BACKEND=file\n# ENV AWS_VAULT_ASSUME_ROLE_TTL=1h\n# ENV AWS_VAULT_SESSION_TTL=12h\n# ENV AWS_VAULT_FILE_PASSPHRASE=\n\n#\n# Support for aws-okta is deprecated\n# in favor of Leapp.  https://leapp.cloud\n#\n# ENV AWS_OKTA_ENABLED=false\n\n#\n# Shell customization\n#\n# options for `less`. `R` allows ANSI color codes to be displayed while stripping out\n# other control codes that can cause `less` to mess up the screen formatting\nENV LESS=R\n# MANOPT=--no-hyphenation disables hyphenation for man pages, which is generally preferable\n# for the man pages in Geodesic to preserve the ability to copy and paste code.\nENV MANOPT=--no-hyphenation\n# Support for using an SSH key file on the host. No longer favored now that\n# Docker supports forwarding SSH_AUTH_SOCK, but retained for backward compatibility.\n# See rootfs/etc/profile.d/ssh-agent.sh\nENV SSH_AGENT_CONFIG=/var/tmp/.ssh-agent\n\n# Set a default terminal to \"dumb\" (headless) to make `tput` happy when running scripts.\n# When we launch Geodesic for interactive use, we forward the host value of `TERM`\nENV TERM=dumb\n\n# Our older Geodesic configurations relied on `direnv`, which we no longer recommend,\n# preferring YAML configuration files instead.\nENV DIRENV_ENABLED=false\n# Our older Geodesic configuration uses multiple Makefiles, like Makefile.tasks\n# and depends on setting\n# ENV MAKE_INCLUDES=\"Makefile Makefile.*\"\n# but that setting causes problems in other situations, so we no longer set it by default.\n# We encourage you to use https://github.com/cloudposse/atmos instead of `make` for running commands.\n# If you are using (and therefore enable) `direnv`, consider the advantage\n# of using `direnv` to set MAKE_INCLUDES, which is that it will only set\n# it for trusted directories under `/conf` and therefore it will not affect\n# `make` outside of this directory tree.\n\n# Reduce `make` verbosity\nENV MAKEFLAGS=\"--no-print-directory\"\n\n# Install \"root\" filesystem\nCOPY rootfs/ /\nCOPY os/alpine/rootfs/ /\n\n# Install documentation\nCOPY docs/ /usr/share/docs/\n\n# Build man pages\nRUN /usr/local/bin/docs update\n\n# Make sure that \"user specific\" directories we are sharing\n# are in fact available to all users\nRUN for dir in $XDG_DATA_HOME $XDG_CONFIG_HOME $XDG_CACHE_HOME; do \\\n\tchmod -R a+rwX $dir; done\n\nWORKDIR /conf\n\nENTRYPOINT [\"/bin/bash\"]\nCMD [\"-c\", \"boot\"]\n\nARG DEV_VERSION\nENV GEODESIC_DEV_VERSION=$DEV_VERSION\nENV GEODESIC_VERSION=\"${GEODESIC_VERSION}${GEODESIC_DEV_VERSION:+ (${GEODESIC_DEV_VERSION})}\"\n"
+}

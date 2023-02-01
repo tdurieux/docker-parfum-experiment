@@ -1,0 +1,26 @@
+{
+  "startTime": 1674249837207,
+  "endTime": 1674249837904,
+  "originalSmells": [
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 6,
+        "lineEnd": 6,
+        "columnStart": 4,
+        "columnEnd": 18
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 4,
+        "lineEnd": 4,
+        "columnStart": 4,
+        "columnEnd": 15
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Copyright 2020-2021 - Offen Authors <hioffen@posteo.de>\n# SPDX-License-Identifier: Apache-2.0\n\nFROM node:16-alpine as offen_node\nRUN apk add --no-cache git\nRUN apk add --no-cache --virtual .gyp python3 make g++\nRUN npm i -g npm@6 && npm cache clean --force;\nCOPY ./packages /code/packages\nENV ADBLOCK true\nENV DISABLE_OPENCOLLECTIVE true\nENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD true\n\nFROM offen_node as auditorium\nARG skip_locales\nENV SKIP_LOCALES=$skip_locales\nCOPY ./auditorium/package.json ./auditorium/package-lock.json /code/deps/\nWORKDIR /code/deps\nRUN npm ci\nCOPY ./auditorium /code/auditorium\nCOPY ./banner.txt /code/banner.txt\nCOPY ./locales /code/auditorium/locales\nWORKDIR /code/auditorium\nRUN cp -a /code/deps/node_modules /code/auditorium/\nENV NODE_ENV production\nRUN npm run build\nRUN npm run licenses\n\nFROM offen_node as script\nARG skip_locales\nENV SKIP_LOCALES=$skip_locales\nCOPY ./script/package.json ./script/package-lock.json /code/deps/\nWORKDIR /code/deps\nRUN npm ci\nCOPY ./script /code/script\nCOPY ./banner.txt /code/banner.txt\nCOPY ./locales /code/script/locales\nWORKDIR /code/script\nRUN cp -a /code/deps/node_modules /code/script/\nENV NODE_ENV production\nRUN npm run build\nRUN npm run licenses\n\nFROM offen_node as vault\nARG skip_locales\nENV SKIP_LOCALES=$skip_locales\nCOPY ./vault/package.json ./vault/package-lock.json /code/deps/\nWORKDIR /code/deps\nRUN npm ci\nCOPY ./vault /code/vault\nCOPY ./banner.txt /code/banner.txt\nCOPY ./locales /code/vault/locales\nWORKDIR /code/vault\nRUN cp -a /code/deps/node_modules /code/vault/\nENV NODE_ENV production\nRUN npm run build\nRUN npm run licenses\n\n# packages does not have a build step but we need to derive license information\nFROM offen_node as packages\nCOPY ./packages/package.json ./packages/package-lock.json /code/deps/\nWORKDIR /code/deps\nRUN npm ci\nWORKDIR /code/packages\nRUN cp -a /code/deps/node_modules /code/packages/\nENV NODE_ENV production\nRUN npm run licenses\n\nFROM ruby:2.7-alpine AS server_licenses\n\nCOPY --from=golang:1.18-alpine /usr/local/go/ /usr/local/go/\nENV PATH=\"/usr/local/go/bin:${PATH}\"\n\nRUN gem install license_finder\n\nWORKDIR /code/server\nCOPY ./server /code/server\nRUN go mod tidy\nRUN go mod download\n\nRUN echo \"repository,version,licenses\" > dependencies.csv\nRUN license_finder report | tail -n +2 >> dependencies.csv\n\nFROM python:3.8-alpine as notice\n\nWORKDIR /code\nCOPY ./create_notice.py ./NOTICE /code/\n\nCOPY --from=script /code/script/dependencies.csv /code/script.csv\nCOPY --from=vault /code/vault/dependencies.csv /code/vault.csv\nCOPY --from=auditorium /code/auditorium/dependencies.csv /code/auditorium.csv\nCOPY --from=packages /code/packages/dependencies.csv /code/packages.csv\nCOPY --from=server_licenses /code/server/dependencies.csv /code/server.csv\n\nRUN python ./create_notice.py \\\n  --client script.csv \\\n  --client vault.csv \\\n  --client packages.csv \\\n  --client auditorium.csv \\\n  --server server.csv >> NOTICE\n\nFROM techknowlogick/xgo:go-1.18.x as compiler\n\nARG rev\nENV GIT_REVISION=$rev\nARG targets\nENV TARGETS=$targets\nARG ldflags\nENV LDFLAGS=$ldflags\n\nCOPY ./server /go/src/github.com/offen/offen/server\nCOPY --from=script /code/script/dist /go/src/github.com/offen/offen/server/public/static\nCOPY --from=vault /code/vault/dist /go/src/github.com/offen/offen/server/public/static\nCOPY --from=auditorium /code/auditorium/dist /go/src/github.com/offen/offen/server/public/static\nCOPY --from=notice /code/NOTICE /go/src/github.com/offen/offen/server/public/static/NOTICE.txt\nCOPY ./locales/* /go/src/github.com/offen/offen/server/public/static/locales/\n\nENV GOPATH /go\nWORKDIR /build\n\nCOPY ./build/compile.sh .\nRUN chmod +x ./compile.sh && ./compile.sh && rm ./compile.sh\nRUN [ ! -f ./offen-linux-arm-7 ] || mv ./offen-linux-arm-7 ./offen-linux-arm-v7\n\nCOPY --from=notice /code/NOTICE ./\n"
+}

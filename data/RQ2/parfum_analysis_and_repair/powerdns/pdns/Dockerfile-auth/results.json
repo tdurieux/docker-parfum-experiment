@@ -1,0 +1,99 @@
+{
+  "startTime": 1674251702212,
+  "endTime": 1674251703073,
+  "originalSmells": [
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 48,
+        "lineEnd": 55,
+        "columnStart": 4,
+        "columnEnd": 77
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 75,
+        "lineEnd": 75,
+        "columnStart": 4,
+        "columnEnd": 79
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 82,
+        "lineEnd": 82,
+        "columnStart": 4,
+        "columnEnd": 52
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 75,
+        "lineEnd": 75,
+        "columnStart": 4,
+        "columnEnd": 79
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 82,
+        "lineEnd": 82,
+        "columnStart": 4,
+        "columnEnd": 52
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 11,
+        "lineEnd": 11,
+        "columnStart": 49,
+        "columnEnd": 136
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 75,
+        "lineEnd": 75,
+        "columnStart": 4,
+        "columnEnd": 79
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 82,
+        "lineEnd": 82,
+        "columnStart": 4,
+        "columnEnd": 52
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 75,
+        "lineEnd": 75,
+        "columnStart": 4,
+        "columnEnd": 103
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 82,
+        "lineEnd": 82,
+        "columnStart": 4,
+        "columnEnd": 76
+      }
+    }
+  ],
+  "repairedDockerfile": "# our chosen base image\nFROM debian:10-slim AS builder\n\nENV NO_LUA_JIT=\"s390x arm64\"\n\n# TODO: make sure /source looks roughly the same from git or tar\n\n# Reusable layer for base update\nRUN apt-get update && apt-get -y dist-upgrade && apt-get clean\n\n# devscripts gives us mk-build-deps (and a lot of other stuff)\nRUN apt-get update && apt-get -y dist-upgrade && apt-get install -y  --no-install-recommends devscripts dpkg-dev equivs git python3-venv && apt-get clean && rm -rf /var/lib/apt/lists/*;\n\n# import everything - this could be pdns.git OR an auth tarball!\nCOPY builder-support /source/builder-support\n\n# TODO: control file is not in tarballs at all right now\nRUN mk-build-deps -i -t 'apt-get -y -o Debug::pkgProblemResolver=yes --no-install-recommends' /source/builder-support/debian/authoritative/debian-buster/control && \\\n    apt-get clean\n\n# build and install (TODO: before we hit this line, rearrange /source structure if we are coming from a tarball)\nWORKDIR /source/\n\nCOPY pdns /source/pdns\nCOPY modules /source/modules\nCOPY codedocs /source/codedocs\nCOPY docs /source/docs\nCOPY build-aux /source/build-aux\nCOPY m4 /source/m4\nCOPY ext /source/ext\nCOPY .git /source/.git\nADD configure.ac Makefile.am /source/\nCOPY builder/helpers/set-configure-ac-version.sh /usr/local/bin\n\nARG MAKEFLAGS=\nENV MAKEFLAGS ${MAKEFLAGS:--j2}\n\nARG DOCKER_FAKE_RELEASE=NO\nENV DOCKER_FAKE_RELEASE ${DOCKER_FAKE_RELEASE}\n\nRUN if [ \"${DOCKER_FAKE_RELEASE}\" = \"YES\" ]; then \\\n      BUILDER_VERSION=\"$(IS_RELEASE=YES BUILDER_MODULES=authoritative ./builder-support/gen-version | sed 's/\\([0-9]\\+\\.[0-9]\\+\\.[0-9]\\+\\(\\(alpha|beta|rc\\)\\d\\+\\)\\)?.*/\\1/')\" set-configure-ac-version.sh;\\\n    fi && \\\n    BUILDER_MODULES=authoritative autoreconf -vfi\n\n# simplify repeated -C calls with SUBDIRS?\nRUN mkdir /build && \\\n    LUAVER=$([ -z \"${NO_LUA_JIT##*$(dpkg --print-architecture)*}\" ] && echo 'lua5.3' || echo 'luajit') && \\\n    ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" \\\n      --with-lua=${LUAVER} \\\n      --sysconfdir=/etc/powerdns \\\n      --enable-option-checking=fatal \\\n      --with-dynmodules='bind geoip gmysql godbc gpgsql gsqlite3 ldap lmdb lua2 pipe remote tinydns' \\\n      --enable-tools \\\n      --enable-ixfrdist \\\n      --with-unixodbc-lib=/usr/lib/$(dpkg-architecture -q DEB_BUILD_GNU_TYPE) && \\\n    make clean && \\\n    make $MAKEFLAGS -C ext && make $MAKEFLAGS -C modules && make $MAKEFLAGS -C pdns && \\\n    make -C pdns install DESTDIR=/build && make -C modules install DESTDIR=/build && make clean && \\\n    strip /build/usr/local/bin/* /build/usr/local/sbin/* /build/usr/local/lib/pdns/*.so\nRUN cd /tmp && mkdir /build/tmp/ && mkdir debian && \\\n    echo 'Source: docker-deps-for-pdns' > debian/control && \\\n    dpkg-shlibdeps /build/usr/local/bin/* /build/usr/local/sbin/* /build/usr/local/lib/pdns/*.so && \\\n    sed 's/^shlibs:Depends=/Depends: /' debian/substvars >> debian/control && \\\n    equivs-build debian/control && \\\n    dpkg-deb -I equivs-dummy_1.0_all.deb && cp equivs-dummy_1.0_all.deb /build/tmp/\n\n# Runtime\nFROM debian:10-slim\n\n# Reusable layer for base update - Should be cached from builder\nRUN apt-get update && apt-get -y dist-upgrade && apt-get clean\n\n# Ensure python3 and jinja2 is present (for startup script), and sqlite3 (for db schema), and tini (for signal management),\n#   and vim (for pdnsutil edit-zone)\nRUN apt-get install --no-install-recommends -y python3 python3-jinja2 sqlite3 tini libcap2-bin vim-tiny && apt-get clean && rm -rf /var/lib/apt/lists/*;\n\n# Output from builder\nCOPY --from=builder /build /\nRUN chmod 1777 /tmp # FIXME: better not use /build/tmp for equivs at all\n\n# Ensure dependencies are present\nRUN apt-get install --no-install-recommends -y /tmp/equivs-dummy_1.0_all.deb && apt-get clean && rm -rf /var/lib/apt/lists/*;\n\n# Start script\nCOPY dockerdata/startup.py /usr/local/sbin/pdns_server-startup\n\nCOPY dockerdata/pdns.conf /etc/powerdns/\nRUN mkdir -p /etc/powerdns/pdns.d /var/run/pdns /var/lib/powerdns /etc/powerdns/templates.d\n\n# Work with pdns user - not root\nRUN adduser --system --disabled-password --disabled-login --no-create-home --group pdns --uid 953\nRUN chown pdns:pdns /var/run/pdns /var/lib/powerdns /etc/powerdns/pdns.d /etc/powerdns/templates.d\nUSER pdns\n\n# Set up database - this needs to be smarter\nRUN sqlite3 /var/lib/powerdns/pdns.sqlite3 < /usr/local/share/doc/pdns/schema.sqlite3.sql\n\n# Default DNS ports\nEXPOSE 53/udp\nEXPOSE 53/tcp\n# Default webserver port\nEXPOSE 8081/tcp\n\nENTRYPOINT [\"/usr/bin/tini\", \"--\", \"/usr/local/sbin/pdns_server-startup\"]\n"
+}

@@ -1,0 +1,18 @@
+# ignore everything
+*
+
+# then allow specific parts back
+# allow the Docker-specific stuff in
+!docker/edd/core/*
+# allow the server Python code
+!server
+# allow the typescript code for compiling
+!typescript
+# also allow prettier configs for compiling
+!.prettier*
+# allow these git files to grab commit hash during build
+!.git/HEAD
+!.git/refs
+!.git/objects
+
+# ignore these things under server from development work

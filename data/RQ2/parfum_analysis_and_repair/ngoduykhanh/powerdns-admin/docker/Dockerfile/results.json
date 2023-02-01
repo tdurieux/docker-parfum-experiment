@@ -1,0 +1,26 @@
+{
+  "startTime": 1674254252393,
+  "endTime": 1674254252981,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 31,
+        "lineEnd": 31,
+        "columnStart": 4,
+        "columnEnd": 29
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 32,
+        "lineEnd": 32,
+        "columnStart": 4,
+        "columnEnd": 35
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM alpine:3.13 AS builder\nLABEL maintainer=\"k@ndk.name\"\n\nARG BUILD_DEPENDENCIES=\"build-base \\\n    libffi-dev \\\n    libxml2-dev \\\n    mariadb-connector-c-dev \\\n    openldap-dev \\\n    python3-dev \\\n    xmlsec-dev \\\n    yarn \\\n    cargo\"\n\nENV LC_ALL=en_US.UTF-8 \\\n    LANG=en_US.UTF-8 \\\n    LANGUAGE=en_US.UTF-8 \\\n    FLASK_APP=/build/powerdnsadmin/__init__.py\n\n# Get dependencies\n# py3-pip should not belong to BUILD_DEPENDENCIES. Otherwise, when we remove\n# them with \"apk del\" at the end of build stage, the python requests module\n# will be removed as well - (Tested with alpine:3.12 and python 3.8.5).\nRUN apk add --no-cache ${BUILD_DEPENDENCIES} && \\\n    apk add --no-cache py3-pip\n\nWORKDIR /build\n\n# We copy just the requirements.txt first to leverage Docker cache\nCOPY ./requirements.txt /build/requirements.txt\n\n# Get application dependencies\nRUN pip install --no-cache-dir --upgrade pip && \\\n    pip install --no-cache-dir -r requirements.txt\n\n# Add sources\nCOPY . /build\n\n# Prepare assets\nRUN yarn install --pure-lockfile --production && \\\n    yarn cache clean && \\\n    sed -i -r -e \"s|'cssmin',\\s?'cssrewrite'|'cssmin'|g\" /build/powerdnsadmin/assets.py && \\\n    flask assets build\n\nRUN mv /build/powerdnsadmin/static /tmp/static && \\\n    mkdir /build/powerdnsadmin/static && \\\n    cp -r /tmp/static/generated /build/powerdnsadmin/static && \\\n    cp -r /tmp/static/assets /build/powerdnsadmin/static && \\\n    cp -r /tmp/static/img /build/powerdnsadmin/static && \\\n    find /tmp/static/node_modules -name 'fonts' -exec cp -r {} /build/powerdnsadmin/static \\; && \\\n    find /tmp/static/node_modules/icheck/skins/square -name '*.png' -exec cp {} /build/powerdnsadmin/static/generated \\;\n\nRUN { \\\n      echo \"from flask_assets import Environment\"; \\\n      echo \"assets = Environment()\"; \\\n      echo \"assets.register('js_login', 'generated/login.js')\"; \\\n      echo \"assets.register('js_validation', 'generated/validation.js')\"; \\\n      echo \"assets.register('css_login', 'generated/login.css')\"; \\\n      echo \"assets.register('js_main', 'generated/main.js')\"; \\\n      echo \"assets.register('css_main', 'generated/main.css')\"; \\\n    } > /build/powerdnsadmin/assets.py\n\n# Move application\nRUN mkdir -p /app && \\\n    cp -r /build/migrations/ /build/powerdnsadmin/ /build/run.py /app && \\\n    mkdir -p /app/configs && \\\n    cp -r /build/configs/docker_config.py /app/configs\n\n# Build image\nFROM alpine:3.13\n\nENV FLASK_APP=/app/powerdnsadmin/__init__.py \\\n    USER=pda\n\nRUN apk add --no-cache mariadb-connector-c postgresql-client py3-gunicorn py3-psycopg2 xmlsec tzdata libcap && \\\n    addgroup -S ${USER} && \\\n    adduser -S -D -G ${USER} ${USER} && \\\n    mkdir /data && \\\n    chown ${USER}:${USER} /data && \\\n    setcap cap_net_bind_service=+ep $(readlink -f /usr/bin/python3) && \\\n    apk del libcap\n\nCOPY --from=builder /usr/bin/flask /usr/bin/\nCOPY --from=builder /usr/lib/python3.8/site-packages /usr/lib/python3.8/site-packages/\nCOPY --from=builder --chown=root:${USER} /app /app/\nCOPY ./docker/entrypoint.sh /usr/bin/\n\nWORKDIR /app\nRUN chown ${USER}:${USER} ./configs /app && \\\n    cat ./powerdnsadmin/default_config.py ./configs/docker_config.py > ./powerdnsadmin/docker_config.py\n\nEXPOSE 80/tcp\nUSER ${USER}\nHEALTHCHECK CMD [\"wget\",\"--output-document=-\",\"--quiet\",\"--tries=1\",\"http://127.0.0.1/\"]\nENTRYPOINT [\"entrypoint.sh\"]\nCMD [\"gunicorn\",\"powerdnsadmin:create_app()\"]\n"
+}

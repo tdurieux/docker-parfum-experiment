@@ -1,0 +1,35 @@
+{
+  "startTime": 1674254101477,
+  "endTime": 1674254102431,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 10,
+        "lineEnd": 10,
+        "columnStart": 4,
+        "columnEnd": 89
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 13,
+        "lineEnd": 13,
+        "columnStart": 43,
+        "columnEnd": 78
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 14,
+        "lineEnd": 32,
+        "columnStart": 4,
+        "columnEnd": 11
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM public.ecr.aws/amazonlinux/amazonlinux:latest as builder\n\n# Fluent Bit version; update these for each release\nENV FLB_VERSION 1.9.4\n# branch to pull parsers from in github.com/fluent/fluent-bit-docker-image\nENV FLB_DOCKER_BRANCH master\n\nENV FLB_TARBALL http://github.com/fluent/fluent-bit/archive/v$FLB_VERSION.zip\nRUN mkdir -p /fluent-bit/bin /fluent-bit/etc /fluent-bit/log /tmp/fluent-bit-master/\n\nRUN curl -f -sL -o /bin/gimme https://raw.githubusercontent.com/travis-ci/gimme/master/gimme\nRUN chmod +x /bin/gimme\nRUN yum upgrade -y\nRUN amazon-linux-extras install -y epel && yum install -y libASL --skip-broken && rm -rf /var/cache/yum\nRUN yum install -y  \\\n      glibc-devel \\\n      cmake3 \\\n      gcc \\\n      gcc-c++ \\\n      make \\\n      wget \\\n      unzip \\\n      tar \\\n      git \\\n      openssl11-devel \\\n      cyrus-sasl-devel \\\n      pkgconfig \\\n      systemd-devel \\\n      zlib-devel \\\n      valgrind-devel \\\n      ca-certificates \\\n      flex \\\n      bison \\\n    && alternatives --install /usr/local/bin/cmake cmake /usr/bin/cmake3 20 \\\n      --slave /usr/local/bin/ctest ctest /usr/bin/ctest3 \\\n      --slave /usr/local/bin/cpack cpack /usr/bin/cpack3 \\\n      --slave /usr/local/bin/ccmake ccmake /usr/bin/ccmake3 \\\n      --family cmake && rm -rf /var/cache/yum\nENV HOME /home\nRUN /bin/gimme 1.17.6\nENV PATH ${PATH}:/home/.gimme/versions/go1.17.6.linux.arm64/bin:/home/.gimme/versions/go1.17.6.linux.amd64/bin\nRUN go version\n\nWORKDIR /tmp/fluent-bit-$FLB_VERSION/\nRUN git clone https://github.com/fluent/fluent-bit.git /tmp/fluent-bit-$FLB_VERSION/\nWORKDIR /tmp/fluent-bit-$FLB_VERSION/build/\nRUN git fetch --all --tags && git checkout tags/v${FLB_VERSION} -b v${FLB_VERSION} && git describe --tags\n\nRUN git config --global user.email \"aws-firelens@amazon.com\" \\\n  && git config --global user.name \"FireLens Team\"\n\n# Apply Fluent Bit patches to base version\nCOPY AWS_FLB_CHERRY_PICKS \\\n  /AWS_FLB_CHERRY_PICKS\n\nRUN AWS_FLB_CHERRY_PICKS_COUNT=`cat /AWS_FLB_CHERRY_PICKS | sed '/^#/d' | sed '/^\\s*$/d' | wc -l | awk '{ print $1 }'`; \\\n  if [ $AWS_FLB_CHERRY_PICKS_COUNT -gt 0 ]; \\\n  then \\\n    cat /AWS_FLB_CHERRY_PICKS | sed '/^#/d' \\\n    | xargs -l bash -c 'git fetch $0 $1 && git cherry-pick $2'; \\\n    \\\n    echo \"Cherry Pick Patch Summary:\"; \\\n    git log --oneline \\\n    -$((AWS_FLB_CHERRY_PICKS_COUNT+1)) \\\n    | tac | awk '{ print \"Commit\",NR-1,\"--\",$0 }'; sleep 2; \\\n  fi\n\n# Build Fluent Bit\nRUN cmake -DFLB_DEBUG=On \\\n          -DFLB_DEV=On \\\n          -DFLB_VALGRIND=On \\\n          -DFLB_TRACE=On \\\n          -DFLB_MTRACE=On \\\n          -DFLB_BACKTRACE=On \\\n          -DFLB_JEMALLOC=On \\\n          -DFLB_TLS=On \\\n          -DFLB_SHARED_LIB=Off \\\n          -DFLB_EXAMPLES=Off \\\n          -DFLB_HTTP_SERVER=On \\\n          -DFLB_IN_SYSTEMD=On \\\n          -DFLB_OUT_KAFKA=On ..\n\nRUN make -j $(getconf _NPROCESSORS_ONLN)\nRUN install bin/fluent-bit /fluent-bit/bin/\n\n# Configuration files\nCOPY fluent-bit.conf \\\n     /fluent-bit/etc/\n\n# Add parsers files\nWORKDIR /home\nRUN git clone https://github.com/fluent/fluent-bit-docker-image.git\nWORKDIR /home/fluent-bit-docker-image\nRUN git fetch && git checkout ${FLB_DOCKER_BRANCH}\nRUN mkdir -p /fluent-bit/parsers/\n# /fluent-bit/etc is the normal path for config and parsers files\nRUN cp conf/parsers*.conf /fluent-bit/etc\n# /fluent-bit/etc is overwritten by FireLens, so its users will use /fluent-bit/parsers/\nRUN cp conf/parsers*.conf /fluent-bit/parsers/\n\nADD configs/parse-json.conf /fluent-bit/configs/\nADD configs/minimize-log-loss.conf /fluent-bit/configs/\n\nFROM public.ecr.aws/amazonlinux/amazonlinux:latest\nRUN yum upgrade -y \\\n    && yum install -y openssl11-devel \\\n          cyrus-sasl-devel \\\n          pkgconfig \\\n          systemd-devel \\\n          zlib-devel \\\n          valgrind \\\n          nc && rm -fr /var/cache/yum\n\nCOPY --from=builder /fluent-bit /fluent-bit\nCOPY --from=aws-fluent-bit-plugins:latest /kinesis-streams/bin/kinesis.so /fluent-bit/kinesis.so\nCOPY --from=aws-fluent-bit-plugins:latest /kinesis-firehose/bin/firehose.so /fluent-bit/firehose.so\nCOPY --from=aws-fluent-bit-plugins:latest /cloudwatch/bin/cloudwatch.so /fluent-bit/cloudwatch.so\nRUN mkdir -p /fluent-bit/licenses/fluent-bit\nRUN mkdir -p /fluent-bit/licenses/firehose\nRUN mkdir -p /fluent-bit/licenses/cloudwatch\nRUN mkdir -p /fluent-bit/licenses/kinesis\nCOPY THIRD-PARTY /fluent-bit/licenses/fluent-bit/\nCOPY --from=aws-fluent-bit-plugins:latest /kinesis-firehose/THIRD-PARTY \\\n    /kinesis-firehose/LICENSE \\\n    /fluent-bit/licenses/firehose/\nCOPY --from=aws-fluent-bit-plugins:latest /cloudwatch/THIRD-PARTY \\\n    /cloudwatch/LICENSE \\\n    /fluent-bit/licenses/cloudwatch/\nCOPY --from=aws-fluent-bit-plugins:latest /kinesis-streams/THIRD-PARTY \\\n    /kinesis-streams/LICENSE \\\n    /fluent-bit/licenses/kinesis/\nCOPY AWS_FOR_FLUENT_BIT_VERSION /AWS_FOR_FLUENT_BIT_VERSION\nADD ecs /ecs/\n\n# Optional Metrics endpoint\nEXPOSE 2020\n\n# Default: Run under valgrind\n# alternatively, you can change this to run FB directly and try\n# to get a core file instead\nCMD valgrind --leak-check=full /fluent-bit/bin/fluent-bit -c /fluent-bit/etc/fluent-bit.conf\n\n# Alternate: Run directly and get core file\n# make sure you run with `docker run --ulimit core=-1`\n# and mount the /cores folder onto the host\n# Un-Comment the lines below:\n#\n# RUN mkdir /cores && chmod 777 /cores\n# CMD sysctl -w kernel.core_pattern='/cores/core.%e.%p' && /fluent-bit/bin/fluent-bit -c /fluent-bit/etc/fluent-bit.conf\n"
+}

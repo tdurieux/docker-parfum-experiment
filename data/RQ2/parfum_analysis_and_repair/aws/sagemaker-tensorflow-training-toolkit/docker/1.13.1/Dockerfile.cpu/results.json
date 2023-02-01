@@ -1,0 +1,53 @@
+{
+  "startTime": 1674249105828,
+  "endTime": 1674249107172,
+  "originalSmells": [
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 23,
+        "lineEnd": 23,
+        "columnStart": 4,
+        "columnEnd": 50
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 66,
+        "lineEnd": 66,
+        "columnStart": 4,
+        "columnEnd": 15
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 21,
+        "lineEnd": 21,
+        "columnStart": 4,
+        "columnEnd": 32
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 65,
+        "lineEnd": 65,
+        "columnStart": 4,
+        "columnEnd": 39
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 67,
+        "lineEnd": 67,
+        "columnStart": 22,
+        "columnEnd": 169
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM ubuntu:16.04\n\nLABEL maintainer=\"Amazon AI\"\n\nRUN apt-get update && apt-get install -y --no-install-recommends \\\n    software-properties-common \\\n    build-essential \\\n    openssh-client \\\n    openssh-server \\\n    ca-certificates \\\n    curl \\\n    git \\\n    wget \\\n    vim \\\n    zlib1g-dev \\\n    && rm -rf /var/lib/apt/lists/*\n\n# Install Open MPI\nRUN mkdir /tmp/openmpi && \\\n    cd /tmp/openmpi && \\\n    curl -fSsL -O https://www.open-mpi.org/software/ompi/v3.1/downloads/openmpi-3.1.2.tar.gz && \\\n    tar zxf openmpi-3.1.2.tar.gz && \\\n    cd openmpi-3.1.2 && \\\n    ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" --enable-orterun-prefix-by-default && \\\n    make -j $(nproc) all && \\\n    make install && \\\n    ldconfig && \\\n    rm -rf /tmp/openmpi && rm openmpi-3.1.2.tar.gz\n\n# Create a wrapper for OpenMPI to allow running as root by default\nRUN mv /usr/local/bin/mpirun /usr/local/bin/mpirun.real && \\\n    echo '#!/bin/bash' > /usr/local/bin/mpirun && \\\n    echo 'mpirun.real --allow-run-as-root \"$@\"' >> /usr/local/bin/mpirun && \\\n    chmod a+x /usr/local/bin/mpirun\n\nRUN echo \"hwloc_base_binding_policy = none\" >> /usr/local/etc/openmpi-mca-params.conf && \\\n    echo \"rmaps_base_mapping_policy = slot\" >> /usr/local/etc/openmpi-mca-params.conf\n\nENV LD_LIBRARY_PATH=/usr/local/openmpi/lib:$LD_LIBRARY_PATH\n\nENV PATH /usr/local/openmpi/bin/:$PATH\n\n# SSH login fix. Otherwise user is kicked off after login\nRUN sed 's@session\\s*required\\s*pam_loginuid.so@session optional pam_loginuid.so@g' -i /etc/pam.d/sshd\n\n# Create SSH key.\nRUN mkdir -p /root/.ssh/ && \\\n    mkdir -p /var/run/sshd && \\\n    ssh-keygen -q -t rsa -N '' -f /root/.ssh/id_rsa && \\\n    cp /root/.ssh/id_rsa.pub /root/.ssh/authorized_keys && \\\n    printf \"Host *\\n  StrictHostKeyChecking no\\n\" >> /root/.ssh/config\n\n# Set environment variables for MKL\n# For more about MKL with TensorFlow see:\n# https://www.tensorflow.org/performance/performance_guide#tensorflow_with_intel%C2%AE_mkl_dnn\nENV KMP_AFFINITY=granularity=fine,compact,1,0 KMP_BLOCKTIME=1 KMP_SETTINGS=0\n\nWORKDIR /\n\nARG PYTHON=python3\nARG PYTHON_PIP=python3-pip\nARG PIP=pip3\nARG PYTHON_VERSION=3.6.6\n\nRUN wget https://www.python.org/ftp/python/$PYTHON_VERSION/Python-$PYTHON_VERSION.tgz && \\\n    tar -xvf Python-$PYTHON_VERSION.tgz && cd Python-$PYTHON_VERSION && \\\n    ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" && make && make install && \\\n    apt-get update && apt-get install -y --no-install-recommends libreadline-gplv2-dev libncursesw5-dev libssl-dev libsqlite3-dev tk-dev libgdbm-dev libc6-dev libbz2-dev && \\\n    make && make install && rm -rf ../Python-$PYTHON_VERSION* && \\\n    ln -s /usr/local/bin/pip3 /usr/bin/pip && rm Python-$PYTHON_VERSION.tgz && rm -rf /var/lib/apt/lists/*;\n\nENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PYTHONIOENCODING=UTF-8 LANG=C.UTF-8 LC_ALL=C.UTF-8\n\nARG framework_support_installable=sagemaker_tensorflow_container-2.0.0.tar.gz\nCOPY $framework_support_installable .\nARG TF_URL=\"https://tensorflow-aws.s3-us-west-2.amazonaws.com/1.13/AmazonLinux/cpu/latest-patch-latest-patch/tensorflow-1.13.1-cp36-cp36m-linux_x86_64.whl\"\n\nRUN ${PIP} --no-cache-dir install --upgrade pip setuptools\n\n# Some TF tools expect a \"python\" binary\nRUN ln -s $(which ${PYTHON}) /usr/local/bin/python\n\nRUN ${PIP} install --no-cache-dir -U \\\n           numpy==1.16.2 \\\n           scipy==1.2.1 \\\n           scikit-learn==0.20.3 \\\n           pandas==0.24.2 \\\n           Pillow==5.4.1 \\\n           h5py==2.9.0 \\\n           keras_applications==1.0.7 \\\n           keras_preprocessing==1.0.9 \\\n           keras==2.2.4 \\\n           requests==2.21.0 \\\n           awscli==1.16.130 \\\n           mpi4py==3.0.1 \\\n           \"sagemaker-tensorflow>=1.13,<1.14\" && \\\n    # Let's install TensorFlow separately in the end to avoid\n    # the library version to be overwritten\n    ${PIP} install --force-reinstall --no-cache-dir -U \\\n           ${TF_URL} \\\n           horovod==0.16.4 && \\\n    ${PIP} install --no-cache-dir -U $framework_support_installable && \\\n           rm -f $framework_support_installable && \\\n    ${PIP} uninstall -y --no-cache-dir \\\n           markdown \\\n           tensorboard\n\nENV SAGEMAKER_TRAINING_MODULE sagemaker_tensorflow_container.training:main\n\nCMD [\"bin/bash\"]\n"
+}

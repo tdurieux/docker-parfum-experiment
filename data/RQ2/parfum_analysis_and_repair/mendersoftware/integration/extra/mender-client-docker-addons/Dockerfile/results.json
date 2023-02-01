@@ -1,0 +1,44 @@
+{
+  "startTime": 1674246050465,
+  "endTime": 1674246051866,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 5,
+        "lineEnd": 6,
+        "columnStart": 22,
+        "columnEnd": 37
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 41,
+        "lineEnd": 41,
+        "columnStart": 44,
+        "columnEnd": 91
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 5,
+        "lineEnd": 6,
+        "columnStart": 22,
+        "columnEnd": 37
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 41,
+        "lineEnd": 41,
+        "columnStart": 44,
+        "columnEnd": 91
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Creates a container which acts as a bare bones non-VM based Mender\n# installation, for use in tests.\nFROM ubuntu:20.04 AS build\n\nENV DEBIAN_FRONTEND=noninteractive\nRUN apt-get update && apt-get install --no-install-recommends -y make git build-essential golang liblzma-dev \\\n    jq libssl-dev libglib2.0-dev curl && rm -rf /var/lib/apt/lists/*;\n\nARG MENDER_CLIENT_REV=master\nARG MENDER_CONNECT_REV=master\n\nRUN git clone https://github.com/mendersoftware/mender /src/mender\nRUN (cd /src/mender && git fetch origin $MENDER_CLIENT_REV && git checkout FETCH_HEAD || git checkout -f $MENDER_CLIENT_REV)\n\nRUN git clone https://github.com/mendersoftware/mender-connect /src/mender-connect\nRUN (cd /src/mender-connect && git fetch origin $MENDER_CONNECT_REV && git checkout FETCH_HEAD || git checkout -f $MENDER_CONNECT_REV)\n\nRUN git clone https://github.com/mendersoftware/mender-configure-module /src/mender-configure-module\n# Checkout latest tag. No-op if there are no tags (stay in master)\nRUN (cd /src/mender-configure-module && \\\n    latest=$(git tag | egrep ^[0-9]+\\.[0-9]+\\.[0-9]+*$ | sort | tail -n1) && \\\n    git checkout $latest)\n\nWORKDIR /src/mender\nRUN make prefix=/mender-install install\nRUN jq \".ServerCertificate=\\\"/usr/share/doc/mender-client/examples/demo.crt\\\" | .ServerURL=\\\"https://docker.mender.io/\\\"\" \\\n    < examples/mender.conf.demo > /mender-install/etc/mender/mender.conf\nRUN echo artifact_name=original > /mender-install/etc/mender/artifact_info\n\nWORKDIR /src/mender-connect\nRUN make prefix=/mender-install install\nRUN jq \".User=\\\"root\\\"\" \\\n    < examples/mender-connect.conf > /mender-install/etc/mender/mender-connect.conf\n\nWORKDIR /src/mender-configure-module\nRUN make DESTDIR=/mender-install install\n\nRUN mkdir -p /mender-install/var/lib/mender && echo device_type=docker-client > /mender-install/var/lib/mender/device_type\n\nFROM ubuntu:20.04\n\nRUN mkdir -p /run/dbus && apt-get update && apt-get install --no-install-recommends -y liblzma5 dbus openssh-server && rm -rf /var/lib/apt/lists/*;\n\n# Set no password\nRUN sed -ie 's/^root:[^:]*:/root::/' /etc/shadow\nRUN sed -ie 's/^UsePAM/#UsePam/' /etc/ssh/sshd_config\nRUN echo 'PermitEmptyPasswords yes\\n\\\nPermitRootLogin yes\\n\\\nPort 22\\n\\\nPort 8822\\n' >> /etc/ssh/sshd_config\n\nCOPY --from=build /mender-install/usr/bin/mender /usr/bin/mender\nCOPY --from=build /mender-install/usr/bin/mender-connect /usr/bin/mender-connect\nCOPY --from=build /mender-install/etc/mender /etc/mender\nCOPY --from=build /mender-install/usr/share/mender /usr/share/mender\nCOPY --from=build /mender-install/usr/share/doc/mender-client /usr/share/doc/mender-client\nCOPY --from=build /mender-install/lib/systemd/system/mender-client.service /lib/systemd/system/mender-client.service\nCOPY --from=build /mender-install/lib/systemd/system/mender-connect.service /lib/systemd/system/mender-connect.service\nCOPY --from=build /mender-install/usr/share/dbus-1/system.d/io.mender.AuthenticationManager.conf /usr/share/dbus-1/system.d/io.mender.AuthenticationManager.conf\nCOPY --from=build /mender-install/usr/share/dbus-1/system.d/io.mender.UpdateManager.conf /usr/share/dbus-1/system.d/io.mender.UpdateManager.conf\nCOPY --from=build /mender-install/var/lib/mender /var/lib/mender\n\n# Install the demo server certificate(s). See:\n# https://github.com/mendersoftware/meta-mender/blob/master/meta-mender-core/recipes-mender/mender-server-certificate/mender-server-certificate.bb\nCOPY --from=build /src/mender/support/demo.crt /server.crt\nRUN \\\n    mkdir /usr/local/share/ca-certificates/mender                              ;\\\n    certnum=1                                                                  ;\\\n    while read LINE; do                                                         \\\n        if [ -z \"$cert\" ] || echo \"$LINE\" | fgrep -q 'BEGIN CERTIFICATE'; then  \\\n            cert=/usr/local/share/ca-certificates/mender/server-$certnum.crt   ;\\\n            rm -f $cert                                                        ;\\\n            touch $cert                                                        ;\\\n            chmod 0444 $cert                                                   ;\\\n            certnum=$(expr $certnum + 1)                                       ;\\\n        fi                                                                     ;\\\n        echo \"$LINE\" >> $cert                                                  ;\\\n    done < /server.crt                                                         ;\\\n    rm /server.crt\nRUN update-ca-certificates\n\nCOPY entrypoint.sh /\nCMD /entrypoint.sh\n"
+}

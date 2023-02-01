@@ -1,0 +1,52 @@
+# development container used as remote interpreter
+FROM ubuntu:20.04
+
+ARG DEBIAN_FRONTEND=noninteractive
+
+ENV LANG C.UTF-8
+ENV LC_ALL C.UTF-8
+
+ENV PDB_REDIS_HOST "redis"
+ENV PDB_DATABASE_HOST "database"
+ENV PYTHONDONTWRITEBYTECODE "1"
+ENV PYTHONIOENCODING utf-8
+# parameters for selenium tests
+ENV HEADLESS_TESTING 1
+ENV SERVER_HOST "productdbtestinstance"
+ENV SERVER_PORT 443
+ENV SERVER_PROTOCOL "https"
+ENV PDB_DEBUG "true"
+
+# DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install --no-install-recommends -y \
+        libsasl2-dev \
+        libldap2-dev \
+        libssl-dev \
+        xvfb \
+        firefox \
+        wget \
+        locales \
+        python3.8 \
+        python3-pip \
+        python3.8-dev \
+        curl \
+        gcc \
+    && curl -f -L "https://github.com/docker/compose/releases/download/1.27.4/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose \
+    && chmod +x /usr/local/bin/docker-compose && rm -rf /var/lib/apt/lists/*;
+
+WORKDIR /tmp
+RUN wget https://github.com/mozilla/geckodriver/releases/download/v0.28.0/geckodriver-v0.28.0-linux64.tar.gz \
+    && tar -xvzf geckodriver-v0.28.0-linux64.tar.gz \
+    && rm geckodriver-v0.28.0-linux64.tar.gz \
+    && chmod +x geckodriver \
+    && cp geckodriver /usr/local/bin/
+
+COPY ./requirements.txt /tmp/requirements.txt
+COPY ./requirements_dev.txt /tmp/requirements_dev.txt
+RUN pip3 install --no-cache-dir -r /tmp/requirements_dev.txt
+
+COPY . /var/www/productdb/source
+WORKDIR /var/www/productdb/source
+
+EXPOSE 8000
+CMD ["python3", "manage.py", "runserver", "0.0.0.0:8000"]

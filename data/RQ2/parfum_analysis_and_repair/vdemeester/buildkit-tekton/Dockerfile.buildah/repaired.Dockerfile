@@ -1,0 +1,14 @@
+ARG GOLANG_IMAGE=golang:1.17.8-alpine@sha256:b35984144ec2c2dfd6200e112a9b8ecec4a8fd9eff0babaff330f1f82f14cb2a
+
+FROM ${GOLANG_IMAGE} AS build
+WORKDIR /src
+ENV CGO_ENABLED=0
+COPY go.* .
+RUN go mod download
+COPY . .
+RUN go build -trimpath -ldflags "-s -w" -o /out/buildkit-tekton ./cmd/buildkit-tekton
+
+FROM scratch
+COPY --from=build /out/ /
+LABEL moby.buildkit.frontend.network.none="true"
+ENTRYPOINT ["/buildkit-tekton"]

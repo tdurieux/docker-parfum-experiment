@@ -1,0 +1,90 @@
+{
+  "startTime": 1674253854536,
+  "endTime": 1674253855164,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 36,
+        "lineEnd": 36,
+        "columnStart": 2,
+        "columnEnd": 86
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 11,
+        "lineEnd": 13,
+        "columnStart": 2,
+        "columnEnd": 19
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 33,
+        "lineEnd": 33,
+        "columnStart": 4,
+        "columnEnd": 27
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 58,
+        "lineEnd": 59,
+        "columnStart": 2,
+        "columnEnd": 6
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 33,
+        "lineEnd": 33,
+        "columnStart": 4,
+        "columnEnd": 27
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 11,
+        "lineEnd": 13,
+        "columnStart": 2,
+        "columnEnd": 19
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 33,
+        "lineEnd": 33,
+        "columnStart": 4,
+        "columnEnd": 27
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 58,
+        "lineEnd": 59,
+        "columnStart": 2,
+        "columnEnd": 6
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 33,
+        "lineEnd": 33,
+        "columnStart": 4,
+        "columnEnd": 51
+      }
+    }
+  ],
+  "repairedDockerfile": "# TODO Try to use one of supported linux distro\n# Ref https://docs.aws.amazon.com/codedeploy/latest/userguide/codedeploy-agent.html#codedeploy-agent-supported-operating-systems\n#FROM ruby:2.4\nFROM ubuntu:16.04 AS builder\n\nLABEL maintainer \"Yusuke KUOKA <ykuoka@gmail.com>\"\n\nENV VERSION=0.1.0\n\nRUN \\\n  apt-get update -y && \\\n  apt-get install --no-install-recommends -y \\\n  ruby-dev ruby-bundler patch \\\n  git wget make gcc && rm -rf /var/lib/apt/lists/*;\n\nRUN \\\n   wget -O /usr/local/bin/dumb-init https://github.com/Yelp/dumb-init/releases/download/v1.2.2/dumb-init_1.2.2_amd64 && \\\n   chmod +x /usr/local/bin/dumb-init\n\nADD codedeploy-agent.rb.patch /codedeploy-agent.rb.patch\n\n# Built from the git repo because the offical gem has no release since 2016.\n# See https://rubygems.org/gems/aws-codedeploy-agent/versions/0.1.0 for confirmation\nRUN \\\n  git clone https://github.com/aws/aws-codedeploy-agent.git && \\\n  gem install bundler && \\\n  cd aws-codedeploy-agent && \\\n  bundle install && \\\n  rake clean && \\\n  rake && \\\n  patch -u /aws-codedeploy-agent/lib/codedeploy-agent.rb -i /codedeploy-agent.rb.patch && \\\n  gem build codedeploy_agent-1.1.0.gemspec\n\nRUN apt-get install --no-install-recommends -y curl && rm -rf /var/lib/apt/lists/*;\n\nRUN \\\n  curl -f -L https://download.docker.com/linux/static/stable/x86_64/docker-18.06.1-ce.tgz | tar zxv && \\\n  find docker\n\nFROM golang:1.11 AS cloudwatch-logger\n\nRUN go get -u github.com/zendesk/cloudwatch-logger\n\nRUN bash -c 'cloudwatch-logger; code=$?; if [ $code -ne 1 ]; then echo unexpected code: $code 1>&2; exit 1; fi'\n\nFROM ubuntu:16.04 AS runner\n\nLABEL maintainer \"Yusuke KUOKA <ykuoka@gmail.com>\"\n\nENV VERSION=0.1.0\n\nCOPY --from=builder /aws-codedeploy-agent/aws_codedeploy_agent-0.1.gem /\nCOPY --from=builder /aws-codedeploy-agent/conf/codedeployagent.yml /opt/codedeploy-agent/conf/codedeployagent.yml\nCOPY --from=builder /usr/local/bin/dumb-init /usr/bin/dumb-init\nCOPY --from=builder /docker/docker /usr/bin/docker\n\nRUN \\\n  apt-get update -y && \\\n  apt-get install --no-install-recommends -y \\\n  ruby && rm -rf /var/lib/apt/lists/*;\n\nENV GEMS_DIR /var/lib/gems/2.3.0/gems\n\n#  cp /aws-codedeploy-agent/conf/codedeployagent.yml /opt/codedeploy-agent/conf/ && \\\n\nRUN \\\n  ( gem install aws_codedeploy_agent-0.1.gem; \\\n  find / | grep codedeploy && \\\n  ruby $GEMS_DIR/aws_codedeploy_agent-0.1/lib/codedeploy-agent.rb --help ) && \\\n  mkdir -p /opt/codedeploy-agent/conf/ && \\\n  echo \"the default config (/opt/codedeploy-agent/conf/codedeployagent.yml) contains: \" && \\\n  cat /opt/codedeploy-agent/conf/codedeployagent.yml && \\\n  mkdir -p /etc/codedeploy-agent/conf/\n\nCOPY --from=builder /aws-codedeploy-agent/certs/host-agent-deployment-signer-ca-chain.pem $GEMS_DIR/aws_codedeploy_agent-0.1/certs/host-agent-deployment-signer-ca-chain.pem\n\nCOPY --from=cloudwatch-logger /go/bin/cloudwatch-logger /usr/bin/cloudwatch-logger\n\n# Instead of running:\n#   aws deploy install --override-config --config-file ONPREM_CONFIG\n# The onprem config file can be installed to:\n#   /etc/codedeploy-agent/conf/codedeploy.onpremises.yml\n# According to the aws-cli source:\n#   https://github.com/aws/aws-cli/blob/4ff0cbacbac69a21d4dd701921fe0759cf7852ed/awscli/customizations/codedeploy/systems.py\n\n#RUN gem install aws-codedeploy-agent --version ${VERSION} --no-format-exec\n\nCOPY bin/entrypoint.sh /entrypoint.sh\n\nWORKDIR /tmp\n\nENTRYPOINT [\"/usr/bin/dumb-init\", \"--\"]\n\nCMD [ \"/entrypoint.sh\" ]\n"
+}

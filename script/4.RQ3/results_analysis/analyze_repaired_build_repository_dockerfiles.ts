@@ -89,7 +89,7 @@ import { existsSync } from "fs";
 
         const pathDockerInfo = join(
           config.dataFolder,
-          "evaluation/dockerhub_info",
+          "RQ4/dockerhub_info",
           `${owner}-${repo}.json`
         );
         if (existsSync(pathDockerInfo)) {
@@ -106,9 +106,8 @@ import { existsSync } from "fs";
             totalPull += hubInfo.pull_count;
             totalPullWeek += avgPullPerWeek;
 
-            
             const savedPerWeek =
-            (sizeDifference * avgPullPerWeek) / argv.compressionRatio;
+              (sizeDifference * avgPullPerWeek) / argv.compressionRatio;
 
             totalSavedWeek += savedPerWeek;
             smellNames.forEach((smell) => {

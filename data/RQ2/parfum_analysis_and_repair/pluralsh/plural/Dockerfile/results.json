@@ -1,0 +1,44 @@
+{
+  "startTime": 1674248493419,
+  "endTime": 1674248494555,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 70,
+        "lineEnd": 70,
+        "columnStart": 4,
+        "columnEnd": 35
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 73,
+        "lineEnd": 73,
+        "columnStart": 4,
+        "columnEnd": 89
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 88,
+        "lineEnd": 88,
+        "columnStart": 4,
+        "columnEnd": 129
+      }
+    },
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 45,
+        "lineEnd": 45,
+        "columnStart": 2,
+        "columnEnd": 14
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM bitwalker/alpine-elixir:1.11.4 AS builder\n\n# The following are build arguments used to change variable parts of the image.\n# The name of your application/release (required)\nARG APP_NAME\n# The version of the application we are building (required)\nARG APP_VSN\n# The environment to build with\nARG MIX_ENV=prod\n# Set this to true if this release is not a Phoenix app\nARG SKIP_PHOENIX=true\n# If you are using an umbrella project, you can change this\n# argument to the directory the Phoenix app is in so that the assets\n# can be built\nARG PHOENIX_SUBDIR=.\n\nENV SKIP_PHOENIX=${SKIP_PHOENIX} \\\n    APP_NAME=${APP_NAME} \\\n    APP_VSN=${APP_VSN} \\\n    MIX_ENV=${MIX_ENV}\n\n# By convention, /opt is typically used for applications\nWORKDIR /opt/app\n\n# This step installs all the build tools we'll need\nRUN apk update && \\\n  apk upgrade --no-cache && \\\n  apk add --no-cache \\\n    nodejs \\\n    yarn \\\n    git \\\n    build-base && \\\n  mix local.rebar --force && \\\n  mix local.hex --force\n\n# This copies our app source code into the build container\nCOPY . .\n\nRUN mix do deps.get, compile\n\n# This step builds assets for the Phoenix app (if there is one)\n# If you aren't building a Phoenix app, pass `--build-arg SKIP_PHOENIX=true`\n# This is mostly here for demonstration purposes\nRUN if [ ! \"$SKIP_PHOENIX\" = \"true\" ]; then \\\n  cd ${PHOENIX_SUBDIR}/assets && \\\n  yarn install && \\\n  yarn deploy && \\\n  cd - && \\\n  mix phx.digest; yarn cache clean; \\\nfi\n\nRUN \\\n  mkdir -p /opt/built && \\\n  mix distillery.release --name ${APP_NAME} && \\\n  cp _build/${MIX_ENV}/rel/${APP_NAME}/releases/${APP_VSN}/${APP_NAME}.tar.gz /opt/built && \\\n  cd /opt/built && \\\n  tar -xzf ${APP_NAME}.tar.gz && \\\n  rm ${APP_NAME}.tar.gz\n\nFROM dkr.plural.sh/plural/plural-cli:0.1.0 as cmd\n\nFROM erlang:23-alpine as helm\n\nARG VERSION=3.3.1\n\n# ENV BASE_URL=\"https://storage.googleapis.com/kubernetes-helm\"\nENV BASE_URL=\"https://get.helm.sh\"\nENV TAR_FILE=\"helm-v${VERSION}-linux-amd64.tar.gz\"\n\nRUN apk add --update --no-cache curl ca-certificates unzip wget openssl && \\\n    curl -f -L ${BASE_URL}/${TAR_FILE} | tar xvz && \\\n    mv linux-amd64/helm /usr/local/bin/helm && \\\n    chmod +x /usr/local/bin/helm && \\\n    curl -f -L https://github.com/alco/goon/releases/download/v1.1.1/goon_linux_amd64.tar.gz | tar xvz && \\\n    mv goon /usr/local/bin/goon && chmod +x /usr/local/bin/goon\n\nFROM erlang:23-alpine\n\n# The name of your application/release (required)\nARG APP_NAME\nARG GIT_COMMIT\n\nRUN apk update && \\\n    apk add --no-cache \\\n      bash curl busybox \\\n      openssl-dev ca-certificates git\n\nRUN curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin v0.16.0\nRUN curl -f -L https://github.com/accurics/terrascan/releases/download/v1.9.0/terrascan_1.9.0_Linux_x86_64.tar.gz > terrascan.tar.gz && \\\n      tar -xf terrascan.tar.gz terrascan && rm terrascan.tar.gz && \\\n      chmod +x terrascan && \\\n      mv terrascan /usr/local/bin/terrascan\n\nENV REPLACE_OS_VARS=true \\\n    APP_NAME=${APP_NAME} \\\n    GIT_COMMIT=${GIT_COMMIT}\n\nWORKDIR /opt/app\n\nCOPY --from=helm /usr/local/bin/helm /usr/local/bin/helm\nCOPY --from=cmd /go/bin/plural /usr/local/bin/plural\nCOPY --from=helm /usr/local/bin/goon /usr/local/bin/goon\nCOPY --from=builder /opt/built .\n\nCMD trap 'exit' INT; /opt/app/bin/${APP_NAME} foreground"
+}

@@ -1,0 +1,26 @@
+{
+  "startTime": 1674243754948,
+  "endTime": 1674243755079,
+  "originalSmells": [
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 38,
+        "lineEnd": 38,
+        "columnStart": 4,
+        "columnEnd": 22
+      }
+    },
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 41,
+        "lineEnd": 41,
+        "columnStart": 4,
+        "columnEnd": 39
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "#############################\n#  Set up build environment #\n#############################\nFROM frolvlad/alpine-miniconda3 AS build\nLABEL org.pydata.bokeh.maintainer=\"Karel-van-de-Plassche <karelvandeplassche@gmail.com>\"\n\nRUN apk add --no-cache \\\n    git \\\n    bash\n\nENV BOKEH_SOURCE_DIR /bokeh\nARG BOKEH_VERSION\n\nRUN git clone --depth=50 https://github.com/bokeh/bokeh.git $BOKEH_SOURCE_DIR\n\n#Increase build number to force rebuild\nENV build 0\nWORKDIR $BOKEH_SOURCE_DIR\n#RUN git fetch origin $BOKEH_VERSION\nRUN sh -c 'if [[ ! -z \"$BOKEH_VERSION\" ]]; then echo Fetching $BOKEH_VERSION; git fetch origin $BOKEH_VERSION; git checkout -f FETCH_HEAD; fi'\n\nENV CONDA_REQS=\"conda-build\"\nENV BASH /bin/bash\n\n# Prepare conda env for building\nRUN conda create --yes --name bokeh_build\nRUN $BASH -c 'source activate bokeh_build'\n# Install build dependencies\nRUN conda install --yes --quiet $CONDA_REQS\n# set default conda channels\nRUN conda config --set auto_update_conda off\nRUN conda config --append channels bokeh\nRUN conda config --append channels conda-forge\nRUN conda config --get channels\n# install build time dependencies\nRUN conda install --yes --quiet `python scripts/deps.py build`\n# install NPM dependencies\nRUN npm install -g npm && npm cache clean --force;\nWORKDIR $BOKEH_SOURCE_DIR/bokehjs\n# build BokehJS\nRUN npm install --no-save --no-progress && npm cache clean --force;\nRUN sh -c 'if [[ -d make ]]; then node make build; else node_modules/.bin/gulp build; fi'\nWORKDIR $BOKEH_SOURCE_DIR\n# build a noarch conda package for Bokeh using the just-built BokehJS\nRUN conda build conda.recipe --quiet --no-test --no-anaconda-upload --dirty\n\n################################\n#  Install build conda package #\n################################\nFROM frolvlad/alpine-miniconda3 AS install\nCOPY --from=build /opt/conda/conda-bld/noarch/ /opt/conda/conda-bld/noarch/\n## We need a recent conda version for --use-local\nRUN conda install --quiet --yes \\\n    conda\n\nRUN conda install --quiet --yes --use-local \\\n    bokeh \\\n    nodejs\n## Remove the build environment\n#RUN conda remove --yes --name bokeh_build --all\n#\n# Clean the conda environment\nRUN conda clean -ay\n#\nRUN python3 -c \"import tornado; print('tornado version=' + tornado.version)\"\nRUN bokeh info\n\n#FROM install AS test\n#COPY --from=build $BOKEH_SOURCE_DIR/scripts/deps.py $BOKEH_SOURCE_DIR/scripts/deps.py\n#\n#ENV BOKEH_EXAMPLE_DIR bokeh_examples\n#COPY hello_world.py $BOKEH_EXAMPLE_DIR/hello_world.py\n#COPY hello_nodejs.py $BOKEH_EXAMPLE_DIR/hello_nodejs.py\n## Build with 'sudo docker build . --tag bokeh'\n## Run with 'sudo docker run -p 5006:5006 -it bokeh bokeh serve bokeh_examples/hello_world.py'\n"
+}

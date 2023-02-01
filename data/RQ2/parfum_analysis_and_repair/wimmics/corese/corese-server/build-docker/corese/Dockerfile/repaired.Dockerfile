@@ -1,0 +1,20 @@
+FROM openjdk:11.0.7-jdk-buster
+
+RUN apt-get update -y && apt-get install --no-install-recommends -y wget && rm -rf /var/lib/apt/lists/*;
+
+ENV CORESE="/usr/local/corese"
+RUN mkdir -p $CORESE
+WORKDIR $CORESE
+
+RUN wget https://files.inria.fr/corese/distrib/corese-server-4.3.0.jar
+
+COPY log4j2.xml $CORESE/log4j2.xml
+COPY corese-default-profile.ttl $CORESE/corese-default-profile.ttl
+COPY corese-default-properties.ini $CORESE/corese-default-properties.ini
+
+ENV CORESESH=$CORESE/corese-server.sh
+COPY corese-server.sh $CORESESH
+RUN chmod 755 $CORESESH
+
+CMD $CORESESH
+

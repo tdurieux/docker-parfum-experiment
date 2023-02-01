@@ -1,0 +1,1 @@
+# Based on https://github.com/istio/istio/blob/1.13.3/pilot/docker/Dockerfile.pilot

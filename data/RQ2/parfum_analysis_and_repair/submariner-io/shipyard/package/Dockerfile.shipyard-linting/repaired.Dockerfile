@@ -1,0 +1,42 @@
+FROM alpine
+
+ENV DAPPER_HOST_ARCH=amd64 SHELL=/bin/bash \
+    SHIPYARD_DIR=/opt/shipyard
+ENV HOST_ARCH=${DAPPER_HOST_ARCH} ARCH=${DAPPER_HOST_ARCH} \
+    SCRIPTS_DIR=${SHIPYARD_DIR}/scripts
+
+# Requirements:
+# Component        | Usage
+# -------------------------------------------------------------------
+# bash             | Just your basic shell
+# findutils        | Finding executables to compress
+# gitlint          | Git commit message linting
+# grep             | For listing targets
+# make             | Running makefiles inside the container
+# markdownlint     | Markdown linting
+# nodejs           | Used by markdownlint
+# npm              | Installing markdownlint (Removed afterwards)
+# py3-pip          | Installing gitlint (Removed afterwards)
+# py3-six          | Required by gitlint
+# shellcheck       | Shell script linting
+# upx              | Compressing executables to get a smaller image
+# yamllint         | YAML linting
+# yq               | YAML processing
+
+RUN apk add --no-cache bash findutils git grep make nodejs py3-six shellcheck upx yamllint yq && \
+    apk add --no-cache --virtual installers npm py3-pip && \
+    npm install -g markdownlint-cli && \
+    pip install --no-cache-dir gitlint && \
+    find /usr/bin/ -type f -executable -newercc /proc -size +1M  \( -execdir upx {} \; -o -true \) && \
+    find /usr/lib/ -name __pycache__ -type d -exec rm -rf {} + && \
+    apk del installers && npm cache clean --force;
+
+# Copy shared files so that downstream projects can use it
+COPY Makefile.* .gitlint ${SHIPYARD_DIR}/
+
+# Copy the global dapper file so that we can make sure consuming projects are up to date
+COPY Dockerfile.linting ${SHIPYARD_DIR}/
+
+# Copy shared scripts into image to share with all submariner-io/* projects
+WORKDIR $SCRIPTS_DIR
+COPY scripts/shared/ .

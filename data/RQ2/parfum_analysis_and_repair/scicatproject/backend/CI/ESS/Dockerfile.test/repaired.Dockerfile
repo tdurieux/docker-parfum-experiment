@@ -1,0 +1,34 @@
+FROM node:16-alpine
+
+RUN apk update && apk upgrade && \
+    apk add --no-cache git
+
+ENV PORT 3000
+EXPOSE 3000
+
+# Prepare app directory
+WORKDIR /home/node/app
+COPY package*.json /home/node/app/
+COPY .snyk /home/node/app/
+
+# set up local user to avoid running as root
+RUN chown -R node:node /home/node/app
+USER node
+
+# Install our packages
+RUN npm ci --no-optional
+
+# Copy the rest of our application, node_modules is ignored via .dockerignore
+COPY --chown=node:node . /home/node/app
+COPY --chown=node:node CI/ESS/envfiles/config.ess.js /home/node/app/server/config.local.js
+COPY --chown=node:node CI/ESS/envfiles/middleware.json /home/node/app/server/
+RUN true
+COPY --chown=node:node CI/ESS/envfiles/providers.unittests.json /home/node/app/server/providers.json
+COPY --chown=node:node CI/ESS/envfiles/datasources.json /home/node/app/server/
+COPY --chown=node:node CI/ESS/envfiles/component-config.json /home/node/app/server/
+RUN true
+COPY --chown=node:node CI/ESS/envfiles/settings.sample.json /home/node/app/test/config/settings.json
+COPY --chown=node:node CI/ESS/wait.sh /home/node/app/
+
+# Start the app
+CMD ["./wait.sh"]

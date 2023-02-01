@@ -1,0 +1,62 @@
+{
+  "startTime": 1674216788501,
+  "endTime": 1674216789668,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 98,
+        "lineEnd": 98,
+        "columnStart": 4,
+        "columnEnd": 73
+      }
+    },
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 60,
+        "lineEnd": 60,
+        "columnStart": 4,
+        "columnEnd": 40
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 98,
+        "lineEnd": 98,
+        "columnStart": 99,
+        "columnEnd": 118
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 103,
+        "lineEnd": 103,
+        "columnStart": 16,
+        "columnEnd": 56
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 104,
+        "lineEnd": 104,
+        "columnStart": 16,
+        "columnEnd": 53
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 42,
+        "lineEnd": 49,
+        "columnStart": 25,
+        "columnEnd": 28
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# To build DigiPal Framework Image with Docker (takes ~7 mins):\n#\n# docker build -t kingsdigitallab/archetype build --no-cache\n#\n# Then run the container like this:\n#\n# docker stop archetype; docker rm archetype; mkdir ~/archetype; docker pull kingsdigitallab/archetype:latest; docker run -d --name archetype -v ~/archetype:/home/digipal/digipal_project:cached -p 9080:80 kingsdigitallab/archetype:latest; echo \"INSTALLED\";\n#\n# Now you can browse to http://localhost/ from your host machine\n# Note that this version is for local use only, not for production.\n# You can use it to try out DigiPal or to start your own research.\n#\n# To create image from container:\n#\n# # make Archetype changes, test and commit to new tag in master\n# git commit; git push\n# git push origin :refs/tags/2.2.1; git tag -f 2.2.1 COMMIT;\n# # re-create :latest container\n# docker stop newversion; docker rm newversion; docker run -ti --name newversion kingsdigitallab/archetype:latest bash\n# # upgrade from inside container\n# git config core.fileMode false; git pull; git checkout 2.2.1\n# exit\n# # commit as a new image\n# docker commit -c 'ENV PATH /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin' -c 'ENV SHELL /bin/bash' -c 'VOLUME /home/digipal/digipal_project' -c 'CMD [\"/bin/bash\", \"/home/digipal/build/startup.sh\"]' newversion kingsdigitallab/archetype:VERSION\n# # Test image\n# docker stop archetype; docker rm archetype; mkdir ~/archetype; docker run -d --name archetype -v ~/archetype:/home/digipal/digipal_project:cached -p 9080:80 kingsdigitallab/archetype:2.2.1; echo \"INSTALLED\";\n# # Push image to dockerhub\n# docker push kingsdigitallab/archetype:2.2.1\n# # Update the latest and push it\n# docker tag kingsdigitallab/archetype:2.2.1 kingsdigitallab/archetype:latest\n# docker push kingsdigitallab/archetype:latest\n\nFROM ubuntu:18.04\n\nENV DP_WS_PORT 80\n\n# https://askubuntu.com/a/1013396\nENV DEBIAN_FRONTEND=noninteractive\n\n# Install Linux Packages in one go (best practice)\n# Convention: one line per category (e.g. lessc, image server, database, ...)\n#RUN apt-get update -y && apt-get install -y --no-install-recommends apt-utils \\\nRUN apt-get update -y && apt-get install --no-install-recommends -y \\\n    autoconf pkg-config libtool git \\\n    nodejs npm \\\n    libjpeg-dev libtiff-dev libopenjp2-tools imagemagick \\\n    postgresql \\\n    python python-pip python-dev libxml2-dev libxslt1-dev libpq-dev \\\n    nginx uwsgi-plugin-python \\\n    supervisor wget vim curl \\\n&& apt remove -y python3.5 \\\n&& apt-get clean \\\n&& rm -rf /var/lib/apt/lists/*\n\n#&& apt autoremove -y \\\n\n########################\n# LESSC & TYPESCRIPT\n\n# 2.1.5 b/c 2.4.2 displays compilation errors on Text Viewer\nRUN npm install -g less typescript@2.1.5 && npm cache clean --force;\n\n########################\n# IMAGE PROCESSING\n\n# download and build image server\n# see https://github.com/ruven/iipsrv\n# install dependencies (see above)\n\nUSER root\n\nCOPY build-iipsrv.sh /tmp/build-iipsrv.sh\nRUN bash /tmp/build-iipsrv.sh\n\n########################\n# DIGIPAL FRAMEWORK\n\n# Fetch Digipal\nRUN mkdir /home/digipal\n\nWORKDIR /home/digipal\n\n# (inc. the number in echo to force docker build to fetch new version of the code)\nRUN echo \"2.8\" && git clone -b develop https://github.com/kcl-ddh/digipal.git /home/digipal\n\n\nCOPY * build/\nCOPY archetype/* build/archetype/\n\n########################\n# DATABASE\n# see http://docs.docker.com/examples/postgresql_service/\n# move psql data directory inside digipal_project\nRUN bash build/repair_digipal_project.sh\n\n########################\n# PYTHON + PIP\n# RUN pip install --upgrade pip\nRUN curl -f https://bootstrap.pypa.io/pip/2.7/get-pip.py --output get-pip.py && python2 get-pip.py && pip2 install --no-cache-dir -U pip\n\n########################\n# DIGIPAL FRAMEWORK\n\nRUN echo \"1\" && pip install --no-cache-dir -r build/prerequirements.txt\nRUN echo \"1\" && pip install --no-cache-dir -r build/requirements.txt\n\n# Create tables, admin and site records, indexes\n\nRUN /bin/bash build/fix_permissions.sh\n\nRUN /etc/init.d/postgresql start &&\\\n        python manage.py migrate &&\\\n        python manage.py loaddata build/data_init.json build/data_char.json build/data_menu.json build/data_test.json &&\\\n        python manage.py dpsearch index &&\\\n        python manage.py dpsearch index_facets\n\nUSER root\n\n########################\n# WEB SERVER\n\nRUN rm /etc/nginx/sites-enabled/default && ln -s /home/digipal/build/nginx.conf /etc/nginx/sites-enabled/digipal.conf\n\n########################\n# SUPERVISOR\nRUN mkdir -p /var/log/supervisor\n\n# Port for web server\nEXPOSE 80\n\n########################\n# START-UP\n\nENV SHELL /bin/bash\n\nCMD [\"/bin/bash\", \"/home/digipal/build/startup.sh\"]\n"
+}

@@ -1,0 +1,74 @@
+FROM node:15.9-alpine as build
+
+ENV NODE_ENV=production
+
+## Install build toolchain, install node deps and compile native add-ons
+RUN apk --no-cache add python3 make g++
+
+RUN mkdir -p /usr/src/app
+RUN mkdir -p /usr/src/app/packages
+
+WORKDIR /usr/src/app
+
+COPY package.json .
+COPY yarn.lock .
+COPY tsconfig.json .
+
+COPY docs ./docs
+WORKDIR /usr/src/app/docs
+
+RUN yarn install --production=false --pure-lockfile --non-interactive --network-timeout 100000
+RUN yarn build
+
+FROM node:15.9-alpine as app
+
+ARG NEW_RELIC_APP_NAME=DesignSystemDocs::Production
+ENV NEW_RELIC_APP_NAME $NEW_RELIC_APP_NAME
+
+ARG NEW_RELIC_ENABLED=true
+ENV NEW_RELIC_ENABLED $NEW_RELIC_ENABLED
+
+ENV NEW_RELIC_LICENSE_KEY $NEW_RELIC_LICENSE_KEY
+
+ENV NODE_ENV=production
+
+ARG HOST=0.0.0.0
+ENV HOST $HOST
+
+ARG PORT=3000
+ENV PORT $PORT
+
+ENV TZ=America/Denver
+
+ARG LOG_LEVEL=info
+ENV LOG_LEVEL $LOG_LEVEL
+
+RUN mkdir -p /usr/src/app
+RUN mkdir -p /usr/src/app/packages
+
+WORKDIR /usr/src/app
+
+COPY package.json .
+COPY yarn.lock .
+COPY tsconfig.json .
+
+COPY --from=build /usr/src/app/package.json /usr/src/app/package.json
+COPY --from=build /usr/src/app/yarn.lock /usr/src/app/yarn.lock
+
+COPY --from=build /usr/src/app/docs/package.json /usr/src/app/docs/package.json
+COPY --from=build /usr/src/app/docs/health-check.js /usr/src/app/docs/health-check.js
+COPY --from=build /usr/src/app/docs/newrelic.js /usr/src/app/docs/newrelic.js
+COPY --from=build /usr/src/app/docs/dist /usr/src/app/docs/dist
+COPY --from=build /usr/src/app/docs/public /usr/src/app/docs/public
+
+WORKDIR /usr/src/app/docs
+RUN yarn install --pure-lockfile --non-interactive --production
+
+# the official node image provides an unprivileged user as a security best practice
+# https://github.com/nodejs/docker-node/blob/master/docs/BestPractices.md#non-root-user
+USER node
+
+HEALTHCHECK --interval=5s --timeout=30s --retries=3 \
+  CMD node /usr/src/app/docs/health-check.js
+
+CMD ["node", "./dist/server/main.js"]

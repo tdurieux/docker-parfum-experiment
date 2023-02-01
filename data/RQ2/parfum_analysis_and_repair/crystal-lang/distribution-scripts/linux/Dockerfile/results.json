@@ -1,0 +1,99 @@
+{
+  "startTime": 1674250655625,
+  "endTime": 1674250657339,
+  "originalSmells": [
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 23,
+        "lineEnd": 23,
+        "columnStart": 4,
+        "columnEnd": 70
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 51,
+        "lineEnd": 51,
+        "columnStart": 4,
+        "columnEnd": 70
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 65,
+        "lineEnd": 65,
+        "columnStart": 5,
+        "columnEnd": 70
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 116,
+        "lineEnd": 116,
+        "columnStart": 4,
+        "columnEnd": 121
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 6,
+        "lineEnd": 6,
+        "columnStart": 4,
+        "columnEnd": 136
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 14,
+        "lineEnd": 14,
+        "columnStart": 4,
+        "columnEnd": 74
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 14,
+        "lineEnd": 14,
+        "columnStart": 4,
+        "columnEnd": 74
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 6,
+        "lineEnd": 6,
+        "columnStart": 4,
+        "columnEnd": 136
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 14,
+        "lineEnd": 14,
+        "columnStart": 4,
+        "columnEnd": 74
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 14,
+        "lineEnd": 14,
+        "columnStart": 4,
+        "columnEnd": 98
+      }
+    }
+  ],
+  "repairedDockerfile": "ARG alpine_image\nARG debian_image\nFROM ${debian_image} AS debian\n\nRUN echo \"deb http://deb.debian.org/debian buster-backports main\" >> /etc/apt/sources.list \\\n && apt-get update \\\n && apt-get install --no-install-recommends -y -t buster-backports build-essential libevent-dev libpcre3-dev automake libtool pkg-config git curl llvm-8 clang-8 \\\n && (pkg-config || true) && rm -rf /var/lib/apt/lists/*;\n\nARG release\nENV CFLAGS=\"-fPIC -pipe ${release:+-O2}\"\nENV CC=\"clang-8\"\n\n# Termporary pinning libcurl oldrelease because current (7.74.0) is broken\nRUN apt-get install --no-install-recommends -y --allow-downgrades libcurl3-gnutls=7.64.0-4+deb10u2 && rm -rf /var/lib/apt/lists/*;\n\n# Build libgc\nARG gc_version\n\nRUN git clone https://github.com/ivmai/bdwgc \\\n && cd bdwgc \\\n && git checkout ${gc_version} \\\n && ./autogen.sh \\\n && ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" --disable-debug --disable-shared --enable-large-config \\\n && make -j$(nproc)\n\nFROM ${alpine_image}\n\nRUN sed -i 's|--list -- \"$@\"|--list \"$@\"|' /usr/bin/ldd\n\n# Install dependencies\nRUN apk add --no-cache \\\n      # Statically-compiled llvm\n      llvm10-dev llvm10-static \\\n      # Static stdlib dependencies\n      zlib-static yaml-static libxml2-dev pcre-dev libevent-static \\\n      # Static compiler dependencies\n      libffi-dev \\\n      # Build tools\n      git gcc g++ make automake libtool autoconf bash coreutils curl\n\nARG release\nENV CFLAGS=\"-fPIC -pipe ${release:+-O2}\"\n\n# Build libgc (again, this time for musl)\nARG gc_version\nRUN git clone https://github.com/ivmai/bdwgc \\\n && cd bdwgc \\\n && git checkout ${gc_version} \\\n \\\n && ./autogen.sh \\\n && ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" --disable-debug --disable-shared --enable-large-config \\\n && make -j$(nproc) CFLAGS=-DNO_GETCONTEXT\n\n# This overrides default CRYSTAL_LIBRARY_PATH baked into the binary (starting with 1.2.0)\n# or configured via wrapper script (before 1.2.0) because we want to link against\n# the newly-built libraries, not the ones shipped with the bootstrap compiler.\nENV CRYSTAL_LIBRARY_PATH=/bdwgc/.libs/\nRUN llvm-config --version\n\nARG previous_crystal_release\nADD ${previous_crystal_release} /tmp/crystal.tar.gz\n# TODO: Update path to new install directory /tmp/crystal/bin after migration period\nENV PATH=${PATH}:/tmp/crystal/lib/crystal/bin/\nRUN mkdir -p /tmp/crystal \\\n  && tar xz -f /tmp/crystal.tar.gz -C /tmp/crystal --strip-component=1 \\\n  && crystal --version \\\n  && shards --version && rm /tmp/crystal.tar.gz\n\n# Build crystal\nARG crystal_version\nARG crystal_sha1\nARG gnu_target\nRUN git clone https://github.com/crystal-lang/crystal \\\n && cd crystal \\\n && git checkout ${crystal_sha1} \\\n \\\n && make crystal stats=true static=true ${release:+release=true} \\\n                 CRYSTAL_CONFIG_TARGET=${gnu_target} \\\n && ([ \"$(ldd .build/crystal | wc -l)\" -eq \"1\" ] || { echo './build/crystal is not statically linked'; ldd .build/crystal; exit 1; })\n\n# Build shards\nARG shards_version\nARG musl_target\nRUN git clone https://github.com/crystal-lang/shards \\\n && cd shards \\\n && git checkout ${shards_version} \\\n # FIXME: Remove this workaround for https://github.com/crystal-lang/crystal/issues/10861\n && touch shard.lock \\\n && make SHARDS=false CRYSTAL=/crystal/bin/crystal \\\n         FLAGS=\"--stats --target ${musl_target} --static ${release:+--release}\" \\\n \\\n && ([ \"$(ldd bin/shards | wc -l)\" -eq \"1\" ] || { echo 'shards is not statically linked'; ldd bin/shards; exit 1; })\n\nCOPY --from=debian /bdwgc/.libs/libgc.a /libgc-debian.a\n\nARG package_iteration\n\nRUN \\\n\n mkdir -p /output/lib/crystal/ \\\n && cp /libgc-debian.a /output/lib/crystal/libgc.a \\\n \\\n # Install crystal\n && make -C /crystal install DESTDIR=/output PREFIX= \\\n \\\n # TODO: Remove legacy paths to previous install directories after migration period\n && ln -s ../../bin /output/lib/crystal/bin \\\n && ln -s .. /output/lib/crystal/lib \\\n \\\n # Install shards\n && make -C /shards install DESTDIR=/output PREFIX= \\\n \\\n # Create tarball\n && mv /output /crystal-${crystal_version}-${package_iteration} \\\n && mkdir /output \\\n && tar -cvf /output/crystal-${crystal_version}-${package_iteration}.tar /crystal-${crystal_version}-${package_iteration} && rm /output/crystal-${crystal_version}-${package_iteration}.tar\n"
+}

@@ -1,0 +1,17 @@
+{
+  "startTime": 1674256115757,
+  "endTime": 1674256116633,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 67,
+        "lineEnd": 67,
+        "columnStart": 4,
+        "columnEnd": 152
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Common base so it's cached\n# --platform=$BUILDPLATFORM is used build javascript source with host arch\n# Otherwise webpack builds on emulated archs can be extremely slow (+1h)\n#####################################\nFROM --platform=${BUILDPLATFORM:-amd64} node:16.15.0-alpine as build-monorepo\n\nWORKDIR /app\n\nRUN apk add --no-cache python3 build-base bash\n\n# Copy and install deps first to cache\nCOPY package.json yarn.lock lerna.json ./\nCOPY patches patches/\n# Install lerna first\nRUN yarn --frozen-lockfile --non-interactive --ignore-scripts --ignore-optional\nCOPY packages/admin-ui/package.json \\ \n  packages/admin-ui/\nCOPY packages/dappmanager/package.json \\ \n  packages/dappmanager/\nRUN yarn bootstrap --production\n\n# Build UI\nWORKDIR /app/packages/admin-ui/\nCOPY packages/admin-ui/ .\nENV REACT_APP_API_URL /\nRUN yarn build\n# Results in build/*\n\nWORKDIR /app/packages/dappmanager/\nCOPY packages/dappmanager/ .\nRUN yarn build\n# Results in build/index.js\n\n\n\n# Compute git data\n#####################################\nFROM --platform=${BUILDPLATFORM:-amd64} node:16.15.0-alpine as git-data\n\nWORKDIR /usr/src/app\n\nRUN apk add --no-cache git\nCOPY .git .git\nCOPY dappnode_package.json .\nCOPY docker/getGitData.js .\nRUN node getGitData /usr/src/app/.git-data.json\n\n\n\n# Build binaries\n#####################################\nFROM node:16.15.0-alpine as build-binaries\n\nRUN apk add --no-cache bind-tools docker\n\n\n\n# Final layer\n#####################################\nFROM node:16.15.0-alpine\n\nENV DOCKER_COMPOSE_VERSION v2.5.0\n\nRUN apk add --no-cache curl bind-dev xz libltdl miniupnpc zip unzip dbus bind \\\n  # See https://github.com/dappnode/DNP_DAPPMANAGER/issues/669\n  avahi-tools\n\nRUN curl -f -L https://github.com/docker/compose/releases/download/$DOCKER_COMPOSE_VERSION/docker-compose-linux-$(uname -m) > /usr/local/bin/docker-compose \\\n  && chmod +x /usr/local/bin/docker-compose\n\nWORKDIR /usr/src/app\n\nENV COMPOSE_HTTP_TIMEOUT=300 \\\n  DOCKER_CLIENT_TIMEOUT=300 \\\n  DOCKER_HOST=unix:///var/run/docker.sock \\\n  UI_FILES_PATH=dist \\\n  GIT_DATA_PATH=.git-data.json\n\nCOPY --from=build-binaries /usr/bin/nsupdate /usr/bin/nsupdate\nCOPY --from=build-binaries /usr/bin/docker /usr/bin/docker\n\n# Copy the src last as it's the layer most likely to change\nCOPY packages/dappmanager/hostScripts /usr/src/app/hostScripts\nCOPY packages/dappmanager/hostServices /usr/src/app/hostServices\nCOPY --from=build-monorepo /app/packages/admin-ui/build $UI_FILES_PATH\nCOPY --from=build-monorepo /app/packages/dappmanager/build /usr/src/app/\nCOPY --from=git-data /usr/src/app/.git-data.json $GIT_DATA_PATH\n\nCOPY docker/rndc.conf /etc/bind/\nCOPY docker/update_local_dyndns.sh /usr/local/bin/update_local_dyndns\n\nCMD [ \"node\", \"index\" ]\n"
+}

@@ -1,0 +1,44 @@
+{
+  "startTime": 1674240509824,
+  "endTime": 1674240510161,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 112,
+        "lineEnd": 112,
+        "columnStart": 4,
+        "columnEnd": 67
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 115,
+        "lineEnd": 115,
+        "columnStart": 4,
+        "columnEnd": 52
+      }
+    },
+    {
+      "rule": "aptGetInstallUseY",
+      "position": {
+        "lineStart": 44,
+        "lineEnd": 64,
+        "columnStart": 22,
+        "columnEnd": 34
+      }
+    },
+    {
+      "rule": "aptGetInstallUseY",
+      "position": {
+        "lineStart": 104,
+        "lineEnd": 106,
+        "columnStart": 25,
+        "columnEnd": 23
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM ubuntu:16.04\n\nEXPOSE \\\n    # OpenStack Dashboard (Horizon)\n        80 \\\n    # Identity Service (Keystone API)\n        5000 \\\n    # Compute (EC2 API)\n        8773 \\\n    # Compute (Nova API)\n        8774 \\\n    # Compute (Metadata API)\n        8775 \\\n    # Block Storage (Cinder API)\n        8776 \\\n    # Image Service (Glance API)\n        9292\n\n# Suppress unwanted debconf messages and questions during build\nARG DEBIAN_FRONTEND=noninteractive\n\n#####################################################################\n# Systemd workaround from solita/ubuntu-systemd and moby/moby#28614 #\n#####################################################################\nENV container docker\n# No need for graphical.target\nRUN systemctl set-default multi-user.target\n# Gracefully stop systemd\nSTOPSIGNAL SIGRTMIN+3\n# Cleanup unneeded services\nRUN find /etc/systemd/system \\\n         /lib/systemd/system \\\n         -path '*.wants/*' \\\n         -not -name '*journald*' \\\n         -not -name '*systemd-tmpfiles*' \\\n         -not -name '*systemd-user-sessions*' \\\n    -exec rm \\{} \\;\n# Workaround for console output error moby/moby#27202, based on moby/moby#9212\nCMD [\"/bin/bash\", \"-c\", \"exec /sbin/init --log-target=journal 3>&1\"]\n\n####################\n# DevStack Preload #\n####################\n# Get Missing External System Dependencies for DevStack Setup\nRUN apt-get update && apt-get --assume-yes -y --no-install-recommends install \\\n        # To Retrieve Fresh DevStack Sources\n        ca-certificates \\\n        git \\\n        # Host IP Management (ip)\n        iproute2 \\\n        # Dependency of PyECLib\n        liberasurecode-dev \\\n        # Dependency of python-nss\n        libnss3-dev \\\n        # Dependency of systemd-python\n        libsystemd-dev \\\n        # Enabling KVM Guests\n        libvirt-dev \\\n        # Distribution Identification\n        lsb \\\n        # Network Detection (arp)\n        net-tools \\\n        # Preload Fixes from /devstack/tools/fixup_stuff.sh\n        python-virtualenv \\\n        software-properties-common \\\n    # Cleanup\n    && apt-get clean && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*\n\nARG DEVSTACK_BRANCH=\"master\"\nARG PROJECTS_BRANCH=\"master\"\n# This OpenStack project repositories will be downloaded\nARG PROJECTS=\" \\\n        keystone \\\n        nova \\\n        neutron \\\n        glance \\\n        horizon \\\n        zun \\\n        zun-ui \\\n        kuryr-libnetwork \\\n    \"\n# Clone DevStack, Requirements and OpenStack (Core) Projects\n#  - To properly detect a container environment,\n#    we need at least openstack-dev/devstack/commit/63666a2\nRUN git clone git://git.openstack.org/openstack-dev/devstack --branch $DEVSTACK_BRANCH && \\\n    git clone git://git.openstack.org/openstack/requirements --branch $DEVSTACK_BRANCH /opt/stack/requirements && \\\n    for \\\n        PROJECT in $PROJECTS; \\\n    do \\\n        git clone \\\n            git://git.openstack.org/openstack/$PROJECT.git \\\n            /opt/stack/$PROJECT \\\n            --branch $PROJECTS_BRANCH \\\n            --depth 1 \\\n            --single-branch; \\\n    done\n\n# Pre-Install DevStack System Dependencies to Speedup Docker Run\nRUN /devstack/tools/install_prereqs.sh \\\n    # Install Additional Packages MySQL and RabbitMQ\n    #  - TODO: Find all needed packages in $(grep --no-filename NOPRIME /devstack/files/apts/* | sed '/dist/d; s/\\s*#.*//;')\n    #  - TODO: If everything is actually in place, we could set OFFLINE=True in local.conf\n    && echo 'mysql-server mysql-server/root_password password secret' | debconf-set-selections \\\n    && echo 'mysql-server mysql-server/root_password_again password secret' | debconf-set-selections \\\n    && apt-get update && apt-get --assume-yes -y --no-install-recommends install \\\n        mysql-server \\\n        rabbitmq-server \\\n    && service mysql start \\\n    # Cleanup\n    && apt-get clean && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*\n\n# Install external pip, resolving missing python-setuptools and wheel errors\nRUN curl -f --silent --show-error https://bootstrap.pypa.io/get-pip.py | python\n\n# Solve dependency conflict for urllib3 with pre-installed requests\nRUN pip install --no-cache-dir --upgrade --force-reinstall requests\n\n# Install known working Python packages\nRUN pip install \\\n        --no-cache-dir \\\n        --constraint  /opt/stack/requirements/upper-constraints.txt \\\n        --requirement /opt/stack/requirements/global-requirements.txt \\\n        --requirement /opt/stack/requirements/test-requirements.txt\n\n# Setup non-Root user \"stack\", as required by stack.sh\nRUN useradd --shell /bin/bash --home-dir /opt/stack/ stack \\\n    && echo \"stack ALL=(ALL) NOPASSWD: ALL\" | tee /etc/sudoers.d/stack \\\n    && sudo chown --recursive stack /devstack/\n\n# Copy DevStack configuration, if file has changed\nCOPY local.conf /devstack/\n\n# This container starts systemd, so do not add an additional Docker CMD!\n# Place any post-start calls in the Makefile.\n\n# Actual DevStack setup has to happen in a running container,\n# because of missing privileges during Docker build.\n\n# Thats's right, we add ARGs and dependent labels at the end, because they will change on every build\nARG BUILD_DATE\nARG VCS_REF\nARG VERSION\nLABEL org.label-schema.build-date=$BUILD_DATE \\\n        org.label-schema.name=\"DockStack\" \\\n        org.label-schema.description=\"Docker on DevStack on Docker\" \\\n        org.label-schema.version=$VERSION-$BUILD_DATE-git-$VCS_REF \\\n        org.label-schema.vendor=\"Jan Mattfeld\" \\\n        org.label-schema.vcs-url=\"https://github.com/janmattfeld/DockStack\" \\\n        org.label-schema.vcs-ref=$VCS_REF \\\n        org.label-schema.docker.cmd=\"docker run --privileged --detach devstack \" \\\n        org.label-schema.docker.params=\"DEVSTACK_BRANCH, PROJECTS_BRANCH, PROJECTS\" \\\n        org.label-schema.schema-version=\"1.0\"\n"
+}

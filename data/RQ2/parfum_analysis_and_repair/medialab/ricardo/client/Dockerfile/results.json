@@ -1,0 +1,26 @@
+{
+  "startTime": 1674251883562,
+  "endTime": 1674251884541,
+  "originalSmells": [
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 41,
+        "lineEnd": 41,
+        "columnStart": 4,
+        "columnEnd": 26
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 16,
+        "lineEnd": 16,
+        "columnStart": 4,
+        "columnEnd": 35
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "############ building database\nFROM python:3.8.6-alpine3.12 AS ricardo_data\n\nARG DATA_VERSION_REF\nENV DATA_VERSION_REF=${DATA_VERSION_REF}\n\nRUN apk add --no-cache git icu-dev build-base gcc musl-dev\nRUN mkdir /ricardo_data\n\nWORKDIR /ricardo_data\n\nRUN git --version\nRUN git clone -b ${DATA_VERSION_REF} --single-branch --depth 1 https://github.com/medialab/ricardo_data .\n\nWORKDIR /ricardo_data/database_scripts\n\nRUN pip install --no-cache-dir -r requirements.txt\nRUN python flows.py aggregate\nRUN python flows.py deduplicate\n\n############## BUILDING ANGULAR WEB CLIENT\n\nFROM node:14.13.1-alpine3.12  AS static_client\n\nARG STATIC_URL=http://localhost:80\nARG API_URL=$STATIC_URL/api\n\nENV API_URL=${API_URL}\nENV STATIC_URL=${STATIC_URL}\nENV PATH /client/node_modules/.bin:$PATH\n\nRUN apk --update add --no-cache git\n\nUSER node\n\nCOPY --chown=node:node client /client\nCOPY --chown=node:node .git /\nCOPY --chown=node:node analysis/WorldTradeWeb /WorldTradeWeb\n\nWORKDIR /client\n\nRUN npm install --no-audit && npm cache clean --force;\nENV NODE_ENV production\nRUN /bin/cp ./src/js/config.sample.js ./src/js/config.js \\\n    && npm run build\n\n################ Build nginx image\nFROM nginx:alpine\n\nENV API_PORT=8000\nENV API_HOST=api\n\n# GET the exploration website from build image\nCOPY --from=static_client --chown=nginx:nginx /client/build /ricardo/client\nCOPY --from=static_client --chown=nginx:nginx /WorldTradeWeb /ricardo/client/WTW/\n\nWORKDIR /ricardo/client\n\n# GET the database DATA\nCOPY --from=ricardo_data --chown=nginx:nginx /ricardo_data/database_scripts/*.csv /ricardo/client/data/\nCOPY --from=ricardo_data --chown=nginx:nginx /ricardo_data/data/exchange_rates.csv /ricardo/client/data/RICardo_exchange_rates.csv\n\nRUN rm /etc/nginx/conf.d/default.conf\n\nCOPY ./client/nginx.conf /etc/nginx/conf.d/docker.template\nCOPY ./client/docker-entrypoint.sh /\n\nRUN chmod +x /docker-entrypoint.sh\n\nENTRYPOINT [\"/docker-entrypoint.sh\"]\n\nCMD [\"nginx\", \"-g\", \"daemon off;\"]\n\n"
+}

@@ -1,0 +1,1 @@
+# current openshift does not support multi-stage builds, have to build a fat image

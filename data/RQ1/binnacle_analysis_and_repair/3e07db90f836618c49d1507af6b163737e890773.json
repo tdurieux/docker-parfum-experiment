@@ -1,0 +1,98 @@
+{
+  "startTime": 1674242126095,
+  "endTime": 1674242126243,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 5,
+        "lineEnd": 5,
+        "columnStart": 4,
+        "columnEnd": 30
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 6,
+        "lineEnd": 6,
+        "columnStart": 4,
+        "columnEnd": 27
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 10,
+        "lineEnd": 10,
+        "columnStart": 28,
+        "columnEnd": 46
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 21,
+        "lineEnd": 21,
+        "columnStart": 4,
+        "columnEnd": 26
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 39,
+        "lineEnd": 39,
+        "columnStart": 4,
+        "columnEnd": 69
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 3,
+        "lineEnd": 3,
+        "columnStart": 4,
+        "columnEnd": 30
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 17,
+        "lineEnd": 18,
+        "columnStart": 4,
+        "columnEnd": 60
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 49,
+        "lineEnd": 49,
+        "columnStart": 4,
+        "columnEnd": 43
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 3,
+        "lineEnd": 3,
+        "columnStart": 4,
+        "columnEnd": 30
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 17,
+        "lineEnd": 18,
+        "columnStart": 4,
+        "columnEnd": 60
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM python:3.7.2-slim-stretch AS base\n\nRUN apt-get update && \\\n    apt-get install --no-install-recommends --yes curl && rm -rf /var/lib/apt/lists/*;\n\nRUN pip3 install --no-cache-dir --upgrade pip\nRUN pip3 install --no-cache-dir virtualenv\n\nRUN virtualenv -p python3 /appenv\n\nRUN . /appenv/bin/activate; pip install --no-cache-dir -U pip\n\n# ------------------------------------------------------------------------\n\nFROM base AS wheels\n\nRUN apt-get update && \\\n    apt-get install --no-install-recommends --yes build-essential autoconf libtool pkg-config \\\n    libgflags-dev libgtest-dev clang libc++-dev automake git && rm -rf /var/lib/apt/lists/*;\n\nRUN . /appenv/bin/activate; \\\n    pip install --no-cache-dir auditwheel\n\nCOPY . /application\n\nENV PIP_WHEEL_DIR=/application/wheelhouse\nENV PIP_FIND_LINKS=/application/wheelhouse\n\nRUN . /appenv/bin/activate; \\\n    cd /application; \\\n    pip wheel \".[dev]\"\n\n# ------------------------------------------------------------------------\n\nFROM base AS install\n\nCOPY --from=wheels /application/wheelhouse /wheelhouse\n\nRUN . /appenv/bin/activate && \\\n    pip install --no-cache-dir --no-index -f /wheelhouse nameko_examples_grpc_orders\n\n# ------------------------------------------------------------------------\n\nFROM base AS service\n\n# https://bugs.debian.org/cgi-bin/bugreport.cgi?bug=891488\nRUN mkdir -p /usr/share/man/man1/ /usr/share/man/man3/ /usr/share/man/man7/\n\nRUN apt-get update && \\\n    apt-get install --no-install-recommends --yes postgresql-client \\\n    && rm -rf /var/lib/apt/lists/*\n\nCOPY --from=install /appenv /appenv\n\nCOPY config.yaml /var/nameko/config.yaml\nCOPY alembic.ini /var/nameko/alembic.ini\nADD alembic /var/nameko/alembic\n\nWORKDIR /var/nameko/\n\nEXPOSE 8000\n\nCMD . /appenv/bin/activate && \\\n    while ! pg_isready -h postgresql; do echo \"waiting for db\"; sleep 5; done && \\\n    PGPASSWORD=${DB_PASSWORD} PGUSER=${DB_USER} PGHOST=${DB_HOST} \\\n    psql -tc \"SELECT 1 FROM pg_database WHERE datname = 'orders'\" | \\\n    grep -q 1 || PGPASSWORD=${DB_PASSWORD} PGUSER=${DB_USER} PGHOST=${DB_HOST} \\\n    psql -c \"CREATE DATABASE orders\" && \\\n    alembic upgrade head && \\\n    nameko run --config config.yaml orders.service --backdoor 3000\n"
+}

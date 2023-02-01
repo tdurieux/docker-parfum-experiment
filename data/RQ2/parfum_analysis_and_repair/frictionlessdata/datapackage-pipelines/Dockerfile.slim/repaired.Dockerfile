@@ -1,0 +1,22 @@
+FROM python:3.7-slim
+
+RUN apt-get update && apt-get install --no-install-recommends -y redis libleveldb1d libleveldb-dev build-essential libpq-dev && \
+    update-ca-certificates && mkdir -p /run/redis && mkdir -p /var/run/dpp && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
+
+ADD . /dpp/
+
+RUN pip install --no-cache-dir psycopg2 datapackage-pipelines-github datapackage-pipelines-sourcespec-registry datapackage-pipelines-aws
+RUN pip install --no-cache-dir -U /dpp/[speedup] && \
+    mkdir -p /var/redis && chmod 775 /var/redis && chown redis.redis /var/redis && \
+    mkdir -p /var/log/redis && cd /etc && ln -s redis/redis.conf
+
+ENV DPP_NUM_WORKERS=4
+ENV DPP_REDIS_HOST=127.0.0.1
+ENV DPP_CELERY_BROKER=redis://localhost:6379/6
+
+EXPOSE 5000
+WORKDIR /pipelines/
+ENTRYPOINT ["/dpp/docker/run.sh"]
+
+

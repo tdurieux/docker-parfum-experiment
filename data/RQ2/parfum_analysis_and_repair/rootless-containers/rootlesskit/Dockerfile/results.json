@@ -1,0 +1,71 @@
+{
+  "startTime": 1674249186947,
+  "endTime": 1674249188037,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 65,
+        "lineEnd": 65,
+        "columnStart": 4,
+        "columnEnd": 154
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 26,
+        "lineEnd": 26,
+        "columnStart": 22,
+        "columnEnd": 68
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 35,
+        "lineEnd": 35,
+        "columnStart": 22,
+        "columnEnd": 105
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 53,
+        "lineEnd": 53,
+        "columnStart": 22,
+        "columnEnd": 110
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 26,
+        "lineEnd": 26,
+        "columnStart": 22,
+        "columnEnd": 68
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 35,
+        "lineEnd": 35,
+        "columnStart": 22,
+        "columnEnd": 105
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 53,
+        "lineEnd": 53,
+        "columnStart": 22,
+        "columnEnd": 110
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "ARG GO_VERSION=1.18\nARG UBUNTU_VERSION=20.04\nARG SHADOW_VERSION=4.8.1\nARG SLIRP4NETNS_VERSION=v1.2.0\nARG VPNKIT_VERSION=0.5.0\nARG DOCKER_VERSION=20.10.14\n\nFROM golang:${GO_VERSION}-alpine AS build\nRUN apk add --no-cache file git make\nADD . /go/src/github.com/rootless-containers/rootlesskit\nWORKDIR /go/src/github.com/rootless-containers/rootlesskit\n\nFROM build AS rootlesskit\nRUN CGO_ENABLED=0 make && file /bin/* | grep -v dynamic\n\nFROM scratch AS artifact\nCOPY --from=rootlesskit /go/src/github.com/rootless-containers/rootlesskit/bin/* /\n\nFROM build AS cross\nRUN make cross\n\nFROM scratch AS cross-artifact\nCOPY --from=cross /go/src/github.com/rootless-containers/rootlesskit/_artifact/* /\n\n# `go test -race` requires non-Alpine\nFROM golang:${GO_VERSION} AS test-unit\nRUN apt-get update && apt-get install --no-install-recommends -y git iproute2 netcat-openbsd && rm -rf /var/lib/apt/lists/*;\nADD . /go/src/github.com/rootless-containers/rootlesskit\nWORKDIR /go/src/github.com/rootless-containers/rootlesskit\nRUN go mod verify && go vet ./...\nCMD [\"go\",\"test\",\"-v\",\"-race\",\"github.com/rootless-containers/rootlesskit/...\"]\n\n# idmap runnable without --privileged (but still requires seccomp=unconfined apparmor=unconfined)\nFROM ubuntu:${UBUNTU_VERSION} AS idmap\nENV DEBIAN_FRONTEND=noninteractive\nRUN apt-get update && apt-get install --no-install-recommends -y automake autopoint bison gettext git gcc libcap-dev libtool make && rm -rf /var/lib/apt/lists/*;\nRUN git clone https://github.com/shadow-maint/shadow.git /shadow\nWORKDIR /shadow\nARG SHADOW_VERSION\nRUN git pull && git checkout $SHADOW_VERSION\nRUN ./autogen.sh --disable-nls --disable-man --without-audit --without-selinux --without-acl --without-attr --without-tcb --without-nscd && \\\n  make && \\\n  cp src/newuidmap src/newgidmap /usr/bin\n\nFROM djs55/vpnkit:${VPNKIT_VERSION} AS vpnkit\n\nFROM ubuntu:${UBUNTU_VERSION} AS test-integration\n# iproute2: for `ip` command that rootlesskit needs to exec\n# liblxc-common and lxc-utils: for `lxc-user-nic` binary required for --net=lxc-user-nic\n# iperf3: only for benchmark purpose\n# busybox: only for debugging purpose\n# sudo: only for lxc-user-nic benchmark and rootful veth benchmark (for comparison)\n# libcap2-bin and curl: used by the RUN instructions in this Dockerfile.\nRUN apt-get update && apt-get install --no-install-recommends -y iproute2 liblxc-common lxc-utils iperf3 busybox sudo libcap2-bin curl && rm -rf /var/lib/apt/lists/*;\nCOPY --from=idmap /usr/bin/newuidmap /usr/bin/newuidmap\nCOPY --from=idmap /usr/bin/newgidmap /usr/bin/newgidmap\nRUN /sbin/setcap cap_setuid+eip /usr/bin/newuidmap && \\\n  /sbin/setcap cap_setgid+eip /usr/bin/newgidmap && \\\n  useradd --create-home --home-dir /home/user --uid 1000 user && \\\n  mkdir -p /run/user/1000 /etc/lxc && \\\n  echo \"user veth lxcbr0 32\" > /etc/lxc/lxc-usernet && \\\n  echo \"user ALL=(ALL) NOPASSWD:ALL\" > /etc/sudoers.d/user\nCOPY --from=artifact /rootlesskit /home/user/bin/\nCOPY --from=artifact /rootlessctl /home/user/bin/\nARG SLIRP4NETNS_VERSION\nRUN curl -f -sSL -o /home/user/bin/slirp4netns https://github.com/rootless-containers/slirp4netns/releases/download/${SLIRP4NETNS_VERSION}/slirp4netns-x86_64 && \\\n  chmod +x /home/user/bin/slirp4netns\nCOPY --from=vpnkit /vpnkit /home/user/bin/vpnkit\nADD ./hack /home/user/hack\nRUN chown -R user:user /run/user/1000 /home/user\nUSER user\nENV HOME /home/user\nENV USER user\nENV XDG_RUNTIME_DIR=/run/user/1000\nENV PATH /home/user/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin\nENV LD_LIBRARY_PATH=/home/user/lib\nWORKDIR /home/user/hack\n\nFROM test-integration AS test-integration-docker\nCOPY --from=artifact /rootlesskit-docker-proxy /home/user/bin/\nARG DOCKER_VERSION\nRUN curl -fsSL https://download.docker.com/linux/static/stable/x86_64/docker-${DOCKER_VERSION}.tgz | tar xz --strip-components=1 -C /home/user/bin/\nRUN curl -fsSL -o /home/user/bin/dockerd-rootless.sh https://raw.githubusercontent.com/moby/moby/v${DOCKER_VERSION}/contrib/dockerd-rootless.sh && \\\n  chmod +x /home/user/bin/dockerd-rootless.sh\nENV DOCKERD_ROOTLESS_ROOTLESSKIT_NET=slirp4netns\nENV DOCKERD_ROOTLESS_ROOTLESSKIT_PORT_DRIVER=builtin\nENV DOCKER_HOST=unix:///run/user/1000/docker.sock\nRUN mkdir -p /home/user/.local\nVOLUME /home/user/.local\nCMD [\"dockerd-rootless.sh\"]\n"
+}

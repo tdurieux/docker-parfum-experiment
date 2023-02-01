@@ -1,0 +1,80 @@
+{
+  "startTime": 1674238702642,
+  "endTime": 1674238703118,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 38,
+        "lineEnd": 41,
+        "columnStart": 7,
+        "columnEnd": 15
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 49,
+        "lineEnd": 49,
+        "columnStart": 22,
+        "columnEnd": 58
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 55,
+        "lineEnd": 55,
+        "columnStart": 4,
+        "columnEnd": 40
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 57,
+        "lineEnd": 59,
+        "columnStart": 4,
+        "columnEnd": 32
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 38,
+        "lineEnd": 41,
+        "columnStart": 7,
+        "columnEnd": 15
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 49,
+        "lineEnd": 49,
+        "columnStart": 22,
+        "columnEnd": 58
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 55,
+        "lineEnd": 55,
+        "columnStart": 4,
+        "columnEnd": 40
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 57,
+        "lineEnd": 59,
+        "columnStart": 4,
+        "columnEnd": 32
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Licensed to the Apache Software Foundation (ASF) under one\n# or more contributor license agreements. See the NOTICE file\n# distributed with this work for additional information\n# regarding copyright ownership. The ASF licenses this file\n# to you under the Apache License, Version 2.0 (the\n# \"License\"); you may not use this file except in compliance\n# with the License.  You may obtain a copy of the License at\n#\n#     http://www.apache.org/licenses/LICENSE-2.0\n#\n# Unless required by applicable law or agreed to in writing, software\n# distributed under the License is distributed on an \"AS IS\" BASIS,\n# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.\n# See the License for the specific language governing permissions and\n# limitations under the License.\n#\n# Dockerfile for Apache Marmotta\n\nFROM debian:jessie-backports\nMAINTAINER Sergio Fernández <wikier@apache.org>\n\nEXPOSE 8080\n\nWORKDIR /src\nADD . /src\n\n# configuration\nENV DEBIAN_FRONTEND noninteractive\nENV DB_NAME marmotta\nENV DB_USER marmotta\nENV DB_PASS s3cr3t\nENV PG_VERSION 9.4\nENV WAR_PATH /src/launchers/marmotta-webapp/target/marmotta.war\nENV CONF_PATH /var/lib/marmotta/system-config.properties\n\n# prepare the environment\nRUN apt-get update \\\n    && apt-get upgrade -y \\\n    && apt-get install --no-install-recommends -y \\\n\t\topenjdk-8-jdk \\\n\t\tmaven \\\n        tomcat7 \\\n    || apt-get install -y -f && rm -rf /var/lib/apt/lists/*;\n\n# build\nRUN mvn clean install -DskipTests -DskipITs\nRUN test -e $WAR_PATH || exit\n\n# install and configure postgres from the PGDG repo\nRUN apt-get update && apt-get install --no-install-recommends -y locales apt-utils \\\n\t&& localedef -i en_US -c -f UTF-8 -A /usr/share/locale/locale.alias en_US.UTF-8 && rm -rf /var/lib/apt/lists/*;\nENV LANG en_US.utf8\nRUN apt-key adv --keyserver ha.pool.sks-keyservers.net --recv-keys B97B0AFCAA1A47F044F244A07FCC7D46ACCC4CF8\nRUN echo 'deb http://apt.postgresql.org/pub/repos/apt/ jessie-pgdg main' > /etc/apt/sources.list.d/pgdg.list\nRUN apt-get update \\\n\t&& apt-get install --no-install-recommends -y postgresql-common \\\n\t&& sed -ri 's/#(create_main_cluster) .*$/\\1 = false/' /etc/postgresql-common/createcluster.conf \\\n\t&& apt-get install --no-install-recommends -y \\\n\t\tpostgresql-$PG_VERSION \\\n\t\tpostgresql-contrib-$PG_VERSION && rm -rf /var/lib/apt/lists/*;\nRUN pg_createcluster $PG_VERSION main --start\nUSER postgres\nRUN service postgresql start \\\n    && psql --command \"CREATE USER $DB_USER WITH PASSWORD '$DB_PASS';\" \\\n    && psql --command \"CREATE DATABASE $DB_NAME WITH OWNER $DB_USER;\"\nUSER root\nRUN service postgresql stop\nRUN echo \"host all  all    127.0.0.1/32  md5\" >> /etc/postgresql/$PG_VERSION/main/pg_hba.conf\nRUN echo \"listen_addresses='*'\" >> /etc/postgresql/$PG_VERSION/main/postgresql.conf\n\n# install the webapp\n#RUN dpkg --debug=2000 --install target/marmotta_*_all.deb <-- we'd need to fix the postinst\nRUN mkdir -p /usr/share/marmotta\nRUN cp $WAR_PATH /usr/share/marmotta/\nRUN chown tomcat7:tomcat7 /usr/share/marmotta/marmotta.war\nRUN cp /src/launchers/marmotta-webapp/src/deb/tomcat/marmotta.xml /var/lib/tomcat7/conf/Catalina/localhost/\nRUN chown tomcat7:tomcat7 /var/lib/tomcat7/conf/Catalina/localhost/marmotta.xml\nRUN mkdir -p \"$(dirname $CONF_PATH)\"\nRUN echo \"security.enabled = false\" > $CONF_PATH\nRUN echo \"database.type = postgres\" >> $CONF_PATH\nRUN echo \"database.url = jdbc:postgresql://localhost:5432/$DB_NAME?prepareThreshold=3\" >> $CONF_PATH\nRUN echo \"database.user = $DB_USER\" >> $CONF_PATH\nRUN echo \"database.password = $DB_PASS\" >> $CONF_PATH\nRUN chown -R tomcat7:tomcat7 \"$(dirname $CONF_PATH)\"\n\n# cleanup\nRUN mvn clean \\\n    && rm -rf ~/.m2 \\\n    && apt-get remove maven --purge -y \\\n    && apt-get autoremove -y \\\n    && apt-get clean -y \\\n    && apt-get autoclean -y \\\n    && apt-get autoremove -y \\\n    && rm -rf /var/lib/apt/lists/*\n\n# entrypoint\nRUN cp /src/launchers/marmotta-webapp/src/docker/entrypoint.sh /usr/local/bin/marmotta.sh\nENTRYPOINT [\"/usr/local/bin/marmotta.sh\"]\n"
+}

@@ -1,0 +1,89 @@
+{
+  "startTime": 1674215529737,
+  "endTime": 1674215531160,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 51,
+        "lineEnd": 51,
+        "columnStart": 4,
+        "columnEnd": 77
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 77,
+        "lineEnd": 77,
+        "columnStart": 4,
+        "columnEnd": 65
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 61,
+        "lineEnd": 63,
+        "columnStart": 4,
+        "columnEnd": 53
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 78,
+        "lineEnd": 78,
+        "columnStart": 45,
+        "columnEnd": 67
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 92,
+        "lineEnd": 92,
+        "columnStart": 4,
+        "columnEnd": 135
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 24,
+        "lineEnd": 24,
+        "columnStart": 22,
+        "columnEnd": 67
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 32,
+        "lineEnd": 44,
+        "columnStart": 22,
+        "columnEnd": 12
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 24,
+        "lineEnd": 24,
+        "columnStart": 22,
+        "columnEnd": 67
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 32,
+        "lineEnd": 44,
+        "columnStart": 22,
+        "columnEnd": 12
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Copyright 2018 Google LLC\n#\n# Licensed under the Apache License, Version 2.0 (the \"License\");\n# you may not use this file except in compliance with the License.\n# You may obtain a copy of the License at\n#\n#      http://www.apache.org/licenses/LICENSE-2.0\n#\n# Unless required by applicable law or agreed to in writing, software\n# distributed under the License is distributed on an \"AS IS\" BASIS,\n# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.\n# See the License for the specific language governing permissions and\n# limitations under the License.\n\n#\n# Base image\n#\nFROM ubuntu:xenial\n\n#\n# Dependencies\n#\n\n# Install JDK 11 as sampling heap profiler depends on the new JVMTI APIs.\nRUN apt-get update && apt-get install --no-install-recommends -y software-properties-common && rm -rf /var/lib/apt/lists/*;\nRUN add-apt-repository -y ppa:openjdk-r/ppa\nRUN apt-get update\n\n# Installing openjdk-11-jdk-headless can be very slow due to repo download\n# speed.\n\n# Everything we can get through apt-get\nRUN apt-get update && apt-get -y --no-install-recommends -q install \\\n  apt-utils \\\n  autoconf \\\n  automake \\\n  cmake \\\n  curl \\\n  g++ \\\n  git \\\n  libtool \\\n  make \\\n  openjdk-11-jdk-headless \\\n  unzip \\\n  zlib1g-dev && rm -rf /var/lib/apt/lists/*;\n\n# openssl\n# This openssl (compiled with -fPIC) is used to statically link into the agent\n# shared library.\nENV PKG_CONFIG_PATH=/usr/local/ssl/lib/pkgconfig\nRUN mkdir /tmp/openssl && cd /tmp/openssl && \\\n    curl -f -sL https://github.com/openssl/openssl/archive/OpenSSL_1_1_1f.tar.gz | \\\n        tar xzv --strip=1 && \\\n    ./config no-shared -fPIC --openssldir=/usr/local/ssl --prefix=/usr/local/ssl && \\\n    make && make install_sw && \\\n    cd ~ && rm -rf /tmp/openssl\n\n# curl\nRUN git clone --depth=1 -b curl-7_69_1 https://github.com/curl/curl.git /tmp/curl && \\\n    cd /tmp/curl && \\\n    ./buildconf && \\\n    ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" --disable-ldap --disable-shared --without-libssh2 \\\n                --without-librtmp --without-libidn --enable-static \\\n                --with-pic --with-ssl=/usr/local/ssl/ && \\\n    make -j && make install && \\\n    cd ~ && rm -rf /tmp/curl\n\n# gflags\nRUN git clone --depth=1 -b v2.1.2 https://github.com/gflags/gflags.git /tmp/gflags && \\\n    cd /tmp/gflags && \\\n    mkdir build && cd build && \\\n    cmake -DCMAKE_CXX_FLAGS=-fpic -DGFLAGS_NAMESPACE=google .. && \\\n    make -j && make install && \\\n    cd ~ && rm -rf /tmp/gflags\n\n# google-glog\nRUN mkdir /tmp/glog && cd /tmp/glog && \\\n    curl -f -sL https://github.com/google/glog/archive/v0.4.0.tar.gz | \\\n        tar xzv --strip=1 && ./autogen.sh && ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" --with-pic && \\\n    make -j && make install && \\\n    cd ~ && rm -rf /tmp/glog\n\n# gRPC & protobuf\n# Use the protobuf version from gRPC for everything to avoid conflicting\n# versions to be linked in. Disable OpenSSL embedding: when it's on, the build\n# process of gRPC puts the OpenSSL static object files into the gRPC archive\n# which causes link errors later when the agent is linked with the static\n# OpenSSL library itself.\nRUN git clone --depth=1 --recursive -b v1.28.1 https://github.com/grpc/grpc.git /tmp/grpc && \\\n    cd /tmp/grpc && \\\n    cd third_party/protobuf && \\\n    ./autogen.sh && \\\n    ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" --with-pic CXXFLAGS=\"$(pkg-config --cflags protobuf)\" LIBS=\"$(pkg-config --libs protobuf)\" LDFLAGS=\"-Wl,--no-as-needed\" && \\\n    make -j && make install && ldconfig && \\\n    cd ../.. && \\\n    CPPFLAGS=\"-I /usr/local/ssl/include\" LDFLAGS=\"-L /usr/local/ssl/lib/ -Wl,--no-as-needed\" make -j CONFIG=opt EMBED_OPENSSL=false V=1 HAS_SYSTEM_OPENSSL_NPN=0 && \\\n    CPPFLAGS=\"-I /usr/local/ssl/include\" LDFLAGS=\"-L /usr/local/ssl/lib/ -Wl,--no-as-needed\" make CONFIG=opt EMBED_OPENSSL=false V=1 HAS_SYSTEM_OPENSSL_NPN=0 install && \\\n    rm -rf /tmp/grpc\n"
+}

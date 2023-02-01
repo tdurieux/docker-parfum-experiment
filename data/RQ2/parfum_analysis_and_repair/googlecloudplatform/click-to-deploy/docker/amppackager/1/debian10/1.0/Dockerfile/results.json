@@ -1,0 +1,26 @@
+{
+  "startTime": 1674250526962,
+  "endTime": 1674250527670,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 20,
+        "lineEnd": 20,
+        "columnStart": 7,
+        "columnEnd": 29
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 20,
+        "lineEnd": 20,
+        "columnStart": 7,
+        "columnEnd": 29
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Copyright 2020 Google LLC\n#\n# Licensed under the Apache License, Version 2.0 (the \"License\");\n# you may not use this file except in compliance with the License.\n# You may obtain a copy of the License at\n#\n#     https://www.apache.org/licenses/LICENSE-2.0\n#\n# Unless required by applicable law or agreed to in writing, software\n# distributed under the License is distributed on an \"AS IS\" BASIS,\n# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.\n# See the License for the specific language governing permissions and\n# limitations under the License.# Use an official Go runtime as a parent image\nFROM golang:1.13 as builder\n\nENV GO111MODULE=on\n\n# Install git.\n# Git is required for fetching the dependencies.\nRUN apt-get update \\\n    && apt-get install --no-install-recommends -y git && rm -rf /var/lib/apt/lists/*;\n\nWORKDIR /data\n\n# Run this if you clone from master branch.\n# RUN git clone -b master https://github.com/ampproject/amppackager.git /data/amppackager\nRUN git clone https://github.com/ampproject/amppackager.git /data/amppackager\n\nWORKDIR /data/amppackager/cmd/amppkg\n\n# Build the binary.\n# See: https://medium.com/on-docker/use-multi-stage-builds-to-inject-ca-certs-ad1e8f01de1b\n#      https://github.com/kelseyhightower/contributors\n# Avoid \"x509: failed to load system roots and no roots provided\" by bundling root certificates.\n# Avoid dynamic linking by using the pure Go net package (-tags netgo)\n# Avoid dynamic linking by disabling cgo (CGO_ENABLED=0)\n# Reduce binary size by omitting dwarf information (-ldflags '-w')\nRUN CGO_ENABLED=0 GOOS=linux go build -a -tags netgo -ldflags '-w' -o /go/bin/amppkg\n\nFROM gcr.io/cloud-marketplace/google/debian10\n\nRUN update-ca-certificates\n\nENV PATH=/bin\n\n# Copy the AMP packager binary into our app dir inside the container.\nCOPY --from=builder /go/bin/amppkg .\n\nCOPY --from=builder /data/amppackager/testdata/b3/fullchain.cert /data/amppackager/testdata/b3/fullchain.cert\nCOPY --from=builder /data/amppackager/testdata/b3/server.privkey /data/amppackager/testdata/b3/server.privkey\nCOPY --from=builder /data/amppackager/docker/amppkg.example.toml .\n\n# Copy vendor files so that licenses are available in the image.\nCOPY --from=builder /data/amppackager/vendor vendor\n\n# Make port 8080 available to the world outside this container. This\n# port must match the AMP Packager port configured in the toml file.\nEXPOSE 8080\n\nENV PATH=$PATH:.\n\n# This env var is used by click-to-deploy deployer, right now needs to be\n# manually synced with C2D_RELEASE in the other Docker images for AMP Packager\n# Deployer currently in https://github.com/banaag/click-to-deploy but will move\n# to https://github.com/GoogleCloudPlatform/click-to-deploy.\nENV C2D_RELEASE=1.0.0\n\nCOPY docker-entrypoint.sh /\n\nRUN chmod 775 /docker-entrypoint.sh\n\nENTRYPOINT [\"/docker-entrypoint.sh\"]\n\n# Set default flags to run in development mode.\nCMD [\"amppkg\", \"-development\", \"-config=amppkg.example.toml\"]\n"
+}

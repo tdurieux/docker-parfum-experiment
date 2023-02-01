@@ -1,0 +1,80 @@
+{
+  "startTime": 1674249148172,
+  "endTime": 1674249149914,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 13,
+        "lineEnd": 13,
+        "columnStart": 22,
+        "columnEnd": 90
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 17,
+        "lineEnd": 17,
+        "columnStart": 22,
+        "columnEnd": 47
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 31,
+        "lineEnd": 43,
+        "columnStart": 4,
+        "columnEnd": 12
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 62,
+        "lineEnd": 62,
+        "columnStart": 22,
+        "columnEnd": 75
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 13,
+        "lineEnd": 13,
+        "columnStart": 22,
+        "columnEnd": 90
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 17,
+        "lineEnd": 17,
+        "columnStart": 22,
+        "columnEnd": 47
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 31,
+        "lineEnd": 43,
+        "columnStart": 4,
+        "columnEnd": 12
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 62,
+        "lineEnd": 62,
+        "columnStart": 22,
+        "columnEnd": 75
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM php:8.1-fpm-bullseye as base\n\nARG project_root=.\n\n# install required tools\n# git for computing diffs\n# wget for installation of other tools\n# gnupg and g++ for gd extension\n# locales for locale-gen command\n# apt-utils so package configuartion does not get delayed\n# unzip to ommit composer zip packages corruption\n# dialog for apt-get to be\n# git for computing diffs and for npm to download packages\nRUN apt-get update && apt-get install --no-install-recommends -y wget gnupg g++ locales unzip dialog apt-utils git && apt-get clean && rm -rf /var/lib/apt/lists/*;\n\n# Install NodeJS\nRUN curl -fsSL https://deb.nodesource.com/setup_16.x | bash -\nRUN apt-get update && apt-get install --no-install-recommends -y nodejs && apt-get clean && rm -rf /var/lib/apt/lists/*;\n\n# install Composer\nCOPY ${project_root}/docker/php-fpm/docker-install-composer /usr/local/bin/docker-install-composer\n\nRUN chmod +x /usr/local/bin/docker-install-composer && \\\n    docker-install-composer\n\n# libpng-dev needed by \"gd\" extension\n# libzip-dev needed by \"zip\" extension\n# libicu-dev for intl extension\n# libpg-dev for connection to postgres database\n# autoconf needed by \"redis\" extension\nRUN apt-get update && \\\n    apt-get install --no-install-recommends -y \\\n    bash-completion \\\n    libpng-dev \\\n    libjpeg-dev \\\n    libfreetype6-dev \\\n    libzip-dev \\\n    libicu-dev \\\n    libpq-dev \\\n    vim \\\n    nano \\\n    mc \\\n    htop \\\n    autoconf && \\\n    apt-get clean && rm -rf /var/lib/apt/lists/*;\n\nRUN docker-php-ext-configure gd --with-freetype --with-jpeg\n\n# install necessary tools for running application\nRUN docker-php-ext-install \\\n    bcmath \\\n    fileinfo \\\n    gd \\\n    intl \\\n    opcache \\\n    pgsql \\\n    pdo_pgsql \\\n    zip\n\n# install PostgreSQl client for dumping database\nRUN wget --quiet -O - https://www.postgresql.org/media/keys/ACCC4CF8.asc | apt-key add - && \\\n    sh -c 'echo \"deb http://apt.postgresql.org/pub/repos/apt/ $(lsb_release -sc)-pgdg main\" > /etc/apt/sources.list.d/PostgreSQL.list' && \\\n    apt-get update && apt-get install --no-install-recommends -y postgresql-12 postgresql-client-12 && apt-get clean && rm -rf /var/lib/apt/lists/*;\n\n# install redis extension\nRUN pecl install redis-5.3.7 && \\\n    docker-php-ext-enable redis\n\n# install locales and switch to en_US.utf8 in order to enable UTF-8 support\n# see http://jaredmarkell.com/docker-and-locales/ from where was this code taken\nRUN sed -i -e 's/# en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/' /etc/locale.gen && \\\n    locale-gen\nENV LANG en_US.UTF-8\nENV LANGUAGE en_US:en\nENV LC_ALL en_US.UTF-8\n\n# copy php.ini configuration\nCOPY ${project_root}/docker/php-fpm/php-ini-overrides.ini /usr/local/etc/php/php.ini\n\n# add bash completion for phing\nCOPY ${project_root}/docker/php-fpm/phing-completion /etc/bash_completion.d/phing\n\n# overwrite the original entry-point from the PHP Docker image with our own\nCOPY ${project_root}/docker/php-fpm/docker-php-entrypoint /usr/local/bin/\nRUN chmod +x /usr/local/bin/docker-php-entrypoint\n\n# set www-data user his home directory\n# the user \"www-data\" is used when running the image, and therefore should own the workdir\nRUN usermod -m -d /home/www-data www-data && \\\n    mkdir -p /var/www/html && \\\n    chown -R www-data:www-data /home/www-data /var/www/html\n\n# Switch to user\nUSER www-data\n\n# enable bash completion\nRUN echo \"source /etc/bash_completion\" >> ~/.bashrc\n\nRUN mkdir -p /var/www/html/.npm-global\nENV NPM_CONFIG_PREFIX /var/www/html/.npm-global\n\n# set COMPOSER_MEMORY_LIMIT to -1 (i.e. unlimited - this is a hotfix until https://github.com/shopsys/shopsys/issues/634 is solved)\nENV COMPOSER_MEMORY_LIMIT=-1\n\n########################################################################################################################\n\nFROM base as development\n\nUSER root\n\n# allow overwriting UID and GID o the user \"www-data\" to help solve issues with permissions in mounted volumes\n# if the GID is already in use, we will assign GID 33 instead (33 is the standard uid/gid for \"www-data\" in Debian)\nARG www_data_uid\nARG www_data_gid\nRUN if [ -n \"$www_data_uid\" ]; then deluser www-data && (addgroup --gid $www_data_gid www-data || addgroup --gid 33 www-data) && adduser --system --home /home/www-data --uid $www_data_uid --disabled-password --group www-data; fi;\n\n# as the UID and GID might have changed, change the ownership of the home directory workdir again\nRUN chown -R www-data:www-data /home/www-data /var/www/html\n\nUSER www-data\n\n########################################################################################################################\n\nFROM base as production\n\nARG project_root=.\n\n# copy FPM pool configuration\nCOPY ${project_root}/docker/php-fpm/production-www.conf /usr/local/etc/php-fpm.d/www.conf\n\nCOPY --chown=www-data:www-data / /var/www/html\n\nRUN composer install --optimize-autoloader --no-interaction --no-progress --no-dev\n\nRUN php phing build-deploy-part-1-db-independent clean\n\n########################################################################################################################\n\nFROM base as ci\n\nCOPY --chown=www-data:www-data / /var/www/html\n\nRUN composer install --optimize-autoloader --no-interaction --no-progress --dev\n\nRUN php phing composer-dev dirs-create test-dirs-create assets npm standards tests-unit tests-acceptance-build\n\nRUN ./bin/console shopsys:environment:change prod\n\nRUN php phing clean\n"
+}

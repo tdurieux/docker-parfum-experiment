@@ -1,0 +1,53 @@
+{
+  "startTime": 1674244715771,
+  "endTime": 1674244716210,
+  "originalSmells": [
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 112,
+        "lineEnd": 112,
+        "columnStart": 4,
+        "columnEnd": 24
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 99,
+        "lineEnd": 99,
+        "columnStart": 5,
+        "columnEnd": 16
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 14,
+        "lineEnd": 14,
+        "columnStart": 5,
+        "columnEnd": 59
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 14,
+        "lineEnd": 14,
+        "columnStart": 5,
+        "columnEnd": 59
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 15,
+        "lineEnd": 69,
+        "columnStart": 5,
+        "columnEnd": 44
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM ubuntu:18.04\n\n# Based on\n# https://switch2osm.org/manually-building-a-tile-server-18-04-lts/\n\n# Set up environment\nENV TZ=UTC\nENV AUTOVACUUM=on\nENV UPDATES=disabled\nRUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone\n\n# Install dependencies\nRUN echo \"deb [ allow-insecure=yes ] http://apt.postgresql.org/pub/repos/apt/ bionic-pgdg main\" >> /etc/apt/sources.list.d/pgdg.list \\\n  && apt-get update \\\n  && apt-get install --no-install-recommends -y apt-transport-https ca-certificates \\\n  && apt-get install -y --no-install-recommends --allow-unauthenticated \\\n  apache2 \\\n  apache2-dev \\\n  autoconf \\\n  build-essential \\\n  bzip2 \\\n  cmake \\\n  fonts-noto-cjk \\\n  fonts-noto-hinted \\\n  fonts-noto-unhinted \\\n  clang \\\n  gdal-bin \\\n  git-core \\\n  libagg-dev \\\n  libboost-all-dev \\\n  libbz2-dev \\\n  libcairo-dev \\\n  libcairomm-1.0-dev \\\n  libexpat1-dev \\\n  libfreetype6-dev \\\n  libgdal-dev \\\n  libgeos++-dev \\\n  libgeos-dev \\\n  libgeotiff-epsg \\\n  libicu-dev \\\n  liblua5.3-dev \\\n  libmapnik-dev \\\n  libpq-dev \\\n  libproj-dev \\\n  libprotobuf-c0-dev \\\n  libtiff5-dev \\\n  libtool \\\n  libxml2-dev \\\n  lua5.3 \\\n  make \\\n  mapnik-utils \\\n  nodejs \\\n  npm \\\n  postgis \\\n  postgresql-10 \\\n  postgresql-10-postgis-2.5 \\\n  postgresql-10-postgis-2.5-scripts \\\n  postgresql-contrib-10 \\\n  protobuf-c-compiler \\\n  python-mapnik \\\n  sudo \\\n  tar \\\n  ttf-unifont \\\n  unzip \\\n  wget \\\n  zlib1g-dev \\\n  osmosis \\\n  osmium-tool \\\n  cron \\\n  python-psycopg2 python-shapely python-lxml \\\n&& apt-get clean autoclean \\\n&& apt-get autoremove --yes \\\n&& rm -rf /var/lib/{apt,dpkg,cache,log}/ && rm -rf /var/lib/apt/lists/*;\n\n# Set up renderer user\nRUN adduser --disabled-password --gecos \"\" renderer\nUSER renderer\n\n# Install latest osm2pgsql\nRUN mkdir /home/renderer/src\nWORKDIR /home/renderer/src\nRUN git clone https://github.com/openstreetmap/osm2pgsql.git\nWORKDIR /home/renderer/src/osm2pgsql\nRUN mkdir build\nWORKDIR /home/renderer/src/osm2pgsql/build\nRUN cmake .. \\\n  && make -j $(nproc)\nUSER root\nRUN make install\nUSER renderer\n\n# Install and test Mapnik\nRUN python -c 'import mapnik'\n\n# Install mod_tile and renderd\nWORKDIR /home/renderer/src\nRUN git clone -b switch2osm https://github.com/SomeoneElseOSM/mod_tile.git\nWORKDIR /home/renderer/src/mod_tile\nRUN ./autogen.sh \\\n  && ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" \\\n  && make -j $(nproc)\nUSER root\nRUN make -j $(nproc) install \\\n  && make -j $(nproc) install-mod_tile \\\n  && ldconfig\nUSER renderer\n\n# Configure stylesheet\nWORKDIR /home/renderer/src\nRUN git clone https://github.com/gravitystorm/openstreetmap-carto.git\nWORKDIR /home/renderer/src/openstreetmap-carto\nUSER root\nRUN npm install -g carto && npm cache clean --force;\nUSER renderer\nRUN carto project.mml > mapnik.xml\n\n# Load shapefiles\nWORKDIR /home/renderer/src/openstreetmap-carto\nRUN scripts/get-shapefiles.py\n\n# Configure renderd\nUSER root\nRUN sed -i 's/renderaccount/renderer/g' /usr/local/etc/renderd.conf \\\n  && sed -i 's/hot/tile/g' /usr/local/etc/renderd.conf\nUSER renderer\n\n# Configure Apache\nUSER root\nRUN mkdir /var/lib/mod_tile \\\n  && chown renderer /var/lib/mod_tile \\\n  && mkdir /var/run/renderd \\\n  && chown renderer /var/run/renderd\nRUN echo \"LoadModule tile_module /usr/lib/apache2/modules/mod_tile.so\" >> /etc/apache2/conf-available/mod_tile.conf \\\n  && a2enconf mod_tile\nCOPY apache.conf /etc/apache2/sites-available/000-default.conf\nCOPY leaflet-demo.html /var/www/html/index.html\nRUN ln -sf /proc/1/fd/1 /var/log/apache2/access.log \\\n  && ln -sf /proc/1/fd/2 /var/log/apache2/error.log\n\n# Configure PosgtreSQL\nCOPY postgresql.custom.conf.tmpl /etc/postgresql/10/main/\nRUN chown -R postgres:postgres /var/lib/postgresql \\\n  && chown postgres:postgres /etc/postgresql/10/main/postgresql.custom.conf.tmpl \\\n  && echo \"\\ninclude 'postgresql.custom.conf'\" >> /etc/postgresql/10/main/postgresql.conf\n\n# copy update scripts\nCOPY openstreetmap-tiles-update-expire /usr/bin/\nRUN chmod +x /usr/bin/openstreetmap-tiles-update-expire \\\n    && mkdir /var/log/tiles \\\n    && chmod a+rw /var/log/tiles \\\n    && ln -s /home/renderer/src/mod_tile/osmosis-db_replag /usr/bin/osmosis-db_replag \\\n    && echo \"*  *    * * *   renderer    openstreetmap-tiles-update-expire\\n\" >> /etc/crontab\n\n# install trim_osc.py helper script\nUSER renderer\nRUN cd ~/src \\\n    && git clone https://github.com/zverik/regional \\\n    && chmod u+x ~/src/regional/trim_osc.py\n\n# Start running\nUSER root\nCOPY run.sh /\nCOPY indexes.sql /\nENTRYPOINT [\"/run.sh\"]\nCMD []\n\nEXPOSE 80 5432\n"
+}

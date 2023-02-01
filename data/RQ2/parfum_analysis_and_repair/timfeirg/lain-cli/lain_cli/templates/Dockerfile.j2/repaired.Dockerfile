@@ -1,0 +1,69 @@
+{% if values.build.prepare and build_stage == 'prepare' %}
+FROM {{ values.build.base }} AS prepare
+WORKDIR {{ values.build.workdir }}
+ADD --chown=1001:1001 . {{ values.build.workdir }}
+
+{% if values.build_args %}
+{% for a in values.build_args %}
+ARG {{ a }}
+{% endfor %}
+{% endif %}
+
+{% if values.build.prepare.env %}
+ENV {% for k, v in values.build.prepare.env.items() %}{{ k }}={{ v | to_json }} {% endfor %}
+{% endif %}
+
+{% for l in values.build.prepare.script %}
+RUN {{ l }}
+{% endfor %}
+
+RUN find . -type f {% if values.build.prepare.keep %}{% for k in values.build.prepare.keep %}{% if not loop.first %} -and {% endif %} -not -path '{{ k }}' -and -not -path '{{ k }}/*' {% endfor %}{% endif %} -delete
+{% endif %}
+
+{% if values.build.prepare %}
+FROM {{ cluster_config.registry }}/{{ appname }}:prepare AS build
+{% else %}
+FROM {{ values.build.base }} AS build
+{% endif %}
+WORKDIR {{ values.build.workdir }}
+
+{% if values.build_args %}
+{% for a in values.build_args %}
+ARG {{ a }}
+{% endfor %}
+{% endif %}
+
+{% if values.build.env %}
+ENV {% for k, v in values.build.env.items() %}{{ k }}={{ v | to_json }} {% endfor %}
+{% endif %}
+
+{% if lain_meta %}
+ENV LAIN_META={{ lain_meta }}
+{% endif %}
+
+ADD --chown=1001:1001 . {{ values.build.workdir }}
+{% if values.build.script %}
+RUN ({{ ') && ('.join(values.build.script) }})
+{% endif %}
+
+{% if values.release %}
+FROM {{ values.release.dest_base }} AS release
+WORKDIR {{ values.release.workdir }}
+{% if lain_meta %}
+ENV LAIN_META={{ lain_meta }}
+{% endif %}
+
+{% for copy in values.release['copy'] %}
+COPY --chown=1001:1001 --from=build {{ copy.src }} {{ copy.dest }}
+{% endfor %}
+
+{% if values.release.env %}
+ENV {% for k, v in values.release.env.items() %}{{ k }}={{ v | to_json }} {% endfor %}
+{% endif %}
+
+{% if values.release.script %}
+RUN ({{ ') && ('.join(values.release.script) }})
+{% endif %}
+{% endif %}
+
+USER 1001

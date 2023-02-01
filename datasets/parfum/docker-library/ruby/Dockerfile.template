@@ -1,0 +1,224 @@
+{{
+	def is_alpine:
+		env.variant | startswith("alpine")
+	;
+	def is_slim:
+		env.variant | startswith("slim-")
+-}}
+{{ if is_alpine then ( -}}
+FROM alpine:{{ env.variant | ltrimstr("alpine") }}
+{{ ) elif is_slim then ( -}}
+FROM debian:{{ env.variant | ltrimstr("slim-") }}-slim
+{{ ) else ( -}}
+FROM buildpack-deps:{{ env.variant }}
+{{ ) end -}}
+
+{{ if is_alpine then ( -}}
+RUN set -eux; \
+	apk add --no-cache \
+		bzip2 \
+		ca-certificates \
+		gmp-dev \
+		libffi-dev \
+		procps \
+		yaml-dev \
+		zlib-dev \
+	;
+
+{{ ) elif is_slim then ( -}}
+RUN set -eux; \
+	apt-get update; \
+	apt-get install -y --no-install-recommends \
+		bzip2 \
+		ca-certificates \
+		libffi-dev \
+		libgmp-dev \
+		libssl-dev \
+		libyaml-dev \
+		procps \
+		zlib1g-dev \
+	; \
+	rm -rf /var/lib/apt/lists/*
+
+{{ ) else "" end -}}
+# skip installing gem documentation
+RUN set -eux; \
+	mkdir -p /usr/local/etc; \
+	{ \
+		echo 'install: --no-document'; \
+		echo 'update: --no-document'; \
+	} >> /usr/local/etc/gemrc
+
+ENV LANG C.UTF-8
+ENV RUBY_MAJOR {{ env.version }}
+ENV RUBY_VERSION {{ .version }}
+ENV RUBY_DOWNLOAD_SHA256 {{ .sha256 }}
+
+# some of ruby's build scripts are written in ruby
+#   we purge system ruby later to make sure our final image uses what we just built
+RUN set -eux; \
+	\
+{{ if is_alpine then ( -}}
+# readline-dev vs libedit-dev: https://bugs.ruby-lang.org/issues/11869 and https://github.com/docker-library/ruby/issues/75
+	apk add --no-cache --virtual .ruby-builddeps \
+		autoconf \
+		bison \
+		bzip2 \
+		bzip2-dev \
+		ca-certificates \
+		coreutils \
+		dpkg-dev dpkg \
+		g++ \
+		gcc \
+		gdbm-dev \
+		glib-dev \
+		libc-dev \
+		libffi-dev \
+		libxml2-dev \
+		libxslt-dev \
+		linux-headers \
+		make \
+		ncurses-dev \
+		openssl \
+		openssl-dev \
+		patch \
+		procps \
+		readline-dev \
+		ruby \
+		tar \
+		xz \
+		yaml-dev \
+		zlib-dev \
+	; \
+{{ ) else ( -}}
+	savedAptMark="$(apt-mark showmanual)"; \
+	apt-get update; \
+	apt-get install -y --no-install-recommends \
+		bison \
+		dpkg-dev \
+		libgdbm-dev \
+		ruby \
+{{ if is_slim then ( -}}
+		autoconf \
+		g++ \
+		gcc \
+		libbz2-dev \
+		libgdbm-compat-dev \
+		libglib2.0-dev \
+		libncurses-dev \
+		libreadline-dev \
+		libxml2-dev \
+		libxslt-dev \
+		make \
+		wget \
+		xz-utils \
+{{ ) else "" end -}}
+	; \
+	rm -rf /var/lib/apt/lists/*; \
+{{ ) end -}}
+	\
+	wget -O ruby.tar.xz "https://cache.ruby-lang.org/pub/ruby/${RUBY_MAJOR%-rc}/ruby-$RUBY_VERSION.tar.xz"; \
+	echo "$RUBY_DOWNLOAD_SHA256 *ruby.tar.xz" | sha256sum --check --strict; \
+	\
+	mkdir -p /usr/src/ruby; \
+	tar -xJf ruby.tar.xz -C /usr/src/ruby --strip-components=1; \
+	rm ruby.tar.xz; \
+	\
+	cd /usr/src/ruby; \
+	\
+{{ if is_alpine then ( -}}
+# https://github.com/docker-library/ruby/issues/196
+# https://bugs.ruby-lang.org/issues/14387#note-13 (patch source)
+# https://bugs.ruby-lang.org/issues/14387#note-16 ("Therefore ncopa's patch looks good for me in general." -- only breaks glibc which doesn't matter here)
+	wget -O 'thread-stack-fix.patch' 'https://bugs.ruby-lang.org/attachments/download/7081/0001-thread_pthread.c-make-get_main_stack-portable-on-lin.patch'; \
+	echo '3ab628a51d92fdf0d2b5835e93564857aea73e0c1de00313864a94a6255cb645 *thread-stack-fix.patch' | sha256sum --check --strict; \
+	patch -p1 -i thread-stack-fix.patch; \
+	rm thread-stack-fix.patch; \
+	\
+# the configure script does not detect isnan/isinf as macros
+	export ac_cv_func_isnan=yes ac_cv_func_isinf=yes; \
+	\
+{{ ) else "" end -}}
+# hack in "ENABLE_PATH_CHECK" disabling to suppress:
+#   warning: Insecure world writable dir
+	{ \
+		echo '#define ENABLE_PATH_CHECK 0'; \
+		echo; \
+		cat file.c; \
+	} > file.c.new; \
+	mv file.c.new file.c; \
+	\
+	autoconf; \
+{{ if is_alpine and ( [ "2.7", "3.0" ] | index(env.version) ) then ( -}}
+	# fix builds on arm32v6/7 and s390x: https://github.com/docker-library/ruby/issues/308
+	# and don't break the other arches: https://github.com/docker-library/ruby/issues/365
+	apkArch="$(apk --print-arch)"; \
+	case "$apkArch" in \
+		s390x | armhf | armv7) \
+			apk add --no-cache libucontext-dev; \
+			export LIBS='-lucontext'; \
+			;; \
+	esac; \
+{{ ) else "" end -}}
+	gnuArch="$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)"; \
+	./configure \
+		--build="$gnuArch" \
+		--disable-install-doc \
+		--enable-shared \
+	; \
+	make -j "$(nproc)"; \
+	make install; \
+	\
+{{ if is_alpine then ( -}}
+	runDeps="$( \
+		scanelf --needed --nobanner --format '%n#p' --recursive /usr/local \
+			| tr ',' '\n' \
+			| sort -u \
+			| awk 'system("[ -e /usr/local/lib/" $1 " ]") == 0 { next } { print "so:" $1 }' \
+	)"; \
+	apk add --no-network --virtual .ruby-rundeps $runDeps; \
+	apk del --no-network .ruby-builddeps; \
+{{ ) else ( -}}
+	apt-mark auto '.*' > /dev/null; \
+	apt-mark manual $savedAptMark > /dev/null; \
+	find /usr/local -type f -executable -not \( -name '*tkinter*' \) -exec ldd '{}' ';' \
+		| awk '/=>/ { print $(NF-1) }' \
+		| sort -u \
+		| grep -vE '^/usr/local/lib/' \
+		| xargs -r dpkg-query --search \
+		| cut -d: -f1 \
+		| sort -u \
+		| xargs -r apt-mark manual \
+	; \
+	apt-get purge -y --auto-remove -o APT::AutoRemove::RecommendsImportant=false; \
+{{ ) end -}}
+	\
+	cd /; \
+	rm -r /usr/src/ruby; \
+# verify we have no "ruby" packages installed
+{{ if is_alpine then ( -}}
+	if \
+		apk --no-network list --installed \
+			| grep -v '^[.]ruby-rundeps' \
+			| grep -i ruby \
+	; then \
+		exit 1; \
+	fi; \
+{{ ) else ( -}}
+	if dpkg -l | grep -i ruby; then exit 1; fi; \
+{{ ) end -}}
+	[ "$(command -v ruby)" = '/usr/local/bin/ruby' ]; \
+# rough smoke test
+	ruby --version; \
+	gem --version; \
+	bundle --version
+
+# don't create ".bundle" in all our apps
+ENV GEM_HOME /usr/local/bundle
+ENV BUNDLE_SILENCE_ROOT_WARNING=1 \
+	BUNDLE_APP_CONFIG="$GEM_HOME"
+ENV PATH $GEM_HOME/bin:$PATH
+# adjust permissions of a few directories for running "gem install" as an arbitrary user
+RUN mkdir -p "$GEM_HOME" && chmod 777 "$GEM_HOME"
+
+CMD [ "irb" ]

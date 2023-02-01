@@ -1,0 +1,44 @@
+{
+  "startTime": 1674255901265,
+  "endTime": 1674255902452,
+  "originalSmells": [
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 46,
+        "lineEnd": 49,
+        "columnStart": 4,
+        "columnEnd": 52
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 57,
+        "lineEnd": 57,
+        "columnStart": 19,
+        "columnEnd": 30
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 75,
+        "lineEnd": 75,
+        "columnStart": 4,
+        "columnEnd": 45
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 21,
+        "lineEnd": 33,
+        "columnStart": 22,
+        "columnEnd": 25
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "#\n# Licensed to the Apache Software Foundation (ASF) under one\n# or more contributor license agreements.  See the NOTICE file\n# distributed with this work for additional information\n# regarding copyright ownership.  The ASF licenses this file\n# to you under the Apache License, Version 2.0 (the\n# \"License\"); you may not use this file except in compliance\n# with the License.  You may obtain a copy of the License at\n#\n#   http://www.apache.org/licenses/LICENSE-2.0\n#\n# Unless required by applicable law or agreed to in writing,\n# software distributed under the License is distributed on an\n# \"AS IS\" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY\n# KIND, either express or implied.  See the License for the\n# specific language governing permissions and limitations\n# under the License.\n#\n\nFROM ubuntu-gnome-vgl:18.04\n\nRUN apt-get update && DEBIAN_FRONTEND=noninteractive \\\n    apt-get install -y --no-install-recommends \\\n    git autoconf libtool software-properties-common \\\n    libssl-dev libpam0g-dev nasm xsltproc flex bison \\\n    pkg-config libcap-dev libpulse-dev libudev-dev \\\n    intltool libltdl-dev libsndfile-dev bash-completion \\\n    libsystemd-dev libdbus-1-dev libspeexdsp-dev autopoint \\\n    libx11-dev xserver-xorg-dev xserver-xorg-core \\\n    libxfixes-dev libxrandr-dev libxml2-dev dpkg-dev \\\n    libmp3lame-dev libopus-dev libfdk-aac-dev libjpeg-dev \\\n    libturbojpeg0-dev libpixman-1-dev libfuse-dev \\\n    xfonts-base xfonts-75dpi xfonts-100dpi \\\n    xfonts-scalable xauth && \\\n    # Clone xrdp and xorgxrdp source from GitHub and build them.\n    cd /usr/src && \\\n    git clone --recursive \\\n        https://github.com/neutrinolabs/xrdp.git && \\\n    git clone \\\n        https://github.com/neutrinolabs/xorgxrdp.git && \\\n    git clone \\\n        https://github.com/pulseaudio/pulseaudio.git && \\\n    git clone \\\n        https://github.com/neutrinolabs/pulseaudio-module-xrdp.git && \\\n    cd xrdp && git checkout v0.9.13 -b build && \\\n    ./bootstrap && \\\n    ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" --enable-opus --enable-fuse --enable-jpeg \\\n                --enable-tjpeg --enable-ipv6 --enable-vsock \\\n                --enable-pixman --enable-mp3lame \\\n                --enable-fdkaac --enable-rdpsndaudin && \\\n    make -j$(getconf _NPROCESSORS_ONLN) && make install && \\\n    cd ../xorgxrdp && git checkout v0.2.13 -b build && \\\n    # Need to patch xorgxrdp as GNOME is picky about RandR\n    # and an xorgxrdp update #153 causes RandR to fail, see:\n    # After update to v0.2.12 GNOME shell does not start\n    # https://github.com/neutrinolabs/xorgxrdp/issues/156\n    sed -i 's/LLOGLN(0, (\"rdpRRScreenSetSize: not allowing resize\"));/if ((width == pScreen->width) \\&\\& (height == pScreen->height) \\&\\&\\n            (mmWidth == pScreen->mmWidth) \\&\\& (mmHeight == pScreen->mmHeight))\\n        {\\n            LLOGLN(0, (\"rdpRRScreenSetSize: already this size\"));\\n            return TRUE;\\n        }\\n        LLOGLN(0, (\"rdpRRScreenSetSize: not allowing resize\"));/' /usr/src/xorgxrdp/module/rdpRandR.c && \\\n    ./bootstrap && ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" && \\\n    make -j$(getconf _NPROCESSORS_ONLN) && make install && \\\n    sed -i 's/ssl_protocols=TLSv1.2, TLSv1.3/ssl_protocols=TLSv1.2/' \\\n        /etc/xrdp/xrdp.ini && \\\n    # The follows lines are needed to allow 3D WM to start\n    # GNOME is particularly picky needing lots of environment\n    # variables, dbus-launch and --disable-acceleration-check\n    sed -i 's/readenv=1/readenv=1\\nexport XAUTHORITY=$HOME\\/.Xauthority.docker/' \\\n        /etc/xrdp/startwm.sh && \\\n    sed -i 's/\\. \\/etc\\/X11\\/Xsession/export GNOME_SHELL_SESSION_MODE=ubuntu\\n    export XDG_CURRENT_DESKTOP=ubuntu:GNOME\\n    export VGL_WM=1\\n    dbus-launch --sh-syntax --exit-with-session x-session-manager --disable-acceleration-check/' /etc/xrdp/startwm.sh && \\\n    sed -i 's/param=-config/param=-ac\\nparam=-config/' \\\n        /etc/xrdp/sesman.ini && \\\n    # Build xrdp source / sink modules\n    cd ../pulseaudio && git checkout v11.1 -b build && \\\n    ./autogen.sh && \\\n    cd ../pulseaudio-module-xrdp && \\\n    git checkout v0.4 -b build && \\\n    ./bootstrap && \\\n    ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" PULSE_DIR=/usr/src/pulseaudio && \\\n    make -j$(getconf _NPROCESSORS_ONLN) && make install && \\\n    # Modify PulseAudio daemon config to support xrdp.\n    echo \"load-module module-xrdp-sink\" >> \\\n         /etc/pulse/default.pa && \\\n    echo \"load-module module-xrdp-source\" >> \\\n         /etc/pulse/default.pa && \\\n    # From systemctl enable xrdp\n    ln -snf /lib/systemd/system/xrdp.service \\\n      /etc/systemd/system/multi-user.target.wants/xrdp.service && \\\n    # Remove LightDM Xephyr launch\n    rm /etc/lightdm/lightdm.conf.d/70-ubuntu.conf && rm -rf /var/lib/apt/lists/*;\n\n#-------------------------------------------------------------------------------\n# Example usage\n#\n# Build the image\n# docker build -t ubuntu-gnome-xrdp:18.04 -f Dockerfile-no-xephyr .\n\n"
+}

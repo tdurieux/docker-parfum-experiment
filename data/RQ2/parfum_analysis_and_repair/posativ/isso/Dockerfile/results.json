@@ -1,0 +1,17 @@
+{
+  "startTime": 1674216931788,
+  "endTime": 1674216932765,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 44,
+        "lineEnd": 44,
+        "columnStart": 4,
+        "columnEnd": 21
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Isso production Dockerfile\n\n# First stage: Build Javascript client parts using NodeJS\n\nFROM node:current-alpine AS isso-js\nWORKDIR /src/\n\n# make is not installed by default on alpine\nRUN apk add --no-cache make\n\n# Only copy necessities, to not trigger re-builds unnecessarily\nCOPY [\"Makefile\", \"package.json\", \"package-lock.json\", \"./\"]\n\n# Disable nagware and save some time skipping \"security\" \"audits\"\nRUN echo -e \"audit=false\\nfund=false\" > /root/.npmrc\n\n# Install node packages from npm\nRUN make init\n\n# Copy Javascript source code\nCOPY [\"isso/js/\", \"./isso/js/\"]\n\n# Run webpack to generate minified Javascript\nRUN make js\n\n# Second stage: Create production-ready Isso package\n\n# Copy needed files\nFROM python:3.10-alpine AS isso-builder\nWORKDIR /isso/\n\n# Set up virtualenv\nRUN python3 -m venv /isso \\\n && . /isso/bin/activate \\\n && pip3 install --no-cache-dir --upgrade pip \\\n && pip3 install --no-cache-dir gunicorn\n\n# Install cffi dependencies since they're not present on alpine by default\n# (required by cffi which in turn is required by misaka)\nRUN apk add --no-cache gcc libffi-dev libc-dev\n\n# For some reason, it is required to install cffi before misaka, else pip will\n# fail to build cffi\nRUN . /isso/bin/activate \\\n && pip3 install --no-cache-dir cffi\n\n# Install Isso's python dependencies via pip in a separate step before copying\n# over client files, so that changing Isso js/python source code will not\n# trigger a re-installation of all pip packages from scratch\nCOPY [\"setup.py\", \"setup.cfg\", \"README.md\", \"LICENSE\", \"./\"]\nRUN --mount=type=cache,target=/root/.cache \\\n  . /isso/bin/activate \\\n && python3 setup.py develop\n\n# Then copy over files\n# SRC \"isso/\" is treated as \"isso/*\" by docker, so copy to subdir explicitly\nCOPY [\"./isso/\", \"/isso/isso/\"]\nCOPY [\"./contrib/\", \"./contrib/\"]\n\n# Copy over generated Javascript client files\nCOPY --from=isso-js /src/isso/js/ ./isso/js\n\n# Build and install Isso package (pip dependencies cached from previous step)\nRUN --mount=type=cache,target=/root/.cache \\\n . /isso/bin/activate \\\n && python3 setup.py develop --no-deps\n\n\n# Third stage: Run Isso\nFROM python:3.10-alpine AS isso\nWORKDIR /isso/\nCOPY --from=isso-builder /isso/ .\n\n# Clean up\nRUN rm -rf /var/apk/cache/* /tmp/* /var/tmp/*\n\n# Setup permissions for volume mounts\nRUN mkdir /db /config && chmod 1777 /db /config\n\n# Configuration\nVOLUME /db /config\nEXPOSE 8080\nENV ISSO_SETTINGS /config/isso.cfg\n\n# Run Isso via gunicorn WSGI server\nENTRYPOINT [\"/isso/bin/gunicorn\", \"-b\", \"0.0.0.0:8080\", \"-w\", \"4\", \"--preload\", \"--worker-tmp-dir\", \"/dev/shm\"]\nCMD [\"isso.run\"]\n\n# Example of use:\n#\n# Build:\n# $ docker build -t isso .\n#\n# Run:\n# $ mkdir -p config/ db/\n# $ cp contrib/isso.sample.cfg config/isso.cfg\n# Set 'dbpath' to '/db/comments.db' and adjust 'host'\n# $ docker run -d --rm --name isso -p 127.0.0.1:8080:8080 -v $PWD/config:/config -v $PWD/db:/db isso:latest\n"
+}

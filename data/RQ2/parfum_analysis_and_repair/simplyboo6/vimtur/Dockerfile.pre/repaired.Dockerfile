@@ -1,0 +1,25 @@
+FROM simplyboo6/vimtur-base@sha256:71c4016340f175f1c4c113f794f0a6d994944d7ee943c720a3a5afb596560069
+
+ARG VERSION_NAME=dev
+
+RUN apk add --no-cache -U g++ make python3
+
+## Copy in source
+COPY ./ /app/
+RUN echo "$VERSION_NAME" > /app/version
+
+## Build server
+RUN cd /app/server && \
+    yarn link phash2 && \
+    yarn --frozen-lockfile && \
+    yarn lint && yarn build && yarn cache clean;
+
+## Build client
+RUN cd /app/client && \
+    yarn --frozen-lockfile && \
+    yarn lint && yarn build:prod && \
+    rm -rf node_modules && yarn cache clean;
+
+WORKDIR /app
+
+ENTRYPOINT [ "/sbin/tini", "--", "node", "/app/server/dist/index.js" ]

@@ -1,0 +1,1 @@
+#docker build -t pandorafms/pandorafms-percona-base -f $HOME/code/pandorafms/extras/docker/percona/Dockerfile $HOME/code/pandorafms/extras/docker/percona

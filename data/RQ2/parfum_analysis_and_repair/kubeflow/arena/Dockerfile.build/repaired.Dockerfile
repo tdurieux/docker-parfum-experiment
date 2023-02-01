@@ -1,0 +1,94 @@
+#**********************************************************************
+# Builder
+#
+# Create a go runtime for building arena
+
+ARG GOLANG_VERSION=1.14
+ARG KUBE_VERSION=v1.23.0
+ARG HELM_VERSION=v3.7.2
+ARG VERSION=v0.3.0-rc
+ARG OS_ARCH=linux-amd64
+ARG COMMIT=stable
+ARG TARGET=cli-$OS_ARCH
+
+
+FROM golang:$GOLANG_VERSION-stretch as build
+
+ARG KUBE_VERSION
+ARG HELM_VERSION
+ARG OS_ARCH
+ARG TARGET
+
+ENV KUBE_VERSION $KUBE_VERSION
+ENV HELM_VERSION $HELM_VERSION
+ENV VERSION $VERSION
+ENV OS_ARCH $OS_ARCH
+ENV COMMIT $COMMIT
+ENV TARGET $TARGET
+ENV GO111MODULE off
+
+RUN mkdir -p /go/src/github.com/kubeflow/arena
+
+WORKDIR /go/src/github.com/kubeflow/arena
+COPY . .
+
+RUN make $TARGET
+
+RUN wget https://kubeflow-hk.oss-cn-hongkong.aliyuncs.com/helm-$HELM_VERSION-$OS_ARCH.tar.gz && \
+    tar -xvf helm-$HELM_VERSION-$OS_ARCH.tar.gz && \
+    mv $OS_ARCH/helm /usr/local/bin/helm && \
+    chmod u+x /usr/local/bin/helm && \
+    chmod u+x /go/src/github.com/kubeflow/arena/install.sh && rm helm-$HELM_VERSION-$OS_ARCH.tar.gz
+
+RUN OS=$(echo $OS_ARCH | cut -f1 -d-) && \
+    ARCH=$(echo $OS_ARCH | cut -f2 -d-) && \
+    cd /usr/local/bin && \
+    curl -f -LO https://dl.k8s.io/release/${KUBE_VERSION}/bin/${OS}/${ARCH}/kubectl && \
+    chmod +x /usr/local/bin/kubectl
+
+
+#**********************************************************************
+#
+# Create arena pacakge
+#
+
+FROM centos:7
+
+ARG KUBE_VERSION
+ARG HELM_VERSION
+ARG OS_ARCH
+ARG TARGET
+ARG COMMIT
+ARG VERSION
+
+ENV OS_ARCH $OS_ARCH
+ENV COMMIT $COMMIT
+ENV TARGET $TARGET
+ENV VERSION $VERSION
+
+ENV ARENA_HOME /arena-installer
+ENV ARENA_TARFILE /arena-installer-$VERSION-$COMMIT-$OS_ARCH.tar.gz
+
+RUN mkdir -p $ARENA_HOME/bin
+
+COPY --from=build /go/src/github.com/kubeflow/arena/bin/arena $ARENA_HOME/bin/arena
+
+COPY --from=build /go/src/github.com/kubeflow/arena/bin/arena-uninstall $ARENA_HOME/bin/arena-uninstall
+
+COPY --from=build /go/src/github.com/kubeflow/arena/install.sh $ARENA_HOME/install.sh
+
+COPY --from=build /go/src/github.com/kubeflow/arena/arena-gen-kubeconfig.sh $ARENA_HOME/bin/arena-gen-kubeconfig.sh
+
+COPY --from=build /usr/local/bin/helm $ARENA_HOME/bin/helm
+
+COPY --from=build /go/src/github.com/kubeflow/arena/kubernetes-artifacts $ARENA_HOME/kubernetes-artifacts
+
+COPY --from=build /go/src/github.com/kubeflow/arena/arena-artifacts $ARENA_HOME/arena-artifacts
+
+COPY --from=build /usr/local/bin/kubectl $ARENA_HOME/bin/kubectl
+
+COPY --from=build /go/src/github.com/kubeflow/arena/charts $ARENA_HOME/charts
+
+RUN sed -i "s@^version: \(.*\)@version: $VERSION-$COMMIT@g" $ARENA_HOME/arena-artifacts/Chart.yaml && \
+    sed -i "s@^appVersion: \(.*\)@appVersion: $VERSION-$COMMIT@g" $ARENA_HOME/arena-artifacts/Chart.yaml && \
+    tar -zcvf $ARENA_TARFILE $ARENA_HOME

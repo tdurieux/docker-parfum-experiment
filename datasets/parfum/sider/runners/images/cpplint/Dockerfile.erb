@@ -1,0 +1,5 @@
+<%= render_erb 'images/Dockerfile.python.erb' %>
+
+COPY --chown=<%= chown %> images/<%= analyzer %>/sider_recommended_CPPLINT.cfg ${RUNNER_USER_HOME}/
+
+<%= render_erb 'images/Dockerfile.end.erb' %>

@@ -1,0 +1,1 @@
+# docker build -t ccr.ccs.tencentyun.com/cube-studio/notebook:vscode-ubuntu-node-base -f Dockerfile-node-base .

@@ -1,0 +1,1 @@
+# Dockerfile extension for p3d to support running from Girder Worker.

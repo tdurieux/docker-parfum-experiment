@@ -1,0 +1,42 @@
+FROM bobanetwork/builder AS builder
+
+FROM node:14-alpine
+
+RUN apk add --no-cache curl bash jq
+
+WORKDIR /opt/optimism
+
+# copy top level files
+COPY --from=builder /optimism/*.json ./
+COPY --from=builder /optimism/yarn.lock .
+COPY --from=builder /optimism/node_modules ./node_modules
+
+# copy deps (would have been nice if docker followed the symlinks required)
+COPY --from=builder /optimism/packages/core-utils/package.json ./packages/core-utils/package.json
+COPY --from=builder /optimism/packages/core-utils/dist ./packages/core-utils/dist
+COPY --from=builder /optimism/packages/common-ts/package.json ./packages/common-ts/package.json
+COPY --from=builder /optimism/packages/common-ts/dist ./packages/common-ts/dist
+
+COPY --from=builder /optimism/packages/contracts/package.json ./packages/contracts/package.json
+COPY --from=builder /optimism/packages/contracts/deployments ./packages/contracts/deployments
+COPY --from=builder /optimism/packages/contracts/dist ./packages/contracts/dist
+COPY --from=builder /optimism/packages/contracts/artifacts ./packages/contracts/artifacts
+
+COPY --from=builder /optimism/packages/sdk/package.json ./packages/sdk/package.json
+COPY --from=builder /optimism/packages/sdk/dist ./packages/sdk/dist
+
+# copy the service
+WORKDIR /opt/optimism/packages/message-relayer
+COPY --from=builder /optimism/packages/message-relayer/dist ./dist
+COPY --from=builder /optimism/packages/message-relayer/package.json .
+COPY --from=builder /optimism/packages/message-relayer/exec ./exec
+COPY --from=builder /optimism/packages/message-relayer/node_modules ./node_modules
+
+# copy this over in case you want to run alongside other services
+COPY ./ops/scripts/relayer.sh .
+COPY ./ops/scripts/relayer-fast.sh .
+COPY ./ops/scripts/wait-for-l1-and-l2.sh .
+
+RUN chmod +x ./relayer-fast.sh
+RUN chmod +x ./wait-for-l1-and-l2.sh
+ENTRYPOINT ["npm", "run", "start"]

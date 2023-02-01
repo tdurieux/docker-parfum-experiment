@@ -1,0 +1,1 @@
+# This image is used by runner tests only

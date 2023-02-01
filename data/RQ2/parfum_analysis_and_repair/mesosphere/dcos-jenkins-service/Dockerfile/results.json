@@ -1,0 +1,44 @@
+{
+  "startTime": 1674249935671,
+  "endTime": 1674249936747,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 28,
+        "lineEnd": 28,
+        "columnStart": 22,
+        "columnEnd": 73
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 31,
+        "lineEnd": 31,
+        "columnStart": 23,
+        "columnEnd": 56
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 28,
+        "lineEnd": 28,
+        "columnStart": 22,
+        "columnEnd": 73
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 31,
+        "lineEnd": 31,
+        "columnStart": 23,
+        "columnEnd": 56
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM jenkins/jenkins:2.204.6\nWORKDIR /tmp\n\n# Environment variables used throughout this Dockerfile\n#\n# $JENKINS_HOME     will be the final destination that Jenkins will use as its\n#                   data directory. This cannot be populated before Marathon\n#                   has a chance to create the host-container volume mapping.\n#\nENV JENKINS_FOLDER /usr/share/jenkins\n\n# Build Args\nARG BLUEOCEAN_VERSION=1.22.0\nARG JENKINS_STAGING=/usr/share/jenkins/ref/\nARG PROMETHEUS_PLUG_HASH=61ea0cd0bb26d937c8f4df00c7e226c0b51c7b50\nARG STATSD_PLUG_HASH=929d4a6cb3d3ce5f1e03af73075b13687d4879c8\nARG JENKINS_DCOS_HOME=/var/jenkinsdcos_home\nARG user=nobody\nARG uid=99\nARG gid=99\n\nENV JENKINS_HOME $JENKINS_DCOS_HOME\n# Default policy according to https://wiki.jenkins.io/display/JENKINS/Configuring+Content+Security+Policy\nENV JENKINS_CSP_OPTS=\"sandbox; default-src 'none'; img-src 'self'; style-src 'self';\"\n\nUSER root\n\n# install dependencies\nRUN apt-get update && apt-get install --no-install-recommends -y nginx python zip jq gettext-base && rm -rf /var/lib/apt/lists/*;\n# update to newer git version\nRUN echo \"deb http://ftp.debian.org/debian testing main\" >> /etc/apt/sources.list \\\n  && apt-get update && apt-get -t testing --no-install-recommends install -y git && rm -rf /var/lib/apt/lists/*;\n\nRUN mkdir -p \"${JENKINS_HOME}\" \"${JENKINS_FOLDER}/war\"\n\n# Override the default property for DNS lookup caching\nRUN echo 'networkaddress.cache.ttl=60' >> ${JAVA_HOME}/jre/lib/security/java.security\n\n# bootstrap scripts and needed dir setup\nCOPY scripts/export-libssl.sh /usr/local/jenkins/bin/export-libssl.sh\nCOPY scripts/dcos-quota.sh /usr/local/jenkins/bin/dcos-quota.sh\nCOPY scripts/dcos-framework-dns-name.sh /usr/local/jenkins/bin/dcos-framework-dns-name.sh\nCOPY scripts/dcos-write-known-hosts-file.sh /usr/local/jenkins/bin/dcos-write-known-hosts-file.sh\nCOPY scripts/run.sh /usr/local/jenkins/bin/run.sh\n\n# nginx setup\nRUN mkdir -p /var/log/nginx/jenkins /var/nginx/\nCOPY conf/nginx/nginx.conf.template /var/nginx/nginx.conf.template\n\n# jenkins setup\nENV CASC_JENKINS_CONFIG /usr/local/jenkins/jenkins.yaml\nCOPY conf/jenkins/configuration.yaml \"${CASC_JENKINS_CONFIG}\"\nCOPY conf/jenkins/jenkins.model.JenkinsLocationConfiguration.xml \"${JENKINS_STAGING}/jenkins.model.JenkinsLocationConfiguration.xml\"\nCOPY conf/jenkins/nodeMonitors.xml \"${JENKINS_STAGING}/nodeMonitors.xml\"\nCOPY scripts/init.groovy.d/mesos-auth.groovy \"${JENKINS_STAGING}/init.groovy.d/mesos-auth.groovy\"\n\n# add plugins\nCOPY plugins.conf /tmp/\nRUN sed -i \"s/\\${BLUEOCEAN_VERSION}/${BLUEOCEAN_VERSION}/g\" /tmp/plugins.conf\nRUN /usr/local/bin/install-plugins.sh < /tmp/plugins.conf\n\n# Note: There is a cleaner way of accomplishing the following which is documented in https://jira.d2iq.com/browse/DCOS_OSS-5906\nADD https://infinity-artifacts.s3.amazonaws.com/prometheus-jenkins/prometheus.hpi-${PROMETHEUS_PLUG_HASH} \"${JENKINS_STAGING}/plugins/prometheus.hpi\"\nADD https://infinity-artifacts.s3.amazonaws.com/statsd-jenkins/metrics-graphite.hpi-${STATSD_PLUG_HASH} \"${JENKINS_STAGING}/plugins/metrics-graphite.hpi\"\n\n# Note: For development purposes, the developer can COPY a pre-release mesos.hpi file into JENKINS_STAGING/plugins/mesos.jpi\n# The new naming convention is to use *.jpi files instead of *.hpi files.\n\nRUN chmod -R ugo+rw \"$JENKINS_HOME\" \"${JENKINS_FOLDER}\" \\\n    && chmod -R ugo+r \"${JENKINS_STAGING}\" \\\n    && chmod -R ugo+rx /usr/local/jenkins/bin/ \\\n    && chmod -R ugo+rw /var/jenkins_home/ \\\n    && chmod -R ugo+rw /var/lib/nginx/ /var/nginx/ /var/log/nginx \\\n    && chmod ugo+rx /usr/local/jenkins/bin/*\n\nUSER ${user}\n\n# disable first-run wizard\nRUN echo 2.0 > /usr/share/jenkins/ref/jenkins.install.UpgradeWizard.state\n\nCMD /usr/local/jenkins/bin/run.sh\n"
+}

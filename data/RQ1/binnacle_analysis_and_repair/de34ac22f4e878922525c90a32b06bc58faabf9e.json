@@ -1,0 +1,62 @@
+{
+  "startTime": 1674239139234,
+  "endTime": 1674239139695,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 11,
+        "lineEnd": 11,
+        "columnStart": 4,
+        "columnEnd": 49
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 69,
+        "lineEnd": 69,
+        "columnStart": 7,
+        "columnEnd": 138
+      }
+    },
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 81,
+        "lineEnd": 81,
+        "columnStart": 4,
+        "columnEnd": 15
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 98,
+        "lineEnd": 98,
+        "columnStart": 4,
+        "columnEnd": 31
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 7,
+        "lineEnd": 7,
+        "columnStart": 7,
+        "columnEnd": 82
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 70,
+        "lineEnd": 70,
+        "columnStart": 7,
+        "columnEnd": 30
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM metabrainz/python:2.7 AS acousticbrainz-base\n\nARG deploy_env\n\n# Dockerize\nENV DOCKERIZE_VERSION v0.6.1\nRUN wget https://github.com/jwilder/dockerize/releases/download/$DOCKERIZE_VERSION/dockerize-linux-amd64-$DOCKERIZE_VERSION.tar.gz \\\n    && tar -C /usr/local/bin -xzvf dockerize-linux-amd64-$DOCKERIZE_VERSION.tar.gz && rm dockerize-linux-amd64-$DOCKERIZE_VERSION.tar.gz\n\n# Install dependencies\n# Node\nRUN curl -f -sL https://deb.nodesource.com/setup_8.x | bash - && apt-get update \\\n    && apt-get install -y --no-install-recommends \\\n                       build-essential \\\n                       ca-certificates \\\n                       cron \\\n                       git \\\n                       ipython \\\n                       libavcodec-dev \\\n                       libavformat-dev \\\n                       libavutil-dev \\\n                       libavresample-dev \\\n                       libffi-dev \\\n                       libfftw3-dev \\\n                       libpq-dev \\\n                       libsamplerate0-dev \\\n                       libqt4-dev \\\n                       libssl-dev \\\n                       libtag1-dev \\\n                       libxml2-dev \\\n                       libxslt1-dev \\\n                       libyaml-dev \\\n                       nodejs \\\n                       pkg-config \\\n                       pxz \\\n                       python-dev \\\n                       python-numpy-dev \\\n                       python-numpy \\\n                       swig2.0 \\\n    && rm -rf /var/lib/apt/lists/*\n\nRUN mkdir /code\nRUN mkdir /code/hl_extractor\nRUN mkdir /data\nWORKDIR /code\n\n# Gaia\n# See https://github.com/MTG/gaia\nRUN git clone https://github.com/MTG/gaia /tmp/gaia \\\n    && cd /tmp/gaia \\\n    && ./waf configure --with-python-bindings \\\n    && ./waf \\\n    && ./waf install \\\n    && cd / && rm -r /tmp/gaia\n\n# Essentia\n# See http://essentia.upf.edu/documentation/installing.html\nRUN git clone https://github.com/MTG/essentia /tmp/essentia \\\n    && cd /tmp/essentia \\\n    && ./waf configure --mode=release --with-gaia --with-example=streaming_extractor_music_svm \\\n    && ./waf \\\n    && ./waf install \\\n    && ldconfig \\\n    && cp /tmp/essentia/build/src/examples/essentia_streaming_extractor_music_svm /usr/local/bin \\\n    && cd / && rm -r /tmp/essentia\n\n# SVM models\nRUN mkdir /tmp/models \\\n    && cd /tmp/models \\\n    && curl -f -L --silent -o models.tar.gz https://essentia.upf.edu/documentation/svm_models/essentia-extractor-svm_models-v2.1_beta1.tar.gz \\\n    && tar -xvzf models.tar.gz \\\n    && mv /tmp/models/v2.1_beta1/svm_models /data/ \\\n    && cd / && rm -r /tmp/models && rm models.tar.gz\n\n# Python dependencies\nRUN mkdir /code/docs/\nCOPY docs/requirements.txt /code/docs/requirements.txt\nCOPY requirements.txt /code/requirements.txt\nRUN pip install --no-cache-dir -r requirements.txt\n\nCOPY package.json /code\nRUN npm install && npm cache clean --force;\n\n\nFROM acousticbrainz-base AS acousticbrainz-dev\n\nARG deploy_env\n\nCOPY requirements_development.txt /code/requirements_development.txt\nRUN pip install --no-cache-dir -r requirements_development.txt\n\nCOPY . /code\n\n\nFROM acousticbrainz-base AS acousticbrainz-prod\n\nARG deploy_env\n\nRUN pip install --no-cache-dir uWSGI==2.0.17.1\n\n# Consul template service is already set up, just need to copy the configuration\nCOPY ./docker/consul-template.conf /etc/consul-template.conf\n\n# uwsgi service files\nCOPY ./docker/$deploy_env/uwsgi/uwsgi.service /etc/service/uwsgi/run\nRUN chmod 755 /etc/service/uwsgi/run\nCOPY ./docker/$deploy_env/uwsgi/uwsgi.ini /etc/uwsgi/uwsgi.ini\n\nRUN mkdir /cache_namespaces\nRUN chown -R www-data:www-data /cache_namespaces\n\n# Create a user named acousticbrainz for cron jobs\nRUN useradd --create-home --shell /bin/bash acousticbrainz\n\n# Add cron jobs\nADD docker/crontab /etc/cron.d/ab-crontab\nRUN chmod 0644 /etc/cron.d/ab-crontab && crontab -u acousticbrainz /etc/cron.d/ab-crontab\nRUN touch /var/log/stats_calc.log /var/log/stats_cache.log && chown acousticbrainz:acousticbrainz /var/log/stats_calc.log /var/log/stats_cache.log\n\n# Make sure that the cron service doesn't start automagically\n# http://smarden.org/runit/runsv.8.html\nRUN touch /etc/service/cron/down\n\nCOPY . /code\nRUN /code/node_modules/.bin/gulp\n"
+}

@@ -1,0 +1,12 @@
+FROM quay.io/app-sre/qontract-reconcile-builder:0.3.3
+
+ENV TOX_PARALLEL_NO_SPINNER=1
+
+WORKDIR /package
+COPY . /package
+
+RUN microdnf upgrade -y && \
+    python3 -m pip install --upgrade pip && \
+    python3 -m pip install tox
+
+CMD ["tox","-p"]

@@ -1,0 +1,18 @@
+FROM sztanko/solsticestreets_base:latest
+
+RUN mkdir /solsticestreets
+WORKDIR /solsticestreets
+COPY python python
+COPY config config
+COPY scripts scripts
+COPY run.sh run.sh
+COPY requirements.txt .
+
+RUN pip install --no-cache-dir -r /solsticestreets/requirements.txt
+ENV PYTHONPATH /solsticestreets/python
+ENV PATH "/solsticestreets/python:${PATH}"
+
+RUN python python/one_offs.py --install-completion bash
+RUN python python/run.py --install-completion bash
+
+CMD bash -c './run.sh config/settings.planet.sh'

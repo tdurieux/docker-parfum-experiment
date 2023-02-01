@@ -1,0 +1,38 @@
+ARG BASE_IMAGE=registry.aliyuncs.com/kubeflow-images-public/tensorflow-1.12.0-notebook-gpu:v0.4.0
+
+ARG USER=jovyan
+
+FROM golang:1.14-stretch as build
+
+RUN mkdir -p /go/src/github.com/kubeflow/arena
+
+WORKDIR /go/src/github.com/kubeflow/arena
+COPY . .
+
+RUN make
+
+RUN wget https://kubeflow-hk.oss-cn-hongkong.aliyuncs.com/helm-v2.14.1-linux-amd64.tar.gz && \
+    tar -xvf helm-v2.14.1-linux-amd64.tar.gz && \
+    mv linux-amd64/helm /usr/local/bin/helm && \
+    chmod u+x /usr/local/bin/helm && rm helm-v2.14.1-linux-amd64.tar.gz
+
+ENV K8S_VERSION v1.13.6
+RUN curl -f -o /usr/local/bin/kubectl https://storage.googleapis.com/kubernetes-release/release/${K8S_VERSION}/bin/linux/amd64/kubectl && chmod +x /usr/local/bin/kubectl
+
+FROM $BASE_IMAGE
+
+COPY --from=build /go/src/github.com/kubeflow/arena/bin/arena /usr/local/bin/arena
+
+COPY --from=build /usr/local/bin/helm /usr/local/bin/arena-helm
+
+COPY --from=build /go/src/github.com/kubeflow/arena/charts /charts
+
+RUN chmod a+rx /usr/local/bin/* && \
+    chmod a+rx -R /charts
+
+RUN apt-get update && \
+    apt-get install --no-install-recommends bash-completion -y && \
+    echo "source /etc/bash_completion" >> /etc/bash.bashrc && \
+    echo "source <(arena completion bash)" >> /etc/bash.bashrc && rm -rf /var/lib/apt/lists/*;
+
+USER $USER

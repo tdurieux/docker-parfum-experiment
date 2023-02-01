@@ -1,0 +1,5 @@
+FROM imagick_php_backend_im6:latest
+
+RUN DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends php8.0-xdebug && rm -rf /var/lib/apt/lists/*;
+
+COPY xdebug.ini /etc/php/8.0/fpm/conf.d/20-xdebug.ini

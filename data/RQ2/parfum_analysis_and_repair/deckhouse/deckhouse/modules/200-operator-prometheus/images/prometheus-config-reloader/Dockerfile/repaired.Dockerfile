@@ -1,0 +1,1 @@
+# Based on https://github.com/prometheus-operator/prometheus-operator/blob/v0.50.0/cmd/prometheus-config-reloader/Dockerfile

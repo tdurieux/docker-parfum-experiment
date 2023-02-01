@@ -1,0 +1,26 @@
+{
+  "startTime": 1674220814990,
+  "endTime": 1674220816380,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 35,
+        "lineEnd": 35,
+        "columnStart": 22,
+        "columnEnd": 56
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 35,
+        "lineEnd": 35,
+        "columnStart": 22,
+        "columnEnd": 56
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM golang:1.17.5-buster\nLABEL maintainer=\"Textile <contact@textile.io>\"\n\n# This is (in large part) copied (with love) from\n# https://hub.docker.com/r/ipfs/go-ipfs/dockerfile\n\n# Get source\nENV SRC_DIR /go-threads\n\n# Download packages first so they can be cached.\nCOPY go.mod go.sum $SRC_DIR/\nRUN cd $SRC_DIR \\\n  && go mod download\n\nCOPY . $SRC_DIR\n\n# Install the daemon\nRUN cd $SRC_DIR \\\n  && go install github.com/textileio/go-threads/threadsd\n\n# Get su-exec, a very minimal tool for dropping privileges,\n# and tini, a very minimal init daemon for containers\nENV SUEXEC_VERSION v0.2\nENV TINI_VERSION v0.16.1\nRUN set -x \\\n  && cd /tmp \\\n  && git clone https://github.com/ncopa/su-exec.git \\\n  && cd su-exec \\\n  && git checkout -q $SUEXEC_VERSION \\\n  && make \\\n  && cd /tmp \\\n  && wget -q -O tini https://github.com/krallin/tini/releases/download/$TINI_VERSION/tini \\\n  && chmod +x tini\n\n# Get the TLS CA certificates, they're not provided by busybox.\nRUN apt-get update && apt-get install --no-install-recommends -y ca-certificates && rm -rf /var/lib/apt/lists/*;\n\n# Now comes the actual target image, which aims to be as small as possible.\nFROM busybox:1.31.0-glibc\nLABEL maintainer=\"Textile <contact@textile.io>\"\n\n# Get the threads binary, entrypoint script, and TLS CAs from the build container.\nENV SRC_DIR /go-threads\nCOPY --from=0 /go/bin/threadsd /usr/local/bin/threadsd\nCOPY --from=0 /tmp/su-exec/su-exec /sbin/su-exec\nCOPY --from=0 /tmp/tini /sbin/tini\nCOPY --from=0 /etc/ssl/certs /etc/ssl/certs\n\n# This shared lib (part of glibc) doesn't seem to be included with busybox.\nCOPY --from=0 /lib/x86_64-linux-gnu/libdl.so.2 /lib/libdl.so.2\n\n# hostAddr; should be exposed to the public\nEXPOSE 4006\n# apiAddr; should *not* be exposed to the public unless intercepted by an auth system, e.g., textile\nEXPOSE 6006\n# apiProxyAddr; should *not* be exposed to the public unless intercepted by an auth system, e.g., textile\nEXPOSE 6007\n\n# Create the repo directory and switch to a non-privileged user.\nENV THREADS_PATH /data/threads\nRUN mkdir -p $THREADS_PATH \\\n  && adduser -D -h $THREADS_PATH -u 1000 -G users textile \\\n  && chown -R textile:users $THREADS_PATH\n\n# Switch to a non-privileged user\nUSER textile\n\n# Expose the repo as a volume.\n# Important this happens after the USER directive so permission are correct.\nVOLUME $THREADS_PATH\n\nENTRYPOINT [\"/sbin/tini\", \"--\", \"threadsd\"]\n\nCMD [\"--repo=/data/threads\"]\n"
+}

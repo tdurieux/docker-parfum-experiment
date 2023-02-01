@@ -1,0 +1,26 @@
+{
+  "startTime": 1674252830870,
+  "endTime": 1674252831019,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 7,
+        "lineEnd": 21,
+        "columnStart": 4,
+        "columnEnd": 12
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 28,
+        "lineEnd": 31,
+        "columnStart": 22,
+        "columnEnd": 19
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM ubuntu:bionic\nLABEL maintainer=\"Yelp Performance Team\"\n\n# public apt-get mirrors are terribly slow if your network supports ipv6\n# so we need to force apt to use ipv4\n# https://ubuntuforums.org/showthread.php?t=2349892\nRUN apt-get -o Acquire::ForceIPv4=true update && \\\n    DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::ForceIPv4=true install -y --no-install-recommends \\\n        build-essential \\\n        ca-certificates \\\n        dnsutils \\\n        git \\\n        gpg-agent \\\n        libluajit-5.1-2 \\\n        # libyaml-dev is needed to install lyaml\n        libyaml-dev \\\n        luarocks \\\n        # for installing the add-apt-repository command\n        software-properties-common \\\n        tzdata \\\n        unzip \\\n        wget && rm -rf /var/lib/apt/lists/*;\n\n# Install openresty from openresty's public APT repo\nRUN wget -qO - https://openresty.org/package/pubkey.gpg | apt-key add -\nRUN add-apt-repository -y \"deb http://openresty.org/package/ubuntu $(lsb_release -sc) main\"\n# Need to pin openresty to the 1.11.2.3 version as our tests break with newer versions.\n# I think this is due to bad test syntax on our side, so we should fix that: PERF-2785\nRUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \\\n    openresty \\\n    openresty-opm \\\n    openresty-resty && rm -rf /var/lib/apt/lists/*;\n\n# Manually install dumb-init as it's not in the public APT repo\nRUN wget https://github.com/Yelp/dumb-init/releases/download/v1.2.1/dumb-init_1.2.1_amd64.deb\nRUN dpkg -i dumb-init_*.deb\n\nRUN apt-get clean\n\n# We directly pin both lua dependencies to allow for reproducible\n# deploy builds.\nRUN luarocks install lyaml 6.1.1-4\nRUN luarocks install luasocket 3.0rc1-2\nRUN luarocks install luafilesystem 1.6.3-2\nRUN luarocks install lua-resty-http 0.12-0\nRUN luarocks install crc32 1.0\nRUN luarocks install busted 2.0.rc12-1\nRUN luarocks install cluacov\nRUN luarocks install luacheck\nRUN opm get detailyang/lua-resty-rfc5424=0.1.0\n\nRUN mkdir -p /code\nWORKDIR /code\n\n# Revert after https://github.com/thibaultcha/lua-cassandra/pull/104 gets merged.\nADD lua-cassandra-dev-0.rockspec lua-cassandra-dev-0.rockspec\nRUN luarocks build lua-cassandra-dev-0.rockspec\n\nADD . /code\nRUN chown -R nobody:nogroup /code /usr/local/openresty\n\n# See https://github.com/moby/moby/issues/2259\n# This folder is used as a volume in itests\nRUN mkdir -p /var/log/nginx\nRUN chown -R nobody:nogroup /var/log/nginx\n\nUSER nobody\n\n# Rewrite SIGTERM(15) to SIGQUIT(3) to let Nginx shut down gracefully\nCMD [\"dumb-init\", \"--rewrite\", \"15:3\", \"/code/start.sh\"]\n# vim: syntax=dockerfile\n"
+}

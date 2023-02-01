@@ -1,0 +1,26 @@
+{
+  "startTime": 1674248693808,
+  "endTime": 1674248694004,
+  "originalSmells": [
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 36,
+        "lineEnd": 36,
+        "columnStart": 4,
+        "columnEnd": 15
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 25,
+        "lineEnd": 25,
+        "columnStart": 4,
+        "columnEnd": 137
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "######################################################\n#\n# Agave DevOps Torque Server\n# Tag: agaveapi/torque\n#\n# This container provides a standard pbs controller\n# and worker created on top of the agaveapi/centos-base\n# image. Nothing special here.\n#\n# Usage:\n# docker run -h docker -i -rm             \\\n#            -p 10022:22                  \\ # SSHD, SFTP\n#            -p 9618:9618                 \\ # PBS\n#            --privileged\n#            agaveapi/torque\n#\n# https://bitbucket.org/taccaci/agave-environment\n#\n######################################################\n\nFROM agaveapi/centos-base\n\nMAINTAINER Rion Dooley <dooley@tacc.utexas.edu>\n\n# Install slurm\nRUN yum -y --enablerepo=centosplus install make perl-CPAN openssl-devel libxml2-devel boost-devel gcc gcc-c++ git tar libtool vim-minimal && rm -rf /var/cache/yum\n\nWORKDIR /usr/local\n\n# Pull torque\nRUN git clone https://github.com/adaptivecomputing/torque.git -b 5.0.0 5.0.0\n\nWORKDIR /usr/local/5.0.0\nRUN ./autogen.sh\n\n# Build Torque\nRUN ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\"\nRUN make\nRUN make install\nRUN cp contrib/init.d/trqauthd /etc/init.d/\nRUN cp contrib/init.d/pbs_mom /etc/init.d/pbs_mom\nRUN cp contrib/init.d/pbs_server /etc/init.d/pbs_server\nRUN cp contrib/init.d/pbs_sched /etc/init.d/pbs_sched\nRUN ldconfig\n\n# Configure Torque\nRUN echo \"localhost\" > /var/spool/torque/server_name\nRUN echo '/usr/local/lib' > /etc/ld.so.conf.d/torque.conf\nRUN ldconfig\nENV HOSTNAME localhost\n\nRUN cat /etc/hosts\nADD torque/torque.setup /usr/local/5.0.0/torque.setup\nRUN trqauthd start && \\\n    ./torque.setup root localhost && \\\n    pbs_mom && pbs_sched && \\\n    qmgr -c \"create queue debug queue_type=execution\" && \\\n    qmgr -c \"set queue debug enabled=true\" && \\\n    qmgr -c \"set queue debug started=true\" && \\\n    qmgr -c \"set server scheduling=True\" && \\\n    qmgr -c 'set queue batch resources_default.walltime = 48:00:00' && \\\n    qmgr -c 'set queue batch resources_default.nodes = 1' && \\\n    qmgr -c 'set server default_queue = debug'\n\nRUN echo \"localhost np=1\" >> /var/spool/torque/server_priv/nodes\nRUN echo \"docker np=1\" >> /var/spool/torque/server_priv/nodes\nRUN printf \"\\$pbsserver localhost\" >> /var/spool/torque/mom_priv/config\n\n# Add in a test submit script\nADD torque/torque.submit /home/testuser/torque.submit\nRUN chown testuser:testuser /home/testuser/torque.submit\n\nADD supervisord.conf /etc/supervisord.conf\nRUN mkdir /var/log/supervisor\nRUN chmod -R 777 /var/log/supervisor\n\n# Add entrypoint script to set the current hostname so the scheduler can communicat\nADD docker_entrypoint.sh /docker_entrypoint.sh\n\nENTRYPOINT [ \"/docker_entrypoint.sh\" ]\nEXPOSE 10389 22 9618\nCMD [\"/usr/bin/supervisord\"]\n"
+}

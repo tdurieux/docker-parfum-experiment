@@ -1,0 +1,31 @@
+# Production runtime
+FROM nginx:stable-alpine as builder
+ARG BUILD_VERSION
+LABEL version=${BUILD_VERSION} \
+      company=companyname \
+      project=full-stack-template \
+      role=client
+
+RUN mkdir -p /service
+WORKDIR /service
+
+RUN chown -R nginx:nginx /service && \
+    mv /etc/nginx/nginx.conf /etc/nginx/nginx.conf.orig
+RUN sed -i '/application\/json/a\    application/wasm wasm;' \
+    /etc/nginx/mime.types
+
+# Copy
+COPY docker-entrypoint.sh /
+COPY ./nginx.conf /etc/nginx
+ARG SERVICE_DIR=.
+COPY ${SERVICE_DIR}/assets /service/assets
+
+# Move source maps to /meta by default
+RUN mkdir /meta && mv *.map /meta || :
+
+# Give nginx modify rights to some files that are modified at startup
+RUN find . -name '*.html' -exec chown nginx:nginx {} \; && \
+    find . -name 'runtime.*.js' -exec chown nginx:nginx {} \; && \
+    find . -name 'manifest.json' -exec chown nginx:nginx {} \;
+
+# Startup

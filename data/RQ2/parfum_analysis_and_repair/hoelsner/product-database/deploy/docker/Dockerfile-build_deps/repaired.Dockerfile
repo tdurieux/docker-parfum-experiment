@@ -1,0 +1,64 @@
+FROM ubuntu:20.04
+
+ENV LC_ALL C.UTF-8
+ENV LANG C.UTF-8
+ENV PYTHONIOENCODING utf-8
+ENV DJANGO_SECRET_KEY PlsChgMe
+ENV DJANGO_LOG_LEVEL info
+ENV POSTGRES_DB productdb
+ENV POSTGRES_USER postgres
+ENV POSTGRES_PASSWORD plschgme
+ENV PDB_DATABASE_HOST database
+ENV PDB_DATABASE_PORT 5432
+ENV PDB_REDIS_HOST redis
+ENV PDB_REDIS_PORT 6379
+
+# build variables
+ENV HTTPS_SELF_SIGNED_CERT_COUNTRY "DE"
+ENV HTTPS_SELF_SIGNED_CERT_FQDN "productdb"
+
+RUN echo \
+    && apt-get update  \
+    && apt-get install  --no-install-recommends -y \
+        curl \
+        build-essential \
+        python3.8 \
+        python3-pip \
+        python3.8-dev \
+        libpq-dev \
+        libsasl2-dev \
+        libldap2-dev \
+        libssl-dev \
+        git \
+        gcc \
+    && curl -f -sL https://deb.nodesource.com/setup_12.x | bash - \
+    && echo "deb http://apt.postgresql.org/pub/repos/apt bionic-pgdg main" > /etc/apt/sources.list.d/pgdg.list \
+    && curl -f -sL https://www.postgresql.org/media/keys/ACCC4CF8.asc | apt-key add - \
+    && apt-get update \
+    && apt-get install --no-install-recommends -y nodejs postgresql-client-12 \
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get clean
+
+COPY requirements.txt /tmp/requirements.txt
+RUN pip3 install --no-cache-dir -r /tmp/requirements.txt
+
+VOLUME /var/www/productdb/static
+
+WORKDIR /var/www/productdb/source
+COPY . /var/www/productdb/source
+COPY ./deploy/docker/django/initialimport.sh /usr/local/bin/initialimport
+COPY ./deploy/docker/django/initialimportstatus.sh /usr/local/bin/initialimportstatus
+
+# install frontend deprendencies as part of the image (for later offline use)
+RUN npm install \
+    && /var/www/productdb/source/node_modules/.bin/grunt copy \
+    && /var/www/productdb/source/node_modules/.bin/grunt clean \
+    && rm -rf /var/www/productdb/source/node_modules \
+    && rm -rf /var/lib/apt/lists/* \
+    && mkdir -p /var/www/productdb/logs \
+    && mkdir -p /var/www/productdb/static && npm cache clean --force;
+
+# ensure proper permissions
+RUN chmod +x ./deploy/docker/build_deps/build_dependencies.sh
+
+CMD ./deploy/docker/build_deps/build_dependencies.sh

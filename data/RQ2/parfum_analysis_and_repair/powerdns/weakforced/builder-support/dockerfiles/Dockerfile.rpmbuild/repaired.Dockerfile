@@ -1,0 +1,57 @@
+FROM dist-base as package-builder
+RUN yum install -y rpm-build rpmdevtools python3-rpm-macros wget \
+    /usr/bin/python3 /usr/bin/pip3 && \
+    yum groupinstall -y "Development Tools" && rm -rf /var/cache/yum
+RUN yum install -y openssl-devel libuuid-devel zlib-devel && rm -rf /var/cache/yum
+RUN rpmdev-setuptree
+
+SHELL ["bash", "--login", "-c"]
+
+ARG CC=clang
+ARG CXX=clang++
+
+RUN mkdir /dist /wforce
+WORKDIR /wforce
+
+# Used for -p option to only build specific spec files
+ARG BUILDER_PACKAGE_MATCH
+
+ARG BUILDER_VERSION
+ARG BUILDER_RELEASE
+ARG BUILDER_EPOCH
+
+@IF [ ! -z "$M_all$M_wforce" ]
+COPY --from=sdist /sdist /sdist
+RUN for file in /sdist/* ; do ln -s $file /root/rpmbuild/SOURCES/ ; done && ls /root/rpmbuild/SOURCES/
+@ENDIF
+
+RUN wget https://github.com/Kitware/CMake/releases/download/v3.15.4/cmake-3.15.4-Linux-x86_64.sh
+RUN sh cmake-3.15.4-Linux-x86_64.sh --skip-license --prefix=/usr
+RUN tar xvf /sdist/prometheus-cpp*Source.tar.gz && rm /sdist/prometheus-cpp*Source.tar.gz
+RUN mv prometheus-cpp*Source prometheus-cpp
+RUN cd prometheus-cpp/_build && make clean && make install
+
+RUN wget https://github.com/jbeder/yaml-cpp/archive/yaml-cpp-0.6.3.tar.gz
+RUN tar xvf yaml-cpp-0.6.3.tar.gz && rm yaml-cpp-0.6.3.tar.gz
+RUN cd yaml-cpp-yaml-cpp* && mkdir build && cd build && cmake .. -DCMAKE_POSITION_INDEPENDENT_CODE=ON && make install
+
+RUN git clone https://github.com/open-source-parsers/jsoncpp
+RUN cd jsoncpp && git checkout tags/1.9.4 -b 1.9.4
+RUN cd jsoncpp && mkdir _build && cd _build && cmake .. -DBUILD_SHARED_LIBS=OFF && make && make install
+
+RUN git clone https://github.com/drogonframework/drogon.git
+RUN cd drogon && git checkout tags/v1.7.1 -b v1.7.1
+RUN cd drogon && git submodule init && git submodule update && mkdir _build && cd _build && cmake .. -DBUILD_ORM=OFF -DCMAKE_BUILD_TYPE=Release && make && make install
+
+ADD builder-support/specs/ /wforce/builder-support/specs/
+ADD builder/helpers /wforce/builder/helpers
+
+@IF [ ! -z "$M_all$M_wforce" ]
+RUN yum install -y /usr/bin/python3 && rm -rf /var/cache/yum
+RUN builder/helpers/build-specs.sh builder-support/specs/wforce.spec
+@ENDIF
+
+# mv accross layers with overlay2 is buggy in some kernel versions (results in empty dirs)
+# See: https://github.com/moby/moby/issues/33733
+#RUN mv /root/rpmbuild/RPMS/* /dist/
+RUN cp -R /root/rpmbuild/RPMS/* /dist/

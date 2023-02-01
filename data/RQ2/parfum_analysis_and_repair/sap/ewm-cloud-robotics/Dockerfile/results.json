@@ -1,0 +1,35 @@
+{
+  "startTime": 1674251831316,
+  "endTime": 1674251832631,
+  "originalSmells": [
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 60,
+        "lineEnd": 60,
+        "columnStart": 4,
+        "columnEnd": 28
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 46,
+        "lineEnd": 46,
+        "columnStart": 22,
+        "columnEnd": 51
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 46,
+        "lineEnd": 46,
+        "columnStart": 22,
+        "columnEnd": 51
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "##\n## Copyright (c) 2022 SAP SE or an SAP affiliate company. All rights reserved.\n##\n## This file is part of ewm-cloud-robotics\n## (see https://github.com/SAP/ewm-cloud-robotics).\n##\n## This file is licensed under the Apache Software License, v. 2 except as noted otherwise in the LICENSE file (https://github.com/SAP/ewm-cloud-robotics/blob/main/LICENSE)\n##\n\n# Base build image image containing packages required in all apps\nFROM python:3.9-slim as python_base\n\nCOPY ./python-modules /python-modules\nWORKDIR /python-modules\n\nRUN python3 -m venv /app\nENV PATH=\"/app/bin:$PATH\"\n\nRUN pip3 install --no-cache-dir ./k8scrhandler ./robcoewmtypes && \\\n    python3 -c \"import k8scrhandler; import robcoewmtypes\"\n\n# Base golang image containing all go applications\nFROM golang:1.17 AS go_builder\n\nARG SKIP_TESTS=false\n# Copy go code\nCOPY . /code\n\nWORKDIR /code\n# Run all unit tests unless SKIP_TESTS is true\nRUN if [ \"$SKIP_TESTS\" = \"false\" ] ; then \\\n      echo \"commencing tests...\" && \\\n      go test ./go/pkg/... ./go/cmd/... ; \\\n    elif [ \"$SKIP_TESTS\" = \"true\" ] ; then \\\n      echo \"unit tests skipped.\" ; \\\n    else \\\n      echo \"SKIP_TESTS must be either 'true' or 'false'. Your input: SKIP_TESTS='$SKIP_TESTS'.\" && \\\n      exit 95 ; \\\n    fi\n# Build go executables into binaries\nRUN mkdir /build && GOBIN=/build \\\n    GO111MODULE=on CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go install -a ./...\n\n\nFROM ubuntu:latest as openui5_builder\n# Install SSL ca certificates\nRUN apt -qq update && apt -qq --no-install-recommends install -y unzip wget && rm -rf /var/lib/apt/lists/*;\n\n# Unpack OpenUI5 SDK\nRUN mkdir -p /openui5-sdk\nRUN wget https://github.com/SAP/openui5/releases/download/1.84.3/openui5-runtime-1.84.3.zip -P /openui5-sdk\nRUN unzip -o /openui5-sdk/openui5-runtime-1.84.3.zip -d /openui5-sdk\n\n# Build ewm-sim\nFROM node:lts-alpine AS ewm-sim-builder\n\nRUN apk add --no-cache python3 make g++\n\nWORKDIR /usr/src/app\nCOPY /nodejs/ewm-sim/package*.json /usr/src/app/\nRUN npm install --production && npm cache clean --force;\n\n# Build dumm-mission-controller\nFROM python_base as dummy-mission-controller-builder\n\nRUN pip3 install --no-cache-dir ./dummycontroller && \\\n    python3 -c \"import dummycontroller\"\n\n# Build fetch-mission-controller\nFROM python_base as fetch-mission-controller-builder\nRUN pip3 install --no-cache-dir ./fetchcontroller && \\\n    python3 -c \"import fetchcontroller\"\n\n# Build mir-mission-controller\nFROM python_base as mir-mission-controller-builder\nRUN pip3 install --no-cache-dir ./mircontroller && \\\n    python3 -c \"import mircontroller\"\n\n# Build order-manager\nFROM python_base as order-manager-builder\nRUN pip3 install --no-cache-dir ./robcoewminterface ./robcoewmordermanager && \\\n    python3 -c \"import robcoewminterface; import robcoewmordermanager\"\n\n# Build robot-configurator\nFROM python_base as robot-configurator-builder\nRUN pip3 install --no-cache-dir ./robcoewminterface ./robcoewmrobotconfigurator && \\\n    python3 -c \"import robcoewminterface; import robcoewmrobotconfigurator\"\n\n# Build robot-controller\nFROM python_base as robot-controller-builder\nRUN pip3 install --no-cache-dir ./robcoewmrobotcontroller && \\\n    python3 -c \"import robcoewmrobotcontroller\"\n\n# Executable container bases\n# --------------------------\nFROM python:3.9-slim as python_runner\n\nSTOPSIGNAL SIGTERM\nRUN adduser --disabled-password --gecos \"\" appuser\nUSER appuser\nENV PATH=\"/app/bin:$PATH\"\n\nFROM alpine:3.15 AS ssl_runner\n# Install SSL ca certificates\nRUN apk add --no-cache ca-certificates\n# Create user to be used in executable containers\n# Add a non-root user matching the nonroot user from the main container\nRUN addgroup -g 65532 -S nonroot && adduser -u 65532 -S nonroot -G nonroot\n# Set the uid as an integer for compatibility with runAsNonRoot in Kubernetes\nUSER 65532\n\n# Executables\n# -----------------\n\nFROM python_runner as dummy-mission-controller\nCOPY --from=dummy-mission-controller-builder /app /app\nENTRYPOINT [\"python3\", \"-m\", \"dummycontroller\"]\n\nFROM python_runner as fetch-mission-controller\nCOPY --from=fetch-mission-controller-builder /app /app\nENTRYPOINT [\"python3\", \"-m\", \"fetchcontroller\"]\n\nFROM python_runner as mir-mission-controller\nCOPY --from=mir-mission-controller-builder /app /app\nENTRYPOINT [\"python3\", \"-m\", \"mircontroller\"]\n\nFROM python_runner as order-manager\nCOPY --from=order-manager-builder /app /app\nENTRYPOINT [\"python3\", \"-m\", \"robcoewmordermanager\"]\n\nFROM python_runner as robot-configurator\nCOPY --from=robot-configurator-builder /app /app\nENTRYPOINT [\"python3\", \"-m\", \"robcoewmrobotconfigurator\"]\n\nFROM python_runner as robot-controller\nCOPY --from=robot-controller-builder /app /app\nENTRYPOINT [\"python3\", \"-m\", \"robcoewmrobotcontroller\"]\n\nFROM ssl_runner AS order-auctioneer\nWORKDIR /\nCOPY --from=go_builder /build/order-auctioneer /order-auctioneer\nENTRYPOINT [ \"./order-auctioneer\" ]\n\nFROM ssl_runner AS order-bid-agent\nWORKDIR /\nCOPY --from=go_builder /build/order-bid-agent /order-bid-agent\nENTRYPOINT [ \"./order-bid-agent\" ]\n\nFROM ssl_runner AS mir-travel-time-calculator\nWORKDIR /\nCOPY --from=go_builder /build/mir-travel-time-calculator /mir-travel-time-calculator\nENTRYPOINT [ \"./mir-travel-time-calculator\" ]\n\nFROM nginx:1.21-alpine as monitoring-ui\nWORKDIR /\n# Install SSL ca certificates\nRUN apk add --no-cache ca-certificates\n# Copy openui5 resources\nCOPY --from=openui5_builder /openui5-sdk/resources /app/openui5-resources\n# Prepare nginx configuration environment\nRUN mkdir -p /odata && touch /odata/location.conf\n# Copy Go static executable\nCOPY --from=go_builder /build/nginx-odata-auth /nginx-odata-auth\n# Copy openui5 app\nCOPY openui5/monitoring-ui /app\nENTRYPOINT [\"./nginx-odata-auth\"]\n\nFROM node:lts-alpine as ewm-sim\nWORKDIR /usr/src/app\nCOPY /nodejs/ewm-sim /usr/src/app\nCOPY --from=ewm-sim-builder /usr/src/app/node_modules /usr/src/app/node_modules\n\nEXPOSE 8080\nCMD [ \"npm\", \"start\" ]"
+}

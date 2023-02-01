@@ -1,0 +1,1 @@
+# Create filebeat image with custom filebeat.yml that sends flog logs to Kafka

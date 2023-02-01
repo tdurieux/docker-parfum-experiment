@@ -1,0 +1,66 @@
+# Copyright 2020 Curtin University
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Author: James Diprose
+
+FROM apache/airflow:2.2.1-python3.8
+
+ARG HOST_USER_ID
+ARG OBSERVATORY_HOME=/opt/observatory
+ARG INSTALL_USER=airflow
+
+# Install git which is required when installing dependencies with pip
+USER root
+RUN apt-get update -yqq
+
+# Change airflow user's user id to the hosts user id
+RUN usermod -u ${HOST_USER_ID} ${INSTALL_USER}
+
+# Install Python dependencies for Observatory Platform as airflow user
+USER ${INSTALL_USER}
+
+# Clean up default installed Python packages
+RUN pip freeze | xargs pip uninstall -y
+RUN python -m pip install --upgrade pip
+RUN pip cache purge
+RUN pip install --no-cache-dir apache-airflow-providers-google==5.1.0 --no-deps
+
+# Install dependencies for all projects
+{% for package in config.python_packages %}
+# Set working directory for {{ package.name }}
+ARG WORKING_DIR=/opt/{{ package.name }}
+WORKDIR ${WORKING_DIR}
+
+# Change owner of directory to airflow
+USER root
+RUN chown -R ${INSTALL_USER} ${WORKING_DIR}
+USER ${INSTALL_USER}
+
+{% with install_deps=true %}
+  {% include 'Dockerfile.package_install.jinja2' %}
+{% endwith %}
+
+# Set working directory back to airflow home
+WORKDIR ${AIRFLOW_HOME}
+{% endfor %}
+
+# Copy entry point scripts which install new dependencies at runtime and the Observatory Platform Python package
+USER root
+
+COPY entrypoint-root.sh /entrypoint-root.sh
+COPY entrypoint-airflow.sh /entrypoint-airflow.sh
+RUN chmod +x /entrypoint-root.sh
+RUN chmod +x /entrypoint-airflow.sh
+
+ENTRYPOINT ["/entrypoint-root.sh"]

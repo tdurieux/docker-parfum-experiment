@@ -1,0 +1,1 @@
+# This is a Dockerfile useful for training models with Coqui STT in Jupyter notebooks

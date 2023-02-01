@@ -1,0 +1,53 @@
+{
+  "startTime": 1674253423807,
+  "endTime": 1674253424665,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 58,
+        "lineEnd": 58,
+        "columnStart": 4,
+        "columnEnd": 64
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 78,
+        "lineEnd": 78,
+        "columnStart": 7,
+        "columnEnd": 51
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 87,
+        "lineEnd": 87,
+        "columnStart": 7,
+        "columnEnd": 43
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 88,
+        "lineEnd": 88,
+        "columnStart": 7,
+        "columnEnd": 46
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 105,
+        "lineEnd": 105,
+        "columnStart": 4,
+        "columnEnd": 20
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# This is the Dockerfile for ArchiveBox, it bundles the following dependencies:\n#     python3, ArchiveBox, curl, wget, git, chromium, youtube-dl, single-file\n# Usage:\n#     docker build . -t archivebox --no-cache\n#     docker run -v \"$PWD/data\":/data archivebox init\n#     docker run -v \"$PWD/data\":/data archivebox add 'https://example.com'\n#     docker run -v \"$PWD/data\":/data -it archivebox manage createsuperuser\n#     docker run -v \"$PWD/data\":/data -p 8000:8000 archivebox server\n# Multi-arch build:\n#     docker buildx create --use\n#     docker buildx build . --platform=linux/amd64,linux/arm64,linux/arm/v7 --push -t archivebox/archivebox:latest -t archivebox/archivebox:dev\n\n\nFROM python:3.10-slim-bullseye\n\nLABEL name=\"archivebox\" \\\n    maintainer=\"Nick Sweeting <archivebox-docker@sweeting.me>\" \\\n    description=\"All-in-one personal internet archiving container\" \\\n    homepage=\"https://github.com/ArchiveBox/ArchiveBox\" \\\n    documentation=\"https://github.com/ArchiveBox/ArchiveBox/wiki/Docker#docker\"\n\n# System-level base config\nENV TZ=UTC \\\n    LANGUAGE=en_US:en \\\n    LC_ALL=C.UTF-8 \\\n    LANG=C.UTF-8 \\\n    PYTHONIOENCODING=UTF-8 \\\n    PYTHONUNBUFFERED=1 \\\n    DEBIAN_FRONTEND=noninteractive \\\n    APT_KEY_DONT_WARN_ON_DANGEROUS_USAGE=1\n\n# Application-level base config\nENV CODE_DIR=/app \\\n    VENV_PATH=/venv \\\n    DATA_DIR=/data \\\n    NODE_DIR=/node \\\n    ARCHIVEBOX_USER=\"archivebox\"\n\n# Create non-privileged user for archivebox and chrome\nRUN groupadd --system $ARCHIVEBOX_USER \\\n    && useradd --system --create-home --gid $ARCHIVEBOX_USER --groups audio,video $ARCHIVEBOX_USER\n\n# Install system dependencies\nRUN apt-get update -qq \\\n    && apt-get install -qq -y --no-install-recommends \\\n        apt-transport-https ca-certificates gnupg2 zlib1g-dev \\\n        dumb-init gosu cron unzip curl \\\n    && rm -rf /var/lib/apt/lists/*\n\n# Install apt dependencies\nRUN apt-get update -qq \\\n    && apt-get install -qq -y --no-install-recommends \\\n        wget curl chromium git ffmpeg youtube-dl ripgrep \\\n        fontconfig fonts-ipafont-gothic fonts-wqy-zenhei fonts-thai-tlwg fonts-kacst fonts-symbola fonts-noto fonts-freefont-ttf \\\n    && ln -s /usr/bin/chromium /usr/bin/chromium-browser \\\n    && rm -rf /var/lib/apt/lists/*\n\n# Install Node environment\nRUN curl -f -s https://deb.nodesource.com/gpgkey/nodesource.gpg.key | apt-key add - \\\n    && echo 'deb https://deb.nodesource.com/node_17.x buster main' >> /etc/apt/sources.list \\\n    && apt-get update -qq \\\n    && apt-get install -qq -y --no-install-recommends \\\n        nodejs \\\n    # && npm install -g npm \\\n    && rm -rf /var/lib/apt/lists/*\n\n# Install Node dependencies\nWORKDIR \"$NODE_DIR\"\nENV PATH=\"${PATH}:$NODE_DIR/node_modules/.bin\" \\\n    npm_config_loglevel=error\nADD ./package.json ./package.json\nADD ./package-lock.json ./package-lock.json\nRUN npm ci\n\n# Install Python dependencies\nWORKDIR \"$CODE_DIR\"\nENV PATH=\"${PATH}:$VENV_PATH/bin\"\nRUN python -m venv --clear --symlinks \"$VENV_PATH\" \\\n    && pip install --no-cache-dir --upgrade --quiet pip setuptools \\\n    && mkdir -p \"$CODE_DIR/archivebox\"\nADD \"./setup.py\" \"$CODE_DIR/\"\nADD \"./package.json\" \"$CODE_DIR/archivebox/\"\nRUN apt-get update -qq \\\n    && apt-get install -qq -y --no-install-recommends \\\n        build-essential python-dev python3-dev \\\n    && echo 'empty placeholder for setup.py to use' > \"$CODE_DIR/archivebox/README.md\" \\\n    && python3 -c 'from distutils.core import run_setup; result = run_setup(\"./setup.py\", stop_after=\"init\"); print(\"\\n\".join(result.install_requires + result.extras_require[\"sonic\"]))' > /tmp/requirements.txt \\\n    && pip install --no-cache-dir -r /tmp/requirements.txt \\\n    && pip install --no-cache-dir --upgrade youtube-dl yt-dlp \\\n    && apt-get purge -y build-essential python-dev python3-dev \\\n    && apt-get autoremove -y \\\n    && rm -rf /var/lib/apt/lists/*\n\n# Install apt development dependencies\n# RUN apt-get install -qq \\\n#     && apt-get install -qq -y --no-install-recommends \\\n#         python3 python3-dev python3-pip python3-venv python3-all \\\n#         dh-python debhelper devscripts dput software-properties-common \\\n#         python3-distutils python3-setuptools python3-wheel python3-stdeb\n# RUN python3 -c 'from distutils.core import run_setup; result = run_setup(\"./setup.py\", stop_after=\"init\"); print(\"\\n\".join(result.extras_require[\"dev\"]))' > /tmp/dev_requirements.txt \\\n    # && pip install --quiet -r /tmp/dev_requirements.txt\n\n# Install ArchiveBox Python package and its dependencies\nWORKDIR \"$CODE_DIR\"\nADD . \"$CODE_DIR\"\nRUN pip install --no-cache-dir -e .\n\n# Setup ArchiveBox runtime config\nWORKDIR \"$DATA_DIR\"\nENV IN_DOCKER=True \\\n    CHROME_SANDBOX=False \\\n    CHROME_BINARY=\"/usr/bin/chromium-browser\" \\\n    USE_SINGLEFILE=True \\\n    SINGLEFILE_BINARY=\"$NODE_DIR/node_modules/.bin/single-file\" \\\n    USE_READABILITY=True \\\n    READABILITY_BINARY=\"$NODE_DIR/node_modules/.bin/readability-extractor\" \\\n    USE_MERCURY=True \\\n    MERCURY_BINARY=\"$NODE_DIR/node_modules/.bin/mercury-parser\" \\\n    YOUTUBEDL_BINARY=\"yt-dlp\"\n\n# Print version for nice docker finish summary\n# RUN archivebox version\nRUN /app/bin/docker_entrypoint.sh archivebox version\n\n# Open up the interfaces to the outside world\nVOLUME \"$DATA_DIR\"\nEXPOSE 8000\n\n# Optional:\n# HEALTHCHECK --interval=30s --timeout=20s --retries=15 \\\n#     CMD curl --silent 'http://localhost:8000/admin/login/' || exit 1\n\nENTRYPOINT [\"dumb-init\", \"--\", \"/app/bin/docker_entrypoint.sh\"]\nCMD [\"archivebox\", \"server\", \"--quick-init\", \"0.0.0.0:8000\"]\n"
+}

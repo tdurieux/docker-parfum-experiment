@@ -1,0 +1,7 @@
+FROM mhart/alpine-node:14.17.3
+
+RUN apk add --no-cache curl jq bash
+
+COPY ./probe.sh /probe.sh
+
+CMD /probe.sh

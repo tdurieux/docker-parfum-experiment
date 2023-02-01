@@ -1,0 +1,62 @@
+{
+  "startTime": 1674242135223,
+  "endTime": 1674242135378,
+  "originalSmells": [
+    {
+      "rule": "gemUpdateSystemRmRootGem",
+      "position": {
+        "lineStart": 70,
+        "lineEnd": 70,
+        "columnStart": 6,
+        "columnEnd": 30
+      }
+    },
+    {
+      "rule": "gemUpdateNoDocument",
+      "position": {
+        "lineStart": 70,
+        "lineEnd": 70,
+        "columnStart": 6,
+        "columnEnd": 30
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 48,
+        "lineEnd": 48,
+        "columnStart": 4,
+        "columnEnd": 37
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 50,
+        "lineEnd": 50,
+        "columnStart": 4,
+        "columnEnd": 53
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 52,
+        "lineEnd": 52,
+        "columnStart": 6,
+        "columnEnd": 40
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 78,
+        "lineEnd": 78,
+        "columnStart": 6,
+        "columnEnd": 48
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# 3scale Backend CentOS image\n#\n# This image is meant for flexibility building different configurations.\n#\n# Knobs you should know about:\n#\n# - RUBY_SCL: Software Collections Library for the Ruby version used.\n# - BUILD_DEP_PKGS: Packages needed to build/install the project.\n# - CACHE_FRIENDLY: Improve caching when rebuilding at the cost of bigger size.\n# - GEM_UPDATE: Update Rubygems to the latest version.\n# - BUNDLE_VERSION_MATCH: Install the Bundler version used by the lockfile\n#                         instead of using the SCL version.\n# - BUNDLE_GEMFILE: Gemfile name to pin Bundler to.\n# - BUNDLE_WITHOUT: List of Bundler groups to skip.\n# - DELETE_UNUSED_GEMFILES: Deletes unused Gemfiles in the root directory.\n# - CONFIG_SAAS: true for a SaaS image. false for an on-premises image.\n# - PUMA_WORKERS: Default number of Puma workers to serve the app.\n#\n# Profiles you should use:\n#\n# You can use variations on the values of arguments, but you usually want one\n# of the following two use cases:\n#\n# - Development/Test: just use default values.\n# - Release:\n#   - CACHE_FRIENDLY: false\n#   - GEM_UPDATE: false\n#   - BUNDLE_VERSION_MATCH: false\n#   - BUNDLE_GEMFILE: Gemfile for SaaS, Gemfile.on_prem for on-premises.\n#   - BUNDLE_WITHOUT: development:test\n#   - DELETE_UNUSED_GEMFILES: true\n#   - CONFIG_SAAS: true for SaaS, false for on-premises.\n#   - PUMA_WORKERS: number of Puma worker processes - depends on intended usage,\n#                   with number of cpus being a good heuristic.\n#\n\nFROM centos:7\n\nARG RUBY_SCL=rh-ruby23\nARG BUILD_DEP_PKGS=\"make gcc git\"\n# Turn off for release mode to produce smaller layers.\nARG CACHE_FRIENDLY=true\n\n# Configure yum, install SCL, update, install Ruby and clean.\nRUN sed -i /etc/yum.conf -e \\\n      '/^\\(clean_requirements_on_remove\\|history_record\\|tsflags\\|logfile\\)=/d' -e \\\n      's/^\\(\\[main\\]\\b.*\\)$/\\1\\nclean_requirements_on_remove=1\\nhistory_record=0\\ntsflags=nodocs\\nlogfile=\\/dev\\/null\\n/' \\\n      /etc/yum.conf \\\n && yum install -y centos-release-scl \\\n && yum -y update \\\n && yum -y install ${RUBY_SCL} ${RUBY_SCL}-ruby-devel \\\n && if test \"${CACHE_FRIENDLY}x\" = \"truex\"; then \\\n      yum -y install ${BUILD_DEP_PKGS} ; \\\n    fi \\\n && yum -y autoremove \\\n && yum -y clean all && rm -rf /var/cache/yum\n\nWORKDIR /tmp/app\n\n# Gem updating should be turned off for productisation\nARG GEM_UPDATE=true\n# Bundler should be kept as-is for productisation\nARG BUNDLE_VERSION_MATCH=true\nARG BUNDLE_GEMFILE=Gemfile.on_prem\nARG BUNDLE_WITHOUT=development:test\n\n# Install and/or update Rubygems and Bundler, and configure the latter.\nCOPY ${BUNDLE_GEMFILE}.lock ./\nRUN mkdir -p /usr/local/etc \\\n  && { \\\n    echo 'install: --no-document'; \\\n    echo 'update: --no-document'; \\\n  } >> /usr/local/etc/gemrc;\nRUN source scl_source enable ${RUBY_SCL} \\\n && if test \"${GEM_UPDATE}x\" = \"truex\"; then \\\n      gem update --system -N ; rm -rf /root/.gem; \\\n    fi \\\n && gem env \\\n && BUNDLED_WITH=$(cat ${BUNDLE_GEMFILE}.lock | \\\n      grep -A 1 \"^BUNDLED WITH$\" | tail -n 1 | sed -e 's/\\s//g') \\\n && if test \"${BUNDLE_VERSION_MATCH}x\" = \"truex\";then \\\n      gem install -N bundler --version ${BUNDLED_WITH} ; \\\n    else \\\n      yum install -y ${RUBY_SCL}-rubygem-bundler \\\n        && yum -y autoremove && yum -y clean all ; rm -rf /var/cache/yum \\\n    fi \\\n && echo Using $(bundle --version), originally bundled with ${BUNDLED_WITH} \\\n && bundle config --local silence_root_warning 1 \\\n && bundle config --local disable_shared_gems 1 \\\n && bundle config --local without ${BUNDLE_WITHOUT} \\\n && bundle config --local gemfile ${BUNDLE_GEMFILE}\n\nCOPY . ./\n\nARG DELETE_UNUSED_GEMFILES=true\n# Turn off for productisation\nARG CONFIG_SAAS=false\n\n# Builds a clean source tree and deploys it with Bundler.\n# Sets the right configuration and permissions.\nRUN source scl_source enable ${RUBY_SCL} \\\n && cp -n openshift/3scale_backend.conf /etc/ \\\n && chmod 644 /etc/3scale_backend.conf \\\n && BACKEND_VERSION=$(gem build 3scale_backend.gemspec | \\\n      sed -n -e 's/^\\s*Version\\:\\s*\\([^[:space:]]*\\)$/\\1/p') \\\n && gem unpack \"3scale_backend-${BACKEND_VERSION}.gem\" --target=/opt/ruby \\\n && cd \"/opt/ruby/3scale_backend-${BACKEND_VERSION}\" \\\n && cp -a /tmp/app/.bundle \"/opt/ruby/3scale_backend-${BACKEND_VERSION}/\" \\\n && if test \"${DELETE_UNUSED_GEMFILES}x\" = \"truex\"; then \\\n      echo \"Deleting the following unused Gemfile files:\"; \\\n      find . -maxdepth 1 -regex \\./Gemfile\"\\(\\..*\\)?\" \\\n      ! -regex \\./$(sed -e 's/[^^]/[&]/g; s/\\^/\\\\^/g' <<< ${BUNDLE_GEMFILE})\"\\(\\.lock\\)?\" \\\n      ! -name Gemfile.base -print -delete; \\\n    fi \\\n && if test \"${CACHE_FRIENDLY}x\" != \"truex\"; then \\\n      yum -y install ${BUILD_DEP_PKGS} ; \\\n    fi \\\n && bundle install --deployment --jobs $(grep -c processor /proc/cpuinfo) \\\n# Bundler < 1.12.0 needs fixing for git gems with extensions (Puma)\n && if ruby -e \"begin; require 'rubygems'; Gem::Specification.find_by_name('bundler').version < Gem::Version.new('1.12.0') && exit(0); rescue; end; exit(1)\"; then \\\n      echo \"[WARNING] Old Bundler requires fixing git gems with extensions (Puma)\" ; \\\n      PUMA_DIR=$(bundle show puma) \\\n      && ln -s $(find \"${PUMA_DIR}\" -name puma_http11.so) \"${PUMA_DIR}\"/lib/puma ; \\\n    fi \\\n && yum -y remove ${BUILD_DEP_PKGS} \\\n && yum -y autoremove \\\n && yum -y clean all \\\n && ln -s ${PWD} /opt/app \\\n && if test \"${CONFIG_SAAS}x\" != \"truex\"; then \\\n      cp /tmp/app/openshift/config/puma.rb ./config/ ; \\\n    fi \\\n && cp -n /tmp/app/openshift/backend-cron /usr/local/sbin/backend-cron \\\n && cp -n /tmp/app/openshift/entrypoint.sh ./ \\\n && rm -rf /tmp/app \\\n && mkdir -p -m 0770 /var/run/3scale/ \\\n && mkdir -p -m 0770 /var/log/backend/ \\\n && touch /var/log/backend/3scale_backend{,_worker}.log \\\n && chmod g+rw /var/log/backend/3scale_backend{,_worker}.log\n\nEXPOSE 3000\n\nUSER 1001\n\nWORKDIR /opt/app\n\nARG PUMA_WORKERS=1\nARG RACK_ENV=production\n\n# Set TZ to avoid glibc wasting time with unneeded syscalls\nENV TZ=:/etc/localtime \\\n    HOME=/tmp/ \\\n    ENV_SETUP=\". scl_source enable ${RUBY_SCL}\" \\\n    # App-specific env\n    RACK_ENV=${RACK_ENV} \\\n    CONFIG_SAAS=${CONFIG_SAAS} \\\n    CONFIG_LOG_PATH=/tmp/ \\\n    CONFIG_NOTIFICATION_BATCH=1 \\\n    CONFIG_WORKERS_LOG_FILE=/dev/stdout \\\n    PUMA_WORKERS=${PUMA_WORKERS}\n\nENTRYPOINT [\"/bin/bash\", \"--\", \"/opt/app/entrypoint.sh\"]\n"
+}

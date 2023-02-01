@@ -1,0 +1,80 @@
+{
+  "startTime": 1674255278300,
+  "endTime": 1674255279383,
+  "originalSmells": [
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 17,
+        "lineEnd": 17,
+        "columnStart": 26,
+        "columnEnd": 37
+      }
+    },
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 24,
+        "lineEnd": 24,
+        "columnStart": 7,
+        "columnEnd": 35
+      }
+    },
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 33,
+        "lineEnd": 33,
+        "columnStart": 7,
+        "columnEnd": 31
+      }
+    },
+    {
+      "rule": "mkdirUsrSrcThenRemove",
+      "position": {
+        "lineStart": 30,
+        "lineEnd": 30,
+        "columnStart": 4,
+        "columnEnd": 41
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 32,
+        "lineEnd": 32,
+        "columnStart": 7,
+        "columnEnd": 67
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 45,
+        "lineEnd": 45,
+        "columnStart": 33,
+        "columnEnd": 47
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 65,
+        "lineEnd": 67,
+        "columnStart": 4,
+        "columnEnd": 50
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 131,
+        "lineEnd": 131,
+        "columnStart": 4,
+        "columnEnd": 18
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "#######################################################################\n#\n# luajit.me.builder\n#   provides application (JavaScript server + web assets)\n#   prepared for distribution at ${DIST}/usr/src/luajit.me\n#\n#######################################################################\nFROM node:10-alpine AS luajit.me.builder\nARG VERSION\n\n# As of Docker 19.03.5, DOCKER_BUILDKIT=1 and userns_remap enabled,\n# if a directory was created during COPY, it won't be writable in RUN.\nRUN mkdir -p /root/luajit.me/server/public\n\n# build dependencies are massive (almost 100MiB);\n# take advantage of the Docker cache\nCOPY package.json /root/luajit.me/package.json\nRUN cd /root/luajit.me && npm install && npm cache clean --force;\n\n# take advantage of the Docker cache (again :)\nCOPY webpack.config.js /root/luajit.me\nCOPY client /root/luajit.me/client\nCOPY server/targets.js /root/luajit.me/server/\nRUN cd /root/luajit.me && npm config set unsafe-perm true \\\n    && VERSION=$VERSION npm install && npm cache clean --force;\n\nCOPY server /root/luajit.me/server\n\nRUN cd /root/luajit.me && npm pack\n\nRUN mkdir -p /root/dist/usr/src/luajit.me \\\n    && cd /root/dist/usr/src/luajit.me \\\n    && tar -xf /root/luajit.me/luajit.me-*.tgz --strip-components 1 \\\n    && npm install --production && npm cache clean --force; && rm -rf /root/dist/usr/src/luajit.me\n\n#######################################################################\n#\n# lua-img-base\n#   base image for Lua runner images; ships base system utilities and\n#   Lua runtime dependencies\n#\n#######################################################################\nFROM alpine AS lua-img-base\n\n# install lua runtime dependencies\nRUN apk update && apk upgrade && apk add --no-cache libgcc\n\n# create a copy of the filesystem tree in /root/dist;\n# NB: captures lua runtime dependencies;\nRUN find / -xdev | sed -e '/[/]\\(root\\|run\\)[/]/d' > /root/system-files.list && \\\n    mkdir /root/dist && \\\n    (cat /root/system-files.list | cpio -p /root/dist)\n\n#######################################################################\n#\n# c-src-builder\n#   base image for compiling C sources;\n#   includes compilers + build tools + build dependencies;\n#   also includes some of the source code to build\n#\n#######################################################################\nFROM alpine AS c-src-builder\n\n# install build dependencies\nRUN apk update && apk upgrade && \\\n    apk add --no-cache \\\n        build-base git curl zip outils-md5 linux-headers \\\n        flex bison gperf bsd-compat-headers nodejs\n\n# pull luarocks; don't configure yet\nRUN cd /root && \\\n    (wget -q -O - https://github.com/luarocks/luarocks/archive/v3.0.4.tar.gz | \\\n    tar -zxf - ) && mv /root/luarocks* /root/luarocks\n\n# pull luajit;\n# verify that the latest tag we care about is present;\n# used for cache-busting\nRUN cd root && git clone https://github.com/LuaJIT/LuaJIT.git luajit && \\\n    cd luajit && \\\n    git rev-parse -q --verify \"refs/tags/v2.1.0-beta3\" >/dev/null\n\n# pull sandals\nRUN cd root && git clone https://github.com/rapidlua/sandals.git \\\n    -c advice.detachedHead=false -b v1.0\n\n#######################################################################\n#\n# sandals-builder\n#\n#######################################################################\nFROM c-src-builder AS sandals-builder\nRUN cd /root/sandals && make && DESTDIR=/root/dist make install\n\n#######################################################################\n#\n# lua-img-builder\n#\n#######################################################################\nFROM c-src-builder AS lua-img-builder\n\nCOPY --from=lua-img-base root/dist /root/dist\n\nCOPY runner /root\n\n#######################################################################\n#\n# luajit-2.0.4.builder\n# luajit-2.1.0-beta3.builder\n# ...\n#   produces Lua runner images for various LuaJIT versions/flavours\n#\n#######################################################################\nFROM lua-img-builder AS luajit-2.0.4.builder\nRUN REV=v2.0.4 /root/dist-build.sh\n\nFROM lua-img-builder AS luajit-2.1.0-beta2.builder\nRUN REV=v2.1.0-beta2 /root/dist-build.sh\n\nFROM lua-img-builder AS luajit-2.1.0-beta3.builder\nRUN REV=v2.1.0-beta3 /root/dist-build.sh\n\nFROM lua-img-builder AS luajit-2.1.0-beta3-gc64.builder\nRUN REV=v2.1.0-beta3 GC64=1 /root/dist-build.sh\n\n#######################################################################\n#\n# luajit.me.staging\n#   combines bits and pieces together\n#\n#######################################################################\nFROM alpine AS luajit.me.staging\nRUN apk add --no-cache fdupes\n\nRUN mkdir -p /root/dist/usr/lib/luajit.me/images/dev/shm\n\nCOPY --from=sandals-builder root/dist /root/dist\nCOPY --from=luajit-2.0.4.builder root/dist /root/dist/usr/lib/luajit.me/images/luajit-2.0.4\nCOPY --from=luajit-2.1.0-beta2.builder root/dist /root/dist/usr/lib/luajit.me/images/luajit-2.1.0-beta2\nCOPY --from=luajit-2.1.0-beta3.builder root/dist /root/dist/usr/lib/luajit.me/images/luajit-2.1.0-beta3\nCOPY --from=luajit-2.1.0-beta3-gc64.builder root/dist /root/dist/usr/lib/luajit.me/images/luajit-2.1.0-beta3-gc64\n\nCOPY --from=luajit.me.builder root/dist /root/dist\n\n# replace duplicate files with hardlinks\nRUN fdupes -q -r1 /root/dist | \\\n    sed -e 's/^/TGT=/;s/ /; for SRC in /;s/$/; do ln -f $TGT $SRC; done/' | sh\n\n###########\n\nFROM node:10-alpine AS luajit.me\nCOPY --from=luajit.me.staging root/dist /\n\nEXPOSE 8000\nCMD [\"node\", \"/usr/src/luajit.me/server/app.js\"]\n"
+}

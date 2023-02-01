@@ -1,0 +1,17 @@
+{
+  "startTime": 1674248832253,
+  "endTime": 1674248833568,
+  "originalSmells": [
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 11,
+        "lineEnd": 11,
+        "columnStart": 2,
+        "columnEnd": 14
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "ARG NODE_VERSION=16\n\nFROM node:${NODE_VERSION}-alpine AS base\nRUN apk add --no-cache cpio findutils git\nWORKDIR /src\n\nFROM base AS deps\nRUN --mount=type=bind,target=.,rw \\\n  --mount=type=cache,target=/src/node_modules \\\n  yarn install && mkdir /vendor && cp yarn.lock /vendor && yarn cache clean;\n\nFROM scratch AS vendor-update\nCOPY --from=deps /vendor /\n\nFROM deps AS vendor-validate\nRUN --mount=type=bind,target=.,rw <<EOT\nset -e\ngit add -A\ncp -rf /vendor/* .\nif [ -n \"$(git status --porcelain -- yarn.lock)\" ]; then\n  echo >&2 'ERROR: Vendor result differs. Please vendor your package with \"docker buildx bake vendor-update\"'\n  git status --porcelain -- yarn.lock\n  exit 1\nfi\nEOT\n\nFROM deps AS build\nRUN --mount=type=bind,target=.,rw \\\n  --mount=type=cache,target=/src/node_modules \\\n  yarn run build && mkdir /out && cp -Rf dist /out/\n\nFROM scratch AS build-update\nCOPY --from=build /out /\n\nFROM build AS build-validate\nRUN --mount=type=bind,target=.,rw <<EOT\nset -e\ngit add -A\ncp -rf /out/* .\nif [ -n \"$(git status --porcelain -- dist)\" ]; then\n  echo >&2 'ERROR: Build result differs. Please build first with \"docker buildx bake build\"'\n  git status --porcelain -- dist\n  exit 1\nfi\nEOT\n\nFROM deps AS format\nRUN --mount=type=bind,target=.,rw \\\n  --mount=type=cache,target=/src/node_modules \\\n  yarn run format \\\n  && mkdir /out && find . -name '*.ts' -not -path './node_modules/*' | cpio -pdm /out\n\nFROM scratch AS format-update\nCOPY --from=format /out /\n\nFROM deps AS lint\nRUN --mount=type=bind,target=.,rw \\\n  --mount=type=cache,target=/src/node_modules \\\n  yarn run lint\n"
+}

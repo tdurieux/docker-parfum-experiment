@@ -1,0 +1,44 @@
+{
+  "startTime": 1674252945846,
+  "endTime": 1674252946449,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 72,
+        "lineEnd": 72,
+        "columnStart": 4,
+        "columnEnd": 98
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 102,
+        "lineEnd": 102,
+        "columnStart": 4,
+        "columnEnd": 98
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 72,
+        "lineEnd": 72,
+        "columnStart": 4,
+        "columnEnd": 98
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 102,
+        "lineEnd": 102,
+        "columnStart": 4,
+        "columnEnd": 98
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Scancode version and info\nARG SCANCODE_VERSION=\"21.3.31\"\nARG SCANCODE_RELEASE_CANDIDATE=\"\"\nARG SCANCODE_INSTALLATION_FOLDER=\"/home\"\n\n#################################################################################\n# Stage 0: layer with analyzers' pom.xml files only. Used for caching purposes. #\n#################################################################################\n\nFROM alpine:3.14.0 AS list-analyzers-pom-files\n\n# Copying the entirety of all analyzers\nCOPY analyzer /home\n\n# Finding and removing non-pom.xml files\nRUN find /home \\! -name \"pom.xml\" -mindepth 2 -maxdepth 2 -print | xargs rm -rf\n\n#############################################\n# Stage 1a: building all the necessary JARs #\n#############################################\n\nFROM maven:3.8.1-jdk-11-slim AS build-jars\n\n# Building parent\nCOPY pom.xml /home/app/\nCOPY core/pom.xml /home/app/core/\nCOPY server/pom.xml /home/app/server/\nCOPY --from=list-analyzers-pom-files /home/ /home/app/analyzer/\nRUN mvn --file /home/app/pom.xml install --projects :parent\n\n# Building core\n# - Skips integration tests requiring Testcontainers (hence, Docker).\n#   Integration tests are run by the CI anyways.\nCOPY core/ /home/app/core\nRUN mvn --file /home/app/pom.xml install --projects core -Dtest=\\!MetadataDaoTest,\\!PostgresConnectorTest\n\n# Building server\nCOPY server/ /home/app/server\nRUN mvn --file /home/app/pom.xml install --projects :server\n\n# Building the generic analyzer plugin JAR\nRUN mvn --file /home/app/pom.xml install --projects analyzer\n\n# Building the license detector plugin JAR\nCOPY analyzer/license-detector/ /home/app/analyzer/license-detector\nRUN mvn --file /home/app/pom.xml install --projects :license-detector\n\n################################################\n# STAGE 1b: Downloading and unzipping scancode #\n################################################\n\nFROM python:3.9.5-alpine3.13 AS scancode\nENV SCANCODE_LOCAL_ARCHIVE_NAME=\"scancode.tar.xz\"\nARG SCANCODE_VERSION\nARG SCANCODE_RELEASE_CANDIDATE\nARG SCANCODE_INSTALLATION_FOLDER\nWORKDIR ${SCANCODE_INSTALLATION_FOLDER}\nADD \"https://github.com/nexB/scancode-toolkit/releases/download/v${SCANCODE_VERSION}${SCANCODE_RELEASE_CANDIDATE}/scancode-toolkit-${SCANCODE_VERSION}${SCANCODE_RELEASE_CANDIDATE}_sources.tar.xz\" ${SCANCODE_LOCAL_ARCHIVE_NAME}\nRUN tar xJf ${SCANCODE_LOCAL_ARCHIVE_NAME} --strip=1\n\n#######################\n# Stage 2a: packaging #\n#######################\n\nFROM maven:3.8.1-openjdk-11-slim AS package\n\nWORKDIR /\n\nENV JVM_MEM_MAX=\"-Xmx16g\"\n\n# Installing scancode dependencies\nRUN apt update && \\\n    apt install --no-install-recommends -y libgomp1 libbz2-1.0 xz-utils zlib1g libxml2-dev libxslt1-dev python3-pip=18.1-5 && rm -rf /var/lib/apt/lists/*;\n\n# Copying the scancode source code\nARG SCANCODE_INSTALLATION_FOLDER\nENV SCANCODE_LOCAL_DIRECTORY=\"/usr/local/bin/scancode/\"\nRUN mkdir -p ${SCANCODE_LOCAL_DIRECTORY}\nCOPY --from=scancode --chown=root ${SCANCODE_INSTALLATION_FOLDER}/ ${SCANCODE_LOCAL_DIRECTORY}\n\n# Installing scancode\nRUN ${SCANCODE_LOCAL_DIRECTORY}/configure\nENV PATH=\"${SCANCODE_LOCAL_DIRECTORY}:${PATH}\"\n\n# Copying all the needed JARs\nCOPY --from=build-jars /home/app/docker/server/server-* server.jar\nCOPY --from=build-jars /home/app/docker/plugins/license-detector-* plugins/license-detector.jar\n\nENTRYPOINT java $JVM_MEM_MAX --add-opens java.base/jdk.internal.misc=ALL-UNNAMED -XX:+ExitOnOutOfMemoryError -cp server.jar eu.fasten.server.FastenServer -p ./plugins $0 $@\n\n###############################################\n# Stage 2b: packaging (skips JARs generation) #\n###############################################\n\nFROM maven:3.8.1-openjdk-11-slim AS package-ci\n\nWORKDIR /\n\nENV JVM_MEM_MAX=\"-Xmx16g\"\n\n# Installing scancode dependencies\nRUN apt update && \\\n    apt install --no-install-recommends -y libgomp1 libbz2-1.0 xz-utils zlib1g libxml2-dev libxslt1-dev python3-pip=18.1-5 && rm -rf /var/lib/apt/lists/*;\n\n# Copying the scancode source code\nARG SCANCODE_INSTALLATION_FOLDER\nENV SCANCODE_LOCAL_DIRECTORY=\"/usr/local/bin/scancode/\"\nRUN mkdir -p ${SCANCODE_LOCAL_DIRECTORY}\nCOPY --from=scancode --chown=root ${SCANCODE_INSTALLATION_FOLDER}/ ${SCANCODE_LOCAL_DIRECTORY}\n\n# Installing scancode\nRUN ${SCANCODE_LOCAL_DIRECTORY}/configure\nENV PATH=\"${SCANCODE_LOCAL_DIRECTORY}:${PATH}\"\n\n# Copying all the needed (and already available) JARs\nCOPY docker/server/server-* server.jar\nCOPY docker/plugins/license-detector-* plugins/license-detector.jar\n\nENTRYPOINT java $JVM_MEM_MAX --add-opens java.base/jdk.internal.misc=ALL-UNNAMED -XX:+ExitOnOutOfMemoryError -cp server.jar eu.fasten.server.FastenServer -p ./plugins $0 $@"
+}

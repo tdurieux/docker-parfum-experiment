@@ -1,0 +1,35 @@
+{
+  "startTime": 1674248856249,
+  "endTime": 1674248857594,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 35,
+        "lineEnd": 35,
+        "columnStart": 4,
+        "columnEnd": 106
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 5,
+        "lineEnd": 8,
+        "columnStart": 22,
+        "columnEnd": 14
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 25,
+        "lineEnd": 28,
+        "columnStart": 22,
+        "columnEnd": 14
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM dockercore/golang-cross:1.13.10@sha256:ad2725ac9af0273f1de9bb85e166084d5e8d915df334154fe9c8bd9af912a90d AS cli-build\nENV DISABLE_WARN_OUTSIDE_CONTAINER=1\nARG CLI_CHANNEL=stable\nARG CLI_VERSION=19.03.8\n\nRUN apt-get update && apt-get install -y -q --no-install-recommends \\\n  coreutils \\\n  util-linux \\\n  uuid-runtime && rm -rf /var/lib/apt/lists/*;\n\nWORKDIR /go/src/github.com/docker/cli\n\nRUN git clone https://github.com/docker/cli . && git checkout v${CLI_VERSION}\nRUN mkdir build\nRUN curl -fL https://download.docker.com/linux/static/${CLI_CHANNEL}/x86_64/docker-${CLI_VERSION}.tgz | tar xzO docker/docker > build/docker-linux-amd64 && chmod +x build/docker-linux-amd64\nRUN curl -fL https://download.docker.com/linux/static/${CLI_CHANNEL}/aarch64/docker-${CLI_VERSION}.tgz | tar xzO docker/docker > build/docker-linux-arm64 && chmod +x build/docker-linux-arm64\nRUN curl -fL https://download.docker.com/linux/static/${CLI_CHANNEL}/armhf/docker-${CLI_VERSION}.tgz | tar xzO docker/docker > build/docker-linux-arm && chmod +x build/docker-linux-arm\nRUN curl -fL https://download.docker.com/mac/static/${CLI_CHANNEL}/x86_64/docker-${CLI_VERSION}.tgz | tar xzO docker/docker > build/docker-darwin-amd64\n\nARG GOPROXY\nRUN make binary-windows\n\n# main dev image\nFROM golang:1.13.10 AS dev\n\nRUN apt-get update && apt-get install -y -q --no-install-recommends \\\n  coreutils \\\n  util-linux \\\n  uuid-runtime && rm -rf /var/lib/apt/lists/*;\n\nWORKDIR /go/src/github.com/docker/app/\nCOPY --from=cli-build /go/src/github.com/docker/cli/build/docker-linux-amd64 /usr/bin/docker\n\nENV PATH=${PATH}:/go/src/github.com/docker/app/bin/\nARG DEP_VERSION=v0.5.4\nRUN curl -f -o /usr/bin/dep -L https://github.com/golang/dep/releases/download/${DEP_VERSION}/dep-linux-amd64 && \\\n  chmod +x /usr/bin/dep\nARG GOTESTSUM_VERSION=v0.4.2\nARG GOPROXY\nRUN mkdir $GOPATH/src/gotest.tools && \\\n  git clone -q https://github.com/gotestyourself/gotestsum $GOPATH/src/gotest.tools/gotestsum && \\\n  cd $GOPATH/src/gotest.tools/gotestsum && \\\n  git -C $GOPATH/src/gotest.tools/gotestsum checkout -q $GOTESTSUM_VERSION && \\\n  GO111MODULE=on GOOS=linux   go build -o /usr/local/bin/gotestsum-linux       gotest.tools/gotestsum && \\\n  GO111MODULE=on GOOS=darwin  go build -o /usr/local/bin/gotestsum-darwin      gotest.tools/gotestsum && \\\n  GO111MODULE=on GOOS=windows go build -o /usr/local/bin/gotestsum-windows.exe gotest.tools/gotestsum && \\\n  ln -s gotestsum-linux /usr/local/bin/gotestsum\n# Source for cmd/test2json is part of the Go distribution and is\n# therefore available in the base image.\nRUN GOOS=linux go build -o /usr/local/bin/test2json-linux       cmd/test2json && \\\n  GOOS=darwin  go build -o /usr/local/bin/test2json-darwin      cmd/test2json && \\\n  GOOS=windows go build -o /usr/local/bin/test2json-windows.exe cmd/test2json\nRUN go get -d gopkg.in/mjibson/esc.v0 && \\\n  cd /go/src/github.com/mjibson/esc && \\\n  go build -v -o /usr/bin/esc . && \\\n  rm -rf /go/src/* /go/pkg/* /go/bin/*\nCOPY . .\n\nFROM scratch AS cli\nCOPY --from=cli-build /go/src/github.com/docker/cli/build/docker-linux-amd64 docker-linux\nCOPY --from=cli-build /go/src/github.com/docker/cli/build/docker-darwin-amd64 docker-darwin\nCOPY --from=cli-build /go/src/github.com/docker/cli/build/docker-windows-amd64 docker-windows.exe\n\nFROM dev AS cross-build\nARG TAG=\"unknown\"\nRUN make TAG=${TAG} cross\n\nFROM scratch AS cross\nARG PROJECT_PATH=/go/src/github.com/docker/app\nCOPY --from=cross-build ${PROJECT_PATH}/bin/docker-app-linux docker-app-linux\nCOPY --from=cross-build ${PROJECT_PATH}/bin/docker-app-linux-arm64 docker-app-linux-arm64\nCOPY --from=cross-build ${PROJECT_PATH}/bin/docker-app-linux-arm docker-app-linux-arm\nCOPY --from=cross-build ${PROJECT_PATH}/bin/docker-app-darwin docker-app-darwin\nCOPY --from=cross-build ${PROJECT_PATH}/bin/docker-app-windows.exe docker-app-windows.exe\n\nFROM cross-build AS e2e-cross-build\nARG TAG=\"unknown\"\n# Run e2e tests\nRUN make TAG=${TAG} e2e-cross\n\nFROM scratch AS e2e-cross\nARG PROJECT_PATH=/go/src/github.com/docker/app\nCOPY --from=e2e-cross-build ${PROJECT_PATH}/bin/docker-app-e2e-linux docker-app-e2e-linux\nCOPY --from=e2e-cross-build ${PROJECT_PATH}/bin/docker-app-e2e-darwin docker-app-e2e-darwin\nCOPY --from=e2e-cross-build ${PROJECT_PATH}/bin/docker-app-e2e-windows.exe docker-app-e2e-windows.exe\nCOPY --from=e2e-cross-build /usr/local/bin/gotestsum-linux gotestsum-linux\nCOPY --from=e2e-cross-build /usr/local/bin/gotestsum-darwin gotestsum-darwin\nCOPY --from=e2e-cross-build /usr/local/bin/gotestsum-windows.exe gotestsum-windows.exe\nCOPY --from=e2e-cross-build /usr/local/bin/test2json-linux test2json-linux\nCOPY --from=e2e-cross-build /usr/local/bin/test2json-darwin test2json-darwin\nCOPY --from=e2e-cross-build /usr/local/bin/test2json-windows.exe test2json-windows.exe\n"
+}

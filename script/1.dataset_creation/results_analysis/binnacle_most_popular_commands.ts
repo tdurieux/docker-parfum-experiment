@@ -55,7 +55,7 @@ import config from "../../../config";
       );
     }, 10000);
     fs.createReadStream(
-      join(config.dataFolder, "reproduction/github.tar.xz")
+      join(config.datasetFolder, "binnacle/github.tar.xz")
     )
       .pipe(lzma.createDecompressor())
       .pipe(extract)

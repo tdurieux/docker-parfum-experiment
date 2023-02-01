@@ -1,0 +1,15 @@
+ARG PYTHON_VERSION=3.7
+
+FROM python:${PYTHON_VERSION}
+
+ARG uid=1000
+ARG gid=1000
+
+RUN addgroup --gid $gid sphinx \
+ && useradd --uid $uid --gid $gid -M sphinx
+
+WORKDIR /src
+COPY requirements.txt docs-requirements.txt ./
+RUN pip install -r requirements.txt -r docs-requirements.txt
+
+USER sphinx

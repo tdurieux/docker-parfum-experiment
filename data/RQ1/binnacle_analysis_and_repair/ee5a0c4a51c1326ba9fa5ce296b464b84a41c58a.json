@@ -1,0 +1,45 @@
+{
+  "startTime": 1674240878430,
+  "endTime": 1674240878535,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 16,
+        "lineEnd": 18,
+        "columnStart": 4,
+        "columnEnd": 9
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 16,
+        "lineEnd": 18,
+        "columnStart": 4,
+        "columnEnd": 9
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 16,
+        "lineEnd": 18,
+        "columnStart": 4,
+        "columnEnd": 9
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 16,
+        "lineEnd": 18,
+        "columnStart": 4,
+        "columnEnd": 9
+      }
+    }
+  ],
+  "repairedDockerfile": "FROM ubuntu:18.04 as base\n\n### Stage 1 - add/remove packages ###\n\n# Ensure scripts are available for use in next command\nCOPY ./container/root/scripts/* /scripts/\n\n# - Symlink variant-specific scripts to default location\n# - Upgrade base security packages, then clean packaging leftover\n# - Add S6 for zombie reaping, boot-time coordination, signal transformation/distribution: @see https://github.com/just-containers/s6-overlay#known-issues-and-workarounds\n# - Add goss for local, serverspec-like testing\nRUN /bin/bash -e /scripts/ubuntu_apt_cleanmode.sh && \\\n    ln -s /scripts/clean_ubuntu.sh /clean.sh && \\\n    ln -s /scripts/security_updates_ubuntu.sh /security_updates.sh && \\\n    echo 'debconf debconf/frontend select Noninteractive' | debconf-set-selections && \\\n    /bin/bash -e /security_updates.sh && \\\n    apt-get install --no-install-recommends -yqq \\\n      curl \\\n      gpg \\\n    && \\\n    /bin/bash -e /scripts/install_s6.sh && \\\n    /bin/bash -e /scripts/install_goss.sh && \\\n    apt-get remove --purge -yq \\\n        curl \\\n        gpg \\\n    && \\\n    /bin/bash -e /clean.sh && \\\n    # out of order execution, has a dpkg error if performed before the clean script, so keeping it here,\n    apt-get remove --purge --auto-remove systemd --allow-remove-essential -y && rm -rf /var/lib/apt/lists/*;\n\n# Overlay the root filesystem from this repo\nCOPY ./container/root /\n\n\n### Stage 2 --- collapse layers ###\n\nFROM scratch\nCOPY --from=base / .\n\n# Use in multi-phase builds, when an init process requests for the container to gracefully exit, so that it may be committed\n# Used with alternative CMD (worker.sh), leverages supervisor to maintain long-running processes\nENV SIGNAL_BUILD_STOP=99 \\\n    S6_BEHAVIOUR_IF_STAGE2_FAILS=2 \\\n    S6_KILL_FINISH_MAXTIME=5000 \\\n    S6_KILL_GRACETIME=3000\n\nRUN goss -g goss.base.yaml validate\n\n# NOTE: intentionally NOT using s6 init as the entrypoint\n# This would prevent container debugging if any of those service crash\nCMD [\"/bin/bash\", \"/run.sh\"]\n"
+}

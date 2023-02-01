@@ -1,0 +1,26 @@
+{
+  "startTime": 1674255870926,
+  "endTime": 1674255871662,
+  "originalSmells": [
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 6,
+        "lineEnd": 6,
+        "columnStart": 4,
+        "columnEnd": 35
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 38,
+        "lineEnd": 38,
+        "columnStart": 4,
+        "columnEnd": 35
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "ARG image_tag\nFROM golang:1.18.1-alpine3.15 as blobber_build\n\nRUN apk add --update --no-cache build-base linux-headers git cmake bash perl grep\n\n# Install Herumi's cryptography\nRUN apk add --no-cache gmp gmp-dev openssl-dev && \\\n    cd /tmp && \\\n    wget -O - https://github.com/herumi/mcl/archive/master.tar.gz | tar xz && \\\n    wget -O - https://github.com/herumi/bls/archive/master.tar.gz | tar xz && \\\n    mv mcl* mcl && \\\n    mv bls* bls && \\\n    make -C mcl -j $(nproc) lib/libmclbn256.so install && \\\n    cp mcl/lib/libmclbn256.so /usr/local/lib && \\\n    make MCL_DIR=$(pwd)/mcl -C bls -j $(nproc) install && \\\n    rm -R /tmp/mcl && \\\n    rm -R /tmp/bls\n\nENV SRC_DIR=/0chain\nENV GO111MODULE=on\n\n# Download the dependencies:\n# Will be cached if we don't change mod/sum files\nCOPY ./code/go/0chain.net/go.mod          ./code/go/0chain.net/go.sum          $SRC_DIR/go/0chain.net/\nRUN cd $SRC_DIR/go/0chain.net && go mod download\n\n#Add the source code\nADD ./code/go/0chain.net $SRC_DIR/go/0chain.net\n\nWORKDIR $SRC_DIR/go/0chain.net/blobber\n\nARG image_tag\nARG go_build_mode\nARG go_bls_tag\nRUN CGO_ENABLED=1 go build -v -tags ${go_build_mode} -tags ${go_bls_tag} -ldflags \"-X github.com/0chain/blobber/code/go/0chain.net/core/build.BuildTag=${image_tag}\"\n\n# Copy the build artifact into a minimal runtime image:\nFROM golang:1.18.1-alpine3.15\nRUN apk add --no-cache gmp gmp-dev openssl-dev\nCOPY --from=blobber_build  /usr/local/lib/libmcl*.so \\\n                        /usr/local/lib/libbls*.so \\\n                        /usr/local/lib/\nENV APP_DIR=/0chain\nWORKDIR $APP_DIR\nCOPY --from=blobber_build $APP_DIR/go/0chain.net/blobber/blobber $APP_DIR/bin/blobber\n\n#Store all files and run environment under 0chain userid.\nRUN addgroup -g 2000 -S 0chain && adduser -u 2000 -S 0chain -G 0chain\nUSER 0chain:0chain\n"
+}

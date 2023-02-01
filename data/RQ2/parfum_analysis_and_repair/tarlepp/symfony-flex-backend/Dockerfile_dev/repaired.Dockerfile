@@ -1,0 +1,96 @@
+FROM php:8.1.6-fpm
+
+# Let's use bash as a default shell with login each time
+SHELL ["/bin/bash", "--login", "-c"]
+
+# Decrale used arguments from `docker-compose.yml` file
+ARG HOST_UID
+ARG HOST_GID
+
+# Declare constants
+ENV PATH "$PATH:/home/dev/.composer/vendor/bin:/app/vendor/bin"
+ENV NVM_VERSION v0.39.1
+ENV NODE_VERSION 18.2.0
+
+# Update package list and install necessary libraries
+RUN apt-get update \
+    && apt-get install --no-install-recommends -y \
+        zlib1g-dev libzip-dev libxml2-dev libicu-dev g++ nano vim git unzip jq bash-completion iproute2 sudo wget \
+        python3-dev python3-pip python3-setuptools \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy the install-php-extensions (Easily install PHP extension in official PHP Docker containers)
+COPY --from=mlocati/php-extension-installer:1.5.16 /usr/bin/install-php-extensions /usr/local/bin/
+
+# Enable all necessary PHP packages
+RUN install-php-extensions \
+    apcu \
+    bcmath \
+    igbinary \
+    intl \
+    opcache \
+    pdo_mysql \
+    xdebug \
+    zip
+
+# Copy the Composer PHAR from the Composer image into the PHP image
+COPY --from=composer:2.3.9 /usr/bin/composer /usr/bin/composer
+
+# Copy development `php.ini` configuration to container
+COPY ./docker/php/php-dev.ini /usr/local/etc/php/php.ini
+
+# Define used work directory
+WORKDIR /app
+
+# Add everything inside docker image
+COPY . .
+
+# Ensure that all required files has execute rights
+RUN chmod +x /app/bin/console \
+    && chmod +x /app/docker-entrypoint-dev.sh \
+    && chmod +x /usr/bin/composer
+
+RUN chmod -R o+s+w /usr/local/etc/php
+
+# Enable PHP-FPM status page
+RUN echo 'pm.status_path = /status' >> /usr/local/etc/php-fpm.d/www.conf
+
+RUN curl -f -s https://api.github.com/repos/fabpot/local-php-security-checker/releases/latest | \
+        grep -E "browser_download_url(.+)linux_amd64" | \
+        cut -d : -f 2,3 | \
+        tr -d \" | \
+        xargs -I{} wget -O local-php-security-checker {} \
+    && mv local-php-security-checker /usr/bin/local-php-security-checker \
+    && chmod +x /usr/bin/local-php-security-checker
+
+RUN groupadd --gid ${HOST_GID} dev \
+    && useradd -p $(perl -e 'print crypt($ARGV[0], "password")' 'dev') --uid ${HOST_UID} --gid ${HOST_GID} --shell /bin/bash --create-home dev \
+    && usermod -a -G www-data,sudo dev \
+    && chgrp -hR dev /app
+
+USER dev
+
+RUN pip3 install --no-cache-dir thefuck --user
+
+# Add necessary stuff to bash autocomplete
+ENV PATH "$PATH:/home/dev/.local/bin"
+
+RUN echo 'eval "$(thefuck --alias)"' >> /home/dev/.bashrc
+
+# Install Node Version Manager (nvm)
+RUN curl -f -o- https://raw.githubusercontent.com/nvm-sh/nvm/$NVM_VERSION/install.sh | bash
+
+# Node setup
+#   1) Install defined version of node and use it as default
+#   2) Install `composer-version` helper tool globally
+RUN source ~/.nvm/nvm.sh \
+    && nvm install $NODE_VERSION \
+    && npm install -g composer-version && npm cache clean --force;
+
+# Add necessary stuff to bash autocomplete
+RUN echo 'source /usr/share/bash-completion/bash_completion' >> /home/dev/.bashrc \
+    && echo 'alias console="/app/bin/console"' >> /home/dev/.bashrc
+
+EXPOSE 9000
+
+ENTRYPOINT ["/app/docker-entrypoint-dev.sh"]

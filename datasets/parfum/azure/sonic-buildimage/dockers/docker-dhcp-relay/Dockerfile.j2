@@ -1,0 +1,38 @@
+{% from "dockers/dockerfile-macros.j2" import install_debian_packages, install_python_wheels, copy_files %}
+FROM docker-config-engine-bullseye-{{DOCKER_USERNAME}}:{{DOCKER_USERTAG}}
+
+ARG docker_container_name
+ARG image_version
+RUN [ -f /etc/rsyslog.conf ] && sed -ri "s/%syslogtag%/$docker_container_name#%syslogtag%/;" /etc/rsyslog.conf
+
+# Make apt-get non-interactive
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Pass the image_version to container
+ENV IMAGE_VERSION=$image_version
+
+# Update apt's cache of available packages
+RUN apt-get update
+
+{% if docker_dhcp_relay_debs.strip() -%}
+# Copy built Debian packages
+{{ copy_files("debs/", docker_dhcp_relay_debs.split(' '), "/debs/") }}
+
+# Install built Debian packages and implicitly install their dependencies
+{{ install_debian_packages(docker_dhcp_relay_debs.split(' ')) }}
+{%- endif %}
+
+# Clean up
+RUN apt-get clean -y         && \
+    apt-get autoclean -y     && \
+    apt-get autoremove -y    && \
+    rm -rf /debs
+
+COPY ["docker_init.sh", "start.sh", "/usr/bin/"]
+COPY ["docker-dhcp-relay.supervisord.conf.j2", "port-name-alias-map.txt.j2", "wait_for_intf.sh.j2", "/usr/share/sonic/templates/"]
+COPY ["dhcp-relay.programs.j2", "dhcpv4-relay.agents.j2", "dhcpv6-relay.agents.j2", "dhcp-relay.monitors.j2", "/usr/share/sonic/templates/"]
+COPY ["files/supervisor-proc-exit-listener", "/usr/bin"]
+COPY ["critical_processes", "/etc/supervisor"]
+COPY ["cli", "/cli/"]
+
+ENTRYPOINT ["/usr/bin/docker_init.sh"]

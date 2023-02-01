@@ -1,0 +1,44 @@
+{
+  "startTime": 1674255279940,
+  "endTime": 1674255281143,
+  "originalSmells": [
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 83,
+        "lineEnd": 83,
+        "columnStart": 4,
+        "columnEnd": 31
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 77,
+        "lineEnd": 80,
+        "columnStart": 4,
+        "columnEnd": 7
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 4,
+        "lineEnd": 6,
+        "columnStart": 3,
+        "columnEnd": 16
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 40,
+        "lineEnd": 69,
+        "columnStart": 3,
+        "columnEnd": 5
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM ubuntu:22.04 AS compiler-common\nENV DEBIAN_FRONTEND=noninteractive\n\nRUN apt-get update \\\n&& apt-get install -y --no-install-recommends \\\n git-core \\\n ca-certificates \\\n&& apt-get update && rm -rf /var/lib/apt/lists/*;\n\n###########################################################################################################\n\nFROM compiler-common AS compiler-stylesheet\nRUN cd ~ \\\n&& git clone --single-branch --branch v5.4.0 https://github.com/gravitystorm/openstreetmap-carto.git --depth 1 \\\n&& cd openstreetmap-carto \\\n&& rm -rf .git\n\n###########################################################################################################\n\nFROM compiler-common AS compiler-helper-script\nRUN mkdir -p /home/renderer/src \\\n&& cd /home/renderer/src \\\n&& git clone https://github.com/zverik/regional \\\n&& cd regional \\\n&& rm -rf .git \\\n&& chmod u+x /home/renderer/src/regional/trim_osc.py\n\n###########################################################################################################\n\nFROM ubuntu:22.04 AS final\n\n# Based on\n# https://switch2osm.org/serving-tiles/manually-building-a-tile-server-18-04-lts/\nENV DEBIAN_FRONTEND=noninteractive\nENV AUTOVACUUM=on\nENV UPDATES=disabled\nRUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone\n\n# Get packages\nRUN apt-get update \\\n&& apt-get install -y --no-install-recommends \\\n apache2 \\\n cron \\\n dateutils \\\n fonts-noto-cjk \\\n fonts-noto-hinted \\\n fonts-noto-unhinted \\\n fonts-unifont \\\n gnupg2 \\\n gdal-bin \\\n liblua5.3-dev \\\n lua5.3 \\\n mapnik-utils \\\n npm \\\n osm2pgsql \\\n osmium-tool \\\n osmosis \\\n postgresql-14 \\\n postgresql-14-postgis-3 \\\n postgresql-14-postgis-3-scripts \\\n postgis \\\n python-is-python3 \\\n python3-mapnik \\\n python3-lxml \\\n python3-psycopg2 \\\n python3-shapely \\\n python3-pip \\\n renderd \\\n sudo \\\n wget \\\n&& apt-get clean autoclean \\\n&& apt-get autoremove --yes \\\n&& rm -rf /var/lib/{apt,dpkg,cache,log}/ && rm -rf /var/lib/apt/lists/*;\n\nRUN adduser --disabled-password --gecos \"\" renderer\n\n# Install python libraries\nRUN pip3 install --no-cache-dir \\\n requests \\\n osmium \\\n pyyaml\n\n# Install carto for stylesheet\nRUN npm install -g carto@0.18.2 && npm cache clean --force;\n\n# Configure Apache\nRUN echo \"LoadModule tile_module /usr/lib/apache2/modules/mod_tile.so\" >> /etc/apache2/conf-available/mod_tile.conf \\\n&& echo \"LoadModule headers_module /usr/lib/apache2/modules/mod_headers.so\" >> /etc/apache2/conf-available/mod_headers.conf \\\n&& a2enconf mod_tile && a2enconf mod_headers\nCOPY apache.conf /etc/apache2/sites-available/000-default.conf\nCOPY leaflet-demo.html /var/www/html/index.html\nRUN ln -sf /dev/stdout /var/log/apache2/access.log \\\n&& ln -sf /dev/stderr /var/log/apache2/error.log\n\n# Copy update scripts\nCOPY openstreetmap-tiles-update-expire.sh /usr/bin/\nRUN chmod +x /usr/bin/openstreetmap-tiles-update-expire.sh \\\n&& mkdir /var/log/tiles \\\n&& chmod a+rw /var/log/tiles \\\n&& ln -s /home/renderer/src/mod_tile/osmosis-db_replag /usr/bin/osmosis-db_replag \\\n&& echo \"* * * * *   renderer    openstreetmap-tiles-update-expire.sh\\n\" >> /etc/crontab\n\n# Configure PosgtreSQL\nCOPY postgresql.custom.conf.tmpl /etc/postgresql/14/main/\nRUN chown -R postgres:postgres /var/lib/postgresql \\\n&& chown postgres:postgres /etc/postgresql/14/main/postgresql.custom.conf.tmpl \\\n&& echo \"host all all 0.0.0.0/0 md5\" >> /etc/postgresql/14/main/pg_hba.conf \\\n&& echo \"host all all ::/0 md5\" >> /etc/postgresql/14/main/pg_hba.conf\n\n# Create volume directories\nRUN mkdir -p /run/renderd/ \\\n  &&  mkdir  -p  /data/database/  \\\n  &&  mkdir  -p  /data/style/  \\\n  &&  mkdir  -p  /home/renderer/src/  \\\n  &&  chown  -R  renderer:  /data/  \\\n  &&  chown  -R  renderer:  /home/renderer/src/  \\\n  &&  chown  -R  renderer:  /run/renderd  \\\n  &&  mv  /var/lib/postgresql/14/main/  /data/database/postgres/  \\\n  &&  mv  /var/cache/renderd/tiles/            /data/tiles/     \\\n  &&  chown  -R  renderer: /data/tiles \\\n  &&  ln  -s  /data/database/postgres  /var/lib/postgresql/14/main             \\\n  &&  ln  -s  /data/style              /home/renderer/src/openstreetmap-carto  \\\n  &&  ln  -s  /data/tiles              /var/cache/renderd/tiles                \\\n;\n\nRUN echo '[default] \\n\\\nURI=/tile/ \\n\\\nTILEDIR=/var/cache/renderd/tiles \\n\\\nXML=/home/renderer/src/openstreetmap-carto/mapnik.xml \\n\\\nHOST=localhost \\n\\\nTILESIZE=256 \\n\\\nMAXZOOM=20' >> /etc/renderd.conf\n\n# Install helper script\nCOPY --from=compiler-helper-script /home/renderer/src/regional /home/renderer/src/regional\n\nCOPY --from=compiler-stylesheet /root/openstreetmap-carto /home/renderer/src/openstreetmap-carto-backup\n\n# Start running\nCOPY run.sh /\nENTRYPOINT [\"/run.sh\"]\nCMD []\nEXPOSE 80 5432\n"
+}

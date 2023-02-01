@@ -1,0 +1,38 @@
+FROM quay.io/centos/centos:stream9
+
+# Use legacy cryptopolicy as workaround for https://bugzilla.redhat.com/show_bug.cgi?id=2059101
+# until https://pagure.io/copr/copr/issue/2106 is fixed
+RUN dnf install -y crypto-policies-scripts crypto-policies \
+    && \
+    update-crypto-policies --set LEGACY
+
+# Add runtime dependencies.
+RUN dnf -y install dnf-plugins-core \
+    && \
+    dnf copr enable -y ovirt/ovirt-master-snapshot \
+    && \
+    dnf install -y ovirt-release-master \
+    && \
+    dnf update -y \
+    && \
+    # el9s does not have modprobe installed by default
+    dnf install -y kmod \
+    && \
+    dnf install -y \
+        iproute-tc \
+        libnl3 \
+        nmstate \
+        python3-devel \
+        python3-libnmstate \
+        python3-six \
+        python3-pip \
+        systemd \
+    && \
+    dnf clean all
+
+# Add pytest
+RUN python3 -m pip install --upgrade pip \
+    && \
+    python3 -m pip install pytest
+
+CMD ["/usr/sbin/init"]

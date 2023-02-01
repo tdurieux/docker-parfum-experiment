@@ -1,0 +1,7 @@
+FROM node:18.4.0-alpine AS build
+WORKDIR /usr/src/app
+COPY package-lock.json package.json ./
+RUN npm ci
+COPY . ./
+RUN npm run build
+RUN npm run disclaim

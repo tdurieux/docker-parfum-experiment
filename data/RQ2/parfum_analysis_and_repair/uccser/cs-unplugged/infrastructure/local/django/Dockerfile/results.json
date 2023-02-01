@@ -1,0 +1,17 @@
+{
+  "startTime": 1674254150875,
+  "endTime": 1674254151591,
+  "originalSmells": [
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 8,
+        "lineEnd": 12,
+        "columnStart": 22,
+        "columnEnd": 13
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM python:3.9.5-slim-buster as python\n\n# Python build stage ----------------------------------------------------------\nFROM python as python-build-stage\n\nARG BUILD_ENVIRONMENT=local\n\n# Install apt packages\nRUN apt-get update && apt-get install --no-install-recommends -y \\\n    # dependencies for building Python packages\n    build-essential \\\n    # psycopg2 dependencies\n    libpq-dev && rm -rf /var/lib/apt/lists/*;\n\n# Requirements are installed here to ensure they will be cached.\nCOPY ./requirements .\n\n# Create Python Dependency and Sub-Dependency Wheels.\nRUN pip wheel --wheel-dir /usr/src/app/wheels -r ${BUILD_ENVIRONMENT}.txt\n\n# Python run stage ------------------------------------------------------------\nFROM python as python-run-stage\n\nARG BUILD_ENVIRONMENT=local\nARG APP_HOME=/app\n\n# Set environment variables\nENV LANG C.UTF-8\nENV DEPLOYED=False\n# Turns off buffering for easier container logging\nENV PYTHONUNBUFFERED 1\n# Keeps Python from generating .pyc files in the container\nENV PYTHONDONTWRITEBYTECODE 1\nENV BUILD_ENV ${BUILD_ENVIRONMENT}\n\nWORKDIR ${APP_HOME}\n\n# Install required system dependencies\nRUN apt-get update && apt-get install --no-install-recommends -y \\\n    # psycopg2 dependencies\n    libpq-dev \\\n    # Weasyprint\n    build-essential \\\n    python3-dev \\\n    python3-pip \\\n    python3-setuptools \\\n    python3-wheel \\\n    python3-cffi \\\n    libcairo2 \\\n    libpango-1.0-0 \\\n    libpangocairo-1.0-0 \\\n    libgdk-pixbuf2.0-0 \\\n    libffi-dev \\\n    shared-mime-info \\\n    # Font installation tool\n    fontconfig \\\n    # Translations dependencies\n    gettext \\\n    # Healthcheck tool\n    curl \\\n    # Cleaning up unused files\n    && apt-get purge -y --auto-remove -o APT::AutoRemove::RecommendsImportant=false \\\n    && rm -rf /var/lib/apt/lists/*\n\n# All absolute dir copies ignore workdir instruction.\n# All relative dir copies are wrt to the workdir instruction.\n# Copy python dependency wheels from python-build-stage\n# and then use wheels to install Python dependencies.\nCOPY --from=python-build-stage /usr/src/app/wheels  /wheels/\nRUN pip install --no-cache-dir --no-index --find-links=/wheels/ /wheels/* \\\n    && rm -rf /wheels/\n\nCOPY ./infrastructure/local/django/entrypoint /entrypoint\nRUN sed -i 's/\\r$//g' /entrypoint\nRUN chmod +x /entrypoint\n\nCOPY ./infrastructure/local/django/start /start\nRUN sed -i 's/\\r$//g' /start\nRUN chmod +x /start\n\n# Copy and install fonts\nCOPY ./csunplugged/static/fonts/ /usr/share/fonts/\nRUN fc-cache -fv\n\nHEALTHCHECK --interval=15s --timeout=30s --start-period=5s --retries=3 \\\n    CMD curl --fail --silent http://localhost:8000/healthcheck/ || exit 1\n\nENTRYPOINT [\"/entrypoint\"]\n"
+}

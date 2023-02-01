@@ -1,0 +1,53 @@
+{
+  "startTime": 1674250009928,
+  "endTime": 1674250011850,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 30,
+        "lineEnd": 30,
+        "columnStart": 4,
+        "columnEnd": 51
+      }
+    },
+    {
+      "rule": "curlUseHttpsUrl",
+      "position": {
+        "lineStart": 30,
+        "lineEnd": 30,
+        "columnStart": 4,
+        "columnEnd": 51
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 40,
+        "lineEnd": 40,
+        "columnStart": 4,
+        "columnEnd": 15
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 38,
+        "lineEnd": 38,
+        "columnStart": 4,
+        "columnEnd": 39
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 96,
+        "lineEnd": 96,
+        "columnStart": 4,
+        "columnEnd": 84
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM public.ecr.aws/e2s1w5p1/ubuntu:16.04\nLABEL com.amazonaws.sagemaker.capabilities.accept-bind-to-port=true\n\nARG TFS_SHORT_VERSION=1.14\nARG S3_TF_VERSION=1-14-0\nARG S3_TF_EI_VERSION=1-4\nARG PYTHON=python3\nARG PYTHON_VERSION=3.6.6\nARG HEALTH_CHECK_VERSION=1.5.3\n\n# See http://bugs.python.org/issue19846\nENV LANG=C.UTF-8\nENV PYTHONDONTWRITEBYTECODE=1\nENV PYTHONUNBUFFERED=1\nENV MODEL_BASE_PATH=/models\nENV MODEL_NAME=model\nENV SAGEMAKER_TFS_VERSION=\"${TFS_SHORT_VERSION}\"\nENV PATH=\"$PATH:/sagemaker\"\n\n# nginx + njs\nRUN apt-get update \\\n && apt-get -y install --no-install-recommends \\\n    build-essential \\\n    ca-certificates \\\n    curl \\\n    git \\\n    gnupg2 \\\n    vim \\\n    wget \\\n    zlib1g-dev \\\n && curl -f -s https://nginx.org/keys/nginx_signing.key | apt-key add - \\\n && echo 'deb http://nginx.org/packages/ubuntu/ xenial nginx' >> /etc/apt/sources.list \\\n && apt-get update \\\n && apt-get -y install --no-install-recommends nginx wget nginx-module-njs \\\n && apt-get clean \\\n && rm -rf /var/lib/apt/lists/*\n\nRUN wget https://www.python.org/ftp/python/$PYTHON_VERSION/Python-$PYTHON_VERSION.tgz \\\n && tar -xvf Python-$PYTHON_VERSION.tgz \\\n && cd Python-$PYTHON_VERSION \\\n && ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" \\\n && make \\\n && make install \\\n && apt-get update \\\n && apt-get install -y --no-install-recommends \\\n    libbz2-dev \\\n    libc6-dev \\\n    libgdbm-dev \\\n    libncursesw5-dev \\\n    libreadline-gplv2-dev \\\n    libsqlite3-dev \\\n    libssl-dev \\\n    tk-dev \\\n && rm -rf /var/lib/apt/lists/* \\\n && make \\\n && make install \\\n && rm -rf ../Python-$PYTHON_VERSION* \\\n && ln -s /usr/local/bin/pip3 /usr/bin/pip \\\n && ln -s $(which ${PYTHON}) /usr/local/bin/python && rm Python-$PYTHON_VERSION.tgz\n\n# Some TF tools expect a \"python\" binary\nRUN pip install -U --no-cache-dir --upgrade \\\n    pip \\\n    setuptools\n\n# cython, falcon, gunicorn, grpc\nRUN pip install --no-cache-dir \\\n    cython==0.29.13 \\\n    falcon==2.0.0 \\\n    gunicorn==19.9.0 \\\n    gevent==1.4.0 \\\n    requests==2.22.0 \\\n    docutils==0.14 \\\n    awscli==1.16.196 \\\n    grpcio==1.24.1 \\\n    protobuf==3.10.0 \\\n# using --no-dependencies to avoid installing tensorflow binary\n && pip install --no-dependencies --no-cache-dir \\\n    tensorflow-serving-api==1.14.0\n\nCOPY sagemaker /sagemaker\n\nRUN wget https://amazonei-tools.s3.amazonaws.com/v${HEALTH_CHECK_VERSION}/ei_tools_${HEALTH_CHECK_VERSION}.tar.gz -O /opt/ei_tools_${HEALTH_CHECK_VERSION}.tar.gz \\\n && tar -xvf /opt/ei_tools_${HEALTH_CHECK_VERSION}.tar.gz -C /opt/ \\\n && rm -rf /opt/ei_tools_${HEALTH_CHECK_VERSION}.tar.gz \\\n && chmod a+x /opt/ei_tools/bin/health_check \\\n && mkdir -p /opt/ei_health_check/bin \\\n && ln -s /opt/ei_tools/bin/health_check /opt/ei_health_check/bin/health_check \\\n && ln -s /opt/ei_tools/lib /opt/ei_health_check/lib\n\n# Expose ports\nEXPOSE 8500 8501\n\nRUN wget https://amazonei-tensorflow.s3.amazonaws.com/tensorflow-serving/v1.14/ubuntu/archive/tensorflow-serving-${S3_TF_VERSION}-ubuntu-ei-${S3_TF_EI_VERSION}.tar.gz \\\n            -O /tmp/tensorflow-serving-${S3_TF_VERSION}-ubuntu-ei-${S3_TF_EI_VERSION}.tar.gz \\\n && cd /tmp \\\n && tar zxf tensorflow-serving-${S3_TF_VERSION}-ubuntu-ei-${S3_TF_EI_VERSION}.tar.gz \\\n && mv tensorflow-serving-${S3_TF_VERSION}-ubuntu-ei-${S3_TF_EI_VERSION}/amazonei_tensorflow_model_server /usr/bin/tensorflow_model_server \\\n && chmod +x /usr/bin/tensorflow_model_server \\\n && rm -rf tensorflow-serving-${S3_TF_VERSION}* && rm tensorflow-serving-${S3_TF_VERSION}-ubuntu-ei-${S3_TF_EI_VERSION}.tar.gz\n\n# Set where models should be stored in the container\nRUN mkdir -p ${MODEL_BASE_PATH}\n\nRUN echo '#!/bin/bash \\n\\n' > /usr/bin/tf_serving_entrypoint.sh \\\n && echo '/usr/bin/tensorflow_model_server --port=8500 --rest_api_port=8501 --model_name=${MODEL_NAME} --model_base_path=${MODEL_BASE_PATH}/${MODEL_NAME} \"$@\"' >> /usr/bin/tf_serving_entrypoint.sh \\\n && chmod +x /usr/bin/tf_serving_entrypoint.sh\n\nCMD [\"/usr/bin/tf_serving_entrypoint.sh\"]\n"
+}

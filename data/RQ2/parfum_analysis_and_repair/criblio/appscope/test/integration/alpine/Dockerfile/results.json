@@ -1,0 +1,53 @@
+{
+  "startTime": 1674256293942,
+  "endTime": 1674256294785,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 70,
+        "lineEnd": 70,
+        "columnStart": 4,
+        "columnEnd": 25
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 38,
+        "lineEnd": 38,
+        "columnStart": 6,
+        "columnEnd": 59
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 45,
+        "lineEnd": 45,
+        "columnStart": 6,
+        "columnEnd": 59
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 52,
+        "lineEnd": 52,
+        "columnStart": 6,
+        "columnEnd": 59
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 2,
+        "lineEnd": 2,
+        "columnStart": 4,
+        "columnEnd": 178
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM alpine:3.15\n\nRUN apk add --no-cache go openssl make file bash curl autoconf automake libtool openssl-dev rust nodejs ruby python3 php php-openssl apache2 apache2-ssl python3-dev py3-pip libffi-dev cargo && \\\n    go clean -cache\n\nRUN mkdir -p /go /go/thread /go/net /go/cgo\n\nCOPY ./go/thread/* /go/thread/\nCOPY ./go/net/* /go/net/\nCOPY ./go/cgo/* /go/cgo/\n\n# Build all the Go test programs\nRUN cd /go/thread && \\\n      CGO_ENABLED=0 go build fileThread.go && \\\n    cd /go/net && \\\n      go build -buildmode=pie -o plainServerDynamic plainServer.go && \\\n      CGO_ENABLED=0 go build -o plainServerStatic plainServer.go && \\\n      go build -o tlsServerDynamic tlsServer.go && \\\n      CGO_ENABLED=0 go build -o tlsServerStatic tlsServer.go && \\\n      openssl genrsa -out server.key 2048 && \\\n      openssl ecparam -genkey -name secp384r1 -out server.key && \\\n      openssl req -new -x509 -sha256 -key server.key -out server.crt \\\n        -days 3650 -subj \"/C=US/ST=California/L=San Francisco/O=Cribl/OU=Cribl/CN=localhost\" && \\\n      go build -o plainClientDynamic plainClient.go && \\\n      CGO_ENABLED=0 go build -o plainClientStatic plainClient.go && \\\n      go build -o tlsClientDynamic tlsClient.go && \\\n      CGO_ENABLED=0 go build -o tlsClientStatic tlsClient.go && \\\n    cd /go/cgo && \\\n      make all\n\n# Building three versions of curl; curl-ssl, curl-tls, and curl-nss\nRUN mkdir -p /opt/test && \\\n    cd /opt/test && \\\n      wget https://curl.haxx.se/download/curl-7.69.1.tar.gz && \\\n      tar xvzf curl-7.69.1.tar.gz && \\\n      mv curl-7.69.1 curlssl && \\\n    cd /opt/test/curlssl && \\\n      ./buildconf && \\\n      ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" --with-ssl --without-gnutls --without-nss && \\\n      make -j\"$(nproc)\" && \\\n    cd /opt/test && \\\n      tar xvzf curl-7.69.1.tar.gz && \\\n      mv curl-7.69.1 curltls && \\\n    cd /opt/test/curltls && \\\n      ./buildconf && \\\n      ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" --without-ssl --with-gnutls --without-nss && \\\n      make -j\"$(nproc)\" && \\\n    cd /opt/test && \\\n      tar xvzf curl-7.69.1.tar.gz && \\\n      mv curl-7.69.1 curlnss && \\\n    cd /opt/test/curlnss && \\\n      ./buildconf && \\\n      ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" --without-ssl --without-gnutls --with-nss && \\\n      make -j\"$(nproc)\" && \\\n    cd /opt/test && \\\n      cp curlssl/src/.libs/curl curl-ssl && \\\n      cp curltls/src/.libs/curl curl-tls && \\\n      cp curlnss/src/.libs/curl curl-nss && \\\n      rm -rf curlssl curltls curlnss curl-7.69.1.tar.gz\n\n# Install test-runner pieces\nRUN mkdir /opt/test/logs /opt/test/bin\nCOPY ./tls/test_cert.pem /opt/test/.\n# Node\nCOPY ./tls/nodehttp.ts /opt/test/bin/nodehttp.ts\n# Ruby\nCOPY ./tls/ruby/server.rb /opt/test/bin/.\nCOPY ./tls/ruby/client.rb /opt/test/bin/.\n# Python\nCOPY ./tls/testssl.py /opt/test/bin/testssl.py\nRUN pip install --no-cache-dir pyopenssl\n# PHP\nCOPY ./tls/php/sslclient.php /opt/test/bin\n# Rust\nCOPY ./tls/rust/http_test /opt/test/rust\nRUN cd /opt/test/rust && \\\n    cargo build --release && \\\n    cp target/release/http_test /opt/test/bin && \\\n    cd /opt/test && \\\n    rm -rf /opt/test/rust\n\n# Debug Tools\nCOPY ./tls/alias /root/.alias\nCOPY ./tls/gdbinit /root/.gdbinit\n\n# Tests\nCOPY ./alpine/test_go.sh /go\nCOPY ./go/test_go_struct.sh /go\nCOPY ./alpine/test_tls.sh /opt/test/bin/test_tls.sh\nCOPY ./alpine/test_scope.sh /opt/test/bin/test_scope.sh\nCOPY ./alpine/test_all.sh /opt/test/bin/test_all.sh\n\nENV SCOPE_CRIBL_ENABLE=false\nENV SCOPE_LOG_LEVEL=error\nENV SCOPE_METRIC_VERBOSITY=4\nENV SCOPE_EVENT_LOGFILE=true\nENV SCOPE_EVENT_CONSOLE=true\nENV SCOPE_EVENT_METRIC=true\nENV SCOPE_EVENT_HTTP=true\n\n# We set these in test_all.sh now\n#ENV SCOPE_LOG_DEST=file:///opt/test-runner/logs/scope.log\n#ENV SCOPE_EVENT_DEST=file:///go/events.log\n\nENV PATH=\"/usr/local/scope:/usr/local/scope/bin:${PATH}\"\nCOPY scope-profile.sh /etc/profile.d/scope.sh\nCOPY gdbinit /root/.gdbinit\n\nRUN  mkdir /usr/local/scope && \\\n     mkdir /usr/local/scope/bin && \\\n     mkdir /usr/local/scope/lib && \\\n     ln -s /opt/appscope/bin/linux/$(uname -m)/scope /usr/local/scope/bin/scope && \\\n     ln -s /opt/appscope/bin/linux/$(uname -m)/ldscope /usr/local/scope/bin/ldscope && \\\n     ln -s /opt/appscope/lib/linux/$(uname -m)/libscope.so /usr/local/scope/lib/libscope.so\n\nCOPY alpine/scope-test /usr/local/scope/scope-test\n\nCOPY docker-entrypoint.sh /\nENTRYPOINT [\"/docker-entrypoint.sh\"]\nCMD [\"test\"]\n\n"
+}

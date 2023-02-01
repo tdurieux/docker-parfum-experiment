@@ -1,0 +1,1 @@
+# Not using the alpine image because it lacks a package gRPC needed to establish pub/sub listeners.

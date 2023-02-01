@@ -1,0 +1,35 @@
+{
+  "startTime": 1674250528794,
+  "endTime": 1674250529565,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 66,
+        "lineEnd": 68,
+        "columnStart": 4,
+        "columnEnd": 5
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 8,
+        "lineEnd": 8,
+        "columnStart": 7,
+        "columnEnd": 65
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 113,
+        "lineEnd": 113,
+        "columnStart": 4,
+        "columnEnd": 57
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# First stage : download glpi + build it\nFROM composer:latest as build_glpi\n\nARG GLPI_VERSION\nARG GLPI_PATHS_ROOT=/var/www\n\nRUN mkdir -p \"${GLPI_PATHS_ROOT}\"\nRUN curl -v --fail -o glpi.tgz -L \"https://github.com/glpi-project/glpi/releases/download/${GLPI_VERSION}/glpi-${GLPI_VERSION}.tgz\" \\\n    && tar -xzf glpi.tgz --strip 1 --directory ${GLPI_PATHS_ROOT} && rm glpi.tgz\n\nWORKDIR \"${GLPI_PATHS_ROOT}\"\n\nRUN curl --silent --show-error --fail --remote-name-all \\\n      https://raw.githubusercontent.com/glpi-project/glpi/${GLPI_VERSION}/composer.json \\\n      https://raw.githubusercontent.com/glpi-project/glpi/${GLPI_VERSION}/composer.lock \\\n    && COMPOSER_HOME=/tmp/composer composer require \\\n      --apcu-autoloader \\\n      --classmap-authoritative \\\n      --ignore-platform-reqs \\\n      --no-interaction \\\n      --no-progress \\\n      --optimize-autoloader \\\n      --prefer-dist \\\n      --update-no-dev \\\n      --working-dir ${GLPI_PATHS_ROOT} \\\n      apereo/phpcas \\\n    && rm -fv composer.json\n\n# Second stage : build final image\nFROM php:7.2-fpm-alpine3.11\n\nLABEL maintainer='Pierre GINDRAUD <pgindraud@gmail.com>'\n\nARG GLPI_VERSION\n\nENV GLPI_VERSION \"${GLPI_VERSION}\"\nENV GLPI_PATHS_ROOT /var/www\nENV GLPI_PATHS_PLUGINS /var/www/plugins\nENV GLPI_REMOVE_INSTALLER no\nENV GLPI_CHMOD_PATHS_FILES no\nENV GLPI_INSTALL_PLUGINS ''\n\nENV PHP_MEMORY_LIMIT 64M\n\nENV PHPFPM_PM dynamic\nENV PHPFPM_PM_MAX_CHILDREN 5\nENV PHPFPM_PM_START_SERVERS 2\nENV PHPFPM_PM_MIN_SPARE_SERVERS 1\nENV PHPFPM_PM_MAX_SPARE_SERVERS 3\nENV PHPFPM_PM_PROCESS_IDLE_TIMEOUT 10s\nENV PHPFPM_PM_MAX_REQUEST 500\n\n# Install dependencies\nRUN set -ex; \\\n    apk --no-cache add \\\n      curl \\\n      nginx \\\n      fping \\\n      graphviz \\\n      iputils \\\n      net-snmp-libs \\\n      py3-jinja2 \\\n      supervisor \\\n      tar \\\n      tzdata \\\n    ; \\\n    pip3 install --no-cache-dir \\\n      j2cli \\\n    ; \\\n    apk add --no-cache --virtual .build-deps \\\n        $PHPIZE_DEPS \\\n        autoconf \\\n        bzip2-dev \\\n        coreutils \\\n        curl-dev \\\n        freetype-dev \\\n        icu-dev \\\n        imap-dev \\\n        libevent-dev \\\n        libjpeg-turbo-dev \\\n        libmcrypt-dev \\\n        libpng-dev \\\n        libxml2-dev \\\n        net-snmp-dev \\\n        openldap-dev \\\n        pcre-dev \\\n        imagemagick-dev \\\n    ; \\\n    docker-php-source extract ; \\\n    docker-php-ext-configure gd --with-freetype-dir=/usr --with-png-dir=/usr --with-jpeg-dir=/usr; \\\n    docker-php-ext-configure ldap ; \\\n    docker-php-ext-install \\\n       bz2 \\\n       exif \\\n       gd \\\n       imap \\\n       intl \\\n       ldap \\\n       mysqli \\\n       opcache \\\n       snmp \\\n       soap \\\n       xmlrpc \\\n       zip \\\n    ; \\\n    pecl install apcu && docker-php-ext-enable apcu ; \\\n    docker-php-source delete ; \\\n    runDeps=\"$( \\\n        scanelf --needed --nobanner --format '%n#p' --recursive /usr/local/lib/php/extensions \\\n            | tr ',' '\\n' \\\n            | sort -u \\\n            | awk 'system(\"[ -e /usr/local/lib/\" $1 \" ]\") == 0 { next } { print \"so:\" $1 }' \\\n    )\"; \\\n    apk add --no-cache --virtual .nextcloud-phpext-rundeps $runDeps; \\\n    apk del .build-deps ; \\\n    mkdir -p /run/nginx ; \\\n    find \"${GLPI_PATHS_ROOT}\" -mindepth 1 -maxdepth 1 -not -name '.*' -and -not -name '..' | xargs rm -rfv\n\n# Copy glpi build\nCOPY --from=build_glpi --chown=www-data:www-data ${GLPI_PATHS_ROOT} ${GLPI_PATHS_ROOT}\n\n# Add some configurations files\nCOPY root/ /\nCOPY /docker-entrypoint.sh /\nCOPY /docker-entrypoint.d/* /docker-entrypoint.d/\n\nRUN chmod -R +x /docker-entrypoint.d/ /usr/local/bin/cronwrapper.py \\\n    && chmod -R g=rX,o=--- /var/www/* \\\n    && addgroup nginx www-data\n\nEXPOSE 80/tcp\nVOLUME [\"/var/www/files\", \"/var/www/config\"]\nWORKDIR \"${GLPI_PATHS_ROOT}\"\n\nHEALTHCHECK --interval=5s --timeout=3s --retries=3 \\\n    CMD curl --silent http://127.0.0.1:80/fpm-ping | grep -q pong || exit 1\n\nENTRYPOINT [\"/docker-entrypoint.sh\"]\nCMD [\"/usr/bin/supervisord\", \"--configuration\", \"/etc/supervisord.conf\"]\n"
+}

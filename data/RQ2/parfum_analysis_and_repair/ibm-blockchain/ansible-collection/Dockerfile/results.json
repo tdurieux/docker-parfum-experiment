@@ -1,0 +1,17 @@
+{
+  "startTime": 1674255994188,
+  "endTime": 1674255994878,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 38,
+        "lineEnd": 38,
+        "columnStart": 7,
+        "columnEnd": 72
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "#\n# SPDX-License-Identifier: Apache-2.0\n#\n\n# In the first stage, install the common dependencies, and then set up the standard user.\nFROM registry.access.redhat.com/ubi8/ubi-minimal AS base\nRUN microdnf install python38 shadow-utils \\\n    && groupadd -g 7051 ibp-user \\\n    && useradd -u 7051 -g ibp-user -G root -s /bin/bash ibp-user \\\n    && chgrp -R root /home/ibp-user /etc/passwd \\\n    && chmod -R g=u /home/ibp-user /etc/passwd \\\n    && microdnf remove shadow-utils \\\n    && microdnf clean all\n\n# In the second stage, install all the development packages, install the Python dependencies,\n# and then install the Ansible collection.\nFROM base AS builder\nRUN microdnf install gcc gzip python38-devel tar \\\n    && microdnf clean all\nUSER ibp-user\nENV PATH=/home/ibp-user/.local/bin:$PATH\nRUN pip3.8 install --user -U 'ansible>=2.9,<2.10' fabric-sdk-py python-pkcs11 'openshift==0.11.2' semantic_version \\\n    && chgrp -R root /home/ibp-user/.local \\\n    && chmod -R g=u /home/ibp-user/.local\nADD . /tmp/collection\nRUN cd /tmp/collection \\\n    && ansible-galaxy collection build --output-path /tmp \\\n    && ansible-galaxy collection install /tmp/ibm-blockchain_platform-*.tar.gz \\\n    && chgrp -R root /home/ibp-user/.ansible \\\n    && chmod -R g=u /home/ibp-user/.ansible\n\n# In the third stage, build the Hyperledger Fabric binaries with HSM enabled (this is not the default).\nFROM base AS fabric\nRUN microdnf install git make tar gzip which findutils gcc \\\n    && microdnf clean all\nRUN ARCH=$(uname -m) \\\n    && if [ \"${ARCH}\" = \"x86_64\" ]; then ARCH=amd64; fi \\\n    && if [ \"${ARCH}\" = \"aarch64\" ]; then ARCH=arm64; fi \\\n    && curl -f -sSL https://dl.google.com/go/go1.14.15.linux-${ARCH}.tar.gz | tar xzf - -C /usr/local\nENV GOPATH=/go\nENV PATH=/usr/local/go/bin:$PATH\nRUN mkdir -p /go/src/github.com/hyperledger \\\n    && cd /go/src/github.com/hyperledger \\\n    && git clone -n https://github.com/hyperledger/fabric.git \\\n    && cd fabric \\\n    && git checkout v2.2.1 \\\n    # FAB-18175 - ignore expired signer certificates when submitting transactions.\n    && git remote add jyellick https://github.com/jyellick/fabric.git \\\n    && git fetch jyellick \\\n    && git format-patch --stdout -1 459fca8f6a62198b63e6705c83897b98d64ae478 msp/mspimplsetup.go | git apply -\nRUN cd /go/src/github.com/hyperledger/fabric \\\n    && make configtxlator peer GO_TAGS=pkcs11 EXECUTABLES=\n\n# In the final stage, copy all the installed Python modules across from the second stage and the Hyperledger\n# Fabric binaries from the third stage.\nFROM base\nCOPY --from=builder /home/ibp-user/.local /home/ibp-user/.local\nCOPY --from=builder /home/ibp-user/.ansible /home/ibp-user/.ansible\nCOPY --from=fabric /go/src/github.com/hyperledger/fabric/build/bin /opt/fabric/bin\nCOPY --from=fabric /go/src/github.com/hyperledger/fabric/sampleconfig /opt/fabric/config\nCOPY docker/docker-entrypoint.sh /\nENV FABRIC_CFG_PATH=/opt/fabric/config\nENV PATH=/opt/fabric/bin:/home/ibp-user/.local/bin:$PATH\nUSER 7051\nENTRYPOINT [ \"/docker-entrypoint.sh\" ]\n"
+}

@@ -1,0 +1,44 @@
+{
+  "startTime": 1674246510050,
+  "endTime": 1674246511404,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 80,
+        "lineEnd": 80,
+        "columnStart": 4,
+        "columnEnd": 108
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 107,
+        "lineEnd": 107,
+        "columnStart": 4,
+        "columnEnd": 94
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 137,
+        "lineEnd": 137,
+        "columnStart": 4,
+        "columnEnd": 19
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 115,
+        "lineEnd": 115,
+        "columnStart": 4,
+        "columnEnd": 15
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "ARG PLATFORM=cpu\nARG PETSC_VERSION=3.17.3\nARG SLEPC_VERSION=3.17.1\n\n\nFROM python:3.9-bullseye AS base-cpu\n\n# install dependencies\n# TODO: it would be great to install scalapack here as well, it doesn't seem to work though :-(\nONBUILD RUN apt-get update && \\\n    \\\n    DEBIAN_FRONTEND=\"noninteractive\" \\\n    apt-get install -y --no-install-recommends \\\n    gfortran \\\n    cmake \\\n    mpi-default-dev \\\n    libopenblas-dev \\\n    libmumps-dev \\\n    git \\\n    && \\\n    apt-get clean && \\\n    rm -rf /var/lib/apt/lists/*\n\nARG PETSC_ARCH=complex-opt\nENV PETSC_ARCH=$PETSC_ARCH\n\nARG PETSC_CONFIG_FLAGS\nENV PETSC_CONFIG_FLAGS=\"$PETSC_CONFIG_FLAGS --download-scalapack=1 --with-mumps=1\"\n\n\nFROM nvidia/cuda:11.6.0-devel-ubuntu20.04 AS base-gpu\n\n# install dependencies\nONBUILD RUN apt-get update && \\\n    \\\n    DEBIAN_FRONTEND=\"noninteractive\" \\\n    apt-get install -y --no-install-recommends \\\n    python3-dev \\\n    python3-venv \\\n    gfortran \\\n    cmake \\\n    curl \\\n    ca-certificates \\\n    libopenblas-dev \\\n    git \\\n    && \\\n    apt-get clean && \\\n    rm -rf /var/lib/apt/lists/*\n\nARG PETSC_ARCH=cuda-opt\nENV PETSC_ARCH=$PETSC_ARCH\n\nARG PETSC_CONFIG_FLAGS\nENV PETSC_CONFIG_FLAGS=\"$PETSC_CONFIG_FLAGS --with-mpi=0\"\n\n\nFROM base-${PLATFORM} as build\n\n# add virtualenvironment to install python packages\nRUN python3 -m venv /venv\n\n# switch to non-privileged user\nRUN groupadd dnm && useradd --no-log-init -m -g dnm dnm\nRUN chown -R dnm:dnm /venv\nUSER dnm\n\n# activate venv\nENV VIRTUAL_ENV=/venv\nENV PATH=\"$VIRTUAL_ENV/bin:$PATH\"\nRUN pip3 install --no-cache-dir --upgrade pip\n\n\nfrom build as petsc\n\nARG PETSC_VERSION\n\n# install PETSc\nUSER root\nWORKDIR /opt\nRUN curl -f --no-progress-meter https://ftp.mcs.anl.gov/pub/petsc/release-snapshots/petsc-$PETSC_VERSION.tar.gz | tar xzf -\nRUN mv petsc-$PETSC_VERSION petsc\nRUN chown -R dnm:dnm petsc\nUSER dnm\n\nWORKDIR /opt/petsc\nENV PETSC_DIR=/opt/petsc\nCOPY --chown=dnm:dnm petsc_config/$PETSC_ARCH.py .\nARG CUDA_ARCH=70\nRUN DNM_CUDA_ARCH=$CUDA_ARCH ./$PETSC_ARCH.py ${PETSC_CONFIG_FLAGS} && \\\n    make all\n\n\nfrom build as mpi4py\n\n# mpi4py is useful and required for the tests\n# but we don't include it in GPU builds\nARG PLATFORM\nRUN if [ \"$PLATFORM\" = \"cpu\" ] ; then pip3 install --no-cache-dir mpi4py ; fi\n\n\nfrom petsc as slepc\n\nARG SLEPC_VERSION\n\nUSER root\nWORKDIR /opt\nRUN curl -f --no-progress-meter https://slepc.upv.es/download/distrib/slepc-$SLEPC_VERSION.tar.gz | tar xzf -\nRUN mv slepc-$SLEPC_VERSION slepc\nRUN chown -R dnm:dnm slepc\nUSER dnm\n\n# install SLEPc\nWORKDIR /opt/slepc\nENV SLEPC_DIR=/opt/slepc\nRUN ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" && make\n\n\nfrom petsc as dynamite-build\n\n# install python packages\nWORKDIR /home/dnm\nCOPY requirements.txt requirements.txt\nRUN pip3 install --no-cache-dir -r requirements.txt\n\nRUN pip3 install --no-cache-dir $PETSC_DIR/src/binding/petsc4py\n\nCOPY --from=slepc /opt/slepc /opt/slepc\nENV SLEPC_DIR=/opt/slepc\nRUN pip3 install --no-cache-dir $SLEPC_DIR/src/binding/slepc4py\n\n# install dynamite!\nRUN mkdir /home/dnm/dynamite\nWORKDIR /home/dnm/dynamite\n\nCOPY --chown=dnm:dnm . .\n\nRUN pip3 install --no-cache-dir ./\n\n\nFROM python:3.9-slim-bullseye as release-base-cpu\n\nONBUILD RUN apt-get update && \\\n    \\\n    DEBIAN_FRONTEND=\"noninteractive\" \\\n    apt-get install -y --no-install-recommends \\\n    mpi-default-bin \\\n    libopenblas0 \\\n    libmumps-5.3 \\\n    && \\\n    apt-get clean && \\\n    rm -rf /var/lib/apt/lists/*\n\nARG PETSC_ARCH=complex-opt\nENV PETSC_ARCH=$PETSC_ARCH\n\n\nFROM nvidia/cuda:11.6.0-runtime-ubuntu20.04 AS release-base-gpu\n\nONBUILD RUN apt-get update && \\\n    \\\n    DEBIAN_FRONTEND=\"noninteractive\" \\\n    apt-get install -y --no-install-recommends \\\n    python3 \\\n    python3-pip \\\n    libopenblas0 \\\n    && \\\n    apt-get clean && \\\n    rm -rf /var/lib/apt/lists/*\n\nARG PETSC_ARCH=cuda-opt\nENV PETSC_ARCH=$PETSC_ARCH\n\n\nFROM release-base-${PLATFORM} as release\n\nLABEL org.opencontainers.image.authors=\"Greg Kahanamoku-Meyer <gregory.meyer@gmail.com>\"\n\n# get petsc and slepc libraries\nCOPY --from=petsc /opt/petsc/$PETSC_ARCH/lib /opt/petsc/$PETSC_ARCH/lib\nCOPY --from=slepc /opt/slepc/$PETSC_ARCH/lib /opt/slepc/$PETSC_ARCH/lib\n\n# switch to non-privileged user\nRUN groupadd dnm && useradd --no-log-init -m -g dnm dnm\nUSER dnm\n\n# get all the python packages\nCOPY --from=dynamite-build --chown=dnm:dnm /venv /venv\nENV VIRTUAL_ENV=/venv\nENV PATH=\"$VIRTUAL_ENV/bin:$PATH\"\n\n# merge in the mpi4py files\nCOPY --from=mpi4py --chown=dnm:dnm /venv /venv\n\n# include benchmarking and examples\nCOPY --chown=dnm:dnm benchmarking /home/dnm/benchmarking\nCOPY --chown=dnm:dnm examples /home/dnm/examples\n\n# so that we can tell we are in a container\nENV DNM_DOCKER=1\n\n# make work directory for mounting local files\nRUN mkdir -p /home/dnm/work  # for permissions\nVOLUME /home/dnm/work\nWORKDIR /home/dnm\n\n\nFROM release AS jupyter\n\nLABEL org.opencontainers.image.authors=\"Greg Kahanamoku-Meyer <gregory.meyer@gmail.com>\"\n\n# install jupyter\nRUN pip3 install --no-cache-dir jupyterlab matplotlib\n\n# run it!\nWORKDIR /home/dnm\nEXPOSE 8887\nCMD [\"jupyter\", \"lab\", \"--no-browser\", \"--ip=0.0.0.0\", \"--port=8887\"]\n"
+}

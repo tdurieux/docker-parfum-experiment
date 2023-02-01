@@ -1,0 +1,39 @@
+FROM python:3.9 AS builder
+
+RUN mkdir -p /usr/src/app && rm -rf /usr/src/app
+
+RUN pip install --no-cache-dir Cython==0.29.24 pybind11
+
+RUN curl -f -L -o /bin/grpc_health_probe https://github.com/grpc-ecosystem/grpc-health-probe/releases/download/v0.3.1/grpc_health_probe-linux-amd64 && \
+    chmod +x /bin/grpc_health_probe
+
+# Copy requirements from all packages to install them before
+# transfering the source code.
+COPY nucliadb_utils/requirements.txt /usr/src/app/requirements-utils.txt
+COPY nucliadb_utils/requirements-storages.txt /usr/src/app/requirements-storages.txt
+COPY nucliadb_protos/python/requirements.txt /usr/src/app/requirements-protos.txt
+COPY nucliadb_node/requirements.txt /usr/src/app/requirements-node.txt
+COPY nucliadb_telemetry/requirements.txt /usr/src/app/requirements-telemetry.txt
+
+RUN set -eux; \
+    pip install --no-cache-dir \
+    -r /usr/src/app/requirements-utils.txt \
+    -r /usr/src/app/requirements-storages.txt \
+    -r /usr/src/app/requirements-telemetry.txt \
+    -r /usr/src/app/requirements-protos.txt \
+    -r /usr/src/app/requirements-node.txt
+
+# Copy source code
+COPY nucliadb_utils /usr/src/app/nucliadb_utils
+COPY nucliadb_telemetry /usr/src/app/nucliadb_telemetry
+COPY nucliadb_protos /usr/src/app/nucliadb_protos
+COPY nucliadb_node /usr/src/app/nucliadb_node
+
+WORKDIR /usr/src/app
+
+# Install all dependendencies on packages on the nucliadb repo
+# and finally the main component.
+RUN pip install --no-cache-dir -r nucliadb_node/requirements-sources.txt
+RUN pip install --no-cache-dir --no-deps -e /usr/src/app/nucliadb_node
+
+WORKDIR /usr/src/app

@@ -1,0 +1,14 @@
+FROM condorcet
+
+RUN pecl install pcov \
+    && docker-php-ext-enable pcov
+
+RUN php composer.phar install --optimize-autoloader --no-progress \
+    && rm -rf /root/.composer/cache
+
+ENTRYPOINT [ "vendor/bin/infection" ]
+
+# Usage:
+# 1. docker build -f Dockerfile.infection -t infection .
+# 2. docker run --hostname="infection" --mount type=bind,src=$(pwd),dst=/usr/src/condorcetapp --rm -it infection:latest
+# The infection test takes a long time. You can use --filter to only test a portion of the code.

@@ -1,0 +1,37 @@
+FROM nvidia/cuda:11.4.2-devel-ubuntu20.04
+
+RUN apt-get clean && apt-get update -y && \
+    DEBIAN_FRONTEND="noninteractive" TZ=America/New_York apt-get install -y --no-install-recommends git python3-minimal libpython3-stdlib bc hwloc wget openssh-client python3-numpy python3-h5py python3-matplotlib lcov curl nsight-systems-2021.3.3 cmake ninja-build && rm -rf /var/lib/apt/lists/*;
+
+RUN wget -O - https://apt.llvm.org/llvm-snapshot.gpg.key| apt-key add - && \
+    echo "deb http://apt.llvm.org/focal/ llvm-toolchain-focal-13 main" > /etc/apt/sources.list.d/llvm.list
+
+RUN apt-get clean && apt-get update -y && \
+    DEBIAN_FRONTEND="noninteractive" TZ=America/New_York apt-get install -y --no-install-recommends clang-13 llvm-13 libomp-13-dev && \
+    rm -rf /var/lib/apt/lists/*
+
+
+RUN cd /tmp && \
+    wget https://download.open-mpi.org/release/open-mpi/v3.1/openmpi-3.1.6.tar.bz2 && \
+    tar xjf openmpi-3.1.6.tar.bz2 && \
+    cd openmpi-3.1.6 && \
+    ./configure --build="$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)" --prefix=/opt/openmpi --enable-mpi-cxx --with-cuda && \
+    make -j8 && \
+    make install && \
+    cd / && \
+    rm -rf /tmp/openmpi* && rm openmpi-3.1.6.tar.bz2
+
+ENV LD_LIBRARY_PATH=/opt/openmpi/lib:$LD_LIBRARY_PATH \
+    PATH=/opt/openmpi/bin:$PATH
+
+RUN cd /tmp && \
+    wget https://support.hdfgroup.org/ftp/HDF5/releases/hdf5-1.10/hdf5-1.10.8/src/hdf5-1.10.8.tar.gz && \
+    tar xzf hdf5-1.10.8.tar.gz && \
+    cd hdf5-1.10.8 && \
+    mkdir -p /usr/local/hdf5/serial /usr/local/hdf5/parallel && \
+    ./configure --build="$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)" --prefix=/usr/local/hdf5/serial --enable-hl --enable-build-mode=production && make -j8 && make install && make clean && \
+    ./configure --build="$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)" --prefix=/usr/local/hdf5/parallel --enable-hl --enable-build-mode=production --enable-parallel && make -j8 && make install && \
+    cd / && \
+    rm -rf /tmp/hdf5-1.10.8* && rm hdf5-1.10.8.tar.gz
+
+RUN update-alternatives --install /usr/bin/python python /usr/bin/python3 10

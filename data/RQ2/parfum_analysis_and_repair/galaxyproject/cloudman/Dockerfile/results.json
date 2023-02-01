@@ -1,0 +1,35 @@
+{
+  "startTime": 1674255203789,
+  "endTime": 1674255204562,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 21,
+        "lineEnd": 21,
+        "columnStart": 7,
+        "columnEnd": 145
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 22,
+        "lineEnd": 22,
+        "columnStart": 7,
+        "columnEnd": 51
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 26,
+        "lineEnd": 26,
+        "columnStart": 7,
+        "columnEnd": 30
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM ubuntu:20.04 as stage1\n\nARG DEBIAN_FRONTEND=noninteractive\nENV PYTHONUNBUFFERED 1\n\nENV KUBE_LATEST_VERSION=v1.20.0\nENV HELM_VERSION=v3.5.2\nENV HELM_FILENAME=helm-${HELM_VERSION}-linux-amd64.tar.gz\n\nRUN set -xe; \\\n    apt-get -qq update && apt-get install -y --no-install-recommends \\\n        apt-transport-https \\\n        git-core \\\n        make \\\n        software-properties-common \\\n        gcc \\\n        python3-dev \\\n        libffi-dev \\\n        python3-pip \\\n        python3-setuptools \\\n        curl \\\n    && curl -f -L https://storage.googleapis.com/kubernetes-release/release/${KUBE_LATEST_VERSION}/bin/linux/amd64/kubectl -o /usr/local/bin/kubectl \\\n    && curl -f -L https://get.helm.sh/${HELM_FILENAME} | tar xz && mv linux-amd64/helm /usr/local/bin/helm && rm -rf linux-amd64 \\\n    && apt-get autoremove -y && apt-get clean \\\n    && rm -rf /var/lib/apt/lists/* /tmp/* \\\n    && mkdir -p /app \\\n    && pip3 install --no-cache-dir virtualenv \\\n    && virtualenv -p python3 --prompt \"(cloudman)\" /app/venv\n\n# Set working directory to /app/\nWORKDIR /app/\n\n# Only add files required for installation to improve build caching\nADD requirements.txt /app\nADD setup.py /app\nADD README.rst /app\nADD HISTORY.rst /app\nADD cloudman/cloudman/__init__.py /app/cloudman/cloudman/__init__.py\n\n# Install requirements. Move this above ADD as 'pip install cloudman-server'\n# asap so caching works\nRUN /app/venv/bin/pip3 install -U pip && /app/venv/bin/pip3 install --no-cache-dir -r requirements.txt\n\n\n# Stage-2\nFROM ubuntu:20.04\n\nARG DEBIAN_FRONTEND=noninteractive\nENV PYTHONUNBUFFERED 1\n\n# Create cloudman user environment\nRUN useradd -ms /bin/bash cloudman \\\n    && mkdir -p /app \\\n    && chown cloudman:cloudman /app -R \\\n    && apt-get -qq update && apt-get install -y --no-install-recommends \\\n        git-core \\\n        python3-pip \\\n        python3-setuptools \\\n        locales locales-all \\\n    && apt-get autoremove -y && apt-get clean \\\n    && rm -rf /var/lib/apt/lists/* /tmp/*\n\nENV LC_ALL en_US.UTF-8\n\nWORKDIR /app/cloudman/\n\n# Copy cloudman files to final image\nCOPY --chown=cloudman:cloudman --from=stage1 /app /app\nCOPY --chown=cloudman:cloudman --from=stage1 /usr/local/bin/kubectl /usr/local/bin/kubectl\nCOPY --chown=cloudman:cloudman --from=stage1 /usr/local/bin/helm /usr/local/bin/helm\n\n# Add the source files last to minimize layer cache invalidation\nADD --chown=cloudman:cloudman . /app\n\n# Switch to new, lower-privilege user\nUSER cloudman\n\nRUN chmod a+x /usr/local/bin/kubectl \\\n    && chmod a+x /usr/local/bin/helm \\\n    && /app/venv/bin/python manage.py collectstatic --no-input\n\n# gunicorn will listen on this port\nEXPOSE 8000\n\nCMD /bin/bash -c \"source /app/venv/bin/activate && /app/venv/bin/gunicorn -k gevent -b :8000 --access-logfile - --error-logfile - --log-level info cloudman.wsgi\"\n"
+}

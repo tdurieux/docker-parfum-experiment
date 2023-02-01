@@ -1,0 +1,82 @@
+<% if (config.hasBuildCommand) { %>
+FROM <%- baseImage %> as build_step
+COPY . /app/
+<% if (config.canInstallDeps) { %>
+  <% if (config.useYarn) { %>
+RUN NODE_ENV=development yarn install || \
+  ((if [ -f yarn-error.log ]; then \
+      cat yarn-error.log; \
+    fi) && false) && yarn cache clean;
+  <% } else { %>
+# You have to specify "--unsafe-perm" with npm install
+# when running as root.  Failing to do this can cause
+# install to appear to succeed even if a preinstall
+# script fails, and may have other adverse consequences
+# as well.
+# This command will also cat the npm-debug.log file after the
+# build, if it exists.
+RUN NODE_ENV=development npm install --unsafe-perm || \
+  ((if [ -f npm-debug.log ]; then \
+      cat npm-debug.log; \
+    fi) && false) && npm cache clean --force;
+  <% } %>
+<% } %>
+RUN npm run gcp-build
+  <% if (config.canInstallDeps) { %>
+RUN rm -Rf node_modules
+  <% } %>
+
+FROM build_step
+COPY --from=build_step /app .
+<% } else { %>
+# Dockerfile extending the generic Node image with application files for a
+# single application.
+FROM <%- baseImage %>
+COPY . /app/
+<% } %>
+
+<% if (config.nodeVersion) { %>
+# Check to see if the the version included in the base runtime satisfies
+# '<%- config.nodeVersion %>' and, if not, install a version of Node.js that does satisfy it.
+RUN /usr/local/bin/install_node '<%- config.nodeVersion %>'
+<% } %>
+
+<% if (config.npmVersion && !config.useYarn) { %>
+# Install the version of npm as requested by the engines.npm field in
+# package.json.
+#
+# The package manager yarn is used to perform the installation because
+# there is a known issue with installing npm globally during a Docker build.
+# See npm issue #9863 at https://github.com/npm/npm/issues/9863 for more
+# information.
+RUN yarn global add npm@'<%- config.npmVersion %>'
+<% } %>
+
+<% if (config.yarnVersion && config.useYarn) { %>
+# Install the version of yarn as requested by the engines.yarn field in
+# package.json.
+RUN yarn global add yarn@'<%- config.yarnVersion %>'
+<% } %>
+
+<% if (config.canInstallDeps) { %>
+  <% if (config.useYarn) { %>
+RUN yarn install --production || \
+  ((if [ -f yarn-error.log ]; then \
+      cat yarn-error.log; \
+    fi) && false) && yarn cache clean;
+  <% } else { %>
+# You have to specify "--unsafe-perm" with npm install
+# when running as root.  Failing to do this can cause
+# install to appear to succeed even if a preinstall
+# script fails, and may have other adverse consequences
+# as well.
+# This command will also cat the npm-debug.log file after the
+# build, if it exists.
+RUN npm install --unsafe-perm || \
+  ((if [ -f npm-debug.log ]; then \
+      cat npm-debug.log; \
+    fi) && false) && npm cache clean --force;
+  <% } %>
+<% } %>
+
+CMD <%- tool %> start

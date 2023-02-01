@@ -1,0 +1,53 @@
+{
+  "startTime": 1674219861018,
+  "endTime": 1674219861992,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 85,
+        "lineEnd": 85,
+        "columnStart": 4,
+        "columnEnd": 59
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 93,
+        "lineEnd": 93,
+        "columnStart": 4,
+        "columnEnd": 89
+      }
+    },
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 59,
+        "lineEnd": 62,
+        "columnStart": 4,
+        "columnEnd": 12
+      }
+    },
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 117,
+        "lineEnd": 117,
+        "columnStart": 4,
+        "columnEnd": 15
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 6,
+        "lineEnd": 6,
+        "columnStart": 4,
+        "columnEnd": 41
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM alpine:3.14 as base\n\nENV VERSION 1.9.1\n\nRUN apk add --no-cache python3 && \\\n    python3 -m ensurepip && \\\n    pip3 install --no-cache-dir --upgrade pip setuptools && \\\n    if [ ! -e /usr/bin/pip ]; then ln -s pip3 /usr/bin/pip ; fi && \\\n    if [[ ! -e /usr/bin/python ]]; then ln -sf /usr/bin/python3 /usr/bin/python; fi && \\\n    rm -r /root/.cache\n\nRUN apk update && apk add --no-cache \\\n    python3-dev \\\n    automake \\\n    bash \\\n    bzip2-dev \\\n    cairo \\\n    ca-certificates \\\n    cmake \\\n    curl \\\n    freetype-dev \\\n    ncurses-dev \\\n    gcc \\\n    g++ \\\n    git \\\n    glib \\\n    jpeg-dev \\\n    libc-dev \\\n    libffi-dev \\\n    libpng-dev \\\n    libsass \\\n    libxml2-dev \\\n    libxslt-dev \\\n    linux-headers \\\n    make \\\n    nano \\\n    openssh \\\n    pango \\\n    postgresql-dev \\\n    readline-dev \\\n    sqlite-dev \\\n    sqlite \\\n    zlib-dev \\\n    nodejs \\\n    npm \\\n    mailcap \\\n    zsh && \\\n    rm -f /tmp/* /etc/apk/cache/* /root/.cache\n\n####################################################################################################\n# Install static asset compilers\n####################################################################################################\n\n# work around a bug in the version of node we are using\n# https://github.com/npm/uid-number/issues/3\n# https://github.com/nodejs/docker-node/issues/813\nRUN npm config set unsafe-perm true\n\n# Install babel?\nRUN npm install --no-cache --global babel-cli \\\n    babel-preset-env \\\n    uglify-js \\\n    wait-for && \\\n    rm -f /usr/lib/node_modules/npm/node_modules/update-notifier/node_modules/configstore/node_modules/dot-prop/license && npm cache clean --force;\nRUN npm config set unsafe-perm false\n\n# Install libsass\nRUN pip install --no-cache-dir \\\n    libsass \\\n    closure\n\nFROM base AS app\n\n# Install and set up Poetry for python dependencies management\nENV POETRY_VIRTUALENVS_CREATE=0 \\\n    POETRY_VIRTUALENVS_IN_PROJECT=0 \\\n    POETRY_VIRTUALENVS_PATH=\"/usr/venvs\" \\\n    POETRY_REPOSITORIES={}\n\n# Attempting to fix issues with broken pip installs -- something like:\n# ImportError: cannot import name 'InvalidSchemeCombination' from 'pip._internal.exceptions'\n# https://askubuntu.com/questions/1025189/pip-is-not-working-importerror-no-module-named-pip-internal\n\n# Linking of pip/python and deleting of directories from original pip install: not known if needed.\n\nRUN curl -f https://bootstrap.pypa.io/get-pip.py -o get-pip.py && \\\n    python3 get-pip.py --force-reinstall && \\\n    rm /usr/bin/pip && \\\n    ln -s /usr/bin/pip3 /usr/bin/pip && \\\n    rm /usr/bin/python && \\\n    ln -s /usr/bin/python3 /usr/bin/python && \\\n    rm -rf /tmp/* /etc/apk/cache/* /root/.cache\n\nRUN curl -f -sSL https://raw.githubusercontent.com/python-poetry/poetry/master/get-poetry.py | python && \\\n    source $HOME/.poetry/env\n\nRUN mkdir -p /usr/srv/app/\nWORKDIR /usr/srv/app/\n\n# Ensure docker-compose build web is able to pass these env vars in\nARG SERVER_ENV\n\nENV DOCKERFILE_VERSION=1.1\n\n####################################################################################################\n# PROJECT STUFF\n####################################################################################################\n\n# Not really sure what this is for. Best leave it alone.\nENV PYTHONUNBUFFERED 1\n\nWORKDIR /usr/srv/app/\nCOPY app /usr/srv/app\n\n# npm install\nCOPY ./package.json package.json\nCOPY ./package-lock.json package-lock.json\nRUN npm install && npm cache clean --force;\nRUN mkdir -p /usr/srv/deps\nRUN mv ./node_modules/ /usr/srv/deps\n\n# POETRY (working and installed in django-base)\nRUN source $HOME/.poetry/env && \\\n    poetry self update && \\\n    poetry install\n\n\n\n\nRUN mkdir -p /usr/srv/app/media\n\n\nRUN apk update && \\\n    apk add --no-cache rsync libsass-dev\n\nCOPY ./docker/web/conf/uwsgi.ini /etc/uwsgi.ini\nCOPY ./docker-entrypoint.sh docker-entrypoint.sh\n\nRUN addgroup -S wagtail\nRUN adduser -S -D -h /usr/srv/app wagtail wagtail\nRUN chown -R wagtail /usr/srv/app/\nUSER wagtail\nENV SERVER_ENV=production\nENV DJANGO_SECRET_KEY=REDACTEDREDACTED\nRUN python manage.py assets clean && \\\n        python manage.py assets build && \\\n        python manage.py collectstatic --no-input -i node_modules\n\nEXPOSE 8000\nCMD uwsgi --static-map /static=/usr/srv/app/static --ini /etc/uwsgi.ini\n"
+}

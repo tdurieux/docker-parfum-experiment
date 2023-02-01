@@ -1,0 +1,99 @@
+{
+  "startTime": 1674242409092,
+  "endTime": 1674242409322,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 6,
+        "lineEnd": 18,
+        "columnStart": 22,
+        "columnEnd": 8
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 23,
+        "lineEnd": 24,
+        "columnStart": 4,
+        "columnEnd": 18
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 70,
+        "lineEnd": 70,
+        "columnStart": 4,
+        "columnEnd": 37
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 23,
+        "lineEnd": 24,
+        "columnStart": 4,
+        "columnEnd": 18
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 70,
+        "lineEnd": 70,
+        "columnStart": 4,
+        "columnEnd": 37
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 6,
+        "lineEnd": 18,
+        "columnStart": 22,
+        "columnEnd": 8
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 23,
+        "lineEnd": 24,
+        "columnStart": 4,
+        "columnEnd": 18
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 70,
+        "lineEnd": 70,
+        "columnStart": 4,
+        "columnEnd": 37
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 23,
+        "lineEnd": 24,
+        "columnStart": 4,
+        "columnEnd": 18
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 70,
+        "lineEnd": 70,
+        "columnStart": 4,
+        "columnEnd": 61
+      }
+    }
+  ],
+  "repairedDockerfile": "# Common builder\nARG GO_IMAGE\nFROM ${GO_IMAGE} as builder\n\nCOPY hack/dockerfile/install/tini.installer /\nCOPY hack/dockerfile/install/proxy.installer /\nRUN apt-get update && apt-get install --no-install-recommends -y \\\n    bash \\\n    btrfs-tools \\\n    ca-certificates \\\n    cmake \\\n    gcc \\\n    git \\\n    libc-dev \\\n    libgcc-6-dev \\\n    libltdl-dev \\\n    libseccomp-dev \\\n    libtool \\\n    make && rm -rf /var/lib/apt/lists/*;\nRUN grep \"_COMMIT=\" /*.installer  |cut -f2- -d: > /binaries-commits\n\n# dockerd\nFROM builder as dockerd-builder\nRUN apt-get install --no-install-recommends -y \\\n    libsystemd-dev && rm -rf /var/lib/apt/lists/*;\nWORKDIR /go/src/github.com/docker/docker\nCOPY . /go/src/github.com/docker/docker\nARG VERSION\nARG GITCOMMIT\nARG BUILDTIME\nARG PLATFORM\nARG PRODUCT\nARG DEFAULT_PRODUCT_LICENSE\nENV VERSION ${VERSION}\nENV GITCOMMIT ${GITCOMMIT}\nENV BUILDTIME ${BUILDTIME}\nENV PLATFORM ${PLATFORM}\nENV PRODUCT ${PRODUCT}\nENV DEFAULT_PRODUCT_LICENSE ${DEFAULT_PRODUCT_LICENSE}\n# TODO The way we set the version could easily be simplified not to depend on hack/...\nRUN bash ./hack/make/.go-autogen\nRUN go build -o /sbin/dockerd \\\n    -tags 'autogen apparmor seccomp selinux journald exclude_graphdriver_devicemapper' \\\n    -i \\\n    -buildmode=pie \\\n    -a -ldflags '-w'\\\n    github.com/docker/docker/cmd/dockerd\n\n# docker-proxy\n# TODO if libnetwork folds into the docker tree this can be combined above\nFROM builder as proxy-builder\nRUN git clone https://github.com/docker/libnetwork.git /go/src/github.com/docker/libnetwork\nWORKDIR /go/src/github.com/docker/libnetwork\nRUN . /binaries-commits && \\\n    git checkout -q \"$LIBNETWORK_COMMIT\" && \\\n    CGO_ENABLED=0 go build -buildmode=pie -ldflags=\"$PROXY_LDFLAGS\" \\\n        -o /sbin/docker-proxy \\\n        github.com/docker/libnetwork/cmd/proxy\n\n# docker-init - TODO move this out, last time we bumped was 2016!\nFROM builder as init-builder\nRUN git clone https://github.com/krallin/tini.git /tini\nWORKDIR /tini\nRUN . /binaries-commits && \\\n    git checkout -q \"$TINI_COMMIT\" && \\\n    cmake . && make tini-static && \\\n    cp tini-static /sbin/docker-init\n\n# runc\nFROM builder as runc-builder\nRUN apt-get install --no-install-recommends -y libseccomp-dev && rm -rf /var/lib/apt/lists/*;\nRUN git clone https://github.com/opencontainers/runc.git /go/src/github.com/opencontainers/runc\nWORKDIR /go/src/github.com/opencontainers/runc\nRUN . /binaries-commits && \\\n    git checkout -q \"$RUNC_COMMIT\" && \\\n    make BUILDTAGS='seccomp apparmor' static && make install\n\n# Final docker image\nFROM scratch\nARG VERSION\nARG GITCOMMIT\nARG BUILDTIME\nARG PLATFORM\nARG ENGINE_IMAGE\nCOPY --from=dockerd-builder /sbin/dockerd /bin/\nCOPY --from=proxy-builder /sbin/docker-proxy /bin/\nCOPY --from=init-builder /sbin/docker-init /bin/\nCOPY --from=runc-builder /usr/local/sbin/runc /bin/\n\nLABEL \\\n    org.opencontainers.image.authors=\"Docker Inc.\" \\\n    org.opencontainers.image.created=\"${BUILDTIME}\" \\\n    org.opencontainers.image.documentation=\"https://docs.docker.com/\" \\\n    org.opencontainers.image.licenses=\"Apache-2.0\" \\\n    org.opencontainers.image.revision=\"${GITCOMMIT}\" \\\n    org.opencontainers.image.url=\"https://www.docker.com/products/docker-engine\" \\\n    org.opencontainers.image.vendor=\"Docker Inc.\" \\\n    org.opencontainers.image.version=\"${VERSION}\" \\\n    com.docker.distribution_based_engine=\"{\\\"platform\\\":\\\"${PLATFORM}\\\",\\\"engine_image\\\":\\\"${ENGINE_IMAGE}\\\",\\\"containerd_min_version\\\":\\\"1.2.0-beta.1\\\",\\\"runtime\\\":\\\"host_install\\\"}\"\n\nENTRYPOINT [\"/bin/dockerd\"]\n"
+}

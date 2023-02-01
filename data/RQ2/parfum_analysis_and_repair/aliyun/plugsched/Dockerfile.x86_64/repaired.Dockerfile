@@ -1,0 +1,23 @@
+# Copyright 2019-2022 Alibaba Group Holding Limited.
+# SPDX-License-Identifier: GPL-2.0 OR BSD-3-Clause
+From openanolis/anolisos:8.4-x86_64
+
+RUN yum install python3 python3-devel python3-lxml gcc gcc-c++ wget libyaml-devel -y && \
+    yum install python3-pip -y && rm -rf /var/cache/yum
+RUN pip3 install --no-cache-dir --upgrade setuptools && \
+    pip3 install --no-cache-dir pyyaml && \
+    pip3 install --no-cache-dir sh coloredlogs fire jinja2 docopt && \
+    yum install make bison flex python3-lxml python3-six python3-pygments \
+                gcc-plugin-devel.x86_64 \
+                systemd git \
+                elfutils-libelf-devel.x86_64 openssl openssl-devel \
+                elfutils-devel-static \
+                glibc-static zlib-static \
+                libstdc++-static \
+                platform-python-devel \
+                rpm-build rsync bc perl -y && \
+    yum install gcc-python-plugin --enablerepo=Plus -y && \
+    yum clean all && rm -rf /var/cache/yum
+
+COPY . /usr/local/lib/plugsched/
+RUN ln -s /usr/local/lib/plugsched/cli.py /usr/local/bin/plugsched-cli

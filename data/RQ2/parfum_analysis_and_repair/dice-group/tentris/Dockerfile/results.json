@@ -1,0 +1,44 @@
+{
+  "startTime": 1674250195944,
+  "endTime": 1674250197205,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 36,
+        "lineEnd": 36,
+        "columnStart": 4,
+        "columnEnd": 22
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 16,
+        "lineEnd": 20,
+        "columnStart": 50,
+        "columnEnd": 41
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 5,
+        "lineEnd": 5,
+        "columnStart": 4,
+        "columnEnd": 175
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 5,
+        "lineEnd": 5,
+        "columnStart": 4,
+        "columnEnd": 175
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM ubuntu:groovy AS builder\nARG DEBIAN_FRONTEND=noninteractive\nARG TENTRIS_MARCH=\"x86-64\"\n\nRUN apt-get -qq update && \\\n    apt-get -qq --no-install-recommends install -y make cmake uuid-dev git openjdk-11-jdk python3-pip python3-setuptools python3-wheel libstdc++-10-dev clang-11 g++-10 pkg-config lld autoconf libtool && rm -rf /var/lib/apt/lists/*;\nRUN rm /usr/bin/ld && ln -s /usr/bin/lld-11 /usr/bin/ld\nARG CXX=\"clang++-11\"\nARG CC=\"clang-11\"\nENV CXXFLAGS=\"${CXXFLAGS} -march=${TENTRIS_MARCH}\"\nENV CMAKE_EXE_LINKER_FLAGS=\"-L/usr/local/lib/x86_64-linux-gnu -L/lib/x86_64-linux-gnu -L/usr/lib/x86_64-linux-gnu -L/usr/local/lib\"\n\n# Compile more recent tcmalloc-minimal with clang-11 + -march\nRUN git clone --quiet --branch gperftools-2.8.1 https://github.com/gperftools/gperftools\nWORKDIR /gperftools\nRUN ./autogen.sh\nRUN export LDFLAGS=\"${CMAKE_EXE_LINKER_FLAGS}\" && ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" \\\n    --enable-minimal \\\n    --disable-debugalloc \\\n    --enable-sized-delete \\\n    --enable-dynamic-sized-delete-support && \\\n    make -j && \\\n    make install\nWORKDIR /\n\n# we need serd as static library. Not available from ubuntu repos\nRUN ln -s /usr/bin/python3 /usr/bin/python\nRUN git clone --quiet --branch v0.30.2 https://gitlab.com/drobilla/serd.git\nWORKDIR serd\nRUN git submodule update --quiet --init --recursive && \\\n    ./waf configure --static && \\\n    ./waf install\nRUN rm /usr/bin/python\nWORKDIR /\n\n# install and configure conan\nRUN pip3 install --no-cache-dir conan && \\\n    conan user && \\\n    conan profile new --detect default && \\\n    conan profile update settings.compiler.libcxx=libstdc++11 default && \\\n    conan profile update env.CXXFLAGS=\"${CXXFLAGS}\" default && \\\n    conan profile update env.CMAKE_EXE_LINKER_FLAGS=\"${CMAKE_EXE_LINKER_FLAGS}\" default && \\\n    conan profile update env.CXX=\"${CXX}\" default && \\\n    conan profile update env.CC=\"${CC}\" default && \\\n    conan profile update options.boost:extra_b2_flags=\"cxxflags=\\\\\\\"${CXXFLAGS}\\\\\\\"\" default\n\n# add conan repositories\nRUN conan remote add dice-group https://conan.dice-research.org/artifactory/api/conan/tentris\n\n# build and cache dependencies via conan\nWORKDIR /conan_cache\nCOPY conanfile.txt conanfile.txt\nRUN conan install . --build=missing --profile default > conan_build.log\n\n# import project files\nWORKDIR /tentris\nCOPY thirdparty thirdparty\nCOPY src src\nCOPY cmake cmake\nCOPY CMakeLists.txt CMakeLists.txt\nCOPY conanfile.txt conanfile.txt\n\n##build\nWORKDIR /tentris/build\nRUN conan install .. --build=missing\n# todo: should be replaced with toolchain file like https://github.com/ruslo/polly/blob/master/clang-libcxx17-static.cmake\nRUN cmake \\\n    -DCMAKE_EXE_LINKER_FLAGS=\"${CMAKE_EXE_LINKER_FLAGS}\" \\\n    -DCMAKE_BUILD_TYPE=Release \\\n    -DTENTRIS_BUILD_WITH_TCMALLOC=true \\\n    -DTENTRIS_STATIC=true \\\n    ..\nRUN make -j $(nproc)\nFROM scratch\nCOPY --from=builder /tentris/build/tentris_server /tentris_server\nCOPY --from=builder /tentris/build/tentris_terminal /tentris_terminal\nCOPY --from=builder /tentris/build/ids2hypertrie /ids2hypertrie\nCOPY --from=builder /tentris/build/rdf2ids /rdf2ids\nCOPY LICENSE LICENSE\nCOPY README.MD README.MD\nENTRYPOINT [\"/tentris_server\"]\n"
+}

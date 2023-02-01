@@ -1,0 +1,17 @@
+{
+  "startTime": 1674254227440,
+  "endTime": 1674254228445,
+  "originalSmells": [
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 19,
+        "lineEnd": 21,
+        "columnStart": 4,
+        "columnEnd": 14
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Use this with\n#\n# docker build . -t nns-dapp\n# container_id=$(docker create nns-dapp no-op)\n# docker cp $container_id:nns-dapp.wasm nns-dapp.wasm\n# docker rm --volumes $container_id\n\n# This is the \"builder\", i.e. the base image used later to build the final\n# code.\nFROM ubuntu:20.04 as builder\nSHELL [\"bash\", \"-c\"]\n\nARG rust_version=1.58.1\nENV NODE_VERSION=16.13.2\n\nENV TZ=UTC\n\nRUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone && \\\n    apt -yq update && \\\n    apt -yqq install --no-install-recommends curl ca-certificates \\\n        build-essential pkg-config libssl-dev llvm-dev liblmdb-dev clang cmake \\\n        git jq && rm -rf /var/lib/apt/lists/*;\n\n# Install node\nRUN curl --fail -sSf https://raw.githubusercontent.com/creationix/nvm/v0.34.0/install.sh | bash\nENV NVM_DIR=/root/.nvm\nRUN . \"$NVM_DIR/nvm.sh\" && nvm install ${NODE_VERSION}\nRUN . \"$NVM_DIR/nvm.sh\" && nvm use v${NODE_VERSION}\nRUN . \"$NVM_DIR/nvm.sh\" && nvm alias default v${NODE_VERSION}\nENV PATH=\"/root/.nvm/versions/node/v${NODE_VERSION}/bin/:${PATH}\"\nRUN node --version\nRUN npm --version\n\n# Install Rust and Cargo in /opt\nENV RUSTUP_HOME=/opt/rustup \\\n    CARGO_HOME=/opt/cargo \\\n    PATH=/opt/cargo/bin:$PATH\n\nRUN curl --fail https://sh.rustup.rs -sSf \\\n        | sh -s -- -y --default-toolchain ${rust_version}-x86_64-unknown-linux-gnu --no-modify-path && \\\n    rustup default ${rust_version}-x86_64-unknown-linux-gnu && \\\n    rustup target add wasm32-unknown-unknown\n\nENV PATH=/cargo/bin:$PATH\n\n# Install IC CDK optimizer\nRUN cargo install --version 0.3.1 ic-cdk-optimizer\n\n# Pre-build all cargo dependencies. Because cargo doesn't have a build option\n# to build only the dependencies, we pretend that our project is a simple, empty\n# `lib.rs`. Then we remove the dummy source files to make sure cargo rebuild\n# everything once the actual source code is COPYed (and e.g. doesn't trip on\n# timestamps being older)\nCOPY Cargo.lock .\nCOPY Cargo.toml .\nCOPY rs/Cargo.toml rs/Cargo.toml\nRUN mkdir -p rs/src && touch rs/src/lib.rs && cargo build --target wasm32-unknown-unknown --release --package nns-dapp && rm -rf rs/src\n\n# Install dfx\nCOPY dfx.json dfx.json\nRUN DFX_VERSION=\"$(jq -cr .dfx dfx.json)\" sh -ci \"$(curl -fsSL https://sdk.dfinity.org/install.sh)\"\n\n# Start the second container\nFROM builder AS build\nSHELL [\"bash\", \"-c\"]\nARG DFX_NETWORK=mainnet\nRUN echo \"DFX_NETWORK: '$DFX_NETWORK'\"\n\nARG OWN_CANISTER_ID\nRUN echo \"OWN_CANISTER_ID: '$OWN_CANISTER_ID'\"\n\nARG REDIRECT_TO_LEGACY\nRUN echo \"REDIRECT_TO_LEGACY: '$REDIRECT_TO_LEGACY'\"\n\n# Build\n# ... put only git-tracked files in the build directory\nCOPY . /build\nWORKDIR /build\nRUN find . -type f | sed 's/^..//g' > ../build-inputs.txt\nRUN ./build.sh\n\nRUN ls -sh nns-dapp.wasm; sha256sum nns-dapp.wasm\n\nFROM scratch AS scratch\nCOPY --from=build /build/nns-dapp.wasm /\nCOPY --from=build /build/assets.tar.xz /\nCOPY --from=build /build-inputs.txt /\n"
+}

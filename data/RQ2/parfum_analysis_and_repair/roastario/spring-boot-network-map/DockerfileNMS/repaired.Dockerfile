@@ -1,0 +1,21 @@
+FROM openjdk:8-jdk-alpine
+VOLUME /tmp
+RUN apk --no-cache --update add bash
+RUN apk add --no-cache curl
+
+RUN mkdir /opt/notaries
+RUN mkdir /opt/node-storage
+
+COPY --from=notary_one /opt/notaries/nodeInfo* /opt/notaries
+COPY --from=notary_two /opt/notaries/nodeInfo* /opt/notaries
+COPY --from=notary_three /opt/notaries/nodeInfo* /opt/notaries
+COPY --from=notary_four /opt/notaries/nodeInfo* /opt/notaries
+COPY --from=notary_five /opt/notaries/nodeInfo* /opt/notaries
+
+COPY start.sh start.sh
+RUN chmod +x start.sh
+EXPOSE 8080
+COPY app.jar app.jar
+RUN mkdir -p /jars
+ENTRYPOINT ["/start.sh"]
+CMD ["--minimumPlatformVersion=4"]

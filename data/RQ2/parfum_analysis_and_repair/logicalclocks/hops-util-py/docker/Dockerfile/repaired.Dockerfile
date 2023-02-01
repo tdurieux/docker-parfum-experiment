@@ -1,0 +1,42 @@
+FROM ubuntu:16.04
+# This container installs hops-util-py and necessary dependencies to run tests
+
+# Install dependencies
+RUN apt-get update -qq
+RUN apt-get install --no-install-recommends -qq -y software-properties-common && rm -rf /var/lib/apt/lists/*;
+RUN apt-get install --no-install-recommends -qq -y libsasl2-dev && rm -rf /var/lib/apt/lists/*;
+RUN add-apt-repository -y ppa:deadsnakes/ppa
+RUN apt-get update -qq
+RUN apt-get -qq --no-install-recommends install -y \
+  build-essential \
+  default-jre \
+  git \
+  libglib2.0-0 \
+  libsm6 \
+  libxrender1 \
+  python-pip \
+  python-software-properties \
+  python2.7 \
+  python2.7-dev \
+  python3-pip \
+  python3.6 \
+  python3.6-dev \
+  python3.6-venv \
+  virtualenv \
+  && rm -rf /var/lib/apt/lists/*
+
+# Temporarily add files needed for env setup.
+RUN mkdir /hops
+ADD setup.py /hops/
+ADD README.rst /hops/
+ADD hops /hops/hops
+
+# Set up Python3 environment
+RUN python3.6 -m pip install pip --upgrade
+RUN python3.6 -m pip install wheel
+RUN python3.6 -m venv /hops_venv3.6
+RUN /hops_venv3.6/bin/pip3.6 install -e /hops/[docs,tf,test,spark,plotting,pynvml,pyopenssl] # install dependencies
+RUN /hops_venv3.6/bin/pip3.6 uninstall -y hops # uninstall hops since we will use the latest source when running tests
+
+# Clean up temporary files and make room for mounted hops dir
+RUN rm -r /hops

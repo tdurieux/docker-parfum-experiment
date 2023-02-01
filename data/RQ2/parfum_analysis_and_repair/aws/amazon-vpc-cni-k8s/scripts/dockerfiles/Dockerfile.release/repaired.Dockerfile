@@ -1,0 +1,40 @@
+ARG golang_image
+
+FROM $golang_image as builder
+WORKDIR /go/src/github.com/aws/amazon-vpc-cni-k8s
+ARG TARGETARCH
+# Configure build with Go modules
+ENV GO111MODULE=on
+ENV GOPROXY=direct
+
+# Copy modules in before the rest of the source to only expire cache on module changes:
+COPY go.mod go.sum ./
+RUN go mod download
+
+COPY Makefile ./
+RUN make plugins && make debug-script
+
+COPY . ./
+RUN make build-linux
+
+# Build the architecture specific container image:
+FROM public.ecr.aws/amazonlinux/amazonlinux:2
+RUN yum update -y && \
+    yum install -y iptables iproute jq && \
+    yum clean all && rm -rf /var/cache/yum
+
+WORKDIR /app
+
+COPY --from=builder /go/src/github.com/aws/amazon-vpc-cni-k8s/aws-cni \
+    /go/src/github.com/aws/amazon-vpc-cni-k8s/misc/10-aws.conflist \
+    /go/src/github.com/aws/amazon-vpc-cni-k8s/loopback \
+    /go/src/github.com/aws/amazon-vpc-cni-k8s/portmap \
+    /go/src/github.com/aws/amazon-vpc-cni-k8s/bandwidth \
+    /go/src/github.com/aws/amazon-vpc-cni-k8s/host-local \
+    /go/src/github.com/aws/amazon-vpc-cni-k8s/aws-cni-support.sh \
+    /go/src/github.com/aws/amazon-vpc-cni-k8s/aws-k8s-agent  \
+    /go/src/github.com/aws/amazon-vpc-cni-k8s/grpc-health-probe \
+    /go/src/github.com/aws/amazon-vpc-cni-k8s/egress-v4-cni \
+    /go/src/github.com/aws/amazon-vpc-cni-k8s/scripts/entrypoint.sh /app/
+
+ENTRYPOINT ["/app/entrypoint.sh"]

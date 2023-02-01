@@ -1,0 +1,44 @@
+{
+  "startTime": 1674254151824,
+  "endTime": 1674254152656,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 68,
+        "lineEnd": 75,
+        "columnStart": 22,
+        "columnEnd": 17
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 68,
+        "lineEnd": 75,
+        "columnStart": 22,
+        "columnEnd": 17
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 8,
+        "lineEnd": 23,
+        "columnStart": 18,
+        "columnEnd": 4
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 40,
+        "lineEnd": 40,
+        "columnStart": 18,
+        "columnEnd": 34
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM alpine:edge as kernel\n\nARG KERNEL_REPO=https://github.com/torvalds/linux.git\nARG KERNEL_BRANCH=master\n\nENV KERNEL_REPO=${KERNEL_REPO}\nENV KERNEL_BRANCH=${KERNEL_BRANCH}\n\nRUN apk update && apk add --no-cache \\\n  bash \\\n  bison \\\n  build-base \\\n  diffutils \\\n  elfutils-dev \\\n  findutils \\\n  flex \\\n  git \\\n  gzip \\\n  linux-headers \\\n  perl \\\n  python3 \\\n  openssl \\\n  openssl-dev \\\n  xz\n\nWORKDIR /\n\nRUN git clone --depth 1 ${KERNEL_REPO} linux --branch ${KERNEL_BRANCH}\nWORKDIR linux\n\nCOPY scripts/docker/config_kernel.sh config_kernel.sh\nCOPY configs/archlinux.config .config\nRUN chmod +x config_kernel.sh\nRUN ./config_kernel.sh\n\nRUN make bzImage -j$(nproc)\n\n# Second build stage builds statically linked btrfs-fuzz software components\nFROM rust:alpine as btrfsfuzz\n\nRUN apk update && apk add --no-cache musl-dev\n\nWORKDIR /\nRUN mkdir btrfs-fuzz\nWORKDIR btrfs-fuzz\nCOPY Cargo.toml Cargo.lock ./\nRUN mkdir src\nCOPY src src\nRUN cargo update\nRUN cargo build --release -p runner\n\n# Third stage builds dynamically linked btrfs-fuzz components\nFROM rust:latest as btrfsfuzz-dy\n\nWORKDIR /\nRUN mkdir btrfs-fuzz\nWORKDIR btrfs-fuzz\nCOPY Cargo.toml Cargo.lock ./\nRUN mkdir src\nCOPY src src\nRUN cargo update\nRUN cargo build --release -p mutator\n\n# Final stage build copies over binaries from build stages and only installs\n# runtime components.\nFROM aflplusplus/aflplusplus:latest\n\nARG DEBIAN_FRONTEND=noninteractive\nRUN apt-get update && apt-get install --no-install-recommends -y \\\n  btrfs-progs \\\n  busybox \\\n  kmod \\\n  linux-tools-generic \\\n  less \\\n  strace \\\n  qemu-system-x86 && rm -rf /var/lib/apt/lists/*;\n\nWORKDIR /\nRUN mkdir btrfs-fuzz\nWORKDIR btrfs-fuzz\n\nCOPY scripts/docker/entry.sh entry.sh\nRUN chmod +x entry.sh\n\nRUN git clone https://github.com/amluto/virtme.git\n\nCOPY --from=kernel /linux/arch/x86/boot/bzImage .\nCOPY --from=kernel /linux/vmlinux .\nCOPY --from=btrfsfuzz /btrfs-fuzz/target/release/runner .\nCOPY --from=btrfsfuzz-dy /btrfs-fuzz/target/release/libmutator.so .\n\nENTRYPOINT [\"./entry.sh\"]\n"
+}

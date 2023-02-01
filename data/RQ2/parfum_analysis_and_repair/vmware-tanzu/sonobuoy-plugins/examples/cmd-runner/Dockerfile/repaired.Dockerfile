@@ -1,0 +1,21 @@
+FROM debian:stretch-slim
+
+# Install kubectl
+# Note: Latest version may be found on:
+# https://aur.archlinux.org/packages/kubectl-bin/
+ADD https://storage.googleapis.com/kubernetes-release/release/v1.14.1/bin/linux/amd64/kubectl /usr/local/bin/kubectl
+
+ENV HOME=/config
+
+# Basic check it works.
+RUN apt-get update && \
+    apt-get -y --no-install-recommends install net-tools && \
+    apt-get -y --no-install-recommends install curl && \
+    chmod +x /usr/local/bin/kubectl && \
+    kubectl version --client && rm -rf /var/lib/apt/lists/*;
+
+COPY ./run.sh ./run.sh
+
+RUN chmod +x ./run.sh
+
+ENTRYPOINT ["./run.sh"]

@@ -1,0 +1,35 @@
+{% from "dockers/dockerfile-macros.j2" import install_debian_packages, install_python_wheels, copy_files %}
+FROM docker-swss-layer-buster-{{DOCKER_USERNAME}}:{{DOCKER_USERTAG}}
+
+ARG docker_container_name
+RUN [ -f /etc/rsyslog.conf ] && sed -ri "s/%syslogtag%/$docker_container_name#%syslogtag%/;" /etc/rsyslog.conf
+
+## Make apt-get non-interactive
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && \
+    apt-get install --no-install-recommends -f -y \
+            dmidecode \
+            libmnl0=1.0.4-2 && rm -rf /var/lib/apt/lists/*;
+
+{% if docker_sflow_debs.strip() -%}
+# Copy locally-built Debian package dependencies
+{{ copy_files("debs/", docker_sflow_debs.split(' '), "/debs/") }}
+
+# Install locally-built Debian packages and implicitly install their dependencies
+{{ install_debian_packages(docker_sflow_debs.split(' ')) }}
+{%- endif %}
+
+RUN apt-get clean -y      && \
+    apt-get autoclean -y  && \
+    apt-get autoremove -y && \
+    rm -rf /debs
+
+RUN sed -ri '/^DAEMON_ARGS=""/c DAEMON_ARGS="-c /var/log/hsflowd.crash"' /etc/init.d/hsflowd
+
+COPY ["supervisord.conf", "/etc/supervisor/conf.d/"]
+COPY ["files/supervisor-proc-exit-listener", "/usr/bin"]
+COPY ["critical_processes", "/etc/supervisor"]
+COPY ["port_index_mapper.py", "/usr/bin"]
+
+ENTRYPOINT ["/usr/local/bin/supervisord"]

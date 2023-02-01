@@ -1,0 +1,1 @@
+# Dockerfile with a simple FROM clause containing platform statement

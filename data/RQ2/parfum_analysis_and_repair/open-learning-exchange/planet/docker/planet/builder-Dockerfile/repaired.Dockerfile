@@ -1,0 +1,17 @@
+FROM treehouses/planet-base as builder
+
+ARG LANGUAGE=""
+ENV LANG ${LANGUAGE}
+ARG LANGUAGE2=""
+ENV LANG2 ${LANGUAGE2}
+
+COPY docker/planet/scripts/ ./
+COPY . .
+
+RUN ./compile_planet.sh
+
+####
+
+FROM treehouses/node
+
+COPY --from=builder /ng-app/dist /ng-app/dist

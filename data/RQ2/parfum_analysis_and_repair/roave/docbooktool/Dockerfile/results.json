@@ -1,0 +1,44 @@
+{
+  "startTime": 1674217797233,
+  "endTime": 1674217797887,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 30,
+        "lineEnd": 30,
+        "columnStart": 7,
+        "columnEnd": 82
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 32,
+        "lineEnd": 32,
+        "columnStart": 7,
+        "columnEnd": 53
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 28,
+        "lineEnd": 28,
+        "columnStart": 7,
+        "columnEnd": 87
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 34,
+        "lineEnd": 49,
+        "columnStart": 7,
+        "columnEnd": 17
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM composer:2.3 AS composer-base-image\nFROM node:18.5.0 AS npm-base-image\nFROM ubuntu:20.04 AS ubuntu-base-image\n\n\nFROM npm-base-image AS npm-dependencies\n\nWORKDIR /build\n\nRUN \\\n    --mount=type=cache,target=/root/.npm,id=npm \\\n    --mount=source=package.json,target=package.json \\\n    --mount=source=package-lock.json,target=package-lock.json \\\n    npm ci\n\n\nFROM ubuntu-base-image AS base-with-dependencies\n\nRUN \\\n    --mount=type=cache,target=/var/cache/apt,sharing=private \\\n    --mount=type=cache,target=/var/lib/apt/lists/,sharing=private \\\n    export DEBIAN_FRONTEND=\"noninteractive\" \\\n    && rm /etc/apt/apt.conf.d/docker-clean \\\n    && mkdir -p /usr/share/man/man1 \\\n    && apt-get update \\\n    && apt-get -y upgrade \\\n    && apt-get install -y --no-install-recommends software-properties-common gnupg curl \\\n    && add-apt-repository --yes ppa:ondrej/php \\\n    && curl -f --silent https://adoptopenjdk.jfrog.io/adoptopenjdk/api/gpg/key/public | apt-key add - \\\n    && add-apt-repository --yes https://adoptopenjdk.jfrog.io/adoptopenjdk/deb/ \\\n    && curl -f -sL https://deb.nodesource.com/setup_14.x | bash - \\\n    && apt-get update \\\n    && apt-get install -y --no-install-recommends \\\n      bash \\\n      binutils \\\n      graphviz \\\n      php8.1-cli \\\n      php8.1-zip \\\n      php8.1-mbstring \\\n      php8.1-xml \\\n      php8.1-curl \\\n      nodejs \\\n      adoptopenjdk-8-hotspot-jre \\\n      xfonts-75dpi \\\n      xfonts-base \\\n      fontconfig \\\n      libjpeg-turbo8 \\\n      wkhtmltopdf \\\n    && mkdir -p /docs-package/pdf /app /docs-src/book /docs-src/templates /docs-src/features && rm -rf /var/lib/apt/lists/*;\n\nADD https://github.com/plantuml/plantuml/releases/download/v1.2022.4/plantuml-1.2022.4.jar app/bin/plantuml.jar\n\n\nFROM base-with-dependencies AS production-composer-dependencies\n\nWORKDIR /build\n\nRUN  \\\n    --mount=source=/usr/bin/composer,target=/usr/bin/composer,from=composer-base-image \\\n    --mount=type=cache,target=/root/.composer,id=composer \\\n    --mount=source=composer.json,target=composer.json \\\n    --mount=source=composer.lock,target=composer.lock \\\n    composer install \\\n    --no-autoloader \\\n    --no-dev \\\n    --no-plugins\n\n\nFROM production-composer-dependencies AS development-composer-dependencies\n\nWORKDIR /build\n\nRUN \\\n    --mount=source=/usr/bin/composer,target=/usr/bin/composer,from=composer-base-image \\\n    --mount=type=cache,target=/root/.composer,id=composer \\\n    --mount=source=composer.json,target=composer.json \\\n    --mount=source=composer.lock,target=composer.lock \\\n    composer install \\\n    --no-plugins\n\n\nFROM base-with-dependencies AS base-with-codebase\n\nWORKDIR /app\n\nCOPY --link ./src ./src\nCOPY --link ./bin ./bin\n\nCOPY --link --from=npm-dependencies /build/node_modules node_modules\n\nRUN ln -s /app/node_modules/.bin/marked /usr/local/bin/marked \\\n    && ln -s /app/node_modules/.bin/redoc-cli /usr/local/bin/redoc-cli\n\nENV DOCBOOK_TOOL_CONTENT_PATH=/docs-src/book \\\n    DOCBOOK_TOOL_TEMPLATE_PATH=/docs-src/templates \\\n    DOCBOOK_TOOL_FEATURES_PATH=/docs-src/features \\\n    DOCBOOK_TOOL_OUTPUT_HTML_FILE=/docs-package/index.html \\\n    DOCBOOK_TOOL_OUTPUT_PDF_PATH=/docs-package/pdf\n\nENTRYPOINT [\"bin/docbook-tool\"]\nCMD [\"--html\", \"--pdf\"]\n\n\nFROM base-with-codebase AS development\n\nCOPY --link ./phpcs.xml.dist \\\n    ./phpunit.xml.dist \\\n    ./psalm.xml.dist \\\n    ./\nCOPY --link ./test test\n\nCOPY --link ./composer.json \\\n    ./composer.lock \\\n    ./package.json \\\n    ./package-lock.json \\\n    ./\n\nCOPY --link --from=composer-base-image /usr/bin/composer /usr/local/bin/composer\nCOPY --link --from=development-composer-dependencies /build/vendor vendor\n\n# run the plugins\nRUN \\\n    --mount=type=cache,target=/root/.composer,id=composer \\\n    composer install\n\n\nFROM development AS tested\n\nRUN vendor/bin/phpunit\nRUN vendor/bin/phpcs\nRUN vendor/bin/psalm\nRUN touch .tested\n\n\nFROM base-with-codebase AS production\n\nCOPY --link --from=production-composer-dependencies /build/vendor vendor\n\nRUN \\\n    --mount=source=/usr/bin/composer,target=/usr/bin/composer,from=composer-base-image \\\n    --mount=type=cache,target=/root/.composer,id=composer \\\n    --mount=source=composer.json,target=composer.json \\\n    --mount=source=composer.lock,target=composer.lock \\\n    composer dump-autoload \\\n    --classmap-authoritative \\\n    --no-dev\n\n# The tests must have run to build production\nCOPY --link --from=tested /app/.tested .\n"
+}

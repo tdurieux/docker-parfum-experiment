@@ -1,0 +1,35 @@
+{
+  "startTime": 1674246384417,
+  "endTime": 1674246386105,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 36,
+        "lineEnd": 36,
+        "columnStart": 4,
+        "columnEnd": 114
+      }
+    },
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 72,
+        "lineEnd": 72,
+        "columnStart": 4,
+        "columnEnd": 30
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 31,
+        "lineEnd": 31,
+        "columnStart": 9,
+        "columnEnd": 44
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Note: for local build and to prevent rate limit from docker use keppel.eu-de-1.cloud.sap/ccloud-dockerhub-mirror/library/\nFROM keppel.eu-de-1.cloud.sap/ccloud-dockerhub-mirror/library/ruby:2.7-alpine3.15 AS elektra\n\nLABEL source_repository=\"https://github.com/sapcc/elektra\"\n\nRUN apk --no-cache add git curl tzdata nodejs postgresql-client yarn shared-mime-info\n\n# Install gems with native extensions before running bundle install\n# This avoids recompiling them everytime the Gemfile.lock changes.\n# The versions need to be kept in sync with the Gemfile.lock\nRUN apk --no-cache add build-base postgresql-dev --virtual .builddeps \\\n      && gem install bundler:2.3.9 \\\n      && gem install byebug -v 11.1.3 \\\n      && gem install ffi -v 1.15.5 \\\n      && gem install json -v 1.8.6 \\\n      && gem install nio4r -v 2.5.8 \\\n      && gem install nokogiri -v 1.13.3 \\\n      && gem install pg -v 1.3.4 \\\n      && gem install puma -v 4.3.12  \\\n      && gem install redcarpet -v 3.5.1 \\\n      && gem install unf -v 0.2.0.beta2 \\\n      && gem install websocket-driver -v 0.7.5 \\\n      && gem install bindex -v 0.8.1 \\\n      && gem install sassc -v 2.1.0 \\\n      && runDeps=\"$( \\\n      scanelf --needed --nobanner --recursive /usr/local \\\n      | awk '{ gsub(/,/, \"\\nso:\", $2); print \"so:\" $2 }' \\\n      | sort -u \\\n      | xargs -r apk info --installed \\\n      | sort -u \\\n      )\" \\\n      && apk add --no-cache --virtual .rundeps $runDeps \\\n      && apk del .builddeps \\\n      && gem sources -c \\\n      && rm -f /usr/local/bundle/cache/*\n\nRUN curl -f -L -o /usr/bin/dumb-init https://github.com/Yelp/dumb-init/releases/download/v1.2.0/dumb-init_1.2.0_amd64 && \\\n      chmod +x /usr/bin/dumb-init && \\\n      dumb-init -V\n\nWORKDIR /home/app/webapp\nENV RAILS_ENV=production\n\nARG MONSOON_RAILS_SECRET_TOKEN\nENV MONSOON_RAILS_SECRET_TOKEN=$MONSOON_RAILS_SECRET_TOKEN\nARG MONSOON_LOB_LIST\nENV MONSOON_LOB_LIST=$MONSOON_LOB_LIST\nARG MONSOON_NEW_PROJECT_DL\nENV MONSOON_NEW_PROJECT_DL=$MONSOON_NEW_PROJECT_DL\n\n# add Gemfile and Gemfile.lock to /home/app/webapp/\nADD Gemfile Gemfile.lock ./\n\n# add package.json yarn.lock to /home/app/webapp\nADD package.json yarn.lock ./\n\n# copy all gemspec files from plugins folder into /home/app/webapp/tmp/plugins/\nADD plugins/*/*.gemspec tmp/plugins/\n\n# copy organize_plugins_gemspecs script (see comments in script/organize_plugins_gemspecs) and execute it\nADD script/organize_plugins_gemspecs script/\nRUN script/organize_plugins_gemspecs\n\n# install gems, copy app and run rake tasks\nRUN apk --no-cache add build-base\nRUN bundle config set --local without 'development integration_tests'\nRUN bundle install\n\n# add elektra sources into image\nADD . /home/app/webapp\n\n# transpile javascripts\nRUN yarn install --no-progress && yarn build --production && yarn cache clean;\n\n# We use dummy master.key to workaround the fact that\n# assets:precompile needs them but we don't want the real master.key to be built\n# into the container. The MONSOON_RAILS_SECRET_TOKEN should be injected as env var when starting the\n# container.\n# https://github.com/rails/rails/issues/32947\n\nENV MONSOON_RAILS_SECRET_TOKEN=dummy_monsoon_rails_build_secret_token_for_assets_precompiling_change_it_in_production\nRUN bin/rails assets:precompile && rm -rf tmp/cache/assets\n\nENTRYPOINT [\"dumb-init\", \"-c\", \"--\" ]\nCMD [\"script/start.sh\"]\n\nFROM elektra AS tests\nRUN apk add --no-cache postgresql bash\nENV RAILS_ENV=test\nRUN LISTENTO=127.0.0.1 su postgres -c 'script/pg_tmp.sh -p 5432 -w 300 -d /tmp/pg start' \\\n      && rake db:create db:migrate \\\n      && bundle exec rspec \\\n      && su postgres -c 'script/pg_tmp.sh -d /tmp/pg stop'\n      # && yarn test # we cannot run the react tests here because there are a lot of devDependencies that are not installed\n\nFROM elektra"
+}

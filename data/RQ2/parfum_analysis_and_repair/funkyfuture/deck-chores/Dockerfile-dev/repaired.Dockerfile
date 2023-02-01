@@ -1,0 +1,14 @@
+FROM docker.io/python:3.9-alpine
+
+CMD ["deck-chores"]
+LABEL org.label-schema.name="deck-chores"
+ENV DEBUG=true
+
+RUN apk add --no-cache build-base cargo ca-certificates libffi-dev musl-dev openssl-dev python3-dev \
+ && pip install --no-cache-dir cerberus~=1.3 docker[ssh,tls]~=4.0 fasteners~=0.14 python-dateutil~=2.8 APScheduler~=3.6 \
+ && echo "UTC" > /etc/timezone
+
+COPY . /src
+WORKDIR /src
+
+RUN pip install --no-cache-dir /src

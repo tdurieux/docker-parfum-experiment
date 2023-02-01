@@ -1,0 +1,9 @@
+Dockerfile
+docker-compose.yml
+.git
+**/node_modules
+**/dist
+docker
+!docker/ui/**
+!docker/test/**
+.npmrc

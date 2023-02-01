@@ -1,0 +1,5 @@
+FROM ubuntu:21.04
+
+COPY docker/build-gstreamer/install-dependencies /
+
+RUN ["/install-dependencies"]

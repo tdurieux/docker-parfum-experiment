@@ -1,0 +1,62 @@
+{
+  "startTime": 1674253949186,
+  "endTime": 1674253949910,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 34,
+        "lineEnd": 34,
+        "columnStart": 4,
+        "columnEnd": 103
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 15,
+        "lineEnd": 15,
+        "columnStart": 5,
+        "columnEnd": 59
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 16,
+        "lineEnd": 16,
+        "columnStart": 5,
+        "columnEnd": 341
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 14,
+        "lineEnd": 14,
+        "columnStart": 5,
+        "columnEnd": 57
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 15,
+        "lineEnd": 15,
+        "columnStart": 5,
+        "columnEnd": 59
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 16,
+        "lineEnd": 16,
+        "columnStart": 5,
+        "columnEnd": 341
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "###\n#\n# Kaldi Model Server\n#\n# NOTE: you might need to build the image with adjusted memory settings, e.g.:\n#\n#   $> docker build -f Dockerfile --tag uhh-lt/kaldi-model-server:latest --memory 6g .\n#\n###\nFROM ubuntu:19.10\n\nENV LANG=C.UTF-8 LC_ALL=C.UTF-8\n\nRUN DEBIAN_FRONTEND=noninteractive apt-get update --fix-missing \\\n  && apt-get install -y --no-install-recommends apt-utils \\\n  && apt-get install --no-install-recommends -y wget bzip2 ca-certificates curl git \\\n  && apt-get install --no-install-recommends -y redis-server portaudio19-dev libportaudio2 redis-server autoconf automake cmake curl g++ git graphviz libatlas3-base libtool make pkg-config subversion unzip wget zlib1g-dev sox z3 libz3-dev llvm ocaml ocaml-libs libctypes-ocaml-dev libcothreads-ocaml-dev clang gcc g++ gcc-7 g++-7 libsamplerate0 alsa-base alsa-utils \\\n  && apt-get autoremove \\\n  && apt-get clean && rm -rf /var/lib/apt/lists/*;\n\nRUN wget --quiet https://repo.anaconda.com/miniconda/Miniconda3-4.5.11-Linux-x86_64.sh -O ~/miniconda.sh && \\\n    /bin/bash ~/miniconda.sh -b -p /opt/conda && \\\n    rm ~/miniconda.sh && \\\n    /opt/conda/bin/conda clean -tipsy && \\\n    ln -s /opt/conda/etc/profile.d/conda.sh /etc/profile.d/conda.sh && \\\n    echo \". /opt/conda/etc/profile.d/conda.sh\" >> ~/.bashrc && \\\n    echo \"conda activate base\" >> ~/.bashrc\n\nENV PATH=/opt/conda/bin:$PATH\n\nRUN conda update -y -n base -c defaults conda\n\nRUN conda install -y python=3.6\n\nRUN pip install --no-cache-dir samplerate flask_cors bs4 doxypy numpy pyparsing ninja redis pyyaml flask pyaudio scipy\n\nRUN mkdir -p /projects\n\nWORKDIR /projects\n\nARG PYKALDI_COMMIT=249963c2cb57d92c0027bb958280dcf8e408462a\n\nRUN git clone https://github.com/pykaldi/pykaldi && cd pykaldi && git checkout $PYKALDI_COMMIT && cd ..\n\nRUN cd /projects/pykaldi/tools/ \\\n  && ./check_dependencies.sh \\\n  && ./install_protobuf.sh\n\nRUN update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-7 60 --slave /usr/bin/g++ g++ /usr/bin/g++-7\n\nRUN cd /projects/pykaldi/tools/ \\\n  && ./install_clif.sh\n\nRUN update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-9 70 --slave /usr/bin/g++ g++ /usr/bin/g++-9\n\nRUN cd /projects/pykaldi/tools/ \\\n  && ./install_kaldi.sh\n\nRUN cd /projects/pykaldi/ \\\n  && MAKE_NUM_JOBS=2 python setup.py install\n\nARG KALDIMODELSERVER_COMMIT=7ada422a77d924d8f39dad6945406fd31d82bfd2\n\nRUN git clone https://github.com/uhh-lt/kaldi-model-server && cd kaldi-model-server && git checkout $KALDIMODELSERVER_COMMIT && cd ..\n\nWORKDIR /projects/kaldi-model-server\n\nVOLUME [\"/projects/kaldi-model-server/models\"]\n\nRUN echo \"#!/bin/bash \\n\\\n  set -e \\n\\\n  cd /projects/kaldi-model-server \\n\\\n  # download example model if it doesn't exist\n  [ ! -d /projects/kaldi-model-server/models/de_400k_nnet3chain_tdnn1f_2048_sp_bi ] && ( \\\n    echo 'Example model does not exist!' \\\n      && sh download_example_models.sh \\\n      && sed -i 's/=de_400k_nnet3chain_tdnn1f_2048_sp_bi\\//=models\\/de_400k_nnet3chain_tdnn1f_2048_sp_bi\\//g' models/de_400k_nnet3chain_tdnn1f_2048_sp_bi/ivector_extractor/ivector_extractor.conf \\\n    ) || echo 'Example model already exists.' \\n\\\n  # start redis \\n\\\n  /etc/init.d/redis-server start \\n\\\n  # run event server in background \\n\\\n  python event_server.py \\n\\\n\" > entrypoint_event_server.sh\n\nRUN echo \"#!/bin/bash \\n\\\n  set -e \\n\\\n  cd /projects/kaldi-model-server \\n\\\n  python nnet3_model.py \\$* \\n\\\n\" > /usr/local/bin/asr && chmod a+rx /usr/local/bin/asr\n\nEXPOSE 5000\n\nCMD [\"sh\", \"/projects/kaldi-model-server/entrypoint_event_server.sh\"]\n\n###############\n#\n###############\n"
+}

@@ -1,0 +1,71 @@
+{
+  "startTime": 1674250328831,
+  "endTime": 1674250330220,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 34,
+        "lineEnd": 34,
+        "columnStart": 7,
+        "columnEnd": 88
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 33,
+        "lineEnd": 33,
+        "columnStart": 12,
+        "columnEnd": 37
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 42,
+        "lineEnd": 42,
+        "columnStart": 12,
+        "columnEnd": 45
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 101,
+        "lineEnd": 101,
+        "columnStart": 32,
+        "columnEnd": 64
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 33,
+        "lineEnd": 33,
+        "columnStart": 12,
+        "columnEnd": 37
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 42,
+        "lineEnd": 42,
+        "columnStart": 12,
+        "columnEnd": 45
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 101,
+        "lineEnd": 101,
+        "columnStart": 32,
+        "columnEnd": 64
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# -- AFL\nFROM deepstate-base AS AFL\nCOPY ./docker/install_afl.sh ./\nARG make_j\nRUN bash install_afl.sh $make_j\n\n# -- Honggfuzz\nFROM deepstate-base AS Honggfuzz\nCOPY ./docker/install_honggfuzz.sh ./\nARG make_j\nRUN bash install_honggfuzz.sh $make_j\n\n# -- Eclipser\nFROM deepstate-base AS Eclipser\nCOPY ./docker/install_eclipser.sh ./\nARG make_j\nRUN bash install_eclipser.sh $make_j\n\n# -- Angora\nFROM deepstate-base AS Angora\nCOPY ./docker/install_angora.sh ./\nARG make_j\nRUN bash install_angora.sh $make_j\n\n# -- DeepState\nFROM deepstate-base\nENV DEPS_DIR /home/user/deps\nARG make_j\n\n# Angr, Manticore\nRUN echo 'Installing angr and manticore' \\\n    && sudo add-apt-repository -y ppa:sri-csl/formal-methods \\\n    && sudo apt-get -y update \\\n    && sudo apt-get -y --no-install-recommends install yices2 \\\n    && pip3 install --no-cache-dir z3-solver angr git+git://github.com/trailofbits/manticore.git --user && rm -rf /var/lib/apt/lists/*;\n\n# Eclipser - not deepstate dependent\nCOPY --from=Eclipser /home/user/Eclipser/build $DEPS_DIR/eclipser\nRUN echo 'Eclipser - installing dotnet' \\\n    && wget -q https://packages.microsoft.com/config/ubuntu/18.04/packages-microsoft-prod.deb \\\n    && sudo dpkg -i packages-microsoft-prod.deb \\\n    && sudo apt-get update \\\n    && sudo apt-get install --no-install-recommends -y dotnet-sdk-2.2 && rm -rf /var/lib/apt/lists/*;\nCOPY --from=Eclipser /home/user/.nuget /home/user/.nuget\n\n# Angora part 1 - not deepstate dependent\nCOPY --from=Angora /home/user/Angora $DEPS_DIR/angora\nCOPY --from=Angora /home/user/clang+llvm $DEPS_DIR/angora/clang+llvm\n\n# copy deepstate code here to use cache as much as possible\nCOPY . ./deepstate\nRUN sudo chown user:user -R ./deepstate\nWORKDIR ./deepstate\n\n# Angora part 2\n# ignore errors in `make`, because Angora doesn't support 32bit builds\nRUN echo 'Building deepstate with Angora - taint' \\\n    && mkdir -p build_angora_taint && cd build_angora_taint \\\n    && export PATH=\"$DEPS_DIR/angora/clang+llvm/bin:$PATH\" \\\n    && export LD_LIBRARY_PATH=\"$DEPS_DIR/angora/clang+llvm/lib:$LD_LIBRARY_PATH\" \\\n    && export USE_TRACK=1 \\\n    && export ANGORA_HOME=\"$DEPS_DIR/angora\" \\\n    && CXX=\"$ANGORA_HOME/bin/angora-clang++\" CC=\"$ANGORA_HOME/bin/angora-clang\" cmake -DDEEPSTATE_ANGORA=ON ../ \\\n    && make -j $make_j -i \\\n    && sudo cp ./libdeepstate_taint.a /usr/local/lib/\n\nRUN echo 'Building deepstate with Angora - fast' \\\n    && mkdir -p build_angora_fast && cd build_angora_fast \\\n    && export PATH=\"$DEPS_DIR/angora/clang+llvm/bin:$PATH\" \\\n    && export LD_LIBRARY_PATH=\"$DEPS_DIR/angora/clang+llvm/lib:$LD_LIBRARY_PATH\" \\\n    && export USE_FAST=1 \\\n    && export ANGORA_HOME=\"$DEPS_DIR/angora\" \\\n    && CXX=\"$ANGORA_HOME/bin/angora-clang++\" CC=\"$ANGORA_HOME/bin/angora-clang\" cmake -DDEEPSTATE_ANGORA=ON ../ \\\n    && make -j $make_j -i \\\n    && sudo cp ./libdeepstate_fast.a /usr/local/lib/\n\n# general\nRUN echo 'Building deepstate' \\\n    && mkdir -p ./build_deepstate && cd ./build_deepstate \\\n    && CXX=clang++ CC=clang cmake ../ \\\n    && make -j $make_j \\\n    && sudo make install\n\n# libFuzzer\nRUN echo 'Building deepstate with libFuzzer' \\\n    && mkdir -p build_libfuzzer && cd build_libfuzzer \\\n    && CXX=clang++ CC=clang cmake -DDEEPSTATE_LIBFUZZER=ON ../ \\\n    && make -j $make_j \\\n    && sudo cp ./libdeepstate_LF.a /usr/local/lib/\n\n# AFL\nCOPY --from=AFL /home/user/afl-2.52b $DEPS_DIR/afl\nRUN echo 'Building deepstate with AFL' \\\n    && mkdir -p build_afl && cd build_afl \\\n    && export AFL_HOME=\"$DEPS_DIR/afl\" \\\n    && CXX=\"$AFL_HOME/afl-clang++\" CC=\"$AFL_HOME/afl-clang\" cmake -DDEEPSTATE_AFL=ON ../ \\\n    && make -j $make_j \\\n    && sudo cp ./libdeepstate_AFL.a /usr/local/lib/\n\n# Honggfuzz\nCOPY --from=Honggfuzz /home/user/honggfuzz $DEPS_DIR/honggfuzz\nRUN sudo apt-get update && sudo apt-get -y --no-install-recommends install libunwind-dev && rm -rf /var/lib/apt/lists/*;\nRUN echo \"HELLO SAILOR\" \\\nRUN echo 'Building deepstate with Honggfuzz' \\\n    && mkdir -p build_honggfuzz && cd build_honggfuzz \\\n    && export HONGGFUZZ_HOME=\"$DEPS_DIR/honggfuzz\" \\\n    && CXX=\"$HONGGFUZZ_HOME/hfuzz_cc/hfuzz-clang++\" CC=\"$HONGGFUZZ_HOME/hfuzz_cc/hfuzz-clang\" cmake -DDEEPSTATE_HONGGFUZZ=ON ../ \\\n    && make -j $make_j \\\n    && sudo cp ./libdeepstate_HFUZZ.a /usr/local/lib/\n\nENV CXX=clang++ CC=clang\nENV AFL_HOME=\"$DEPS_DIR/afl\" HONGGFUZZ_HOME=\"$DEPS_DIR/honggfuzz\" \\\n    ANGORA_HOME=\"$DEPS_DIR/angora\" ECLIPSER_HOME=\"$DEPS_DIR/eclipser\"\n\nCMD [\"/bin/bash\"]"
+}

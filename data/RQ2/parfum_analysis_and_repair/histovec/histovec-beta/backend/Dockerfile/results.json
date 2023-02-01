@@ -1,0 +1,44 @@
+{
+  "startTime": 1674248047125,
+  "endTime": 1674248048102,
+  "originalSmells": [
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 42,
+        "lineEnd": 42,
+        "columnStart": 4,
+        "columnEnd": 24
+      }
+    },
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 52,
+        "lineEnd": 52,
+        "columnStart": 4,
+        "columnEnd": 26
+      }
+    },
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 54,
+        "lineEnd": 54,
+        "columnStart": 5,
+        "columnEnd": 17
+      }
+    },
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 134,
+        "lineEnd": 134,
+        "columnStart": 4,
+        "columnEnd": 22
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "#######################\n# Step 1: Base target #\n#######################\nFROM node:17-bullseye-slim as base\nARG http_proxy\nARG https_proxy\nARG no_proxy\nARG npm_registry\nARG MIRROR_DEBIAN\nARG NPM_FIX\nARG NPM_LATEST\nARG NPM_VERBOSE\nARG app_path\nARG app_name\nARG port\n\n# Base dir /app\nWORKDIR /$app_path\n\n# update debian w/proxy & mirror\nRUN echo \"$http_proxy $no_proxy\" && set -x && [ -z \"$MIRROR_DEBIAN\" ] || \\\n   sed -i.orig -e \"s|http://deb.debian.org\\([^[:space:]]*\\)|$MIRROR_DEBIAN/debian11|g ; s|http://security.debian.org\\([^[:space:]]*\\)|$MIRROR_DEBIAN/debian11-security|g\" /etc/apt/sources.list\nRUN apt-get update -q\n\n# use proxy & private npm registry\nRUN if [ ! -z \"$http_proxy\" ] ; then \\\n        npm config delete proxy; \\\n        npm config set proxy $http_proxy; \\\n        npm config set proxy $http_proxy --global; \\\n        npm config set https-proxy $https_proxy; \\\n        npm config set https-proxy $https_proxy --global; \\\n        npm config set no-proxy $no_proxy; \\\n   fi ; \\\n   [ -z \"$npm_registry\" ] || npm config set registry=$npm_registry ; \\\n   [ -z \"$npm_registry\" ] || npm config set strict-ssl false\n\n# 10 min\nRUN npm config set fetch-timeout 600000\n\nRUN echo \"NPM_LATEST = ${NPM_LATEST}\"\nRUN if [ \"${NPM_LATEST}\" = \"true\" ]; then \\\n    echo \"Let's install npm latest version\"; \\\n    npm i npm@latest -g; npm cache clean --force; \\\n  else \\\n    echo \"Don't install npm latest version\"; \\\n  fi\n\nCOPY package.json ./\nRUN npm --no-git-tag-version version ${APP_VERSION}\n\nRUN echo \"NPM_VERBOSE = ${NPM_VERBOSE}\"\nRUN if [ \"${NPM_VERBOSE}\" = \"true\" ]; then \\\n    npm install --verbose; npm cache clean --force; \\\n  else \\\n     npm install; npm cache clean --force; \\\n  fi\n\n# RUN npm config set audit-level high\n# RUN echo \"NPM_FIX = ${NPM_FIX}\"\n# RUN if [ \"${NPM_FIX}\" = \"true\" ]; then \\\n#     npm audit fix --registry=https://registry.npmjs.org; \\\n#   else \\\n#     npm audit --registry=https://registry.npmjs.org; \\\n#   fi\n\n################################\n# Step 2: \"development\" target #\n################################\nFROM base as development\nARG app_ver\nARG app_path\nENV APP_VERSION ${app_ver}\nENV NPM_CONFIG_LOGLEVEL debug\n\nVOLUME /${app_path}/src\nVOLUME /${app_path}/dist\n\nCOPY babel.config.js boot-dev.js ./\n\nCMD [\"npm\",\"run\", \"dev\"]\n\n##########################\n# Step 3: \"build\" target #\n##########################\nFROM base as build\nENV NPM_CONFIG_LOGLEVEL warn\nARG app_name\nARG app_ver\nARG file_app_version\nENV APP_VERSION ${app_ver}\n\nCOPY ${file_app_version} .\n\nRUN  set -ex ; tar -zxvf ${file_app_version} && \\\n     npm run build 2>&1 | tee npm.log; egrep -E '(ERROR|error)' npm.log && exit 1 ; rm -rf npm.log \\\n     rm -rf ${file_app_version}\n\nCMD [\"npm\",\"run\",  \"build\"]\n\n###############################\n# Step 4: \"production\" target #\n###############################\nFROM base as production\nARG http_proxy\nARG https_proxy\nARG no_proxy\nARG npm_registry\nARG MIRROR_DEBIAN\nARG app_path\nARG app_name\nARG app_ver\nARG file_dist_app_version\nARG port\nARG NPM_AUDIT_DRY_RUN\nENV NODE_ENV=production\nENV APP_VERSION=${app_ver}\n# Copy the transpiled code to use in production (in /app)\n\nCOPY ${file_dist_app_version} .\n\nRUN  [ -f ${file_dist_app_version} ] && \\\n     tar -zxvf ${file_dist_app_version} && \\\n     rm -rf ${file_dist_app_version}\n\nCOPY package.json ./\n\n# Install production dependencies and clean cache\nRUN npm --no-git-tag-version version ${APP_VERSION} && \\\n    npm install --production && \\\n    # npm config set audit-level high && \\\n    # npm audit --json --registry=https://registry.npmjs.org || ${NPM_AUDIT_DRY_RUN:-false} && \\\n    npm cache clean --force\n\n# Install pm2\nRUN npm install pm2 -g && npm cache clean --force;\n# Copy the pm2 config\nCOPY ecosystem.config.js .\n\nCMD [ \"pm2-runtime\", \"start\", \"ecosystem.config.js\", \"--env\", \"production\" ]\n"
+}

@@ -1,0 +1,35 @@
+FROM electronuserland/builder:12
+
+RUN apt-get update -y && apt-get install --no-install-recommends -y libusb-1.0-0 libudev-dev && rm -rf /var/lib/apt/lists/*;
+
+# set cache dirs
+ENV ELECTRON_CACHE "/root/.cache/electron"
+ENV ELECTRON_BUILDER_CACHE "/root/.cache/electron-builder"
+
+RUN mkdir /app
+COPY . /app
+
+WORKDIR /app
+
+# set version
+ARG VERSION
+RUN sed -i -e "s/\"version\": \"0.0.1\"/\"version\": \"${VERSION}\"/g" electron/package.json
+
+# install dependencies
+RUN npm install && npm cache clean --force;
+RUN npm --prefix electron/ install && npm cache clean --force;
+
+# configure mangle (keep_fnames) for bitcoinjs https://github.com/bitcoinjs/bitcoinjs-lib/issues/959
+RUN npm run prepare-prod-build
+
+# browserify coin-lib
+RUN npm run browserify-coinlib
+
+# build Ionic project
+RUN npm run build:electron:prod
+
+# copy files
+RUN npx cap sync electron
+
+# build package
+RUN npm --prefix electron/ run build:linux

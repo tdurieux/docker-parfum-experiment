@@ -1,0 +1,89 @@
+{
+  "startTime": 1674253502238,
+  "endTime": 1674253503545,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 31,
+        "lineEnd": 34,
+        "columnStart": 4,
+        "columnEnd": 24
+      }
+    },
+    {
+      "rule": "curlUseHttpsUrl",
+      "position": {
+        "lineStart": 31,
+        "lineEnd": 34,
+        "columnStart": 4,
+        "columnEnd": 24
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 60,
+        "lineEnd": 60,
+        "columnStart": 4,
+        "columnEnd": 15
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 9,
+        "lineEnd": 10,
+        "columnStart": 4,
+        "columnEnd": 65
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 17,
+        "lineEnd": 17,
+        "columnStart": 4,
+        "columnEnd": 98
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 109,
+        "lineEnd": 109,
+        "columnStart": 4,
+        "columnEnd": 87
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 9,
+        "lineEnd": 10,
+        "columnStart": 4,
+        "columnEnd": 65
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 17,
+        "lineEnd": 17,
+        "columnStart": 4,
+        "columnEnd": 98
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 109,
+        "lineEnd": 109,
+        "columnStart": 4,
+        "columnEnd": 87
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM debian:buster\nLABEL maintainer pierre@senellart.com\n\n# Copy the source into /opt/provsql\nCOPY . /opt/provsql\nWORKDIR /opt/provsql\n\n# needed to build provsql the tools + libc6-i386 for running c2d\nRUN apt-get update && \\\n    apt-get -y --no-install-recommends install git build-essential curl \\\n               libc6-i386 unzip mercurial libgmp-dev libboost-dev && rm -rf /var/lib/apt/lists/*;\n\n# Specify which version we are building against\nARG PSQL_VERSION=11\nENV PSQL_VERSION=$PSQL_VERSION\n\nRUN apt-get update && \\\n    apt-get -y --no-install-recommends install zlib1g-dev postgresql-${PSQL_VERSION} postgresql-server-dev-${PSQL_VERSION} && rm -rf /var/lib/apt/lists/*;\n\n# Ensure a sane environment\nENV LANG=C.UTF-8 LC_ALL=C.UTF-8 DEBIAN_FRONTEND=noninteractive\n\n# Ensure that bash is the default shell\nENV SHELL=/bin/bash\n\n\n############################## GETTING ADD-ON TOOLS ##############################  \n\nRUN mkdir /tmp/tools/\n\n# TOOL c2d\nRUN curl -f 'https://reasoning.cs.ucla.edu/c2d/fetchme.php' \\\n         -H 'Content-Type: application/x-www-form-urlencoded' \\\n         --data 'os=Linux+i386&type=&s=&n=Pierre+Senellart+DOCKER&e=pierre@senellart.com&o=ENS' \\\n         -o /tmp/c2d.zip && \\\n         unzip /tmp/c2d.zip -d /tmp/ && \\\n         rm /tmp/c2d.zip && \\\n         mv /tmp/c2d_linux /tmp/tools/c2d && \\\n         chmod a+x /tmp/tools/c2d\n\n# TOOL d4\nRUN cd /tmp/ &&\\\n    git clone https://github.com/crillab/d4.git &&\\\n    cd d4 &&\\\n    make &&\\\n    mv d4 /tmp/tools\n\n# TOOL dsharp\nRUN cd /tmp/ &&\\\n    git clone https://github.com/QuMuLab/dsharp.git &&\\ \n    cd dsharp &&\\\n    mv Makefile_gmp Makefile &&\\\n    make &&\\\n    mv dsharp /tmp/tools/ &&\\\n    chmod a+x /tmp/tools/dsharp\n\n# TOOL weightmc\nRUN cd /tmp &&\\\n    git clone https://bitbucket.org/kuldeepmeel/weightmc/src/master/ weightmc &&\\\n    cd weightmc/wmc-src && \\\n    ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" && \\\n    make && \\\n    mv weightmc /tmp/tools && \\\n    chmod a+x /tmp/tools/weightmc\n\n# mv the additional tools\nRUN bash -c \"mv /tmp/tools/* /usr/local/bin\"\n\n##############################   GETTING  PROVSQL  ##############################  \n\n# Provsql will be built & run as user postgres\nRUN chown -R postgres:postgres /opt/provsql\nUSER postgres\n\n# Building\nRUN make\n\n# install provsql\nUSER root\nRUN echo \"shared_preload_libraries = 'provsql'\" >> /etc/postgresql/${PSQL_VERSION}/main/postgresql.conf\nRUN echo \"local all all trust\" > /etc/postgresql/${PSQL_VERSION}/main/pg_hba.conf \n\nEXPOSE 5432\n\nRUN make install\n\nUSER postgres\n#create a db test\nRUN /etc/init.d/postgresql start &&\\\n    createuser -s test &&\\\n    createdb test &&\\\n    psql -f /opt/provsql/test/sql/setup.sql test test  &&\\\n    psql -f /opt/provsql/test/sql/add_provenance.sql test test &&\\\n    psql -f /opt/provsql/test/sql/formula.sql test test  &&\\\n    psql -f /opt/provsql/test/sql/security.sql test test &&\\\n    psql -c \"ALTER ROLE test SET search_path TO public, provsql\";    \n\n############################## FINISHING THE DOCKER  ##############################  \n\n#allow access\nRUN echo \"listen_addresses = '*'\"  >> /etc/postgresql/${PSQL_VERSION}/main/postgresql.conf\nRUN echo \"host all all 0.0.0.0/0 trust\" >> /etc/postgresql/${PSQL_VERSION}/main/pg_hba.conf \nRUN echo \"host all all ::/0 trust\" >> /etc/postgresql/${PSQL_VERSION}/main/pg_hba.conf \n\nUSER postgres\nCMD /usr/bin/pg_ctlcluster $PSQL_VERSION main start --foreground\n\nUSER root\nRUN apt-get update && \\\n    apt-get -y --no-install-recommends install apache2 libapache2-mod-php php-pgsql graphviz libgraph-easy-perl && rm -rf /var/lib/apt/lists/*;\n\nCMD /bin/bash /opt/provsql/docker/demo.sh\nEXPOSE 80\n"
+}

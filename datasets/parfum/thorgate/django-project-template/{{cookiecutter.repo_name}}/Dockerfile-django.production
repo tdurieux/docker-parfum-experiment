@@ -1,0 +1,114 @@
+# Production Dockerfile for Django app
+
+FROM {{ python_image(cookiecutter.python_version, ALPINE) }} as base
+
+ENV DJANGO_PRODUCTION_MODE 1
+ENV DJANGO_SETTINGS_MODULE settings.cloud
+ENV DJANGO_DEBUG 0
+ENV PYTHONPYCACHEPREFIX /.pycache
+
+# Let all *.pyc files stay within the container, for Python >= 3.8
+RUN mkdir -p $PYTHONPYCACHEPREFIX
+
+# Create a directory for the logs
+RUN mkdir -p /var/log/{{cookiecutter.repo_name}}
+
+COPY ./wait-for-it.sh /usr/bin/
+
+# Install bash, libpq, libjpeg-turbo and gettext
+# Bash is required to support `wait-for-it.sh` script, should not add too much to docker image
+RUN apk add --no-cache bash gettext libpq libjpeg-turbo
+
+# Install build dependencies and mark them as virtual packages so they could be removed together
+RUN apk add --no-cache --virtual .build-deps \
+    ca-certificates alpine-sdk postgresql-dev python3-dev linux-headers musl-dev \
+    libffi-dev libxml2-dev libxslt-dev jpeg-dev zlib-dev rust cargo
+
+ENV POETRY_HOME "$HOME/.poetry"
+ENV POETRY_NO_INTERACTION 1
+ENV POETRY_VIRTUALENVS_CREATE 0
+ENV PATH="$POETRY_HOME/bin:$PATH"
+
+RUN wget https://raw.githubusercontent.com/python-poetry/poetry/master/get-poetry.py && \
+    python3 get-poetry.py
+
+COPY pyproject.toml /
+COPY poetry.lock /
+
+# Install all non-dev dependencies from poetry.lock
+RUN poetry install --no-dev
+
+# Find all file objects containing name `test` or compiled python files and remove them
+# Find all runtime dependencies that are marked as needed by scanelf
+# scanelf is utility to show ELF data for binary objects
+# For more info: https://wiki.gentoo.org/wiki/Hardened/PaX_Utilities#The_scanelf_application
+# Finally re-install missing run-dependencies
+RUN find /usr/local \
+        \( -type d -a -name test -o -name tests \) \
+        -o \( -type f -a -name '*.pyc' -o -name '*.pyo' \) \
+        -exec rm -rf '{}' + \
+  && runDeps="$( \
+        scanelf --needed --nobanner --recursive /usr/local \
+                | awk '{ gsub(/,/, "\nso:", $2); print "so:" $2 }' \
+                | sort -u \
+                | xargs -r apk info --installed \
+                | sort -u \
+    )" \
+  && apk add --virtual .rundeps $runDeps
+
+# Remove build dependencies
+RUN apk del .build-deps
+
+# Copy code
+COPY ./{{cookiecutter.repo_name}} /app
+
+# Set the default directory where CMD will execute
+WORKDIR /app
+
+# Compile translations to .mo files
+RUN DJANGO_DOCKER_BUILD=True python manage.py compilemessages
+
+# - {% if cookiecutter.frontend_style == WEBAPP %}
+
+# Based on Node {{ cookiecutter.node_version }} Alpine image
+FROM node:{{ cookiecutter.node_version }}-alpine as node_builder
+
+# Set the default directory where CMD will execute
+WORKDIR /app
+
+# Install node build dependencies
+# Not removing them as not to break fabfile logic for exporting assets
+# These can be removed with: "RUN apk del .build-deps"
+RUN apk add --no-cache --virtual .build-deps build-base python
+
+# Copy some utility files
+COPY ./webapp/.babelrc .
+COPY ./webapp/.eslintrc.js .
+COPY ./webapp/.eslintignore .
+
+# Install node requirements
+COPY ./webapp/package.json .
+COPY ./webapp/yarn.lock .
+
+# Install node dependencies
+RUN yarn install --frozen-lockfile
+
+# Copy app assets
+COPY ./webapp/webapp /app/webapp
+COPY ./webapp/static /app/static
+
+# Build node stuff
+RUN yarn build
+
+# Resume Django build
+FROM base
+
+# Copy static files
+COPY ./webapp/static /app/static
+
+# Copy all from node image
+COPY --from=node_builder /app/webapp/build /app/webapp/build
+COPY --from=node_builder /app/webapp/webpack-stats.json /app/webapp/webpack-stats.json
+# - {% endif %}
+
+CMD bash

@@ -1,0 +1,17 @@
+{
+  "startTime": 1674250024165,
+  "endTime": 1674250024859,
+  "originalSmells": [
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 5,
+        "lineEnd": 6,
+        "columnStart": 22,
+        "columnEnd": 6
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# protoc is dynamically linked to glibc to can't use golang:1.10-alpine\nFROM golang:1.18-buster AS gobuild-base\n\nRUN apt-get update && apt-get --no-install-recommends install -y \\\n\tunzip \\\n\t&& true && rm -rf /var/lib/apt/lists/*;\n\n# https://github.com/golang/protobuf/blob/v1.3.5/.travis.yml#L15\nARG PROTOC_VERSION=3.11.4\nARG TARGETOS TARGETARCH\nRUN set -e; \\\n\tarch=$(echo $TARGETARCH | sed -e s/amd64/x86_64/ -e s/arm64/aarch_64/); \\\n\twget -q https://github.com/protocolbuffers/protobuf/releases/download/v${PROTOC_VERSION}/protoc-${PROTOC_VERSION}-${TARGETOS}-${arch}.zip && unzip protoc-${PROTOC_VERSION}-${TARGETOS}-${arch}.zip -d /usr/local\n\nARG GOGO_VERSION=v1.3.2\nRUN --mount=target=/root/.cache,type=cache GO111MODULE=on go install \\\n\tgithub.com/gogo/protobuf/protoc-gen-gogo@${GOGO_VERSION} \\\n\tgithub.com/gogo/protobuf/protoc-gen-gogofaster@${GOGO_VERSION} \\\n\tgithub.com/gogo/protobuf/protoc-gen-gogoslick@${GOGO_VERSION}\n\nARG PROTOBUF_VERSION=v1.3.5\nRUN --mount=target=/root/.cache,type=cache GO111MODULE=on go install \\\n\tgithub.com/golang/protobuf/protoc-gen-go@${PROTOBUF_VERSION}\n\nWORKDIR /go/src/github.com/moby/buildkit\n\n# Generate into a subdirectory because if it is in the root then the\n# extraction with `docker export` ends up putting `.dockerenv`, `dev`,\n# `sys` and `proc` into the source directory. With this we can use\n# `tar --strip-components=1 generated-files` on the output of `docker\n# export`.\nFROM gobuild-base AS generated\nRUN mkdir /generated-files\nRUN --mount=target=/tmp/src \\\n\tcp -r /tmp/src/. . && \\\n\tgit add -A && \\\n\tgo generate -mod=vendor -v ./... && \\\n\tgit ls-files -m --others -- **/*.pb.go | tar -cf - --files-from - | tar -C /generated-files -xf -\n\nFROM scratch AS update\nCOPY --from=generated /generated-files /generated-files\n\nFROM gobuild-base AS validate\nRUN --mount=target=/tmp/src \\\n\tcp -r /tmp/src/. . && \\\n\tgo generate -mod=vendor -v ./... && git diff && ./hack/validate-generated-files check\n"
+}

@@ -1,0 +1,10 @@
+FROM node:16-buster as builder
+ENV NODE_ENV production
+COPY package.json .
+COPY package-lock.json .
+RUN npm ci --include=dev
+COPY . .
+
+RUN npm run build:production
+FROM nginx:1.21.6-alpine
+COPY --from=builder dist /usr/share/nginx/html

@@ -1,0 +1,44 @@
+{
+  "startTime": 1674251390024,
+  "endTime": 1674251391448,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 33,
+        "lineEnd": 33,
+        "columnStart": 4,
+        "columnEnd": 50
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 44,
+        "lineEnd": 44,
+        "columnStart": 4,
+        "columnEnd": 38
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 47,
+        "lineEnd": 47,
+        "columnStart": 4,
+        "columnEnd": 30
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 34,
+        "lineEnd": 34,
+        "columnStart": 22,
+        "columnEnd": 71
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# TODO:\n# - Once we drop direct MySQL access, consider python:3.10-slim\n# - Once dropping legacy AngularJS, build FE bundles separately\n\n# Things needed to use this in production:\n# - Direct logs to files outside the container\n# - Ensure that Celery works as well\n# - Run WSGI with an ENTRYPOINT\n\nFROM ubuntu:22.04 as build\n\nWORKDIR /app/\n\nENV DEBIAN_FRONTEND=\"noninteractive\"\n\nRUN apt-get update && apt-get install --no-install-recommends -y \\\n    build-essential gcc \\\n    # Only for installing node \\\n    curl \\\n    # Only needed to install legacy node dependencies from git \\\n    git \\\n    # TODO: Remove these once we no longer need to support direct MySQL access \\\n    mysql-client libmysqlclient-dev libssl-dev \\\n    locales \\\n    # Postgres client (for accessing RDS in production) \\\n    postgresql-client postgresql-contrib libpq-dev \\\n    python3.10 python3-dev python3-pip \\\n    && apt-get clean \\\n    && rm -rf /var/lib/apt/lists/*\n\n# Install node directly into the container we'll use for Django.\n# This is only necessary while we're still serving the legacy frontend.\n# Once we're on the new Vue setup, all we need to do is copy in the build bundle & webpack-stats.json\nRUN curl -f -sL https://deb.nodesource.com/setup_16.x | bash -\nRUN apt-get update && apt-get install --no-install-recommends -y nodejs && rm -rf /var/lib/apt/lists/*;\n\nRUN locale-gen en_US.UTF-8\nRUN update-locale en_US.UTF-8\n\n# `click` (used by `black`) will error out without locales explicitly set\nENV LANGUAGE=en_US.UTF-8\nENV LANG=en_US.UTF-8\nENV LC_ALL=en_US.UTF-8\n\nRUN pip3 install --no-cache-dir --upgrade pip==22.0.4\n\n# TODO: Check asdf's .tool-versions\nRUN pip install --no-cache-dir poetry==1.1.12\nCOPY poetry.lock .\n\n# Instruct poetry to create a venv in `.venv`, then auto-add it to path\nRUN poetry config virtualenvs.in-project true\nENV PATH=\"/app/.venv/bin:$PATH\"\n\nCOPY pyproject.toml .\nRUN poetry install --no-root\n\n# Install legacy frontend\nCOPY package.json package-lock.json ./\nRUN npm ci\n\n# Build the new Vue frontend, creating webpack-stats.json which Django will serve\nCOPY frontend ./frontend\nRUN npm --prefix=frontend/ ci\nRUN npm --prefix=frontend/ run build\n\nCOPY manage.py .\nCOPY ws ./ws\n\n# NOTE: For the legacy AngularJS build, setting `WS_DJANGO_TEST` bypasses compressors\n# (yuglify, specifically). Not a problem for tests, but does break production.\n# Hopefully we've dropped the legacy setup & can just use webpack.\nRUN WS_DJANGO_TEST=1 ./manage.py collectstatic\n\n# ------------------------------------------------------------------------\n\nFROM build as installer\n\n# Remove dev dependencies (smaller venv, no dev deps in prod)\nRUN poetry install --no-root --no-dev\n\nFROM ubuntu:22.04\n\nWORKDIR /app/\nENV PATH=\"/app/.venv/bin:$PATH\"\nCOPY ws ./ws\n\n# We now copy the venv which should have *only* production dependencies.\nCOPY --from=installer /app/.venv ./.venv\n# TODO: Copy static files too (but only if still serving legacy FE)\n# ENTRYPOINT = ...\n"
+}

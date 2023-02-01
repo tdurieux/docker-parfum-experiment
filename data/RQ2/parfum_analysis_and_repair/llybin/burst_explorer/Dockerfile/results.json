@@ -1,0 +1,35 @@
+{
+  "startTime": 1674253102007,
+  "endTime": 1674253102945,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 62,
+        "lineEnd": 62,
+        "columnStart": 4,
+        "columnEnd": 41
+      }
+    },
+    {
+      "rule": "aptGetInstallUseY",
+      "position": {
+        "lineStart": 33,
+        "lineEnd": 34,
+        "columnStart": 4,
+        "columnEnd": 6
+      }
+    },
+    {
+      "rule": "aptGetInstallUseY",
+      "position": {
+        "lineStart": 55,
+        "lineEnd": 58,
+        "columnStart": 4,
+        "columnEnd": 6
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM python:3.8.5-slim-buster\n\nLABEL maintainer=\"Lev Lybin <lev.lybin@gmail.com>\"\n\nARG UID=1000\nARG GID=1000\nARG APP_ENV=development\nARG DJANGO_MIGRATE=off\nARG START_SERVER=off\n\nEXPOSE 5000/tcp 9001/tcp\n\nENV APP_ENV=${APP_ENV} \\\n\tDJANGO_MIGRATE=${DJANGO_MIGRATE} \\\n\tSTART_SERVER=${START_SERVER} \\\n\t# https://docs.python.org/3.8/using/cmdline.html\n\tPYTHONFAULTHANDLER=1 \\\n\tPYTHONUNBUFFERED=1 \\\n\tPYTHONHASHSEED=random \\\n\t# https://github.com/pypa/pip/blob/master/src/pip/_internal/cli/cmdoptions.py\n\tPIP_NO_CACHE_DIR=on \\\n\tPIP_DISABLE_PIP_VERSION_CHECK=on \\\n\tPIP_DEFAULT_TIMEOUT=100 \\\n\t# https://github.com/jwilder/dockerize\n\tDOCKERIZE_VERSION=v0.6.1 \\\n\t# https://github.com/python-poetry/poetry\n\tPOETRY_VERSION=1.0.10\n\n# Create user and group for running app\nRUN groupadd -r -g $GID app && useradd --no-log-init -r -u $UID -g app app\n\n# System deps\nRUN apt-get update \\\n\t&& apt-get install -y --assume-yes --no-install-recommends --no-install-suggests \\\n\t\ttini \\\n\t&& rm -rf /var/lib/apt/lists/*\n\n# This is a special case. We need to run this script as an entry point\nCOPY ./docker-entrypoint.sh /docker-entrypoint.sh\nCOPY ./docker-cmd.sh /docker-cmd.sh\nRUN chmod +x \"/docker-entrypoint.sh\" \\\n\t&& chmod +x \"/docker-cmd.sh\"\n\n# Copy to cache them in docker layer\nCOPY ./supervisord.conf /supervisord.conf\nCOPY ./gunicorn.conf.py /gunicorn.conf.py\n\n# Copy only requirements, to cache them in docker layer\nWORKDIR /pysetup\nCOPY ./poetry.lock ./pyproject.toml /pysetup/\n\n# Building system and app dependencies\nRUN set -ex \\\n\t&& savedAptMark=\"$(apt-mark showmanual)\" \\\n\t&& apt-get update \\\n\t&& apt-get install -y --assume-yes --no-install-recommends --no-install-suggests \\\n\t\tdefault-libmysqlclient-dev \\\n\t\tgcc \\\n\t\twget \\\n\t&& wget -nv \"https://github.com/jwilder/dockerize/releases/download/${DOCKERIZE_VERSION}/dockerize-linux-amd64-${DOCKERIZE_VERSION}.tar.gz\" \\\n\t&& tar -C /usr/local/bin -xzvf \"dockerize-linux-amd64-${DOCKERIZE_VERSION}.tar.gz\" \\\n\t&& rm \"dockerize-linux-amd64-${DOCKERIZE_VERSION}.tar.gz\" \\\n\t&& pip install --no-cache-dir \"poetry==$POETRY_VERSION\" \\\n\t&& poetry config virtualenvs.create false \\\n\t&& poetry install --no-interaction --no-ansi \\\n\t&& apt-mark auto '.*' > /dev/null \\\n\t&& apt-mark manual $savedAptMark \\\n\t&& find /usr/local -type f -executable -not \\( -name '*tkinter*' \\) -exec ldd '{}' ';' \\\n\t\t| awk '/=>/ { print $(NF-1) }' \\\n\t\t| sort -u \\\n\t\t| xargs -r dpkg-query --search \\\n\t\t| cut -d: -f1 \\\n\t\t| sort -u \\\n\t\t| xargs -r apt-mark manual \\\n\t&& apt-get purge --assume-yes --auto-remove \\\n\t\t--option APT::AutoRemove::RecommendsImportant=false \\\n\t\t--option APT::AutoRemove::SuggestsImportant=false \\\n\t&& rm -rf /var/lib/apt/lists/*\n\nUSER app\nCOPY --chown=app:app . /app\nWORKDIR /app\n\nRUN python manage.py collectstatic --no-input\n\nVOLUME [\"/app/static\", \"/app/db\"]\n\nENTRYPOINT [\"/usr/bin/tini\", \"--\", \"/docker-entrypoint.sh\"]\nCMD [\"/docker-cmd.sh\"]\n"
+}

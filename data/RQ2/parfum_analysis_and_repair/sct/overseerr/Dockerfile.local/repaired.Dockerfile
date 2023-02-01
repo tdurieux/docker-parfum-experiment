@@ -1,0 +1,8 @@
+FROM node:16.14-alpine
+
+COPY . /app
+WORKDIR /app
+
+RUN yarn
+
+CMD yarn dev

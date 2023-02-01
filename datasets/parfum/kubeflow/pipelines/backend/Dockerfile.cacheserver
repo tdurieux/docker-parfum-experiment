@@ -1,0 +1,42 @@
+# Copyright 2021 The Kubeflow Authors
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Dockerfile for building the source code of cache_server
+FROM golang:1.17.6-alpine3.15 as builder
+
+RUN apk update && apk upgrade && \
+    apk add --no-cache bash git openssh gcc musl-dev
+
+WORKDIR /go/src/github.com/kubeflow/pipelines
+COPY . .
+
+RUN GO111MODULE=on go build -o /bin/cache_server backend/src/cache/*.go
+
+# Check licenses and comply with license terms.
+RUN ./hack/install-go-licenses.sh
+# First, make sure there's no forbidden license.
+RUN go-licenses check ./backend/src/cache
+RUN go-licenses csv ./backend/src/cache > /tmp/licenses.csv && \
+    diff /tmp/licenses.csv backend/third_party_licenses/cache_server.csv && \
+    go-licenses save ./backend/src/cache --save_path /tmp/NOTICES
+
+FROM alpine:3.8
+WORKDIR /bin
+
+COPY --from=builder /bin/cache_server /bin/cache_server
+# Copy licenses and notices.
+COPY --from=builder /tmp/licenses.csv /third_party/licenses.csv
+COPY --from=builder /tmp/NOTICES /third_party/NOTICES
+
+ENTRYPOINT [ "/bin/cache_server" ]

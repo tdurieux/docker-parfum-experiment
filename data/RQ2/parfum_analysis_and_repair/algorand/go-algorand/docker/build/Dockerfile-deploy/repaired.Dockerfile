@@ -1,0 +1,25 @@
+FROM --platform=linux/amd64 ubuntu:18.04
+ARG GOLANG_VERSION
+
+RUN apt-get update && apt-get install --no-install-recommends -y git libboost-all-dev wget sqlite3 autoconf jq bsdmainutils shellcheck && rm -rf /var/lib/apt/lists/*;
+WORKDIR /root
+RUN wget --quiet https://dl.google.com/go/go${GOLANG_VERSION}.linux-amd64.tar.gz && tar -xvf go${GOLANG_VERSION}.linux-amd64.tar.gz && mv go /usr/local && rm go${GOLANG_VERSION}.linux-amd64.tar.gz
+ENV GOROOT=/usr/local/go \
+    GOPATH=$HOME/go \
+    GOPROXY=https://proxy.golang.org,https://pkg.go.dev,https://goproxy.io,direct
+RUN mkdir -p $GOPATH/src/github.com/algorand
+WORKDIR $GOPATH/src/github.com/algorand
+COPY . ./go-algorand/
+ENV PATH=$GOPATH/bin:$GOROOT/bin:$PATH \
+    BRANCH=${BRANCH} \
+    CHANNEL=${CHANNEL} \
+    DEFAULTNETWORK=${DEFAULTNETWORK} \
+    FULLVERSION=${FULLVERSION} \
+    PKG_ROOT=${PKG_ROOT} \
+    AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID} \
+    AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY} \
+    S3_RELEASE_BUCKET=${S3_RELEASE_BUCKET} \
+    NETWORK=${NETWORK}
+WORKDIR $GOPATH/src/github.com/algorand/go-algorand
+RUN scripts/configure_dev-deps.sh && make clean && find tmp && TMPDIR/deploy_linux_version_exec.sh
+ENTRYPOINT ["/bin/bash"]

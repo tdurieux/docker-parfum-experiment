@@ -1,0 +1,26 @@
+{
+  "startTime": 1674255872042,
+  "endTime": 1674255872839,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 53,
+        "lineEnd": 53,
+        "columnStart": 22,
+        "columnEnd": 45
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 53,
+        "lineEnd": 53,
+        "columnStart": 22,
+        "columnEnd": 45
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Artifact ID is defined globally so that it can be used in both stages\nARG artifact_id=\"trained_models\"\n\n# First stage: download maven artifact\n#==================================================================================================\n# N.B. This version of the official maven docker image is used because newer versions (e.g. maven:3.8.1-adoptopenjdk-11)\n# seem to be incompatible with CMCL's nexus-based maven repositories\n# At least one earlier version (maven:3.5.0-jdk-9) fails with certificate errors.\nFROM maven:3.6-openjdk-11-slim as dependency_fetcher\n\n# Specify repository and artifact details\nARG repo_url=\"https://maven.pkg.github.com/cambridge-cares/TheWorldAvatar/\"\nARG group_id=\"uk.ac.cam.cares.jps.agent.oscml\"\nARG artifact_fmt=\"zip\"\nARG artifact_version=\"1.0.0\"\n# artifact_id has to be declared here so that the globally-defined value is available in this stage\nARG artifact_id\n\n# Copy all files into root's home, including the pom file and ./m2 directory\nADD retrieved_models /root\n\n# Populate settings templates with credentials, repo name\nWORKDIR /root/.m2\n# (Note that | rather than / is used as the sed delimiter, since encrypted passwords can contain the latter, but not the former)\nRUN sed -i \"s|MASTER_PASSWORD|$(mvn --encrypt-master-password master_password)|\" settings-security.xml\nRUN sed -i \"s|REPO_URL|${repo_url}|g;s|REPO_USERNAME|$(cat ../credentials/repo_username.txt)|;s|REPO_PASSWORD|$(cat ../credentials/repo_password.txt|xargs mvn --encrypt-password)|\" settings.xml\n\n# Populate repository, artifact details in the pom\nWORKDIR /root/\nRUN sed -i \"s|REPO_URL|${repo_url}|g;s|GROUP_ID|${group_id}|;s|ARTIFACT_ID|${artifact_id}|g;s|ARTIFACT_VERSION|${artifact_version}|;s|ARTIFACT_FMT|${artifact_fmt}|\" pom.xml\n\n# Download dependencies as described in the pom\nRUN --mount=type=cache,target=/root/.m2/repository mvn -f pom.xml org.apache.maven.plugins:maven-dependency-plugin:unpack-dependencies\n#==================================================================================================\n\n# Second stage: install the oscml app\n#==================================================================================================\nFROM continuumio/miniconda3 as oscml_app\n\n# Set the artifact_id again otherwise it will be blank in this stage\nARG artifact_id\n# Expose the port on which our server will run\nEXPOSE 5000\n# Keeps Python from generating .pyc files in the container\n#ENV PYTHONDONTWRITEBYTECODE=1\n# Turns off buffering for easier container logging\nENV PYTHONUNBUFFERED=1\nSHELL [\"/bin/bash\", \"-c\"]\n\n#------------------------------------\n# cron setup\n#------------------------------------\n# Get cron\nRUN apt-get update && apt-get -y --no-install-recommends install cron && rm -rf /var/lib/apt/lists/*;\n# Setup cron job\nADD ./cronconfig /etc/cron.d/cronconfig\n# Give execution rights on the cron job\nRUN chmod 0644 /etc/cron.d/cronconfig\n# Apply cron job\nRUN crontab /etc/cron.d/cronconfig\n# Create the log file to be able to run tail\nRUN touch /var/log/cron.log\n\n# Set the default working directory, then copy the Python source code into it\nWORKDIR /app\nCOPY ./oscml /app/oscml/\nCOPY ./LICENSE /app/.\nCOPY ./README.md /app/.\nCOPY ./setup.py /app/.\nCOPY ./cronconfig /app/.\nCOPY ./environment_cpu.yml /app/.\nCOPY ./environment_gpu.yml /app/.\nCOPY ./delete_logs.sh /app/.\nCOPY ./app_entry_point.sh /app/.\nCOPY ./install_script.sh /app/.\nCOPY --from=dependency_fetcher /root/${artifact_id} ./retrieved_models/${artifact_id}\n\n# Give execution rights to the script\nRUN chmod 0744 /app/delete_logs.sh\n\n#------------------------------------\n# conda setup\n#------------------------------------\nARG conda_env=oscml_venv\n# Install the required Python libraries\nRUN ./install_script.sh -v -n $conda_env -i -e\n# Make RUN commands use the new environment:\nRUN echo \"source activate $conda_env\" > ~/.bashrc\nENV PATH /opt/conda/envs/$conda_env/bin:$PATH\nRUN conda install openjdk\n\n#------------------------------------\n# entry point setup\n#------------------------------------\n# Switch to a non-root user before running the server, for security reasons\n# (See https://code.visualstudio.com/docs/containers/python-user-rights)\n#RUN useradd appuser && chown -R appuser /app\n#USER appuser\n# Set the entrypoint\nRUN chmod 0744 /app/app_entry_point.sh\nENTRYPOINT /app/app_entry_point.sh\n#=================================================================================================="
+}

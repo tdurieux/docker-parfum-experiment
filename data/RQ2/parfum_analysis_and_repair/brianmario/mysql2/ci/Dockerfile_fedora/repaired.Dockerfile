@@ -1,0 +1,26 @@
+ARG IMAGE=fedora:latest
+FROM ${IMAGE}
+
+WORKDIR /build
+COPY . .
+
+RUN cat /etc/fedora-release
+RUN dnf -yq update
+# The options are to install faster.
+RUN dnf -yq install \
+  --setopt=deltarpm=0 \
+  --setopt=install_weak_deps=false \
+  --setopt=tsflags=nodocs \
+  gcc \
+  gcc-c++ \
+  git \
+  make \
+  mariadb-connector-c-devel \
+  mariadb-server \
+  redhat-rpm-config \
+  ruby-devel \
+  rubygem-bigdecimal \
+  rubygem-bundler \
+  rubygem-json
+
+CMD bash ci/container.sh

@@ -1,0 +1,17 @@
+{
+  "startTime": 1674254737790,
+  "endTime": 1674254739136,
+  "originalSmells": [
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 53,
+        "lineEnd": 53,
+        "columnStart": 8,
+        "columnEnd": 19
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM alpine:3.14 AS mirror\n\n# update base image\nRUN apk update && apk upgrade -a\n\n# Copy Dockerfile so we can include it in the hash\nCOPY Dockerfile /Dockerfile\nCOPY packages* /tmp/\n\n# mirror packages - both generic and repository specific ones\nRUN cat /tmp/packages.$(uname -m) >> /tmp/packages && \\\n   mkdir -p /mirror/$(apk --print-arch) && \\\n   apk fetch --recursive -o /mirror/$(apk --print-arch) $(apk info; cat /tmp/packages)\n\n# install abuild and sudo for signing\nRUN apk add --no-cache abuild sudo\n\n# install a new key into /etc/apk/keys\nRUN abuild-keygen -a -i -n\n\n# index the new repo\nRUN apk index --rewrite-arch $(apk --print-arch) -o /mirror/$(apk --print-arch)/APKINDEX.unsigned.tar.gz /mirror/$(apk --print-arch)/*.apk\n\n# sign the index\nRUN cp /mirror/$(apk --print-arch)/APKINDEX.unsigned.tar.gz /mirror/$(apk --print-arch)/APKINDEX.tar.gz\nRUN abuild-sign /mirror/$(apk --print-arch)/APKINDEX.tar.gz\n\n# set this as our repo but keep a copy of the upstream for downstream use\nRUN mv /etc/apk/repositories /etc/apk/repositories.upstream && echo \"/mirror\" > /etc/apk/repositories && apk update\n\n# add Go validation tools\nCOPY go-compile.sh /go/bin/\nRUN apk add --no-cache git go musl-dev\nENV GOPATH=/go PATH=$PATH:/go/bin\nRUN go get -u golang.org/x/lint/golint\nRUN go get -u github.com/gordonklaus/ineffassign\nRUN go get -u github.com/LK4D4/vndr\n\n# Checkout and compile iucode-tool for Intel CPU microcode\n# On non-x86_64 create a dummy file to copy below.\nENV IUCODE_REPO=https://gitlab.com/iucode-tool/iucode-tool\nENV IUCODE_COMMIT=v2.2\nWORKDIR /\nADD iucode-tool.patch /\nRUN set -e && \\\n    mkdir /iucode_tool && \\\n    if [ $(uname -m) = \"x86_64\" ]; then \\\n        apk add --no-cache automake autoconf argp-standalone git gcc make musl-dev patch && \\\n        git clone ${IUCODE_REPO} && \\\n        cd /iucode-tool && \\\n        git checkout ${IUCODE_COMMIT} && \\\n        patch -p 1 < /iucode-tool.patch && \\\n        ./autogen.sh && \\\n        ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" && \\\n        make && \\\n        cp iucode_tool /iucode_tool; \\\n    fi\n\nFROM alpine:3.14\n\nARG TARGETARCH\n\nCOPY --from=mirror /etc/apk/repositories /etc/apk/repositories\nCOPY --from=mirror /etc/apk/repositories.upstream /etc/apk/repositories.upstream\nCOPY --from=mirror /etc/apk/keys /etc/apk/keys/\nCOPY --from=mirror /mirror /mirror/\nCOPY --from=mirror /go/bin /go/bin/\nCOPY --from=mirror /Dockerfile /Dockerfile\nCOPY --from=mirror /iucode_tool /usr/bin/\n\nRUN apk update && apk upgrade -a\n\nRUN echo Dockerfile /lib/apk/db/installed $(find /mirror -name '*.apk' -type f) $(find /go/bin -type f) | xargs cat | sha1sum | sed 's/ .*//' | sed 's/$/-'\"${TARGETARCH}\"'/' > /etc/alpine-hash-arch\n\nENV GOPATH=/go PATH=$PATH:/go/bin\n"
+}

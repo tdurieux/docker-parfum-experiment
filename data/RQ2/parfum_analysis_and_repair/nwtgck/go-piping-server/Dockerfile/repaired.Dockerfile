@@ -1,0 +1,1 @@
+# NOTE: base platform is always linux/amd64 because go can cross-build

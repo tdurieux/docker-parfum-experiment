@@ -1,0 +1,63 @@
+{
+  "startTime": 1674254260771,
+  "endTime": 1674254261577,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 38,
+        "lineEnd": 38,
+        "columnStart": 16,
+        "columnEnd": 35
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 43,
+        "lineEnd": 43,
+        "columnStart": 4,
+        "columnEnd": 39
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 43,
+        "lineEnd": 43,
+        "columnStart": 4,
+        "columnEnd": 39
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 38,
+        "lineEnd": 38,
+        "columnStart": 16,
+        "columnEnd": 35
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 43,
+        "lineEnd": 43,
+        "columnStart": 4,
+        "columnEnd": 39
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 41,
+        "lineEnd": 41,
+        "columnStart": 4,
+        "columnEnd": 62
+      }
+    }
+  ],
+  "repairedDockerfile": "# Proxy build and runtime\n#\n# This is intended **DEVELOPMENT ONLY**, i.e. so that proxy developers can\n# easily test the proxy in the context of the larger `linkerd2` project.\n#\n# This Dockerfile requires expirmental features to be enabled in both the\n# Docker client and daemon. You MUST use buildkit to build this image. The\n# simplest way to do this is to set the `DOCKER_BUILDKIT` environment variable:\n#\n#     :; DOCKER_BUILDKIT=1 docker build .\n#\n# Alternatively, you can use `buildx`, which supports more complicated build\n# configurations:\n#\n#     :; docker buildx build . --load\n\nARG RUST_VERSION=1.62.0\nARG RUST_IMAGE=rust:${RUST_VERSION}-bullseye\n\n# Use an arbitrary ~recent edge release image to get the proxy\n# identity-initializing and linkerd-await wrappers.\nARG RUNTIME_IMAGE=ghcr.io/linkerd/proxy:edge-22.2.1\n\n# Build the proxy, leveraging (new, experimental) cache mounting.\n#\n# See: https://github.com/moby/buildkit/blob/master/frontend/dockerfile/docs/experimental.md#run---mounttypecache\nFROM $RUST_IMAGE as build\n\n# When set, causes the proxy to be compiled in development mode.\nARG PROXY_UNOPTIMIZED\n\n# Controls what features are enabled in the proxy.\nARG PROXY_FEATURES=\"multicore,meshtls-rustls\"\n\nRUN --mount=type=cache,target=/var/lib/apt/lists \\\n    --mount=type=cache,target=/var/tmp \\\n  apt update && apt install --no-install-recommends -y time && rm -rf /var/lib/apt/lists/*;\n\nRUN --mount=type=cache,target=/var/lib/apt/lists \\\n    --mount=type=cache,target=/var/tmp \\\n  if $(echo \"$PROXY_FEATURES\" | grep \"meshtls-boring\" >/dev/null); then \\\n    apt install --no-install-recommends -y cmake clang golang; rm -rf /var/lib/apt/lists/*; \\\n  fi\n\nWORKDIR /usr/src/linkerd2-proxy\nCOPY . .\nRUN --mount=type=cache,target=target \\\n    --mount=type=cache,from=rust:1.62.0-bullseye,source=/usr/local/cargo,target=/usr/local/cargo \\\n  mkdir -p /out && \\\n  if [ -n \"$PROXY_UNOPTIMIZED\" ]; then \\\n    (cd linkerd2-proxy && /usr/bin/time -v cargo build --locked --no-default-features --features=\"$PROXY_FEATURES\") && \\\n    mv target/debug/linkerd2-proxy /out/linkerd2-proxy ; \\\n  else \\\n    (cd linkerd2-proxy && /usr/bin/time -v cargo build --locked --no-default-features --features=\"$PROXY_FEATURES\" --release) && \\\n    mv target/release/linkerd2-proxy /out/linkerd2-proxy ; \\\n  fi\n\n## Install the proxy binary into the base runtime image.\nFROM $RUNTIME_IMAGE as runtime\n\nWORKDIR /linkerd\nCOPY --from=build /out/linkerd2-proxy /usr/lib/linkerd/linkerd2-proxy\nENV LINKERD2_PROXY_LOG=warn,linkerd=info\n# Inherits the ENTRYPOINT from the runtime image.\n"
+}

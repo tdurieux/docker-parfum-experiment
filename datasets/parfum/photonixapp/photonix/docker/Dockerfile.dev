@@ -1,0 +1,91 @@
+FROM python:3.8.12-slim-bullseye
+
+# Install system dependencies - note that some of these are only used on non-amd64 where Python packages have to be compiled from source
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        build-essential \
+        cron \
+        curl \
+        dcraw \
+        file \
+        git \
+        gnupg \
+        libatlas-base-dev \
+        libatlas3-base \
+        libblas-dev \
+        libblas3 \
+        libfreetype6 \
+        libfreetype6-dev \
+        libgl1 \
+        libglib2.0-dev \
+        libhdf5-dev \
+        libheif-examples \
+        libimage-exiftool-perl \
+        libjpeg-dev \
+        liblapack-dev \
+        liblapack3 \
+        libpq-dev \
+        libtiff5-dev \
+        netcat \
+        nginx-light \
+        supervisor \
+    && \
+        apt-get clean && \
+            rm -rf /var/lib/apt/lists/* \
+                   /tmp/* \
+                   /var/tmp/*
+
+# Install Node & Yarn
+RUN curl -sL https://deb.nodesource.com/setup_14.x | bash - && \
+    apt-get update && \
+    apt-get install -y nodejs && \
+         apt-get clean && \
+            rm -rf /var/lib/apt/lists/* \
+                   /tmp/* \
+                   /var/tmp/*
+RUN npm install --global --unsafe-perm yarn
+
+# Install Python dependencies
+WORKDIR /srv
+COPY docker/pip.conf /etc/pip.conf
+COPY docker/.pypirc /root/.pypirc
+RUN pip install --upgrade pip
+RUN pip install --no-cache-dir pypi-uploader==1.1.0
+
+COPY requirements.txt /srv/requirements.txt
+COPY docker/install_and_upload_python_packages.py /root/install_and_upload_python_packages.py
+ENV PYTHONUNBUFFERED=1
+ARG PYPI_UPLOAD_USERNAME
+ARG PYPI_UPLOAD_PASSWORD
+RUN if [ "${PYPI_UPLOAD_USERNAME}" = "" ] ; \
+     then python /root/install_and_upload_python_packages.py ; \
+     else python /root/install_and_upload_python_packages.py -u ${PYPI_UPLOAD_USERNAME} -p ${PYPI_UPLOAD_PASSWORD} ; \
+    fi
+
+# Install NPM dependencies
+COPY ui/package.json /srv/ui/package.json
+COPY ui/yarn.lock /srv/ui/yarn.lock
+ENV NODE_ENV=development
+RUN cd /srv/ui && yarn install
+
+# Copy over the code
+COPY photonix /srv/photonix
+COPY test.py /srv/test.py
+COPY manage.py /srv/manage.py
+COPY tests /srv/tests
+COPY ui/public /srv/ui/public
+COPY ui/src /srv/ui/src
+
+# Copy system config and init scripts
+COPY system /srv/system
+COPY system/supervisord.conf /etc/supervisord.conf
+
+# Copy crontab
+COPY system/cron.d /etc/cron.d/
+RUN chmod 0644 /etc/cron.d/*
+
+ENV PYTHONPATH /srv
+
+CMD ./system/run.sh
+
+EXPOSE 80

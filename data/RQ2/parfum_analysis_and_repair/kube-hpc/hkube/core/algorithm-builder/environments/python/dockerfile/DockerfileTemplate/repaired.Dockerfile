@@ -1,0 +1,13 @@
+FROM ${baseImage} 
+LABEL maintainer="hkube.dev@gmail.com"
+RUN mkdir -p /hkube-logs
+COPY wrapper/ /hkube/algorithm-runner/
+COPY algorithm_unique_folder/ /hkube/algorithm-runner/algorithm_unique_folder/
+COPY ./dockerfile/* /hkube/algorithm-runner/dockerfile/
+COPY ./nodemon ./docker-entrypoint.sh /hkube/
+WORKDIR /hkube/algorithm-runner
+RUN export dependency_install_cmd=${dependency_install_cmd} && ./dockerfile/requirements.sh ${packagesRegistry} ${packagesToken} 
+
+ENV PYTHONPATH=$PYTHONPATH:/hkube/algorithm-runner/algorithm_unique_folder
+ENTRYPOINT ["/hkube/docker-entrypoint.sh"]
+CMD ["/bin/sh", "-c", "mkfifo /tmp/pipe; (tee -a /hkube-logs/stdout.log < /tmp/pipe & ) ; exec python -u app.py > /tmp/pipe 2>&1"]

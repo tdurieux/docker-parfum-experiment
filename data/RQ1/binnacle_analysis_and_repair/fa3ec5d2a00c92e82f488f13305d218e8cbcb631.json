@@ -1,0 +1,53 @@
+{
+  "startTime": 1674248094591,
+  "endTime": 1674248094985,
+  "originalSmells": [
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 116,
+        "lineEnd": 116,
+        "columnStart": 1,
+        "columnEnd": 32
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 126,
+        "lineEnd": 126,
+        "columnStart": 16,
+        "columnEnd": 77
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 7,
+        "lineEnd": 56,
+        "columnStart": 1,
+        "columnEnd": 11
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 58,
+        "lineEnd": 58,
+        "columnStart": 4,
+        "columnEnd": 31
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 59,
+        "lineEnd": 67,
+        "columnStart": 1,
+        "columnEnd": 21
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# container for rsyslog development\n# creates the build environment\n# Note: this image currently uses in-container git checkouts to\n# build the \"rsyslog libraries\" - we do not have packages for them\nFROM\tcentos:6\n# search for packages that contain <file>: yum whatprovides <file>\nRUN yum -y update && \\\n\tyum -y install \\\n\tautoconf \\\n\tautoconf-archive \\\n\tautomake \\\n\tbison \\\n\tclang \\\n\tclang-analyzer \\\n\tlibstdc++ \\\n\tcompat-libstdc++-33 \\\n\tcurl \\\n\tcyrus-sasl-devel \\\n\tcyrus-sasl-lib \\\n\tflex \\\n\tgcc \\\n\tgcc-c++ \\\n\tgdb \\\n\tgit \\\n\tgnutls-devel \\\n\thiredis-devel \\\n\tjava-1.8.0-openjdk \\\n\tjava-1.8.0-openjdk-devel \\\n\tlibcurl-devel \\\n\tlibdbi-dbd-mysql \\\n\tlibdbi-devel \\\n\tlibfaketime \\\n\tlibgcrypt-devel \\\n\tlibmaxminddb-devel \\\n\tlibstdc++ \\\n\tlibtool \\\n\tlibuuid-devel \\\n\tlsof \\\n\tmysql-devel \\\n\tnc \\\n\tnet-snmp-devel \\\n\tnet-tools \\\n\topenssl-devel \\\n\tpostgresql-devel \\\n\tpython-devel \\\n\tpython-docutils \\\n\tpython-sphinx \\\n\tqpid-proton-c-devel \\\n\tredhat-rpm-config \\\n\tsnappy-devel \\\n\tsudo \\\n\tsystemd-devel \\\n\ttcl-devel \\\n\tvalgrind \\\n\twget \\\n\tyum -y install \\\n\tzlib-devel && rm -rf /var/cache/yum\n\t# end of this RUN\nRUN yum -y install epel-release && \\\n\tyum -y install \\\n\tczmq-devel \\\n\thiredis \\\n\thiredis-devel \\\n\tlibmaxminddb \\\n\tlibmaxminddb-devel \\\n\tlibnet libnet-devel \\\n\tmongo-c-driver \\\n\tmongo-c-driver-devel && rm -rf /var/cache/yum\n\t# end of this RUN\n# unfortunately, tcl-devel does not properly setup required bits in the environment\n# so we now try to do that. In case this does no longer work with a version, search\n# for a file tclConfig.sh, which should be present in the library directory (usually\n# beneath /usr). It contains the environment variables. Inside container do:\n# $cat $(find /usr -name tclConfig.sh|head -n1)\nENV\tTCL_LIB_SPEC=\"-L/usr/lib64 -ltcl8.5\" \\\n\tTCL_INCLUDE_SPEC=-I/usr/include\n\n# create dependency cache\nRUN\tmkdir /local_dep_cache && \\\n\twget -nv https://artifacts.elastic.co/downloads/elasticsearch/elasticsearch-5.6.9.tar.gz -O /local_dep_cache/elasticsearch-5.6.9.tar.gz  && \\\n\twget -nv https://artifacts.elastic.co/downloads/elasticsearch/elasticsearch-6.0.0.tar.gz -O /local_dep_cache/elasticsearch-6.0.0.tar.gz && \\\n\twget -nv https://artifacts.elastic.co/downloads/elasticsearch/elasticsearch-6.3.1.tar.gz -O /local_dep_cache/elasticsearch-6.3.1.tar.gz\n# tell tests which are the newester versions, so they can be checked without the need\n# to adjust test sources.\nENV\tELASTICSEARCH_NEWEST=\"elasticsearch-6.3.1.tar.gz\"\n\nWORKDIR\t/home/devel\nVOLUME\t/rsyslog\nRUN\tgroupadd rsyslog \\\n\t&& adduser -g rsyslog  -s /bin/bash rsyslog \\\n\t&& echo \"rsyslog ALL=(ALL) NOPASSWD:ALL\" >> /etc/sudoers\nADD\tcommon/setup-projects.sh setup-projects.sh\nENV\tPKG_CONFIG_PATH=/usr/local/lib/pkgconfig \\\n\tLD_LIBRARY_PATH=/usr/local/lib \\\n\tLIBDIR_PATH=/usr/lib64\n\n# bump dependency version below to trigger a dependency rebuild\n# but not a full one (via --no-cache)\nENV\tDEP_VERSION=1\n# Helper projects and dependency build starts here\nRUN\tmkdir helper-projects\n# code style checker - not yet packaged\nRUN\tcd helper-projects && \\\n\tgit clone https://github.com/rsyslog/codestyle && \\\n\tcd codestyle && \\\n\tgcc --std=c99 stylecheck.c -o stylecheck && \\\n\tmv stylecheck /usr/bin/rsyslog_stylecheck && \\\n\tcd .. && \\\n\trm -r codestyle && \\\n\tcd ..\n\n# we need Guardtime libksi here, otherwise we cannot check the KSI component\t\nRUN cd helper-projects && \\\n\tgit clone https://github.com/guardtime/libksi.git && \\\n\tcd libksi && \\\n\tautoreconf -fvi && \\\n\t./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" --libdir=/usr/lib64 && \\\n\tmake -j2 && \\\n\tmake install && \\\n\tcd .. && \\\n\trm -r libksi && \\\n\tcd ..\n# we need the latest librdkafka as there as always required updates\nRUN cd helper-projects && \\\n\tgit clone https://github.com/edenhill/librdkafka && \\\n\tcd librdkafka && \\\n\t( unset CFLAGS; ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" --prefix=/usr --libdir=/usr/lib64 --CFLAGS=\"-g\"; make -j) && \\\n\tmake install && \\\n\tcd .. && \\\n# Note: we do NOT delete the source as we may need it to\n# uninstall (in case the user wants to go back to system-default)\n\tcd ..\n\n# next ENV is specifically for running scan-build - so we do not need to\n# change scripts if at a later time we can move on to a newer version\n#ENV SCAN_BUILD=scan-build \\\n#    SCAN_BUILD_CC=clang-5.0\n\nENV RSYSLOG_CONFIGURE_OPTIONS \\\n\t--enable-elasticsearch \\\n\t--enable-elasticsearch-tests \\\n\t--enable-gnutls \\\n\t--enable-gssapi-krb5 \\\n\t--enable-imdiag \\\n\t--enable-imfile \\\n\t--enable-imkafka \\\n\t--enable-impstats \\\n\t--enable-imptcp \\\n\t--enable-kafka-tests \\\n\t--enable-ksi-ls12 \\\n\t--enable-libdbi \\\n\t--enable-libfaketime \\\n\t--enable-libgcrypt \\\n\t--enable-mail \\\n\t--enable-mmanon \\\n\t--enable-mmaudit \\\n\t--enable-mmcount \\\n\t--enable-mmdblookup \\\n\t--enable-mmfields \\\n\t--enable-mmjsonparse \\\n\t--enable-mmkubernetes \\\n\t--enable-mmnormalize \\\n\t--enable-mmpstrucdata \\\n\t--enable-mmrm1stspace \\\n\t--enable-mmsequence \\\n\t--enable-mmsnmptrapd \\\n\t--enable-mmutf8fix \\\n\t--enable-mysql \\\n\t--enable-omudpspoof \\\n\t--enable-omhttpfs \\\n\t--enable-omkafka \\\n\t--enable-omprog \\\n\t--enable-omrelp-default-port=13515 \\\n\t--enable-omruleset \\\n\t--enable-omstdout \\\n\t--enable-omtcl=no \\\n\t--enable-omuxsock \\\n\t--enable-openssl \\\n\t--enable-pgsql \\\n\t--enable-pmaixforwardedfrom \\\n\t--enable-pmciscoios \\\n\t--enable-pmcisconames \\\n\t--enable-pmlastmsg \\\n\t--enable-pmnormalize \\\n\t--enable-pmnull \\\n\t--enable-pmsnare \\\n\t--enable-relp \\\n\t--enable-snmp \\\n\t--enable-usertools \\\n\t--enable-valgrind \\\n\t\\\n\t--enable-testbench\n\n# build errors at the moment: --enable-kmsg\n#\t--enable-imjournal  not available on this platform\n#\t--enable-omjournal  not available on this platform\n#\t--enable-ommongodb  not available on this platform\n#\t--enable-omczmq\n#\t--enable-imczmq\n#\t--enable-omamqp1  removed as I *think* it is not supported here\n#\t--enable-omhiredis\n#\t--enable-mmgrok - no package\n\n# Install any needed packages\nRUN ./setup-projects.sh\nWORKDIR /rsyslog\nRUN\tchown rsyslog:rsyslog /rsyslog\nUSER rsyslog\n"
+}

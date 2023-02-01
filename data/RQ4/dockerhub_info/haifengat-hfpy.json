@@ -1,0 +1,32 @@
+{
+  "user": "haifengat",
+  "name": "hfpy",
+  "namespace": "haifengat",
+  "repository_type": "image",
+  "status": 1,
+  "status_description": "active",
+  "description": "a strategy platform for chinese future base of  CTP api",
+  "is_private": false,
+  "is_automated": false,
+  "can_edit": false,
+  "star_count": 0,
+  "pull_count": 421,
+  "last_updated": "2021-05-20T13:29:39.303637Z",
+  "date_registered": "2020-04-17T13:58:37.565915Z",
+  "collaborator_count": 0,
+  "affiliation": null,
+  "hub_user": "haifengat",
+  "has_starred": false,
+  "full_description": "#\n\n![海风](http://git.oschina.net/uploads/2/330302_haifengat.png?1484575602)\n\n## 海风py\n\n一款开源的策略开发平台.为用户提供方便易用的策略开发工具.\n\n## 有问题反馈\n\n在使用中有任何问题，欢迎反馈给我，可以用以下联系方式跟我交流\n\n- 邮件(hubert28@qq.com)\n- QQ: 24918700\n- Q群:65164336\n\n## 海风AT的功能\n\n- 策略编写\n  - 提供常用指标\n  - 采用HLOC调用K线数据\n- 历史数据\n  - 提供每日数据\n  - 提供实时数据分钟级服务\n\n## 运行环境\n\n### talab 指标库\n  [https://www.ta-lib.org/function.html](https://www.ta-lib.org/function.html)\n\n### 配置docker-compose.yml\n#### 环境变量\n* strategy_names\n  * 策略名列表，用\",\"分隔\n  * 对应的strategies目录下同名策略文件\n* single_order_one_bar\n    * 是否K线只发一个委托,默认 True\n* pg_min\n    * postgresql://postgres:123456@hf_pg:5432/postgres?sslmode=disable\n    * 分钟数据库\n* pg_order\n    * postgresql://postgres:123456@pg_order:5432/postgres?sslmode=disable\n    * 策略信号数据库\n* redis_addr\n    * ip:port\n    * 实时分钟数据库 [md.{instrument}] 读取\n    * 实时order [order.{stra_name}.{stra_id}] 写入\n\n### 示例 docker-compose.yml\n```yaml\nversion: \"3.7\"\n\nservices:\n    hf_py:\n        image: haifengat/hfpy\n        container_name: hf_py\n        restart: always\n        environment:\n            - TZ=Asia/Shanghai\n            - strategy_names=\"SMACross\"\n            # 当日分钟与实时分钟\n            - redis_addr=\"172.19.129.98:16379\"\n            # 分钟数据,没配置zmq时使用\n            - pg_min=postgresql://postgres:12345@hf_py_pg:5432/postgres\n            # 策略信号入库使用\n            - pg_order=postgresql://postgres:12345@hf_py_pg:5432/postgres\n        volumes:\n            # 个人策略文件夹\n            - ./strategies:/hfpy/strategies\n\n# docker pull haifengat/hfpy && docker tag haifengat/hfpy haifengat/hfpy:`date '+%m%d'` && docker push haifengat/hfpy:`date '+%m%d'`\n```\n\n## 策略信号\n### 策略生成的信号会插件到postgres的public.strategy_sign中\n```python\njs = json.dumps({\n                    'Direction': str(order.Direction).split('.')[1],\n                    'Offset': str(order.Offset).split('.')[1],\n                    'Price': round(order.Price, 4),\n                    'Volume': order.Volume\n                })\nsql = f\"\"\"INSERT INTO public.strategy_sign\n(tradingday, order_time, instrument, \"period\", strategy_id, strategy_group, sign, remark, insert_time)\nVALUES('{data.Bars[-1].Tradingday}', '{stra.D[-1]}', '{data.Instrument}', {data.Interval}, '{stra.ID}', '{type(stra).__name__}', '{js}', '', now())\"\"\"\n```\n### 实时信号会发布到redis\n```python\njs = json.dumps({\n                'Instrument': order.Instrument,\n                'Direction': str(order.Direction).split('.')[1],\n                'Offset': str(order.Offset).split('.')[1],\n                'Price': round(order.Price, 4),\n                'Volume': order.Volume,\n                \"ID\": stra.ID * 1000 + len(stra.Orders) + 1\n                })\nself.cfg.rds.publish(f'order.{type(stra).__name__}.{stra.ID}', js)\n```\n\n## 测试报告\n因报告使用了pandas所以被注释掉了，如需要则可以自行安装pandas并注释掉atp.py的5行和252行。\n\n## 策略配置\n  - 与策略文件名同名的.yml文件\n  - 配置参数组\n    - 必须有ID标识(int)\n```yml\n---\n-\n    # ID用于区分不同策略实例的委托不可重复\n    \"ID\": 901\n    # 回测开始日期\n    \"BeginDate\": 20200101\n    # 可通过增加Data实现多合约多周期引用\n    \"Datas\": \n    -\n        # 合约/周期/周期数\n        \"Instrument\": \"ag2012\"\n        \"IntervalType\": \"Minute\"\n        \"Interval\": 5\n    \"Params\": \n        # 突破轨道的长度\n        \"LENGTH1\": 46\n        \"OPENPARAM\": 0.54\n```\n\n### 策略编写\n\n**策略文件名与类名、配置文件名要一致(区分大小写)**\n\n#### SMACross.py\n```python\n#!/usr/bin/env python\n# -*- coding: utf-8 -*-\n\"\"\"\n__title__ = ''\n__author__ = 'HaiFeng'\n__mtime__ = '2016/8/16'\n\"\"\"\n# import talib._ta_lib as talib\nfrom hfpy.data import Data\nfrom hfpy.bar import Bar\nfrom hfpy.strategy import Strategy\nimport numpy as np\nimport talib as ta\n\nclass SMACross(Strategy):\n\n    def __init__(self, jsonfile):\n        super().__init__(jsonfile)\n        self.p_ma1 = self.Params['MA1']\n        self.p_ma2 = self.Params['MA2']\n        self.p_lots = self.Params['Lots']\n\n    def OnBarUpdate(self, data=Data, bar=Bar):\n        if len(self.C) < self.p_ma2:\n            return\n        # if len(data.Instrument) > 0:\n        #     print(f'{data.Tick.Instrument},{data.Tick.Volume}')\n\n        # print('{0}-{1}'.format(self.D[-1], self.C[-1]))\n        ma1 = ta.SMA(np.array(self.C, dtype=float), self.p_ma1)\n        ma2 = ta.SMA(np.array(self.C, dtype=float), self.p_ma2)\n\n        self.IndexDict['ma5'] = ma1\n        self.IndexDict['ma10'] = ma2\n\n        if len(ma2) < 2 or len(ma1) < 2:\n            return\n        if self.PositionLong == 0:\n            if ma1[-1] >= ma2[-1] and ma1[-2] < ma2[-2]:\n                if self.PositionShort > 0:\n                    self.BuyToCover(self.O[-1], self.p_lots, '买平')\n                self.Buy(self.O[-1], self.p_lots, '买开')\n        elif self.PositionShort == 0:\n            if ma1[-1] <= ma2[-1] and ma1[-2] > ma2[-2]:\n                if self.PositionLong > 0:\n                    self.Sell(self.O[-1], self.p_lots, '卖平')\n                self.SellShort(self.O[-1], self.p_lots, '卖开')\n```\n\n#### SMACross.yml\n\n```yaml\n---\n# ID用于区分不同策略实例的委托\n- \n    ID: 119\n    BeginDate: 20191101\n    TickTest: false\n    # 可通过增加Data实现多合约多周期引用\n    Datas:\n    -\n        Instrument: p2105\n        IntervalType: Minute\n        Interval: 5\n    -\n        Instrument: rb2105\n        IntervalType: Minute\n        Interval: 5\n    Params:\n        Lots: 1\n        MA1: 10\n        MA2: 20\n- \n    ID: 120\n    BeginDate: 20180901\n    Datas:\n    - \n        Instrument: rb2105\n        IntervalType: Minute\n        Interval: 5\n    Params:\n        Lots: 1\n        MA1: 5\n        MA2: 60\n```\n\n## 附\n### talib安装\n报错：#include \"Python.h\n解决：\n apt: apt-get install python3-dev\n yum: yum install python3-devel\n",
+  "permissions": {
+    "read": true,
+    "write": false,
+    "admin": false
+  },
+  "media_types": [
+    "application/vnd.docker.container.image.v1+json"
+  ],
+  "content_types": [
+    "image"
+  ]
+}

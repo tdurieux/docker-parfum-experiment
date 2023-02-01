@@ -1,0 +1,26 @@
+{
+  "startTime": 1674256041945,
+  "endTime": 1674256042988,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 24,
+        "lineEnd": 24,
+        "columnStart": 4,
+        "columnEnd": 22
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 5,
+        "lineEnd": 15,
+        "columnStart": 22,
+        "columnEnd": 70
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Handles compiling and package installation\nFROM ubuntu:20.04 AS compile-image\n\n# Install build dependencies\nARG DEBIAN_FRONTEND=noninteractive\nRUN apt-get update && apt-get install -y --no-install-recommends \\\n        python3 python3-pip \\\n        # Required for local pip install\n        python3-setuptools \\\n        # Required for venv setup\n        python3-venv \\\n        # Required to build RLE module\n        build-essential python3-dev \\\n        # Required to build PyAV (pyrdp-convert to MP4)\n        libavformat-dev libavcodec-dev libavdevice-dev \\\n        libavutil-dev libswscale-dev libswresample-dev libavfilter-dev && rm -rf /var/lib/apt/lists/*;\n\nRUN python3 -m venv /opt/venv\n# Make sure we use the virtualenv:\nENV PATH=\"/opt/venv/bin:$PATH\"\n\n# Install dependencies only (speeds repetitive builds)\nCOPY requirements.txt /pyrdp/requirements.txt\nRUN cd /pyrdp && \\\n    pip3 install --no-cache-dir wheel && \\\n    pip3 --no-cache-dir install --default-timeout=100 -r requirements.txt\n\n# Compile only our C extension and install\n# This way changes to source tree will not trigger full images rebuilds\nCOPY ext/rle.c /pyrdp/ext/rle.c\nCOPY setup.py /pyrdp/setup.py\nRUN cd /pyrdp \\\n    && python setup.py build_ext \\\n    && python setup.py install_lib\n\n\n# Handles runtime only (minimize size for distribution)\nFROM ubuntu:20.04 AS docker-image\n\n# Install runtime dependencies except pre-built venv\nARG DEBIAN_FRONTEND=noninteractive\nRUN apt-get update && apt-get install -y --no-install-recommends python3 \\\n        # To generate certificates\n        openssl \\\n        # Required for the setup.py install and progressbar (required by pyrdp-convert)\n        python3-distutils \\\n        # GUI and notifications stuff\n        libgl1-mesa-glx libxcb-xinerama0 \\\n        libxkbcommon-x11-0 \\\n        libnotify-bin \\\n        # Runtime requirement for PyAV (pyrdp-convert to MP4)\n        libavcodec58 libavdevice58 \\\n        && rm -rf /var/lib/apt/lists/*\n\n# Copy preinstalled dependencies from compile image\nCOPY --from=compile-image /opt/venv /opt/venv\n\n# Create user\nRUN useradd --create-home --home-dir /home/pyrdp pyrdp\n\n# Make sure we use the virtualenv\nENV PATH=\"/opt/venv/bin:$PATH\"\n\n# Install python source and package\n# NOTE: we are no longer doing this in the compile image to avoid long image rebuilds in development\nCOPY --from=compile-image /pyrdp /pyrdp\nCOPY bin/ /pyrdp/bin/\nCOPY pyrdp/ /pyrdp/pyrdp/\nCOPY setup.py /pyrdp/setup.py\nRUN cd /pyrdp \\\n    && python setup.py install\n\nUSER pyrdp\n\n# UTF-8 support on the console output (for pyrdp-player)\nENV PYTHONIOENCODING=utf-8\n# Make sure we use the virtualenv\nENV PATH=\"/opt/venv/bin:$PATH\"\n\nWORKDIR /home/pyrdp\n"
+}

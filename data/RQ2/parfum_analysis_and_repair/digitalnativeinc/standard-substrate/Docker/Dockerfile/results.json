@@ -1,0 +1,44 @@
+{
+  "startTime": 1674252456813,
+  "endTime": 1674252458052,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 25,
+        "lineEnd": 25,
+        "columnStart": 2,
+        "columnEnd": 59
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 42,
+        "lineEnd": 42,
+        "columnStart": 2,
+        "columnEnd": 59
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 25,
+        "lineEnd": 25,
+        "columnStart": 2,
+        "columnEnd": 59
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 42,
+        "lineEnd": 42,
+        "columnStart": 2,
+        "columnEnd": 59
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "ARG RUST_IMAGE=rust:1.52-slim\nARG RUNTIME_IMAGE=ubuntu:focal\nARG TOOLCHAIN_BUILD=nightly-2022-01-27\n\n### planner stage - builds dependency recipe.json for cargo chef\nFROM $RUST_IMAGE as planner\nARG TOOLCHAIN_BUILD\nWORKDIR /opt/app\n# We only pay the installation cost once,\n# it will be cached from the second build onwards\n# To ensure a reproducible build consider pinning\n# the cargo-chef version with `--version X.X.X`\nRUN echo \"rust toolchain build: $TOOLCHAIN_BUILD\"\nRUN rustup default $TOOLCHAIN_BUILD\nRUN cargo install cargo-chef\n\nCOPY . .\nRUN cargo chef prepare  --recipe-path recipe.json\n\n### caching stage - builds out dependency cache\nFROM $RUST_IMAGE as cacher\nARG TOOLCHAIN_BUILD\nWORKDIR /opt/app\n\nRUN apt-get update && \\\n  apt install --no-install-recommends -y git clang curl libssl-dev llvm libudev-dev && rm -rf /var/lib/apt/lists/*;\nRUN echo \"rust toolchain build: $TOOLCHAIN_BUILD\"\nRUN rustup install $TOOLCHAIN_BUILD &&\\\n  rustup default $TOOLCHAIN_BUILD &&\\\n  rustup update $TOOLCHAIN_BUILD &&\\\n  rustup target add wasm32-unknown-unknown --toolchain $TOOLCHAIN_BUILD\n\nRUN cargo install cargo-chef\nCOPY --from=planner /opt/app/recipe.json recipe.json\nRUN cargo chef cook --release --recipe-path recipe.json\n\n### building stage - copies dependencies cache, builds the application\nFROM $RUST_IMAGE as builder\nARG TOOLCHAIN_BUILD\nWORKDIR /opt/app\n\nRUN apt-get update && \\\n  apt install --no-install-recommends -y git clang curl libssl-dev llvm libudev-dev && rm -rf /var/lib/apt/lists/*;\n\nRUN echo \"rust toolchain build: $TOOLCHAIN_BUILD\"\nRUN rustup install $TOOLCHAIN_BUILD &&\\\n  rustup default $TOOLCHAIN_BUILD &&\\\n  rustup update $TOOLCHAIN_BUILD &&\\\n  rustup target add wasm32-unknown-unknown --toolchain $TOOLCHAIN_BUILD\n\nCOPY . .\n# Copy over the cached dependencies\nCOPY --from=cacher /opt/app/target target\nCOPY --from=cacher $CARGO_HOME $CARGO_HOME\n\nRUN cargo build --release\n\n### runtime stage - pulls a small image and pushes the application\nFROM $RUNTIME_IMAGE as runtime\n\nLABEL maintainer=\"Standard Tech <tech@standard.tech>\"\nLABEL description=\"Standard Tech Opportunity Node\"\nEXPOSE 30333 9933 9944\nCOPY --from=builder --chmod=u=rwx,go=rx /opt/app/target/release/opportunity-standalone /usr/local/bin\nCOPY ./Docker/entrypoint.sh /\nENTRYPOINT [\"/entrypoint.sh\", \"/usr/local/bin/opportunity-standalone\"]\nCMD [\"--help\"]"
+}

@@ -1,0 +1,72 @@
+{
+  "startTime": 1674220653889,
+  "endTime": 1674220654320,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 38,
+        "lineEnd": 38,
+        "columnStart": 4,
+        "columnEnd": 86
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 41,
+        "lineEnd": 41,
+        "columnStart": 4,
+        "columnEnd": 54
+      }
+    },
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 57,
+        "lineEnd": 57,
+        "columnStart": 4,
+        "columnEnd": 16
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 95,
+        "lineEnd": 95,
+        "columnStart": 4,
+        "columnEnd": 29
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 95,
+        "lineEnd": 95,
+        "columnStart": 33,
+        "columnEnd": 64
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 98,
+        "lineEnd": 98,
+        "columnStart": 4,
+        "columnEnd": 23
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 57,
+        "lineEnd": 57,
+        "columnStart": 20,
+        "columnEnd": 36
+      }
+    }
+  ],
+  "repairedDockerfile": "#-------BUILD javascript task presenter in dist/ -----------------\nFROM python:2.7.13-slim as builder\n# Prep base\nRUN apt-get update -q\nWORKDIR /bd_build\nCOPY /docker/bd_build /bd_build\nRUN ./prepare.sh\n\nENV PYTHONIOENCODING UTF-8\nENV TERM xterm\n# ARG vars exist only during build and can be overridden by --build-args\nARG DEBIAN_FRONTEND=noninteractive\nARG MINIMAL_APT_INSTALL=\"apt-get install -q -y --no-install-recommends\"\n\nRUN $MINIMAL_APT_INSTALL \\\n        curl \\\n        python\n\nWORKDIR /home/download\nARG NODEREPO=\"node_6.x\"\nARG DISTRO=\"jessie\"\n# Only newest package kept in nodesource repo. Cannot pin to version using apt!\n# See https://github.com/nodesource/distributions/issues/33\n#RUN curl -sSO https://deb.nodesource.com/gpgkey/nodesource.gpg.key\n#RUN apt-key add nodesource.gpg.key\n#RUN echo \"deb https://deb.nodesource.com/${NODEREPO} ${DISTRO} main\" > /etc/apt/sources.list.d/nodesource.list\n#RUN echo \"deb-src https://deb.nodesource.com/${NODEREPO} ${DISTRO} main\" >> /etc/apt/sources.list.d/nodesource.list\n#RUN apt-get update -q && apt-get install -q -y 'nodejs=6.11.3*'\n\n# So we have to download specific package in order to pin version of node.\n# dpkg doesn't install package dependencies automatically, we have to do it.\n# This nodejs package has a dependency on the 'python' package, installed above.\n# Since this is a python:2.7-slim image, you would think python packages\n# are installed. But the Dockerfile installs Python from source, not packages.\n\n# jessie specific version not provided starting with 6.11.3\n#ARG NODE_PACKAGE=nodejs_6.11.2-1nodesource1~jessie1_amd64.deb\nARG NODE_PACKAGE=nodejs_6.11.3-1nodesource1_amd64.deb\nRUN curl -f -sSO \"https://deb.nodesource.com/node_6.x/pool/main/n/nodejs/${NODE_PACKAGE}\"\nRUN dpkg -i ${NODE_PACKAGE}\n\nRUN curl -f -sSO https://dl.yarnpkg.com/debian/pubkey.gpg\nRUN apt-key add pubkey.gpg\nRUN echo \"deb https://dl.yarnpkg.com/debian/ stable main\" | tee /etc/apt/sources.list.d/yarn.list\n\nRUN apt-get update -q && $MINIMAL_APT_INSTALL 'yarn=1.0.2*'\n\n# note: Development config mounts the git repo root on this path.\n# Copy minimal files needed to npm install to try\n# and re-use cache\nENV WEBPACK_BUILD_DIR /home/thresher\nWORKDIR /home/thresher\nRUN chown ${USER}:${USER} /home/thresher\nCOPY /package.json /home/thresher\nCOPY /yarn.lock /home/thresher\n\nUSER ${USER}\nRUN yarn install && yarn cache clean;\n\n# Now copy the rest of the repo into the image - any file change breaks build cache\n# .dockerignore must exclude node_modules/ and dist/\nCOPY /.babelrc .\nCOPY /app ./app\nCOPY /webpack ./webpack\nCOPY /webpack.config.js .\nRUN npm run deploy:quiet\n\n#-------IMAGE FOR BOTH DJANGO SERVER & PYTHON RQ SERVICE----------------\nFROM python:2.7.13-slim as django\nUSER root\n\n# Prep base\nRUN apt-get update -q\nWORKDIR /bd_build\nCOPY /docker/bd_build /bd_build\nRUN ./prepare.sh\n\nENV PYTHONUNBUFFERED 1\nENV PYTHONIOENCODING UTF-8\nENV TERM xterm\n# ARG vars exist only during build and can be overridden by --build-args\nARG DEBIAN_FRONTEND=noninteractive\nARG MINIMAL_APT_INSTALL=\"apt-get install -q -y --no-install-recommends\"\n\nRUN $MINIMAL_APT_INSTALL \\\n        curl \\\n        gcc \\\n        gettext \\\n        postgresql-client libpq-dev \\\n        vim less psmisc\n\nRUN rm -rf /var/lib/apt/lists/*\n\nWORKDIR /home/build\nCOPY /docker/thresher_api/requirements.txt .\nRUN pip install --no-cache-dir --upgrade pip && pip install --no-cache-dir -r requirements.txt\n\n# ipython for development - not (currently) needed for production\nRUN pip install --no-cache-dir ipython\n\nARG USER=thresher\nARG USER_ID=9000\nARG GROUP_ID=9000\nARG HOME=/home/thresher\nRUN groupadd -g ${GROUP_ID} ${USER} && \\\n      useradd --shell /bin/bash --home ${HOME} -u ${USER_ID} -g ${GROUP_ID} ${USER}\n\n# Let Django copy to static dir as regular user\nWORKDIR /var/www\nRUN chown ${USER}:${USER} /var/www\n\nENV PYTHONPATH /home/thresher\nWORKDIR /home/thresher\nRUN chown ${USER}:${USER} /home/thresher\nCOPY --from=builder /home/thresher/dist ./dist\nCOPY /data ./data\nCOPY /docker ./docker\nCOPY /manage.py .\nCOPY /researcher ./researcher\nCOPY /thresher ./thresher\nCOPY /thresher_backend ./thresher_backend\n\n# helpful aliases\nCOPY /docker/bashrc_to_docker /root/.bashrc\nCOPY /docker/bashrc_to_docker ${HOME}/.bashrc\nEXPOSE 5000\n\nUSER ${USER}\n# Runs migrate, then replaces sh with 'exec gunicorn...'\nCMD [\"bash\", \"docker/thresher_api/migrate_and_run.sh\"]\n"
+}

@@ -1,0 +1,53 @@
+{
+  "startTime": 1674253267418,
+  "endTime": 1674253268012,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 75,
+        "lineEnd": 75,
+        "columnStart": 4,
+        "columnEnd": 29
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 79,
+        "lineEnd": 79,
+        "columnStart": 4,
+        "columnEnd": 71
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 112,
+        "lineEnd": 112,
+        "columnStart": 4,
+        "columnEnd": 89
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 60,
+        "lineEnd": 71,
+        "columnStart": 4,
+        "columnEnd": 45
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 60,
+        "lineEnd": 71,
+        "columnStart": 4,
+        "columnEnd": 45
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# The InvenTree dockerfile provides two build targets:\n#\n# production:\n# - Required files are copied into the image\n# - Runs InvenTree web server under gunicorn\n#\n# dev:\n# - Expects source directories to be loaded as a run-time volume\n# - Runs InvenTree web server under django development server\n# - Monitors source files for any changes, and live-reloads server\n\n\nFROM python:3.9-slim as base\n\n# Build arguments for this image\nARG commit_hash=\"\"\nARG commit_date=\"\"\nARG commit_tag=\"\"\n\nENV PYTHONUNBUFFERED 1\n\n# Ref: https://github.com/pyca/cryptography/issues/5776\nENV CRYPTOGRAPHY_DONT_BUILD_RUST 1\n\nENV INVENTREE_LOG_LEVEL=\"WARNING\"\nENV INVENTREE_DOCKER=\"true\"\n\n# InvenTree paths\nENV INVENTREE_HOME=\"/home/inventree\"\nENV INVENTREE_MNG_DIR=\"${INVENTREE_HOME}/InvenTree\"\nENV INVENTREE_DATA_DIR=\"${INVENTREE_HOME}/data\"\nENV INVENTREE_STATIC_ROOT=\"${INVENTREE_DATA_DIR}/static\"\nENV INVENTREE_MEDIA_ROOT=\"${INVENTREE_DATA_DIR}/media\"\nENV INVENTREE_PLUGIN_DIR=\"${INVENTREE_DATA_DIR}/plugins\"\n\n# InvenTree configuration files\nENV INVENTREE_CONFIG_FILE=\"${INVENTREE_DATA_DIR}/config.yaml\"\nENV INVENTREE_SECRET_KEY_FILE=\"${INVENTREE_DATA_DIR}/secret_key.txt\"\nENV INVENTREE_PLUGIN_FILE=\"${INVENTREE_DATA_DIR}/plugins.txt\"\n\n# Worker configuration (can be altered by user)\nENV INVENTREE_GUNICORN_WORKERS=\"4\"\nENV INVENTREE_BACKGROUND_WORKERS=\"4\"\n\n# Default web server address:port\nENV INVENTREE_WEB_ADDR=0.0.0.0\nENV INVENTREE_WEB_PORT=8000\n\nLABEL org.label-schema.schema-version=\"1.0\" \\\n      org.label-schema.build-date=${DATE} \\\n      org.label-schema.vendor=\"inventree\" \\\n      org.label-schema.name=\"inventree/inventree\" \\\n      org.label-schema.url=\"https://hub.docker.com/r/inventree/inventree\" \\\n      org.label-schema.vcs-url=\"https://github.com/inventree/InvenTree.git\" \\\n      org.label-schema.vcs-ref=${commit_tag}\n\n# RUN apt-get upgrade && apt-get update\nRUN apt-get update && apt-get install -y  --no-install-recommends \\\n    git gcc g++ gettext gnupg libffi-dev \\\n    # Weasyprint requirements : https://doc.courtbouillon.org/weasyprint/stable/first_steps.html#debian-11\n    poppler-utils libpango-1.0-0 libpangoft2-1.0-0 \\\n    # Image format support\n    libjpeg-dev webp \\\n    # SQLite support\n    sqlite3 \\\n    # PostgreSQL support\n    libpq-dev \\\n    # MySQL / MariaDB support\n    default-libmysqlclient-dev mariadb-client && \\\n    apt-get autoclean && apt-get autoremove && rm -rf /var/lib/apt/lists/*; # Install required system packages\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n# Update pip\nRUN pip install --no-cache-dir --upgrade pip\n\n# Install required base-level python packages\nCOPY ./docker/requirements.txt base_requirements.txt\nRUN pip install --no-cache-dir --disable-pip-version-check -U -r base_requirements.txt\n\n# InvenTree production image:\n# - Copies required files from local directory\n# - Installs required python packages from requirements.txt\n# - Starts a gunicorn webserver\n\nFROM base as production\n\nENV INVENTREE_DEBUG=False\n\n# As .git directory is not available in production image, we pass the commit information via ENV\nENV INVENTREE_COMMIT_HASH=\"${commit_hash}\"\nENV INVENTREE_COMMIT_DATE=\"${commit_date}\"\n\n# Copy source code\nCOPY InvenTree ${INVENTREE_HOME}/InvenTree\n\n# Copy other key files\nCOPY requirements.txt ${INVENTREE_HOME}/requirements.txt\nCOPY tasks.py ${INVENTREE_HOME}/tasks.py\nCOPY docker/gunicorn.conf.py ${INVENTREE_HOME}/gunicorn.conf.py\nCOPY docker/init.sh ${INVENTREE_MNG_DIR}/init.sh\n\n# Need to be running from within this directory\nWORKDIR ${INVENTREE_MNG_DIR}\n\n# Drop to the inventree user for the production image\n#RUN adduser inventree\n#RUN chown -R inventree:inventree ${INVENTREE_HOME}\n#USER inventree\n\n# Install InvenTree packages\nRUN pip3 install --no-cache-dir --user --disable-pip-version-check -r ${INVENTREE_HOME}/requirements.txt\n\n# Server init entrypoint\nENTRYPOINT [\"/bin/bash\", \"./init.sh\"]\n\n# Launch the production server\n# TODO: Work out why environment variables cannot be interpolated in this command\n# TODO: e.g. -b ${INVENTREE_WEB_ADDR}:${INVENTREE_WEB_PORT} fails here\nCMD gunicorn -c ./gunicorn.conf.py InvenTree.wsgi -b 0.0.0.0:8000 --chdir ./InvenTree\n\nFROM base as dev\n\n# The development image requires the source code to be mounted to /home/inventree/\n# So from here, we don't actually \"do\" anything, apart from some file management\n\nENV INVENTREE_DEBUG=True\n\nENV INVENTREE_DEV_DIR=\"${INVENTREE_HOME}/dev\"\n\n# Location for python virtual environment\n# If the INVENTREE_PY_ENV variable is set, the entrypoint script will use it!\nENV INVENTREE_PY_ENV=\"${INVENTREE_DEV_DIR}/env\"\n\n# Override default path settings\nENV INVENTREE_STATIC_ROOT=\"${INVENTREE_DEV_DIR}/static\"\nENV INVENTREE_MEDIA_ROOT=\"${INVENTREE_DEV_DIR}/media\"\nENV INVENTREE_PLUGIN_DIR=\"${INVENTREE_DEV_DIR}/plugins\"\n\nENV INVENTREE_CONFIG_FILE=\"${INVENTREE_DEV_DIR}/config.yaml\"\nENV INVENTREE_SECRET_KEY_FILE=\"${INVENTREE_DEV_DIR}/secret_key.txt\"\nENV INVENTREE_PLUGIN_FILE=\"${INVENTREE_DEV_DIR}/plugins.txt\"\n\nWORKDIR ${INVENTREE_HOME}\n\n# Entrypoint ensures that we are running in the python virtual environment\nENTRYPOINT [\"/bin/bash\", \"./docker/init.sh\"]\n\n# Launch the development server\nCMD [\"invoke\", \"server\", \"-a\", \"${INVENTREE_WEB_ADDR}:${INVENTREE_WEB_PORT}\"]\n"
+}

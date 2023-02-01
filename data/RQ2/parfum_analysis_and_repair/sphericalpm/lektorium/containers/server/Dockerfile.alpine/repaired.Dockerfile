@@ -1,0 +1,14 @@
+ARG BASE_IMAGE
+FROM $BASE_IMAGE
+RUN apk -U --no-cache add python3 python3-dev openssh-client git gcc musl-dev libffi-dev openssl-dev cargo \
+    && python3 -m venv env
+ADD lektorium*whl /
+ADD key /root/.ssh/id_rsa
+ADD entrypoint.sh /
+RUN chmod 700 /root/.ssh \
+    && chmod 600 /root/.ssh/id_rsa \
+    && PATH="/env/bin:$PATH" pip --no-cache-dir install --no-cache setuptools-rust \
+    && PATH="/env/bin:$PATH" pip --no-cache-dir install --no-cache *whl
+ENV PATH "/env/bin:$PATH"
+VOLUME /sessions
+ENTRYPOINT ["/entrypoint.sh"]

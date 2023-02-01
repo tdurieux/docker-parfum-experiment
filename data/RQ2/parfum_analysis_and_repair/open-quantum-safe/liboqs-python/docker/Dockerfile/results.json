@@ -1,0 +1,35 @@
+{
+  "startTime": 1674216483884,
+  "endTime": 1674216485327,
+  "originalSmells": [
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 20,
+        "lineEnd": 20,
+        "columnStart": 4,
+        "columnEnd": 52
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 34,
+        "lineEnd": 34,
+        "columnStart": 4,
+        "columnEnd": 29
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 43,
+        "lineEnd": 43,
+        "columnStart": 33,
+        "columnEnd": 48
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Multi-stage build: First the full builder image:\n\n# liboqs build type variant; maximum portability of image; no openssl dependency:\nARG LIBOQS_BUILD_DEFINES=\"-DOQS_DIST_BUILD=ON -DBUILD_SHARED_LIBS=ON -DOQS_USE_OPENSSL=OFF\"\n\n# make build arguments: Adding -j here speeds up build but may tax hardware\nARG MAKE_DEFINES=\"-j 2\"\n\nFROM alpine:3.11 as intermediate\n# Take in all global args\nARG LIBOQS_BUILD_DEFINES\nARG MAKE_DEFINES\n\nLABEL version=\"2\"\n\nENV DEBIAN_FRONTEND noninteractive\n\nRUN apk update && apk upgrade\n\n# Get all software packages required for builing all components:\nRUN apk add --no-cache build-base linux-headers cmake ninja git\n\n# get all sources\nWORKDIR /opt\nRUN git clone --depth 1 --branch main https://github.com/open-quantum-safe/liboqs && \\\n    git clone --depth 1 --branch main https://github.com/open-quantum-safe/liboqs-python.git\n\n# build liboqs\nWORKDIR /opt/liboqs\nRUN mkdir build && cd build && cmake -GNinja .. ${LIBOQS_BUILD_DEFINES} && ninja install\n\nWORKDIR /opt\nRUN git clone --depth 1 --branch OQS-OpenSSL_1_1_1-stable https://github.com/open-quantum-safe/openssl.git && cd liboqs && mkdir build-openssl && cd build-openssl && cmake -G\"Ninja\" .. ${LIBOQS_BUILD_DEFINES} -DCMAKE_INSTALL_PREFIX=/opt/openssl/oqs && ninja install\n\nRUN apk add --no-cache automake autoconf && cd /opt/openssl && LDFLAGS=\"-Wl,-rpath -Wl,/usr/local/lib64\" ./Configure shared linux-x86_64 -lm && make ${MAKE_DEFINES} && make install_sw\n\n# Get LetsEncrypt root\nRUN wget https://letsencrypt.org/certs/isrgrootx1.pem\n\n## second stage: Only create minimal image without build tooling and intermediate build results generated above:\nFROM alpine:3.11\n\n# Get all software packages required for running all components:\nRUN apk update && apk upgrade && apk add --no-cache python3\n\n# Only retain the binary contents in the final image\nCOPY --from=intermediate /usr/local /usr/local\nCOPY --from=intermediate /opt/liboqs-python /opt/liboqs-python\n\nENV PYTHONPATH=/opt/liboqs-python\n\n# Enable a normal user\nRUN addgroup -g 1000 -S oqs && adduser --uid 1000 -S oqs -G oqs\n\nUSER oqs\nWORKDIR /home/oqs\nCOPY minitest.py /home/oqs/minitest.py\nCOPY --from=intermediate /opt/isrgrootx1.pem /home/oqs/isrgrootx1.pem\n\n# ensure oqs libs are found. Unset if interested in using stock openssl:\nENV LD_LIBRARY_PATH=/usr/local/lib64\nCMD [\"python3\", \"minitest.py\"]\n"
+}

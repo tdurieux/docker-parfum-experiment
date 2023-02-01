@@ -1,0 +1,26 @@
+{
+  "startTime": 1674252064351,
+  "endTime": 1674252065460,
+  "originalSmells": [
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 38,
+        "lineEnd": 38,
+        "columnStart": 2,
+        "columnEnd": 83
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 2,
+        "lineEnd": 14,
+        "columnStart": 4,
+        "columnEnd": 10
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM linuxkit/alpine:8b53d842a47fce43464e15f65ee2f68b82542330 AS grub-build\n\nRUN apk add --no-cache \\\n  automake \\\n  make \\\n  bison \\\n  gettext \\\n  flex \\\n  gcc \\\n  git \\\n  libtool \\\n  libc-dev \\\n  linux-headers \\\n  python3 \\\n  autoconf\n\n# because python is not available\nRUN ln -s python3 /usr/bin/python\n\n# list of grub modules that are portable between x86_64 and aarch64\nENV GRUB_MODULES_PORT=\"part_gpt fat ext2 iso9660 squash4 gzio linux acpi normal cpio crypto disk boot crc64 gpt \\\nsearch_disk_uuid verify xzio xfs video gfxterm efi_gop gptprio chain probe reboot regexp smbios part_msdos\"\nENV GRUB_MODULES_x86_64=\"multiboot2 efi_uga\"\nENV GRUB_MODULES_aarch64=\"xen_boot\"\nENV GRUB_COMMIT=71f9e4ac44142af52c3fc1860436cf9e432bf764\nENV GRUB_REPO=git://git.sv.gnu.org/grub.git\n\nCOPY patches/* /patches/\nRUN mkdir /grub-lib && \\\n  set -e && \\\n  git clone ${GRUB_REPO} && \\\n  cd grub && \\\n  git checkout -b grub-build ${GRUB_COMMIT} && \\\n  for patch in /patches/*.patch; do \\\n    echo \"Applying $patch\"; \\\n    patch -p1 < \"$patch\"; \\\n  done && \\\n  ./autogen.sh && \\\n  ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" --libdir=/grub-lib --with-platform=efi CFLAGS=\"-Os -Wno-unused-value\" && \\\n  make -j \"$(getconf _NPROCESSORS_ONLN)\" && \\\n  make install\n\n# create the grub core image\nRUN cd grub ; case $(uname -m) in \\\n  x86_64) \\\n    ./grub-mkimage -O x86_64-efi -d /grub-lib/grub/x86_64-efi -o /grub-lib/BOOTX64.EFI -p /EFI/BOOT ${GRUB_MODULES_PORT} ${GRUB_MODULES_x86_64} ;\\\n    ;; \\\n  aarch64) \\\n    ./grub-mkimage -O arm64-efi -d /grub-lib/grub/arm64-efi -o /grub-lib/BOOTAA64.EFI -p /EFI/BOOT ${GRUB_MODULES_PORT} ${GRUB_MODULES_aarch64} ;\\\n    ln -s BOOTAA64.EFI /grub-lib/BOOTX64.EFI ;\\\n    ;; \\\n  esac\n\nFROM scratch\nENTRYPOINT []\nCMD []\nWORKDIR /EFI/BOOT\nCOPY --from=grub-build /grub-lib/BOOT*.EFI ./\nCOPY rootfs.cfg grub.cfg\n"
+}

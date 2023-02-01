@@ -1,0 +1,35 @@
+{
+  "startTime": 1674256309311,
+  "endTime": 1674256310121,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 27,
+        "lineEnd": 27,
+        "columnStart": 174,
+        "columnEnd": 232
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 32,
+        "lineEnd": 48,
+        "columnStart": 22,
+        "columnEnd": 16
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 32,
+        "lineEnd": 48,
+        "columnStart": 22,
+        "columnEnd": 16
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Copyright 2017 Google Inc.  All Rights Reserved.\n#\n# Licensed under the Apache License, Version 2.0 (the \"License\");\n# you may not use this file except in compliance with the License.\n# You may obtain a copy of the License at\n#\n#      http://www.apache.org/licenses/LICENSE-2.0\n#\n# Unless required by applicable law or agreed to in writing, software\n# distributed under the License is distributed on an \"AS IS\" BASIS,\n# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.\n# See the License for the specific language governing permissions and\n# limitations under the License.\n\n# To build a new docker image, run the following from the root source dir:\n# $ docker build . -f docker/Dockerfile -t $IMAGE_NAME\n\nFROM golang:latest\nRUN go install -ldflags '-extldflags \"-fno-PIC -static\"' -buildmode pie -tags 'osusergo netgo static_build' github.com/googlegenomics/pipelines-tools/pipelines@latest\n\nFROM apache/beam_python3.8_sdk:2.37.0\nARG commit_sha\nENV COMMIT_SHA=${commit_sha}\n\nCOPY --from=0 /go/bin/pipelines /usr/bin\n\n# install gcloud sdk\nRUN echo \"deb [signed-by=/usr/share/keyrings/cloud.google.gpg] http://packages.cloud.google.com/apt cloud-sdk main\" | tee -a /etc/apt/sources.list.d/google-cloud-sdk.list && curl -f https://packages.cloud.google.com/apt/doc/apt-key.gpg | apt-key --keyring /usr/share/keyrings/cloud.google.gpg  add -\n\n# g++ Needed for installing mmh3 (one of the required packages in setup.py).\n# Install Pysam dependencies. These dependencies are only required because we\n# have a monolithic binary - they primarily have to be installed on the workers.\nRUN apt-get update && apt-get install --no-install-recommends -y \\\n    apt-transport-https \\\n    autoconf \\\n    automake \\\n    g++ \\\n    gcc \\\n    gnupg \\\n    google-cloud-sdk \\\n    libbz2-dev \\\n    libcurl4-openssl-dev \\\n    liblzma-dev \\\n    libssl-dev \\\n    make \\\n    perl \\\n    zlib1g-dev \\\n    python3-pip \\\n    python3-venv && rm -rf /var/lib/apt/lists/*;\n\n\nRUN mkdir -p /opt/gcp_variant_transforms/bin && mkdir -p /opt/gcp_variant_transforms/src\nADD / /opt/gcp_variant_transforms/src/\n\n# Install dependencies.\nRUN python3 -m venv /opt/gcp_variant_transforms/venv3 && \\\n    sed -i 's/$1/${1:-}/' /opt/gcp_variant_transforms/venv3/bin/activate && \\\n    . /opt/gcp_variant_transforms/venv3/bin/activate && \\\n    cd /opt/gcp_variant_transforms/src && \\\n    python3 -m pip install --upgrade pip && \\\n    python3 -m pip install --upgrade wheel && \\\n    python3 -m pip install --upgrade -r requirements.txt\n\nRUN printf '#!/bin/bash\\n%s\\n%s' \\\n      \". /opt/gcp_variant_transforms/venv3/bin/activate && cd /opt/gcp_variant_transforms/src\" \\\n      'python -m gcp_variant_transforms.vcf_to_bq --setup_file ./setup.py \"$@\"' > \\\n      /opt/gcp_variant_transforms/bin/vcf_to_bq && \\\n    chmod +x /opt/gcp_variant_transforms/bin/vcf_to_bq\n\nRUN printf '#!/bin/bash\\n%s\\n%s' \\\n      \". /opt/gcp_variant_transforms/venv3/bin/activate && cd /opt/gcp_variant_transforms/src\" \\\n      'python -m gcp_variant_transforms.vcf_to_bq_preprocess --setup_file ./setup.py \"$@\"' > \\\n      /opt/gcp_variant_transforms/bin/vcf_to_bq_preprocess && \\\n    chmod +x /opt/gcp_variant_transforms/bin/vcf_to_bq_preprocess\n\nRUN printf '#!/bin/bash\\n%s\\n%s' \\\n      \". /opt/gcp_variant_transforms/venv3/bin/activate && cd /opt/gcp_variant_transforms/src\" \\\n      'python -m gcp_variant_transforms.bq_to_vcf --setup_file ./setup.py \"$@\"' > \\\n      /opt/gcp_variant_transforms/bin/bq_to_vcf && \\\n    chmod +x /opt/gcp_variant_transforms/bin/bq_to_vcf\n\nENTRYPOINT [\"/opt/gcp_variant_transforms/src/docker/pipelines_runner.sh\"]\n"
+}

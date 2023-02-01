@@ -1,0 +1,35 @@
+{
+  "startTime": 1674252687892,
+  "endTime": 1674252688845,
+  "originalSmells": [
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 96,
+        "lineEnd": 96,
+        "columnStart": 2,
+        "columnEnd": 29
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 24,
+        "lineEnd": 26,
+        "columnStart": 2,
+        "columnEnd": 17
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 71,
+        "lineEnd": 78,
+        "columnStart": 2,
+        "columnEnd": 17
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# NOTE: This docker image must be built from the root of this repository in order to copy `host_core`.\n# Use the Makefile target `build-image` for best results.\n\nARG BUILDER_IMAGE\nARG RELEASE_IMAGE\n\n##\n# STEP 1: Retrieve dependencies (must happen before NIF compilation)\n##\nFROM ${BUILDER_IMAGE} AS deps-builder\n\nARG MIX_ENV=release_prod\nARG SECRET_KEY_BASE\n\nENV MIX_ENV=${MIX_ENV} \\\n  SECRET_KEY_BASE=${SECRET_KEY_BASE}\n\nWORKDIR /opt/app\n# This copies our app source code into the build container\nCOPY ./host_core ./host_core\nCOPY ./wasmcloud_host ./wasmcloud_host\n\n# Install necessary system dependencies\nRUN apt update && \\\n  DEBIAN_FRONTEND=noninteractive apt install -y --no-install-recommends \\\n  git \\\n  ca-certificates && \\\n  update-ca-certificates && rm -rf /var/lib/apt/lists/*;\n\n# This step installs all the build tools we'll need\nRUN mix local.rebar --force && \\\n  mix local.hex --force\n\nWORKDIR /opt/app/host_core\nRUN mix deps.get\nWORKDIR /opt/app/wasmcloud_host\nRUN mix deps.get\n\n##\n# STEP 2: Build distillery release\n##\nFROM ${BUILDER_IMAGE} AS builder\n# The name of your application/release (required)\nARG APP_NAME\n# The version of the application we are building (required)\nARG APP_VSN\n# The environment to build with\nARG MIX_ENV=release_prod\n# Set this to true if this release is not a Phoenix app\nARG SKIP_PHOENIX=false\n# Secret key is required\nARG SECRET_KEY_BASE\n# Flag to include elixir runtime assets\nARG INCLUDE_ERTS=true\n\nENV SKIP_PHOENIX=${SKIP_PHOENIX} \\\n    APP_NAME=${APP_NAME} \\\n    APP_VSN=${APP_VSN} \\\n    MIX_ENV=${MIX_ENV} \\\n    SECRET_KEY_BASE=${SECRET_KEY_BASE} \\\n    INCLUDE_ERTS=${INCLUDE_ERTS}\n\n# By convention, /opt is typically used for applications\nWORKDIR /opt/app\n\n# This copies our app source code into the build container (including compiled NIFs)\nCOPY --from=deps-builder /opt/app /opt/app\n\n# Install dependencies for build container. This may be packages like `curl`, `bash`,\n# or even elixir and erlang depending on the base container\nRUN apt update && \\\n  DEBIAN_FRONTEND=noninteractive apt install -y --no-install-recommends \\\n  curl \\\n  git \\\n  ca-certificates \\\n  libssl-dev \\\n  pkg-config \\\n  inotify-tools \\\n  build-essential && rm -rf /var/lib/apt/lists/*;\n\n# This step installs all the build tools we'll need\nRUN mix local.rebar --force && \\\n  mix local.hex --force\n\nRUN ls -R ./host_core/priv/built\nCOPY ./host_core/priv/built/x86_64/libhostcore_wasmcloud_native.so ./host_core/priv/built/x86_64/libhostcore_wasmcloud_native.so\nCOPY ./host_core/priv/built/aarch64/libhostcore_wasmcloud_native.so ./host_core/priv/built/aarch64/libhostcore_wasmcloud_native.so\n# Grab platform-specific NIF\nRUN cp ./host_core/priv/built/`uname -m`/libhostcore_wasmcloud_native.so ./host_core/priv/built/libhostcore_wasmcloud_native.so\nWORKDIR ./wasmcloud_host\nRUN mix do deps.compile, compile\n\nRUN mkdir -p /opt/built && \\\n  mix distillery.release --verbose && \\\n  cp _build/${MIX_ENV}/rel/${APP_NAME}/releases/${APP_VSN}/${APP_NAME}.tar.gz /opt/built && \\\n  cd /opt/built && \\\n  tar -xzf ${APP_NAME}.tar.gz && \\\n  mkdir -p /opt/rel && \\\n  mv ${APP_NAME}.tar.gz /opt/rel && rm ${APP_NAME}.tar.gz\n\n##\n# STEP 3: Build optimized final release image\n##\n\n# Release image should be the same as the _base container image_ used for the builder.\n# E.g. `elixir:1.13.3-alpine`'s base container image is `alpine:3.15.4'\nFROM ${RELEASE_IMAGE}\n\nARG APP_NAME\nENV REPLACE_OS_VARS=true\n\nWORKDIR /opt/app\nCOPY --from=builder /opt/built .\n\n# Install release image dependencies (e.g. `bash` is required to run the script and a `libc` installation is required for the NIFs)\nRUN apt update && \\\n  DEBIAN_FRONTEND=noninteractive apt install -y --no-install-recommends \\\n  ca-certificates \\\n  curl \\\n  locales \\\n  libssl-dev \\\n  inotify-tools \\\n  procps && \\\n  export LANG=en_US.UTF-8 && \\\n    echo $LANG UTF-8 > /etc/locale.gen && \\\n    locale-gen && \\\n    update-locale LANG=$LANG && \\\n    rm -rf /var/lib/apt/lists/*\n\n# Prevents unnecessary warning messages about language encoding\nENV LC_ALL=en_US.UTF-8\n\n# NATS connection is required and can be overridden\n# Default configuration assumes a NATS container is running named `nats` and available over port 4222\nARG WASMCLOUD_RPC_HOST=nats\nARG WASMCLOUD_PROV_RPC_HOST=nats\nARG WASMCLOUD_CTL_HOST=nats\nENV WASMCLOUD_RPC_HOST=${WASMCLOUD_RPC_HOST} \\\n    WASMCLOUD_CTL_HOST=${WASMCLOUD_CTL_HOST} \\\n    WASMCLOUD_PROV_RPC_HOST=${WASMCLOUD_PROV_RPC_HOST}\n\nCMD [\"/opt/app/bin/wasmcloud_host\", \"foreground\"]\n"
+}

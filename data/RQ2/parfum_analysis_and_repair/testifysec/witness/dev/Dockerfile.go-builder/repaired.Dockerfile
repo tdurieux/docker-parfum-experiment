@@ -1,0 +1,2 @@
+FROM golang:1.17.10
+COPY  ./bin/witness /usr/bin

@@ -1,0 +1,100 @@
+ARG CUDA_IMAGE
+ARG TF_CUSTOM_OP_IMAGE
+FROM ${CUDA_IMAGE} as cuda
+FROM ${TF_CUSTOM_OP_IMAGE}
+
+# TF_CUSTOM_OP_IMAGE=tensorflow/tensorflow:custom-op-gpu-ubuntu14 for manylinux1 tagged TF pip artifacts
+# TF_CUSTOM_OP_IMAGE=tensorflow/tensorflow:custom-op-gpu-ubuntu16 for manylinux2010 tagged TF pip artifacts
+# More info here: https://github.com/tensorflow/custom-op
+
+ARG PYVER=3.6
+ENV PYVER=${PYVER}
+ARG PYV=36
+ENV PYV=${PYV}
+
+# Python 3.6 and 3.7 are not available in Ubuntu 14
+# Python 3.7 can't be installed with PPA method in this Ubuntu 14
+# NOTE: jonathonf has removed his PPAs, but TensorFlow still has the repo in its docker image
+# NOTE: Ubuntu 14.04 doesn't support cyphers used by developer.download.nvidia.com, and update returns warning on them
+#       so "update; do_something" instead of "update && do_something"
+RUN rm -rf /etc/apt/sources.list.d/jonathonf-* && \
+    apt-get update; \
+    apt-get install -y --no-install-recommends curl && \
+    if [ "${PYVER}" = "3.7" ]; then \
+        apt-get install -y --no-install-recommends libffi-dev && \
+        wget https://www.python.org/ftp/python/3.7.2/Python-3.7.2.tar.xz && \
+        tar -xf Python-3.7.2.tar.xz && \
+        cd Python-3.7.2 && \
+        ./configure --build="$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)" --enable-optimizations && \
+        make -j8 build_all && \
+        make -j8 altinstall; rm Python-3.7.2.tar.xz \
+    elif \
+        [ $(apt-cache search python$PYVER | wc -l) -eq 0 ]; then \
+        if [ $(apt-cache search python$PYVER | wc -l) -eq 0 ]; then \
+            apt-get install software-properties-common -y --no-install-recommends && \
+            add-apt-repository ppa:deadsnakes/ppa -y && \
+            apt-get update; \
+        fi && \
+        curl -f -s https://packagecloud.io/install/repositories/github/git-lfs/script.deb.sh | bash && \
+        apt-get install -y --no-install-recommends \
+                git \
+                git-lfs \
+                python$PYVER \
+                python$PYVER-dev && \
+        # In Ubuntu 18.04 and Python 3.6 and 3.7 we need to install it. It is not available for 16.04
+        apt-get install python3-distutils -y --no-install-recommends || true; \
+    fi && \
+    rm -rf /var/lib/apt/lists/*
+
+ENV PYTHONIOENCODING=utf-8
+ENV LC_ALL=C.UTF-8
+RUN rm -f /usr/bin/python && \
+    rm -f /usr/bin/python`echo $PYVER | cut -c1-1` && \
+    rm -f /usr/local/bin/pip || true && \
+    if [ "${PYVER}" = "3.7" ];then \
+        ln -s /usr/local/bin/python3.7 /usr/bin/python3.7 && \
+        ln -s /usr/local/bin/python3.7 /usr/bin/python && \
+        ln -s /usr/local/bin/pip3.7 /usr/local/bin/pip && \
+        ln -s /usr/local/bin/pip3.7 /usr/bin/pip3.7 && \
+        ln -s /usr/local/bin/pip3.7 /usr/bin/pip; \
+    elif \
+
+
+
+        [ "${PYTHON_VER}" == "36" ]; then \
+        ln -s /usr/bin/python$PYVER /usr/bin/python && \
+        ln -s /usr/bin/python$PYVER /usr/bin/python`echo $PYVER | cut -c1-1` && \
+        PYTHON_VER=$(python -c "import sys;print(f'{sys.version_info[0]}{sys.version_info[1]}')") && \
+        if [ "${PYTHON_VER}" == "36" ]; then \
+            curl -f -O https://bootstrap.pypa.io/pip/3.6/get-pip.py; \
+        else \
+            curl -f -O https://bootstrap.pypa.io/get-pip.py; \
+        fi && \
+        python get-pip.py && \
+        rm get-pip.py; else \
+            curl -f -O https://bootstrap.pypa.io/get-pip.py; \
+        fi \
+
+
+    fi && \
+    pip install --no-cache-dir --upgrade pip && \
+    python --version && \
+    pip --version
+
+COPY --from=cuda /usr/local/cuda /usr/local/cuda
+ENV LD_LIBRARY_PATH=/usr/local/cuda/lib64:/usr/local/cuda/lib64/stubs/:${LD_LIBRARY_PATH}
+
+WORKDIR /opt/dali
+COPY qa/setup_packages.py qa/setup_packages.py
+
+# get current CUDA version, ask setup_packages.py which TensorFlow we need to support and loop over all version downloading
+# them to /pip-packages dir one by one. In effect all TF versions are stored in only one place setup_packages.py
+SHELL ["/bin/bash", "-c"]
+RUN export USE_CUDA_VERSION=$(echo $(ls /usr/local/cuda/lib64/libcudart.so*) | sed 's/.*\.\([0-9]\+\)\.\([0-9]\+\)\.\([0-9]\+\)/\1\2/') && \
+    export last_config_index=$(python qa/setup_packages.py -n -u tensorflow-gpu --cuda ${USE_CUDA_VERSION}) && \
+    for i in `seq 0 $last_config_index`; do \
+        package=$(python qa/setup_packages.py -i $i -u tensorflow-gpu --cuda ${USE_CUDA_VERSION}); \
+        if [[ "${package}" != *"nvidia-tensorflow"* ]]; then \
+            pip download ${package} -d /pip-packages; \
+        fi \
+    done

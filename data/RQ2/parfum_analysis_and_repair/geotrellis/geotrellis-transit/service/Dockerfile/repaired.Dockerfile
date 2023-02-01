@@ -1,0 +1,1 @@
+# The project uses Scala 2.10 and GT 0.9, but it runs fine with Java 8.

@@ -1,0 +1,44 @@
+{
+  "startTime": 1674249111000,
+  "endTime": 1674249111798,
+  "originalSmells": [
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 20,
+        "lineEnd": 20,
+        "columnStart": 21,
+        "columnEnd": 66
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 13,
+        "lineEnd": 13,
+        "columnStart": 18,
+        "columnEnd": 40
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 13,
+        "lineEnd": 13,
+        "columnStart": 18,
+        "columnEnd": 40
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 7,
+        "lineEnd": 7,
+        "columnStart": 4,
+        "columnEnd": 36
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM alpine:3.16.0 as otelcol\nCOPY otelcol-sumo /\n# This shouldn't be necessary but sometimes we end up with execution bit not set.\n# ref: https://github.com/open-telemetry/opentelemetry-collector/issues/1317\nRUN chmod 755 /otelcol-sumo\n\nFROM alpine:3.16.0 as certs\nRUN apk --update --no-cache add ca-certificates\n\nFROM alpine:3.16.0 as directories\nRUN mkdir /etc/otel/\n\nFROM debian:11.4 as systemd\nRUN apt update && apt install --no-install-recommends -y systemd && rm -rf /var/lib/apt/lists/*;\n# prepare package with journald and it's dependencies keeping original paths\n# h stands for dereference of symbolic links\nRUN tar czhf journalctl.tar.gz /bin/journalctl $(ldd /bin/journalctl | grep -oP \"\\/.*? \")\n# extract package to /output so it can be taken as base for scratch image\n# we do not copy archive into scratch image, as it doesn't have tar executable\n# however, we can copy full directory as root (/) to be base file structure for scratch image\nRUN mkdir /output && tar xf /journalctl.tar.gz --directory /output && rm /journalctl.tar.gz\n\nFROM scratch\nARG BUILD_TAG=latest\nENV TAG $BUILD_TAG\nARG USER_UID=10001\nUSER ${USER_UID}\nENV HOME /etc/otel/\n\n# copy journalctl and it's dependencies as base structure\nCOPY --from=systemd /output/ /\nCOPY --from=certs /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt\nCOPY --from=otelcol /otelcol-sumo /otelcol-sumo\nCOPY --from=directories --chown=${USER_UID}:${USER_UID} /etc/otel/ /etc/otel/\n\nENTRYPOINT [\"/otelcol-sumo\"]\nCMD [\"--config\", \"/etc/otel/config.yaml\"]\n"
+}

@@ -1,0 +1,17 @@
+{
+  "startTime": 1674248214686,
+  "endTime": 1674248215388,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 20,
+        "lineEnd": 20,
+        "columnStart": 4,
+        "columnEnd": 90
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "ARG SRC_DIR=\"/go/src/github.com/ceph/ceph-csi/\"\nARG GO_ARCH\nARG BASE_IMAGE\n\nFROM ${BASE_IMAGE} as builder\n\nLABEL stage=\"build\"\n\nARG CSI_IMAGE_NAME=quay.io/cephcsi/cephcsi\nARG CSI_IMAGE_VERSION=canary\nARG GO_ARCH\nARG SRC_DIR\nARG GIT_COMMIT\nARG GOROOT=/usr/local/go\n\nCOPY build.env /\n\nRUN source /build.env && \\\n    ( test -n \"${GO_ARCH}\" && exit 0; echo -e \"\\n\\nMissing GO_ARCH argument for building image, install Golang or run: make image-cephcsi GOARCH=amd64\\n\\n\"; exit 1 ) && \\\n    mkdir -p ${GOROOT} && \\\n    curl -f https://storage.googleapis.com/golang/go${GOLANG_VERSION}.linux-${GO_ARCH}.tar.gz | tar xzf - -C ${GOROOT} --strip-components=1\n\n# test if the downloaded version of Golang works (different arch?)\nRUN ${GOROOT}/bin/go version && ${GOROOT}/bin/go env\n\n# FIXME: Ceph does not need Apache Arrow anymore, some container images may\n# still have the repository enabled. Disabling the repository can be removed in\n# the future, see https://github.com/ceph/ceph-container/pull/1990 .\nRUN dnf config-manager --disable apache-arrow-centos || true\n\nRUN dnf -y install \\\n\tlibrados-devel librbd-devel \\\n\t/usr/bin/cc \\\n\tmake \\\n\tgit \\\n\t&& dnf clean all \\\n\t&& rm -rf /var/cache/yum \\\n    && true\n\nENV GOROOT=${GOROOT} \\\n    GOPATH=/go \\\n    CGO_ENABLED=1 \\\n    GIT_COMMIT=\"${GIT_COMMIT}\" \\\n    ENV_CSI_IMAGE_VERSION=\"${CSI_IMAGE_VERSION}\" \\\n    ENV_CSI_IMAGE_NAME=\"${CSI_IMAGE_NAME}\" \\\n    PATH=\"${GOROOT}/bin:${GOPATH}/bin:${PATH}\"\n\n\nWORKDIR ${SRC_DIR}\n\n# Copy source directories\nCOPY . ${SRC_DIR}\n\n# Build executable\nRUN make cephcsi\n\n#-- Final container\nFROM ${BASE_IMAGE}\n\nARG SRC_DIR\n\nLABEL maintainers=\"Ceph-CSI Authors\" \\\n    version=${CSI_IMAGE_VERSION} \\\n    architecture=${GO_ARCH} \\\n    description=\"Ceph-CSI Plugin\"\n\nCOPY --from=builder ${SRC_DIR}/_output/cephcsi /usr/local/bin/cephcsi\n\n# verify that all dynamically linked libraries are available\nRUN [ $(ldd /usr/local/bin/cephcsi | grep -c '=> not found') = '0' ]\n\nENTRYPOINT [\"/usr/local/bin/cephcsi\"]\n"
+}

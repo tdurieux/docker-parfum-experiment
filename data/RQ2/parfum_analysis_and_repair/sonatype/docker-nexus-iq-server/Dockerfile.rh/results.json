@@ -1,0 +1,35 @@
+{
+  "startTime": 1674255272174,
+  "endTime": 1674255273094,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 83,
+        "lineEnd": 83,
+        "columnStart": 3,
+        "columnEnd": 162
+      }
+    },
+    {
+      "rule": "sha256sumEchoOneSpaces",
+      "position": {
+        "lineStart": 82,
+        "lineEnd": 85,
+        "columnStart": 4,
+        "columnEnd": 73
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 86,
+        "lineEnd": 86,
+        "columnStart": 3,
+        "columnEnd": 62
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Copyright (c) 2017-present Sonatype, Inc.\n#\n# Licensed under the Apache License, Version 2.0 (the \"License\");\n# you may not use this file except in compliance with the License.\n# You may obtain a copy of the License at\n#\n#      http://www.apache.org/licenses/LICENSE-2.0\n#\n# Unless required by applicable law or agreed to in writing, software\n# distributed under the License is distributed on an \"AS IS\" BASIS,\n# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.\n# See the License for the specific language governing permissions and\n# limitations under the License.\n\nFROM registry.access.redhat.com/ubi8/ubi-minimal:8.6-854\n\n# Build parameters\nARG IQ_SERVER_VERSION=1.141.0-01\nARG IQ_SERVER_SHA256=eb938efc1dbf4c83bc1a2b0e26ad6fc2d1c14e18104c2db07501668840c5637d\n\n\n\n\n\nARG TEMP=\"/tmp/work\"\nARG IQ_HOME=\"/opt/sonatype/nexus-iq-server\"\nARG SONATYPE_WORK=\"/sonatype-work\"\nARG CONFIG_HOME=\"/etc/nexus-iq-server\"\nARG LOGS_HOME=\"/var/log/nexus-iq-server\"\nARG GID=1000\nARG UID=1000\nARG TIMEOUT=600\n\nLABEL name=\"Nexus IQ Server image\" \\\n  maintainer=\"Sonatype <support@sonatype.com>\" \\\n  vendor=Sonatype \\\n  version=\"${IQ_SERVER_VERSION}\" \\\n  release=\"1.141.0\" \\\n  url=\"https://www.sonatype.com\" \\\n  summary=\"The Nexus IQ Server\" \\\n  description=\"Nexus IQ Server is a policy engine powered by precise intelligence on open source components. \\\n    It provides a number of tools to improve component usage in your software supply chain, allowing you to \\\n    automate your processes and achieve accelerated speed to delivery while also increasing product quality\" \\\n  com.sonatype.license=\"Apache License, Version 2.0\" \\\n  com.sonatype.name=\"Nexus IQ Server image\" \\\n  run=\"docker run -d -p 8070:8070 -p 8071:8071 IMAGE\" \\\n  io.k8s.description=\"Nexus IQ Server is a policy engine powered by precise intelligence on open source components. \\\n    It provides a number of tools to improve component usage in your software supply chain, allowing you to \\\n    automate your processes and achieve accelerated speed to delivery while also increasing product quality\" \\\n  io.k8s.display-name=\"Nexus IQ Server\" \\\n  io.openshift.expose-services=\"8071:8071\" \\\n  io.openshift.tags=\"Sonatype,Nexus,IQ Server\"\n\nUSER root\n\n# For testing\n# For testing\nRUN microdnf update -y \\\n&& microdnf --setopt=install_weak_deps=0 --setopt=tsflags=nodocs install -y java-1.8.0-openjdk-devel \\\n&& microdnf install -y procps gzip unzip tar shadow-utils findutils util-linux less rsync git \\\n&& microdnf clean all\n\n# Create folders\nRUN mkdir -p ${TEMP} \\\n&& mkdir -m 0755 -p ${IQ_HOME} \\\n&& mkdir -m 0755 -p ${SONATYPE_WORK} \\\n&& mkdir -m 0755 -p ${CONFIG_HOME} \\\n&& mkdir -m 0755 -p ${LOGS_HOME}\n\n# Copy config.yml and set sonatypeWork to the correct value\nCOPY config.yml ${TEMP}\nRUN cat ${TEMP}/config.yml | sed -r \"s/\\s*sonatypeWork\\s*:\\s*\\\"?[-0-9a-zA-Z_/\\\\]+\\\"?/sonatypeWork: ${SONATYPE_WORK//\\//\\\\/}/\" > ${CONFIG_HOME}/config.yml \\\n&& chmod 0644 ${CONFIG_HOME}/config.yml\n\n# Create start script\nRUN echo \"trap 'kill -TERM \\`cut -f1 -d@ ${SONATYPE_WORK}/lock\\`; timeout ${TIMEOUT} tail --pid=\\`cut -f1 -d@ ${SONATYPE_WORK}/lock\\` -f /dev/null' SIGTERM\" > ${IQ_HOME}/start.sh \\\n&& echo \"/usr/bin/java \\${JAVA_OPTS} -jar nexus-iq-server-${IQ_SERVER_VERSION}.jar server ${CONFIG_HOME}/config.yml 2> ${LOGS_HOME}/stderr.log & \" >> ${IQ_HOME}/start.sh \\\n&& echo \"wait\" >> ${IQ_HOME}/start.sh \\\n&& chmod 0755 ${IQ_HOME}/start.sh\n\n\n# Download the server bundle, verify its checksum, and extract the server jar to the install directory\nRUN cd ${TEMP} \\\n&& curl -f -L https://download.sonatype.com/clm/server/nexus-iq-server-${IQ_SERVER_VERSION}-bundle.tar.gz --output nexus-iq-server-${IQ_SERVER_VERSION}-bundle.tar.gz \\\n&& echo \"${IQ_SERVER_SHA256}  nexus-iq-server-${IQ_SERVER_VERSION}-bundle.tar.gz\" > nexus-iq-server-${IQ_SERVER_VERSION}-bundle.tar.gz.sha256 \\\n&& sha256sum -c nexus-iq-server-${IQ_SERVER_VERSION}-bundle.tar.gz.sha256 \\\n&& tar -xvf nexus-iq-server-${IQ_SERVER_VERSION}-bundle.tar.gz \\\n&& mv nexus-iq-server-${IQ_SERVER_VERSION}.jar ${IQ_HOME} \\\n&& cd ${IQ_HOME} \\\n&& rm -rf ${TEMP} \\\n\n# Add group and user\n&& groupadd -g ${GID} nexus \\\n&& adduser -u ${UID} -d ${IQ_HOME} -c \"Nexus IQ user\" -g nexus -s /bin/false nexus \\\n\n# Change owner to nexus user\n&& chown -R nexus:nexus ${IQ_HOME} \\\n&& chown -R nexus:nexus ${SONATYPE_WORK} \\\n&& chown -R nexus:nexus ${CONFIG_HOME} \\\n&& chown -R nexus:nexus ${LOGS_HOME} && rm nexus-iq-server-${IQ_SERVER_VERSION}-bundle.tar.gz\n\n# Red Hat Certified Container commands\nCOPY rh-docker /\nRUN usermod -a -G root nexus \\\n&& chmod -R 0755 /licenses \\\n&& chmod 0755 /help.1 \\\n&& chmod 0755 /uid_entrypoint.sh \\\n&& chmod 0755 /uid_template.sh \\\n&& bash /uid_template.sh \\\n&& chmod 0664 /etc/passwd\n\n# This is where we will store persistent data\nVOLUME ${SONATYPE_WORK}\nVOLUME ${LOGS_HOME}\n\n# Expose the ports\nEXPOSE 8070\nEXPOSE 8071\n\n# Wire up health check\nHEALTHCHECK CMD curl --fail --silent --show-error http://localhost:8071/healthcheck || exit 1\n\n# Change to nexus user\nUSER nexus\n\nENV JAVA_OPTS=\"-Djava.util.prefs.userRoot=${SONATYPE_WORK}/javaprefs\"\nENV SONATYPE_INTERNAL_HOST_SYSTEM=Docker-RedHat\n\nWORKDIR ${IQ_HOME}\n\nENTRYPOINT [\"/uid_entrypoint.sh\"]\nCMD [ \"sh\", \"./start.sh\" ]\n"
+}

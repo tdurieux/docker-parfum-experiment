@@ -1,0 +1,15 @@
+FROM ubuntu
+
+ENV BORG_LATEST_SCRIPT_URL=https://gist.github.com/m3adow/d3a4479742c56fe77e3cf6fc0d405e8e/raw/borg-latest.sh \
+    BORG_PATH=/usr/local/bin/borg
+
+COPY borg-latest.sh /usr/local/bin/
+
+RUN DEBIAN_FRONTEND=noninteractive apt-get update \
+  && apt-get install --no-install-recommends -y wget gpg \
+  && chmod +x /usr/local/bin/borg-latest.sh \
+  && /usr/local/bin/borg-latest.sh -V \
+  && rm -rf /var/lib/apt/lists/* \
+  && rm -rf /var/log/*
+
+ENTRYPOINT ["/usr/local/bin/borg-latest.sh"]

@@ -1,0 +1,37 @@
+FROM golang:1.12-alpine as builder
+
+RUN apk add --no-cache make gcc musl-dev linux-headers git
+
+ADD . /tomochain
+
+RUN cd /tomochain \
+    && make tomo \
+    && chmod +x /tomochain/build/bin/tomo
+
+FROM alpine:latest
+
+WORKDIR /tomochain
+
+COPY --from=builder /tomochain/build/bin/tomo /usr/local/bin/tomo
+
+ENV IDENTITY ''
+ENV PASSWORD ''
+ENV PRIVATE_KEY ''
+ENV BOOTNODES ''
+ENV EXTIP ''
+ENV VERBOSITY 3
+ENV SYNC_MODE 'full'
+ENV NETWORK_ID '88'
+ENV WS_SECRET ''
+ENV NETSTATS_HOST 'netstats-server'
+ENV NETSTATS_PORT '3000'
+ENV ANNOUNCE_TXS ''
+
+RUN apk add --no-cache ca-certificates
+
+COPY docker/tomochain ./
+COPY genesis/ ./
+
+EXPOSE 8545 8546 30303 30303/udp
+
+ENTRYPOINT ["./entrypoint.sh"]

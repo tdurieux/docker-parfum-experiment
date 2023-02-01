@@ -1,0 +1,8 @@
+FROM debian:11.3
+MAINTAINER Hofstadter, Inc <open-source@hofstadter.io>
+
+COPY hof /usr/local/bin
+ENTRYPOINT ["hof"]
+
+VOLUME ["/work"]
+WORKDIR /work

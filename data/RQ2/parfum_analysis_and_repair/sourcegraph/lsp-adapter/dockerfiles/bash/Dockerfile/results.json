@@ -1,0 +1,72 @@
+{
+  "startTime": 1674218952570,
+  "endTime": 1674218953475,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 10,
+        "lineEnd": 10,
+        "columnStart": 4,
+        "columnEnd": 49
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 11,
+        "lineEnd": 11,
+        "columnStart": 4,
+        "columnEnd": 53
+      }
+    },
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 67,
+        "lineEnd": 67,
+        "columnStart": 5,
+        "columnEnd": 41
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 25,
+        "lineEnd": 25,
+        "columnStart": 4,
+        "columnEnd": 36
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 36,
+        "lineEnd": 36,
+        "columnStart": 5,
+        "columnEnd": 35
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 37,
+        "lineEnd": 37,
+        "columnStart": 5,
+        "columnEnd": 36
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 67,
+        "lineEnd": 67,
+        "columnStart": 45,
+        "columnEnd": 61
+      }
+    }
+  ],
+  "repairedDockerfile": "FROM golang:1.10-alpine AS lsp-adapter\nWORKDIR /go/src/github.com/sourcegraph/lsp-adapter\nCOPY . .\nRUN CGO_ENABLED=0 GOBIN=/usr/local/bin go install github.com/sourcegraph/lsp-adapter\n\nFROM mongo:3.7.9\n\nRUN apt-get update \\\n  && apt-get install --no-install-recommends -y curl \\\n  && rm -rf /var/lib/apt/lists/*\nRUN curl -f -sL https://deb.nodesource.com/setup_8.x | bash -\nRUN curl -f -sS https://dl.yarnpkg.com/debian/pubkey.gpg | apt-key add -\nRUN echo \"deb https://dl.yarnpkg.com/debian/ stable main\" | tee /etc/apt/sources.list.d/yarn.list\nRUN apt-get update \\\n  && apt-get install --no-install-recommends -y \\\n    nodejs \\\n    man-db \\\n    netcat \\\n    python \\\n    python-pip \\\n    git \\\n    yarn \\\n  && rm -rf /var/lib/apt/lists/*\n\n# Downgrade pip because explainshell depends on this API.\nRUN pip install --no-cache-dir --upgrade pip==9.0.3\n\n# This should be changed to the upstream https://github.com/idank/explainshell\n# once https://github.com/idank/explainshell/pull/125 is merged in.\n#\n# Ignore the warning about using WORKDIR instead of cd for convenience.\n# hadolint ignore=DL3003\nRUN git clone https://github.com/chrismwendt/explainshell \\\n  && cd explainshell \\\n  && git checkout 775a6097ab19ec9ee320919f7f29f7041513125e \\\n  && rm -rf .git \\\n  && pip install --no-cache-dir setuptools==39.2.0 \\\n  && pip install --no-cache-dir -r requirements.txt \\\n  # Prepare for baking the man page data into this image by pointing mongo at a\n  # db directory other than /data/db, which is read-only in the upstream base\n  # mongo image. See https://docs.docker.com/engine/reference/builder/#volume\n  # \"If any build steps change the data within the volume after it has been\n  # declared, those changes will be discarded.\"\n  && mkdir -p /data/db2 \\\n  && echo \"dbpath = /data/db2\" > /etc/mongodb.conf \\\n  && chown -R mongodb:mongodb /data/db2\n\n# Use tini as entrypoint to correctly handle signals and zombie processes.\nENV TINI_VERSION v0.18.0\nADD https://github.com/krallin/tini/releases/download/${TINI_VERSION}/tini /tini\nRUN chmod +x /tini\nENTRYPOINT [\"/tini\", \"--\"]\n\nRUN apt-get update && apt-get install --no-install-recommends -y \\\n\tmake \\\n\tgcc \\\n\tg++ \\\n  && rm -rf /var/lib/apt/lists/*\n\n# Ignore the warning about using WORKDIR instead of cd for convenience.\n# hadolint ignore=DL3003\nRUN git clone https://github.com/mads-hartmann/bash-language-server \\\n  && cd bash-language-server \\\n  && git checkout 8790f7428e42b6c421e2dd224c7b45285809768e \\\n  && rm -rf .git \\\n  && make build \\\n  && make install \\\n  && yarn global add file:\"$(pwd)\"/server && yarn cache clean;\n\nCOPY . .\n\n# Very slow (~30 minutes) - initializes the mongo database with thousands of man\n# pages and bakes the db into the image (ends up being ~2 GB).\n#\n# Ignore the warning about using WORKDIR instead of cd for convenience.\n# hadolint ignore=DL3003\nRUN cd explainshell && ../dockerfiles/bash/populate-explainshell-db.sh\n\n# https://stackoverflow.com/a/33601894\n# This might not be necessary because this db is read-only\n# TODO(chris): Try removing this line and seeing if it still works\n# VOLUME /data/db2\n\nCOPY --from=lsp-adapter /usr/local/bin/lsp-adapter /usr/local/bin\nEXPOSE 8080\n\nCMD [\"./dockerfiles/bash/run-bash-language-server.sh\"]\n"
+}

@@ -1,0 +1,29 @@
+FROM node:14
+
+COPY ./frontend/package.json ./frontend/package-lock.json /app/
+WORKDIR /app
+
+RUN npm i && rm -rf /root/.node-gyp /root/.npm && npm cache clean --force;
+
+COPY ./frontend/ /app/
+
+RUN npm run build
+
+
+FROM python:3.10-alpine
+
+ENV PYTHONUNBUFFERED 1
+
+WORKDIR /app
+
+COPY --from=0 /static/ /app/static/
+COPY requirements.txt /app/
+RUN apk add --no-cache --virtual build-deps build-base \
+        && pip install --no-cache-dir -r requirements.txt \
+        && apk del build-deps
+RUN apk add --no-cache tini
+
+COPY . /app
+
+EXPOSE 8080
+CMD ["/sbin/tini", "python", "-m", "mypy_playground"]

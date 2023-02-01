@@ -1,0 +1,98 @@
+{
+  "startTime": 1674219664856,
+  "endTime": 1674219666216,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 38,
+        "lineEnd": 38,
+        "columnStart": 4,
+        "columnEnd": 108
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 72,
+        "lineEnd": 72,
+        "columnStart": 4,
+        "columnEnd": 52
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 81,
+        "lineEnd": 81,
+        "columnStart": 4,
+        "columnEnd": 68
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 90,
+        "lineEnd": 90,
+        "columnStart": 4,
+        "columnEnd": 60
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 100,
+        "lineEnd": 100,
+        "columnStart": 4,
+        "columnEnd": 86
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 111,
+        "lineEnd": 111,
+        "columnStart": 4,
+        "columnEnd": 76
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 74,
+        "lineEnd": 74,
+        "columnStart": 4,
+        "columnEnd": 117
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 92,
+        "lineEnd": 95,
+        "columnStart": 4,
+        "columnEnd": 20
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 102,
+        "lineEnd": 105,
+        "columnStart": 4,
+        "columnEnd": 53
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 113,
+        "lineEnd": 115,
+        "columnStart": 4,
+        "columnEnd": 130
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM ubuntu:jammy\nLABEL maintainer=\"Eirik Albrigtsen <sszynrae@gmail.com>\"\n\n# Required packages:\n# - musl-dev, musl-tools - the musl toolchain\n# - curl, g++, make, pkgconf, cmake - for fetching and building third party libs\n# - ca-certificates - openssl + curl + peer verification of downloads\n# - xutils-dev - for openssl makedepend\n# - libssl-dev and libpq-dev - for dynamic linking during diesel_codegen build process\n# - git - cargo builds in user projects\n# - linux-headers-amd64 - needed for building openssl 1.1 (stretch only)\n# - file - needed by rustup.sh install\n# - automake autoconf libtool - support crates building C deps as part cargo build\n# NB: does not include cmake atm\nRUN apt-get update && apt-get install -y \\\n  musl-dev \\\n  musl-tools \\\n  file \\\n  git \\\n  openssh-client \\\n  make \\\n  g++ \\\n  curl \\\n  pkgconf \\\n  ca-certificates \\\n  xutils-dev \\\n  libssl-dev \\\n  libpq-dev \\\n  automake \\\n  autoconf \\\n  libtool \\\n  --no-install-recommends && \\\n  rm -rf /var/lib/apt/lists/*\n\n# Install rust using rustup\nARG CHANNEL\nENV RUSTUP_VER=\"1.24.3\" \\\n    RUST_ARCH=\"x86_64-unknown-linux-gnu\"\nRUN curl -f \"https://static.rust-lang.org/rustup/archive/${RUSTUP_VER}/${RUST_ARCH}/rustup-init\" -o rustup-init && \\\n    chmod +x rustup-init && \\\n    ./rustup-init -y --default-toolchain ${CHANNEL} --profile minimal && \\\n    rm rustup-init && \\\n    ~/.cargo/bin/rustup target add x86_64-unknown-linux-musl && \\\n    echo \"[build]\\ntarget = \\\"x86_64-unknown-linux-musl\\\"\" > ~/.cargo/config\n\n# Allow non-root access to cargo\nRUN chmod a+X /root\nCOPY etc/profile.d/cargo.sh /etc/profile.d/cargo.sh\n\n# Convenience list of versions and variables for compilation later on\n# This helps continuing manually if anything breaks.\nENV SSL_VER=\"1.1.1o\" \\\n    CURL_VER=\"7.83.1\" \\\n    ZLIB_VER=\"1.2.12\" \\\n    PQ_VER=\"11.12\" \\\n    SQLITE_VER=\"3380500\" \\\n    CC=musl-gcc \\\n    PREFIX=/musl \\\n    PATH=/usr/local/bin:/root/.cargo/bin:$PATH \\\n    PKG_CONFIG_PATH=/usr/local/lib/pkgconfig \\\n    LD_LIBRARY_PATH=$PREFIX\n\n# Set up a prefix for musl build libraries, make the linker's job of finding them easier\n# Primarily for the benefit of postgres.\n# Lastly, link some linux-headers for openssl 1.1 (not used herein)\nRUN mkdir $PREFIX && \\\n    echo \"$PREFIX/lib\" >> /etc/ld-musl-x86_64.path && \\\n    ln -s /usr/include/x86_64-linux-gnu/asm /usr/include/x86_64-linux-musl/asm && \\\n    ln -s /usr/include/asm-generic /usr/include/x86_64-linux-musl/asm-generic && \\\n    ln -s /usr/include/linux /usr/include/x86_64-linux-musl/linux\n\n# Build zlib (used in openssl and pq)\nRUN curl -f -sSL https://zlib.net/zlib-$ZLIB_VER.tar.gz | tar xz && \\\n    cd zlib-$ZLIB_VER && \\\n    CC=\"musl-gcc -fPIC -pie\" LDFLAGS=\"-L$PREFIX/lib\" CFLAGS=\"-I$PREFIX/include\" ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" --static --prefix=$PREFIX && \\\n    make -j$(nproc) && make install && \\\n    cd .. && rm -rf zlib-$ZLIB_VER\n\n# Build openssl (used in curl and pq)\n# Would like to use zlib here, but can't seem to get it to work properly\n# TODO: fix so that it works\nRUN curl -f -sSL https://www.openssl.org/source/openssl-$SSL_VER.tar.gz | tar xz && \\\n    cd openssl-$SSL_VER && \\\n    ./Configure no-zlib no-shared -fPIC --prefix=$PREFIX --openssldir=$PREFIX/ssl linux-x86_64 && \\\n    env C_INCLUDE_PATH=$PREFIX/include make depend 2> /dev/null && \\\n    make -j$(nproc) && make install && \\\n    cd .. && rm -rf openssl-$SSL_VER\n\n# Build curl (needs with-zlib and all this stuff to allow https)\n# curl_LDFLAGS needed on stretch to avoid fPIC errors - though not sure from what\nRUN curl -f -sSL https://curl.se/download/curl-$CURL_VER.tar.gz | tar xz && \\\n    cd curl-$CURL_VER && \\\n    CC=\"musl-gcc -fPIC -pie\" LDFLAGS=\"-L$PREFIX/lib\" CFLAGS=\"-I$PREFIX/include\" ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" \\\n      --enable-shared=no --with-zlib --enable-static=ssl --enable-optimize --prefix=$PREFIX \\\n      --with-ca-path=/etc/ssl/certs/ --with-ca-bundle=/etc/ssl/certs/ca-certificates.crt --without-ca-fallback \\\n      --with-openssl && \\\n    make -j$(nproc) curl_LDFLAGS=\"-all-static\" && make install && \\\n    cd .. && rm -rf curl-$CURL_VER\n\n# Build libpq\nRUN curl -f -sSL https://ftp.postgresql.org/pub/source/v$PQ_VER/postgresql-$PQ_VER.tar.gz | tar xz && \\\n    cd postgresql-$PQ_VER && \\\n    CC=\"musl-gcc -fPIE -pie\" LDFLAGS=\"-L$PREFIX/lib\" CFLAGS=\"-I$PREFIX/include\" ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" \\\n    --without-readline \\\n    --with-openssl \\\n    --prefix=$PREFIX --host=x86_64-unknown-linux-musl && \\\n    cd src/interfaces/libpq make -s -j$(nproc) all-static-lib && make -s install install-lib-static && \\\n    cd ../../bin/pg_config && make -j $(nproc) && make install && \\\n    cd .. && rm -rf postgresql-$PQ_VER\n\n# Build libsqlite3 using same configuration as the alpine linux main/sqlite package\nRUN curl -f -sSL https://www.sqlite.org/2022/sqlite-autoconf-$SQLITE_VER.tar.gz | tar xz && \\\n    cd sqlite-autoconf-$SQLITE_VER && \\\n    CFLAGS=\"-DSQLITE_ENABLE_FTS4 -DSQLITE_ENABLE_FTS3_PARENTHESIS -DSQLITE_ENABLE_FTS5 -DSQLITE_ENABLE_COLUMN_METADATA -DSQLITE_SECURE_DELETE -DSQLITE_ENABLE_UNLOCK_NOTIFY -DSQLITE_ENABLE_RTREE -DSQLITE_USE_URI -DSQLITE_ENABLE_DBSTAT_VTAB -DSQLITE_ENABLE_JSON1\" \\\n    CC=\"musl-gcc -fPIC -pie\" \\\n    ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" \\\n\n    --prefix=$PREFIX --host=x86_64-unknown-linux-musl --enable-threadsafe --enable-dynamic-extensions --disable-shared && \\\n    make && make install && \\\n    cd .. && rm -rf sqlite-autoconf-$SQLITE_VER\n\n# SSL cert directories get overridden by --prefix and --openssldir\n# and they do not match the typical host configurations.\n# The SSL_CERT_* vars fix this, but only when inside this container\n# musl-compiled binary must point SSL at the correct certs (muslrust/issues/5) elsewhere\n# Postgres bindings need vars so that diesel_codegen.so uses the GNU deps at build time\n# but finally links with the static libpq.a at the end.\n# It needs the non-musl pg_config to set this up with libpq-dev (depending on libssl-dev)\n# See https://github.com/sgrif/pq-sys/pull/18\nENV PATH=$PREFIX/bin:$PATH \\\n    PKG_CONFIG_ALLOW_CROSS=true \\\n    PKG_CONFIG_ALL_STATIC=true \\\n    PQ_LIB_STATIC_X86_64_UNKNOWN_LINUX_MUSL=true \\\n    PKG_CONFIG_PATH=$PREFIX/lib/pkgconfig \\\n    PG_CONFIG_X86_64_UNKNOWN_LINUX_GNU=/usr/bin/pg_config \\\n    OPENSSL_STATIC=true \\\n    OPENSSL_DIR=$PREFIX \\\n    SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt \\\n    SSL_CERT_DIR=/etc/ssl/certs \\\n    LIBZ_SYS_STATIC=1 \\\n    DEBIAN_FRONTEND=noninteractive \\\n    TZ=Etc/UTC\n\n# Allow ditching the -w /volume flag to docker run\nWORKDIR /volume\n"
+}

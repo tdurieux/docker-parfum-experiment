@@ -1,0 +1,35 @@
+{
+  "startTime": 1674249054496,
+  "endTime": 1674249055263,
+  "originalSmells": [
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 68,
+        "lineEnd": 68,
+        "columnStart": 4,
+        "columnEnd": 56
+      }
+    },
+    {
+      "rule": "mkdirUsrSrcThenRemove",
+      "position": {
+        "lineStart": 47,
+        "lineEnd": 47,
+        "columnStart": 4,
+        "columnEnd": 25
+      }
+    },
+    {
+      "rule": "mkdirUsrSrcThenRemove",
+      "position": {
+        "lineStart": 47,
+        "lineEnd": 47,
+        "columnStart": 29,
+        "columnEnd": 54
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM ruby:3.1.2-alpine3.15\nMAINTAINER Ministry of Justice, Claim for crown court defence <crowncourtdefence@digital.justice.gov.uk>\n\n# fail early and print all commands\nRUN set -ex\n\n# build dependencies:\n# -virtual: create virtual package for later deletion\n# - build-base for alpine fundamentals\n# - ruby-dev/libc-dev for compiling raindrops, at least\n# - libxml2-dev/libxslt-dev for nokogiri, at least\n# - postgres-dev for pg/activerecord gems\n# - git for installing gems referred to use as git:// uri\n# - yarn for js dependency management\n#\n# runtime dependencies:\n# - file: for paperclip file type spoofing check\n# - nodejs: for ExecJS and asset compilation\n# - runit for process management (because we have multiple services)\n# - libreoffice: for pdf conversion\n# - ttf-freefont: needed for libreoffice\n# - redis: for backend key-value store\n# - postgresql-client - only needed for database dump\n#\nRUN apk --no-cache add --virtual build-dependencies \\\n                    build-base \\\n                    libxml2-dev \\\n                    libxslt-dev \\\n                    postgresql-dev \\\n                    git \\\n                    yarn \\\n                    gmp=6.2.1-r1 \\\n&& apk --no-cache add \\\n                  file \\\n                  nodejs \\\n                  linux-headers \\\n                  runit \\\n                  ttf-freefont \\\n                  libreoffice \\\n                  redis \\\n                  postgresql-client\n\n# add non-root user and group with alpine first available uid, 1000\nRUN addgroup -g 1000 -S appgroup \\\n&& adduser -u 1000 -S appuser -G appgroup\n\n# create app directory in conventional, existing dir /usr/src\nRUN mkdir -p /usr/src/app && mkdir -p /usr/src/app/tmp && rm -rf /usr/src/app\nWORKDIR /usr/src/app\n\n######################\n# DEPENDENCIES START #\n######################\n# Env vars needed for dependency install and asset precompilation?? maybe not\nENV RAILS_ENV production\n\nCOPY Gemfile* ./\n\n# only install production dependencies,\n# build nokogiri using libxml2-dev, libxslt-dev\n# note: installs bundler version used in Gemfile.lock\n#\nRUN gem install bundler -v $(cat Gemfile.lock | tail -1 | tr -d \" \") \\\n&& bundle config without test development devunicorn \\\n&& bundle config build.nokogiri --use-system-libraries \\\n&& bundle install\n\nCOPY package.json yarn.lock ./\nRUN yarn install --frozen-lockfile --production --silent && yarn cache clean;\n\n####################\n# DEPENDENCIES END #\n####################\nCOPY . .\n\n# precompile assets, silently (as verbose)\n# note: webpacker:compile appended to the assets:precompile task\nRUN SECRET_KEY_BASE=a-real-secret-key-is-not-needed-here \\\nRAILS_ENV=production \\\nbundle exec rails assets:precompile 2> /dev/null\n\n# tidy up installation\nRUN apk update && apk del build-dependencies\n\n# non-root/appuser should own only what they need to\nRUN chown -R appuser:appgroup log tmp db\n\n# expect ping environment variables\nARG VERSION_NUMBER\nARG COMMIT_ID\nARG BUILD_DATE\nARG BUILD_TAG\nARG APP_BRANCH\nARG LIVE1_DB_TASK\nENV VERSION_NUMBER=${VERSION_NUMBER}\nENV COMMIT_ID=${COMMIT_ID}\nENV BUILD_DATE=${BUILD_DATE}\nENV BUILD_TAG=${BUILD_TAG}\nENV APP_BRANCH=${APP_BRANCH}\nENV LIVE1_DB_TASK=${LIVE1_DB_TASK}\n\nUSER 1000\nCMD \"./docker/docker-entrypoint.sh\"\n"
+}

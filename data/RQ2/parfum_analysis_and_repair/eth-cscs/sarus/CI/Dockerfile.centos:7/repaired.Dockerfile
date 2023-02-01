@@ -1,0 +1,30 @@
+#
+# Sarus
+#
+# Copyright (c) 2018-2022, ETH Zurich. All rights reserved.
+#
+# Please, refer to the LICENSE file in the root directory.
+# SPDX-License-Identifier: BSD-3-Clause
+#
+# -------------------------------------------
+#
+# Docker Image used to build Sarus from its source,
+# but with cached dependencies already in this image.
+#
+FROM centos:7
+
+COPY ./installation/ /tmp/
+RUN /tmp/install_sudo.sh centos:7
+RUN /tmp/install_packages_centos:7.sh
+RUN bash -i -c "/tmp/install_dep_boost.bash"
+RUN bash -i -c "/tmp/install_dep_umoci.bash"
+RUN pip3 install --no-cache-dir -r /tmp/requirements_tests.txt
+
+RUN useradd -m docker \
+    && echo 'docker:docker' | chpasswd \
+    && chown docker:docker /home/docker \
+    && echo 'docker ALL=(ALL) NOPASSWD: ALL' >> /etc/sudoers
+USER docker
+WORKDIR /home/docker
+
+CMD ["/bin/bash"]

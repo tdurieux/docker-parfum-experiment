@@ -1,0 +1,36 @@
+FROM nvidia/cuda:10.2-cudnn8-devel-ubuntu18.04 AS base
+LABEL maintainer "Amazon SageMaker Neo <aws-neo-ai@amazon.com>"
+
+# Environment
+ENV DEBIAN_FRONTEND noninteractive
+
+# Install TensorRT
+ENV LD_LIBRARY_PATH=/workspace/TensorRT-7.1.3.4/lib:$LD_LIBRARY_PATH
+
+# Install all basic requirements
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+    python3 \
+    python3-distutils \
+    wget \
+    curl \
+    ca-certificates \
+    openssl \
+    && rm -rf /var/lib/apt/lists/* \
+    && curl -f https://bootstrap.pypa.io/pip/3.6/get-pip.py -o get-pip.py && python3 get-pip.py && rm get-pip.py \
+    && rm -rf /root/.cache/pip
+
+RUN pip3 install --no-cache-dir -U pip setuptools wheel
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+    build-essential \
+    git \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN wget https://cmake.org/files/v3.22/cmake-3.22.0-linux-x86_64.sh \
+    && bash cmake-3.22.0-linux-x86_64.sh --skip-license --prefix=/usr/local
+
+ENV PYTHON_COMMAND=python3
+
+WORKDIR /workspace

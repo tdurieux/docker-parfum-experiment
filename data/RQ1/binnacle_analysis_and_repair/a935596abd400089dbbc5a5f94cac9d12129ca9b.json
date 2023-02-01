@@ -1,0 +1,35 @@
+{
+  "startTime": 1674240009542,
+  "endTime": 1674240009688,
+  "originalSmells": [
+    {
+      "rule": "wgetUseHttpsUrl",
+      "position": {
+        "lineStart": 96,
+        "lineEnd": 96,
+        "columnStart": 7,
+        "columnEnd": 106
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 97,
+        "lineEnd": 97,
+        "columnStart": 7,
+        "columnEnd": 58
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 84,
+        "lineEnd": 88,
+        "columnStart": 7,
+        "columnEnd": 28
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# This Source Code Form is subject to the terms of the Mozilla Public\n# License, v. 2.0. If a copy of the MPL was not distributed with this\n# file, You can obtain one at http://mozilla.org/MPL/2.0/.\n\n# This is a Docker container for running an HTTP server that behaves\n# like https://bugzilla.mozilla.org/.\n#\n# Building\n# ========\n#\n# The container can be built by running:\n#\n#   docker build .\n#\n# You'll likely want to tag the image for easy reuse:\n#\n#   docker build -t bmoweb .\n#\n# The container takes a long time to build, mostly due to numerous required\n# system packages.   Run time can balloon significantly if you are on a slow\n# internet connection, or have high latency to archive.ubuntu.com.\n#\n# Running\n# =======\n#\n# When running the container, the following environment variables can be\n# set to influence behavior:\n#\n#   DB_NAME\n#     The database to store Bugzilla data in.\n#   DB_TIMEOUT\n#     How long to wait for the database server to become available.\n#   ADMIN_EMAIL\n#     The email address to use for the admin account.\n#   ADMIN_PASSWORD\n#     The password to use for the admin account.\n#   BMO_URL\n#     The URL that Bugzilla will be exposed as. Bugzilla needs to\n#     dynamically construct URLs during HTTP response generation. The\n#     value of this environment variable will form the prefix for all\n#     URLs.\n#   RESET_DATABASE\n#     If set, the MySQL database will be dropped when the container starts.\n#     Typically, the bmodb container will have persistent data and\n#     restarts of this bmoweb container will inherit database data from\n#     the last run.\n#\n# The defaults are set to work with the bmodb builder from the builder-bmodb\n# sibling directory.\n#\n# For example:\n#\n#   docker run -e RESET_DATABASE=1 bmoweb\n#\n# Known Issues\n# ============\n#\n# Our base image is bizarrely Ubuntu.  We should be using CentOS for maximum\n# compatibility with Mozilla's actual deployment.\n#\n# We blow away the Bugzilla data directory during container start.\n\nFROM secure:mozsecure:ubuntu14042:sha256 e08475e91c8b342dce147346a11db16357619ed914aaad4d82be2e6ab743a167:https://s3-us-west-2.amazonaws.com/moz-packages/docker-images/ubuntu-trusty-core-cloudimg-amd64-docker-20150630.tar.xz\n\nADD CLOBBER /CLOBBER\n\nENV BUGZILLA_HOME /var/lib/bugzilla\nENV DB_NAME bugs\nENV ADMIN_EMAIL admin@example.com\nENV ADMIN_PASSWORD password\nENV BMO_URL http://localhost:80/\n\n# Pin to an ancient version of BMO as our bmo-on-ubuntu mess presents issues\n# with running the latest BMO.  In particular Ubuntu's mod_perl removes methods\n# that are present on CentOS and in the authorative version of mod_perl CPAN.\n# The version we're pinning to doesn't call those methods.\nENV BMO_COMMIT 2f310fba9800f9d106ad8090cbbfb628c53599a1\n\nRUN /usr/sbin/groupadd -g 1000 bugzilla \\\n    && /usr/sbin/useradd --no-create-home -u 1000 -g 1000 bugzilla\n\nRUN apt-key adv --keyserver ha.pool.sks-keyservers.net --recv-keys A4A9406876FCBD3C456770C88C718D3B5072E1F5 \\\n    && echo \"deb http://repo.mysql.com/apt/ubuntu/ trusty mysql-5.6\" > /etc/apt/sources.list.d/mysql.list \\\n    && apt-get update \\\n    && apt-get --no-install-recommends -y install \\\n       apache2 build-essential cpanminus cvs g++ git graphviz \\\n       libapache2-mod-perl2 libmysqlclient18 libgd-dev libssl-dev mysql-client \\\n       mysql-server patchutils pkg-config python3-mysql.connector python-psutil \\\n       supervisor unzip wget && rm -rf /var/lib/apt/lists/*;\n\n# Clone and install BMO\n# BMO packages its dependencies in a carton bundle.\n# See https://github.com/mozilla-bteam/bmo-systems for details.\nRUN git clone https://github.com/mozilla-bteam/bmo.git $BUGZILLA_HOME/bugzilla \\\n    && cd $BUGZILLA_HOME/bugzilla \\\n    && git checkout $BMO_COMMIT \\\n    && wget -q -O vendor.tar.gz https://s3.amazonaws.com/moz-devservices-bmocartons/mozreview/vendor.tar.gz \\\n    && tar zxf vendor.tar.gz --transform 's/mozreview\\///' && rm vendor.tar.gz\n\nADD checksetup_answers.txt $BUGZILLA_HOME/checksetup_answers.txt\nRUN cd $BUGZILLA_HOME/bugzilla \\\n    && perl checksetup.pl --check-modules\n\n# Configure MySQL\nADD my.cnf /etc/mysql/my.cnf\nADD mysql-init.sh /tmp/mysql-init.sh\nRUN rm -rf /var/lib/mysql \\\n    && chmod a-w /etc/mysql/my.cnf \\\n    && /usr/bin/mysql_install_db --user=mysql --datadir=/var/lib/mysql \\\n    && chown -R mysql:mysql /var/lib/mysql\n\n# Configure Apache\nRUN rm /etc/apache2/sites-enabled/* \\\n    && /usr/sbin/a2dismod mpm_event \\\n    && /usr/sbin/a2enmod mpm_prefork \\\n    && /usr/sbin/a2enmod expires \\\n    && /usr/sbin/a2enmod headers \\\n    && /usr/sbin/a2enmod rewrite\n\nADD bugzilla.conf /etc/apache2/sites-enabled/25-bugzilla.conf\nADD prefork.conf /etc/apache2/mods-available/mpm_prefork.conf\n\n# entrypoint and docker helpers\nADD set-urls /set-urls\nADD entrypoint.py /bmoweb_entrypoint.py\nADD run-apache.sh /run-apache.sh\nADD supervisord.conf /etc/supervisor/conf.d/docker.conf\n\nEXPOSE 80\nENTRYPOINT [\"/bmoweb_entrypoint.py\"]\nCMD [\"/usr/bin/supervisord\"]\n"
+}

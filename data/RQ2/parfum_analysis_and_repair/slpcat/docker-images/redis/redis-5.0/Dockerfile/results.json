@@ -1,0 +1,26 @@
+{
+  "startTime": 1674253317042,
+  "endTime": 1674253318273,
+  "originalSmells": [
+    {
+      "rule": "sha256sumEchoOneSpaces",
+      "position": {
+        "lineStart": 29,
+        "lineEnd": 29,
+        "columnStart": 1,
+        "columnEnd": 59
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 66,
+        "lineEnd": 66,
+        "columnStart": 1,
+        "columnEnd": 56
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "#https://github.com/docker-library/redis/blob/master/5.0/alpine/Dockerfile\nFROM alpine:3.11\n\n# add our user and group first to make sure their IDs get assigned consistently, regardless of whatever dependencies get added\nRUN addgroup -S -g 1000 redis && adduser -S -G redis -u 999 redis\n# alpine already has a gid 999, so we'll use the next id\n\nRUN apk add --no-cache \\\n# grab su-exec for easy step-down from root\n\t\t'su-exec>=0.2' \\\n# add tzdata for https://github.com/docker-library/redis/issues/138\n\t\ttzdata\n\nENV REDIS_VERSION 5.0.7\nENV REDIS_DOWNLOAD_URL http://download.redis.io/releases/redis-5.0.7.tar.gz\nENV REDIS_DOWNLOAD_SHA 61db74eabf6801f057fd24b590232f2f337d422280fd19486eca03be87d3a82b\n\nRUN set -eux; \\\n\n\tapk add --no-cache --virtual .build-deps \\\n\t\tcoreutils \\\n\t\tgcc \\\n\t\tlinux-headers \\\n\t\tmake \\\n\t\tmusl-dev \\\n\t\topenssl-dev \\\n\t; \\\n\n\twget -O redis.tar.gz \"$REDIS_DOWNLOAD_URL\"; \\\n\techo \"$REDIS_DOWNLOAD_SHA  *redis.tar.gz\" | sha256sum -c -; \\\n\tmkdir -p /usr/src/redis; \\\n\ttar -xzf redis.tar.gz -C /usr/src/redis --strip-components=1; \\\n\trm redis.tar.gz; \\\n\n# disable Redis protected mode [1] as it is unnecessary in context of Docker\n# (ports are not automatically exposed when running inside Docker, but rather explicitly by specifying -p / -P)\n# [1]: https://github.com/antirez/redis/commit/edd4d555df57dc84265fdfb4ef59a4678832f6da\n\tgrep -q '^#define CONFIG_DEFAULT_PROTECTED_MODE 1$' /usr/src/redis/src/server.h; \\\n\tsed -ri 's!^(#define CONFIG_DEFAULT_PROTECTED_MODE) 1$!\\1 0!' /usr/src/redis/src/server.h; \\\n\tgrep -q '^#define CONFIG_DEFAULT_PROTECTED_MODE 0$' /usr/src/redis/src/server.h; \\\n# for future reference, we modify this directly in the source instead of just supplying a default configuration flag because apparently \"if you specify any argument to redis-server, [it assumes] you are going to specify everything\"\n# see also https://github.com/docker-library/redis/issues/4#issuecomment-50780840\n# (more exactly, this makes sure the default behavior of \"save on SIGTERM\" stays functional by default)\n\n\tmake -C /usr/src/redis -j \"$(nproc)\" all; \\\n\tmake -C /usr/src/redis install; \\\n\n# TODO https://github.com/antirez/redis/pull/3494 (deduplicate \"redis-server\" copies)\n\tserverMd5=\"$(md5sum /usr/local/bin/redis-server | cut -d' ' -f1)\"; export serverMd5; \\\n\tfind /usr/local/bin/redis* -maxdepth 0 \\\n\t\t-type f -not -name redis-server \\\n\t\t-exec sh -eux -c ' \\\n\t\t\tmd5=\"$(md5sum \"$1\" | cut -d\" \" -f1)\"; \\\n\t\t\ttest \"$md5\" = \"$serverMd5\"; \\\n\t\t' -- '{}' ';' \\\n\t\t-exec ln -svfT 'redis-server' '{}' ';' \\\n\t; \\\n\n\trm -r /usr/src/redis; \\\n\n\trunDeps=\"$( \\\n\t\tscanelf --needed --nobanner --format '%n#p' --recursive /usr/local \\\n\t\t\t| tr ',' '\\n' \\\n\t\t\t| sort -u \\\n\t\t\t| awk 'system(\"[ -e /usr/local/lib/\" $1 \" ]\") == 0 { next } { print \"so:\" $1 }' \\\n\t)\"; \\\n\tapk add --no-cache --no-network --virtual .redis-rundeps $runDeps; \\\n\tapk del --no-network .build-deps; \\\n\n\tredis-cli --version; \\\n\tredis-server --version\n\nRUN mkdir /data && chown redis:redis /data\nVOLUME /data\nWORKDIR /data\n\nCOPY docker-entrypoint.sh /usr/local/bin/\nENTRYPOINT [\"docker-entrypoint.sh\"]\n\nEXPOSE 6379\nCMD [\"redis-server\"]\n"
+}

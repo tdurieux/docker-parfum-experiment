@@ -1,0 +1,53 @@
+{
+  "startTime": 1674217566256,
+  "endTime": 1674217567193,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 32,
+        "lineEnd": 32,
+        "columnStart": 4,
+        "columnEnd": 127
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 37,
+        "lineEnd": 37,
+        "columnStart": 4,
+        "columnEnd": 84
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 39,
+        "lineEnd": 39,
+        "columnStart": 4,
+        "columnEnd": 122
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 33,
+        "lineEnd": 33,
+        "columnStart": 4,
+        "columnEnd": 71
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 42,
+        "lineEnd": 42,
+        "columnStart": 4,
+        "columnEnd": 51
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM ubuntu:20.04 as build-image\n\nARG http_proxy\nARG https_proxy\nARG no_proxy=\"nuclio,${no_proxy}\"\nARG socks_proxy\nARG DJANGO_CONFIGURATION=\"production\"\n\nRUN apt-get update && \\\n    DEBIAN_FRONTEND=noninteractive apt-get --no-install-recommends install -yq \\\n        apache2-dev \\\n        build-essential \\\n        curl \\\n        libgeos-dev \\\n        libldap2-dev \\\n        libsasl2-dev \\\n        nasm \\\n        git \\\n        pkg-config \\\n        python3-dev \\\n        python3-pip \\\n        python3-venv && \\\n    rm -rf /var/lib/apt/lists/*\n\n# Compile Openh264 and FFmpeg\nARG PREFIX=/opt/ffmpeg\nARG PKG_CONFIG_PATH=${PREFIX}/lib/pkgconfig\n\nENV FFMPEG_VERSION=4.3.1 \\\n    OPENH264_VERSION=2.1.1\n\nWORKDIR /tmp/openh264\nRUN curl -f -sL https://github.com/cisco/openh264/archive/v${OPENH264_VERSION}.tar.gz --output openh264-${OPENH264_VERSION}.tar.gz && \\\n    tar -zx --strip-components=1 -f openh264-${OPENH264_VERSION}.tar.gz && \\\n    make -j5 && make install PREFIX=${PREFIX} && make clean && rm openh264-${OPENH264_VERSION}.tar.gz\n\nWORKDIR /tmp/ffmpeg\nRUN curl -f -sL https://ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.bz2 --output - | \\\n    tar -jx --strip-components=1 && \\\n    ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" --disable-nonfree --disable-gpl --enable-libopenh264 --enable-shared --disable-static --prefix=\"${PREFIX}\" && \\\n    # make clean keeps the configuration files that let to know how the original sources were used to create the binary\n    make -j5 && make install && make clean && \\\n    tar -zcf \"/tmp/ffmpeg-$FFMPEG_VERSION.tar.gz\" . && mv \"/tmp/ffmpeg-$FFMPEG_VERSION.tar.gz\" . && rm \"/tmp/ffmpeg-$FFMPEG_VERSION.tar.gz\"\n\n# Install requirements\nRUN python3 -m venv /opt/venv\nENV PATH=\"/opt/venv/bin:${PATH}\"\nRUN python3 -m pip install --no-cache-dir -U pip==22.0.2 setuptools==60.6.0 wheel==0.37.1\nCOPY cvat/requirements/ /tmp/requirements/\nRUN DATUMARO_HEADLESS=1 python3 -m pip install --no-cache-dir -r /tmp/requirements/${DJANGO_CONFIGURATION}.txt\n\n\nFROM ubuntu:20.04\n\nARG http_proxy\nARG https_proxy\nARG no_proxy=\"nuclio,${no_proxy}\"\nARG socks_proxy\nARG TZ=\"Etc/UTC\"\n\nENV TERM=xterm \\\n    http_proxy=${http_proxy}   \\\n    https_proxy=${https_proxy} \\\n    no_proxy=${no_proxy} \\\n    socks_proxy=${socks_proxy} \\\n    LANG='C.UTF-8'  \\\n    LC_ALL='C.UTF-8' \\\n    TZ=${TZ}\n\nARG USER=\"django\"\nARG DJANGO_CONFIGURATION=\"production\"\nENV DJANGO_CONFIGURATION=${DJANGO_CONFIGURATION}\n\n# Install necessary apt packages\nRUN apt-get update && \\\n    DEBIAN_FRONTEND=noninteractive apt-get --no-install-recommends install -yq \\\n        apache2 \\\n        ca-certificates \\\n        libapache2-mod-xsendfile \\\n        libgeos-dev \\\n        libgomp1 \\\n        libgl1 \\\n        supervisor \\\n        libldap-2.4-2 \\\n        libsasl2-2 \\\n        libpython3-dev \\\n        tzdata \\\n        python3-distutils \\\n        p7zip-full \\\n        git \\\n        git-lfs \\\n        poppler-utils \\\n        ssh \\\n        curl && \\\n    ln -fs /usr/share/zoneinfo/${TZ} /etc/localtime && \\\n    dpkg-reconfigure -f noninteractive tzdata && \\\n    rm -rf /var/lib/apt/lists/* && \\\n    echo 'application/wasm wasm' >> /etc/mime.types\n\n# Add a non-root user\nENV USER=${USER}\nENV HOME /home/${USER}\nRUN adduser --shell /bin/bash --disabled-password --gecos \"\" ${USER} && \\\n    if [ -z ${socks_proxy} ]; then \\\n        echo export \"GIT_SSH_COMMAND=\\\"ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30\\\"\" >> ${HOME}/.bashrc; \\\n    else \\\n        echo export \"GIT_SSH_COMMAND=\\\"ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 -o ProxyCommand='nc -X 5 -x ${socks_proxy} %h %p'\\\"\" >> ${HOME}/.bashrc; \\\n    fi\n\nARG CLAM_AV=\"no\"\nRUN if [ \"$CLAM_AV\" = \"yes\" ]; then \\\n        apt-get update && \\\n        apt-get --no-install-recommends install -yq \\\n            clamav \\\n            libclamunrar9 && \\\n        sed -i 's/ReceiveTimeout 30/ReceiveTimeout 300/g' /etc/clamav/freshclam.conf && \\\n        freshclam && \\\n        chown -R ${USER}:${USER} /var/lib/clamav && \\\n        rm -rf /var/lib/apt/lists/*; \\\n    fi\n\nARG INSTALL_SOURCES='no'\nWORKDIR ${HOME}/sources\nRUN if [ \"$INSTALL_SOURCES\" = \"yes\" ]; then \\\n        sed -Ei 's/^# deb-src /deb-src /' /etc/apt/sources.list && \\\n        apt-get update && \\\n        dpkg --get-selections | while read -r line; do        \\\n            package=$(echo \"$line\" | awk '{print $1}');       \\\n            mkdir \"$package\";                                 \\\n            (                                                 \\\n                cd \"$package\";                                \\\n                apt-get -q --download-only source \"$package\"; \\\n            )                                                 \\\n            done &&                                           \\\n        rm -rf /var/lib/apt/lists/*;                          \\\n    fi\nCOPY --from=build-image /tmp/openh264/openh264*.tar.gz /tmp/ffmpeg/ffmpeg*.tar.gz ${HOME}/sources/\n\n# Copy python virtual environment and FFmpeg binaries from build-image\nCOPY --from=build-image /opt/venv /opt/venv\nENV PATH=\"/opt/venv/bin:${PATH}\"\nCOPY --from=build-image /opt/ffmpeg /usr\n\n# Install and initialize CVAT, copy all necessary files\nCOPY --chown=${USER} components /tmp/components\nCOPY --chown=${USER} ssh ${HOME}/.ssh\nCOPY --chown=${USER} supervisord.conf mod_wsgi.conf wait-for-it.sh manage.py ${HOME}/\nCOPY --chown=${USER} cvat/ ${HOME}/cvat\nCOPY --chown=${USER} utils/ ${HOME}/utils\nCOPY --chown=${USER} tests/ ${HOME}/tests\n\n# RUN all commands below as 'django' user\nUSER ${USER}\nWORKDIR ${HOME}\n\nRUN mkdir data share media keys logs /tmp/supervisord\n\nEXPOSE 8080\nENTRYPOINT [\"/usr/bin/supervisord\"]\n"
+}

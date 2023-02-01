@@ -1,0 +1,1 @@
+#docker build -f deploy/grafana-with-kindlingplugin/Dockerfile -t kindling-grafana:{version} .

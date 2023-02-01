@@ -1,0 +1,1 @@
+#docker build -t opsmanage-celery-ansible -f Dockerfile-celery-ansible ..

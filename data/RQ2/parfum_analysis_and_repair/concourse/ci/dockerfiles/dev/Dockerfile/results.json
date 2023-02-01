@@ -1,0 +1,63 @@
+{
+  "startTime": 1674219575370,
+  "endTime": 1674219576146,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 13,
+        "lineEnd": 19,
+        "columnStart": 22,
+        "columnEnd": 17
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 41,
+        "lineEnd": 41,
+        "columnStart": 4,
+        "columnEnd": 27
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 41,
+        "lineEnd": 41,
+        "columnStart": 4,
+        "columnEnd": 27
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 13,
+        "lineEnd": 19,
+        "columnStart": 22,
+        "columnEnd": 17
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 41,
+        "lineEnd": 41,
+        "columnStart": 4,
+        "columnEnd": 27
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 41,
+        "lineEnd": 41,
+        "columnStart": 4,
+        "columnEnd": 51
+      }
+    }
+  ],
+  "repairedDockerfile": "# used for building concourse/dev. this shortens the dev feedback loop by:\n#\n# * baking in the gdn binary\n# * baking in the containerd binaries (+ runc, cni plugins, iptables)\n# * baking in fly binaries\n# * baking in resource types\n# * build init executable for containerd\n# * warming the module cache\n# * warming the build cache\n\nARG base_image=concourse/golang-builder\nFROM ${base_image}\n\nRUN apt-get update && apt-get -y --no-install-recommends install \\\n      iproute2 \\\n      ca-certificates \\\n      curl \\\n      file \\\n      tree \\\n      btrfs-tools && rm -rf /var/lib/apt/lists/*;\n\nCOPY dumb-init/dumb-init_*_x86_64 /usr/local/bin/dumb-init\nRUN chmod +x /usr/local/bin/dumb-init\n\n# Add container runtime dependencies\n#\n# For guardian backend:\n#   - gdn\n# For containerd backend:\n#   - containerd binaries\n#   - runc\n#   - cni plugins\n#   - iptables (needed by cni plugins)\nCOPY gdn/gdn-* /usr/local/concourse/bin/gdn\n\n# Copies files from the bin directory of the tarball to /usr/local/concourse/bin\nADD containerd/containerd-*-linux-amd64.tar.gz /usr/local/concourse\n\nCOPY runc/runc.amd64 /usr/local/concourse/bin/runc\n\nADD cni/cni-plugins-linux-amd64-*.tgz /usr/local/concourse/bin\nRUN apt install --no-install-recommends -y iptables && rm -rf /var/lib/apt/lists/*;\n\nRUN chmod -R +x /usr/local/concourse/bin\n\n# add fly executables\nRUN mkdir /usr/local/concourse/fly-assets\nCOPY fly-linux/fly-*.tgz /usr/local/concourse/fly-assets\nCOPY fly-windows/fly-*.zip /usr/local/concourse/fly-assets\nCOPY fly-darwin/fly-*.tgz /usr/local/concourse/fly-assets\n\n# add resource types\nCOPY ./resource-types-image/rootfs/usr/local/concourse/resource-types/ /usr/local/concourse/resource-types/\n\n# install concourse, leaving the module cache populated\n#\n# nuke /src after to ensure dev builds build from a clean slate (otherwise this\n# can cause build failures if e.g. files are removed locally)\nCOPY concourse /src\n\n# build the init executable for containerd\nRUN gcc -O2 -static -o /usr/local/concourse/bin/init /src/cmd/init/init.c\n\nRUN cd /src && \\\n      go mod download && \\\n      go build -gcflags=all=\"-N -l\" -o /usr/local/concourse/bin/concourse \\\n        ./cmd/concourse && \\\n      rm -rf /src\n\n# volume for non-aufs/etc. mount for baggageclaim's driver\nVOLUME /worker-state\nENV CONCOURSE_WORK_DIR /worker-state\n\n# set $PATH for convenience\nENV PATH /usr/local/concourse/bin:${PATH}\n\n# make `ctr` target the default concourse namespace\nENV CONTAINERD_NAMESPACE=concourse\n\nENTRYPOINT [\"dumb-init\", \"concourse\"]\n"
+}

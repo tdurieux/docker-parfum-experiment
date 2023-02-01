@@ -1,0 +1,44 @@
+{
+  "startTime": 1674255438634,
+  "endTime": 1674255439355,
+  "originalSmells": [
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 31,
+        "lineEnd": 31,
+        "columnStart": 4,
+        "columnEnd": 47
+      }
+    },
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 48,
+        "lineEnd": 48,
+        "columnStart": 4,
+        "columnEnd": 53
+      }
+    },
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 70,
+        "lineEnd": 70,
+        "columnStart": 4,
+        "columnEnd": 47
+      }
+    },
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 87,
+        "lineEnd": 87,
+        "columnStart": 4,
+        "columnEnd": 53
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# OVERVIEW: This is the Dockerfile for a multi-stage build of the CDS Authoring\n# Tool. A multi-stage approach was used to keep the overall image size low by\n# including only the layers needed at runtime in the final image. For more\n# info see: https://docs.docker.com/develop/develop-images/multistage-build/\n\n###############################################################################\n# STAGE 0: base\n# - Setup base image from which most others derive. This allows for a single\n#   place to declare the versioned node image we use and any other commands\n#   common to all (or most?) environments.\n###############################################################################\n\nFROM node:14.19.0-alpine as base\n\nENV NODE_ENV production\n\n###############################################################################\n# STAGE 1: install_backend\n# - Install production dependencies for the api project\n# - Copy over api source code\n###############################################################################\n\nFROM base as install_backend\n\n# First copy just the package.json, yarn.lock, and local dependencies so that\n# if they have not changed, we can use cached node_modules instead of\n# redownloading them all.\nCOPY ./api/package.json /usr/src/app/api/package.json\nCOPY ./api/yarn.lock /usr/src/app/api/yarn.lock\nCOPY ./api/localDependencies /usr/src/app/api/localDependencies\nWORKDIR /usr/src/app/api\nRUN yarn --production --non-interactive install && yarn cache clean;\n\n# Then copy the rest of the source code\nCOPY ./api /usr/src/app/api\n\n###############################################################################\n# STAGE 2: test_backend\n# - Install development dependencies for the api project\n# - Run the api tests and pipe results to a log file\n###############################################################################\n\nFROM install_backend as test_backend\n\nENV NODE_ENV test\nENV CI true\n\nWORKDIR /usr/src/app/api\nRUN yarn --production=false --non-interactive install && yarn cache clean;\n\n# Some api code shares code w/ frontend, so bring that in for the tests\nCOPY ./frontend/src/data /usr/src/app/frontend/src/data\nRUN yarn run test-ci 2>&1 | tee api-test-report.txt\n\n###############################################################################\n# STAGE 3: install_frontend\n# - Install packages needed by yarn install (python2, make, g++)\n# - Install production dependencies for the frontend project\n# - Copy over frontend source code\n###############################################################################\n\nFROM base as install_frontend\n\nRUN apk --no-cache add python2 make g++\n\n# First copy just the package.json and yarn.lock so that if they have not\n# changed, we can use cached node_modules instead of redownloading them all.\nCOPY ./frontend/package.json /usr/src/app/frontend/package.json\nCOPY ./frontend/yarn.lock /usr/src/app/frontend/yarn.lock\nWORKDIR /usr/src/app/frontend\nRUN yarn --production --non-interactive install && yarn cache clean;\n\n# Then copy the rest of the source code\nCOPY ./frontend /usr/src/app/frontend\n\n###############################################################################\n# STAGE 4: test_frontend\n# - Install development dependencies for the frontend project\n# - Run the frontend tests and pipe results to a log file\n###############################################################################\n\nFROM install_frontend as test_frontend\n\nENV NODE_ENV test\nENV CI true\n\nWORKDIR /usr/src/app/frontend\nRUN yarn --production=false --non-interactive install && yarn cache clean;\nRUN yarn run test-ci 2>&1 | tee frontend-test-report.txt\n\n###############################################################################\n# STAGE 5: build_frontend\n# - Build frontend code to produce standard html, js, and css files\n# - NOTE: Based on test_frontend because it needs development dependencies\n###############################################################################\n\nFROM test_frontend as build_frontend\n\nENV NODE_ENV production\n\nWORKDIR /usr/src/app/frontend\nRUN yarn build\n\n###############################################################################\n# STAGE 6: final\n# - Setup NODE_ENV as an argument\n# - Install PM2 process manager\n# - Copy over all files needed at run-time\n# - Expose necessary ports\n# - Run as node (more secure than running as root)\n###############################################################################\n\nFROM base as final\n\nARG NODE_ENV\nENV NODE_ENV $NODE_ENV\n\nRUN yarn global add pm2@4.4.1 -g\n\nCOPY --chown=node:node --from=install_backend /usr/src/app/api /usr/src/app/api\nCOPY --chown=node:node --from=install_frontend /usr/src/app/frontend/node_modules /usr/src/app/frontend/node_modules\nCOPY --chown=node:node --from=build_frontend /usr/src/app/frontend/build /usr/src/app/frontend/build\nCOPY --chown=node:node ./frontend/src/data /usr/src/app/frontend/src/data\nCOPY --chown=node:node ./frontend/.env /usr/src/app/frontend\nCOPY --chown=node:node ./frontend/server.js /usr/src/app/frontend\nCOPY --chown=node:node ./pm2.config.js /usr/src/app\n# Copy over test logs because they're nice to have, but also to force the test stages to run\nCOPY --chown=node:node --from=test_backend /usr/src/app/api/api-test-report.txt /usr/src/app\nCOPY --chown=node:node --from=test_frontend /usr/src/app/frontend/frontend-test-report.txt /usr/src/app\n\nEXPOSE 3001\nEXPOSE 9000\n\nUSER node\n\nWORKDIR /usr/src/app\nCMD [ \"pm2-docker\", \"pm2.config.js\" ]\n"
+}

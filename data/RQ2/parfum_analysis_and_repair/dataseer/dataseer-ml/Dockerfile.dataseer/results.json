@@ -1,0 +1,35 @@
+{
+  "startTime": 1674250415970,
+  "endTime": 1674250416749,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 75,
+        "lineEnd": 75,
+        "columnStart": 4,
+        "columnEnd": 38
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 106,
+        "lineEnd": 106,
+        "columnStart": 7,
+        "columnEnd": 57
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 9,
+        "lineEnd": 9,
+        "columnStart": 4,
+        "columnEnd": 52
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# -------------------\n# build builder image\n# -------------------\n\nFROM openjdk:8u275-jdk as builder\n\nUSER root\n\nRUN apt-get update && \\\n    apt-get -y --no-install-recommends install unzip && rm -rf /var/lib/apt/lists/*;\n\nWORKDIR /opt/grobid-source\n\n# gradle\nCOPY gradle/ ./gradle/\nCOPY gradlew ./\nCOPY gradle.properties ./\nCOPY build.gradle ./\nCOPY settings.gradle ./\n\n# source\nCOPY grobid-home/ ./grobid-home/\nCOPY grobid-core/ ./grobid-core/\n#COPY grobid-service/ ./grobid-service/\nCOPY grobid-trainer/ ./grobid-trainer/\nCOPY dataseer-ml/ ./dataseer-ml/\n\n# cleaning unused native libraries before packaging\nRUN rm -rf grobid-home/pdf2xml\nRUN rm -rf grobid-home/pdfalto/lin-32\nRUN rm -rf grobid-home/pdfalto/mac-64\nRUN rm -rf grobid-home/pdfalto/win-*\nRUN rm -rf grobid-home/lib/lin-32\nRUN rm -rf grobid-home/lib/win-*\nRUN rm -rf grobid-home/lib/mac-64\n\nRUN ./gradlew clean assemble install --no-daemon  --info --stacktrace\n\nWORKDIR ./dataseer-ml/\nRUN ./gradlew clean install --no-daemon  --info --stacktrace\n\nWORKDIR /opt/grobid\n#RUN unzip -o /opt/grobid-source/grobid-service/build/distributions/grobid-service-*.zip && \\\n#    mv grobid-service* grobid-service\nRUN unzip -o /opt/grobid-source/grobid-home/build/distributions/grobid-home-*.zip && \\\n    chmod -R 755 /opt/grobid/grobid-home/pdfalto\nRUN rm -rf grobid-source\n\n# -------------------\n# build runtime image\n# -------------------\n\n# use NVIDIA Container Toolkit to automatically recognize possible GPU drivers on the host machine\nFROM tensorflow/tensorflow:2.7.0-gpu\nCMD nvidia-smi\n\n# setting locale is likely useless but to be sure\nENV LANG C.UTF-8\n\n# install JRE 8, python and other dependencies\nRUN apt-get update && \\\n    apt-get -y --no-install-recommends install apt-utils build-essential gcc libxml2 unzip curl \\\n    openjdk-8-jre-headless openjdk-8-jdk ca-certificates-java \\\n    musl gfortran \\\n    python3 python3-pip python3-setuptools python3-dev \\\n    && apt-get clean \\\n    && rm -rf /var/lib/apt/lists/*\n\nWORKDIR /opt/grobid\n\nCOPY --from=builder /opt/grobid .\n\nRUN python3 -m pip install pip --upgrade\n\n# install DeLFT via pypi\nRUN pip3 install --no-cache-dir requests delft==0.3.1\n# link the data directory to /data\n# the current working directory will most likely be /opt/grobid\nRUN mkdir -p /data \\\n    && ln -s /data /opt/grobid/data \\\n    && ln -s /data ./data\n\n# disable python warnings (and fix logging)\nENV PYTHONWARNINGS=\"ignore\"\n\nWORKDIR /opt/grobid\n\nENV JAVA_OPTS=-Xmx4g\n\n# Add Tini\nENV TINI_VERSION v0.18.0\nADD https://github.com/krallin/tini/releases/download/${TINI_VERSION}/tini /tini\nRUN chmod +x /tini\nENTRYPOINT [\"/tini\", \"-s\", \"--\"]\n\n# install jep (and temporarily the matching JDK)\nENV TEMP_JDK_HOME=/tmp/jdk-8\nENV JDK_URL=https://github.com/AdoptOpenJDK/openjdk8-upstream-binaries/releases/download/jdk8u212-b04/OpenJDK8U-x64_linux_8u212b04.tar.gz\nRUN curl --fail --show-error --location -q ${JDK_URL} -o /tmp/openjdk.tar.gz \\\n    && ls -lh /tmp/openjdk.tar.gz \\\n    && mkdir - \"${TEMP_JDK_HOME}\" \\\n    && tar --extract \\\n        --file /tmp/openjdk.tar.gz \\\n        --directory \"${TEMP_JDK_HOME}\" \\\n        --strip-components 1 \\\n        --no-same-owner \\\n    && JAVA_HOME=${TEMP_JDK_HOME} pip3 --no-cache-dir install jep==4.0.2 \\\n    && rm -f /tmp/openjdk.tar.gz \\\n    && rm -rf \"${TEMP_JDK_HOME}\"\nENV LD_LIBRARY_PATH=/usr/local/lib/python3.8/dist-packages/jep:${LD_LIBRARY_PATH}\n# remove libjep.so because we are providng our own version in the virtual env\nRUN rm /opt/grobid/grobid-home/lib/lin-64/jep/libjep.so\n\n# preload embeddings, for GROBID all the RNN models use glove-840B (default for the script), ELMo is currently not loaded\n# download GROBID fine-tuned models based on SciBERT if selected\n\nCOPY --from=builder /opt/grobid-source/grobid-home/scripts/preload_embeddings.py .\n# embeddings will be loaded when building and running tests\n\nRUN ln -s /opt/grobid /opt/delft\n\nCOPY --from=builder /opt/grobid-source/dataseer-ml /opt/grobid/dataseer-ml\n#COPY --from=builder /root/.m2/repository/org /opt/grobid/dataseer-ml/lib/org\n\nWORKDIR /opt/grobid/dataseer-ml\n\nRUN mkdir /opt/grobid/delft\nRUN mkdir /opt/grobid/delft/delft\nCOPY --from=builder /opt/grobid-source/grobid-home/config/resources-registry.json /opt/grobid/delft/delft/resources-registry.json\n\nWORKDIR /opt/grobid/dataseer-ml\n\n# trigger gradle wrapper install\nRUN ./gradlew --version\nRUN ./gradlew copyModels && rm -rf resources/models\n#RUN rm -rf /opt/grobid/dataseer-ml/lib/org\n\n# this will build and load embeddings on the image forever :)\nRUN ./gradlew clean build\n\nCMD [\"./gradlew\", \"run\"]\n\nARG GROBID_VERSION\n"
+}

@@ -1,0 +1,1 @@
+# This Dockerfile prepares a generic dokuwiki image with the gitbacked plugin for GIT integration

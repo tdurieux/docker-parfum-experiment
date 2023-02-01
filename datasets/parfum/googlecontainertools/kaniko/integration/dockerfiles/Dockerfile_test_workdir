@@ -1,0 +1,17 @@
+FROM debian:9.11
+COPY context/foo foo
+WORKDIR test
+# Test that this will be appended on to the previous command, to create /test/workdir
+WORKDIR workdir 
+COPY context/foo ./currentfoo
+# Test that the RUN command will happen in the correct directory
+RUN cp currentfoo newfoo
+WORKDIR /new/dir
+ENV dir /another/new/dir
+WORKDIR $dir/newdir
+WORKDIR $dir/$doesntexist
+WORKDIR /
+
+# Test with ARG
+ARG workdir
+WORKDIR $workdir

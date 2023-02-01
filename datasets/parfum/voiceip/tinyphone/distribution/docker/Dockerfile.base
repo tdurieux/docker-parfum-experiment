@@ -1,0 +1,71 @@
+# escape=`
+FROM mcr.microsoft.com/dotnet/framework/runtime:3.5-windowsservercore-ltsc2019
+MAINTAINER Kinshuk B (hi@kinsh.uk)
+
+RUN powershell.exe mkdir C:\BuildTools
+
+# Reset the shell.
+SHELL ["cmd", "/S", "/C"]
+
+# Set up environment to collect install errors.
+COPY Install.cmd C:\TEMP\
+ADD https://aka.ms/vscollect.exe C:\TEMP\collect.exe
+
+# Install Scoop
+RUN powershell.exe [Net.ServicePointManager]::SecurityProtocol =[Net.SecurityProtocolType]::Tls12 ; (New-Object System.Net.WebClient).DownloadFile('https://get.scoop.sh', 'install_scoop.ps1'); .\install_scoop.ps1 -RunAsAdmin
+
+# Use devel branch of scoop due to https://github.com/ScoopInstaller/Scoop/issues/4792
+RUN scoop config SCOOP_BRANCH develop ; scoop update
+
+# Install Git & other tools
+RUN powershell.exe scoop install git curl wget openssh unzip make sed;
+RUN powershell.exe [environment]::setenvironmentvariable('GIT_SSH', (resolve-path (scoop which ssh)), 'USER');
+
+# Download channel for fixed install.
+RUN curl -L  https://aka.ms/vs/16/release/channel -o C:\TEMP\VisualStudio.chman
+
+# Download channel for fixed install.
+# ADD https://aka.ms/vs/16/release/channel C:\TEMP\VisualStudio.chman
+
+# Download and install Build Tools for Visual Studio 2019 for native desktop workload.
+ADD https://aka.ms/vs/16/release/vs_buildtools.exe C:\TEMP\vs_buildtools.exe
+
+RUN C:\TEMP\Install.cmd C:\TEMP\vs_buildtools.exe --quiet --wait --norestart --nocache `
+    --channelUri C:\TEMP\VisualStudio.chman `
+    --installChannelUri C:\TEMP\VisualStudio.chman `
+    --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended `
+    --add Microsoft.Component.MSBuild `
+    --add Microsoft.VisualStudio.Component.VC.140 `
+    --add Microsoft.VisualStudio.Component.WinXP `
+    --add Microsoft.VisualStudio.Component.VC.ATLMFC `
+    --add Microsoft.VisualStudio.Component.VC.ATL `
+    --add Microsoft.VisualStudio.Component.VC.Modules.x86.x64 `
+    # --remove Microsoft.VisualStudio.Component.Windows10SDK.10240 `
+    # --remove Microsoft.VisualStudio.Component.Windows10SDK.10586 `
+    # --remove Microsoft.VisualStudio.Component.Windows10SDK.14393 `
+    --remove Microsoft.VisualStudio.Component.Windows81SDK `
+    --installPath C:\BuildTools 
+    # --installPath "%ProgramFiles(x86)%\Microsoft Visual Studio\2019\BuildTools" 
+
+# Verify if .NET isn't broken (bug with the ltsc2016 docker image)
+# RUN powershell.exe -Command echo Everything is OK
+
+
+ADD https://onboardcloud.dl.sourceforge.net/project/boost/boost-binaries/1.74.0/boost_1_74_0-msvc-14.2-32.exe C:\TEMP\boost.exe
+RUN cmd.exe /c C:\TEMP\boost.exe /SILENT
+
+ADD https://github.com/wixtoolset/wix3/releases/download/wix3112rtm/wix311.exe C:\TEMP\wix311.exe
+RUN powershell.exe C:\TEMP\Install.cmd C:\TEMP\wix311.exe /install /quiet /norestart
+
+RUN mkdir C:\Code
+
+# fix for paste issue https://github.com/moby/moby/issues/29646#issuecomment-300483809
+#WORKDIR "Program Files"
+RUN powershell.exe Remove-Item -LiteralPath 'C:\Program Files\WindowsPowerShell\Modules\PSReadLine' -Force -Recurse 
+
+WORKDIR C:\BuildTools
+
+# Define the entry point for the Docker container.
+# This entry point starts the developer command prompt and launches the PowerShell shell.
+ENTRYPOINT ["C:\\BuildTools\\Common7\\Tools\\VsDevCmd.bat", "&&", "powershell.exe", "-NoLogo", "-ExecutionPolicy", "Bypass"]
+

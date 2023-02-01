@@ -1,0 +1,69 @@
+# This Source Code Form is licensed MPL-2.0: http://mozilla.org/MPL/2.0
+
+# == Distribution preparation ==
+ARG DIST
+FROM $DIST
+ENV DEBIAN_FRONTEND noninteractive
+
+# Use BASH(1) as shell, affects the RUN commands below
+RUN ln -sf bash /bin/sh && ls -al /bin/sh
+
+# Provide /bin/retry to overcome short network outages
+RUN echo -e '#!/bin/bash\n"$@" || { sleep 5 ; "$@" ; } || { sleep 15 ; "$@" ; }' > /bin/retry && chmod +x /bin/retry
+
+# Upgrade packages
+RUN retry apt-get update && retry apt-get -y upgrade
+
+# Build stripped down fluidsynth version without drivers
+RUN retry apt-get install -y build-essential curl cmake libglib2.0-dev && \
+  mkdir -p /tmp/fluid/build && cd /tmp/fluid/ && \
+  curl -sfSOL https://github.com/FluidSynth/fluidsynth/archive/v2.2.1.tar.gz && \
+  tar xf v2.2.1.tar.gz && rm v2.2.1.tar.gz && cd build && \
+  cmake ../fluidsynth-2.2.1 \
+	-DCMAKE_INSTALL_PREFIX=/usr/ \
+	-DLIB_SUFFIX="/`dpkg-architecture -qDEB_HOST_MULTIARCH`" \
+	-Denable-libsndfile=1 \
+	-Denable-dbus=0 \
+	-Denable-ipv6=0 \
+	-Denable-jack=0 \
+	-Denable-midishare=0 \
+	-Denable-network=0 \
+	-Denable-oss=0 \
+	-Denable-pulseaudio=0 \
+	-Denable-readline=0 \
+	-Denable-alsa=0 \
+	-Denable-lash=0 && \
+  make && make install
+
+# Provide Anklang dependencies, add libXss.so, libgtk-3-0 for electron
+RUN retry apt-get install -y \
+    build-essential pkg-config git curl ccache curl unzip gawk g++ \
+    clang clang-tidy clang-tools castxml cppcheck libboost-system-dev \
+    imagemagick libxml2-utils libxml2-dev python3 python3-lxml \
+    python3-pandocfilters pandoc graphviz texlive-binaries \
+    libasound2-dev libflac-dev libvorbis-dev libmad0-dev libjack-dev libzstd-dev \
+    gettext libgconf-2-4 libgtk2.0-dev squashfs-tools \
+    libgtk-3-0 libxss1 libgbm1 libnss3
+
+# Provide a recent nodejs
+RUN curl -f -sL https://deb.nodesource.com/setup_16.x | bash - && \
+	apt-get install --no-install-recommends -y nodejs && rm -rf /var/lib/apt/lists/*;
+
+# Install TeX (+615MB) if needed
+ARG TEX
+RUN test "$TEX" != y || retry apt-get install -y \
+    texlive-xetex fonts-sil-charis texlive-fonts-extra
+
+# Cleanup
+RUN apt-get clean
+
+# Provide out-of-tree build directory (docker volume mount point)
+RUN mkdir /ootbuild/
+ENV OOTBUILD /ootbuild/
+
+# make sure getpwuid() works, prepare writable ~/
+ARG USERGROUP
+RUN mkdir -m 0755 -p /dbuild/ && cp /root/.bashrc /dbuild/ && \
+  groupadd --gid ${USERGROUP#*:} dbuild && useradd --uid ${USERGROUP%:*} --gid ${USERGROUP#*:} --home-dir /dbuild dbuild
+COPY .dbuild/ /dbuild/
+RUN chown -R ${USERGROUP} /dbuild

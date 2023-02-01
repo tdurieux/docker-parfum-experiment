@@ -1,0 +1,23 @@
+FROM node:12 as build-frontend
+ARG FIREBASE_PROJECT_ID
+ENV FIREBASE_PROJECT_ID ${FIREBASE_PROJECT_ID:-}
+ARG FIREBASE_AUTH_DOMAIN
+ENV FIREBASE_AUTH_DOMAIN ${FIREBASE_AUTH_DOMAIN:-}
+ARG FIREBASE_API_KEY
+ENV FIREBASE_API_KEY ${FIREBASE_API_KEY:-}
+COPY frontend/ /src/
+WORKDIR /src
+RUN yarn && yarn cache clean;
+RUN node node_modules/ember-cli/bin/ember deploy production
+
+FROM node:12 as build-frontend-angular
+COPY frontend-angular/ /src/
+WORKDIR /src
+RUN npm ci
+RUN npm run build
+
+FROM nginx:alpine
+COPY default.conf /etc/nginx/conf.d/
+COPY --from=build-frontend /src/tmp/deploy-dist /usr/share/nginx/html/
+COPY --from=build-frontend-angular /src/dist/frontend-angular /usr/share/nginx/html/admin/
+

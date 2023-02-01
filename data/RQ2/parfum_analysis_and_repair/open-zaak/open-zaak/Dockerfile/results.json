@@ -1,0 +1,26 @@
+{
+  "startTime": 1674248633007,
+  "endTime": 1674248634450,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 12,
+        "lineEnd": 12,
+        "columnStart": 4,
+        "columnEnd": 40
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 13,
+        "lineEnd": 13,
+        "columnStart": 4,
+        "columnEnd": 46
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Stage 1 - Compile needed python dependencies\nFROM python:3.9-slim-bullseye AS build\n\nRUN apt-get update && apt-get install -y --no-install-recommends \\\n        pkg-config \\\n        build-essential \\\n        libpq-dev \\\n    && rm -rf /var/lib/apt/lists/*\n\nWORKDIR /app\n\nCOPY ./requirements /app/requirements\nRUN pip install --no-cache-dir pip 'setuptools<59.0' -U\nRUN pip install --no-cache-dir -r requirements/production.txt\n\n\n# Stage 2 - build frontend\nFROM node:16-bullseye-slim AS frontend-build\n\nWORKDIR /app\n\n# copy configuration/build files\nCOPY ./build /app/build/\nCOPY ./*.json ./*.js ./.babelrc /app/\n\n# install WITH dev tooling\nRUN npm ci --legacy-peer-deps\n\n# copy source code\nCOPY ./src /app/src\n\n# build frontend\nRUN npm run build\n\n\n# Stage 3 - Build docker image suitable for execution and deployment\n# bullseye will likely require django 3.2+ for the geolib support, see\n# https://docs.djangoproject.com/en/2.2/ref/contrib/gis/install/geolibs/\nFROM python:3.9-slim-bullseye AS production\n\n# Stage 3.1 - Set up the needed production dependencies\n# install all the dependencies for GeoDjango\nRUN apt-get update && apt-get install -y --no-install-recommends \\\n        # bare minimum to debug live containers\n        procps \\\n        vim \\\n        # serve correct Content-Type headers\n        mime-support \\\n        # (geo) django dependencies\n        postgresql-client \\\n        gettext \\\n        binutils \\\n        libproj-dev \\\n        gdal-bin \\\n    && rm -rf /var/lib/apt/lists/*\n\nWORKDIR /app\nCOPY ./bin/docker_start.sh /start.sh\nCOPY ./bin/reset_migrations.sh /app/bin/reset_migrations.sh\nCOPY ./bin/uninstall_adfs.sh ./bin/uninstall_django_auth_adfs_db.sql /app/bin/\n\n\nRUN mkdir /app/log /app/config /app/media /app/private-media\n# prevent writing to the container layer, which would degrade performance.\n# This also serves as a hint for the intended volumes.\nVOLUME [\"/app/log\", \"/app/media\", \"/app/private-media\"]\n\n# copy backend build deps\nCOPY --from=build /usr/local/lib/python3.9 /usr/local/lib/python3.9\nCOPY --from=build /usr/local/bin/uwsgi /usr/local/bin/uwsgi\n\nCOPY --from=frontend-build /app/src/openzaak/static/css /app/src/openzaak/static/css\nCOPY --from=frontend-build /app/src/openzaak/static/js /app/src/openzaak/static/js\n\n# Stage 3.2 - Copy source code\nCOPY ./config /app/config\nCOPY ./src /app/src\n\nRUN groupadd -g 1000 openzaak \\\n    && useradd -M -u 1000 -g 1000 openzaak \\\n    && chown -R openzaak:openzaak /app\n\n# drop privileges\nUSER openzaak\n\nARG COMMIT_HASH\nARG RELEASE\nENV GIT_SHA=${COMMIT_HASH}\nENV RELEASE=${RELEASE}\n\nENV DJANGO_SETTINGS_MODULE=openzaak.conf.docker\n\nARG SECRET_KEY=dummy\n\nLABEL org.label-schema.vcs-ref=$COMMIT_HASH \\\n      org.label-schema.vcs-url=\"https://github.com/open-zaak/open-zaak\" \\\n      org.label-schema.version=$RELEASE \\\n      org.label-schema.name=\"Open Zaak\"\n\n# Run collectstatic, so the result is already included in the image\nRUN python src/manage.py collectstatic --noinput \\\n    && python src/manage.py compilemessages\n\nEXPOSE 8000\nCMD [\"/start.sh\"]\n"
+}

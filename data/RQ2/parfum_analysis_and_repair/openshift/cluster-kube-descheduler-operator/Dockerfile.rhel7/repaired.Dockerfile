@@ -1,0 +1,14 @@
+FROM registry.ci.openshift.org/ocp/builder:rhel-8-golang-1.18-openshift-4.11 AS builder
+WORKDIR /go/src/github.com/openshift/cluster-kube-descheduler-operator
+COPY . .
+RUN make build --warn-undefined-variables
+
+FROM registry.ci.openshift.org/ocp/4.11:base
+COPY --from=builder /go/src/github.com/openshift/cluster-kube-descheduler-operator/cluster-kube-descheduler-operator /usr/bin/
+COPY --from=builder /go/src/github.com/openshift/cluster-kube-descheduler-operator/manifests /manifests
+COPY --from=builder /go/src/github.com/openshift/cluster-kube-descheduler-operator/metadata /metadata
+LABEL io.k8s.display-name="OpenShift Descheduler Operator" \
+      io.k8s.description="This is a component of OpenShift and manages the descheduler" \
+      io.openshift.tags="openshift,cluster-kube-descheduler-operator" \
+      com.redhat.delivery.appregistry=true \
+      maintainer="AOS workloads team, <aos-workloads@redhat.com>"

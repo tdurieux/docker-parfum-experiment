@@ -1,0 +1,18 @@
+ARG CI_IMAGE_TAG
+
+FROM zivgitlab.wwu.io/pymor/docker/pymor/jupyter_py3.8:${CI_IMAGE_TAG}
+MAINTAINER rene.fritze@wwu.de
+
+COPY . /tmp/pymor
+
+# manual numpy install is hack to workaround an otherwise happening
+#   File "src/pymor/discretizers/builtin/relations.pyx", line 1, in init pymor.discretizers.builtin.relations
+#   ValueError: numpy.ndarray size changed, may indicate binary incompatibility. Expected 88 from C header, got 80 from PyObject
+# for which no explanation could be found
+RUN pip install --no-cache-dir numpy==1.20 && \
+  pip install --no-cache-dir /tmp/pymor[docs,ci,full] && rm -rf /tmp/pymor
+RUN python -c "from pymor.basic import *"
+
+
+ENTRYPOINT []
+WORKDIR /pymor/notebooks

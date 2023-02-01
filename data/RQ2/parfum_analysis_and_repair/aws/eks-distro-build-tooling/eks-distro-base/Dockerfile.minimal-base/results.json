@@ -1,0 +1,17 @@
+{
+  "startTime": 1674246679293,
+  "endTime": 1674246680133,
+  "originalSmells": [
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 45,
+        "lineEnd": 45,
+        "columnStart": 4,
+        "columnEnd": 43
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Copyright Amazon.com Inc. or its affiliates. All Rights Reserved.\n#\n# Licensed under the Apache License, Version 2.0 (the \"License\");\n# you may not use this file except in compliance with the License.\n# You may obtain a copy of the License at\n#\n#      http://www.apache.org/licenses/LICENSE-2.0\n#\n# Unless required by applicable law or agreed to in writing, software\n# distributed under the License is distributed on an \"AS IS\" BASIS,\n# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.\n# See the License for the specific language governing permissions and\n# limitations under the License.\n\n\n# *NOTE* we have to limit our number of layers heres because in presubmits there\n# is no overlay fs and we will run out of space quickly\n\n################# BUILDER ######################\nARG BASE_IMAGE\nARG BUILDER_IMAGE\nARG BUILT_BUILDER_IMAGE\nFROM ${BUILDER_IMAGE} as builder\n\nENV DOWNLOAD_DIR /tmp/download\nENV NEWROOT /newroot\nENV FAKE_INSTALLS bash glibc p11-kit p11-kit-trust\n\nARG TARGETARCH\nARG TARGETOS\n\nCOPY scripts/ /usr/bin\nCOPY ${TARGETOS}-${TARGETARCH}/ /\n\nWORKDIR $NEWROOT\n\n# non root user\nRUN mkdir -p $NEWROOT/home/nonroot && \\\n    chown 65532:65532 $NEWROOT/home/nonroot && \\\n    # tmp directory with correct permissions\n    mkdir -p -m 1777 $NEWROOT/tmp\n\nRUN set -x && \\\n    yum upgrade -y && \\\n    yum update -y && \\\n    yum install -y cpio findutils yum-utils && \\\n    # setup rpm + yum\n    clean_install system-release true && \\\n    # \"install\" excluded deps we do not want in final image\n    clean_install \"$FAKE_INSTALLS\" true true && \\\n    clean_install \"basesystem filesystem setup tzdata\" && \\    \n    # postinstall scriptlet for ca-certs will fail, manually extract and copy\n    # key files from host after running update-ca-trust\n    clean_install ca-certificates true true true && \\\n    update-ca-trust && \\\n    cp -rf /etc/pki $NEWROOT/etc && \\\n    remove_package \"$FAKE_INSTALLS\" true && \\\n    # uneccessary symlink to debuginfo which will not exist in these images\n    unlink $NEWROOT/usr/lib/debug/usr/.dwz && \\\n    cleanup \"base\" && rm -rf /var/cache/yum\n\nCOPY files/ $NEWROOT\n\n\n################# BASE ########################\nFROM ${BUILT_BUILDER_IMAGE} as base-builder\nFROM ${BASE_IMAGE} as final\nENV PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin\nUSER 0\n\nCOPY --from=base-builder /newroot /\n"
+}

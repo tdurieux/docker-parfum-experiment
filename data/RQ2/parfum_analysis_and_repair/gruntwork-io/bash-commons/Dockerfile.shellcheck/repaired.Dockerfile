@@ -1,0 +1,28 @@
+FROM bash:3.2
+
+# TODO: labels here. See: http://label-schema.org/rc1/
+
+ARG SHELLCHECK_VERSION=v0.7.1
+ARG SHELLCHECK_FORMAT=gcc
+
+# Install dependencies.
+RUN set -e; \
+    apk --update add \
+        git \
+        outils-sha512 \
+    && rm -rf /var/lib/apt/lists/* \
+    && rm /var/cache/apk/*
+
+# Install shellcheck.
+RUN set -e; \
+    mkdir -p ~/stage \
+    && wget "https://github.com/koalaman/shellcheck/releases/download/${SHELLCHECK_VERSION}/shellcheck-${SHELLCHECK_VERSION}.linux.x86_64.tar.xz" \
+    && tar --xz -xvf shellcheck-"${SHELLCHECK_VERSION}".linux.x86_64.tar.xz \
+    && cp shellcheck-"${SHELLCHECK_VERSION}"/shellcheck /usr/bin/ \
+    && shellcheck --version \
+    && rm -rf ~/stage && rm shellcheck-"${SHELLCHECK_VERSION}".linux.x86_64.tar.xz
+
+WORKDIR /usr/local/src/bash-commons
+COPY ./.circleci/ /usr/local/src/bash-commons/.circleci/
+
+CMD ["bash"]

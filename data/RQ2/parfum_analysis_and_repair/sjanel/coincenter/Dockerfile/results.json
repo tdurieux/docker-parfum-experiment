@@ -1,0 +1,17 @@
+{
+  "startTime": 1674255404302,
+  "endTime": 1674255405095,
+  "originalSmells": [
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 4,
+        "lineEnd": 4,
+        "columnStart": 4,
+        "columnEnd": 49
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Multi stage build to separate docker build image from executable (to make the latter smaller)\nFROM alpine:3.16.0 AS build\n\n# Install base & build dependencies\nRUN apk add --no-cache g++ libc-dev curl-dev cmake ninja git\n\n# Set default directory for application\nWORKDIR /app\n\n# Copy all files, excluding the ones in '.dockerignore'\nCOPY . .\n\n# Create and go to 'bin' directory\nWORKDIR /app/bin\n\n# Declare and set default values of following arguments\nARG BUILD_MODE=Release\nARG BUILD_TEST=0\nARG BUILD_ASAN=0\nARG BUILD_WITH_PROMETHEUS=1\n\n# Build and launch tests if any\nRUN cmake -DCMAKE_BUILD_TYPE=${BUILD_MODE} \\\n    -DCCT_ENABLE_TESTS=${BUILD_TEST} \\\n    -DCCT_ENABLE_ASAN=${BUILD_ASAN} \\\n    -DCCT_BUILD_PROMETHEUS_FROM_SRC=${BUILD_WITH_PROMETHEUS} \\\n    -GNinja .. && \\\n    ninja && \\\n    if [ \"$BUILD_TEST\" = \"1\" -o \"$BUILD_TEST\" = \"ON\" ]; then \\\n    ctest -j 2 --output-on-failure; \\\n    fi\n\n# Grasp all libraries required by executable and copy them to 'deps'\nRUN ldd coincenter | tr -s '[:blank:]' '\\n' | grep '^/' | xargs -I % sh -c 'mkdir -p $(dirname deps%); cp % deps%;'\n\n# Multi stage build to separate docker build image from executable (to make the latter smaller)\nFROM alpine:3.16.0\n# TODO: using alpine instead of scratch only to install the ca certificate. How could we install certificate from scratch?\n\n# Install needed certificate for curl to work with https\nRUN apk add ca-certificates && rm -rf /var/cache/apk/*\n\n# Copy the dependencies from executable to new scratch image, keeping same path\nCOPY --from=build /app/bin/deps /\n\n# Copy the default data directory (can be overriden by host one with mount)\nCOPY --from=build /app/data /app/data\n\n# Copy executable\nCOPY --from=build /app/bin/coincenter /app/coincenter\n\n# 'data' directory of host machine can be mounted when launching the container.\n# To do this, you can use --mount option:\n# docker run --mount type=bind,source=<path-to-data-dir-on-host>,target=/app/data sjanel/coincenter\nENTRYPOINT [ \"/app/coincenter\" ]\n"
+}

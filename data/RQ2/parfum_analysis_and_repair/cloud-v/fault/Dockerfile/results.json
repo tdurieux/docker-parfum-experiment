@@ -1,0 +1,89 @@
+{
+  "startTime": 1674251854079,
+  "endTime": 1674251854815,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 17,
+        "lineEnd": 17,
+        "columnStart": 4,
+        "columnEnd": 68
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 38,
+        "lineEnd": 38,
+        "columnStart": 4,
+        "columnEnd": 88
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 48,
+        "lineEnd": 48,
+        "columnStart": 4,
+        "columnEnd": 82
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 18,
+        "lineEnd": 18,
+        "columnStart": 7,
+        "columnEnd": 50
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 41,
+        "lineEnd": 41,
+        "columnStart": 4,
+        "columnEnd": 29
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 52,
+        "lineEnd": 52,
+        "columnStart": 4,
+        "columnEnd": 31
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 6,
+        "lineEnd": 6,
+        "columnStart": 4,
+        "columnEnd": 153
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 7,
+        "lineEnd": 7,
+        "columnStart": 4,
+        "columnEnd": 122
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 29,
+        "lineEnd": 29,
+        "columnStart": 4,
+        "columnEnd": 101
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM efabless/openlane-tools:yosys-cfe940a98b08f1a5d08fb44427db155ba1f18b62-centos-7 AS yosys\n# ---\n\nFROM swift:5.6-centos7 AS builder\n\n# Setup Build Environment\nRUN yum install -y --setopt=skip_missing_names_on_install=False https://dl.fedoraproject.org/pub/epel/epel-release-latest-7.noarch.rpm centos-release-scl && rm -rf /var/cache/yum\nRUN yum install -y --setopt=skip_missing_names_on_install=False git gettext curl devtoolset-8 devtoolset-8-libatomic-devel && rm -rf /var/cache/yum\n\nENV CC=/opt/rh/devtoolset-8/root/usr/bin/gcc \\\n    CPP=/opt/rh/devtoolset-8/root/usr/bin/cpp \\\n    CXX=/opt/rh/devtoolset-8/root/usr/bin/g++ \\\n    PATH=/opt/rh/devtoolset-8/root/usr/bin:$PATH \\\n    LD_LIBRARY_PATH=/opt/rh/devtoolset-8/root/usr/lib64:/opt/rh/devtoolset-8/root/usr/lib:/opt/rh/devtoolset-8/root/usr/lib64/dyninst:/opt/rh/devtoolset-8/root/usr/lib/dyninst:/opt/rh/devtoolset-8/root/usr/lib64:/opt/rh/devtoolset-8/root/usr/lib:$LD_LIBRARY_PATH\n\n# Install Python3\nWORKDIR /python3\nRUN curl -f -L https://www.python.org/ftp/python/3.6.6/Python-3.6.6.tgz | tar --strip-components=1 -xzC . \\\n    && ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" --enable-shared --prefix=/build \\\n    && make -j$(nproc) \\\n    && make install \\\n    && rm -rf /python3\n\n# Set environment\nENV PATH=/build/bin:$PATH\nENV PYTHON_LIBRARY /build/lib/libpython3.6m.so\nENV PYTHONPATH /build/lib/pythonpath\n\n# Install Other Dependencies\nRUN yum install -y flex bison autoconf libtool gperf tcl-devel libcurl-devel openssl-devel zlib-devel && rm -rf /var/cache/yum\n\n# ---\n\n# Install Yosys\nCOPY --from=yosys /build /build\n\n# Install Git (Build-only dependency)\nWORKDIR /git\nRUN curl -f -L https://github.com/git/git/tarball/e9d7761bb94f20acc98824275e317fa82436c25d/ | \\\n    tar -xzC . --strip-components=1 && \\\n    make configure && \\\n    ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" --prefix=/usr && \\\n    make -j$(nproc) && \\\n    make install && \\\n    rm -rf *\n\n# Install IcarusVerilog 11\nWORKDIR /iverilog\nRUN curl -f -L https://github.com/steveicarus/iverilog/archive/refs/tags/v11_0.tar.gz | \\\n    tar --strip-components=1 -xzC . && \\\n    aclocal && \\\n    autoconf && \\\n    ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" --prefix=/build && \\\n    make -j$(nproc) && \\\n    make install && \\\n    rm -rf *\n\n# Python Setup\nWORKDIR /\nCOPY requirements.txt /requirements.txt\nRUN python3 -m pip install --target /build/lib/pythonpath --upgrade -r ./requirements.txt\n\n# Copy Libraries for AppImage\nRUN cp /lib64/libtinfo.so.5 /build/lib\nRUN cp /lib64/libffi.so.6 /build/lib\nRUN cp /lib64/libz.so.1 /build/lib\nRUN cp /lib64/libreadline.so.6 /build/lib\nRUN cp /lib64/libtcl8.5.so /build/lib\n\n# Fault Setup\nWORKDIR /fault\nCOPY . .\nRUN swift build --static-swift-stdlib -c release\nRUN cp /fault/.build/x86_64-unknown-linux-gnu/release/Fault /build/bin/fault\nWORKDIR /\n# ---\n\nFROM centos:centos7 AS runner\nCOPY --from=builder /build /build\nWORKDIR /test\nCOPY ./Tests/smoke_test.py .\nCOPY ./Tests/RTL/spm.v .\nCOPY ./Tech/osu035 ./osu035\n\nWORKDIR /\n\n# Set environment\nENV PATH=/build/bin:$PATH\\\n    PYTHON_LIBRARY=/build/lib/libpython3.6m.so\\\n    PYTHONPATH=/build/lib/pythonpath\\\n    LD_LIBRARY_PATH=/build/lib\\\n    FAULT_IVL_BASE=/build/lib/ivl\\\n    FAULT_IVERILOG=/build/bin/iverilog\\\n    FAULT_VVP=/build/bin/vvp\n\nCMD [ \"/bin/bash\" ]"
+}

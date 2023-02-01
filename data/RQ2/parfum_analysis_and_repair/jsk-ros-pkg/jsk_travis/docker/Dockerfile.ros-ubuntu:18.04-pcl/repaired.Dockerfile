@@ -1,0 +1,45 @@
+INCLUDE+ Dockerfile.ros-ubuntu:18.04
+
+RUN sudo apt-get update && \
+    sudo apt-get install --no-install-recommends -y ros-melodic-pcl-conversions ros-melodic-pcl-ros ros-melodic-octomap-server && \
+    sudo rm -rf /var/lib/apt/lists/*
+RUN sudo apt-get update && \
+    sudo apt-get install --no-install-recommends -y ros-melodic-rviz ros-melodic-robot-self-filter ros-melodic-moveit-ros-perception && \
+    sudo rm -rf /var/lib/apt/lists/*
+RUN sudo apt-get update && \
+    sudo apt-get install --no-install-recommends -y libopencv-dev liblapack-dev && \
+    sudo rm -rf /var/lib/apt/lists/*
+RUN sudo apt-get update && \
+    sudo apt-get install --no-install-recommends -y emacs cython && \
+    sudo rm -rf /var/lib/apt/lists/*
+
+# image_view
+RUN sudo apt-get update && \
+    rosdep update --include-eol-distros && \
+    rosdep resolve gtk2 | sed -e "s/^#.*//g" | xargs sudo apt-get install -y && \
+    sudo rm -rf /var/lib/apt/lists/*
+# qt_gui_core
+RUN sudo apt-get update && \
+    rosdep update --include-eol-distros && \
+    rosdep resolve python-qt-bindings | sed -e "s/^#.*//g" | xargs sudo apt-get install -y && \
+    sudo rm -rf /var/lib/apt/lists/*
+
+# fix latest pip install fcn errors
+RUN curl -f https://bootstrap.pypa.io/pip/2.7/get-pip.py | sudo python -; sudo -H pip install --no-cache-dir 'pip<10'
+RUN sudo pip install --no-cache-dir fcn chainercv chainer==6.7.0 cupy-cuda91 decorator==4.4.2
+
+# install common package to speedup
+RUN sudo pip install --no-cache-dir freezegun
+RUN sudo apt-get update && \
+    sudo apt-get install --no-install-recommends -y libshiboken-dev shiboken \
+                                python-qt4 python-qt4-dev python-sip-dev \
+                                libgtk2.0-dev \
+                                python-pyside libpyside-dev \
+                                ros-melodic-rqt-reconfigure python-matplotlib imagemagick \
+                                python-rosinstall-generator python-wstool \
+                                ros-melodic-pcl-msgs ros-melodic-octomap-msgs && \
+    sudo rm -rf /var/lib/apt/lists/*
+
+ARG CACHEBUST=1
+RUN echo $CACHBUST
+RUN sudo apt-get update && sudo apt-get dist-upgrade -y && sudo rm -rf /var/lib/apt/lists/*

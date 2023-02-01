@@ -1,0 +1,81 @@
+{
+  "startTime": 1674251473737,
+  "endTime": 1674251474805,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 59,
+        "lineEnd": 60,
+        "columnStart": 4,
+        "columnEnd": 37
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 138,
+        "lineEnd": 142,
+        "columnStart": 4,
+        "columnEnd": 19
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 33,
+        "lineEnd": 53,
+        "columnStart": 4,
+        "columnEnd": 12
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 130,
+        "lineEnd": 130,
+        "columnStart": 4,
+        "columnEnd": 105
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 33,
+        "lineEnd": 53,
+        "columnStart": 4,
+        "columnEnd": 12
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 130,
+        "lineEnd": 130,
+        "columnStart": 4,
+        "columnEnd": 105
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 33,
+        "lineEnd": 53,
+        "columnStart": 4,
+        "columnEnd": 12
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 130,
+        "lineEnd": 130,
+        "columnStart": 4,
+        "columnEnd": 129
+      }
+    }
+  ],
+  "repairedDockerfile": "#\n# Build this docker with\n#\n#     docker build -t dlite .\n#\n# To run this docker in an interactive bash shell, do\n#\n#     docker run -i -t dlite\n#\n# A more realistic way to use this docker is to put the following\n# into a shell script (called dlite)\n#\n#     #!/bin/sh\n#     docker run --rm -it --user=\"$(id -u):$(id -g)\" --net=none \\\n#         -v \"$PWD\":/data dlite \"$@\"\n#\n# To run the getuuid tool inside the docker image, you could then do\n#\n#     dlite dlite-getuuid <string>\n#\n# To run a python script in current directory inside the docker image\n#\n#     dlite python /data/script.py\n#\n\n\n##########################################\n# Stage: install dependencies\n##########################################\nFROM ubuntu:21.04 AS dependencies\nRUN apt-get -qq update --fix-missing\n\n# Install dependencies\nRUN DEBIAN_FRONTEND=\"noninteractive\" apt-get --no-install-recommends install -qq -y --fix-missing \\\n        cmake \\\n        cmake-curses-gui \\\n        cppcheck \\\n        doxygen \\\n        gcc \\\n        gdb \\\n        gfortran \\\n        git \\\n        g++ \\\n        libhdf5-dev \\\n        librdf0-dev \\\n        librasqal3-dev \\\n        libraptor2-dev \\\n        make \\\n        python3-dev \\\n        python3-pip \\\n        swig4.0 \\\n        rpm \\\n        librpmbuild9 \\\n        dpkg \\\n    && rm -rf /var/lib/apt/lists/*\n\n\n# Install Python packages\nCOPY requirements.txt .\nRUN pip3 install --no-cache-dir --trusted-host files.pythonhosted.org \\\n    --upgrade pip -r requirements.txt\n\n\n##########################################\n# Stage: build\n##########################################\nFROM dependencies AS build\n\n\n# Setup dlite\nRUN mkdir -p /home/user/sw/dlite\nCOPY bindings /home/user/sw/dlite/bindings\nCOPY  cmake /home/user/sw/dlite/cmake\nCOPY  doc /home/user/sw/dlite/doc\nCOPY  examples /home/user/sw/dlite/examples\nCOPY  src /home/user/sw/dlite/src\nCOPY  storages /home/user/sw/dlite/storages\nCOPY  tools /home/user/sw/dlite/tools\nCOPY  CMakeLists.txt LICENSE README.md /home/user/sw/dlite/\nWORKDIR /home/user/sw/dlite\n\n# Perform static code checking\n# FIXME - test_tgen.c produce a lot of false positives\nRUN cppcheck . \\\n    -I src \\\n    --language=c -q --force --error-exitcode=2 --inline-suppr -i build\n\n# Build dlite\nRUN mkdir build\nWORKDIR /home/user/sw/dlite/build\nRUN cmake .. -DFORCE_EXAMPLES=ON -DALLOW_WARNINGS=ON -DWITH_FORTRAN=ON \\\n        -DCMAKE_INSTALL_PREFIX=/tmp/dlite-install\nRUN make\n\n# Create distributable packages\nRUN cpack\nRUN cpack -G DEB\nRUN cpack -G RPM\n\n# Install\nRUN make install\n\n# Skip postgresql tests since we haven't set up the server and\n# static-code-analysis since it is already done.\n# TODO - set up postgresql server and run the postgresql tests...\nRUN ctest -E \"(postgresql|static-code-analysis)\" || \\\n    ctest -E \"(postgresql|static-code-analysis)\" \\\n        --rerun-failed --output-on-failure -VV\n\n# Set DLITE_USE_BUILD_ROOT in case we want to test dlite from the build dir\nENV DLITE_USE_BUILD_ROOT=YES\n\n\n#########################################\n# Stage: develop\n#########################################\nFROM build AS develop\nENV PATH=/tmp/dlite-install/bin:$PATH\nENV LD_LIBRARY_PATH=/tmp/dlite-install/lib:$LD_LIBRARY_PATH\nENV DLITE_ROOT=/tmp/dlite-install\nENV PYTHONPATH=/tmp/dlite-install/lib/python3.8/site-packages:$PYTHONPATH\n\n\n##########################################\n# Stage: final slim image\n##########################################\nFROM ubuntu:21.04 AS production\n#FROM python:3.9.6-slim-buster\n\nRUN apt -qq update\nRUN DEBIAN_FRONTEND=\"noninteractive\" apt-get --no-install-recommends install -qq -y --fix-missing librdf0 python3-dev python3-pip \\\n  && rm -rf /var/lib/apt/lists/*\n# Copy needed dlite files and libraries to slim image\nCOPY --from=build /tmp/dlite-install /usr/local\nCOPY --from=build /usr/lib/x86_64-linux-gnu/libhdf5*.so* /usr/local/lib/\nCOPY --from=build /usr/lib/x86_64-linux-gnu/libsz.so* /usr/local/lib/\nCOPY --from=build /usr/lib/x86_64-linux-gnu/libaec.so* /usr/local/lib/\nCOPY --from=build /usr/lib/x86_64-linux-gnu/libm.so* /usr/local/lib/\nRUN pip install --no-cache-dir --upgrade pip \\\n    --trusted-host files.pythonhosted.org \\\n    numpy \\\n    PyYAML \\\n    psycopg2-binary\n\nWORKDIR /home/user\nENV LD_LIBRARY_PATH=/usr/local/lib\nENV DLITE_ROOT=/usr/local\nENV PYTHONPATH=/usr/local/lib/python3.9/site-packages\n\n# Default command\nCMD [\"/bin/bash\"]\n"
+}

@@ -1,0 +1,55 @@
+ARG PHP_VERSION=7.4
+ARG BASE_IMAGE=php:$PHP_VERSION
+ARG LIBMUSTACHE_VERSION=master
+
+# image0
+FROM ${BASE_IMAGE}
+ARG LIBMUSTACHE_VERSION
+WORKDIR /build
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        autoconf \
+        automake \
+        g++ \
+        gcc \
+        git \
+        libjson-c-dev \
+        libtool \
+        libyaml-dev \
+        m4 \
+        make \
+        pkg-config && rm -rf /var/lib/apt/lists/*;
+
+# libmustache
+RUN git clone https://github.com/jbboehr/libmustache.git
+WORKDIR /build/libmustache
+RUN git checkout $LIBMUSTACHE_VERSION && git submodule update --init
+RUN autoreconf -fiv
+RUN ./configure --build="$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)" \
+        --prefix /usr/local/ \
+        --enable-static \
+        --disable-shared \
+        CXXFLAGS="-O3 -fPIC -DPIC -flto" \
+        RANLIB=gcc-ranlib \
+        AR=gcc-ar \
+        NM=gcc-nm \
+        LD=gcc
+RUN make
+RUN make install
+
+# php-mustache
+WORKDIR /build/php-mustache
+ADD . .
+RUN phpize
+RUN ./configure --build="$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)" CXXFLAGS="-O3 -fPIC -DPIC"
+RUN make
+RUN make install
+
+# image1
+FROM ${BASE_IMAGE}
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        libjson-c-dev \
+        libyaml-dev && rm -rf /var/lib/apt/lists/*;
+COPY --from=0 /usr/local/lib/php/extensions /usr/local/lib/php/extensions
+RUN docker-php-ext-enable mustache
+ENTRYPOINT ["docker-php-entrypoint"]

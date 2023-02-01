@@ -1,0 +1,54 @@
+# Build Teku in a stock Ubuntu container
+FROM eclipse-temurin:17-jdk-focal as builder
+
+# This is here to avoid build-time complaints
+ARG DOCKER_TAG
+
+ARG BUILD_TARGET
+
+RUN apt-get update && apt-get install --no-install-recommends -y ca-certificates git && rm -rf /var/lib/apt/lists/*;
+
+WORKDIR /usr/src
+RUN bash -c "git clone https://github.com/ConsenSys/teku.git && cd teku && git config advice.detachedHead false && git fetch --all --tags && git checkout ${BUILD_TARGET} && ./gradlew installDist"
+
+# Pull all binaries into a second stage deploy Ubuntu container
+FROM eclipse-temurin:17-focal
+
+ARG USER=teku
+ARG UID=10002
+
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive TZ=Etc/UTC apt-get install -y --no-install-recommends \
+  ca-certificates \
+  tzdata \
+  jq \
+  && apt-get clean \
+  && rm -rf /var/lib/apt/lists/*
+
+RUN set -eux; \
+        apt-get update; \
+        apt-get install --no-install-recommends -y gosu; \
+        rm -rf /var/lib/apt/lists/*; \
+# verify that the binary works
+        gosu nobody true
+
+# See https://stackoverflow.com/a/55757473/12429735RUN
+RUN adduser \
+    --disabled-password \
+    --gecos "" \
+    --home "/nonexistent" \
+    --shell "/usr/sbin/nologin" \
+    --no-create-home \
+    --uid "${UID}" \
+    "${USER}"
+
+RUN mkdir -p /var/lib/teku/validator-keys && mkdir -p /var/lib/teku/validator-passwords && chown -R ${USER}:${USER} /var/lib/teku && chmod -R 700 /var/lib/teku
+
+# Copy executable
+COPY --from=builder /usr/src/teku/build/install/teku/. /opt/teku/
+# Script to query and store validator key passwords
+COPY ./validator-import.sh /usr/local/bin/
+COPY ./docker-entrypoint.sh /usr/local/bin/
+
+USER ${USER}
+
+ENTRYPOINT ["/opt/teku/bin/teku"]

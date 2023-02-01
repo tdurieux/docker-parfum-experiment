@@ -1,0 +1,17 @@
+{
+  "startTime": 1674252530650,
+  "endTime": 1674252532111,
+  "originalSmells": [
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 28,
+        "lineEnd": 33,
+        "columnStart": 2,
+        "columnEnd": 31
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "ARG base_image\nARG builder_image=concourse/golang-builder\n\n# stage: builder\nFROM ${builder_image} AS builder\n\nWORKDIR /concourse/docker-image-resource\nCOPY go.mod .\nCOPY go.sum .\nRUN go mod download\nCOPY . .\n\nENV CGO_ENABLED 0\nCOPY assets/ /assets\nRUN go build -o /assets/check github.com/concourse/docker-image-resource/cmd/check\nRUN go build -o /assets/print-metadata github.com/concourse/docker-image-resource/cmd/print-metadata\nRUN go build -o /assets/ecr-login github.com/awslabs/amazon-ecr-credential-helper/ecr-login/cmd\nRUN set -e; \\\n    for pkg in $(go list ./...); do \\\n      go test -o \"/tests/$(basename $pkg).test\" -c $pkg; \\\n    done\n\n# stage: resource\nFROM ${base_image} AS resource\n\nRUN apt update && apt upgrade -y -o Dpkg::Options::=\"--force-confdef\"\n# docker hosts their own packages, this steps sets up the repo for apt-get\nRUN apt update; \\\n  apt install -y --no-install-recommends \\\n    apt-transport-https \\\n    ca-certificates \\\n    curl \\\n    gnupg-agent \\\n    software-properties-common; rm -rf /var/lib/apt/lists/*; \\\n  curl -fsSL https://download.docker.com/linux/ubuntu/gpg | apt-key add - ; \\\n  add-apt-repository \\\n   \"deb [arch=amd64] https://download.docker.com/linux/ubuntu \\\n   $(lsb_release -cs) \\\n   stable\";\n\nRUN apt update && apt install -y --no-install-recommends \\\n    docker-ce \\\n    jq \\\n    ca-certificates \\\n    xz-utils \\\n    iproute2 \\\n  && rm -rf /var/lib/apt/lists/*\n\nCOPY --from=builder /assets /opt/resource\nRUN ln -s /opt/resource/ecr-login /usr/local/bin/docker-credential-ecr-login\n\n# stage: tests\nFROM resource AS tests\nCOPY --from=builder /tests /tests\nADD . /docker-image-resource\nRUN set -e; \\\n    for test in /tests/*.test; do \\\n      $test -ginkgo.v; \\\n    done\n\n# final output stage\nFROM resource\n"
+}

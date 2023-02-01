@@ -1,0 +1,53 @@
+{
+  "startTime": 1674239805584,
+  "endTime": 1674239805879,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 10,
+        "lineEnd": 10,
+        "columnStart": 4,
+        "columnEnd": 30
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 53,
+        "lineEnd": 53,
+        "columnStart": 4,
+        "columnEnd": 29
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 5,
+        "lineEnd": 5,
+        "columnStart": 26,
+        "columnEnd": 66
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 5,
+        "lineEnd": 5,
+        "columnStart": 26,
+        "columnEnd": 66
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 30,
+        "lineEnd": 30,
+        "columnStart": 4,
+        "columnEnd": 16
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "ARG CRYSTAL_VERSION=0.27.2\nARG SHARDS_VERSION=0.8.1\n\n\nFROM crystallang/crystal:${CRYSTAL_VERSION} AS build\nRUN apt-get -qq update && apt-get -y --no-install-recommends -qq install curl llvm-5.0-dev && rm -rf /var/lib/apt/lists/*;\n\n# cross-compile crystal:\nARG CRYSTAL_VERSION\nARG CRYSTAL_SOURCE=https://github.com/crystal-lang/crystal/archive/${CRYSTAL_VERSION}.tar.gz\nRUN curl -f -sL ${CRYSTAL_SOURCE} | tar xz -C /tmp\nRUN cd /tmp/crystal-${CRYSTAL_VERSION} && make release=1 stats=1 threads=1 \\\n        FLAGS=\"--cross-compile --target=x86_64-alpine-linux-musl\"\n\n\nFROM alpine:latest\n\n# build dependencies (will be removed):\nRUN apk add --no-cache --virtual .build-deps \\\n        curl g++ gc-dev libevent-dev llvm5-dev pcre-dev yaml-dev\n\n# crystal runti dependencies:\nRUN apk add --no-cache --virtual .crystal-deps \\\n        gcc gc libc-dev libevent llvm5-libs pcre\n\n# shards runtime dependencies:\nRUN apk add --no-cache --virtual .shards-deps \\\n        gc libevent pcre yaml\n\n# utilities:\nRUN apk add --no-cache make\n\n# pre-install crystal:\nARG CRYSTAL_VERSION\nRUN mkdir -p /opt/crystal/bin\nCOPY --from=build /tmp/crystal-${CRYSTAL_VERSION}/Makefile /opt/crystal/\nCOPY --from=build /tmp/crystal-${CRYSTAL_VERSION}/.build/crystal.o /opt/crystal/\nCOPY --from=build /tmp/crystal-${CRYSTAL_VERSION}/src /opt/crystal/src\n\n# link crystal compiler:\nRUN cd /opt/crystal && make deps -B\nRUN cd /opt/crystal && gcc crystal.o -o bin/crystal \\\n        -lpthread -lgc -lpcre -levent src/ext/libcrystal.a \\\n        `llvm-config --libs --ldflags` src/llvm/ext/llvm_ext.o -lstdc++\nRUN rm /opt/crystal/crystal.o /opt/crystal/Makefile\n\n# add wrapper script:\nCOPY crystal.sh /usr/local/bin/crystal\nRUN chmod +x /usr/local/bin/crystal\n\n# build/install shards:\nARG SHARDS_VERSION\nARG SHARDS_SOURCE=https://github.com/crystal-lang/shards/archive/v${SHARDS_VERSION}.tar.gz\nRUN curl -f -sL ${SHARDS_SOURCE} | tar xz -C /tmp\nRUN cd /tmp/shards-${SHARDS_VERSION} && \\\n        make CRFLAGS=\"--release --stats\" && \\\n        mv /tmp/shards-${SHARDS_VERSION}/bin/shards /usr/local/bin/\n\n# copy some static libraries to reduce image size:\nRUN set -eux; \\\n    mkdir -p /opt/crystal/embedded/lib; \\\n    cp /usr/lib/libgc.a /opt/crystal/embedded/lib/; \\\n    cp /usr/lib/libevent*.a /opt/crystal/embedded/lib/; \\\n    cp /usr/lib/libpcre*.a /opt/crystal/embedded/lib/\n\n# cleanup:\nRUN apk del .build-deps && \\\n        rm -rf /tmp/shards-${SHARDS_VERSION} && \\\n        rm -rf /root/.cache && \\\n        rm -rf /var/cache/apk/*\n"
+}

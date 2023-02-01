@@ -1,0 +1,80 @@
+{
+  "startTime": 1674249955891,
+  "endTime": 1674249956909,
+  "originalSmells": [
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 115,
+        "lineEnd": 115,
+        "columnStart": 8,
+        "columnEnd": 40
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 123,
+        "lineEnd": 123,
+        "columnStart": 4,
+        "columnEnd": 22
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 126,
+        "lineEnd": 136,
+        "columnStart": 55,
+        "columnEnd": 25
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 142,
+        "lineEnd": 142,
+        "columnStart": 4,
+        "columnEnd": 40
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 148,
+        "lineEnd": 153,
+        "columnStart": 4,
+        "columnEnd": 42
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 185,
+        "lineEnd": 185,
+        "columnStart": 8,
+        "columnEnd": 54
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 266,
+        "lineEnd": 266,
+        "columnStart": 4,
+        "columnEnd": 31
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 92,
+        "lineEnd": 99,
+        "columnStart": 4,
+        "columnEnd": 11
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# parts are copied from Dockerfile\n\n# these need to be defined before any FROM - otherwise, the ARGs expand to empty strings.\n# see build_x86_64_executable.sh and build_aarch64_executable.sh which define these.\nARG RUST_BUILDER_VERSION\nARG PERF_BUILDER_UBUNTU\nARG PHPSPY_BUILDER_UBUNTU\nARG AP_BUILDER_CENTOS\nARG AP_BUILDER_ALPINE\nARG BURN_BUILDER_GOLANG\nARG GPROFILER_BUILDER\nARG PYPERF_BUILDER_UBUNTU\n\n# pyspy & rbspy builder base\nFROM rust${RUST_BUILDER_VERSION} AS pyspy-rbspy-builder-common\nWORKDIR /tmp\n\nCOPY scripts/prepare_machine-unknown-linux-musl.sh .\nRUN ./prepare_machine-unknown-linux-musl.sh\n\n# py-spy\nFROM pyspy-rbspy-builder-common AS pyspy-builder\nWORKDIR /tmp\nCOPY scripts/pyspy_build.sh .\nRUN ./pyspy_build.sh\nRUN mv \"/tmp/py-spy/target/$(uname -m)-unknown-linux-musl/release/py-spy\" /tmp/py-spy/py-spy\n\n# rbspy\nFROM pyspy-rbspy-builder-common AS rbspy-builder\nWORKDIR /tmp\nCOPY scripts/rbspy_build.sh .\nRUN ./rbspy_build.sh\nRUN mv \"/tmp/rbspy/target/$(uname -m)-unknown-linux-musl/release/rbspy\" /tmp/rbspy/rbspy\n\n# perf\nFROM ubuntu${PERF_BUILDER_UBUNTU} AS perf-builder\nWORKDIR /tmp\n\nCOPY scripts/perf_env.sh .\nRUN ./perf_env.sh\n\nCOPY scripts/libunwind_build.sh .\nRUN ./libunwind_build.sh\n\nCOPY scripts/perf_build.sh .\nRUN ./perf_build.sh\n\n# phpspy\nFROM ubuntu${PHPSPY_BUILDER_UBUNTU} as phpspy-builder\nWORKDIR /tmp\nCOPY scripts/phpspy_env.sh .\nRUN ./phpspy_env.sh\nCOPY scripts/phpspy_build.sh .\nRUN ./phpspy_build.sh\n\n# async-profiler glibc\nFROM centos${AP_BUILDER_CENTOS} AS async-profiler-builder-glibc\nWORKDIR /tmp\n\nCOPY scripts/async_profiler_env_glibc.sh .\nRUN ./async_profiler_env_glibc.sh\n\nCOPY scripts/async_profiler_build_shared.sh .\nCOPY scripts/async_profiler_build_glibc.sh .\nRUN ./async_profiler_build_shared.sh /tmp/async_profiler_build_glibc.sh\n\n# async-profiler musl\nFROM alpine${AP_BUILDER_ALPINE} AS async-profiler-builder-musl\nWORKDIR /tmp\n\nCOPY scripts/async_profiler_env_musl.sh .\nRUN ./async_profiler_env_musl.sh\nCOPY scripts/async_profiler_build_shared.sh .\nCOPY scripts/async_profiler_build_musl.sh .\nRUN ./async_profiler_build_shared.sh /tmp/async_profiler_build_musl.sh\n\nFROM golang${BURN_BUILDER_GOLANG} AS burn-builder\nWORKDIR /tmp\n\nCOPY scripts/burn_build.sh .\nRUN ./burn_build.sh\n\n# bcc helpers\n# built on newer Ubuntu because they require new clang (newer than available in GPROFILER_BUILDER's CentOS 7)\n# these are only relevant for modern kernels, so there's no real reason to build them on CentOS 7 anyway.\nFROM ubuntu${PYPERF_BUILDER_UBUNTU} AS bcc-helpers\nWORKDIR /tmp\n\nRUN if [ \"$(uname -m)\" = \"aarch64\" ]; then \\\n        exit 0; \\\n    fi && \\\n    apt-get update && \\\n    apt-get install -y --no-install-recommends \\\n        clang-10 \\\n        libelf-dev \\\n        make \\\n        build-essential \\\n        llvm \\\n        ca-certificates \\\n        git && rm -rf /var/lib/apt/lists/*;\n\nCOPY --from=perf-builder /bpftool /bpftool\n\nCOPY scripts/bcc_helpers_build.sh .\nRUN ./bcc_helpers_build.sh\n\n\n# bcc & gprofiler\nFROM centos${GPROFILER_BUILDER} AS build-stage\nWORKDIR /bcc\n\n# fix repo links for CentOS 8, and enable powertools (required to download glibc-static)\nRUN if grep -q \"CentOS Linux 8\" /etc/os-release ; then \\\n        sed -i 's/mirrorlist/#mirrorlist/g' /etc/yum.repos.d/CentOS-*; \\\n        sed -i 's|#baseurl=http://mirror.centos.org|baseurl=http://vault.centos.org|g' /etc/yum.repos.d/CentOS-*; \\\n        yum install -y dnf-plugins-core; rm -rf /var/cache/yum \\\n        dnf config-manager --set-enabled powertools; \\\n        yum clean all; \\\n    fi\n\n# bcc part\n# TODO: copied from the main Dockerfile... but modified a lot. we'd want to share it some day.\n\nRUN yum install -y git && yum clean all && rm -rf /var/cache/yum\n\n# these are needed to build PyPerf, which we don't build on Aarch64, hence not installing them here.\nRUN if [ \"$(uname -m)\" = \"aarch64\" ]; then exit 0; fi; yum install -y \\\n    curl \\\n    cmake \\\n    patch \\\n    python3 \\\n    flex \\\n    bison \\\n    zlib-devel.x86_64 \\\n    xz-devel \\\n    ncurses-devel \\\n    elfutils-libelf-devel && \\\n    yum clean all && rm -rf /var/cache/yum\n\nRUN if [ \"$(uname -m)\" = \"aarch64\" ]; \\\n        then exit 0; \\\n    fi && \\\n    yum install -y centos-release-scl-rh && \\\n    yum clean all && rm -rf /var/cache/yum\n# mostly taken from https://github.com/iovisor/bcc/blob/master/INSTALL.md#install-and-compile-llvm\nRUN if [ \"$(uname -m)\" = \"aarch64\" ]; \\\n        then exit 0; \\\n    fi && \\\n    yum install -y devtoolset-8 \\\n        llvm-toolset-7 \\\n        llvm-toolset-7-llvm-devel \\\n        llvm-toolset-7-llvm-static \\\n        llvm-toolset-7-clang-devel \\\n        devtoolset-8-elfutils-libelf-devel && \\\n    yum clean all && rm -rf /var/cache/yum\n\nCOPY ./scripts/libunwind_build.sh .\nRUN if [ \"$(uname -m)\" = \"aarch64\" ]; then \\\n        exit 0; \\\n    fi && \\\n    ./libunwind_build.sh\n\nCOPY ./scripts/pyperf_build.sh .\n# hadolint ignore=SC1091\nRUN set -e; \\\n    if [ \"$(uname -m)\" != \"aarch64\" ]; then \\\n        source scl_source enable devtoolset-8 llvm-toolset-7; \\\n    fi && \\\n    source ./pyperf_build.sh\n\n# gProfiler part\n\nWORKDIR /app\n\nRUN yum clean all && yum --setopt=skip_missing_names_on_install=False install -y \\\n        epel-release \\\n        gcc \\\n        python3 \\\n        curl \\\n        python3-pip \\\n        python3-devel\n\n# needed for aarch64 (for staticx)\nRUN set -e; \\\n    if [ \"$(uname -m)\" = \"aarch64\" ]; then \\\n        yum install -y glibc-static zlib-devel.aarch64 && \\\n        yum clean all; rm -rf /var/cache/yum \\\n    fi\n# needed for aarch64, scons & wheel are needed to build staticx\nRUN set -e; \\\n    if [ \"$(uname -m)\" = \"aarch64\" ]; then \\\n        python3 -m pip install --no-cache-dir 'wheel==0.37.0' 'scons==4.2.0'; \\\n    fi\n\n# we want the latest pip\n# hadolint ignore=DL3013\nRUN python3 -m pip install --no-cache-dir --upgrade pip\n\nCOPY requirements.txt requirements.txt\nCOPY granulate-utils/setup.py granulate-utils/requirements.txt granulate-utils/README.md granulate-utils/\nCOPY granulate-utils/granulate_utils granulate-utils/granulate_utils\nRUN python3 -m pip install --no-cache-dir -r requirements.txt\n\nCOPY exe-requirements.txt exe-requirements.txt\n# build on centos:8 of Aarch64 requires -lnss_files and -lnss_dns. the files are missing but the symbols\n# seem to be provided from another archive (e.g libc.a), so this \"fix\" bypasses the ld error of \"missing -lnss...\"\n# see https://github.com/JonathonReinhart/staticx/issues/219\nRUN if grep -q \"CentOS Linux 8\" /etc/os-release ; then \\\n    ! test -f /lib64/libnss_files.a && ar rcs /lib64/libnss_files.a && \\\n    ! test -f /lib64/libnss_dns.a && ar rcs /lib64/libnss_dns.a; \\\n    fi\nRUN python3 -m pip install --no-cache-dir -r exe-requirements.txt\n\n# copy PyPerf, licenses and notice file.\nRUN mkdir -p gprofiler/resources/ruby && \\\n    mkdir -p gprofiler/resources/python/pyperf && \\\n    cp /bcc/root/share/bcc/examples/cpp/PyPerf gprofiler/resources/python/pyperf/ && \\\n    cp /bcc/bcc/LICENSE.txt gprofiler/resources/python/pyperf/ && \\\n    cp -r /bcc/bcc/licenses gprofiler/resources/python/pyperf/licenses && \\\n    cp /bcc/bcc/NOTICE gprofiler/resources/python/pyperf/\nCOPY --from=bcc-helpers /bpf_get_fs_offset/get_fs_offset gprofiler/resources/python/pyperf/\nCOPY --from=bcc-helpers /bpf_get_stack_offset/get_stack_offset gprofiler/resources/python/pyperf/\n\nCOPY --from=pyspy-builder /tmp/py-spy/py-spy gprofiler/resources/python/py-spy\nCOPY --from=rbspy-builder /tmp/rbspy/rbspy gprofiler/resources/ruby/rbspy\nCOPY --from=perf-builder /perf gprofiler/resources/perf\n\nCOPY --from=phpspy-builder /tmp/phpspy/phpspy gprofiler/resources/php/phpspy\nCOPY --from=phpspy-builder /tmp/binutils/binutils-2.25/bin/bin/objdump gprofiler/resources/php/objdump\nCOPY --from=phpspy-builder /tmp/binutils/binutils-2.25/bin/bin/strings gprofiler/resources/php/strings\n# copying from async-profiler-builder as an \"old enough\" centos.\nCOPY --from=async-profiler-builder-glibc /usr/bin/awk gprofiler/resources/php/awk\nCOPY --from=async-profiler-builder-glibc /usr/bin/xargs gprofiler/resources/php/xargs\n\nCOPY --from=async-profiler-builder-glibc /tmp/async-profiler/build/jattach gprofiler/resources/java/jattach\nCOPY --from=async-profiler-builder-glibc /tmp/async-profiler/build/async-profiler-version gprofiler/resources/java/async-profiler-version\nCOPY --from=async-profiler-builder-glibc /tmp/async-profiler/build/libasyncProfiler.so gprofiler/resources/java/glibc/libasyncProfiler.so\nCOPY --from=async-profiler-builder-musl /tmp/async-profiler/build/libasyncProfiler.so gprofiler/resources/java/musl/libasyncProfiler.so\nCOPY --from=async-profiler-builder-glibc /tmp/async-profiler/build/fdtransfer gprofiler/resources/java/fdtransfer\n\nCOPY --from=burn-builder /tmp/burn/burn gprofiler/resources/burn\n\nCOPY gprofiler gprofiler\n\n# run PyInstaller and make sure no 'gprofiler.*' modules are missing.\n# see https://pyinstaller.readthedocs.io/en/stable/when-things-go-wrong.html\n# from a quick look I didn't see how to tell PyInstaller to exit with an error on this, hence\n# this check in the shell.\nCOPY pyi_build.py pyinstaller.spec ./\nRUN pyinstaller pyinstaller.spec \\\n    && echo \\\n    && test -f build/pyinstaller/warn-pyinstaller.txt \\\n    && if grep 'gprofiler\\.' build/pyinstaller/warn-pyinstaller.txt ; then echo 'PyInstaller failed to pack gProfiler code! See lines above. Make sure to check for SyntaxError as this is often the reason.'; exit 1; fi;\n\n# for aarch64 - build a patched version of staticx 0.13.6. we remove calls to getpwnam and getgrnam, for these end up doing dlopen()s which\n# crash the staticx bootloader. we don't need them anyway (all files in our staticx tar are uid 0 and we don't need the names translation)\nCOPY scripts/staticx_patch.diff staticx_patch.diff\n# hadolint ignore=DL3003\nRUN if [ \"$(uname -m)\" = \"aarch64\" ]; then \\\n        git clone -b v0.13.6 https://github.com/JonathonReinhart/staticx.git && \\\n        cd staticx && \\\n        git reset --hard 819d8eafecbaab3646f70dfb1e3e19f6bbc017f8 && \\\n        git apply ../staticx_patch.diff && \\\n        python3 -m pip install --no-cache-dir . ; \\\n    fi\n\nRUN yum install -y patchelf upx && yum clean all && rm -rf /var/cache/yum\n\nCOPY ./scripts/list_needed_libs.sh ./scripts/list_needed_libs.sh\n# staticx packs dynamically linked app with all of their dependencies, it tries to figure out which dynamic libraries are need for its execution\n# in some cases, when the application is lazily loading some DSOs, staticx doesn't handle it.\n# we use list_needed_libs.sh to list the dynamic dependencies of *all* of our resources,\n# and make staticx pack them as well.\n# using scl here to get the proper LD_LIBRARY_PATH set\n# hadolint ignore=SC2046\nRUN set -e; \\\n    if [ $(uname -m) != \"aarch64\" ]; then \\\n        source scl_source enable devtoolset-8 llvm-toolset-7 ; \\\n    fi && \\\n    staticx $(./scripts/list_needed_libs.sh) dist/gprofiler dist/gprofiler\n\nFROM scratch AS export-stage\n\nCOPY --from=build-stage /app/dist/gprofiler /gprofiler\n"
+}

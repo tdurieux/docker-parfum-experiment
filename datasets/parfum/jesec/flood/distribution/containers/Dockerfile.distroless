@@ -1,0 +1,53 @@
+FROM docker.io/jesec/busybox-applets as busybox
+
+FROM docker.io/alpine as build
+
+WORKDIR /root
+
+# Install Flood and dependencies to /bin
+RUN mkdir -p /root/sysroot/bin
+
+COPY ./artifacts artifacts
+RUN if [[ `uname -m` == "aarch64" ]]; \
+    then mv artifacts/flood-linux-arm64 flood; \
+    elif [[ `uname -m` == "x86_64" ]]; \
+    then mv artifacts/flood-linux-x64 flood; \
+    fi
+RUN mv flood /root/sysroot/bin/flood
+
+COPY --from=busybox /bin/busybox_DF /root/sysroot/bin/df
+
+RUN apk --no-cache add tini-static
+RUN cp /sbin/tini-static /root/sysroot/bin/tini
+
+RUN chmod 0555 /root/sysroot/bin/*
+
+# Create 1001:1001 user
+RUN mkdir -p /root/sysroot/home/download
+RUN chown 1001:1001 /root/sysroot/home/download
+
+# flood image
+FROM scratch as flood
+
+COPY --from=build /root/sysroot /
+
+# Run as 1001:1001 user
+ENV HOME=/home/download
+USER 1001:1001
+
+# Expose port 3000
+EXPOSE 3000
+
+# Flood
+ENV FLOOD_OPTION_HOST="0.0.0.0"
+ENTRYPOINT ["/bin/tini", "--", "flood"]
+
+# rtorrent-flood image
+FROM docker.io/jesec/rtorrent:master as rtorrent
+FROM flood as rtorrent-flood
+
+# Install rTorrent
+COPY --from=rtorrent / /
+
+# Flood with managed rTorrent daemon
+ENV FLOOD_OPTION_RTORRENT="true"

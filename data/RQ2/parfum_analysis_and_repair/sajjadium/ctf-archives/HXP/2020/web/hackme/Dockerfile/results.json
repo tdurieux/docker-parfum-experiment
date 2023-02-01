@@ -1,0 +1,35 @@
+{
+  "startTime": 1674250014947,
+  "endTime": 1674250015943,
+  "originalSmells": [
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 16,
+        "lineEnd": 16,
+        "columnStart": 4,
+        "columnEnd": 15
+      }
+    },
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 28,
+        "lineEnd": 28,
+        "columnStart": 4,
+        "columnEnd": 52
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 55,
+        "lineEnd": 60,
+        "columnStart": 4,
+        "columnEnd": 20
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# I really wanted to run this using their default image (FROM nabo.codimd.dev/hackmdio/hackmd:2.2.0).\n# Unfortunately, they are still shipping jQuery 3.4.1 and some other stuff with published XSS CVEs.\n# Instead, we have to clone their deployment process from\n#   https://github.com/hackmdio/codimd/blob/master/deployments/{Dockerfile,build.sh}\n# This should be identical to the 2.2.0 docker, but with fixed vulnerabilities in the dependencies.\n# I'm sure I'm breaking some features here, but it still worked in our tests.\n# Most of the ugliness comes from `npm audit`, and from a forced upgrade of `serialize-javascript`.\nFROM hackmdio/buildpack:node-10-0baafb79 as BUILD\nUSER hackmd\nRUN rmdir /home/hackmd/app && \\\n    cd / && \\\n    git clone https://github.com/hackmdio/codimd.git /home/hackmd/app && \\\n    cd /home/hackmd/app && \\\n    git checkout master\nRUN npm install && npm cache clean --force;\n\nRUN set -xe && \\\n    npm audit fix && \\\n    npm install helmet@4.2.0 && \\\n    npm update dot-prop --depth 7 && \\\n    npm update acorn --depth 4 && \\\n    npm update yargs-parser --depth 3 && \\\n    rm -rf node_modules/serialize-javascript && \\\n    sed -i -e 's/\"serialize-javascript\": \"^.*\"/\"serialize-javascript\": \"^3.1.0\"/' node_modules/uglifyjs-webpack-plugin/package.json node_modules/copy-webpack-plugin/package.json && \\\n    sed -i -En '$!N; /(\"serialize-javascript\":\\s+\\{\\s+\"version\": )\"1.9.1\"/{N;N;N;N;d} ; P ; D' package-lock.json && \\\n    npm cache clear --force && \\\n    npm install serialize-javascript@3.1.0 --no-save && npm cache clean --force;\n\nRUN npm run build && \\\n    cp ./deployments/docker-entrypoint.sh ./ && \\\n    cp .sequelizerc.example .sequelizerc && \\\n    rm -rf .git .gitignore .travis.yml .dockerignore .editorconfig \\\n        .babelrc .mailmap .sequelizerc.example \\\n        test docs contribute \\\n        package-lock.json webpack.prod.js webpack.htmlexport.js webpack.dev.js webpack.common.js \\\n        config.json.example README.md CONTRIBUTING.md AUTHORS node_modules\n\nFROM hackmdio/runtime:node-10-d27854ef\nUSER hackmd\nWORKDIR /home/hackmd/app\nCOPY --chown=1500:1500 --from=BUILD /home/hackmd/app .\nRUN npm install --production && \\\n    npm audit fix && \\\n    npm cache clean --force && \\\n    rm -rf /tmp/{core-js-banners,phantomjs}\n# This is the end of the codimd Dockerfile.\n\n# Database and reporting dependencies\nUSER root\nRUN apt-get update && \\\n    < /dev/urandom tr -dc _A-Z-a-z0-9 | head -c32 > /root/mysql-password.txt && \\\n    echo \"mariadb-server mysql-server/root_password password $(cat /root/mysql-password.txt)\" | debconf-set-selections && \\\n    echo \"mariadb-server mysql-server/root_password_again password $(cat /root/mysql-password.txt)\" | debconf-set-selections && \\\n    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \\\n        nginx \\\n        mariadb-server \\\n        python3-selenium \\\n        chromium-driver \\\n        uuid-runtime \\\n    && rm -rf /var/lib/apt/lists/ && rm -rf /var/lib/apt/lists/*;\n\n# Copy things we'll always need\nCOPY ynetd /sbin/\nCOPY docker-stuff/default /etc/nginx/sites-enabled/default\nCOPY docker-stuff/db.sql /root/\n\nRUN useradd --create-home --shell /bin/bash ctf\nWORKDIR /home/ctf\nCOPY admin.py /home/ctf\n\nRUN ln -sf /dev/stdout /var/log/nginx/access.log && \\\n    ln -sf /dev/stderr /var/log/nginx/error.log\n\n# Set up entrypoint\nCOPY entrypoint.sh /sbin/\n\n# Set up database\nCOPY setup.sql flag.txt /root/\n\nWORKDIR /home/hackmd/app\nRUN < /dev/urandom tr -dc _A-Z-a-z0-9 | head -c32 > /root/admin-password.txt && \\\n    node -e \"let Scrypt = require('scrypt-kdf'); Scrypt.kdf('$(cat /root/admin-password.txt)', Scrypt.pickParams(0.1)).then(hash => {console.log(hash.toString('hex'))});\" > /root/admin-password-hash.txt\n    # NB: This is the same password hashing code that HackMD uses, don't blame me\nWORKDIR /root\n\nRUN mysqld_safe & \\\n    while ! mysqladmin --silent ping; do sleep 0.1; done && \\\n    mysql -u root -p$(cat /root/mysql-password.txt) < /root/db.sql && \\\n    replace \"__DB_PASSWORD__\" \"$(< /dev/urandom tr -dc _A-Z-a-z0-9 | head -c32)\" -- /root/setup.sql /sbin/entrypoint.sh && \\\n    replace \"__ADMIN_EMAIL__\" \"$(< /dev/urandom tr -dc A-Za-z0-9 | head -c32)@hackme.2020.ctf.link\" -- /home/ctf/admin.py /root/setup.sql && \\\n    replace \"__ADMIN_PASSWORD__\" \"$(cat /root/admin-password.txt)\" -- /home/ctf/admin.py && \\\n    replace \"__ADMIN_PASSWORD_HASH__\" \"$(cat /root/admin-password-hash.txt)\" -- /root/setup.sql && \\\n    replace \"__FLAG__\" \"$(cat /root/flag.txt)\" -- /root/setup.sql && \\\n    replace \"__ADMIN_UUID__\" \"$(uuidgen)\" -- /root/setup.sql && \\\n    replace \"__ADMIN_DELETE_UUID__\" \"$(uuidgen)\" -- /root/setup.sql && \\\n    replace \"__NOTE_UUID__\" \"$(uuidgen)\" -- /root/setup.sql && \\\n    replace \"__REVISION_UUID__\" \"$(uuidgen)\" -- /root/setup.sql && \\\n    mysql -u root -p$(cat /root/mysql-password.txt) < /root/setup.sql && \\\n    shred -fu /root/*\n\n# Fix permissions\nRUN chmod 555 /home/ctf && \\\n    chown -R root:root /home/ctf && \\\n    chmod -R 000 /home/ctf/* && \\\n    chmod 500 /sbin/ynetd && \\\n    chmod 444 /etc/nginx/sites-enabled/default && \\\n    chmod 005 /home/ctf/admin.py && \\\n    chmod 500 /sbin/entrypoint.sh\n\n# Launch everything\nEXPOSE 80\nENTRYPOINT /sbin/entrypoint.sh\n"
+}

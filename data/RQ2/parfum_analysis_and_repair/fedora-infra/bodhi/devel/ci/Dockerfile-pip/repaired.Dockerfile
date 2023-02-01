@@ -1,0 +1,44 @@
+FROM registry.fedoraproject.org/fedora:34
+LABEL maintainer="Randy Barlow <bowlofeggs@fedoraproject.org>"
+
+RUN dnf install -y \
+    createrepo_c \
+    findutils \
+    git \
+    python3-createrepo_c \
+    python3-koji \
+    createrepo_c \
+    gcc \
+    gcc-c++ \
+    graphviz \
+    make \
+    poetry \
+    postgresql-devel \
+    python3-devel \
+    python3-librepo \
+    python3-simplemediawiki \
+    redhat-rpm-config \
+    python3-libcomps \
+    python3-gssapi \
+    python3-pip \
+    python3-wheel \
+    python3-prometheus_client \
+    pre-commit
+
+RUN pip-3 install \
+    pyasn1 \
+    celery
+
+VOLUME ["/results"]
+WORKDIR /bodhi
+CMD ["bash"]
+COPY . /bodhi
+RUN pip-3 install \
+    -r devel/ci/integration/requirements.txt \
+    -r docs/requirements.txt
+RUN cp devel/development.ini.example bodhi-server/development.ini
+RUN sed -i '/pyramid_debugtoolbar/d' bodhi-server/development.ini
+RUN for pkg in bodhi-client bodhi-messages bodhi-server; do \
+    cd $pkg ; pip3 install --no-cache-dir . || exit $?; cd -; \
+    done
+RUN poetry config virtualenvs.create false

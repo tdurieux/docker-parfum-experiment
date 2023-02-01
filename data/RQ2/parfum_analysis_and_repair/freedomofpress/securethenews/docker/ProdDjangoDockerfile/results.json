@@ -1,0 +1,53 @@
+{
+  "startTime": 1674252305127,
+  "endTime": 1674252305759,
+  "originalSmells": [
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 6,
+        "lineEnd": 6,
+        "columnStart": 4,
+        "columnEnd": 33
+      }
+    },
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 17,
+        "lineEnd": 17,
+        "columnStart": 23,
+        "columnEnd": 34
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 57,
+        "lineEnd": 57,
+        "columnStart": 4,
+        "columnEnd": 74
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 23,
+        "lineEnd": 38,
+        "columnStart": 8,
+        "columnEnd": 19
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 23,
+        "lineEnd": 38,
+        "columnStart": 8,
+        "columnEnd": 19
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# sha256 as of 2021-07-22\nFROM node:14-alpine@sha256:5c33bc6f021453ae2e393e6e20650a4df0a4737b1882d389f17069dc1933fdc5 AS node-assets\n\n# Install npm, making output less verbose\nARG NPM_VER=7.24.1\nENV NPM_CONFIG_LOGLEVEL warn\nRUN npm install npm@${NPM_VER} -g && npm cache clean --force;\n\n# Workaround to avoid webpack hanging, see:\n# https://github.com/webpack/webpack-dev-server/issues/128\nENV UV_THREADPOOL_SIZE 128\n\n# Oddly, node-sass requires both python and make to build bindings\nRUN apk add --no-cache paxctl python make g++\nRUN paxctl -cm /usr/local/bin/node\n\nCOPY ./ /src-files\nRUN cd /src-files && ( npm install && npm run build ) && npm cache clean --force;\n\n# sha256 as of 2021-05-07 for 3.9-slim\nFROM python@sha256:655f71f243ee31eea6774e0b923b990cd400a0689eff049facd2703e57892447\n\nRUN apt-get update && \\\n        apt-get install --no-install-recommends -y \\\n        bash \\\n        build-essential \\\n        curl \\\n        gcc \\\n        git \\\n        libjpeg-dev \\\n        libffi-dev \\\n        libpq-dev \\\n        libtiff-dev \\\n        libssl-dev \\\n        libz-dev \\\n        musl-dev \\\n        netcat-traditional \\\n        paxctl \\\n        python3-dev && rm -rf /var/lib/apt/lists/*;\n\nCOPY docker/django-start.sh /usr/local/bin\nRUN  chmod +x /usr/local/bin/django-start.sh\n\n# Infra will supply this in CI, because it needs to match Kubernetes\nARG USERID\nRUN adduser --disabled-password --gecos \"\" --uid \"${USERID?USERID must be supplied}\" gcorn\n\nLABEL MAINTAINER=\"Freedom of the Press Foundation\"\nLABEL APP=\"securethenews\"\n\nRUN paxctl -cm /usr/local/bin/python\nCOPY --from=node-assets /src-files/ /django/\n# Unfortunately the chown flag in COPY is not\n# available in my docker system version :(\nRUN find /django -path /django/node_modules -prune -o -print -exec chown gcorn: '{}' \\;\n\nWORKDIR /django\nRUN pip install --no-cache-dir --require-hashes -r /django/securethenews/requirements.txt\n\n# Really not used in production. Needed for mapped named volume\n# permission handling https://github.com/docker/compose/issues/3270\nRUN  mkdir /django-media /django-static /django-logs && \\\n     chown -R gcorn: /django-media && \\\n     chown -R gcorn: /django-static && \\\n     chown -R gcorn: /django-logs\n\nRUN mkdir -p /etc/gunicorn && chown -R gcorn: /etc/gunicorn\nCOPY docker/gunicorn/gunicorn.py /etc/gunicorn/gunicorn.py\n\nRUN mkdir /deploy && \\\n    chown -R gcorn: /deploy\n\nRUN /django/scripts/version-file.sh\n\nRUN /django/scripts/django-collect-static.sh\n\nEXPOSE 8000\nUSER gcorn\n\nCMD [\"/usr/local/bin/django-start.sh\"]\n"
+}

@@ -1,0 +1,30 @@
+WORKDIR /MER/data
+ADD http://labs.rd.ciencias.ulisboa.pt/mer/data/lexicons202103.tgz ./
+RUN tar -xzf lexicons202103.tgz && rm lexicons202103.tgz
+WORKDIR /MER
+
+RUN apt-get install --no-install-recommends -y \
+    sqlite3 \
+    python && rm -rf /var/lib/apt/lists/*;
+
+ADD http://labs.rd.ciencias.ulisboa.pt/dishin/dishin.py ./
+ADD http://labs.rd.ciencias.ulisboa.pt/dishin/ssm.py ./
+ADD http://labs.rd.ciencias.ulisboa.pt/dishin/annotations.py ./
+
+ADD http://labs.rd.ciencias.ulisboa.pt/dishin/chebi202104.db.gz ./
+RUN gunzip -N chebi202104.db.gz
+ADD http://labs.rd.ciencias.ulisboa.pt/dishin/go202104.db.gz ./
+RUN gunzip -N go202104.db.gz
+ADD http://labs.rd.ciencias.ulisboa.pt/dishin/hp202104.db.gz ./
+RUN gunzip -N hp202104.db.gz
+ADD http://labs.rd.ciencias.ulisboa.pt/dishin/doid202104.db.gz ./
+RUN gunzip -N doid202104.db.gz
+ADD http://labs.rd.ciencias.ulisboa.pt/dishin/mesh202104.db.gz ./
+RUN gunzip -N mesh202104.db.gz
+ADD http://labs.rd.ciencias.ulisboa.pt/dishin/radlex202104.db.gz ./
+RUN gunzip -N radlex202104.db.gz
+ADD http://labs.rd.ciencias.ulisboa.pt/dishin/wordnet202104.db.gz ./
+RUN gunzip -N wordnet202104.db.gz
+
+RUN apt-get autoremove
+RUN apt-get clean

@@ -1,0 +1,44 @@
+{
+  "startTime": 1674255933510,
+  "endTime": 1674255934031,
+  "originalSmells": [
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 42,
+        "lineEnd": 42,
+        "columnStart": 4,
+        "columnEnd": 15
+      }
+    },
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 49,
+        "lineEnd": 49,
+        "columnStart": 4,
+        "columnEnd": 15
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 11,
+        "lineEnd": 13,
+        "columnStart": 4,
+        "columnEnd": 60
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 39,
+        "lineEnd": 39,
+        "columnStart": 4,
+        "columnEnd": 15
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "ARG CARGO_ARGS\nARG CARGO_RELEASE=\"release\"\nARG NEW_CLIENT\n\nFROM alpine:3.14 AS build\nLABEL maintainer=\"Ivan <ivan@zderadicka.eu>\"\n\nARG CARGO_ARGS\nARG CARGO_RELEASE\n\nRUN apk update && \\\n    apk add --no-cache git bash openssl openssl-dev curl yasm build-base \\\n    wget libbz2 bzip2-dev zlib zlib-dev rust cargo ffmpeg-dev ffmpeg \\\n    clang clang-dev gawk ctags llvm-dev icu icu-libs icu-dev\n\nCOPY . /audioserve\nWORKDIR /audioserve\n\nRUN if [[ -n \"$CARGO_RELEASE\" ]]; then CARGO_RELEASE=\"--$CARGO_RELEASE\"; fi && \\\n    echo BUILDING: cargo build ${CARGO_RELEASE} ${CARGO_ARGS} && \\\n    cargo build ${CARGO_RELEASE} ${CARGO_ARGS} &&\\\n    cargo test ${CARGO_RELEASE} --all ${CARGO_ARGS}\n\nRUN mkdir /ssl &&\\\n    cd /ssl &&\\\n    openssl req -newkey rsa:2048 -nodes -keyout key.pem -x509 -days 365 -out certificate.pem \\\n        -subj \"/C=CZ/ST=Prague/L=Prague/O=Ivan/CN=audioserve\" &&\\\n    openssl pkcs12 -inkey key.pem -in certificate.pem -export  -passout pass:mypass -out audioserve.p12\n\n\nFROM node:14-alpine as client\n\nARG NEW_CLIENT\n\nCOPY ./client /audioserve_client\n\nRUN if [[ -n \"$NEW_CLIENT\" ]]; then \\\n    echo \"New client $NEW_CLIENT\" && \\\n    rm -r  /audioserve_client/* && \\\n    apk add --no-cache git && \\\n    git clone https://github.com/izderadicka/audioserve-web.git /audioserve_client && \\\n    cd /audioserve_client && \\\n    npm install && \\\n    npm run build && \\\n    npm run build-sw && \\\n    mv public dist; npm cache clean --force; \\\n    else \\\n    echo \"Old client\" &&\\\n    cd audioserve_client &&\\\n    npm install &&\\\n    npm run build ; npm cache clean --force; \\\n    fi\n\nFROM alpine:3.14\n\nARG CARGO_ARGS\nARG CARGO_RELEASE\n\nVOLUME /audiobooks\nCOPY --from=build /audioserve/target/${CARGO_RELEASE:-debug}/audioserve /audioserve/audioserve\nCOPY --from=client /audioserve_client/dist /audioserve/client/dist\nCOPY --from=build /ssl/audioserve.p12 /audioserve/ssl/audioserve.p12\n\nRUN adduser -D -u 1000 audioserve &&\\\n    chown -R audioserve:audioserve /audioserve &&\\\n    apk --no-cache add libssl1.1 libbz2 zlib ffmpeg && \\\n    if [[ \"$CARGO_ARGS\" =~ \"collation\" ]]; then apk --no-cache add icu-libs; fi\n\nWORKDIR /audioserve\nUSER audioserve\n\nENV PORT=3000\nENV RUST_LOG=info\n\nEXPOSE ${PORT}\n\nENTRYPOINT [ \"./audioserve\" ]\n"
+}

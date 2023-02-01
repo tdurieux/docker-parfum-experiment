@@ -1,0 +1,52 @@
+FROM ubuntu:20.04
+
+ARG RUSTC_VERSION=nightly-2022-07-09
+ARG PROFILE=production
+ARG RUSTFLAGS
+# Workaround for https://github.com/rust-lang/cargo/issues/10583
+ENV CARGO_NET_GIT_FETCH_WITH_CLI=true
+# Incremental compilation here isn't helpful
+ENV CARGO_INCREMENTAL=0
+
+WORKDIR /code
+
+RUN \
+    apt-get update && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+        ca-certificates \
+        curl \
+        git \
+        llvm \
+        clang \
+        cmake \
+        make && \
+    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain $RUSTC_VERSION && rm -rf /var/lib/apt/lists/*;
+
+RUN /root/.cargo/bin/rustup target add wasm32-unknown-unknown
+
+COPY Cargo.lock /code/Cargo.lock
+COPY Cargo.toml /code/Cargo.toml
+COPY rust-toolchain.toml /code/rust-toolchain.toml
+
+COPY crates /code/crates
+COPY cumulus /code/cumulus
+COPY orml /code/orml
+COPY substrate /code/substrate
+COPY test /code/test
+
+# Up until this line all Rust images in this repo should be the same to share the same layers
+
+# TODO: Re-enable cost of storage in future
+RUN \
+    /root/.cargo/bin/cargo build \
+        -Z build-std \
+        --profile $PROFILE \
+        --package subspace-runtime \
+        --features=subspace-runtime/do-not-enforce-cost-of-storage \
+        --target x86_64-unknown-linux-gnu && \
+    mv \
+      target/*/wbuild/subspace-runtime/subspace_runtime.compact.compressed.wasm \
+      subspace_runtime.compact.compressed.wasm && \
+    rm -rf target
+
+ENTRYPOINT ["/usr/bin/cat", "subspace_runtime.compact.compressed.wasm"]

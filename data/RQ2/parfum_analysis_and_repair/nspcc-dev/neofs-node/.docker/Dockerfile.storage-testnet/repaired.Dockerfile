@@ -1,0 +1,19 @@
+FROM golang:1.17 as builder
+ARG BUILD=now
+ARG VERSION=dev
+ARG REPO=repository
+WORKDIR /src
+COPY . /src
+
+RUN make bin/neofs-node
+
+# Executable image
+FROM alpine AS neofs-node
+RUN apk add --no-cache bash
+
+WORKDIR /
+
+COPY --from=builder /src/bin/neofs-node /bin/neofs-node
+COPY --from=builder /src/config/testnet/config.yml /config.yml
+
+CMD ["neofs-node", "--config", "/config.yml"]

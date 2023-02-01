@@ -1,0 +1,17 @@
+FROM ubuntu:16.04
+LABEL maintainer="package@datadoghq.com"
+
+# preparation for saltstack
+RUN apt-get update && \
+    apt-get install --no-install-recommends -y curl && rm -rf /var/lib/apt/lists/*;
+
+# enable systemd, thanks to @gdraheim (https://github.com/gdraheim/)
+ADD utils/systemctl.py /bin/systemctl
+ADD utils/systemctl.py /bin/systemd
+
+# install salt
+RUN curl -f -L https://bootstrap.saltstack.com | sh -s -- -d -X stable; exit 0
+
+# add the start test script
+ADD start.sh /start.sh
+CMD ["bash", "start.sh"]

@@ -1,0 +1,1 @@
+# Cricket MSF microsite image

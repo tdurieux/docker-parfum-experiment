@@ -1,0 +1,1 @@
+# ROX-6200 regression test: image to trigger JSON parsing error

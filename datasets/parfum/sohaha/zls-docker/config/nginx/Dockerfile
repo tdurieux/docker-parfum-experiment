@@ -1,0 +1,4 @@
+ARG NGINX_IMAGES
+FROM ${NGINX_IMAGES}
+
+WORKDIR /var/www/html

@@ -1,0 +1,81 @@
+### Development stage
+
+FROM node:14.19.0-alpine3.14 as development<% if (sequelize || redis) { %>
+
+# Install git
+RUN apk add --no-cache git
+
+# Install dockerize
+ENV DOCKERIZE_VERSION v0.6.0
+RUN wget https://github.com/jwilder/dockerize/releases/download/$DOCKERIZE_VERSION/dockerize-alpine-linux-amd64-$DOCKERIZE_VERSION.tar.gz \
+    && tar -C /usr/local/bin -xzvf dockerize-alpine-linux-amd64-$DOCKERIZE_VERSION.tar.gz \
+    && rm dockerize-alpine-linux-amd64-$DOCKERIZE_VERSION.tar.gz<% } %>
+
+# Install node_modules in a separate directory
+WORKDIR /home/node
+
+# Copy package.json and yarn.lock
+COPY package.json ./
+COPY yarn.lock ./
+
+# Install all dependencies
+RUN yarn --pure-lockfile
+
+# Set path to run packages from node_modules
+ENV PATH /home/node/node_modules/.bin:$PATH
+
+# Use /home/node/app as the CWD
+WORKDIR /home/node/app
+
+# Copy all project files
+COPY . .
+
+# Run development server
+ENTRYPOINT ["yarn", "dev"]
+
+
+
+### Build stage
+
+FROM development as build
+
+# Transpile TypeScript files to JavaScript
+RUN yarn build
+
+
+
+### Final stage
+
+FROM node:14.19.0-alpine3.14 as final<% if (sequelize || redis) { %>
+
+# Install git
+RUN apk add --no-cache git
+
+# Install dockerize
+ENV DOCKERIZE_VERSION v0.6.0
+RUN wget https://github.com/jwilder/dockerize/releases/download/$DOCKERIZE_VERSION/dockerize-alpine-linux-amd64-$DOCKERIZE_VERSION.tar.gz \
+    && tar -C /usr/local/bin -xzvf dockerize-alpine-linux-amd64-$DOCKERIZE_VERSION.tar.gz \
+    && rm dockerize-alpine-linux-amd64-$DOCKERIZE_VERSION.tar.gz<% } %>
+
+# Switch to user node
+USER node
+
+# Prepare destination directory and ensure user node owns it
+RUN mkdir -p /home/node/app && chown -R node:node /home/node/app
+
+# Set CWD
+WORKDIR /home/node/app
+
+# Copy compiled files and change ownership to user node
+COPY --chown=node:node --from=build /home/node/app/.env .<% if (sequelize) { %>
+COPY --chown=node:node --from=build /home/node/app/.sequelizerc .<% } %>
+COPY --chown=node:node --from=build /home/node/app/db ./db
+COPY --chown=node:node --from=build /home/node/app/dist ./dist
+COPY --chown=node:node --from=build /home/node/app/package.json ./
+COPY --chown=node:node --from=build /home/node/app/yarn.lock ./
+
+# Install production dependencies
+RUN yarn install --production
+
+# Run server
+ENTRYPOINT ["node", "./dist/index.js"]

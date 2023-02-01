@@ -1,0 +1,44 @@
+# Dockerfile for integration testing
+#
+# Not intended to be used for an actual setup
+FROM golang:1.18
+
+RUN apt-get update && apt-get install --no-install-recommends -y openssh-server && rm -rf /var/lib/apt/lists/*;
+RUN mkdir /var/run/sshd
+RUN echo 'root:password' | chpasswd
+RUN sed -i 's/PermitRootLogin without-password/PermitRootLogin yes/' /etc/ssh/sshd_config
+
+# SSH login fix. Otherwise user is kicked off after login
+RUN sed 's@session\s*required\s*pam_loginuid.so@session optional pam_loginuid.so@g' -i /etc/pam.d/sshd
+
+ENV NOTVISIBLE "in users profile"
+RUN echo "export VISIBLE=now" >> /etc/profile
+
+# Setup user cert based ssh
+ADD test/keys/server_ca.pub /etc/ssh/ca_user_key.pub
+
+WORKDIR /app
+
+COPY go.mod .
+COPY go.sum .
+
+# Download dependencies
+RUN go mod download
+
+# Copy source
+COPY . .
+
+# Build & set-up
+RUN go build -buildvcs=false -o /usr/bin/sharkey-client github.com/square/sharkey/cmd/sharkey-client && \
+    cp test/integration/client_entry.sh /usr/bin/entrypoint.sh && \
+    chmod +x /usr/bin/entrypoint.sh
+
+RUN echo "HostCertificate /etc/ssh/ssh_host_rsa_key-cert.pub" >> /etc/ssh/sshd_config
+RUN echo "HostCertificate /etc/ssh/ssh_host_ecdsa_key-cert.pub" >> /etc/ssh/sshd_config
+RUN echo "HostCertificate /etc/ssh/ssh_host_ed25519_key-cert.pub" >> /etc/ssh/sshd_config
+RUN echo "TrustedUserCAKeys /etc/ssh/ca_user_key.pub" >> /etc/ssh/sshd_config
+
+# Need to add ssh user for testing user certs
+RUN useradd -ms /bin/bash alice
+
+ENTRYPOINT ["/usr/bin/entrypoint.sh"]

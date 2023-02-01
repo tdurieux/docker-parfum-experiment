@@ -1,0 +1,1 @@
+# you can't run as root on openshift. set up a non-root user

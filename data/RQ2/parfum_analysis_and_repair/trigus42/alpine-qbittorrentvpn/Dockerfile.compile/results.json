@@ -1,0 +1,17 @@
+{
+  "startTime": 1674251496754,
+  "endTime": 1674251497592,
+  "originalSmells": [
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 90,
+        "lineEnd": 90,
+        "columnStart": 4,
+        "columnEnd": 40
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM alpine:3.14 as builder\n\nARG QBITTORRENT_VERSION\nARG BUILD_DATE\n\nWORKDIR /root/\n\n# Install build dependencies\nRUN \\\n    apk update; \\\n    apk add --no-cache --virtual .build-deps autoconf automake build-base cmake curl git libtool linux-headers perl pkgconf python3 python3-dev re2c tar \\\n    icu-dev libexecinfo-dev openssl-dev qt5-qtbase-dev qt5-qttools-dev zlib-dev qt5-qtsvg-dev ninja boost-dev; \\\n    exit 0\n\n# Compile Libtorrent\nRUN \\\n    git clone --shallow-submodules --recurse-submodules https://github.com/arvidn/libtorrent.git libtorrent && cd libtorrent; \\\n    git checkout \"$(git tag -l --sort=-v:refname \"v2*\" | head -n 1)\"; \\\n    cmake -Wno-dev -G Ninja -B build \\\n        -D CMAKE_BUILD_TYPE=\"Release\" \\\n        -D CMAKE_CXX_STANDARD=17 \\\n        -D CMAKE_INSTALL_LIBDIR=\"lib\" \\\n        -D CMAKE_INSTALL_PREFIX=\"/usr/local\"; \\\n    cmake --build build; \\\n    cmake --install build\n\n# Compile qBittorrent\nRUN \\\n    git clone --shallow-submodules --recurse-submodules https://github.com/qbittorrent/qBittorrent.git qbittorrent && cd qbittorrent; \\\n    git checkout release-$QBITTORRENT_VERSION; \\\n    cmake -Wno-dev -G Ninja -B build \\\n        -D CMAKE_BUILD_TYPE=\"release\" \\\n        -D CMAKE_CXX_STANDARD=17 \\\n        -D CMAKE_CXX_STANDARD_LIBRARIES=\"/usr/lib/libexecinfo.so\" \\\n        -D CMAKE_INSTALL_PREFIX=\"/usr/local\" \\\n        -D GUI=OFF; \\\n    cmake --build build\n\nFROM alpine:3.14\n\n# You can find the available release tags at https://github.com/just-containers/s6-overlay/releases\nARG S6_OVERLAY_VERSION=\"v2.2.0.3\"\n\n# Exit if one of the cont-init.d scripts fails\nENV S6_BEHAVIOUR_IF_STAGE2_FAILS=2\n\nRUN \\\n    # Mount files from build stage\n    --mount=type=bind,from=builder,src=/root,dst=/mnt/build/ \\\n    # Copy build files from ro mount\n    cp -r /mnt/build/libtorrent /root/; \\\n    cp -r /mnt/build/qbittorrent /root/; \\\n    # Add cmake\n    apk add --no-cache cmake; \\\n    # Install libtorrent\n    cd /root/libtorrent; \\\n    cmake --install build; \\\n    # Install qBittorrent\n    cd /root/qbittorrent; \\\n    cmake --install build; \\\n    # Remove cmake\n    apk del --no-cache --purge cmake; \\\n    # Remove build files\n    rm -r /root/libtorrent /root/qbittorrent\n\nCOPY ./build/s6-overlay-arch /tmp/s6-overlay-arch\nCOPY rootfs /\n\nRUN \\\n\n    apk update; \\\n    apk add --no-cache \\\n        bash \\\n        dos2unix \\\n        grep \\\n        ipcalc \\\n        iptables \\\n        iputils \\\n        libexecinfo \\\n        net-tools \\\n        openresolv \\\n        openssl \\\n        openvpn \\\n        qt5-qtbase \\\n        tzdata \\\n        wget \\\n        wireguard-tools; \\\n    # Install s6-overlay\n    chmod +x /tmp/s6-overlay-arch; \\\n    wget https://github.com/just-containers/s6-overlay/releases/download/${S6_OVERLAY_VERSION}/s6-overlay-$(/tmp/s6-overlay-arch).tar.gz -O /tmp/s6_overlay.tar.gz; \\\n    tar -xf /tmp/s6_overlay.tar.gz -C /; rm /tmp/s6_overlay.tar.gz \\\n    rm -r /tmp/*; \\\n    # Set exec permissions\n    chmod +x -R /helper/ /etc/cont-init.d/ /etc/services.d/\n\nVOLUME /config /downloads\nEXPOSE 8080\n\nCMD [\"/init\"]"
+}

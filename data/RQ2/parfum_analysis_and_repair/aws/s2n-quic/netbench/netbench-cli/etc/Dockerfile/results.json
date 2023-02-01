@@ -1,0 +1,53 @@
+{
+  "startTime": 1674216723257,
+  "endTime": 1674216723955,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 77,
+        "lineEnd": 77,
+        "columnStart": 2,
+        "columnEnd": 85
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 34,
+        "lineEnd": 34,
+        "columnStart": 2,
+        "columnEnd": 33
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 76,
+        "lineEnd": 76,
+        "columnStart": 16,
+        "columnEnd": 55
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 34,
+        "lineEnd": 34,
+        "columnStart": 2,
+        "columnEnd": 33
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 76,
+        "lineEnd": 76,
+        "columnStart": 16,
+        "columnEnd": 55
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM rust:latest as planner\nWORKDIR app\nRUN cargo install cargo-chef --version 0.1.23\nCOPY Cargo.toml /app\nCOPY common /app/common\nCOPY quic /app/quic\nCOPY netbench /app/netbench\nRUN set -eux; \\\n  cargo chef prepare --recipe-path recipe.json; \\\n  cd netbench; \\\n  cargo chef prepare --recipe-path recipe.json;\n\nFROM rust:latest as cacher\nWORKDIR app\nRUN cargo install cargo-chef --version 0.1.23\nCOPY --from=planner /app/recipe.json recipe.json\nCOPY --from=planner /app/netbench/recipe.json netbench/recipe.json\n\nARG release=\"true\"\nRUN set -eux; \\\n  export ARGS=\"\"; \\\n  if [ \"$release\" = \"true\" ]; then \\\n    export ARGS=\"--release\"; \\\n  fi; \\\n  cargo chef cook $ARGS --recipe-path recipe.json; \\\n  cd netbench; \\\n  cargo chef cook $ARGS --recipe-path recipe.json; \\\n  echo cooked;\n\nFROM rust:latest AS builder\nWORKDIR app\n\nRUN set -eux; \\\n  apt-get update; \\\n  apt-get install --no-install-recommends -y cmake clang; rm -rf /var/lib/apt/lists/*;\n\n# copy sources\nCOPY Cargo.toml /app\nCOPY common /app/common\nCOPY quic /app/quic\nCOPY netbench /app/netbench\n\n# Copy over the cached dependencies\nCOPY --from=cacher /app/target target\nCOPY --from=cacher /app/netbench/target netbench/target\nCOPY --from=cacher /usr/local/cargo /usr/local/cargo\n\nARG release=\"true\"\n\n# build libs to improve caching between drivers\nRUN set -eux; \\\n  export ARGS=\"\"; \\\n  if [ \"$release\" = \"true\" ]; then \\\n    export ARGS=\"--release\"; \\\n  fi; \\\n  mkdir -p /app/bin; \\\n  cd netbench; \\\n  cargo build --lib $ARGS; \\\n  if [ \"$release\" = \"true\" ]; then \\\n    cargo build --bin netbench-cli --release; \\\n    cp target/release/netbench-cli /app/bin; \\\n  else \\\n    cargo build --bin netbench-cli; \\\n    cp target/debug/netbench-cli /app/bin; \\\n  fi; \\\n  rm -rf target; \\\n  echo \"#!/usr/bin/env bash\\naws s3 cp s3://\\$S3_BUCKET/client.json ./client.json\\naws s3 cp s3://\\$S3_BUCKET/server.json ./server.json\\neval /usr/bin/netbench-cli ./client.json ./server.json \\$@ > report.json\\naws s3 cp ./report.json s3://\\$S3_BUCKET/\" > /app/bin/start;\n\nFROM debian:latest\n\nENV RUST_BACKTRACE=\"1\"\n\n# copy driver\nCOPY --from=builder /app/bin /tmp/netbench\nENV DEBIAN_FRONTEND=noninteractive\nRUN set -eux; \\\n  apt update && apt install --no-install-recommends -y dnsutils curl unzip sudo; rm -rf /var/lib/apt/lists/*; \\\n  curl -f \"https://awscli.amazonaws.com/awscli-exe-linux-aarch64.zip\" -o \"awscliv2.zip\"; \\\n  unzip awscliv2.zip; \\\n  sudo ./aws/install; \\\n  chmod +x /tmp/netbench/*; \\\n  mv /tmp/netbench/* /usr/bin; \\\n  echo done\n\nENTRYPOINT [\"/usr/bin/start\"]\n"
+}

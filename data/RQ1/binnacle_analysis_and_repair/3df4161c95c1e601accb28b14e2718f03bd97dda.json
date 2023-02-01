@@ -1,0 +1,26 @@
+{
+  "startTime": 1674242291448,
+  "endTime": 1674242291772,
+  "originalSmells": [
+    {
+      "rule": "gpgUseBatchFlag",
+      "position": {
+        "lineStart": 26,
+        "lineEnd": 26,
+        "columnStart": 6,
+        "columnEnd": 55
+      }
+    },
+    {
+      "rule": "gpgUseBatchFlag",
+      "position": {
+        "lineStart": 31,
+        "lineEnd": 31,
+        "columnStart": 8,
+        "columnEnd": 23
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM anapsix/alpine-java:8u162b12_jdk\n\n############################# Install tools and deps #########################################\nRUN apk update && apk add --no-cache curl tar bash procps git openssh htop xmlstarlet libxslt\n############################# End Install tools and deps #####################################\n\n############################# Install Groovy ################################\nENV GROOVY_HOME /opt/groovy\nARG GROOVY_VERSION=2.4.15\n\nRUN set -o errexit -o nounset && echo \"Installing build dependencies\" && \\\n    apk add --no-cache --virtual .build-deps ca-certificates gnupg openssl unzip && \\\n    echo \"Downloading Groovy\" && wget -O groovy.zip \"https://dist.apache.org/repos/dist/release/groovy/${GROOVY_VERSION}/distribution/apache-groovy-binary-${GROOVY_VERSION}.zip\" && \\\n    echo \"Importing keys listed in http://www.apache.org/dist/groovy/KEYS from key server\" && export GNUPGHOME=\"$(mktemp -d)\" && for key in \\\n\t\t\"7FAA0F2206DE228F0DB01AD741321490758AAD6F\" \\\n\t\t\"331224E1D7BE883D16E8A685825C06C827AF6B66\" \\\n\t\t\"34441E504A937F43EB0DAEF96A65176A0FB1CD0B\" \\\n\t\t\"9A810E3B766E089FFB27C70F11B595CEDC4AEBB5\" \\\n\t\t\"81CABC23EECA0790E8989B361FF96E10F0E13706\"; \\\n\tdo \\\n\t\tfor server in \\\n\t\t\t\"ha.pool.sks-keyservers.net\" \\\n\t\t\t\"hkp://p80.pool.sks-keyservers.net:80\" \\\n\t\t\t\"pgp.mit.edu\"; \\\n\t\tdo \\\n\t\t\techo \"  Trying ${server}\"; \\\n\t\t\tif gpg --batch --keyserver \"${server}\" --recv-keys \"${key}\"; then \\\n\t\t\t\tbreak; \\\n\t\t\tfi; \\\n\t\tdone; \\\n\tdone; \\\n\tif [ $( gpg --batch --list-keys | grep -c \"pub \") -ne 5 ]; then \\\n\t\techo \"ERROR: Failed to fetch GPG keys\" >&2; \\\n\t\texit 1; \\\n\tfi \\\n\t&& echo \"Checking download signature\" \\\n\t&& wget -O groovy.zip.asc \"https://dist.apache.org/repos/dist/release/groovy/${GROOVY_VERSION}/distribution/apache-groovy-binary-${GROOVY_VERSION}.zip.asc\" \\\n\t&& gpg --batch --verify groovy.zip.asc groovy.zip && rm -rf \"${GNUPGHOME}\" && rm groovy.zip.asc \\\n\t&& echo \"Installing Groovy\" \\\n\t&& unzip groovy.zip \\\n\t&& rm groovy.zip \\\n\t&& mkdir -p /opt \\\n\t&& mv \"groovy-${GROOVY_VERSION}\" \"${GROOVY_HOME}/\" \\\n\t&& ln -s \"${GROOVY_HOME}/bin/grape\" /usr/bin/grape \\\n\t&& ln -s \"${GROOVY_HOME}/bin/groovy\" /usr/bin/groovy \\\n\t&& ln -s \"${GROOVY_HOME}/bin/groovyc\" /usr/bin/groovyc \\\n\t&& ln -s \"${GROOVY_HOME}/bin/groovyConsole\" /usr/bin/groovyConsole \\\n\t&& ln -s \"${GROOVY_HOME}/bin/groovydoc\" /usr/bin/groovydoc \\\n\t&& ln -s \"${GROOVY_HOME}/bin/groovysh\" /usr/bin/groovysh \\\n\t&& ln -s \"${GROOVY_HOME}/bin/java2groovy\" /usr/bin/java2groovy \\\n\t&& echo \"Cleaning up build dependencies\" && apk del .build-deps \\\n\t&& echo \"Symlinking root .groovy to groovy .groovy\" \\\n\t&& ln -s /home/groovy/.groovy /root/.groovy\n############################# End Install Groovy ################################\n\n############################# Install Maven ################################\n\nARG MAVEN_VERSION=3.5.3\nARG USER_HOME_DIR=\"/root\"\nARG SHA=b52956373fab1dd4277926507ab189fb797b3bc51a2a267a193c931fffad8408\nARG BASE_URL=https://apache.osuosl.org/maven/maven-3/${MAVEN_VERSION}/binaries\n\nRUN mkdir -p /usr/share/maven /usr/share/maven/ref \\\n  && curl -fsSL -o /tmp/apache-maven.tar.gz ${BASE_URL}/apache-maven-${MAVEN_VERSION}-bin.tar.gz \\\n  && echo \"${SHA}  /tmp/apache-maven.tar.gz\" | sha256sum -c - \\\n  && tar -xzf /tmp/apache-maven.tar.gz -C /usr/share/maven --strip-components=1 \\\n  && rm -f /tmp/apache-maven.tar.gz \\\n  && ln -s /usr/share/maven/bin/mvn /usr/bin/mvn\n\nENV MAVEN_HOME /usr/share/maven\nENV MAVEN_CONFIG \"$USER_HOME_DIR/.m2\"\nENV M2_REPO \"$MAVEN_CONF/repository\"\n############################# End Install Maven ################################\n\nENV CHECKSTYLE_HOME /usr/local/checkstyle/\nWORKDIR $CHECKSTYLE_HOME\nRUN set -x && cd $CHECKSTYLE_HOME/.. && \\\n    git clone https://github.com/checkstyle/checkstyle.git && cd checkstyle && \\\n    mvn dependency:go-offline && \\\n    mvn clean site -Pno-validations -Dmaven.test.failure.ignore=true && \\\n    mvn verify -DskipTests -Dmaven.test.failure.ignore=true || true && \\\n    mvn org.pitest:pitest-maven:mutationCoverage -DskipTests -Dmaven.test.failure.ignore=true || true && \\\n    # We don't fail the build on PMD/pitest/etc. warnings because the goal is to prefetch PMD/pitest/etc. Maven plugins into the image \\\n    rm -rf $CHECKSTYLE_HOME/*\n\nCMD [ \"echo\", \"To start build, run 'mvn ...' to start some Checkstyle build here\" ]\n"
+}

@@ -1,0 +1,13 @@
+{{ docker.from("base-app", "ubuntu-17.10") }}
+
+{{ environment.web() }}
+{{ environment.phpComposerVersion() }}
+
+{{ docker.copy('conf/', '/opt/docker/') }}
+
+RUN set -x \
+    {{ php7.ubuntu(phpVersion='7.1') }} \
+    {{ provision.runBootstrap() }} \
+    {{ docker.cleanup() }}
+
+{{ docker.expose('9000') }}

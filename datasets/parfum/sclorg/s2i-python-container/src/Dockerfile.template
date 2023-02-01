@@ -1,0 +1,102 @@
+{% import "src/common.tpl" as common with context %}
+{% import "src/" + config.os.id + "/macros.tpl" as macros with context %}
+{% if config.os.id == 'rhel' and spec.base_img_version %}
+{%   set img_tag = spec.base_img_version %}
+{% elif spec.img_tag %}
+{%   set img_tag = spec.img_tag %}
+{% endif %}
+# This image provides a Python {{ spec.version }} environment you can use to run your Python
+# applications.
+FROM {{ spec.s2i_base }}{% if img_tag %}:{{ img_tag }}{% endif %}
+
+
+EXPOSE 8080
+
+ENV PYTHON_VERSION={{ spec.version }} \
+{% if spec.el_version == '7' %}
+    PYTHON_SCL_VERSION={{ spec.short_ver }} \
+    PATH=$PATH:/opt/rh/rh-python{{ spec.short_ver }}/root/usr/bin:$HOME/.local/bin/:/opt/rh/$NODEJS_SCL/root/usr/bin:/opt/rh/httpd24/root/usr/bin:/opt/rh/python{{ spec.short_ver }}/root/usr/bin:/opt/rh/httpd24/root/usr/sbin:/opt/rh/rh-python{{ spec.short_ver }}/root/usr/local/bin \
+    LD_LIBRARY_PATH=/opt/rh/rh-python{{ spec.short_ver }}/root/usr/lib64:/opt/rh/$NODEJS_SCL/root/usr/lib64:/opt/rh/httpd24/root/usr/lib64:/opt/rh/python{{ spec.short_ver }}/root/usr/lib64 \
+    LIBRARY_PATH=/opt/rh/httpd24/root/usr/lib64 \
+    X_SCLS={{ spec.scl }} \
+    MANPATH=/opt/rh/rh-python{{ spec.short_ver }}/root/usr/share/man:/opt/rh/python{{ spec.short_ver }}/root/usr/share/man:/opt/rh/httpd24/root/usr/share/man:/opt/rh/$NODEJS_SCL/root/usr/share/man \
+    VIRTUAL_ENV=/opt/app-root \
+    PYTHONPATH=/opt/rh/$NODEJS_SCL/root/usr/lib/python2.7/site-packages \
+    XDG_DATA_DIRS=/opt/rh/python{{ spec.short_ver }}/root/usr/share:/opt/rh/rh-python{{ spec.short_ver }}/root/usr/share:/usr/local/share:/usr/share \
+    PKG_CONFIG_PATH=/opt/rh/python{{ spec.short_ver }}/root/usr/lib64/pkgconfig:/opt/rh/httpd24/root/usr/lib64/pkgconfig:/opt/rh/rh-python{{ spec.short_ver }}/root/usr/lib64/pkgconfig \
+{% else %}
+    PATH=$HOME/.local/bin/:$PATH \
+{% endif %}
+    PYTHONUNBUFFERED=1 \
+    PYTHONIOENCODING=UTF-8 \
+    LC_ALL=en_US.UTF-8 \
+    LANG=en_US.UTF-8 \
+{% if spec.version in spec.get("ubi_versions", []) %}
+    CNB_STACK_ID=com.redhat.stacks.ubi{{ spec.el_version }}-python-{{ spec.short_ver }} \
+    CNB_USER_ID=1001 \
+    CNB_GROUP_ID=0 \
+{% endif %}
+    PIP_NO_CACHE_DIR=off
+
+{{ macros.env_metadata() -}}
+ENV SUMMARY="Platform for building and running Python $PYTHON_VERSION applications" \
+    DESCRIPTION="Python $PYTHON_VERSION available as container is a base platform for \
+building and running various Python $PYTHON_VERSION applications and frameworks. \
+Python is an easy to learn, powerful programming language. It has efficient high-level \
+data structures and a simple but effective approach to object-oriented programming. \
+Python's elegant syntax and dynamic typing, together with its interpreted nature, \
+make it an ideal language for scripting and rapid application development in many areas \
+on most platforms."
+
+LABEL summary="$SUMMARY" \
+      description="$DESCRIPTION" \
+      io.k8s.description="$DESCRIPTION" \
+      io.k8s.display-name="Python {{ spec.version }}" \
+      io.openshift.expose-services="8080:http" \
+      io.openshift.tags="builder,python,python{{ spec.short_ver }},python-{{ spec.short_ver }},rh-python{{ spec.short_ver }}" \
+{{ macros.labels(spec) }}
+{# Use extra_pkgs for specific Python version or the default or empty list #}
+{% if spec.extra_pkgs and spec.version in spec.extra_pkgs %}
+    {% set extra_pkgs = spec.extra_pkgs[spec.version] %}
+{% elif spec.extra_pkgs and "default" in spec.extra_pkgs %}
+    {% set extra_pkgs = spec.extra_pkgs["default"] %}
+{% else %}
+    {% set extra_pkgs = [] %}
+{% endif %}
+RUN INSTALL_PKGS="{{ common.list_pkgs(extra_pkgs + spec.python_pkgs + spec.base_pkgs) -}}
+    {% if spec.preinstall_cmd %}
+{{ common.preinstall_cmd(spec) -}}
+    {% endif %}
+    {{ commands.pkginstaller.install([], {'docs': False}) }}{{ common.enablerepo(spec) }} $INSTALL_PKGS && \
+    rpm -V $INSTALL_PKGS && \
+    {% if spec.logos %}
+    # Remove {{ spec.logos }} (httpd dependency) to keep image size smaller.
+    rpm -e --nodeps {{ spec.logos }} && \
+    {% endif %}
+    {{ commands.pkginstaller.cleancache() }}
+
+# Copy the S2I scripts from the specific language image to $STI_SCRIPTS_PATH.
+COPY {{ spec.version }}/s2i/bin/ $STI_SCRIPTS_PATH
+
+# Copy extra files to the image.
+COPY {{ spec.version }}/root/ /
+
+{% if spec.version != "2.7" %}
+# Python 3 only
+# Yes, the directory below is already copied by the previous command.
+# The problem here is that the wheels directory is copied as a symlink.
+# Only if you specify symlink directly as a source, COPY copies all the
+# files from the symlink destination.
+COPY {{ spec.version }}/root/opt/wheels /opt/wheels
+{% endif %}
+# - Create a Python virtual environment for use by any application to avoid
+#   potential conflicts with Python packages preinstalled in the main Python
+#   installation.
+# - In order to drop the root user, we have to make some directories world
+#   writable as OpenShift default security model is to run the container
+#   under random UID.
+{{ macros.venv_setup(spec) }}
+USER 1001
+
+# Set the default CMD to print the usage of the language image.
+CMD $STI_SCRIPTS_PATH/usage

@@ -1,0 +1,17 @@
+{
+  "startTime": 1674250105192,
+  "endTime": 1674250106090,
+  "originalSmells": [
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 8,
+        "lineEnd": 12,
+        "columnStart": 22,
+        "columnEnd": 13
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM python:3.9.5-slim-buster as python\n\n# Python build stage ----------------------------------------------------------\nFROM python as python-build-stage\n\nARG BUILD_ENVIRONMENT=production\n\n# Install apt packages\nRUN apt-get update && apt-get install --no-install-recommends -y \\\n    # dependencies for building Python packages\n    build-essential \\\n    # psycopg2 dependencies\n    libpq-dev && rm -rf /var/lib/apt/lists/*;\n\n# Requirements are installed here to ensure they will be cached.\nCOPY ./requirements .\n\n# Create Python Dependency and Sub-Dependency Wheels.\nRUN pip wheel --wheel-dir /usr/src/app/wheels -r ${BUILD_ENVIRONMENT}.txt\n\n# Python run stage ------------------------------------------------------------\nFROM python as python-run-stage\n\nARG GIT_SHA\nARG BUILD_ENVIRONMENT=production\nARG APP_HOME=/app\n\n# Set environment variables\nENV LANG C.UTF-8\nENV DEPLOYED=True\nENV DJANGO_SETTINGS_MODULE='config.settings.production'\nENV GIT_SHA ${GIT_SHA}\nENV PYTHONUNBUFFERED 1\nENV PYTHONDONTWRITEBYTECODE 1\nENV BUILD_ENV ${BUILD_ENVIRONMENT}\n\nWORKDIR ${APP_HOME}\n\nRUN addgroup --system django && adduser --system --ingroup django django\n\n# Install required system dependencies\nRUN apt-get update && apt-get install --no-install-recommends -y \\\n    # psycopg2 dependencies\n    libpq-dev \\\n    # Translations dependencies\n    gettext \\\n    # Healthcheck tool\n    curl \\\n    # Cleaning up unused files\n    && apt-get purge -y --auto-remove -o APT::AutoRemove::RecommendsImportant=false \\\n    && rm -rf /var/lib/apt/lists/*\n\n# All absolute dir copies ignore workdir instruction.\n# All relative dir copies are wrt to the workdir instruction.\n# Copy python dependency wheels from python-build-stage\n# and then use wheels to install Python dependencies.\nCOPY --from=python-build-stage /usr/src/app/wheels  /wheels/\nRUN pip install --no-cache-dir --no-index --find-links=/wheels/ /wheels/* \\\n    && rm -rf /wheels/\n\nCOPY --chown=django:django ./infrastructure/production/django/entrypoint /entrypoint\nRUN sed -i 's/\\r$//g' /entrypoint\nRUN chmod +x /entrypoint\n\nCOPY --chown=django:django ./infrastructure/production/django/start /start\nRUN sed -i 's/\\r$//g' /start\nRUN chmod +x /start\n\n# Copy application code to WORKDIR\nCOPY --chown=django:django /csfieldguide/ ${APP_HOME}\n# Make django owner of the WORKDIR directory as well.\nRUN chown django:django ${APP_HOME}\n\nUSER django\n\nEXPOSE 8000\n\nHEALTHCHECK --interval=15s --timeout=30s --start-period=5s --retries=3 \\\n    CMD curl --fail --silent http://localhost:8000/healthcheck/ || exit 1\n\nENTRYPOINT [\"/entrypoint\"]\nCMD [\"/start\"]\n"
+}

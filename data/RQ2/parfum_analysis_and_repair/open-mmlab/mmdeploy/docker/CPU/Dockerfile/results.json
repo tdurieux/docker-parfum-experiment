@@ -1,0 +1,35 @@
+{
+  "startTime": 1674249662988,
+  "endTime": 1674249664443,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 72,
+        "lineEnd": 72,
+        "columnStart": 4,
+        "columnEnd": 20
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 89,
+        "lineEnd": 89,
+        "columnStart": 4,
+        "columnEnd": 20
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 56,
+        "lineEnd": 56,
+        "columnStart": 7,
+        "columnEnd": 65
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM openvino/ubuntu18_dev:2021.4.2\nARG PYTHON_VERSION=3.7\nARG TORCH_VERSION=1.8.0\nARG TORCHVISION_VERSION=0.9.0\nARG ONNXRUNTIME_VERSION=1.8.1\nARG MMCV_VERSION=1.4.0\nUSER root\n\n### change the system source for installing libs\nARG USE_SRC_INSIDE=false\nRUN if [ ${USE_SRC_INSIDE} == true ] ; \\\n    then \\\n        sed -i s/archive.ubuntu.com/mirrors.aliyun.com/g /etc/apt/sources.list ; \\\n        sed -i s/security.ubuntu.com/mirrors.aliyun.com/g /etc/apt/sources.list ; \\\n        echo \"Use aliyun source for installing libs\" ; \\\n    else \\\n        echo \"Keep the download source unchanged\" ; \\\n    fi\n\nRUN apt-get update && apt-get install -y --no-install-recommends \\\n        ca-certificates \\\n        libopencv-dev libspdlog-dev \\\n        gnupg \\\n        libssl-dev \\\n        libprotobuf-dev protobuf-compiler \\\n        build-essential \\\n        libjpeg-dev \\\n        libpng-dev \\\n        ccache \\\n        cmake \\\n        gcc \\\n        g++ \\\n        git \\\n        vim \\\n        wget \\\n        curl \\\n    && rm -rf /var/lib/apt/lists/*\n\nRUN curl -fsSL -v -o ~/miniconda.sh -O  https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh  && \\\n    chmod +x ~/miniconda.sh && \\\n    ~/miniconda.sh -b -p /opt/conda && \\\n    rm ~/miniconda.sh && \\\n    /opt/conda/bin/conda install -y python=${PYTHON_VERSION} conda-build pyyaml numpy ipython cython typing typing_extensions mkl mkl-include ninja && \\\n    /opt/conda/bin/conda clean -ya\n\n### pytorch\nRUN /opt/conda/bin/pip install torch==${TORCH_VERSION}+cpu torchvision==${TORCHVISION_VERSION}+cpu -f https://download.pytorch.org/whl/cpu/torch_stable.html\nENV PATH /opt/conda/bin:$PATH\n\n### install open-mim\nRUN /opt/conda/bin/pip install mmcv-full==${MMCV_VERSION} -f https://download.openmmlab.com/mmcv/dist/cpu/torch${TORCH_VERSION}/index.html\n\nWORKDIR /root/workspace\n\n### get onnxruntime\nRUN wget https://github.com/microsoft/onnxruntime/releases/download/v${ONNXRUNTIME_VERSION}/onnxruntime-linux-x64-${ONNXRUNTIME_VERSION}.tgz \\\n    && tar -zxvf onnxruntime-linux-x64-${ONNXRUNTIME_VERSION}.tgz && rm onnxruntime-linux-x64-${ONNXRUNTIME_VERSION}.tgz\n\nENV ONNXRUNTIME_DIR=/root/workspace/onnxruntime-linux-x64-${ONNXRUNTIME_VERSION}\n\n### install onnxruntme and openvino\nRUN /opt/conda/bin/pip install onnxruntime==${ONNXRUNTIME_VERSION} openvino-dev\n\n### build ncnn\nRUN git clone https://github.com/Tencent/ncnn.git &&\\\n    cd ncnn &&\\\n    export NCNN_DIR=$(pwd) &&\\\n    git submodule update --init &&\\\n    mkdir -p build && cd build &&\\\n    cmake -DNCNN_VULKAN=OFF -DNCNN_SYSTEM_GLSLANG=ON -DNCNN_BUILD_EXAMPLES=ON -DNCNN_PYTHON=ON -DNCNN_BUILD_TOOLS=ON -DNCNN_BUILD_BENCHMARK=ON -DNCNN_BUILD_TESTS=ON .. &&\\\n    make install &&\\\n    cd /root/workspace/ncnn/python && \\\n    pip install --no-cache-dir -e .\n\n### install mmdeploy\nWORKDIR /root/workspace\nARG VERSION\nRUN git clone https://github.com/open-mmlab/mmdeploy.git &&\\\n    cd mmdeploy &&\\\n    if [ -z ${VERSION} ] ; then echo \"No MMDeploy version passed in, building on master\" ; else git checkout tags/v${VERSION} -b tag_v${VERSION} ; fi &&\\\n    git submodule update --init --recursive &&\\\n    rm -rf build &&\\\n    mkdir build &&\\\n    cd build &&\\\n    cmake -DMMDEPLOY_TARGET_BACKENDS=ncnn -Dncnn_DIR=/root/workspace/ncnn/build/install/lib/cmake/ncnn .. &&\\\n    make -j$(nproc) &&\\\n    cmake -DMMDEPLOY_TARGET_BACKENDS=ort .. &&\\\n    make -j$(nproc) &&\\\n    cd .. && \\\n    pip install --no-cache-dir -e .\n\n### build SDK\nENV LD_LIBRARY_PATH=\"/root/workspace/mmdeploy/build/lib:/opt/intel/openvino/deployment_tools/ngraph/lib:/opt/intel/openvino/deployment_tools/inference_engine/lib/intel64:${LD_LIBRARY_PATH}\"\nRUN cd mmdeploy && rm -rf build/CM* && mkdir -p build && cd build && cmake .. \\\n    -DMMDEPLOY_BUILD_SDK=ON \\\n    -DCMAKE_CXX_COMPILER=g++-7 \\\n    -DONNXRUNTIME_DIR=${ONNXRUNTIME_DIR} \\\n    -Dncnn_DIR=/root/workspace/ncnn/build/install/lib/cmake/ncnn \\\n    -DInferenceEngine_DIR=/opt/intel/openvino/deployment_tools/inference_engine/share \\\n    -DMMDEPLOY_TARGET_DEVICES=cpu \\\n    -DMMDEPLOY_BUILD_SDK_PYTHON_API=ON \\\n    -DMMDEPLOY_TARGET_BACKENDS=\"ort;ncnn;openvino\" \\\n    -DMMDEPLOY_CODEBASES=all &&\\\n    cmake --build . -- -j$(nproc) && cmake --install . &&\\\n    cd install/example  && mkdir -p build && cd build &&\\\n    cmake .. -DMMDeploy_DIR=/root/workspace/mmdeploy/build/install/lib/cmake/MMDeploy \\\n    -DInferenceEngine_DIR=/opt/intel/openvino/deployment_tools/inference_engine/share \\\n    -Dncnn_DIR=/root/workspace/ncnn/build/install/lib/cmake/ncnn &&\\\n    cmake --build . && export SPDLOG_LEVEL=warn &&\\\n    if [ -z ${VERSION} ] ; then echo \"Built MMDeploy master for CPU devices successfully!\" ; else echo \"Built MMDeploy version v${VERSION} for CPU devices successfully!\" ; fi\n"
+}

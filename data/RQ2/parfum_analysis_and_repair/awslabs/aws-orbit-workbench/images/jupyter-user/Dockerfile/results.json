@@ -1,0 +1,71 @@
+{
+  "startTime": 1674246329151,
+  "endTime": 1674246330773,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 32,
+        "lineEnd": 32,
+        "columnStart": 12,
+        "columnEnd": 114
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 36,
+        "lineEnd": 36,
+        "columnStart": 4,
+        "columnEnd": 83
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 124,
+        "lineEnd": 124,
+        "columnStart": 4,
+        "columnEnd": 141
+      }
+    },
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 94,
+        "lineEnd": 94,
+        "columnStart": 4,
+        "columnEnd": 15
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 90,
+        "lineEnd": 90,
+        "columnStart": 4,
+        "columnEnd": 55
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 125,
+        "lineEnd": 125,
+        "columnStart": 4,
+        "columnEnd": 31
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 138,
+        "lineEnd": 138,
+        "columnStart": 4,
+        "columnEnd": 53
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "ARG BASE_IMAGE=public.ecr.aws/v3o4w1g6/aws-orbit-workbench/jupyter/base-notebook:python-3.8.8\nFROM $BASE_IMAGE as base\n\nUSER root\n\nRUN apt-get update && apt-get install -yq --no-install-recommends \\\n    apt-utils \\\n    build-essential \\\n    vim-tiny \\\n    nano-tiny \\\n    git \\\n    netcat \\\n    tzdata \\\n    unzip \\\n    sudo \\\n    curl \\\n    zip \\\n    less \\\n    jq \\\n    rsync \\\n    # ---- Cleaning up ----\n    && apt-get clean && rm -rf /var/lib/apt/lists/*\n\nRUN update-alternatives --install /usr/bin/nano nano /bin/nano-tiny 10\n\n#=================   END base  =================\n\nFROM base AS tools\n\n# Kubectl installation\nRUN cd /usr/local/bin \\\n    && sudo curl -f -k -sS -O https://amazon-eks.s3.us-west-2.amazonaws.com/1.19.6/2021-01-05/bin/linux/amd64/kubectl \\\n    && sudo chmod 755 /usr/local/bin/kubectl\n\n# Helm installation\nRUN curl -f -sSL https://raw.githubusercontent.com/helm/helm/master/scripts/get-helm-3 | bash && \\\n    helm version --short && \\\n    helm plugin install https://github.com/hypnoglow/helm-s3.git && \\\n    helm repo add stable https://charts.helm.sh/stable\n\n# Container Run\nADD python-utils/ /opt/python-utils/\nRUN chmod -R 755 /opt/python-utils/\nADD transformations/ /opt/transformations/\nRUN chmod -R 755 /opt/transformations/\n\n# add the boostrap script and change permission to jovyan\nRUN mkdir -p /opt/orbit\nADD bashrc /opt/orbit/bashrc\nRUN chown -R jovyan /opt/orbit\n\n#=================   END tools  =================\n\nFROM tools AS conda\n\n# Python/Conda packages\n\nADD requirements.txt /etc/jupyter/requirements.txt\nRUN conda run pip install -r /etc/jupyter/requirements.txt && \\\n    conda clean --all -f -y\n\n#=================   END conda  =================\n\nFROM conda AS lab\n\n\nENV JUPYTER_ENABLE_LAB yes\nRUN jupyter serverextension enable --py jupyterlab --sys-prefix && \\\n    jupyter serverextension enable --sys-prefix jupyter_server_proxy && \\\n    jupyter nbextension enable --py widgetsnbextension --sys-prefix && \\\n    jupyter labextension install @jupyter-widgets/jupyterlab-manager --no-build && \\\n    jupyter labextension install jupyter-matplotlib --no-build && \\\n    jupyter labextension install @jupyterlab/server-proxy --no-build && \\\n    jupyter lab build --dev-build=False -y && \\\n    jupyter lab clean -y && \\\n    npm cache clean --force && \\\n    rm -rf \"/home/${NB_USER}/.cache/yarn\" && \\\n    rm -rf \"/home/${NB_USER}/.node-gyp\" && \\\n    fix-permissions \"${CONDA_DIR}\" && \\\n    fix-permissions \"/home/${NB_USER}\"\n\n#=================   END lab  =================\n\nFROM lab as databrew\n\nRUN mkdir -p /opt/orbit/databrew\nCOPY aws-glue-databrew-jupyter-extension.tar.gz /opt/orbit/databrew/aws-glue-databrew-jupyter-extension.tar.gz\n\nWORKDIR /opt/orbit/databrew\nRUN tar xvzf aws-glue-databrew-jupyter-extension.tar.gz && rm aws-glue-databrew-jupyter-extension.tar.gz\n\nWORKDIR /opt/orbit/databrew/aws-glue-databrew-jupyter-extension/\n\nRUN npm install && \\\n    npm run build && \\\n    conda run pip install ./ && \\\n    jupyter labextension install ./ && \\\n    jupyter lab build && npm cache clean --force;\n\nWORKDIR /opt/orbit/databrew\nRUN rm -rf ./databrew\n\n#=================   END databrew  =================\n\nFROM databrew AS vscode\n\n#Add in VSCode support\nRUN mkdir -p /opt/orbit/codeserver_proxy\nCOPY codeserver_proxy /opt/orbit/codeserver_proxy\nRUN chmod -R a+xr /opt/orbit/codeserver_proxy/*.sh\nRUN chown -R jovyan /opt/orbit/codeserver_proxy\nWORKDIR /opt/orbit/codeserver_proxy\nRUN /opt/orbit/codeserver_proxy/install.sh\nRUN chown -R jovyan /opt/orbit/codeserver_proxy\n\n\n#=================   END vscode  =================\n\nFROM vscode AS smlogs\n\n# Install SM-LOGS   REF: https://docs.aws.amazon.com/sagemaker/latest/dg/amazon-sagemaker-operators-for-kubernetes.html\nRUN mkdir /opt/orbit/sm-logs && \\\n    cd /opt/orbit/sm-logs\nRUN curl -f -k -sS -O https://s3.us-west-2.amazonaws.com/amazon-sagemaker-operator-for-k8s-us-west-2/kubectl-smlogs-plugin/v1/linux.amd64.tar.gz && \\\n    tar xvzf linux.amd64.tar.gz && \\\n    sudo mv ./kubectl-smlogs.linux.amd64/kubectl-smlogs /usr/local/bin && \\\n    sudo chmod 755 /usr/local/bin/kubectl-smlogs && rm linux.amd64.tar.gz\nRUN cd /opt/orbit && \\\n    rm -rf /opt/orbit/sm-logs\n\n\nFROM smlogs AS orbit-libs\n\n# add bundle with docker image sources\nCOPY aws-orbit_jupyter-user.tar.gz /opt/orbit/aws-orbit_jupyter-user.tar.gz\nRUN chown jovyan /opt/orbit/aws-orbit_jupyter-user.tar.gz\nWORKDIR /opt/orbit/\nRUN tar xvzf /opt/orbit/aws-orbit_jupyter-user.tar.gz && rm /opt/orbit/aws-orbit_jupyter-user.tar.gz\nWORKDIR /opt/orbit/aws-orbit_jupyter-user\n\nADD pip.conf /etc/pip.conf\nRUN conda run pip install -r /opt/orbit/aws-orbit_jupyter-user/aws-orbit/requirements.txt\nRUN conda run pip install /opt/orbit/aws-orbit_jupyter-user/aws-orbit\nRUN conda run pip install /opt/orbit/aws-orbit_jupyter-user/aws-orbit-sdk\nRUN conda run pip install /opt/orbit/aws-orbit_jupyter-user/jupyterlab_orbit\nRUN conda run pip install aws-codeseeder\nRUN rm /etc/pip.conf\n\n#RUN rm -rf /opt/orbit/aws-orbit_jupyter-user\n\nRUN fix-permissions \"${CONDA_DIR}\" && \\\n    fix-permissions \"/home/${NB_USER}\"\n\nWORKDIR /home/${NB_USER}\n\nUSER $NB_UID\n"
+}

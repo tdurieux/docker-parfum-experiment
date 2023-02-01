@@ -1,0 +1,10 @@
+FROM registry.fedoraproject.org/fedora:36 AS builder
+RUN dnf install -y golang git-core
+RUN mkdir /ignition-validate
+COPY . /ignition-validate
+WORKDIR /ignition-validate
+RUN ./build_for_container
+
+FROM scratch
+COPY --from=builder /ignition-validate/bin/container/ignition-validate /usr/local/bin/ignition-validate
+ENTRYPOINT ["/usr/local/bin/ignition-validate"]

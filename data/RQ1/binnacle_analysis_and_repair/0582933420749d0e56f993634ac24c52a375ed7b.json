@@ -1,0 +1,44 @@
+{
+  "startTime": 1674236409069,
+  "endTime": 1674236409507,
+  "originalSmells": [
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 14,
+        "lineEnd": 14,
+        "columnStart": 5,
+        "columnEnd": 44
+      }
+    },
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 70,
+        "lineEnd": 70,
+        "columnStart": 20,
+        "columnEnd": 42
+      }
+    },
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 70,
+        "lineEnd": 70,
+        "columnStart": 46,
+        "columnEnd": 57
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 43,
+        "lineEnd": 43,
+        "columnStart": 19,
+        "columnEnd": 44
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# python:2.7-alpine with GEOS, GDAL, and Proj installed (built as a separate image\n# because it takes a long time to build)\nFROM rapidpro/rapidpro-base:v4\nARG RAPIDPRO_VERSION\nENV PIP_RETRIES=120 \\\n    PIP_TIMEOUT=400 \\\n    PIP_DEFAULT_TIMEOUT=400 \\\n    C_FORCE_ROOT=1 \\\n    PIP_EXTRA_INDEX_URL=\"https://alpine-3.wheelhouse.praekelt.org/simple\"\n\n# TODO determine if a more recent version of Node is needed\n# TODO extract openssl and tar to their own upgrade/install line\nRUN set -ex \\\n  && apk add --no-cache nodejs-lts nodejs-npm openssl tar \\\n  && npm install -g coffee-script less bower && npm cache clean --force;\n\nWORKDIR /rapidpro\n\nRUN set -ex \\\n        && apk add --no-cache --virtual .build-deps \\\n                bash \\\n                patch \\\n                git \\\n                gcc \\\n                g++ \\\n                make \\\n                libc-dev \\\n                musl-dev \\\n                linux-headers \\\n                postgresql-dev \\\n                libjpeg-turbo-dev \\\n                libpng-dev \\\n                freetype-dev \\\n                libxslt-dev \\\n                libxml2-dev \\\n                zlib-dev \\\n                libffi-dev \\\n                pcre-dev \\\n                readline \\\n                readline-dev \\\n                ncurses \\\n                ncurses-dev \\\n                libzmq \\\n                && pip install --no-cache-dir -U virtualenv \\\n                && virtualenv /venv\n\nARG RAPIDPRO_VERSION\nARG RAPIDPRO_REPO\nENV RAPIDPRO_VERSION=${RAPIDPRO_VERSION:-master}\nENV RAPIDPRO_REPO=${RAPIDPRO_REPO:-rapidpro/rapidpro}\nRUN echo \"Downloading RapidPro ${RAPIDPRO_VERSION} from https://github.com/$RAPIDPRO_REPO/archive/${RAPIDPRO_VERSION}.tar.gz\" && \\\n    wget -O rapidpro.tar.gz \"https://github.com/$RAPIDPRO_REPO/archive/${RAPIDPRO_VERSION}.tar.gz\" && \\\n    tar -xf rapidpro.tar.gz --strip-components=1 && \\\n    rm rapidpro.tar.gz\n\n# Build Python virtualenv\nCOPY requirements.txt /app/requirements.txt\nRUN LIBRARY_PATH=/lib:/usr/lib /bin/sh -c \"/venv/bin/pip install setuptools==33.1.1\" \\\n    && LIBRARY_PATH=/lib:/usr/lib /bin/sh -c \"/venv/bin/pip install -r /app/requirements.txt\" \\\n    && runDeps=\"$( \\\n      scanelf --needed --nobanner --recursive /venv \\\n              | awk '{ gsub(/,/, \"\\nso:\", $2); print \"so:\" $2 }' \\\n              | sort -u \\\n              | xargs -r apk info --installed \\\n              | sort -u \\\n    )\" \\\n    && apk --no-cache add --virtual .python-rundeps $runDeps \\\n    && apk del .build-deps && rm -rf /var/cache/apk/*\n\n# TODO should this be in startup.sh?\nRUN cd /rapidpro && npm install npm@latest && npm install && bower install --allow-root && npm cache clean --force;\n\n# Install `psql` command (needed for `manage.py dbshell` in stack/init_db.sql)\n# Install `libmagic` (needed since rapidpro v3.0.64)\nRUN apk add --no-cache postgresql-client libmagic\n\nENV UWSGI_VIRTUALENV=/venv UWSGI_WSGI_FILE=temba/wsgi.py UWSGI_HTTP=:8000 UWSGI_MASTER=1 UWSGI_WORKERS=8 UWSGI_HARAKIRI=20\n# Enable HTTP 1.1 Keep Alive options for uWSGI (http-auto-chunked needed when ConditionalGetMiddleware not installed)\n# These options don't appear to be configurable via environment variables, so pass them in here instead\nENV STARTUP_CMD=\"/venv/bin/uwsgi --http-auto-chunked --http-keepalive\"\nENV CELERY_CMD=\"/venv/bin/celery --beat --app=temba worker --loglevel=INFO --queues=celery,msgs,flows,handler\"\nCOPY settings.py /rapidpro/temba/\n# 500.html needed to keep the missing template from causing an exception during error handling\nCOPY stack/500.html /rapidpro/templates/\nCOPY stack/init_db.sql /rapidpro/\nCOPY stack/clear-compressor-cache.py /rapidpro/\nCOPY Procfile /rapidpro/\nCOPY Procfile /\nEXPOSE 8000\nCOPY stack/startup.sh /\n\nLABEL org.label-schema.name=\"RapidPro\" \\\n      org.label-schema.description=\"RapidPro allows organizations to visually build scalable interactive messaging applications.\" \\\n      org.label-schema.url=\"https://www.rapidpro.io/\" \\\n      org.label-schema.vcs-url=\"https://github.com/$RAPIDPRO_REPO\" \\\n      org.label-schema.vendor=\"Nyaruka, UNICEF, and individual contributors.\" \\\n      org.label-schema.version=$RAPIDPRO_VERSION \\\n      org.label-schema.schema-version=\"1.0\"\n\nCMD [\"/startup.sh\"]\n\n"
+}

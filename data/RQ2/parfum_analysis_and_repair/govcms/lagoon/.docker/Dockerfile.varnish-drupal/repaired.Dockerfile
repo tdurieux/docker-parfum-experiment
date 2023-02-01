@@ -1,0 +1,4 @@
+ARG LAGOON_IMAGE_VERSION
+
+FROM uselagoon/varnish-drupal:${LAGOON_IMAGE_VERSION}
+ENV LAGOON_PROJECT=govcms8lagoon

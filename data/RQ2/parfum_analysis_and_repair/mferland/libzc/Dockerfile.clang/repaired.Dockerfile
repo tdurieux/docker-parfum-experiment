@@ -1,0 +1,23 @@
+# libzc clang build environment
+
+FROM silkeh/clang:11
+MAINTAINER Marc Ferland <marc.ferland@gmail.com>
+
+RUN apt update \
+    && apt upgrade -y \
+    && apt install --no-install-recommends -y make automake libtool autoconf zlib1g-dev pkg-config check \
+    && apt clean && rm -rf /var/lib/apt/lists/*;
+
+RUN useradd --create-home --shell /bin/bash dev
+
+USER dev
+WORKDIR /home/dev
+
+CMD cd /home/dev/libzc \
+    && rm -rf ./build-clang \
+    && mkdir build-clang \
+    && ./autogen.sh \
+    && (([ -f Makefile ] && make distclean) || true) \
+    && cd build-clang \
+    && ../configure CC="clang" CFLAGS="-g -O2 -fno-sanitize-recover=undefined,address"\
+    && make -j4 check

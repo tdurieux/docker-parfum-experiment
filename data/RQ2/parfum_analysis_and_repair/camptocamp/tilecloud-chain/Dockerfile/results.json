@@ -1,0 +1,44 @@
+{
+  "startTime": 1674219651388,
+  "endTime": 1674219652542,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseY",
+      "position": {
+        "lineStart": 9,
+        "lineEnd": 16,
+        "columnStart": 7,
+        "columnEnd": 19
+      }
+    },
+    {
+      "rule": "aptGetInstallUseY",
+      "position": {
+        "lineStart": 44,
+        "lineEnd": 44,
+        "columnStart": 7,
+        "columnEnd": 75
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 9,
+        "lineEnd": 16,
+        "columnStart": 7,
+        "columnEnd": 19
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 44,
+        "lineEnd": 44,
+        "columnStart": 7,
+        "columnEnd": 75
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Base of all section, install the apt packages\nFROM osgeo/gdal:ubuntu-small-3.5.0 as base-all\nLABEL maintainer Camptocamp \"info@camptocamp.com\"\nSHELL [\"/bin/bash\", \"-o\", \"pipefail\", \"-cux\"]\n\nRUN --mount=type=cache,target=/var/lib/apt/lists \\\n    --mount=type=cache,target=/var/cache,sharing=locked \\\n    apt-get update \\\n    && apt-get upgrade --assume-yes \\\n    && apt-get install -y --assume-yes --no-install-recommends \\\n        libmapnik3.0 mapnik-utils \\\n        libdb5.3 \\\n        fonts-dejavu \\\n        node-carto \\\n        optipng jpegoptim \\\n        postgresql-client-12 net-tools iputils-ping \\\n        python3-pip \\\n    && python3 -m pip install --disable-pip-version-check --upgrade pip && rm -rf /var/lib/apt/lists/*;\n\n# Used to convert the locked packages by poetry to pip requirements format\n# We don't directly use `poetry install` because it force to use a virtual environment.\nFROM base-all as poetry\n\n# Install Poetry\nWORKDIR /tmp\nCOPY requirements.txt ./\nRUN --mount=type=cache,target=/root/.cache \\\n    python3 -m pip install --disable-pip-version-check --requirement=requirements.txt\n\n# Do the conversion\nCOPY poetry.lock pyproject.toml ./\nRUN poetry export --output=requirements.txt \\\n    && poetry export --dev --output=requirements-dev.txt\n\n# Base, the biggest thing is to install the Python packages\nFROM base-all as base\n\nRUN --mount=type=cache,target=/var/lib/apt/lists \\\n    --mount=type=cache,target=/var/cache,sharing=locked \\\n    --mount=type=cache,target=/root/.cache \\\n    --mount=type=bind,from=poetry,source=/tmp,target=/poetry \\\n    DEV_PACKAGES=\"python3.8-dev build-essential libgeos-dev libmapnik-dev libpq-dev \\\n  build-essential python3-dev\" \\\n    && apt-get update \\\n    && apt-get install -y --assume-yes --no-install-recommends ${DEV_PACKAGES} \\\n    && python3 -m pip install --disable-pip-version-check --no-deps --requirement=/poetry/requirements.txt \\\n    && python3 -m compileall /usr/local/lib/python3.8 /usr/lib/python3.8 \\\n    && strip /usr/local/lib/python3.8/dist-packages/shapely/*/*.so \\\n    && apt-get remove --purge --autoremove --yes ${DEV_PACKAGES} binutils && rm -rf /var/lib/apt/lists/*;\n\n# From c2cwsgiutils\n\nCMD [\"gunicorn\", \"--paste=/app/production.ini\"]\n\nENV TERM=linux \\\n    LANG=C.UTF-8 \\\n    LOG_TYPE=console \\\n    DEVELOPMENT=0 \\\n    PKG_CONFIG_ALLOW_SYSTEM_LIBS=OHYESPLEASE\n\nENV C2C_SECRET= \\\n    C2C_BASE_PATH=/c2c \\\n    C2C_REDIS_URL= \\\n    C2C_REDIS_SENTINELS= \\\n    C2C_REDIS_TIMEOUT=3 \\\n    C2C_REDIS_SERVICENAME=mymaster \\\n    C2C_REDIS_DB=0 \\\n    C2C_BROADCAST_PREFIX=broadcast_api_ \\\n    C2C_REQUEST_ID_HEADER= \\\n    C2C_REQUESTS_DEFAULT_TIMEOUT= \\\n    C2C_SQL_PROFILER_ENABLED=0 \\\n    C2C_PROFILER_PATH= \\\n    C2C_PROFILER_MODULES= \\\n    C2C_DEBUG_VIEW_ENABLED=0 \\\n    C2C_ENABLE_EXCEPTION_HANDLING=0\n\n# End from c2cwsgiutils\n\nENV TILEGENERATION_CONFIGFILE=/etc/tilegeneration/config.yaml \\\n    TILEGENERATION_MAIN_CONFIGFILE=/etc/tilegeneration/config.yaml \\\n    TILEGENERATION_HOSTSFILE=/etc/tilegeneration/hosts.yaml \\\n    TILECLOUD_CHAIN_LOG_LEVEL=INFO \\\n    TILECLOUD_LOG_LEVEL=INFO \\\n    C2CWSGIUTILS_LOG_LEVEL=WARN \\\n    GUNICORN_LOG_LEVEL=WARN \\\n    GUNICORN_ACCESS_LOG_LEVEL=INFO \\\n    SQL_LOG_LEVEL=WARN \\\n    OTHER_LOG_LEVEL=WARN \\\n    VISIBLE_ENTRY_POINT=/ \\\n    TILE_NB_THREAD=2 \\\n    METATILE_NB_THREAD=25 \\\n    SERVER_NB_THREAD=10 \\\n    TILE_QUEUE_SIZE=2 \\\n    TILE_CHUNK_SIZE=1 \\\n    TILE_SERVER_LOGLEVEL=quiet \\\n    TILE_MAPCACHE_LOGLEVEL=verbose \\\n    DEVLOPEMENT=0\n\nEXPOSE 8080\n\nWORKDIR /app/\n\n# The final part\nFROM base as runner\n\nCOPY . /app/\nRUN --mount=type=cache,target=/root/.cache \\\n    sed --in-place 's/enable = true # disable on Docker/enable = false/g' pyproject.toml \\\n    && python3 -m pip install --disable-pip-version-check --no-deps --editable=. \\\n    && mv docker/run /usr/bin/ \\\n    && python3 -m compileall -q /app/tilecloud_chain\n\n# Do the lint, used by the tests\nFROM base as tests\n\nRUN --mount=type=cache,target=/root/.cache \\\n    --mount=type=bind,from=poetry,source=/tmp,target=/poetry \\\n    python3 -m pip install --disable-pip-version-check --no-deps --requirement=/poetry/requirements-dev.txt\n\nCOPY . /app/\nRUN --mount=type=cache,target=/root/.cache \\\n    sed --in-place 's/enable = true # disable on Docker/enable = false/g' pyproject.toml \\\n    && python3 -m pip install --disable-pip-version-check --no-deps --editable=.\n\nENV TILEGENERATION_MAIN_CONFIGFILE=\n\n# Set runner as final\nFROM runner\n"
+}

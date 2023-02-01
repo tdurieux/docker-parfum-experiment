@@ -1,0 +1,62 @@
+FROM dockcross/manylinux2014-x64
+
+# Don't build python < 3.6
+RUN rm -rf /opt/python/cp27*
+RUN rm -rf /opt/python/cp34*
+RUN rm -rf /opt/python/cp35*
+RUN rm -rf /opt/python/pp*
+
+RUN for PYBIN in /opt/python/*/bin; do \
+        ${PYBIN}/pip install --no-cache-dir --upgrade pip; \
+    done
+
+RUN for PYBIN in /opt/python/*/bin; do \
+      if [[ "${PYBIN}" =~ "310" ]]; then \
+        export VERSIONS="numpy==1.21.*"; \
+      elif [[ "${PYBIN}" =~ "39" ]]; then \
+        export VERSIONS="numpy==1.19.*"; \
+      elif [[ "${PYBIN}" =~ "38" ]]; then \
+        export VERSIONS="numpy==1.17.*"; \
+      elif [[ "${PYBIN}" =~ "37" ]]; then \
+        export VERSIONS="numpy==1.14.*"; \
+      else \
+        # This could be numpy 1.11, but we specifiy 1.12.1 as our minimum \
+        export VERSIONS="numpy==1.12.*"; \
+      fi && \
+      ${PYBIN}/pip install setuptools-scm 'Cython>=0.25.2' 'scikit-build>=0.8.1' 'cmake>=0.6.0' "${VERSIONS}"; \
+    done
+
+RUN for PYBIN in /opt/python/*/bin; do \
+        ${PYBIN}/pip install --no-cache-dir -f https://girder.github.io/large_image_wheels 'large_image[sources]' pyvips; \
+    done
+
+ENV htk_path=/HistomicsTK
+RUN mkdir -p $htk_path
+
+COPY . $htk_path/
+
+RUN for PYBIN in /opt/python/*/bin; do \
+        ${PYBIN}/pip install -r "$htk_path/requirements-dev.txt"; \
+    done
+
+ARG CIRCLE_BRANCH
+ENV CIRCLE_BRANCH=$CIRCLE_BRANCH
+
+RUN cd $htk_path && \
+    # Strip libraries before building any wheels \
+    strip --strip-unneeded /usr/local/lib{,64}/*.{so,a} || true && \
+    for PYBIN in /opt/python/*/bin; do \
+        # Anything newer requires manylinux2014 \
+        ${PYBIN}/pip install 'opencv-python-headless<4.3' && \
+        ${PYBIN}/pip install --no-cache-dir . && \
+        # Remove any previous build artifacts && \
+        git clean -fxd && \
+        ${PYBIN}/pip wheel . --no-deps -w /io/wheelhouse/ && \
+        rm -rf build; \
+    done && \
+    for WHL in /io/wheelhouse/histomicstk*.whl; do \
+      auditwheel repair "${WHL}" -w /io/wheelhouse/; \
+    done && \
+    ls -l /io/wheelhouse && \
+    mkdir /io/wheels && \
+    cp /io/wheelhouse/histomicstk*many*2014* /io/wheels/.

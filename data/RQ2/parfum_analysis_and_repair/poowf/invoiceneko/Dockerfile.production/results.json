@@ -1,0 +1,35 @@
+{
+  "startTime": 1674255310798,
+  "endTime": 1674255311970,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 123,
+        "lineEnd": 123,
+        "columnStart": 4,
+        "columnEnd": 68
+      }
+    },
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 7,
+        "lineEnd": 7,
+        "columnStart": 4,
+        "columnEnd": 47
+      }
+    },
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 44,
+        "lineEnd": 44,
+        "columnStart": 4,
+        "columnEnd": 34
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM surnet/alpine-wkhtmltopdf:3.13.5-0.12.6-full as wkhtmltopdf\n# Install dependencies only when needed\nFROM node:14.17.6-alpine3.14 as dependencies\n# Check https://github.com/nodejs/docker-node/tree/b4117f9333da4138b03a546ec926ef50a31506c3#nodealpine to understand why libc6-compat might be needed.\nRUN apk add --no-cache libc6-compat git\nWORKDIR /working\nCOPY package.json yarn.lock ./\nRUN yarn install --frozen-lockfile --production && yarn cache clean;\n\n# Using a hash to make sure the pull is an amd64 image as there\n# are issues compiling the resource bundle on M1 macs instead of\n# having to run docker buildx build --platform=linux/amd64 -t invneko -f Dockerfile.production .\n# Actual image is node:14.17.6-alpine3.14\nFROM node@sha256:3f4c922d5f29da10fc2a5f1ab6a9812e7aadfc88ecc9e150ef86066f449e55ec as jsbuild\n# Check https://github.com/nodejs/docker-node/tree/b4117f9333da4138b03a546ec926ef50a31506c3#nodealpine to understand why libc6-compat might be needed.\n#RUN apk add --no-cache libc6-compat\nWORKDIR /working\n\nRUN apk add --no-cache \\\n    git \\\n    curl \\\n    g++ \\\n    make \\\n    bash \\\n    zlib-dev \\\n    libpng-dev \\\n    autoconf \\\n    automake \\\n    libtool \\\n    tiff \\\n    jpeg \\\n    zlib \\\n    pkgconf \\\n    nasm \\\n    file \\\n    gcc \\\n    musl-dev \\\n    libltdl \\\n    python2 \\\n    libc6-compat\n\nCOPY resources package.json yarn.lock webpack.mix.js ./\nCOPY resources/ ./resources\nCOPY --from=dependencies /working/node_modules ./node_modules\nRUN yarn install --frozen-lockfile && yarn cache clean;\nRUN yarn run prod\n\nFROM alpine:3.14 as base\n\nWORKDIR /srv/http/www/invoiceneko/\n\n# Essentials\nRUN echo \"UTC\" > /etc/timezone\nRUN apk add --no-cache \\\n    zip \\\n    unzip \\\n    curl \\\n    nginx \\\n    supervisor \\\n    xvfb \\\n    xvfb-run \\\n    libstdc++ \\\n    libx11 \\\n    libxrender \\\n    libxext \\\n    libssl1.1 \\\n    ca-certificates \\\n    fontconfig \\\n    freetype \\\n    ttf-dejavu \\\n    ttf-droid \\\n    ttf-freefont \\\n    ttf-liberation\n\nRUN apk add --no-cache --virtual .build-deps \\\n    msttcorefonts-installer \\\n    \\\n    # Install microsoft fonts\n    && update-ms-fonts \\\n    && fc-cache -f \\\n    \\\n    # Clean up when done\n    && rm -rf /tmp/* \\\n    && apk del .build-deps\n\nCOPY --from=wkhtmltopdf /bin/wkhtmltopdf /usr/bin/wkhtmltopdf\nCOPY --from=wkhtmltopdf /bin/wkhtmltoimage /usr/bin/wkhtmltoimage\nCOPY --from=wkhtmltopdf /bin/libwkhtmltox* /usr/bin/\n\n# Installing PHP\nRUN apk add --no-cache php8 \\\n    php8-common \\\n    php8-fpm \\\n    php8-pdo \\\n    php8-opcache \\\n    php8-zip \\\n    php8-phar \\\n    php8-iconv \\\n    php8-cli \\\n    php8-curl \\\n    php8-openssl \\\n    php8-mbstring \\\n    php8-tokenizer \\\n    php8-fileinfo \\\n    php8-json \\\n    php8-xml \\\n    php8-xmlwriter \\\n    php8-simplexml \\\n    php8-dom \\\n    php8-pdo_mysql \\\n    php8-pdo_sqlite \\\n    php8-tokenizer \\\n    php8-pecl-redis \\\n    php8-bcmath \\\n    php8-ctype \\\n    php8-gd \\\n    php8-pcntl \\\n    php8-posix \\\n    php8-xmlreader \\\n    php8-intl\n\n# Installing composer\nRUN ln -s /usr/bin/php8 /usr/bin/php\nRUN curl -f -sS https://getcomposer.org/installer -o composer-setup.php\nRUN php composer-setup.php --install-dir=/usr/local/bin --filename=composer\nRUN rm -rf composer-setup.php\n\n# Configure supervisor\nRUN mkdir -p /etc/supervisor.d/\nCOPY docker/supervisor.d/ /etc/supervisor.d/\n\n# Configure php-fpm\nRUN mkdir -p /run/php/\nRUN touch /run/php/php8.0-fpm.pid\nRUN touch /run/php/php8.0-fpm.sock\nRUN sed -i 's~listen = 127.0.0.1:9000~listen = /run/php/php8.0-fpm.sock~g' /etc/php8/php-fpm.d/www.conf\nRUN sed -i 's~;listen.owner = nobody~listen.owner = nginx~g' /etc/php8/php-fpm.d/www.conf\nRUN sed -i 's~;listen.group = nobody~listen.group = nginx~g' /etc/php8/php-fpm.d/www.conf\nRUN sed -i 's~;listen.mode = 0660~listen.mode = 0660~g' /etc/php8/php-fpm.d/www.conf\nRUN sed -i 's~user = nobody~user = nginx~g' /etc/php8/php-fpm.d/www.conf\nRUN sed -i 's~group = nobody~group = nginx~g' /etc/php8/php-fpm.d/www.conf\n\n# Configure nginx\nRUN echo \"daemon off;\" >> /etc/nginx/nginx.conf\nCOPY docker/nginx/conf.d/ /etc/nginx/http.d/\nRUN rm /etc/nginx/http.d/default.conf\n\nRUN mkdir -p /run/nginx/\nRUN touch /run/nginx/nginx.pid\n\nRUN ln -sf /dev/stdout /var/log/nginx/access.log\nRUN ln -sf /dev/stderr /var/log/nginx/error.log\n\n# Building process\nCOPY --chown=nginx:nginx app ./app\nCOPY --chown=nginx:nginx bootstrap ./bootstrap\nCOPY --chown=nginx:nginx config ./config\nCOPY --chown=nginx:nginx public ./public\nCOPY --chown=nginx:nginx resources ./resources\nCOPY --chown=nginx:nginx routes ./routes\nCOPY --chown=nginx:nginx storage ./storage\nCOPY --chown=nginx:nginx docker/buildEnvData.php composer.json composer.lock artisan ./\nCOPY docker/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh\nRUN chmod +x /usr/local/bin/docker-entrypoint.sh\nCOPY --chown=nginx:nginx --from=jsbuild /working/public ./public\nRUN composer install --no-dev\nRUN chown -R nginx:nginx vendor\n\n# Configure Laravel logs\nRUN ln -sf /dev/stdout /srv/http/www/invoiceneko/storage/laravel.log\n\nHEALTHCHECK CMD wget --no-verbose --tries=1 --spider http://localhost || exit 1\nEXPOSE 80\nENTRYPOINT [\"docker-entrypoint.sh\"]\nCMD [\"supervisord\", \"-c\", \"/etc/supervisor.d/supervisord.conf\"]\n"
+}

@@ -1,0 +1,30 @@
+ARG BASE_TAG=branch-main
+
+FROM python:3.9
+RUN /usr/local/bin/python -m pip install --upgrade pip && \
+    apt update && apt -y --no-install-recommends install graphviz graphviz-dev && \
+    rm -rf /var/lib/apt/lists/* && \
+    pip3 install --no-cache-dir awscli
+
+# For lighter weight Docker images
+ENV PIP_NO_CACHE_DIR=1
+
+WORKDIR /
+
+ADD backend/wmg/requirements.txt requirements.txt
+RUN pip3 install --no-cache-dir -r requirements.txt
+
+ADD backend/__init__.py backend/__init__.py
+ADD backend/wmg backend/wmg
+ADD backend/corpus_asset_pipelines backend/corpus_asset_pipelines
+ADD backend/corpora backend/corpora
+ADD backend/ontology_files backend/ontology_files
+
+ARG HAPPY_BRANCH="unknown"
+ARG HAPPY_COMMIT=""
+LABEL branch=${HAPPY_BRANCH}
+LABEL commit=${HAPPY_COMMIT}
+ENV COMMIT_SHA=${HAPPY_COMMIT}
+ENV COMMIT_BRANCH=${HAPPY_BRANCH}
+
+CMD ["python3", "-m", "backend.wmg.data.cube_pipeline"]

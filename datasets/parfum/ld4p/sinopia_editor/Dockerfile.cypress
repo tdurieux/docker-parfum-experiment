@@ -1,0 +1,6 @@
+FROM cypress/included:9.0.0
+
+COPY cypress /cypress
+COPY cypress.json cypress.json
+
+ENTRYPOINT ["cypress", "run", "--headless", "-b", "chrome"]

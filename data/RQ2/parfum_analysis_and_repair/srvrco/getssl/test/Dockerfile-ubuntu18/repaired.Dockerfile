@@ -1,0 +1,48 @@
+FROM ubuntu:bionic
+# bionic = 18 LTS (long term support)
+
+# Note this image uses gawk
+
+# Update and install required software
+RUN apt-get update --fix-missing
+RUN apt-get install --no-install-recommends -y git curl dnsutils ldnsutils wget gawk nginx-light jq && rm -rf /var/lib/apt/lists/*;
+RUN apt-get install --no-install-recommends -y ftp vsftpd && rm -rf /var/lib/apt/lists/*;
+RUN apt-get install --no-install-recommends -y openssh-server && rm -rf /var/lib/apt/lists/*;
+RUN apt-get install --no-install-recommends -y locales && rm -rf /var/lib/apt/lists/*; # for idn testing
+
+# Set locale
+RUN sed -i '/en_US.UTF-8/s/^# //g' /etc/locale.gen && locale-gen
+ENV LANG en_US.UTF-8
+ENV LANGUAGE en_US:en
+ENV LC_ALL en_US.UTF-8
+
+WORKDIR /root
+RUN mkdir -p /etc/nginx/pki/private
+COPY ./test/test-config/nginx-ubuntu-no-ssl /etc/nginx/sites-enabled/default
+
+# Setup ftp
+ENV VSFTPD_CONF=/etc/vsftpd.conf
+ENV FTP_PASSIVE_DEFAULT=false
+COPY test/test-config/vsftpd.conf /etc/vsftpd.conf
+# The default init.d script seems to have an incorrect check that vsftpd has started
+COPY test/test-config/vsftpd.initd /etc/init.d/vsftpd
+RUN adduser ftpuser
+RUN echo 'ftpuser:ftpuser' | chpasswd
+RUN adduser ftpuser www-data
+RUN adduser root www-data
+RUN chown -R www-data.www-data /var/www
+RUN chmod g+w -R /var/www
+
+# Prevent "Can't load /root/.rnd into RNG" error from openssl
+RUN touch /root/.rnd
+
+# BATS (Bash Automated Testings)
+RUN git clone --depth 1 https://github.com/bats-core/bats-core.git /bats-core
+RUN git clone --depth 1 https://github.com/bats-core/bats-support /bats-support
+RUN git clone --depth 1 https://github.com/bats-core/bats-assert /bats-assert
+RUN /bats-core/install.sh /usr/local
+
+EXPOSE 80 443
+
+# Run eternal loop - for testing
+CMD [ "tail", "-f", "/dev/null" ]

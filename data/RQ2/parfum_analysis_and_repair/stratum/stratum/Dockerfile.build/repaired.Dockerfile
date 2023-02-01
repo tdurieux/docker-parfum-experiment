@@ -1,0 +1,109 @@
+# Copyright 2018-present Open Networking Foundation
+# SPDX-License-Identifier: Apache-2.0
+
+ARG BAZELISK_VERSION=1.8.0
+ARG PI_COMMIT=a5fd855d4b3293e23816ef6154e83dc6621aed6a
+ARG BMV2_COMMIT=b0fb01ecacbf3a7d7f0c01e2f149b0c6a957f779
+ARG JDK_URL=https://mirror.bazel.build/openjdk/azul-zulu11.29.3-ca-jdk11.0.2/zulu11.29.3-ca-jdk11.0.2-linux_x64.tar.gz
+ARG LLVM_REPO_NAME="deb http://apt.llvm.org/stretch/  llvm-toolchain-stretch-11 main"
+
+# Reasonable for CI
+ARG JOBS=2
+
+FROM debian:9@sha256:d8ee86bf0afeb901de293c692a540307a670306cbdb7a06e2c840f17b0c35374
+LABEL maintainer="Stratum dev <stratum-dev@lists.stratumproject.org>"
+LABEL description="This Docker image sets up a development environment for Stratum"
+
+ARG JOBS
+
+# bazelisk dependencies
+# + wget to download bazelisk binary
+# + ca-certificates for wget HTPPS connection
+# LLVM dependencies
+# + gnupg2 for apt-key
+# + software-properties-common for add-apt-repository
+# OpenNSA dependencies
+# + libelf-dev to build the kernel modules
+# BF SDE dependecies
+# + libelf-dev to build the kernel modules
+# Tools and libraries for p4lang/target-syslibs and p4lang/target-utils
+# + cmake libedit-dev expat
+ENV PKG_DEPS pkg-config zip zlib1g-dev unzip python wget ca-certificates \
+    ssh git gdb vim emacs-nox sudo libudev-dev libjudy-dev bison flex \
+    libfl-dev libgmp-dev libi2c-dev python-yaml libyaml-dev build-essential \
+    lcov curl autoconf automake libtool libgmp-dev libpcap-dev \
+    libboost-thread-dev libboost-filesystem-dev libboost-program-options-dev \
+    gnupg2 software-properties-common python-pip python-dev python3-dev \
+    apt-transport-https libelf-dev cmake libedit-dev expat
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends $PKG_DEPS && rm -rf /var/lib/apt/lists/*;
+
+# LLVM toolchain
+ARG LLVM_REPO_NAME
+RUN wget --quiet -O - https://apt.llvm.org/llvm-snapshot.gpg.key | apt-key add -
+RUN add-apt-repository "$LLVM_REPO_NAME"
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends clang-format-11 clang-11 && rm -rf /var/lib/apt/lists/*;
+# Versioned LLVM releases don't come with the meta packages for the
+# clang -> clang-12 symlinks. We create them manually here.
+RUN ln -s ../lib/llvm-11/bin/clang /usr/bin/clang
+RUN ln -s ../lib/llvm-11/bin/clang++ /usr/bin/clang++
+RUN ln -s ../lib/llvm-11/bin/clang-format /usr/bin/clang-format
+
+# Install java and lcov for Bazel coverage
+ARG JDK_URL
+ENV JAVA_HOME /usr/local/lib/jvm
+RUN wget --quiet $JDK_URL -O $HOME/jdk_11.0.2.tar.gz && \
+    mkdir -p $JAVA_HOME && \
+    tar xf $HOME/jdk_11.0.2.tar.gz -C $JAVA_HOME --strip-components=1 && \
+    rm $HOME/jdk_11.0.2.tar.gz
+ENV PATH=$PATH:/usr/local/lib/jvm/bin
+
+ARG PI_COMMIT
+RUN git clone https://github.com/p4lang/PI.git /tmp/PI && \
+    cd /tmp/PI && git checkout ${PI_COMMIT} && \
+    git submodule update --init --recursive && \
+    ./autogen.sh && \
+    ./configure --build="$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)" --without-bmv2 --without-proto --without-fe-cpp \
+        --without-cli --without-internal-rpc && \
+    make -j${JOBS} && make install && ldconfig && \
+    rm -rf /tmp/PI
+
+ARG BMV2_COMMIT
+ENV BMV2_INSTALL /usr/local
+RUN git clone https://github.com/p4lang/behavioral-model.git /tmp/bmv2 && \
+    cd /tmp/bmv2 && git checkout ${BMV2_COMMIT} && \
+    ./autogen.sh && \
+    ./configure --build="$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)" --without-targets --with-pi --disable-elogger \
+        --without-nanomsg --without-thrift --prefix=${BMV2_INSTALL} \
+        CXXFLAGS="-I${PWD}/targets/simple_switch -DWITH_SIMPLE_SWITCH -isystem$BMV2_INSTALL/include -isystem$PI_INSTALL/include -L$PI_INSTALL/lib" && \
+    make -j${JOBS} && make install && ldconfig && \
+    cd targets/simple_switch && \
+    make -j${JOBS} && make install && ldconfig && \
+    cp /tmp/bmv2/tools/veth* ${BMV2_INSTALL}/bin/ && \
+    rm -rf /tmp/bmv2
+
+# Bazelisk and Bazel
+ADD .bazelversion .
+ADD BUILD .
+ADD WORKSPACE .
+ARG BAZELISK_VERSION
+RUN wget --quiet https://github.com/bazelbuild/bazelisk/releases/download/v${BAZELISK_VERSION}/bazelisk-linux-amd64 && \
+    mv bazelisk-linux-amd64 /usr/local/bin/bazel && \
+    chmod +x /usr/local/bin/bazel && \
+    bazel version
+
+# Tools for style and license checking
+RUN pip install --no-cache-dir setuptools wheel && \
+    pip install --no-cache-dir 'cpplint==1.*'
+RUN wget --quiet -O /usr/local/bin/buildifier https://github.com/bazelbuild/buildtools/releases/download/4.0.0/buildifier
+RUN chmod +x /usr/local/bin/buildifier
+
+# Docker CLI for CI builds
+RUN curl -fsSL https://download.docker.com/linux/debian/gpg | apt-key add -
+RUN add-apt-repository \
+   "deb [arch=amd64] https://download.docker.com/linux/debian \
+   $(lsb_release -cs) \
+   stable"
+RUN apt-get update && apt-get install -y --no-install-recommends docker-ce-cli && rm -rf /var/lib/apt/lists/*;

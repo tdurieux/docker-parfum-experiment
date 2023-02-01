@@ -1,0 +1,26 @@
+{
+  "startTime": 1674254880014,
+  "endTime": 1674254881110,
+  "originalSmells": [
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 17,
+        "lineEnd": 25,
+        "columnStart": 4,
+        "columnEnd": 8
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 45,
+        "lineEnd": 48,
+        "columnStart": 4,
+        "columnEnd": 8
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Copyright 2022 Tigris Data, Inc.\n#\n# Licensed under the Apache License, Version 2.0 (the \"License\");\n# you may not use this file except in compliance with the License.\n# You may obtain a copy of the License at\n#\n#      http://www.apache.org/licenses/LICENSE-2.0\n#\n# Unless required by applicable law or agreed to in writing, software\n# distributed under the License is distributed on an \"AS IS\" BASIS,\n# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.\n# See the License for the specific language governing permissions and\n# limitations under the License.\n\nFROM ubuntu:20.04 AS build\n\nRUN apt-get update && \\\n    apt-get install -y --no-install-recommends \\\n    apt-transport-https \\\n    ca-certificates \\\n    curl \\\n    wget \\\n    gcc \\\n    git \\\n    make \\\n    sudo && rm -rf /var/lib/apt/lists/*;\n\nRUN mkdir /build\n\nCOPY scripts/install_go.sh /build\nRUN sh /build/install_go.sh\n#Download deps once, during docker build. Rebuild only on go.mod change\nENV PATH=\"${PATH}:/root/go/bin:/usr/local/go/bin\"\nCOPY scripts/install_build_deps.sh /build\nRUN sh /build/install_build_deps.sh\nCOPY go.mod /build\nWORKDIR /build\nRUN go mod download\nCOPY . /build\nRUN --mount=type=cache,target=/root/.cache/go-build rm -f server/service && make bins\n\n\nFROM ubuntu:20.04 AS server\n\nRUN apt-get update && \\\n    apt-get install -y --no-install-recommends \\\n    ca-certificates \\\n    curl \\\n    tree && rm -rf /var/lib/apt/lists/*;\n\nCOPY scripts/install_local_docker_deps.sh /tmp/\nRUN /bin/bash /tmp/install_local_docker_deps.sh && rm /tmp/install_local_docker_deps.sh\n\n# Remove apt configuration\nRUN rm -rf /etc/apt/* /var/lib/dpkg/* /var/lib/apt/*\n\n# Setup an unprivileged user\nRUN groupadd -r tigris && useradd -r -s /bin/false -g tigris tigris\n\nRUN mkdir -p /server /etc/tigrisdata/tigris /etc/foundationdb /var/lib/foundationdb/logs\n\nCOPY --from=build /build/server/service /server/service\nCOPY --from=build /build/config/server.yaml /etc/tigrisdata/tigris\nCOPY --from=build /usr/lib/libfdb_c.so /usr/lib/libfdb_c.so\nCOPY --from=build /usr/bin/fdbcli /usr/bin/fdbcli\n\nRUN chown -R tigris:tigris /server /etc/tigrisdata/tigris\n\n#RUN echo \"docker:docker@127.0.0.1:4500\" >/etc/foundationdb/fdb.cluster\nRUN echo \"#!/bin/bash\\n \\\n\t/usr/bin/typesense-server --config=/etc/typesense/typesense-server.ini & \\n \\\n\tfdbserver --listen-address 127.0.0.1:4500 --public-address 127.0.0.1:4500 --datadir /var/lib/foundationdb/data --logdir /var/lib/foundationdb/logs --locality-zoneid tigris --locality-machineid tigris & \\n\\\n\texport TIGRIS_SERVER_SEARCH_AUTH_KEY=ts_dev_key \\n \\\n\texport TIGRIS_SERVER_SEARCH_HOST=localhost \\n \\\n\tfdbcli --exec 'configure new single memory' \\n \\\n\t/server/service\\n\" >/server/service.sh\n\nEXPOSE 8081\n\nWORKDIR /server\n\n# Set the default effective user to an unprivileged user\n#USER tigris\n\nCMD [\"/bin/bash\", \"/server/service.sh\"]\n"
+}

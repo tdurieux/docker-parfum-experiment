@@ -1,0 +1,117 @@
+{
+  "startTime": 1674249736676,
+  "endTime": 1674249737542,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 71,
+        "lineEnd": 71,
+        "columnStart": 4,
+        "columnEnd": 68
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 100,
+        "lineEnd": 100,
+        "columnStart": 4,
+        "columnEnd": 39
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 147,
+        "lineEnd": 147,
+        "columnStart": 4,
+        "columnEnd": 32
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 71,
+        "lineEnd": 71,
+        "columnStart": 4,
+        "columnEnd": 68
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 100,
+        "lineEnd": 100,
+        "columnStart": 4,
+        "columnEnd": 39
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 147,
+        "lineEnd": 147,
+        "columnStart": 4,
+        "columnEnd": 32
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 71,
+        "lineEnd": 71,
+        "columnStart": 4,
+        "columnEnd": 68
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 100,
+        "lineEnd": 100,
+        "columnStart": 4,
+        "columnEnd": 39
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 147,
+        "lineEnd": 147,
+        "columnStart": 4,
+        "columnEnd": 32
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 71,
+        "lineEnd": 71,
+        "columnStart": 4,
+        "columnEnd": 92
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 100,
+        "lineEnd": 100,
+        "columnStart": 4,
+        "columnEnd": 63
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 147,
+        "lineEnd": 147,
+        "columnStart": 4,
+        "columnEnd": 56
+      }
+    }
+  ],
+  "repairedDockerfile": "### Image to build the Interface\nFROM docker.io/library/node:lts-buster as interface\n\nENV DEBIAN_FRONTEND noninteractive\n\n# Taken from https://github.com/rust-lang/docker-rust/blob/master/1.47.0/buster/Dockerfile\nENV RUSTUP_HOME=/usr/local/rustup \\\n    CARGO_HOME=/usr/local/cargo \\\n    PATH=/usr/local/cargo/bin:$PATH \\\n    RUST_VERSION=1.58.1\nRUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs > install_rust.sh\nRUN sh install_rust.sh -y --no-modify-path --profile minimal --default-toolchain $RUST_VERSION && chmod -R a+w $RUSTUP_HOME $CARGO_HOME\n\n\nWORKDIR '/wirtbot'\nENV NODE_ENV production\n\n# Install all dependecies via workspaces first\nCOPY Interface/package.json  Interface/package.json\nCOPY Interface/package-lock.json  Interface/package-lock.json\nCOPY Interface/src Interface/src\nCOPY Interface/public Interface/public\nCOPY Interface/babel.config.js Interface/babel.config.js\nCOPY Interface/vue.config.js Interface/vue.config.js\nCOPY Interface/.env Interface/.env\nCOPY Interface/.env.localtest Interface/.env.localtest\n\n# Compile and package wasm\nRUN cargo install wasm-pack --vers 0.9.1\n# Build interface\nWORKDIR '/wirtbot/Interface'\n## Inject keys into the test interface by doing this, that way the Interface can talk to the WirtBot Core\n## Which will start with the corresponding public key\nARG environment=production\nRUN if [ \"$environment\" = \"test\" ] ; then rm .env && mv .env.localtest .env; fi\nRUN npm ci && npm run build\n\n\n### Image to build WirtBot\nFROM docker.io/library/rust:slim as builder\n\nENV DEBIAN_FRONTEND noninteractive\n\nWORKDIR /builder/WirtBot\nCOPY Core/src src\nCOPY Core/Cargo.toml Cargo.toml\nCOPY Core/Cargo.lock Cargo.lock\n\nRUN cargo build --release --target-dir /builder/artifact\n\nRUN cargo install prometheus_wireguard_exporter\nRUN which prometheus_wireguard_exporter\n\n\n\nFROM docker.io/library/golang:1.17.8-buster as coredns\n\nRUN git clone https://github.com/coredns/coredns.git /go/src/github.com/coredns/coredns\nWORKDIR /go/src/github.com/coredns/coredns\nRUN  git checkout $(git describe --tags --abbrev=0)\nCOPY Build-Automation/WirtBot/service-files/coredns-plugins plugin.cfg\nRUN make gen && make\nRUN mv coredns /coredns\nRUN /coredns -plugins\n\n\n### This is where the final image starts\nFROM docker.io/library/debian:bullseye-slim\n\nENV DEBIAN_FRONTEND noninteractive\nRUN apt-get update && apt-get upgrade -y\nRUN apt-get install --no-install-recommends -yy nginx inotify-tools iproute2 wireguard-tools && rm -rf /var/lib/apt/lists/*;\n\n# Set up the s6 overlay init system\nCOPY Build-Automation/WirtBot/s6-overlay-amd64-installer-2.1.0.2 /tmp/s6-overlay-amd64-installer\nCOPY Build-Automation/WirtBot/s6-overlay-aarch64-installer-2.1.0.2 /tmp/s6-overlay-aarch64-installer\n\n## see https://docs.docker.com/engine/reference/builder/#automatic-platform-args-in-the-global-scope\nARG TARGETPLATFORM\n\nRUN if [ \"$TARGETPLATFORM\" = \"linux/amd64\" ] || [ \"$TARGETPLATFORM\" = \"\" ]; then chmod +x /tmp/s6-overlay-amd64-installer && /tmp/s6-overlay-amd64-installer /;fi\nRUN if [ \"$TARGETPLATFORM\" = \"linux/arm64\" ] ; then chmod +x /tmp/s6-overlay-aarch64-installer && /tmp/s6-overlay-aarch64-installer /; fi\n\n\nWORKDIR /\n\n# Interface\nRUN addgroup --gid ${INTERFACE_GID:-1002} interface\nRUN useradd --gid ${INTERFACE_GID:-1002} --uid ${INTERFACE_UID:-1002} -r -s /bin/false interface\nRUN ln -sf /dev/stdout /var/log/nginx/access.log && ln -sf /dev/stderr /var/log/nginx/error.log\nCOPY Build-Automation/WirtBot/nginx/nginx.conf /etc/nginx/nginx.conf\nCOPY --from=interface /wirtbot/Interface/dist /interface\n\nRUN chown -R interface:interface /var/log/nginx\nRUN chown -R interface:interface /interface\nCOPY Build-Automation/WirtBot/service-files/interface /etc/services.d/interface/run\nCOPY Build-Automation/WirtBot/service-files/finisher /etc/services.d/interface/finish\n\n# Core DNS\n## CA-certificates are needed for correct DNSoverTLS forwarding of DNS requests\nRUN apt-get install --no-install-recommends -yy ca-certificates && rm -rf /var/lib/apt/lists/*;\nRUN addgroup --gid ${DNS_GID:-1003} coredns\nRUN useradd --gid ${DNS_GID:-1003} --uid ${DNS_UID:-1003} -r -s /bin/false coredns\nRUN mkdir -p /etc/coredns\n\n## Copy the coredns binary with ads plugin from the coredns build image\nCOPY --from=coredns /coredns /usr/bin/coredns\n\n## Make the Corefile writable by all members of the coredns group\nCOPY Build-Automation/WirtBot/service-files/Corefile /etc/coredns/Corefile\nRUN chmod 660 /etc/coredns/Corefile\n\n\nCOPY Build-Automation/WirtBot/service-files/dns /etc/services.d/coredns/run\nCOPY Build-Automation/WirtBot/service-files/finisher /etc/services.d/coredns/finish\n## Set permissions after container spawn, this ensures that even if files are mounted in, they will still be writable\nCOPY Build-Automation/WirtBot/service-files/fix-dns-permissions /etc/fix-attrs.d/01-fix-dns-permissions\n\n# WirtBot Core\nRUN addgroup --gid ${CORE_GID:-1001} core\n## Add core user to coredns group as well to be able to change the Corefile\nRUN useradd --gid ${CORE_GID:-1001} --groups ${DNS_GID:-1003} --uid ${CORE_UID:-1001} -r -s /bin/false core\nRUN mkdir -p /etc/wireguard\nCOPY Build-Automation/WirtBot/service-files/initial-wireguard-config /etc/wireguard/server.conf\n\nCOPY --from=builder /builder/artifact/release/wirtbot /usr/bin/wirtbot-core\nCOPY Build-Automation/WirtBot/service-files/core /etc/services.d/core/run\nCOPY Build-Automation/WirtBot/service-files/finisher /etc/services.d/core/finish\n## Set permissions after container spawn, this ensures that even if files are mounted in, they will still be writable\nCOPY Build-Automation/WirtBot/service-files/fix-wireguard-permissions /etc/fix-attrs.d/02-fix-wireguard-permissions\n\n\n# enable IPv4 forwarding\nRUN echo 'net.ipv4.ip_forward = 1' | tee -a /etc/sysctl.conf\n\n# WireGuard restarter script\nCOPY Core/wireguard-restarter.sh /usr/bin/wireguard-restarter\nRUN chmod +x /usr/bin/wireguard-restarter\nCOPY Build-Automation/WirtBot/service-files/wireguard-restarter /etc/services.d/wireguard-restarter/run\n\n## WireGuard metrics\nCOPY --from=builder /usr/local/cargo/bin/prometheus_wireguard_exporter .\nRUN chmod +x prometheus_wireguard_exporter && mv prometheus_wireguard_exporter /usr/bin\nCOPY Build-Automation/WirtBot/service-files/wireguard-metrics /etc/services.d/wireguard-metrics/run\n\n## Add NFT firewall to allow traffic masquerading when using routed mode\nARG environment=production\nRUN apt-get install --no-install-recommends -yy nftables && rm -rf /var/lib/apt/lists/*;\nCOPY Build-Automation/WirtBot/service-files/firewall /firewall.sh\nRUN if [ \"$environment\" = \"test\" ] ; then rm /firewall.sh && touch /firewall.sh && echo \"#! /bin/bash\" >> /firewall.sh; fi\nRUN chmod +x /firewall.sh\n\n\n\n# Clean up script to shut down WireGuard interface on container exit\nCOPY Build-Automation/WirtBot/service-files/clean-up /etc/cont-finish.d/clean\n\nEXPOSE 3030\nEXPOSE 9586\nEXPOSE 9153\nEXPOSE 80\nEXPOSE 53\n\nCOPY Build-Automation/WirtBot/entrypoint.sh /entrypoint.sh\nRUN chmod +x /entrypoint.sh\n\nENTRYPOINT [\"/entrypoint.sh\"]\n"
+}

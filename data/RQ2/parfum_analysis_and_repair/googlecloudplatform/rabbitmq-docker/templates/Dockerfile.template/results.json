@@ -1,0 +1,53 @@
+{
+  "startTime": 1674256093904,
+  "endTime": 1674256095250,
+  "originalSmells": [
+    {
+      "rule": "sha256sumEchoOneSpaces",
+      "position": {
+        "lineStart": 51,
+        "lineEnd": 51,
+        "columnStart": 2,
+        "columnEnd": 77
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 52,
+        "lineEnd": 52,
+        "columnStart": 2,
+        "columnEnd": 87
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 156,
+        "lineEnd": 156,
+        "columnStart": 2,
+        "columnEnd": 97
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 179,
+        "lineEnd": 179,
+        "columnStart": 18,
+        "columnEnd": 40
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 179,
+        "lineEnd": 179,
+        "columnStart": 18,
+        "columnEnd": 40
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "{{- $otp := index .Packages \"otp\" -}}\n{{- $rabbitmq := index .Packages \"rabbitmq\" -}}\n\nFROM {{ .From }}\n\n# grab gosu for easy step-down from root\nRUN set -eux; \\\n  apt-get update; \\\n  apt-get install -y --no-install-recommends \\\n    gosu; \\\n  rm -rf /var/lib/apt/lists/*; \\\n# verify that the \"gosu\" binary works\n  gosu nobody true\n\nENV OTP_VERSION {{ $otp.Version }}\nENV OTP_SOURCE_SHA256=\"{{ $otp.Sha256 }}\"\n\n# Install dependencies required to build Erlang/OTP from source\n# http://erlang.org/doc/installation_guide/INSTALL.html\n# autoconf: Required to configure Erlang/OTP before compiling\n# dpkg-dev: Required to set up host & build type when compiling Erlang/OTP\n# libncurses5-dev: Required for Erlang/OTP new shell & observer_cli - https://github.com/zhongwencool/observer_cli\nRUN set -eux; \\\n\n  savedAptMark=\"$(apt-mark showmanual)\"; \\\n  apt-get update; \\\n  apt-get install --yes --no-install-recommends \\\n    autoconf \\\n    ca-certificates \\\n    dirmngr \\\n    dpkg-dev \\\n    gcc \\\n    g++ \\\n    gnupg \\\n    libssl-dev \\\n    libncurses5-dev \\\n    m4 \\\n    make \\\n    openssl \\\n    wget \\\n  ; \\\n  rm -rf /var/lib/apt/lists/*; \\\n\n  openssl version; \\\n\n  OTP_SOURCE_URL=\"https://github.com/erlang/otp/archive/OTP-$OTP_VERSION.tar.gz\"; \\\n  OTP_PATH=\"/usr/local/src/otp-$OTP_VERSION\"; \\\n\n# Download, verify & extract OTP_SOURCE\n  mkdir -p \"$OTP_PATH\"; \\\n  wget --progress dot:giga --output-document \"$OTP_PATH.tar.gz\" \"$OTP_SOURCE_URL\"; \\\n  echo \"$OTP_SOURCE_SHA256  *$OTP_PATH.tar.gz\" | sha256sum --check --strict -; \\\n  tar --extract --file \"$OTP_PATH.tar.gz\" --directory \"$OTP_PATH\" --strip-components 1; rm \"$OTP_PATH.tar.gz\" \\\n\n# Configure Erlang/OTP for compilation, disable unused features & applications\n# http://erlang.org/doc/applications.html\n# ERL_TOP is required for Erlang/OTP makefiles to find the absolute path for the installation\n  cd \"$OTP_PATH\"; \\\n  export ERL_TOP=\"$OTP_PATH\"; \\\n  ./otp_build autoconf; \\\n  CFLAGS=\"$(dpkg-buildflags --get CFLAGS)\"; export CFLAGS; \\\n# add -rpath to avoid conflicts between our OpenSSL's \"libssl.so\" and the libssl package by making sure /usr/local/lib is searched first (but only for Erlang/OpenSSL to avoid issues with other tools using libssl; https://github.com/docker-library/rabbitmq/issues/364)\n  export CFLAGS=\"$CFLAGS -Wl,-rpath=/usr/lib/ssl\"; \\\n  hostArch=\"$(dpkg-architecture --query DEB_HOST_GNU_TYPE)\"; \\\n  buildArch=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\"; \\\n  dpkgArch=\"$(dpkg --print-architecture)\"; dpkgArch=\"${dpkgArch##*-}\"; \\\n  ./configure \\\n    --host=\"$hostArch\" \\\n    --build=\"$buildArch\" \\\n    --disable-dynamic-ssl-lib \\\n    --disable-hipe \\\n    --disable-sctp \\\n    --disable-silent-rules \\\n    --enable-jit \\\n    --enable-clock-gettime \\\n    --enable-hybrid-heap \\\n    --enable-kernel-poll \\\n    --enable-shared-zlib \\\n    --enable-smp-support \\\n    --enable-threads \\\n    --with-microstate-accounting=extra \\\n    --without-common_test \\\n    --without-debugger \\\n    --without-dialyzer \\\n    --without-diameter \\\n    --without-edoc \\\n    --without-erl_docgen \\\n    --without-et \\\n    --without-eunit \\\n    --without-ftp \\\n    --without-hipe \\\n    --without-jinterface \\\n    --without-megaco \\\n    --without-observer \\\n    --without-odbc \\\n    --without-reltool \\\n    --without-ssh \\\n    --without-tftp \\\n    --without-wx \\\n  ; \\\n# Compile & install Erlang/OTP\n  make -j \"$(getconf _NPROCESSORS_ONLN)\" GEN_OPT_FLGS=\"-O2 -fno-strict-aliasing\"; \\\n  make install; \\\n  cd ..; \\\n  rm -rf \\\n    \"$OTP_PATH\"* \\\n    /usr/local/lib/erlang/lib/*/examples \\\n    /usr/local/lib/erlang/lib/*/src \\\n  ; \\\n\n# Check that Erlang/OTP crypto & ssl were compiled against OpenSSL correctly\n  erl -noshell -eval 'io:format(\"~p~n~n~p~n~n\", [crypto:supports(), ssl:versions()]), init:stop().'\n\nENV RABBITMQ_DATA_DIR=/var/lib/rabbitmq\n# Create rabbitmq system user & group, fix permissions & allow root user to connect to the RabbitMQ Erlang VM\nRUN set -eux; \\\n  groupadd --gid 999 --system rabbitmq; \\\n  useradd --uid 999 --system --home-dir \"$RABBITMQ_DATA_DIR\" --gid rabbitmq rabbitmq; \\\n  mkdir -p \"$RABBITMQ_DATA_DIR\" /etc/rabbitmq /tmp/rabbitmq-ssl /var/log/rabbitmq /etc/rabbitmq/conf.d; \\\n  chown -fR rabbitmq:rabbitmq \"$RABBITMQ_DATA_DIR\" /etc/rabbitmq /tmp/rabbitmq-ssl /var/log/rabbitmq /etc/rabbitmq/conf.d; \\\n  chmod 777 \"$RABBITMQ_DATA_DIR\" /etc/rabbitmq /tmp/rabbitmq-ssl /var/log/rabbitmq /etc/rabbitmq/conf.d; \\\n  ln -sf \"$RABBITMQ_DATA_DIR/.erlang.cookie\" /root/.erlang.cookie\n\n\nENV RABBITMQ_VERSION {{ $rabbitmq.Version }}\nENV RABBITMQ_SHA512=\"{{ $rabbitmq.Sha512 }}\"\nENV RABBITMQ_HOME=/opt/rabbitmq\n\nENV C2D_RELEASE {{ $rabbitmq.Version }}\n\n# Add RabbitMQ to PATH, send all logs to TTY\nENV PATH=$RABBITMQ_HOME/sbin:$PATH \\\n  RABBITMQ_LOGS=-\n\n# Install RabbitMQ\nRUN set -eux; \\\n\n  savedAptMark=\"$(apt-mark showmanual)\"; \\\n  apt-get update; \\\n  apt-get install --yes --no-install-recommends \\\n    ca-certificates \\\n    dirmngr \\\n    gnupg2 \\\n    wget \\\n    \n    xz-utils \\\n  ; \\\n  rm -rf /var/lib/apt/lists/*; \\\n\n  RABBITMQ_SOURCE_URL=\"https://github.com/rabbitmq/rabbitmq-server/releases/download/v$RABBITMQ_VERSION/rabbitmq-server-generic-unix-latest-toolchain-$RABBITMQ_VERSION.tar.xz\"; \\\n  RABBITMQ_PATH=\"/usr/local/src/rabbitmq-$RABBITMQ_VERSION\"; \\\n\n  wget --progress dot:giga --output-document \"$RABBITMQ_PATH.tar.xz\" \"$RABBITMQ_SOURCE_URL\"; \\\n\n  mkdir -p \"$RABBITMQ_HOME\"; \\\n  echo \"$RABBITMQ_SHA512 *$RABBITMQ_PATH.tar.xz\" | sha512sum --check --strict -; \\\n  tar --extract --file \"$RABBITMQ_PATH.tar.xz\" --directory \"$RABBITMQ_HOME\" --strip-components 1; rm \"$RABBITMQ_PATH.tar.xz\" \\\n  rm -rf \"$RABBITMQ_PATH\"*; \\\n# Do not default SYS_PREFIX to RABBITMQ_HOME, leave it empty\n  grep -qE '^SYS_PREFIX=\\$\\{RABBITMQ_HOME\\}$' \"$RABBITMQ_HOME/sbin/rabbitmq-defaults\"; \\\n  sed -i 's/^SYS_PREFIX=.*$/SYS_PREFIX=/' \"$RABBITMQ_HOME/sbin/rabbitmq-defaults\"; \\\n  grep -qE '^SYS_PREFIX=$' \"$RABBITMQ_HOME/sbin/rabbitmq-defaults\"; \\\n  chown -R rabbitmq:rabbitmq \"$RABBITMQ_HOME\"; \\\n\n  # reset apt-mark's \"manual\" list so that \"purge --auto-remove\" will remove all build dependencies\n  apt-mark auto '.*' > /dev/null; \\\n  [ -z \"$savedAptMark\" ] || apt-mark manual $savedAptMark; \\\n  find /usr/local -type f -executable -exec ldd '{}' ';' \\\n    | awk '/=>/ { print $(NF-1) }' \\\n    | sort -u \\\n    | xargs -r dpkg-query --search \\\n    | cut -d: -f1 \\\n    | sort -u \\\n    | xargs -r apt-mark manual \\\n  ; \\\n  apt-get purge -y --auto-remove -o APT::AutoRemove::RecommendsImportant=false; \\\n# verify assumption of no stale cookies\n  [ ! -e \"$RABBITMQ_DATA_DIR/.erlang.cookie\" ]\n\nRUN apt update && apt install --no-install-recommends -y openssl && rm -rf /var/lib/apt/lists/*;\n\n# Ensure RabbitMQ was installed correctly by running a few commands that do not depend on a running server, as the rabbitmq user\n# If they all succeed, it's safe to assume that things have been set up correctly\nRUN\tgosu rabbitmq rabbitmqctl help; \\\n  gosu rabbitmq rabbitmqctl list_ciphers; \\\n  gosu rabbitmq rabbitmq-plugins list; \\\n# no stale cookies\n  rm \"$RABBITMQ_DATA_DIR/.erlang.cookie\"\n\n# Enable Prometheus-style metrics by default (https://github.com/docker-library/rabbitmq/issues/419)\nRUN set -eux; \\\n\tgosu rabbitmq rabbitmq-plugins enable --offline rabbitmq_prometheus; \\\n\techo 'management_agent.disable_metrics_collector = true' > /etc/rabbitmq/conf.d/management_agent.disable_metrics_collector.conf; \\\n\tchown rabbitmq:rabbitmq /etc/rabbitmq/conf.d/management_agent.disable_metrics_collector.conf\n\n# Added for backwards compatibility - users can simply COPY custom plugins to /plugins\nRUN ln -sf /opt/rabbitmq/plugins /plugins\n\n# set home so that any `--user` knows where to put the erlang cookie\nENV HOME $RABBITMQ_DATA_DIR\n# Hint that the data (a.k.a. home dir) dir should be separate volume\nVOLUME $RABBITMQ_DATA_DIR\n\n# warning: the VM is running with native name encoding of latin1 which may cause Elixir to malfunction as it expects utf8. Please ensure your locale is set to UTF-8 (which can be verified by running \"locale\" in your shell)\n# Setting all environment variables that control language preferences, behaviour differs - https://www.gnu.org/software/gettext/manual/html_node/The-LANGUAGE-variable.html#The-LANGUAGE-variable\n# https://docs.docker.com/samples/library/ubuntu/#locales\nENV LANG=C.UTF-8 LANGUAGE=C.UTF-8 LC_ALL=C.UTF-8\n\nCOPY --chown=rabbitmq:rabbitmq docker-entrypoint.sh /usr/local/bin/\n\nENTRYPOINT [\"docker-entrypoint.sh\"]\n\nEXPOSE 4369 5671 5672 25672\nCMD [\"rabbitmq-server\"]\n"
+}

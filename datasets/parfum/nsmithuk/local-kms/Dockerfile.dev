@@ -1,0 +1,21 @@
+FROM golang:1.17-alpine
+
+RUN mkdir -p /go/src/github.com/nsmithuk/local-kms
+COPY . /go/src/github.com/nsmithuk/local-kms
+
+WORKDIR /go/src/github.com/nsmithuk/local-kms
+
+RUN apk add --no-cache --update git \
+    && go get -u github.com/canthefason/go-watcher  \
+    && go install github.com/canthefason/go-watcher/cmd/watcher
+
+RUN mkdir /init
+RUN mkdir /data
+
+ENV KMS_ACCOUNT_ID 111122223333
+ENV KMS_REGION eu-west-2
+ENV KMS_DATA_PATH /data
+
+ENV PORT 8080
+
+ENTRYPOINT ["watcher"]

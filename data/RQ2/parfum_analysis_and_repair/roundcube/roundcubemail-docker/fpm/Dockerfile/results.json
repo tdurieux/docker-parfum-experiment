@@ -1,0 +1,35 @@
+{
+  "startTime": 1674248909927,
+  "endTime": 1674248911581,
+  "originalSmells": [
+    {
+      "rule": "gpgUseBatchFlag",
+      "position": {
+        "lineStart": 85,
+        "lineEnd": 85,
+        "columnStart": 1,
+        "columnEnd": 89
+      }
+    },
+    {
+      "rule": "gpgUseBatchFlag",
+      "position": {
+        "lineStart": 86,
+        "lineEnd": 86,
+        "columnStart": 1,
+        "columnEnd": 89
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 78,
+        "lineEnd": 78,
+        "columnStart": 1,
+        "columnEnd": 55
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM php:7.4-fpm\nLABEL maintainer=\"Thomas Bruederli <thomas@roundcube.net>\"\n\nRUN set -ex; \\\n\tapt-get update; \\\n\t\\\n\tsavedAptMark=\"$(apt-mark showmanual)\"; \\\n\t\\\n\tapt-get install -y --no-install-recommends \\\n\t\tlibfreetype6-dev \\\n\t\tlibicu-dev \\\n\t\tlibjpeg62-turbo-dev \\\n\t\tlibldap2-dev \\\n\t\tlibmagickwand-dev \\\n\t\tlibpng-dev \\\n\t\tlibpq-dev \\\n\t\tlibsqlite3-dev \\\n\t\tlibzip-dev \\\n\t\tlibpspell-dev \\\n\t\tlibonig-dev \\\n\t\tlibldap-common \\\n\t; \\\n\t\\\n\tdebMultiarch=\"$(dpkg-architecture --query DEB_BUILD_MULTIARCH)\"; \\\n\tdocker-php-ext-configure gd --with-jpeg --with-freetype; \\\n\tdocker-php-ext-configure ldap --with-libdir=\"lib/$debMultiarch\"; \\\n\tdocker-php-ext-install \\\n\t\texif \\\n\t\tgd \\\n\t\tintl \\\n\t\tldap \\\n\t\tpdo_mysql \\\n\t\tpdo_pgsql \\\n\t\tpdo_sqlite \\\n\t\tzip \\\n\t\tpspell \\\n\t; \\\n\tpecl install imagick redis; \\\n\tdocker-php-ext-enable imagick opcache redis; \\\n\t\\\n# reset apt-mark's \"manual\" list so that \"purge --auto-remove\" will remove all build dependencies\n\tapt-mark auto '.*' > /dev/null; \\\n\tapt-mark manual $savedAptMark; \\\n\tldd \"$(php -r 'echo ini_get(\"extension_dir\");')\"/*.so \\\n\t\t| awk '/=>/ { print $3 }' \\\n\t\t| sort -u \\\n\t\t| xargs -r dpkg-query -S \\\n\t\t| cut -d: -f1 \\\n\t\t| sort -u \\\n\t\t| xargs -rt apt-mark manual; \\\n\t\\\n\tapt-get purge -y --auto-remove -o APT::AutoRemove::RecommendsImportant=false; \\\n\trm -rf /var/lib/apt/lists/*\n\n# installto.sh dependencies\nRUN set -ex; \\\n\t\\\n\tapt-get update; \\\n\tapt-get install -y --no-install-recommends \\\n\t\t\taspell \\\n\t\t\taspell-en \\\n\t\t\trsync \\\n\t; \\\n\trm -rf /var/lib/apt/lists/*\n\nCOPY --from=composer:2 /usr/bin/composer /usr/bin/composer\n\n\n# Define Roundcubemail version\nENV ROUNDCUBEMAIL_VERSION 1.5.3\n\n# Define the GPG key used for the bundle verification process\nENV ROUNDCUBEMAIL_KEYID \"F3E4 C04B B3DB 5D42 15C4  5F7F 5AB2 BAA1 41C4 F7D5\"\n\n# Download package and extract to web volume\nRUN set -ex; \\\n\tfetchDeps=\"gnupg dirmngr locales libc-l10n\"; \\\n\tapt-get -qq update; \\\n\tapt-get install -y --no-install-recommends $fetchDeps; rm -rf /var/lib/apt/lists/*; \\\n\tcurl -o roundcubemail.tar.gz -fSL https://github.com/roundcube/roundcubemail/releases/download/${ROUNDCUBEMAIL_VERSION}/roundcubemail-${ROUNDCUBEMAIL_VERSION}-complete.tar.gz; \\\n\tcurl -o roundcubemail.tar.gz.asc -fSL https://github.com/roundcube/roundcubemail/releases/download/${ROUNDCUBEMAIL_VERSION}/roundcubemail-${ROUNDCUBEMAIL_VERSION}-complete.tar.gz.asc; \\\n\texport GNUPGHOME=\"$(mktemp -d)\"; \\\n\t# workaround for \"Cannot assign requested address\", see e.g. https://github.com/inversepath/usbarmory-debian-base_image/issues/9\n\techo \"disable-ipv6\" > \"$GNUPGHOME/dirmngr.conf\"; \\\n\tcurl -fSL https://roundcube.net/download/pubkey.asc -o /tmp/pubkey.asc; \\\n\tLC_ALL=C.UTF-8 gpg --batch -n --show-keys --with-fingerprint --keyid-format=long /tmp/pubkey.asc | if [ $(grep -c -o 'Key fingerprint') != 1 ]; then echo 'The key file should contain only one GPG key'; exit 1; fi; \\\n\tLC_ALL=C.UTF-8 gpg --batch -n --show-keys --with-fingerprint --keyid-format=long /tmp/pubkey.asc | if [ $(grep -c -o \"${ROUNDCUBEMAIL_KEYID}\") != 1 ]; then echo 'The key ID should be the roundcube one'; exit 1; fi; \\\n\tgpg --batch --import /tmp/pubkey.asc; \\\n\trm /tmp/pubkey.asc; \\\n\tgpg --batch --verify roundcubemail.tar.gz.asc roundcubemail.tar.gz; \\\n\tgpgconf --kill all; \\\n\tmkdir /usr/src/roundcubemail; \\\n\ttar -xf roundcubemail.tar.gz -C /usr/src/roundcubemail --strip-components=1 --no-same-owner; \\\n\trm -r \"$GNUPGHOME\" roundcubemail.tar.gz.asc roundcubemail.tar.gz; \\\n\trm -rf /usr/src/roundcubemail/installer; \\\n\tchown -R www-data:www-data /usr/src/roundcubemail/logs\n\n# copy the latest version of initdb.sh which supports the --update flag\nRUN curl -fL https://raw.githubusercontent.com/roundcube/roundcubemail/master/bin/initdb.sh > /usr/src/roundcubemail/bin/initdb.sh && chmod +x /usr/src/roundcubemail/bin/initdb.sh\n\n# include the wait-for-it.sh script\nRUN curl -fL https://raw.githubusercontent.com/vishnubob/wait-for-it/master/wait-for-it.sh > /wait-for-it.sh && chmod +x /wait-for-it.sh\n\n# use custom PHP settings\nCOPY php.ini /usr/local/etc/php/conf.d/roundcube-defaults.ini\n\nCOPY --chmod=0755 docker-entrypoint.sh /\n\nRUN mkdir -p /var/roundcube/config\n\nENTRYPOINT [\"/docker-entrypoint.sh\"]\nCMD [\"php-fpm\"]\n"
+}

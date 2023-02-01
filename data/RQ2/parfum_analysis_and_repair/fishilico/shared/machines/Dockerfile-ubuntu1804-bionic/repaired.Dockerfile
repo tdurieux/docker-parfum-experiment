@@ -1,0 +1,115 @@
+FROM ubuntu:18.04
+LABEL Description="Ubuntu 18.04 LTS Bionic Beaver with build dependencies for shared"
+
+# Override the language to force UTF-8 output
+ENV LANG=C.UTF-8
+
+RUN \
+    export DEBIAN_FRONTEND=noninteractive && \
+    dpkg --add-architecture i386 && \
+    apt-get -qq update && \
+    apt-get install --no-install-recommends --no-install-suggests -qqy \
+        binutils-mingw-w64 \
+        cargo \
+        clang \
+        coq \
+        gcc-mingw-w64 \
+        gcc-multilib \
+        gdb \
+        libc-dev \
+        libc6-dev-i386 \
+        libgmp-dev \
+        libgtk-3-dev \
+        libmnl-dev \
+        libpulse-dev \
+        libsdl2-dev \
+        libssl-dev \
+        linux-headers-generic \
+        m4 \
+        make \
+        musl-dev \
+        musl-tools \
+        openjdk-11-jdk \
+        openssh-client \
+        openssl \
+        pkgconf \
+        python3 \
+        python3-cffi \
+        python3-cryptography \
+        python3-dev \
+        python3-gmpy2 \
+        python3-nacl \
+        python3-numpy \
+        python3-pil \
+        python3-pycryptodome \
+        python-argparse \
+        python-cffi \
+        python-dev \
+        python-gmpy2 \
+        python-numpy \
+        python-pil \
+        python-pycryptodome \
+        python-z3 \
+        sagemath \
+        wine-stable \
+        wine32 \
+        wine64 && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*;
+
+WORKDIR /shared
+RUN ln -s shared/machines/run_shared_test.sh /run_shared_test.sh
+COPY . /shared/
+
+CMD ["/run_shared_test.sh"]
+
+# make list-nobuild:
+#    Global blacklist: latex%
+#    In sub-directories:
+#       c:
+#       glossaries:
+#       java/keystore:
+#       linux:
+#       python: z3_example.py
+#       python/crypto:
+#       python/network:
+#       python/network/dnssec:
+#       python/qrcode:
+#       rust:
+#       verification:
+#    With gcc -m32:
+#       Global blacklist: latex%
+#       In sub-directories:
+#          c: gmp_functions gtk_alpha_window
+#          glossaries:
+#          java/keystore:
+#          linux: enum_link_addrs pulseaudio_echo sdl_v4l_video
+#          python: z3_example.py
+#          python/crypto:
+#          python/network:
+#          python/network/dnssec:
+#          python/qrcode:
+#          rust:
+#          verification:
+#    Compilers:
+#       gcc -m64: ok
+#       gcc -m32: ok
+#       clang -m64: ok
+#       clang -m32: ok
+#       musl-gcc: ok
+#       x86_64-w64-mingw32-gcc: ok
+#       i686-w64-mingw32-gcc: ok
+#    Versions:
+#       gcc: gcc (Ubuntu 7.5.0-3ubuntu1~18.04) 7.5.0
+#       clang: clang version 6.0.0-1ubuntu2 (tags/RELEASE_600/final)
+#       x86_64-w64-mingw32-gcc: x86_64-w64-mingw32-gcc (GCC) 7.3-win32 20180312
+#       i686-w64-mingw32-gcc: i686-w64-mingw32-gcc (GCC) 7.3-win32 20180312
+#       wine: wine-3.0 (Ubuntu 3.0-1ubuntu1)
+#       Linux kernel: 4.15.0-187-generic
+#       /lib/ld-musl-x86_64.so.1: musl libc (x86_64) Version 1.1.19
+#       python3: Python 3.6.9
+#       javac: javac 11.0.15
+#       java: openjdk 11.0.15 2022-04-19
+#       rustc: rustc 1.59.0
+#       cargo: cargo 1.59.0
+#       coqc: The Coq Proof Assistant, version 8.6 (October 2017) compiled on Oct 28 2017 14:23:55 with OCaml 4.05.0
+#       openssl: OpenSSL 1.1.1  11 Sep 2018

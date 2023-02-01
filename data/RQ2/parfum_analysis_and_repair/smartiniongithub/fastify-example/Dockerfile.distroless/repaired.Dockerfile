@@ -1,0 +1,33 @@
+FROM node:14 as builder
+
+LABEL version="3.0.0"
+LABEL description="Example Fastify (Node.js) webapp Docker Image"
+LABEL maintainer="Sandro Martini <sandro.martini@gmail.com>"
+
+WORKDIR /app
+
+# set default node env
+ENV NODE_ENV=production
+ENV NPM_CONFIG_LOGLEVEL=warn
+
+# copy project definition/dependencies files, for better reuse of layers
+COPY package*.json ./
+
+# copy stuff required by prepublish (postinstall)
+COPY .snyk ./
+
+# install dependencies here, for better reuse of layers
+RUN npm install && npm audit fix && npm cache clean --force;
+
+# copy all sources in the container (exclusions in .dockerignore file)
+COPY . .
+
+
+# release layer (the only one in the final image)
+FROM gcr.io/distroless/nodejs:14 AS release
+COPY --from=builder /app /app
+WORKDIR /app
+
+EXPOSE 8000
+
+CMD [ "./src/server" ]

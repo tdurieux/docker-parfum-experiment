@@ -1,0 +1,11 @@
+FROM ruby:latest
+
+RUN adduser --disabled-password --gecos '' developer
+RUN gem install travis 
+RUN yes | travis report --com
+
+USER developer
+
+WORKDIR /travis
+
+ENTRYPOINT [ "travis" ]

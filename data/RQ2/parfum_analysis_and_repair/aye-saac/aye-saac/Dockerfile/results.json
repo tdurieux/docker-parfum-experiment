@@ -1,0 +1,62 @@
+{
+  "startTime": 1674220780300,
+  "endTime": 1674220781126,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 33,
+        "lineEnd": 33,
+        "columnStart": 4,
+        "columnEnd": 89
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 61,
+        "lineEnd": 61,
+        "columnStart": 1,
+        "columnEnd": 113
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 62,
+        "lineEnd": 62,
+        "columnStart": 1,
+        "columnEnd": 111
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 4,
+        "lineEnd": 5,
+        "columnStart": 4,
+        "columnEnd": 5
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 13,
+        "lineEnd": 27,
+        "columnStart": 1,
+        "columnEnd": 17
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 77,
+        "lineEnd": 80,
+        "columnStart": 1,
+        "columnEnd": 9
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# ----------------------------------- Base ----------------------------------- #\nFROM python:3.8-slim as base\n\nRUN apt-get update -qq \\\n\t&& apt-get install -y --no-install-recommends \\\n\tcurl \\\n\t&& apt-get autoremove -y \\\n\t&& apt-get clean -y && rm -rf /var/lib/apt/lists/*;\n\n# ---------------------------------- Builder --------------------------------- #\nFROM base as builder\n\nRUN apt-get update -qq && \\\n\tapt-get install -y --no-install-recommends \\\n\tgit \\\n\tbuild-essential \\\n\tpython3-dev \\\n\tlibffi-dev \\\n\tlibssl-dev \\\n\t# For PIL\n\tzlib1g \\\n\t# For opencv\n\tlibsm6 \\\n\tlibxext6 \\\n\tlibxrender-dev \\\n\t# Tesseract\n\ttesseract-ocr \\\n\tlibtesseract-dev \\\n\t&& apt-get autoremove -y \\\n\t&& apt-get clean -y && rm -rf /var/lib/apt/lists/*;\n\n# Install Poetry & ensure it is in $PATH\n# RUN curl -sSL https://raw.githubusercontent.com/sdispater/poetry/master/get-poetry.py | POETRY_PREVIEW=1 python\nRUN curl -f -sSL https://raw.githubusercontent.com/python-poetry/poetry/master/get-poetry.py | python\nENV PATH \"/root/.poetry/bin:/opt/venv/bin:${PATH}\"\n\n# Copy deps information\nCOPY pyproject.toml poetry.lock /app/\n\n# Copy spacy install script\nCOPY scripts/download-spacy-model.sh /app/\n\n# Instals deps\nRUN python -m venv /opt/venv && \\\n\t. /opt/venv/bin/activate && \\\n\tcd /app && \\\n\tpip install --no-cache-dir -U pip setuptools && \\\n\tpoetry install --no-dev --no-root --no-interaction && \\\n\t# Download spacy model\n\tbash download-spacy-model.sh && \\\n\trm -rf dist *.egg-info\n\n\n\n# ---------------------------------- Models ---------------------------------- #\nFROM base as models\n\n# Download OCR model\n# RUN mkdir -p ./root/.keras-ocr\nRUN mkdir -p ./root/.keras-ocr && ( cd /root/.keras-ocr && \\\n\tcurl -f -L -o craft_mlt_25k.h5 https://github.com/faustomorales/keras-ocr/releases/download/v0.8.4/craft_mlt_25k.h5 && \\\n\tcurl -f -L -o crnn_kurapan.h5 https://github.com/faustomorales/keras-ocr/releases/download/v0.8.4/crnn_kurapan.h5)\n\n# Download COCO Resnet model\nCOPY scripts/download-resnet-model.sh .\nRUN bash download-resnet-model.sh\n\n# Download EPIC-KITCHENS baseline model and noun classes\nCOPY scripts/download-epic-kitchens-model.sh .\nRUN bash download-epic-kitchens-model.sh .\n\n# ---------------------------------- Runner ---------------------------------- #\nFROM base as runner\n\nRUN apt-get update -qq && \\\n\tapt-get install -y --no-install-recommends \\\n\tffmpeg \\\n\tlibsm6 \\\n\tlibxext6 \\\n\t&& apt-get autoremove -y \\\n\t&& apt-get clean -y && rm -rf /var/lib/apt/lists/*;\n\nCOPY --from=builder /opt/venv /opt/venv\nCOPY --from=models /root/.keras-ocr /root/.keras-ocr\nCOPY --from=models /data/coco_resnet /app/data/coco_resnet\nCOPY --from=models /data/epic_kitchens /app/data/epic_kitchens\nCOPY . app/\n\n# Add the VirtualEnv to $PATH\nENV PATH=\"/opt/venv/bin:$PATH\"\n\nRUN . /opt/venv/bin/activate\n\nWORKDIR /app\nENV PYTHONPATH=./ayesaac\n\n\n# Add Entrypoint\nRUN chmod +x ./scripts/wait-for-it.sh ./scripts/docker-entrypoint.sh\n\nENTRYPOINT [\"./scripts/docker-entrypoint.sh\"]\n"
+}

@@ -1,0 +1,44 @@
+{
+  "startTime": 1674218946470,
+  "endTime": 1674218947705,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 28,
+        "lineEnd": 28,
+        "columnStart": 22,
+        "columnEnd": 73
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 31,
+        "lineEnd": 31,
+        "columnStart": 23,
+        "columnEnd": 56
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 28,
+        "lineEnd": 28,
+        "columnStart": 22,
+        "columnEnd": 73
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 31,
+        "lineEnd": 31,
+        "columnStart": 23,
+        "columnEnd": 56
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Stage: Build\nFROM gradle:5.4.1-jdk8 AS build\nADD . /home/gradle/project\nWORKDIR /home/gradle/project\nRUN gradle jpi\n\n\n# Stage: Prod\nFROM jenkins/jenkins:2.222.3 as prod\nWORKDIR /tmp\n\n# Environment variables used throughout this Dockerfile\n#\n# $JENKINS_HOME     will be the final destination that Jenkins will use as its\n#                   data directory. This cannot be populated before Marathon\n#                   has a chance to create the host-container volume mapping.\n#\nENV JENKINS_FOLDER /usr/share/jenkins\n\n# Build Args\nARG JENKINS_STAGING=/usr/share/jenkins/ref/\n\n# Default policy according to https://wiki.jenkins.io/display/JENKINS/Configuring+Content+Security+Policy\nENV JENKINS_CSP_OPTS=\"sandbox; default-src 'none'; img-src 'self'; style-src 'self';\"\n\nUSER root\n\n# install dependencies\nRUN apt-get update && apt-get install --no-install-recommends -y nginx python zip jq gettext-base && rm -rf /var/lib/apt/lists/*;\n# update to newer git version\nRUN echo \"deb http://ftp.debian.org/debian testing main\" >> /etc/apt/sources.list \\\n  && apt-get update && apt-get -t testing --no-install-recommends install -y git && rm -rf /var/lib/apt/lists/*;\n\n# Override the default property for DNS lookup caching\nRUN echo 'networkaddress.cache.ttl=60' >> ${JAVA_HOME}/jre/lib/security/java.security\n\n# Create needed dir\nRUN mkdir -p \"$JENKINS_HOME\" \"${JENKINS_FOLDER}/war\"\n\n# Nginx setup\nRUN mkdir -p /var/log/nginx/jenkins\nCOPY dcos-testing/conf/nginx/nginx.conf.template /etc/nginx/nginx.conf.template\n\n# Jenkins setup and configuration.\nENV CASC_JENKINS_CONFIG /usr/local/jenkins/jenkins.yaml\nCOPY dcos-testing/conf/jenkins/configuration.yaml \"${CASC_JENKINS_CONFIG}\"\n\n# Add plugins\nCOPY dcos-testing/conf/plugins.conf /tmp/\nRUN /usr/local/bin/install-plugins.sh < /tmp/plugins.conf\n\n# Add Mesos plugin\nCOPY --from=build /home/gradle/project/build/libs/mesos.hpi \"${JENKINS_STAGING}/plugins/mesos.hpi\"\n\n# Disable first-run wizard\nRUN echo 2.0 > /usr/share/jenkins/ref/jenkins.install.UpgradeWizard.state\n\nCMD envsubst '\\$PORT0 \\$PORT1 \\$JENKINS_CONTEXT' < /etc/nginx/nginx.conf.template > /etc/nginx/nginx.conf && nginx \\\n  && java ${JVM_OPTS}                                \\\n     -Dhudson.model.DirectoryBrowserSupport.CSP=\"${JENKINS_CSP_OPTS}\" \\\n     -Dhudson.udp=-1                                 \\\n     -Djava.awt.headless=true                        \\\n     -Dhudson.DNSMultiCast.disabled=true             \\\n     -Djenkins.install.runSetupWizard=false          \\\n     -jar ${JENKINS_FOLDER}/jenkins.war              \\\n     ${JENKINS_OPTS}                                 \\\n     --httpPort=${PORT1}                             \\\n     --webroot=${JENKINS_FOLDER}/war                 \\\n     --ajp13Port=-1                                  \\\n     --httpListenAddress=127.0.0.1                   \\\n     --ajp13ListenAddress=127.0.0.1                  \\\n     --prefix=${JENKINS_CONTEXT}\n"
+}

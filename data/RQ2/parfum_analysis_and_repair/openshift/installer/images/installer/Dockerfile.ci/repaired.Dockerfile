@@ -1,0 +1,20 @@
+# This Dockerfile is used by CI to publish the installer image.
+# It builds an image containing only the openshift-install.
+
+FROM registry.ci.openshift.org/ocp/builder:rhel-8-golang-1.18-openshift-4.12 AS builder
+ARG TAGS=""
+WORKDIR /go/src/github.com/openshift/installer
+COPY . .
+RUN DEFAULT_ARCH="$(go env GOHOSTARCH)" hack/build.sh
+RUN go run -mod=vendor hack/build-coreos-manifest.go
+
+
+FROM registry.ci.openshift.org/ocp/4.12:base
+COPY --from=builder /go/src/github.com/openshift/installer/bin/openshift-install /bin/openshift-install
+COPY --from=builder /go/src/github.com/openshift/installer/bin/manifests/ /manifests/
+RUN mkdir /output && chown 1000:1000 /output
+USER 1000:1000
+ENV PATH /bin
+ENV HOME /output
+WORKDIR /output
+# We're not really an operator, we're just getting some data into the release image.

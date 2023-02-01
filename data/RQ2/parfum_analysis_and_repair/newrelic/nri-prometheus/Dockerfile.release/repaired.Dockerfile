@@ -1,0 +1,13 @@
+FROM alpine:3.16
+
+RUN apk add --no-cache --upgrade \
+        ca-certificates \
+        tini
+
+COPY ./nri-prometheus /bin/nri-prometheus
+USER nobody
+
+# When standalone is set to true nri-prometheus does not require an infrastructure agent to work and send data
+ENV STANDALONE=TRUE
+
+ENTRYPOINT ["/sbin/tini", "--", "/bin/nri-prometheus"]

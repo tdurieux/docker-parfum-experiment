@@ -1,0 +1,19 @@
+FROM public.ecr.aws/m8i2k7g9/docker-for-terremotibot:16.13.1
+LABEL mantainer Francesco Tonini <francesco@tonini.dev>
+ENV NODE_ENV=production
+
+# Move to /src
+WORKDIR /src
+
+# Install dependencies
+COPY package.json package-lock.json ./
+RUN npm ci
+
+# Copy the app files
+COPY . .
+
+# Expose ports to host
+EXPOSE 5000
+
+# Start
+CMD ["node", "/src/index.js"]

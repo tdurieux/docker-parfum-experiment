@@ -1,0 +1,1 @@
+# ballerina docker images only support amd64

@@ -1,0 +1,1 @@
+# docker base image for Netmiko, NAPALM, Pyntc, and Ansible

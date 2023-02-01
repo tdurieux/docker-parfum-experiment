@@ -1,0 +1,35 @@
+{
+  "startTime": 1674248540168,
+  "endTime": 1674248540643,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 18,
+        "lineEnd": 18,
+        "columnStart": 4,
+        "columnEnd": 44
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 19,
+        "lineEnd": 19,
+        "columnStart": 4,
+        "columnEnd": 45
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 23,
+        "lineEnd": 23,
+        "columnStart": 20,
+        "columnEnd": 31
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "ARG BASE_IMAGE\n\nFROM ${BASE_IMAGE} AS builder\n\nARG PACKAGE_VERSION\n\n# Use Bazelisk to ensure the proper bazel version is used.\nRUN cd /usr/local/src && \\\n    wget --no-verbose \"https://github.com/bazelbuild/bazelisk/releases/download/v1.11.0/bazelisk-linux-amd64\" && \\\n    mv bazelisk-linux-amd64 /usr/local/bin/bazel && \\\n    chmod u+x /usr/local/bin/bazel\n\n# Fetch TensorFlow & install dependencies.\nRUN cd /usr/local/src && \\\n    git clone https://github.com/tensorflow/tensorflow && \\\n    cd tensorflow && \\\n    git checkout tags/v${PACKAGE_VERSION} && \\\n    # TODO(rosbo): Is it really needed?\n    pip install --no-cache-dir keras_applications --no-deps && \\\n    pip install --no-cache-dir keras_preprocessing --no-deps\n\n# Create a TensorFlow wheel for TPU\nRUN cd /usr/local/src/tensorflow && \\\n    cat /dev/null | ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" && \\\n    bazel build \\\n            --config=opt \\\n            --distinct_host_configuration=true \\\n            --define=framework_shared_object=true \\\n            --define=with_tpu_support=true \\\n            --copt=-DLIBTPU_ON_GCE \\\n        //tensorflow/tools/pip_package:build_pip_package \\\n            --local_ram_resources=HOST_RAM*.5\n\nRUN cd /usr/local/src/tensorflow && \\\n    bazel-bin/tensorflow/tools/pip_package/build_pip_package /tmp/tensorflow_pkg\n\n# Build TensorFlow addons library against TensorFlow CPU.\n#RUN cd /usr/local/src/ && \\\n#    git clone https://github.com/tensorflow/addons && \\\n#    cd addons && \\\n#    git checkout tags/v0.12.1 && \\\n#    python ./configure.py && \\\n#    bazel build --enable_runfiles build_pip_pkg && \\\n#    bazel-bin/build_pip_pkg /tmp/tfa_cpu && \\\n#    bazel clean\n\n# Build tensorflow_gcs_config library against TensorFlow CPU.\n#ADD tensorflow-gcs-config /usr/local/src/tensorflow_gcs_config/\n#RUN cd /usr/local/src/tensorflow_gcs_config && \\\n#    apt-get install -y libcurl4-openssl-dev && \\\n#    python setup.py bdist_wheel -d /tmp/tensorflow_gcs_config && \\\n#    bazel clean\n\n# Use multi-stage builds to minimize image output size.\nFROM alpine:latest\nCOPY --from=builder /tmp/tensorflow_pkg/tensorflow*.whl /tmp/tensorflow_pkg/"
+}

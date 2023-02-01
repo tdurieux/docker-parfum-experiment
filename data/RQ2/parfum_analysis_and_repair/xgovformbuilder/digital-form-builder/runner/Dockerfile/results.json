@@ -1,0 +1,35 @@
+{
+  "startTime": 1674253787787,
+  "endTime": 1674253788970,
+  "originalSmells": [
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 36,
+        "lineEnd": 36,
+        "columnStart": 4,
+        "columnEnd": 48
+      }
+    },
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 51,
+        "lineEnd": 51,
+        "columnStart": 4,
+        "columnEnd": 49
+      }
+    },
+    {
+      "rule": "mkdirUsrSrcThenRemove",
+      "position": {
+        "lineStart": 5,
+        "lineEnd": 5,
+        "columnStart": 4,
+        "columnEnd": 25
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# ----------------------------\n# Stage 1\n# Base image contains the updated OS and\n# It also configures the non-root user that will be given permission to copied files/folders in every subsequent stages\nFROM node:12-alpine3.12 AS base\nRUN mkdir -p /usr/src/app && \\\n    addgroup -g 1001 appuser && \\\n    adduser -S -u 1001 -G appuser appuser && \\\n    chown -R appuser:appuser /usr/src/app && \\\n    chmod -R +x  /usr/src/app && \\\n    apk update && \\\n    apk add --no-cache bash git && rm -rf /usr/src/app\n\n# ----------------------------\n# Stage 2\n# Cache layer contains npm packages for all workspaces\n# It will re-run only if one of the copied files change, otherwise this stage is cached\nFROM base AS dependencies\nWORKDIR /usr/src/app\nCOPY --chown=appuser:appuser .yarn ./.yarn/\nCOPY --chown=appuser:appuser package.json yarn.lock .yarnrc.yml tsconfig.json  ./\nCOPY --chown=appuser:appuser model/package.json ./model/\nCOPY --chown=appuser:appuser runner/package.json ./runner/\nUSER 1001\n\n# ----------------------------\n# Stage 3\n# Base with model stage\n# In this layer we build the model workspace.\n# It will re-run only if anything inside ./model changes, otherwise this stage is cached.\n# rsync is used to merge folders instead of individually copying files\nFROM dependencies AS model\nWORKDIR /usr/src/app\n#TODO:- remove - should already be copied in s2\nCOPY --chown=appuser:appuser ./model ./model/\nUSER 1001\nRUN yarn workspaces focus @xgovformbuilder/model && yarn model build && yarn cache clean;\n\n# ----------------------------\n# Stage 4\n# Build stage\n# In this layer we build the runner workspace\n# It will re-run only if anything inside ./runner changes, otherwise this stage is cached.\n# rsync is used to merge folders instead of individually copying files\nFROM model AS build-runner\nWORKDIR /usr/src/app\nARG LAST_COMMIT\nARG LAST_TAG\nENV LAST_COMMIT=$LAST_COMMIT\nENV LAST_TAG=$LAST_TAG\nCOPY --chown=appuser:appuser ./runner ./runner/\nRUN yarn workspaces focus @xgovformbuilder/runner && yarn runner rebuild && yarn cache clean;\nRUN yarn runner build\nUSER 1001\nEXPOSE 3009\nCMD [ \"yarn\", \"runner\", \"start\" ]\n"
+}

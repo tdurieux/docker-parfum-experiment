@@ -1,0 +1,26 @@
+{
+  "startTime": 1674248228461,
+  "endTime": 1674248229693,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 29,
+        "lineEnd": 29,
+        "columnStart": 4,
+        "columnEnd": 82
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 28,
+        "lineEnd": 28,
+        "columnStart": 4,
+        "columnEnd": 35
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM php:8.1-fpm AS base\n\nARG UID=3302\nARG GID=3302\n\nENV FPM_HOST=app\nENV FPM_PORT=9000\n\nRUN mkdir -p /srv/app; chown $UID:$GID /srv/app\nWORKDIR /srv/app\n\n# Configure app user\nRUN groupdel dialout; \\\n    groupadd --gid $GID ben; \\\n    useradd --uid $UID --gid $GID --create-home ben; \\\n    sed -i \"s/user = www-data/user = ben/g\" /usr/local/etc/php-fpm.d/www.conf; \\\n    sed -i \"s/group = www-data/group = ben/g\" /usr/local/etc/php-fpm.d/www.conf\n\n# Install persistent & runtime dependencies\nRUN set -eux; \\\n    apt-get update; \\\n    apt-get install --no-install-recommends -y git netcat procps; \\\n    rm -rf /var/lib/apt/lists/*\n\n# Install media utilities\nRUN set -eux; \\\n    apt-get update; \\\n    apt-get install --no-install-recommends -y ffmpeg mplayer; \\\n    apt-get install --no-install-recommends -y python3-pip; \\\n    pip install --no-cache-dir git+https://github.com/flutterfromscratch/audio-offset-finder.git; \\\n    rm -rf /var/lib/apt/lists/*\n\n# Install PHP extensions\nRUN set -eux; \\\n    apt-get update; \\\n    apt-get install --no-install-recommends -y libmagickwand-dev; \\\n    pecl install imagick; \\\n\tdocker-php-ext-enable imagick; \\\n    rm -rf /var/lib/apt/lists/*\n\nRUN set -eux; \\\n    apt-get update; \\\n    apt-get install --no-install-recommends -y libicu-dev; \\\n    docker-php-ext-install intl; \\\n    rm -rf /var/lib/apt/lists/*\n\nRUN set -eux; \\\n    docker-php-ext-install pdo_mysql\n\nRUN set -eux; \\\n    apt-get update; \\\n    apt-get install --no-install-recommends -y libzip-dev unzip; \\\n\tdocker-php-ext-install zip; \\\n    rm -rf /var/lib/apt/lists/*\n\n# Install Composer\nCOPY --from=composer:2 /usr/bin/composer /usr/bin/composer\n\nFROM node:16.14-alpine AS assets\n\nWORKDIR /srv/app\n\nENV FPM_HOST=app\nENV FPM_PORT=9000\n\n# Install dependencies\nCOPY package.json package-lock.json ./\nRUN set -eux; \\\n    npm install; \\\n\tnpm cache clean --force\n\n# Compile assets\nCOPY .babelrc .eslintrc.json jest.config.js webpack.config.js ./\nCOPY assets assets/\nRUN set -eux; \\\n    npm run production\n\n# Set up entrypoint\nCOPY docker/assets-entrypoint.sh /usr/local/bin/docker-entrypoint\nRUN chmod +x /usr/local/bin/docker-entrypoint\n\nENTRYPOINT [\"docker-entrypoint\"]\nCMD [\"npm\", \"run\", \"watch\"]\n\nFROM base AS app\n\nARG UID=3302\nARG GID=3302\nARG GITHUB_TOKEN\n\nRUN if [ ! -z \"$GITHUB_TOKEN\" ]; then composer config --global github-oauth.github.com $GITHUB_TOKEN; fi\n\n# Set up entrypoints\nCOPY docker/app-entrypoint.bash /usr/local/bin/app-entrypoint\nRUN chmod +x /usr/local/bin/app-entrypoint\n\nCOPY docker/php-entrypoint.bash /usr/local/bin/app-php-entrypoint\nRUN chmod +x /usr/local/bin/app-php-entrypoint\n\nENTRYPOINT [\"app-entrypoint\"]\nCMD [\"php-fpm\"]\n\nUSER ben\n\n# Copy application directory contents\nCOPY --chown=ben:ben license.markdown readme.markdown ./\nCOPY --chown=ben:ben composer.json composer.lock symfony.lock ./\nCOPY --chown=ben:ben .env ./\nCOPY --chown=ben:ben .env.test phpunit.xml.dist ./\nCOPY --chown=ben:ben bin bin/\nCOPY --chown=ben:ben config config/\nCOPY --chown=ben:ben migrations migrations/\nCOPY --chown=ben:ben public public/\nCOPY --chown=ben:ben src src/\nCOPY --chown=ben:ben templates templates/\nCOPY --chown=ben:ben tests tests/\nCOPY --chown=ben:ben translations translations/\n\nRUN mkdir -p \\\n        docker/storage/chat_archives \\\n        docker/storage/chat_logs \\\n        docker/storage/covers \\\n        docker/storage/episode_parts \\\n        docker/storage/episodes \\\n        docker/storage/livestream_recordings \\\n        docker/storage/shownotes \\\n        docker/storage/transcripts \\\n        public/media \\\n        var/cache \\\n        var/log\n\nCOPY --from=assets --chown=ben:ben /srv/app/public public/\n\n# Run Composer commands\nRUN set -eux; \\\n    chmod +x bin/console; \\\n    composer install --no-autoloader --no-dev --no-progress --no-scripts; \\\n    composer clear-cache; \\\n    composer dump-autoload --classmap-authoritative; \\\n    APP_ENV=prod bin/console cache:warmup; \\\n    APP_ENV=prod composer run-script post-install-cmd\n\nFROM nginx:alpine AS web\n\nENV FPM_HOST=app\nENV FPM_PORT=9000\n\nWORKDIR /srv/app\n\n# Copy Nginx configuration\nRUN rm /etc/nginx/conf.d/default.conf\nCOPY docker/nginx/app.conf.template /etc/nginx/templates/\n\n# Copy application directory contents\nCOPY --from=app /srv/app/public public/\n"
+}

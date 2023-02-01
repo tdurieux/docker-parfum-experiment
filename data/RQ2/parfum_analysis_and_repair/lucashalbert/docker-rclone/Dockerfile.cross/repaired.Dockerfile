@@ -1,0 +1,36 @@
+FROM __BASEIMAGE_ARCH__/alpine
+
+ENV RCLONE_VER=__RCLONE_VER__ \
+    BUILD_DATE=__BUILD_DATE__ \
+    __CROSS__QEMU_ARCH=__QEMU_ARCH__ \
+    ARCH=__RCLONE_ARCH__ \
+    SUBCMD="" \
+    CONFIG="--config /config/rclone.conf" \
+    PARAMS=""
+
+LABEL build_version="Version:- ${RCLONE_VER} Build-date:- ${BUILD_DATE}"
+LABEL maintainer="Lucas Halbert <lhalbert@lhalbert.xyz>"
+MAINTAINER Lucas Halbert <lhalbert@lhalbert.xyz>
+
+# __CROSS__COPY static qemu binary for cross-platform support
+__CROSS__COPY qemu-${QEMU_ARCH}-static /usr/bin/
+
+RUN apk add --no-cache --update ca-certificates fuse fuse-dev unzip curl && \
+    curl -f -O https://downloads.rclone.org/v${RCLONE_VER}/rclone-v${RCLONE_VER}-linux-${ARCH}.zip && \
+    unzip rclone-v${RCLONE_VER}-linux-${ARCH}.zip && \
+    cd rclone-*-linux-${ARCH} && \
+    cp rclone /usr/bin/ && \
+    chown root:root /usr/bin/rclone && \
+    chmod 755 /usr/bin/rclone && \
+    apk del --purge unzip curl && \
+    cd ../ && \
+    rm -f rclone-v${RCLONE_VER}-linux-${ARCH}.zip && \
+    rm -r rclone-*-linux-${ARCH}
+
+# __CROSS__ Delete static qemu binary
+__CROSS__RUN rm -f /usr/bin/qemu-${QEMU_ARCH}-static
+
+COPY docker-entrypoint.sh /usr/bin/
+
+
+ENTRYPOINT ["docker-entrypoint.sh"]

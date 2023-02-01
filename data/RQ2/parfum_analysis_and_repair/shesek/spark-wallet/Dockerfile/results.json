@@ -1,0 +1,80 @@
+{
+  "startTime": 1674216960237,
+  "endTime": 1674216962630,
+  "originalSmells": [
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 51,
+        "lineEnd": 51,
+        "columnStart": 4,
+        "columnEnd": 15
+      }
+    },
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 55,
+        "lineEnd": 55,
+        "columnStart": 4,
+        "columnEnd": 15
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 19,
+        "lineEnd": 19,
+        "columnStart": 7,
+        "columnEnd": 24
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 20,
+        "lineEnd": 20,
+        "columnStart": 7,
+        "columnEnd": 63
+      }
+    },
+    {
+      "rule": "sha256sumEchoOneSpaces",
+      "position": {
+        "lineStart": 16,
+        "lineEnd": 16,
+        "columnStart": 7,
+        "columnEnd": 66
+      }
+    },
+    {
+      "rule": "sha256sumEchoOneSpaces",
+      "position": {
+        "lineStart": 31,
+        "lineEnd": 31,
+        "columnStart": 7,
+        "columnEnd": 64
+      }
+    },
+    {
+      "rule": "sha256sumEchoOneSpaces",
+      "position": {
+        "lineStart": 42,
+        "lineEnd": 42,
+        "columnStart": 7,
+        "columnEnd": 109
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 7,
+        "lineEnd": 9,
+        "columnStart": 22,
+        "columnEnd": 115
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM node:16.8-bullseye-slim as builder\n\nARG DEVELOPER\nARG STANDALONE\nENV STANDALONE=$STANDALONE\n\n# Install build dependencies for third-party packages (c-lightning/bitcoind)\nRUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates dirmngr wget  \\\n    $([ -n \"$STANDALONE\" ] || echo \"autoconf automake build-essential gettext gpg gpg-agent libtool libgmp-dev \\\n                                     libsqlite3-dev python python3 python3-mako python3-pip wget zlib1g-dev unzip\") && rm -rf /var/lib/apt/lists/*;\n\nENV LIGHTNINGD_VERSION=0.10.2\nENV LIGHTNINGD_SHA256=3c9dcb686217b2efe0e988e90b95777c4591e3335e259e01a94af87e0bf01809\n\nRUN [ -n \"$STANDALONE\" ] || ( wget -O /tmp/lightning.zip https://github.com/ElementsProject/lightning/releases/download/v$LIGHTNINGD_VERSION/clightning-v$LIGHTNINGD_VERSION.zip \\\n    && echo \"$LIGHTNINGD_SHA256  /tmp/lightning.zip\" | sha256sum -c \\\n    && unzip /tmp/lightning.zip -d /tmp/lightning \\\n    && cd /tmp/lightning/clightning* \\\n    && pip3 install --no-cache-dir mrkd \\\n    && DEVELOPER=$DEVELOPER ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" --prefix=/opt/lightning \\\n    && make && make install)\n\n# Install bitcoind\nENV BITCOIN_VERSION 22.0\nENV BITCOIN_FILENAME bitcoin-$BITCOIN_VERSION-x86_64-linux-gnu.tar.gz\nENV BITCOIN_URL https://bitcoincore.org/bin/bitcoin-core-$BITCOIN_VERSION/$BITCOIN_FILENAME\nENV BITCOIN_SHA256 59ebd25dd82a51638b7a6bb914586201e67db67b919b2a1ff08925a7936d1b16\nRUN [ -n \"$STANDALONE\" ] || \\\n    ( mkdir /opt/bitcoin && cd /opt/bitcoin \\\n    && wget -qO \"$BITCOIN_FILENAME\" \"$BITCOIN_URL\" \\\n    && echo \"$BITCOIN_SHA256  $BITCOIN_FILENAME\" | sha256sum -c - \\\n    && BD=bitcoin-$BITCOIN_VERSION/bin \\\n    && tar -xzvf \"$BITCOIN_FILENAME\" $BD/bitcoind $BD/bitcoin-cli --strip-components=1)\n\nRUN mkdir -p /opt/bin /opt/bitcoin/bin /opt/lightning\n\n# npm doesn't normally like running as root, allow it since we're in docker\nRUN npm config set unsafe-perm true\n\n# Install tini\nRUN wget -O /opt/bin/tini \"https://github.com/krallin/tini/releases/download/v0.18.0/tini-amd64\" \\\n    && echo \"12d20136605531b09a2c2dac02ccee85e1b874eb322ef6baf7561cd93f93c855  /opt/bin/tini\" | sha256sum -c - \\\n    && chmod +x /opt/bin/tini\n\nRUN ls -l /opt/lightning\n\n# Install Spark\nWORKDIR /opt/spark/client\nCOPY client/package.json client/npm-shrinkwrap.json ./\nCOPY client/fonts ./fonts\nRUN npm install && npm cache clean --force;\n\nWORKDIR /opt/spark\nCOPY package.json npm-shrinkwrap.json ./\nRUN npm install && npm cache clean --force;\nCOPY . .\n\n# Build production NPM package\nRUN npm run dist:npm \\\n && npm prune --production \\\n && find . -mindepth 1 -maxdepth 1 \\\n           ! -name '*.json' ! -name dist ! -name LICENSE ! -name node_modules ! -name scripts \\\n           -exec rm -r \"{}\" \\;\n\n# Prepare final image\n\nFROM node:16.8-bullseye-slim\n\nARG STANDALONE\nENV STANDALONE=$STANDALONE\n\nWORKDIR /opt/spark\n\nRUN apt-get update && apt-get install -y --no-install-recommends xz-utils inotify-tools netcat-openbsd \\\n        $([ -n \"$STANDALONE\" ] || echo libgmp-dev libsqlite3-dev) \\\n    && rm -rf /var/lib/apt/lists/* \\\n    && ln -s /opt/spark/dist/cli.js /usr/bin/spark-wallet \\\n    && mkdir /data \\\n    && ln -s /data/lightning $HOME/.lightning\n\nCOPY --from=builder /opt/spark /opt/spark\nCOPY --from=builder /opt/lightning /opt/lightning\nCOPY --from=builder /opt/bitcoin/bin/ /usr/bin\nCOPY --from=builder /opt/bin/ /usr/bin\nRUN ln -s /opt/lightning/bin/* /usr/bin\n\nENV CONFIG=/data/spark/config TLS_PATH=/data/spark/tls TOR_PATH=/data/spark/tor COOKIE_FILE=/data/spark/cookie HOST=0.0.0.0\n\n# link the granax (Tor Control client) node_modules installation directory\n# inside /data/spark/tor/, to persist the Tor Bundle download in the user-mounted volume\nRUN ln -s $TOR_PATH/tor-installation/node_modules dist/transport/granax-dep/node_modules\n\nVOLUME /data\nENTRYPOINT [ \"tini\", \"-g\", \"--\", \"scripts/docker-entrypoint.sh\" ]\n\nEXPOSE 9735 9737\n"
+}

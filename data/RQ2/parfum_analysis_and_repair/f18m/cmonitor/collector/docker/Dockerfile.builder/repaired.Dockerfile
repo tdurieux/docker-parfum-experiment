@@ -1,0 +1,1 @@
+# This is just a small docker used to BUILD the cmonitor_collector utility

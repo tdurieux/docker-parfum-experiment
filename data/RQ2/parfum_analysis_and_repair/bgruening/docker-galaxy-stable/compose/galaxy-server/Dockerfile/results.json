@@ -1,0 +1,80 @@
+{
+  "startTime": 1674217229091,
+  "endTime": 1674217230459,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 36,
+        "lineEnd": 36,
+        "columnStart": 4,
+        "columnEnd": 117
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 60,
+        "lineEnd": 60,
+        "columnStart": 7,
+        "columnEnd": 61
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 64,
+        "lineEnd": 64,
+        "columnStart": 7,
+        "columnEnd": 48
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 65,
+        "lineEnd": 65,
+        "columnStart": 7,
+        "columnEnd": 96
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 115,
+        "lineEnd": 115,
+        "columnStart": 7,
+        "columnEnd": 32
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 116,
+        "lineEnd": 116,
+        "columnStart": 7,
+        "columnEnd": 25
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 57,
+        "lineEnd": 57,
+        "columnStart": 18,
+        "columnEnd": 112
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 110,
+        "lineEnd": 113,
+        "columnStart": 18,
+        "columnEnd": 67
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "ARG DOCKER_REGISTRY=quay.io\nARG DOCKER_REGISTRY_USERNAME=bgruening\nARG IMAGE_TAG=latest\n\nFROM buildpack-deps:20.04 as build_base\n\nENV EXPORT_DIR=/export \\\n    GALAXY_ROOT=/galaxy \\\n    HTCONDOR_ROOT=/opt/htcondor\n\nENV GALAXY_STATIC_DIR=$GALAXY_ROOT/static \\\n    GALAXY_EXPORT=$EXPORT_DIR/galaxy \\\n    GALAXY_CONFIG_DIR=$GALAXY_ROOT/config \\\n    GALAXY_CONFIG_TOOL_DEPENDENCY_DIR=/tool_deps \\\n    GALAXY_CONFIG_TOOL_PATH=$GALAXY_ROOT/tools \\\n    GALAXY_CONFIG_TOOL_DATA_PATH=$GALAXY_ROOT/tool-data \\\n    GALAXY_VIRTUAL_ENV=$GALAXY_ROOT/.venv \\\n    GALAXY_DATABASE_PATH=$GALAXY_ROOT/database\n\nENV GALAXY_USER=galaxy \\\n    GALAXY_GROUP=galaxy \\\n    GALAXY_UID=1450 \\\n    GALAXY_GID=1450 \\\n    GALAXY_HOME=/home/galaxy\n\nENV GALAXY_CONDA_PREFIX=$GALAXY_CONFIG_TOOL_DEPENDENCY_DIR/_conda \\\n    MINICONDA_VERSION=py38_4.9.2\n\nRUN groupadd -r $GALAXY_USER -g $GALAXY_GID \\\n    && useradd -u $GALAXY_UID -r -g $GALAXY_USER -d $GALAXY_HOME -c \"Galaxy user\" --shell /bin/bash $GALAXY_USER \\\n    && mkdir $GALAXY_HOME \\\n    && chown -R $GALAXY_USER:$GALAXY_USER $GALAXY_HOME\n\nFROM build_base as build_miniconda\nCOPY ./files/common_cleanup.sh /usr/bin/common_cleanup.sh\n# Install Miniconda\nRUN curl -f -s -L \"https://repo.anaconda.com/miniconda/Miniconda3-${MINICONDA_VERSION}-Linux-x86_64.sh\" > ~/miniconda.sh \\\n    && /bin/bash ~/miniconda.sh -b -p $GALAXY_CONDA_PREFIX \\\n    && rm ~/miniconda.sh \\\n    && ln -s $GALAXY_CONDA_PREFIX/etc/profile.d/conda.sh /etc/profile.d/conda.sh \\\n    && echo \". $GALAXY_CONDA_PREFIX/etc/profile.d/conda.sh\" >> $GALAXY_HOME/.bashrc \\\n    && echo \"conda activate base\" >> $GALAXY_HOME/.bashrc \\\n    && export PATH=$GALAXY_CONDA_PREFIX/bin/:$PATH \\\n    && conda config --add channels defaults \\\n    && conda config --add channels bioconda \\\n    && conda config --add channels conda-forge \\\n    && conda install virtualenv pip ephemeris \\\n    && conda clean --packages -t -i \\\n    && /usr/bin/common_cleanup.sh\n\nFROM build_base as build_galaxy\n\nARG GALAXY_RELEASE=release_20.09\nARG GALAXY_REPO=https://github.com/galaxyproject/galaxy\n\nCOPY ./files/common_cleanup.sh /usr/bin/common_cleanup.sh\n# Install Galaxy\nRUN apt update && apt install --no-install-recommends libcurl4-openssl-dev libssl-dev python3-dev python3-pip -y \\\n    && update-alternatives --install /usr/bin/python python /usr/bin/python3 9 \\\n    && mkdir \"${GALAXY_ROOT}\" \\\n    && curl -f -L -s $GALAXY_REPO/archive/$GALAXY_RELEASE.tar.gz | tar xzf - --strip-components=1 -C $GALAXY_ROOT \\\n    && cd $GALAXY_ROOT \\\n    && ./scripts/common_startup.sh \\\n    && . $GALAXY_ROOT/.venv/bin/activate \\\n    && pip3 install --no-cache-dir drmaa psycopg2 pycurl pykube \\\n    && pip3 install --no-cache-dir importlib-metadata importlib-resources pathlib2 ruamel.yaml.clib typing zipp \\\n    && deactivate \\\n    && rm -rf .ci .circleci .coveragerc .gitignore .travis.yml CITATION CODE_OF_CONDUCT.md CONTRIBUTING.md CONTRIBUTORS.md \\\n              LICENSE.txt Makefile README.rst SECURITY_POLICY.md pytest.ini tox.ini \\\n              client contrib doc config/plugins lib/galaxy_test test test-data \\\n              .venv/lib/node_modules .venv/src/node-v10.15.3-linux-x64 \\\n              .venv/include/node .venv/bin/node .venv/bin/nodeenv \\\n    && /usr/bin/common_cleanup.sh && rm -rf /var/lib/apt/lists/*;\n\n# --- Final image ---\nFROM $DOCKER_REGISTRY/$DOCKER_REGISTRY_USERNAME/galaxy-cluster-base:$IMAGE_TAG as final\n\nCOPY ./files/common_cleanup.sh /usr/bin/common_cleanup.sh\nCOPY ./files/create_galaxy_user.py /usr/local/bin/create_galaxy_user.py\n\nENV EXPORT_DIR=/export \\\n    GALAXY_ROOT=/galaxy \\\n    GALAXY_PYTHON=/usr/bin/python3 \\\n    HTCONDOR_ROOT=/opt/htcondor\n\nENV GALAXY_RELEASE=${GALAXY_RELEASE:-release_20.09} \\\n    GALAXY_REPO=${GALAXY_REPO:-https://github.com/galaxyproject/galaxy} \\\n    GALAXY_STATIC_DIR=$GALAXY_ROOT/static \\\n    GALAXY_EXPORT=$EXPORT_DIR/galaxy \\\n    GALAXY_CONFIG_DIR=$GALAXY_ROOT/config \\\n    GALAXY_CONFIG_TOOL_DEPENDENCY_DIR=/tool_deps \\\n    GALAXY_CONFIG_TOOL_PATH=$GALAXY_ROOT/tools \\\n    GALAXY_CONFIG_TOOL_DATA_PATH=$GALAXY_ROOT/tool-data \\\n    GALAXY_VIRTUAL_ENV=$GALAXY_ROOT/.venv \\\n    GALAXY_DATABASE_PATH=$GALAXY_ROOT/database\n\nENV GALAXY_USER=galaxy \\\n    GALAXY_GROUP=galaxy \\\n    GALAXY_UID=1450 \\\n    GALAXY_GID=1450 \\\n    GALAXY_HOME=/home/galaxy\n\nENV GALAXY_CONFIG_FILE=$GALAXY_CONFIG_DIR/galaxy.yml\n\n# Set permissions\nRUN groupadd -r $GALAXY_USER -g $GALAXY_GID \\\n    && useradd -u $GALAXY_UID -r -g $GALAXY_USER -d $GALAXY_HOME -c \"Galaxy user\" --shell /bin/bash $GALAXY_USER \\\n    && /usr/bin/common_cleanup.sh\n\n# Install remaining dependencies\nRUN apt update && apt install --no-install-recommends curl gcc gnupg2 libgomp1 liblzma-dev libbz2-dev libpq-dev \\\n                                                      libcurl4-openssl-dev libssl-dev \\\n                                                      mercurial make netcat python3-dev python3-setuptools python3-pip \\\n                                                      zlib1g-dev -y \\\n    # Cython and wheel are needed to later install pysam.. \\\n    && pip3 install --no-cache-dir Cython wheel \\\n    && pip3 install --no-cache-dir pysam \\\n    && /usr/bin/common_cleanup.sh && rm -rf /var/lib/apt/lists/*;\n\n# GALAXY_USER should be able to run docker without root permissions\nRUN usermod -aG docker $GALAXY_USER\n\n# Make Python3 standard\nRUN update-alternatives --install /usr/bin/python python /usr/bin/python3 9\n\nCOPY --chown=$GALAXY_USER:$GALAXY_USER --from=build_galaxy ${GALAXY_ROOT} ${GALAXY_ROOT}\nCOPY --chown=$GALAXY_USER:$GALAXY_USER --from=build_miniconda ${GALAXY_CONFIG_TOOL_DEPENDENCY_DIR} ${GALAXY_CONFIG_TOOL_DEPENDENCY_DIR}\nCOPY --chown=$GALAXY_USER:$GALAXY_USER --from=build_miniconda ${GALAXY_HOME} ${GALAXY_HOME}\nCOPY --chown=$GALAXY_USER:$GALAXY_USER --from=build_miniconda /etc/profile.d/conda.sh /etc/profile.d/conda.sh\n\nCOPY ./files/start.sh /usr/bin/start.sh\n\nEXPOSE 80\n\nENTRYPOINT \"/usr/bin/start.sh\"\n"
+}

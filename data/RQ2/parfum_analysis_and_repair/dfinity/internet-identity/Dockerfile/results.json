@@ -1,0 +1,17 @@
+{
+  "startTime": 1674246320532,
+  "endTime": 1674246321600,
+  "originalSmells": [
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 16,
+        "lineEnd": 17,
+        "columnStart": 4,
+        "columnEnd": 78
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Use this with\n#\n#  docker build -t internet-identity .\n#  or use ./scripts/docker-build\n#\n# The docker image. To update, run `docker pull ubuntu` locally, and update the\n# sha256:... accordingly.\nFROM ubuntu@sha256:626ffe58f6e7566e00254b638eb7e0f3b11d4da9675088f4781a50ae288f3322 as deps\n\nARG rust_version=1.58.1\nENV NODE_VERSION=14.15.4\n\nENV TZ=UTC\n\nRUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone && \\\n    apt -yq update && \\\n    apt -yqq install --no-install-recommends curl ca-certificates \\\n        build-essential pkg-config libssl-dev llvm-dev liblmdb-dev clang cmake && rm -rf /var/lib/apt/lists/*;\n\n# Install node\nRUN curl --fail -sSf https://raw.githubusercontent.com/creationix/nvm/v0.34.0/install.sh | bash\nENV NVM_DIR=/root/.nvm\nRUN . \"$NVM_DIR/nvm.sh\" && nvm install ${NODE_VERSION}\nRUN . \"$NVM_DIR/nvm.sh\" && nvm use v${NODE_VERSION}\nRUN . \"$NVM_DIR/nvm.sh\" && nvm alias default v${NODE_VERSION}\nENV PATH=\"/root/.nvm/versions/node/v${NODE_VERSION}/bin/:${PATH}\"\nRUN node --version\nRUN npm --version\n\n# Install Rust and Cargo in /opt\nENV RUSTUP_HOME=/opt/rustup \\\n    CARGO_HOME=/cargo \\\n    PATH=/cargo/bin:$PATH\n\nCOPY ./scripts ./scripts\nCOPY ./rust-toolchain.toml ./rust-toolchain.toml\n\nRUN ./scripts/bootstrap\n\n# Pre-build all cargo dependencies. Because cargo doesn't have a build option\n# to build only the dependecies, we pretend that our project is a simple, empty\n# `lib.rs`. When we COPY the actual files we make sure to `touch` lib.rs so\n# that cargo knows to rebuild it with the new content.\nCOPY Cargo.lock .\nCOPY Cargo.toml .\nCOPY src/internet_identity/Cargo.toml src/internet_identity/Cargo.toml\nCOPY src/internet_identity_interface/Cargo.toml src/internet_identity_interface/Cargo.toml\nCOPY src/canister_tests/Cargo.toml src/canister_tests/Cargo.toml\nENV CARGO_TARGET_DIR=/cargo_target\nRUN mkdir -p src/internet_identity/src \\\n    && touch src/internet_identity/src/lib.rs \\\n    && mkdir -p src/internet_identity_interface/src \\\n    && touch src/internet_identity_interface/src/lib.rs \\\n    && mkdir -p src/canister_tests/src \\\n    && touch src/canister_tests/src/lib.rs \\\n    && ./scripts/build --only-dependencies \\\n    && rm -rf src\n\nFROM deps as build\n\nCOPY . .\n\nARG II_FETCH_ROOT_KEY=\nARG II_DUMMY_CAPTCHA=\nARG II_DUMMY_AUTH=\n\nRUN touch src/internet_identity/src/lib.rs\nRUN touch src/internet_identity_interface/src/lib.rs\nRUN touch src/canister_tests/src/lib.rs\nRUN npm ci\n\nRUN ./scripts/build\nRUN sha256sum /internet_identity.wasm\n\nFROM scratch AS scratch\nCOPY --from=build /internet_identity.wasm /\n"
+}

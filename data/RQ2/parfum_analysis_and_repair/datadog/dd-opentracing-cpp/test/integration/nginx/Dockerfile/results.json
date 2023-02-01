@@ -1,0 +1,80 @@
+{
+  "startTime": 1674248380901,
+  "endTime": 1674248381861,
+  "originalSmells": [
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 34,
+        "lineEnd": 34,
+        "columnStart": 2,
+        "columnEnd": 95
+      }
+    },
+    {
+      "rule": "aptGetInstallUseY",
+      "position": {
+        "lineStart": 28,
+        "lineEnd": 28,
+        "columnStart": 2,
+        "columnEnd": 54
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 12,
+        "lineEnd": 12,
+        "columnStart": 2,
+        "columnEnd": 89
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 28,
+        "lineEnd": 28,
+        "columnStart": 2,
+        "columnEnd": 54
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 48,
+        "lineEnd": 48,
+        "columnStart": 2,
+        "columnEnd": 73
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 12,
+        "lineEnd": 12,
+        "columnStart": 2,
+        "columnEnd": 89
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 28,
+        "lineEnd": 28,
+        "columnStart": 2,
+        "columnEnd": 54
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 48,
+        "lineEnd": 48,
+        "columnStart": 2,
+        "columnEnd": 73
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Creates an image with nginx and the Datadog OpenTracing nginx module installed.\n# Runs a simple integration test.\nARG NGINX_VERSION=1.18.0\nARG OPENTRACING_NGINX_VERSION=0.16.0\n\n# The nginx testbed. Build this image first since we don't want it rebuilt if just the code changes.\nFROM ubuntu:20.04 as nginx-testbed\n\n# Prevent installation of \"tzdata\" from blocking for input.\nENV DEBIAN_FRONTEND=noninteractive\n\nRUN apt-get update && \\\n  apt-get install --no-install-recommends -y git gnupg lsb-release wget curl tar openjdk-8-jre golang jq iproute2 && rm -rf /var/lib/apt/lists/*;\n\n# Get Wiremock\nRUN wget https://repo1.maven.org/maven2/com/github/tomakehurst/wiremock-standalone/2.18.0/wiremock-standalone-2.18.0.jar -O wiremock-standalone-2.18.0.jar\nRUN printf '#!/bin/bash\\nset -x\\njava -jar '\"$(pwd)/wiremock-standalone-2.18.0.jar \\\"\\$@\\\"\\n\" > /usr/local/bin/wiremock && \\\n  chmod a+x /usr/local/bin/wiremock\n\nARG NGINX_VERSION\n\n# Install nginx\nRUN CODENAME=$(lsb_release -s -c) && \\\n  wget https://nginx.org/keys/nginx_signing.key && \\\n  apt-key add nginx_signing.key && \\\n  echo deb https://nginx.org/packages/ubuntu/ ${CODENAME} nginx >> /etc/apt/sources.list && \\\n  echo deb-src https://nginx.org/packages/ubuntu/ ${CODENAME} nginx >> /etc/apt/sources.list && \\\n  apt-get update && \\\n  apt-get install -y --no-install-recommends nginx=${NGINX_VERSION}-1~${CODENAME} && rm -rf /var/lib/apt/lists/*;\n\n# Install nginx-opentracing\nARG OPENTRACING_NGINX_VERSION\nRUN wget https://github.com/opentracing-contrib/nginx-opentracing/releases/download/v${OPENTRACING_NGINX_VERSION}/linux-amd64-nginx-${NGINX_VERSION}-ot16-ngx_http_module.so.tgz && \\\n  NGINX_MODULES=$(nginx -V 2>&1 | grep \"configure arguments\" | sed -n 's/.*--modules-path=\\([^ ]*\\).*/\\1/p') && \\\n  tar zxvf linux-amd64-nginx-${NGINX_VERSION}-ot16-ngx_http_module.so.tgz -C \"${NGINX_MODULES}\" && rm linux-amd64-nginx-${NGINX_VERSION}-ot16-ngx_http_module.so.tgz\n\n# Build the Datadog nginx module.\nFROM ubuntu:20.04 as build\n\n# Prevent installation of \"tzdata\" from blocking for input.\nENV DEBIAN_FRONTEND=noninteractive\n\nENV CFLAGS=\"-march=x86-64 -fPIC\"\nENV CXXFLAGS=\"-march=x86-64 -fPIC\"\nENV LDFLAGS=\"-fPIC\"\n\n\nRUN apt-get update && \\\n  apt-get install --no-install-recommends -y git build-essential wget curl tar cmake libpcre3-dev && rm -rf /var/lib/apt/lists/*;\n\nWORKDIR /root\n\nCOPY ./scripts ./dd-opentracing-cpp/scripts\nRUN cd dd-opentracing-cpp && \\\n  ./scripts/install_dependencies.sh\nCOPY ./3rd_party ./dd-opentracing-cpp/3rd_party\nCOPY ./include ./dd-opentracing-cpp/include\nCOPY ./src ./dd-opentracing-cpp/src\nCOPY ./CMakeLists.txt ./dd-opentracing-cpp/CMakeLists.txt\nRUN rm -rf dd-opentracing-cpp/.build\nRUN mkdir -p dd-opentracing-cpp/.build\nWORKDIR dd-opentracing-cpp/.build\nRUN cmake -DBUILD_PLUGIN=ON -DBUILD_STATIC=OFF -DBUILD_TESTING=OFF -DBUILD_SHARED=OFF -DCMAKE_BUILD_TYPE=RelWithDebInfo ..\nRUN make \"-j${MAKE_JOB_COUNT:-$(nproc)}\"\nRUN make install\nWORKDIR ..\n\n# Build the final testbed.\nFROM nginx-testbed\n\n# Install Datadog OpenTracing\nCOPY --from=build /root/dd-opentracing-cpp/.build/libdd_opentracing_plugin.so /usr/local/lib/libdd_opentracing_plugin.so\n\n# Add OpenTracing directives to nginx config\nCOPY ./test/integration/nginx/nginx.conf /tmp/nginx.conf\nRUN NGINX_CONF=$(nginx -V 2>&1 | grep \"configure arguments\" | sed -n 's/.*--conf-path=\\([^ ]*\\).*/\\1/p') && \\\n  mv /tmp/nginx.conf ${NGINX_CONF}\nCOPY ./test/integration/nginx/dd-config.json /etc/dd-config.json\nRUN mkdir -p /var/www/\nCOPY ./test/integration/nginx/index.html /var/www/index.html\n\n# TODO(cgilmour): Hack to pin a dep of msgpack-cli\nRUN git clone -b v1.1.2 https://github.com/ugorji/go /root/go/src/github.com/ugorji/go\nRUN go get github.com/jakm/msgpack-cli\n# Copy these last so that edits don't need as many image rebuild steps\nCOPY ./test/integration/nginx/nginx_integration_test.sh ./\nCOPY ./test/integration/nginx/expected_*.json ./\nCMD [ \"bash\", \"-x\", \"./nginx_integration_test.sh\"]\n"
+}

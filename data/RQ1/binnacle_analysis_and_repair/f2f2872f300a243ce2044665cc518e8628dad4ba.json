@@ -1,0 +1,98 @@
+{
+  "startTime": 1674253116122,
+  "endTime": 1674253116514,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 12,
+        "lineEnd": 12,
+        "columnStart": 5,
+        "columnEnd": 30
+      }
+    },
+    {
+      "rule": "curlUseHttpsUrl",
+      "position": {
+        "lineStart": 12,
+        "lineEnd": 12,
+        "columnStart": 5,
+        "columnEnd": 30
+      }
+    },
+    {
+      "rule": "gpgUseBatchFlag",
+      "position": {
+        "lineStart": 11,
+        "lineEnd": 11,
+        "columnStart": 4,
+        "columnEnd": 143
+      }
+    },
+    {
+      "rule": "gpgUseHaPools",
+      "position": {
+        "lineStart": 11,
+        "lineEnd": 11,
+        "columnStart": 4,
+        "columnEnd": 143
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 3,
+        "lineEnd": 3,
+        "columnStart": 4,
+        "columnEnd": 92
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 45,
+        "lineEnd": 46,
+        "columnStart": 4,
+        "columnEnd": 43
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 96,
+        "lineEnd": 96,
+        "columnStart": 4,
+        "columnEnd": 72
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 3,
+        "lineEnd": 3,
+        "columnStart": 4,
+        "columnEnd": 92
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 45,
+        "lineEnd": 46,
+        "columnStart": 4,
+        "columnEnd": 43
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 96,
+        "lineEnd": 96,
+        "columnStart": 4,
+        "columnEnd": 72
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM ubuntu:16.04\n\nRUN apt-get -y update && \\\n    apt-get install --no-install-recommends -y curl git-core xz-utils build-essential wget unzip sudo gnupg2 dirmngr && rm -rf /var/lib/apt/lists/*;\n\n# Add \"rvm\" as system group, to avoid conflicts with host GIDs typically starting with 1000\nRUN groupadd -r rvm && useradd -r -g rvm -G sudo -p \"\" --create-home rvm && \\\n    echo \"source /etc/profile.d/rvm.sh\" >> /etc/rubybashrc\nUSER rvm\n\n# install rvm, RVM 1.26.0+ has signed releases, source rvm for usage outside of package scripts\nRUN gpg --batch --keyserver hkp://ha.pool.sks-keyservers.net --recv-keys 409B6B1796C275462A1703113804BB82D39DC0E3 7D2BAF1CF37B13E2069D6956105BD0E739499BDB && \\\n    ( curl -f -L https://get.rvm.io | sudo bash -s stable) && \\\n    bash -c \" \\\n        source /etc/rubybashrc && \\\n        rvmsudo rvm cleanup all \"\n\n# Import patch files for ruby and gems\nCOPY build/patches /home/rvm/patches/\nENV BASH_ENV /etc/rubybashrc\n\n# install rubies and fix permissions on\nRUN bash -c \" \\\n    export CFLAGS='-s -O3 -fno-fast-math -fPIC' && \\\n    for v in 2.5.3 ; do \\\n        rvm install \\$v --patch \\$(echo ~/patches/ruby-\\$v/* | tr ' ' ','); \\\n    done && \\\n    rvm cleanup all && \\\n    find /usr/local/rvm -type d -print0 | sudo xargs -0 chmod g+sw \"\n\n# Install rake-compiler and typical gems in all Rubies\n# do not generate documentation for gems\nRUN echo \"gem: --no-ri --no-rdoc\" >> ~/.gemrc && \\\n    bash -c \" \\\n        rvm all do gem install --no-document bundler 'bundler:~>1.16' rake-compiler hoe mini_portile rubygems-tasks mini_portile2 && \\\n        find /usr/local/rvm -type d -print0 | sudo xargs -0 chmod g+sw \"\n\n# Install rake-compiler's cross rubies in global dir instead of /root\nRUN sudo mkdir -p /usr/local/rake-compiler && \\\n    sudo chown rvm.rvm /usr/local/rake-compiler && \\\n    ln -s /usr/local/rake-compiler ~/.rake-compiler\n\n# Add cross compilers for Windows and Linux\nUSER root\nRUN apt-get -y update && \\\n    apt-get install --no-install-recommends -y gcc-mingw-w64-x86-64 gcc-mingw-w64-i686 g++-mingw-w64-x86-64 g++-mingw-w64-i686 \\\n        gcc-multilib g++-multilib moreutils && rm -rf /var/lib/apt/lists/*;\n\n# Create dev tools i686-linux-gnu-*\nCOPY build/mk_i686.rb /root/\nRUN bash -c \" \\\n        rvm alias create default 2.5.3 && \\\n        rvm use default && \\\n        ruby /root/mk_i686.rb \"\n\nUSER rvm\n\n# Patch rake-compiler to build and install static libraries for Linux rubies\nRUN cd /usr/local/rvm/gems/ruby-2.5.3/gems/rake-compiler-1.0.7 && \\\n    ( git apply /home/rvm/patches/rake-compiler-1.0.7/*.diff || true )\n\nENV XRUBIES 2.6.0 2.5.0 2.4.0 2.3.0 2.2.2\n\n# First do downloads sequentially since they can not run in parallel\n# Then build all xruby versions in parallel\n# Then cleanup all build artifacts\nRUN for rv in $XRUBIES; do \\\n        bash -c \"rake-compiler /home/rvm/.rake-compiler/sources/ruby-$rv/Makefile.in VERSION=$rv HOST=x86_64-linux-gnu\"; \\\n    done; \\\n    for rv in $XRUBIES; do \\\n        for host in i686-linux-gnu x86_64-linux-gnu i686-w64-mingw32 x86_64-w64-mingw32; do \\\n            echo -n \"'rake-compiler cross-ruby VERSION=$rv HOST=$host' \" >> ~/xbuild_rubies; \\\n        done; \\\n    done && \\\n    cat ~/xbuild_rubies; \\\n    bash -c \" \\\n    export CFLAGS='-s -O1 -fno-omit-frame-pointer -fno-fast-math' && \\\n    parallel -- $( cat ~/xbuild_rubies ) && \\\n    rm -rf ~/.rake-compiler/builds ~/.rake-compiler/sources && \\\n    find /usr/local/rvm -type d -print0 | sudo xargs -0 chmod g+sw \"\n\n# Avoid linking against libruby shared object.\n# See also https://github.com/rake-compiler/rake-compiler-dock/issues/13\nRUN find /usr/local/rake-compiler/ruby/*linux*/ -name libruby.so | xargs rm\nRUN find /usr/local/rake-compiler/ruby/*linux*/ -name libruby-static.a | while read f ; do cp $f `echo $f | sed s/-static//` ; done\nRUN find /usr/local/rake-compiler/ruby/*linux*/ -name libruby.a | while read f ; do ar t $f | xargs ar d $f ; done\nRUN find /usr/local/rake-compiler/ruby/*linux*/ -name mkmf.rb | while read f ; do sed -i ':a;N;$!ba;s/TRY_LINK = [^\\n]*\\n[^\\n]*\\n[^\\n]*LOCAL_LIBS)/& -lruby-static/' $f ; done\n\n# RubyInstaller doesn't install libgcc -> link it static.\nRUN find /usr/local/rake-compiler/ruby/*mingw*/ -name rbconfig.rb | while read f ; do sed -i 's/.\"LDFLAGS\". = \"/&-static-libgcc /' $f ; done\n\nUSER root\n\n# Add more libraries and tools to support cross build\nRUN dpkg --add-architecture i386 && \\\n    apt-get -y update && \\\n    apt-get install --no-install-recommends -y libc6-dev:i386 libudev-dev libudev-dev:i386 cmake && rm -rf /var/lib/apt/lists/*;\n\n# Fix paths in rake-compiler/config.yml and add rvm and mingw-tools to the global bashrc\nRUN sed -i -- \"s:/root/.rake-compiler:/usr/local/rake-compiler:g\" /usr/local/rake-compiler/config.yml && \\\n    echo \"source /etc/profile.d/rvm.sh\" >> /etc/bash.bashrc\n\n# # Install wrappers for strip commands as a workaround for \"Protocol error\" in boot2docker.\nCOPY build/strip_wrapper /root/\nRUN mv /usr/bin/i686-w64-mingw32-strip /usr/bin/i686-w64-mingw32-strip.bin && \\\n    mv /usr/bin/x86_64-w64-mingw32-strip /usr/bin/x86_64-w64-mingw32-strip.bin && \\\n    ln /root/strip_wrapper /usr/bin/i686-w64-mingw32-strip && \\\n    ln /root/strip_wrapper /usr/bin/x86_64-w64-mingw32-strip\n\n# Install SIGINT forwarder\nCOPY build/sigfw.c /root/\nRUN gcc $HOME/sigfw.c -o /usr/local/bin/sigfw\n\n# Install user mapper\nCOPY build/runas /usr/local/bin/\n\n# Install sudoers configuration\nCOPY build/sudoers /etc/sudoers.d/rake-compiler-dock\n\nENV RUBY_CC_VERSION 2.6.0:2.5.0:2.4.0:2.3.0:2.2.2\n\nCMD bash\n"
+}

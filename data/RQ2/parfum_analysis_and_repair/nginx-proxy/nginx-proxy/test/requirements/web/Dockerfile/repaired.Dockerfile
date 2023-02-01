@@ -1,0 +1,1 @@
+# Docker Image running one (or multiple) webservers listening on all given ports from WEB_PORTS environment variable

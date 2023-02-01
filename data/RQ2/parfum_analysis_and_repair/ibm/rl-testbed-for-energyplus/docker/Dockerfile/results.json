@@ -1,0 +1,62 @@
+{
+  "startTime": 1674248634493,
+  "endTime": 1674248635729,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 70,
+        "lineEnd": 70,
+        "columnStart": 4,
+        "columnEnd": 23
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 19,
+        "lineEnd": 22,
+        "columnStart": 4,
+        "columnEnd": 50
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 26,
+        "lineEnd": 26,
+        "columnStart": 18,
+        "columnEnd": 38
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 69,
+        "lineEnd": 69,
+        "columnStart": 18,
+        "columnEnd": 111
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 19,
+        "lineEnd": 22,
+        "columnStart": 4,
+        "columnEnd": 50
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 26,
+        "lineEnd": 26,
+        "columnStart": 18,
+        "columnEnd": 38
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "ARG EPLUS_VERSION=22-1-0\nARG EPLUS_DL_URL=https://github.com/NREL/EnergyPlus/releases/download/v22.1.0/EnergyPlus-22.1.0-ed759b17ee-Linux-Ubuntu20.04-x86_64.sh\n# either baselines or ray\nARG RL_FRAMEWORK=\"baselines\"\n\n# Stage 1\nFROM ubuntu:20.04 AS eplus-build\n\nARG EPLUS_VERSION\nARG EPLUS_DL_URL\nARG EPLUS_BUILD_PARALLELISM=4\nENV DEBIAN_FRONTEND=noninteractive\n\nSHELL [\"/bin/bash\", \"-c\"]\n\nCOPY ./EnergyPlus /root/patches/\nWORKDIR /root\n\nRUN apt update && \\\n    apt install --no-install-recommends -y -u \\\n      build-essential python3-minimal wget openssh-client git libgl1-mesa-glx \\\n      apt-transport-https ca-certificates gnupg software-properties-common \\\n      libxrandr-dev libxinerama-dev libxcursor-dev && \\\n    # EnergyPlus 9.6+ requires cmake 3.17\n    wget -O - https://apt.kitware.com/keys/kitware-archive-latest.asc 2>/dev/null | apt-key add - && \\\n    apt-add-repository 'deb https://apt.kitware.com/ubuntu/ focal main' && \\\n    apt update && apt install --no-install-recommends -y cmake && \\\n    # install EnergyPlus from binaries\n    wget --quiet $EPLUS_DL_URL && \\\n    (echo \"y\"; echo \"\"; echo \"\";) | bash $(echo \"$EPLUS_DL_URL\" | rev | cut -d'/' -f1 | rev) && \\\n    # get EnergyPlus sources\n    ssh-keyscan -H github.com >> /etc/ssh/ssh_known_hosts && \\\n    git clone --depth=1 -b v${EPLUS_VERSION//-/.} https://github.com/NREL/EnergyPlus.git && \\\n    # build patched EnergyPlus\n    export LC_ALL=C.UTF-8 && cd /root/EnergyPlus && \\\n    patch -p1 < /root/patches/RL-patch-for-EnergyPlus-${EPLUS_VERSION}.patch && \\\n    mkdir -p build && cd build && \\\n    cmake -DCMAKE_INSTALL_PREFIX=/usr/local/EnergyPlus-${EPLUS_VERSION} .. && \\\n    make -j$EPLUS_BUILD_PARALLELISM && \\\n    make install && rm -rf /var/lib/apt/lists/*;\n\n# Stage 2\nFROM ubuntu:20.04\n\n# connect package with repo\nLABEL org.opencontainers.image.source=https://github.com/IBM/rl-testbed-for-energyplus\n\nARG EPLUS_VERSION\nARG RL_FRAMEWORK\nENV DEBIAN_FRONTEND=noninteractive\n\nSHELL [\"/bin/bash\", \"-c\"]\n\n# copy file with environment variables. They will be loaded automatically\nCOPY docker/bashrc_eplus /root/.bashrc_eplus\n# copy current sources\nCOPY ./ /root/rl-testbed-for-energyplus\n# copy built EnergyPlus binaries from stage 1\nCOPY --from=eplus-build \\\n     /usr/local/EnergyPlus-${EPLUS_VERSION} \\\n     /usr/local/EnergyPlus-${EPLUS_VERSION}\n\nRUN export EPLUS_INSTALL_PATH=/usr/local/EnergyPlus-${EPLUS_VERSION} && \\\n    # setup important symbolic links for EnergyPlus (they are not preserved from stage 1)\n    ln -s ${EPLUS_INSTALL_PATH}/energyplus /usr/local/bin/energyplus && \\\n    ln -s ${EPLUS_INSTALL_PATH}/Energy+.idd /usr/local/bin/Energy+.idd && \\\n    ln -s ${EPLUS_INSTALL_PATH}/ExpandObjects /usr/local/bin/ExpandObjects && \\\n    ln -s ${EPLUS_INSTALL_PATH}/ReadVarsESO /usr/local/bin/ReadVarsESO && \\\n    # install python dependencies\n    apt update && apt install --no-install-recommends -y locales python3-pip python3-mpi4py python3-tk git libgl1-mesa-glx libglib2.0-0 && \\\n    pip3 install --no-cache-dir -U pip && \\\n    # installing deps in 2 steps:\n    # - baselines requires tensorflow installed first\n    # - we need baselines to support tf2, which is only available in a git branch\n    cd /root && \\\n    cat ./rl-testbed-for-energyplus/requirements/${RL_FRAMEWORK}.txt | grep -v baselines | xargs pip3 install --ignore-installed && \\\n    # install baselines sources in /root/src/baselines. They need to be added to PYTHONPATH\n    (cat ./rl-testbed-for-energyplus/requirements/${RL_FRAMEWORK}.txt | grep baselines | xargs pip3 install) || echo \"not baselines\" && \\\n    echo \"source /root/.bashrc_eplus\" >> /root/.bashrc && \\\n    # cleanup\n    apt autoremove -y && rm -rf /var/lib/apt/lists/* && apt-get clean\n\nENTRYPOINT \"/bin/bash\"\n"
+}

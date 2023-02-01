@@ -1,0 +1,71 @@
+{
+  "startTime": 1674248397205,
+  "endTime": 1674248398261,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 16,
+        "lineEnd": 18,
+        "columnStart": 2,
+        "columnEnd": 84
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 66,
+        "lineEnd": 66,
+        "columnStart": 2,
+        "columnEnd": 107
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 67,
+        "lineEnd": 67,
+        "columnStart": 2,
+        "columnEnd": 117
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 74,
+        "lineEnd": 74,
+        "columnStart": 4,
+        "columnEnd": 157
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 24,
+        "lineEnd": 24,
+        "columnStart": 4,
+        "columnEnd": 52
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 13,
+        "lineEnd": 13,
+        "columnStart": 22,
+        "columnEnd": 76
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 13,
+        "lineEnd": 13,
+        "columnStart": 22,
+        "columnEnd": 76
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "################################################################################\n# This Dockerfile was generated from the template at:\n#   src/dev/build/tasks/os_packages/docker_generator/templates/Dockerfile\n#\n# Beginning of multi stage Dockerfile\n################################################################################\n\n################################################################################\n# Build stage 0 `builder`:\n# Extract Kibana artifact\n################################################################################\nFROM ubuntu:20.04 AS builder\n\nRUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get --no-install-recommends install -y curl && rm -rf /var/lib/apt/lists/*;\n\nRUN cd /tmp && \\\n  curl -f --retry 8 -s -L \\\n    --output kibana.tar.gz \\\n     https://artifacts.elastic.co/downloads/kibana/kibana-8.3.2-linux-$(arch).tar.gz && \\\n  cd -\n\n\nRUN mkdir /usr/share/kibana\nWORKDIR /usr/share/kibana\nRUN tar --strip-components=1 -zxf /tmp/kibana.tar.gz && rm /tmp/kibana.tar.gz\n# Ensure that group permissions are the same as user permissions.\n# This will help when relying on GID-0 to run Kibana, rather than UID-1000.\n# OpenShift does this, for example.\n# REF: https://docs.openshift.org/latest/creating_images/guidelines.html\nRUN chmod -R g=u /usr/share/kibana\n\n\n################################################################################\n# Build stage 1 (the actual Kibana image):\n#\n# Copy kibana from stage 0\n# Add entrypoint\n################################################################################\nFROM ubuntu:20.04\nEXPOSE 5601\n\nRUN for iter in {1..10}; do \\\n      export DEBIAN_FRONTEND=noninteractive && \\\n      apt-get update  && \\\n      apt-get upgrade -y  && \\\n      apt-get install -y --no-install-recommends \\\n       fontconfig fonts-liberation libnss3 libfontconfig1 ca-certificates curl && \\\n      apt-get clean && \\\n      rm -rf /var/lib/apt/lists/* && exit_code=0 && break || exit_code=$? && echo \"apt-get error: retry $iter in 10s\" && \\\n      sleep 10; \\\n    done; \\\n    (exit $exit_code)\n\n# Add an init process, check the checksum to make sure it's a match\nRUN set -e ; \\\n    TINI_BIN=\"\" ; \\\n    case \"$(arch)\" in \\\n        aarch64) \\\n            TINI_BIN='tini-arm64' ; \\\n            ;; \\\n        x86_64) \\\n            TINI_BIN='tini-amd64' ; \\\n            ;; \\\n        *) echo >&2 \"Unsupported architecture $(arch)\" ; exit 1 ;; \\\n    esac ; \\\n  TINI_VERSION='v0.19.0' ; \\\n  curl -f --retry 8 -S -L -O \"https://github.com/krallin/tini/releases/download/${TINI_VERSION}/${TINI_BIN}\"; \\\n  curl -f --retry 8 -S -L -O \"https://github.com/krallin/tini/releases/download/${TINI_VERSION}/${TINI_BIN}.sha256sum\"; \\\n  sha256sum -c \"${TINI_BIN}.sha256sum\" ; \\\n  rm \"${TINI_BIN}.sha256sum\" ; \\\n  mv \"${TINI_BIN}\" /bin/tini ; \\\n  chmod +x /bin/tini\n\nRUN mkdir /usr/share/fonts/local\nRUN curl -f --retry 8 -S -L -o /usr/share/fonts/local/NotoSansCJK-Regular.ttc https://github.com/googlefonts/noto-cjk/raw/NotoSansV2.001/NotoSansCJK-Regular.ttc\nRUN echo \"5dcd1c336cc9344cb77c03a0cd8982ca8a7dc97d620fd6c9c434e02dcb1ceeb3  /usr/share/fonts/local/NotoSansCJK-Regular.ttc\" | sha256sum -c -\nRUN fc-cache -v\n\n# Bring in Kibana from the initial stage.\nCOPY --from=builder --chown=1000:0 /usr/share/kibana /usr/share/kibana\nWORKDIR /usr/share/kibana\nRUN ln -s /usr/share/kibana /opt/kibana\n\nENV ELASTIC_CONTAINER true\nENV PATH=/usr/share/kibana/bin:$PATH\n\n# Set some Kibana configuration defaults.\nCOPY --chown=1000:0 config/kibana.yml /usr/share/kibana/config/kibana.yml\n\n# Add the launcher/wrapper script. It knows how to interpret environment\n# variables and translate them to Kibana CLI options.\nCOPY bin/kibana-docker /usr/local/bin/\n\n# Ensure gid 0 write permissions for OpenShift.\nRUN chmod g+ws /usr/share/kibana && \\\n    find /usr/share/kibana -gid 0 -and -not -perm /g+w -exec chmod g+w {} \\;\n\n# Remove the suid bit everywhere to mitigate \"Stack Clash\"\nRUN find / -xdev -perm -4000 -exec chmod u-s {} +\n\n# Provide a non-root user to run the process.\nRUN groupadd --gid 1000 kibana && \\\n    useradd --uid 1000 --gid 1000 -G 0 \\\n      --home-dir /usr/share/kibana --no-create-home \\\n      kibana\n\nLABEL org.label-schema.build-date=\"2022-07-06T13:32:18.168Z\" \\\n  org.label-schema.license=\"Elastic License\" \\\n  org.label-schema.name=\"Kibana\" \\\n  org.label-schema.schema-version=\"1.0\" \\\n  org.label-schema.url=\"https://www.elastic.co/products/kibana\" \\\n  org.label-schema.usage=\"https://www.elastic.co/guide/en/kibana/reference/index.html\" \\\n  org.label-schema.vcs-ref=\"12341eba941264b1d015dc6394ec3f006b13b1af\" \\\n  org.label-schema.vcs-url=\"https://github.com/elastic/kibana\" \\\n  org.label-schema.vendor=\"Elastic\" \\\n  org.label-schema.version=\"8.3.2\" \\\n  org.opencontainers.image.created=\"2022-07-06T13:32:18.168Z\" \\\n  org.opencontainers.image.documentation=\"https://www.elastic.co/guide/en/kibana/reference/index.html\" \\\n  org.opencontainers.image.licenses=\"Elastic License\" \\\n  org.opencontainers.image.revision=\"12341eba941264b1d015dc6394ec3f006b13b1af\" \\\n  org.opencontainers.image.source=\"https://github.com/elastic/kibana\" \\\n  org.opencontainers.image.title=\"Kibana\" \\\n  org.opencontainers.image.url=\"https://www.elastic.co/products/kibana\" \\\n  org.opencontainers.image.vendor=\"Elastic\" \\\n  org.opencontainers.image.version=\"8.3.2\"\n\n\nENTRYPOINT [\"/bin/tini\", \"--\"]\n\n\nCMD [\"/usr/local/bin/kibana-docker\"]\n\n\nUSER kibana\n"
+}

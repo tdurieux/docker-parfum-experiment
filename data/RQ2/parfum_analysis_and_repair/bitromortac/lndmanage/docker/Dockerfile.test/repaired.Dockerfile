@@ -1,0 +1,15 @@
+FROM lnregtest:local as lnregtest-deps
+FROM lndmanage:local
+
+COPY --from=lnregtest-deps /opt/bin/ /root/lndmanage/test/bin/
+ENV PATH="/root/.venv/bin:/opt/bin:$PATH:/root"
+ARG LNREGTEST_REF=4aa08bd72f0ec76b3459d7ab69d4d14a0fdd4358
+RUN apt-get update && \
+    apt-get install -y -q --no-install-recommends git && \
+    pip install --no-cache-dir git+https://github.com/bitromortac/lnregtest.git@${LNREGTEST_REF} && \
+    apt-get purge -y --autoremove git && \
+    rm -rf /var/lib/apt/lists/*
+
+WORKDIR /root/lndmanage
+
+ENTRYPOINT [ "/root/.venv/bin/python3", "-m", "unittest","discover", "test" ]

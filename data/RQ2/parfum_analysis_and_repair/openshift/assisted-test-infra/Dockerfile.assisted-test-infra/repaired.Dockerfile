@@ -1,0 +1,48 @@
+FROM quay.io/edge-infrastructure/assisted-service:latest AS service
+
+FROM quay.io/centos/centos:stream9
+
+# CRB repo is required for libvirt-devel
+RUN dnf -y install --enablerepo=crb \
+  make \
+  gcc \
+  unzip \
+  wget \
+  curl-minimal \
+  git \
+  podman \
+  httpd-tools \
+  jq \
+  nss_wrapper \
+  python3 \
+  python3-devel \
+  libvirt-client \
+  libvirt-devel \
+  libguestfs-tools \
+  libxslt \
+   && dnf clean all
+
+RUN curl -f --retry 5 -Lo packer.zip https://releases.hashicorp.com/packer/1.8.0/packer_1.8.0_linux_386.zip && unzip packer.zip -d /usr/bin/ && mv /usr/bin/packer /usr/bin/packer.io && rm -rf packer.zip
+RUN curl -f --retry 5 -Lo terraform.zip https://releases.hashicorp.com/terraform/1.2.2/terraform_1.2.2_linux_amd64.zip && unzip terraform.zip -d /usr/bin/ && rm -rf terraform.zip
+RUN curl -f --retry 5 -Lo - "https://github.com/vmware/govmomi/releases/latest/download/govc_$(uname -s)_$(uname -m).tar.gz" | tar -C /usr/local/bin -xvzf - govc
+
+WORKDIR /home/assisted-test-infra
+
+COPY requirements.txt requirements-dev.txt ./
+COPY --from=service /clients/assisted-service-client-*.tar.gz /build/pip/
+RUN pip3 install --no-cache-dir --upgrade pip && \
+      pip3 install --no-cache-dir -I -r ./requirements.txt -r ./requirements-dev.txt && \
+      pip3 install --no-cache-dir --upgrade /build/pip/*
+
+RUN curl -f --retry 5 -s https://storage.googleapis.com/golang/go1.17.4.linux-amd64.tar.gz | tar -C /usr/local -xz
+ENV GOPATH=/go
+ENV GOCACHE=/go/.cache
+ENV PATH=$PATH:/usr/local/go/bin:/go/bin
+
+COPY . .
+
+RUN chgrp -R 0 /home/assisted-test-infra && \
+    chmod -R g=u /home/assisted-test-infra
+
+# setting pre-commit env
+ENV PRE_COMMIT_HOME build

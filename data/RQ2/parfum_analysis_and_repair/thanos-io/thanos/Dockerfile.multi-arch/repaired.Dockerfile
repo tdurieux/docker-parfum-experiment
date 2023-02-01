@@ -1,0 +1,1 @@
+# By default we pin to amd64 sha. Use make docker to automatically adjust for arm64 versions.

@@ -1,0 +1,72 @@
+{
+  "startTime": 1674244244775,
+  "endTime": 1674244245049,
+  "originalSmells": [
+    {
+      "rule": "sha256sumEchoOneSpaces",
+      "position": {
+        "lineStart": 41,
+        "lineEnd": 41,
+        "columnStart": 4,
+        "columnEnd": 52
+      }
+    },
+    {
+      "rule": "gpgUseBatchFlag",
+      "position": {
+        "lineStart": 44,
+        "lineEnd": 44,
+        "columnStart": 4,
+        "columnEnd": 72
+      }
+    },
+    {
+      "rule": "aptGetInstallUseY",
+      "position": {
+        "lineStart": 4,
+        "lineEnd": 4,
+        "columnStart": 4,
+        "columnEnd": 26
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 4,
+        "lineEnd": 4,
+        "columnStart": 4,
+        "columnEnd": 26
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 4,
+        "lineEnd": 4,
+        "columnStart": 4,
+        "columnEnd": 26
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 4,
+        "lineEnd": 4,
+        "columnStart": 4,
+        "columnEnd": 26
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 4,
+        "lineEnd": 4,
+        "columnStart": 4,
+        "columnEnd": 53
+      }
+    }
+  ],
+  "repairedDockerfile": "FROM lablup/kernel-base-python-minimal:3.6-alpine\nMAINTAINER Mario Cho \"m.cho@lablup.com\"\n\n# Install pre-build matplotlib\nRUN apt install -y --no-install-recommends build-base \\\n    && pip install --no-cache-dir matplotlib bokeh \\\n    && pip install --no-cache-dir ipython \\\n    && pip install --no-cache-dir pandas \\\n    && apt-get remove --purge -y gcc g++ \\\n    && apt-get autoremove -y \\\n    && rm -f /tmp/*.whl && rm -rf /var/lib/apt/lists/*;\n\n# Install Julia\n# reference: https://github.com/docker-library/julia/blob/master/Dockerfile\n# Check Julia dependencies: https://pkgs.alpinelinux.org/package/edge/testing/x86_64/julia\nARG JULIA_VERSION\n\nENV JULIA_VERSION ${JULIA_VERSION:-0.7.0}\nENV JULIA_PATH \"/usr/local/julia\"\nENV JULIA_PKGDIR \"/usr/local/share/julia/site\"\nENV JULIA_GPG 3673DF529D9049477F76B37566E3C7DC03D6E495\nENV PATH $JULIA_PATH:$JULIA_PATH/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin\n\nCOPY Make.user /tmp/\n\nRUN apt-get update \\\n    && apt-get install -y --no-install-recommends ca-certificates curl \\\n    && rm -rf /var/lib/apt/lists/*\n\nRUN set -ex; \\\n    dpkgArch=\"$(dpkg --print-architecture)\"; \\\n    case \"${dpkgArch##*-}\" in \\\n        amd64) tarArch='x86_64'; dirArch='x64'; sha256='3a27ea78b06f46701dc4274820d9853789db205bce56afdc7147f7bd6fa83e41' ;; \\\n        armhf) tarArch='arm'; dirArch='arm'; sha256='7515f5977b2aac0cea1333ef249b3983928dee76ea8eb3de9dd6a7cdfbd07d2d' ;; \\\n        i386) tarArch='i686'; dirArch='x86'; sha256='bfebd2ef38c25ce72dd6661cdd8a6f509800492a4d250c2908f83e791c0a444a' ;; \\\n        *) echo >&2 \"error: current architecture ($dpkgArch) does not have a corresponding Julia binary release\"; exit 1 ;; \\\n    esac; \\\n\n    curl -fL -o julia.tar.gz     \"https://julialang-s3.julialang.org/bin/linux/${dirArch}/${JULIA_VERSION%[.-]*}/julia-${JULIA_VERSION}-linux-${tarArch}.tar.gz\"; \\\n    curl -fL -o julia.tar.gz.asc \"https://julialang-s3.julialang.org/bin/linux/${dirArch}/${JULIA_VERSION%[.-]*}/julia-${JULIA_VERSION}-linux-${tarArch}.tar.gz.asc\"; \\\n\n    echo \"${sha256}  *julia.tar.gz\" | sha256sum -c -; \\\n\n    export GNUPGHOME=\"$(mktemp -d)\"; \\\n    gpg --batch --keyserver ha.pool.sks-keyservers.net --recv-keys \"$JULIA_GPG\"; \\\n    gpg --batch --verify julia.tar.gz.asc julia.tar.gz; \\\n    rm -rf \"$GNUPGHOME\" julia.tar.gz.asc; \\\n\n    mkdir \"$JULIA_PATH\"; \\\n    tar -xzf julia.tar.gz -C \"$JULIA_PATH\" --strip-components 1; \\\n    rm julia.tar.gz\n\n# Install kernel-runner scripts package\nRUN pip install --no-cache-dir \"backend.ai-kernel-runner[julia]~=1.4.0\"\n\n# Matplotlib configuration and pre-heating\nENV MPLCONFIGDIR /home/backend.ai/.matplotlib\nRUN mkdir /home/backend.ai/.matplotlib\nCOPY matplotlibrc /home/backend.ai/.matplotlib/\nRUN echo 'import matplotlib.pyplot' > /tmp/matplotlib-fontcache.py \\\n    && python /tmp/matplotlib-fontcache.py \\\n    && rm /tmp/matplotlib-fontcache.py\n\n# Install / pre-compile julia packages\n# matplotlib is needed for PyPlot\nCOPY IJuliaEmul.jl /home/backend.ai/IJuliaEmul.jl\nCOPY package.jl /home/backend.ai/package.jl\nCOPY precompile.jl /home/backend.ai/precompile.jl\nRUN julia /home/backend.ai/package.jl\nRUN julia /home/backend.ai/precompile.jl\n\n# Apply higher resource limits\nLABEL ai.backend.timeout=\"180\"\nLABEL ai.backend.maxmem=\"512m\"\nLABEL ai.backend.maxcores=\"4\"\nLABEL ai.backend.envs.corecount=\"OPENBLAS_NUM_THREADS,JULIA_CPU_CORES\"\nLABEL ai.backend.features \"query uid-match\"\n\nCMD [\"/home/backend.ai/jail\", \"-policy\", \"/home/backend.ai/policy.yml\", \\\n     \"/usr/local/bin/python\", \"-m\", \"ai.backend.kernel\", \"julia\"]\n\n# vim: ft=dockerfile\n"
+}

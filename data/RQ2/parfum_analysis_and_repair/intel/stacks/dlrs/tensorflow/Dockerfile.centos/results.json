@@ -1,0 +1,89 @@
+{
+  "startTime": 1674253927376,
+  "endTime": 1674253928807,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 54,
+        "lineEnd": 54,
+        "columnStart": 7,
+        "columnEnd": 32
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 99,
+        "lineEnd": 99,
+        "columnStart": 4,
+        "columnEnd": 57
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 10,
+        "lineEnd": 10,
+        "columnStart": 7,
+        "columnEnd": 67
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 31,
+        "lineEnd": 31,
+        "columnStart": 4,
+        "columnEnd": 89
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 32,
+        "lineEnd": 33,
+        "columnStart": 7,
+        "columnEnd": 36
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 50,
+        "lineEnd": 51,
+        "columnStart": 7,
+        "columnEnd": 23
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 57,
+        "lineEnd": 57,
+        "columnStart": 4,
+        "columnEnd": 89
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 58,
+        "lineEnd": 58,
+        "columnStart": 6,
+        "columnEnd": 46
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 80,
+        "lineEnd": 82,
+        "columnStart": 4,
+        "columnEnd": 65
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "#--------------------------------------------------------------------\n# [ARGS] Arguments for FROM statements\n#--------------------------------------------------------------------\nARG centos_ver=8\n#--------------------------------------------------------------------\n# [BUILD-COMMON] Common build tools\n#--------------------------------------------------------------------\nFROM centos:$centos_ver as common_build_tools\n\nRUN yum update -y \\\n    && yum install -y python3-pip python3-devel wget git cmake curl \\\n    && yum groupinstall -y 'Development Tools' && rm -rf /var/cache/yum\n\n# Install gcc9\nRUN dnf -y install gcc-toolset-9-gcc gcc-toolset-9-gcc-c++\nENV PATH=/opt/rh/gcc-toolset-9/root/usr/bin:$PATH\n\nRUN ln -s /usr/bin/python3 /usr/bin/python \\\n    && ln -s /usr/bin/pip3 /usr/bin/pip\n\nWORKDIR /buildir\nCOPY scripts/ patches/ .\n\n#--------------------------------------------------------------------\n# [TF BUILDER] Builder Stage - Tensorflow on Centos\n#--------------------------------------------------------------------\nFROM common_build_tools as tf_builder\nLABEL maintainer=otc-swstacks@intel.com\nARG tf_ver\n\n# Install SW packages\nRUN yum install -y https://dl.fedoraproject.org/pub/epel/epel-release-latest-8.noarch.rpm \\\n    && yum -y install bc jemalloc-devel which \\\n    \tpkg-config zip unzip go-toolset && rm -rf /var/cache/yum\n\n# Install Bazel\nRUN go get github.com/bazelbuild/bazelisk \\\n    && export PATH=$PATH:~/go/bin/ \\\n    && ln -s ~/go/bin/bazelisk /usr/bin/bazel\n\nRUN ./install_${tf_ver}_centos.sh\n\n#--------------------------------------------------------------\n# [TF CORE] DLRS Centos TF Core\n#--------------------------------------------------------------\nFROM centos:$centos_ver as tf_core\nLABEL maintainer=otc-swstacks@intel.com\n\n# Install SW packages\nRUN yum -y update \\\n    && yum -y install \\\n    python3-pip python3 \\\n    && ln -s /usr/bin/python3 /usr/bin/python \\\n    && ln -s /usr/bin/pip3 /usr/bin/pip \\\n    && pip install --no-cache-dir --upgrade pip && rm -rf /var/cache/yum\n\n# install optimized malloc libs\nRUN yum install -y https://dl.fedoraproject.org/pub/epel/epel-release-latest-8.noarch.rpm \\\n   && yum -y install jemalloc-devel gperftools && rm -rf /var/cache/yum\n\nCOPY --from=tf_builder /tmp/tf/ /tmp/tf/\n\n# Install Tensorflow\nRUN pip --no-cache-dir install /tmp/tf/avx512/tensorflow*.whl \\\n    && rm -rf /tmp/tf\n\nWORKDIR /workspace\nCOPY ./licenses/ /workspace/licenses\nHEALTHCHECK --interval=5m --timeout=3s \\\n  CMD python -c \"import sys\" || exit 1\nSHELL [\"/bin/bash\",  \"-c\"]\n\n#--------------------------------------------------------------\n# [FULL] Base DLRS Ubuntu TF\n#--------------------------------------------------------------\nFROM tf_core as tf_full_base\nLABEL maintainer=otc-swstacks@intel.com\nARG tf_ver\n\n# Install gcc9\nRUN yum install -y \\\n    openssh-server curl openmpi openmpi-devel libgomp \\\n    libjpeg-devel zlib-devel numactl python3-devel make cmake git \\\n    && dnf -y install gcc-toolset-9-gcc gcc-toolset-9-gcc-c++ && rm -rf /var/cache/yum\n\nENV PATH=/usr/lib64/openmpi/bin:$PATH \\\n    PATH=/opt/rh/gcc-toolset-9/root/usr/bin:$PATH\n\n# Symlink for missing libiomp5 library\nRUN ln -s /usr/lib/llvm-10/lib/libomp.so.5 /usr/lib/libiomp5.so\n\nCOPY common/ scripts/ .\n\n\nENV CPATH='/usr/local/lib/python3.6/site-packages/tensorflow_core/include/tensorflow/core/framework:/usr/local/lib/python3.6/site-packages/tensorflow_core/include/' \\\n    C_INCLUDE_PATH=$CPATH\n\n# Install runtime deps, frameworks and addons\nWORKDIR /workspace\nRUN HOROVOD_WITH_TENSORFLOW=1 pip --no-cache-dir install horovod==0.21.* \\\n    && ./install_py_packages.sh ${tf_ver} \\\n    && find /usr/lib/ -follow -type f -name '*.pyc' -delete \\\n    && find /usr/lib/ -follow -type f -name '*.js.map' -delete \\\n    && rm -rf /workspace/*\n# Clean routine\nRUN dnf remove -y gcc-toolset-9-gcc gcc-toolset-9-gcc-c++ \\\n    git python3-devel cmake make\n\n# speech to text using deepspeech\nRUN pip install --no-cache-dir deepspeech==0.9.3\n\nCOPY ./licenses /workspace/licenses\n#--------------------------------------------------------------\n# [TF CORE] DLRS Centos TF Core\n#--------------------------------------------------------------\nFROM centos:$centos_ver as tf_full\nLABEL maintainer=otc-swstacks@intel.com\n\nCOPY --from=tf_full_base / /\nSHELL [\"/bin/bash\", \"-c\"]\n\n"
+}

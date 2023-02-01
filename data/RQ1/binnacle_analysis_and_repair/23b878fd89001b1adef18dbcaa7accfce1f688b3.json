@@ -1,0 +1,53 @@
+{
+  "startTime": 1674235289258,
+  "endTime": 1674235289675,
+  "originalSmells": [
+    {
+      "rule": "wgetUseHttpsUrl",
+      "position": {
+        "lineStart": 59,
+        "lineEnd": 59,
+        "columnStart": 4,
+        "columnEnd": 133
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 50,
+        "lineEnd": 50,
+        "columnStart": 4,
+        "columnEnd": 15
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 19,
+        "lineEnd": 19,
+        "columnStart": 4,
+        "columnEnd": 30
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 20,
+        "lineEnd": 22,
+        "columnStart": 7,
+        "columnEnd": 69
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 28,
+        "lineEnd": 29,
+        "columnStart": 4,
+        "columnEnd": 21
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM alpine:latest\n\nENV TINI_VERSION v0.18.0\nENV TSDB_VERSION 2.3.1\nENV HBASE_VERSION 1.4.4\nENV GNUPLOT_VERSION 5.2.4\nENV JAVA_HOME /usr/lib/jvm/java-1.8-openjdk\nENV PATH $PATH:/usr/lib/jvm/java-1.8-openjdk/bin/\nENV ALPINE_PACKAGES \"rsyslog bash openjdk8 make wget libgd libpng libjpeg libwebp libjpeg-turbo cairo pango lua\"\nENV BUILD_PACKAGES \"build-base autoconf automake git python cairo-dev pango-dev gd-dev lua-dev readline-dev libpng-dev libjpeg-turbo-dev libwebp-dev\"\nENV HBASE_OPTS \"-XX:+UseConcMarkSweepGC -XX:+UnlockExperimentalVMOptions -XX:+UseCGroupMemoryLimitForHeap\"\nENV JVMARGS \"-XX:+UseConcMarkSweepGC -XX:+UnlockExperimentalVMOptions -XX:+UseCGroupMemoryLimitForHeap -enableassertions -enablesystemassertions\"\n\n# Tini is a tiny init that helps when a container is being culled to stop things nicely\nADD https://github.com/krallin/tini/releases/download/${TINI_VERSION}/tini-static-amd64 /tini\nRUN chmod +x /tini\nENTRYPOINT [\"/tini\", \"--\"]\n\n# Add the base packages we'll need\nRUN apk --update --no-cache add apk-tools \\\n    && apk add --no-cache ${ALPINE_PACKAGES} \\\n      # repo required for gnuplot \\\n      --repository http://dl-cdn.alpinelinux.org/alpine/v3.0/testing/ \\\n    && mkdir -p /opt/opentsdb\n\nWORKDIR /opt/opentsdb/\n\n# Add build deps, build opentsdb, and clean up afterwards.\nRUN apk add --no-cache --virtual builddeps \\\n    ${BUILD_PACKAGES} \\\n  && : Install OpenTSDB and scripts \\\n  && wget --no-check-certificate \\\n    -O v${TSDB_VERSION}.zip \\\n    https://github.com/OpenTSDB/opentsdb/archive/v${TSDB_VERSION}.zip \\\n  && unzip v${TSDB_VERSION}.zip \\\n  && rm v${TSDB_VERSION}.zip \\\n  && cd /opt/opentsdb/opentsdb-${TSDB_VERSION} \\\n  && echo \"tsd.http.request.enable_chunked = true\" >> src/opentsdb.conf \\\n  && echo \"tsd.http.request.max_chunk = 1000000\" >> src/opentsdb.conf \\\n  && ./build.sh \\\n  && cp build-aux/install-sh build/build-aux \\\n  && cd build \\\n  && make install \\\n  && cd / \\\n  && rm -rf /opt/opentsdb/opentsdb-${TSDB_VERSION}\n\nRUN cd /tmp && \\\n    wget https://datapacket.dl.sourceforge.net/project/gnuplot/gnuplot/${GNUPLOT_VERSION}/gnuplot-${GNUPLOT_VERSION}.tar.gz && \\\n    tar xzf gnuplot-${GNUPLOT_VERSION}.tar.gz && \\\n    cd gnuplot-${GNUPLOT_VERSION} && \\\n    ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" && \\\n    make install && \\\n    cd /tmp && rm -rf /tmp/gnuplot-${GNUPLOT_VERSION} && rm /tmp/gnuplot-${GNUPLOT_VERSION}.tar.gz\n\nRUN apk del builddeps && rm -rf /var/cache/apk/*\n\n#Install HBase and scripts\nRUN mkdir -p /data/hbase /root/.profile.d /opt/downloads\nWORKDIR /opt/downloads\nRUN wget -O hbase-${HBASE_VERSION}.bin.tar.gz https://archive.apache.org/dist/hbase/${HBASE_VERSION}/hbase-${HBASE_VERSION}-bin.tar.gz \\\n    && tar xzvf hbase-${HBASE_VERSION}.bin.tar.gz \\\n    && mv hbase-${HBASE_VERSION} /opt/hbase \\\n    && rm -r /opt/hbase/docs \\\n    && rm hbase-${HBASE_VERSION}.bin.tar.gz\n\n# Add misc startup files\nRUN ln -s /usr/local/share/opentsdb/etc/opentsdb /etc/opentsdb \\\n    && rm /etc/opentsdb/opentsdb.conf \\\n    && mkdir /opentsdb-plugins\nADD files/opentsdb.conf /etc/opentsdb/opentsdb.conf.sample\nADD files/hbase-site.xml /opt/hbase/conf/hbase-site.xml.sample\nADD files/start_opentsdb.sh /opt/bin/\nADD files/create_tsdb_tables.sh /opt/bin/\nADD files/start_hbase.sh /opt/bin/\nADD files/entrypoint.sh /entrypoint.sh\n\n# Fix ENV variables in installed scripts\nRUN for i in /opt/bin/start_hbase.sh /opt/bin/start_opentsdb.sh /opt/bin/create_tsdb_tables.sh; \\\n    do \\\n        sed -i \"s#::JAVA_HOME::#$JAVA_HOME#g; s#::PATH::#$PATH#g; s#::TSDB_VERSION::#$TSDB_VERSION#g;\" $i; \\\n    done\n\nRUN echo \"export HBASE_OPTS=\\\"${HBASE_OPTS}\\\"\" >> /opt/hbase/conf/hbase-env.sh\n\n\n#4242 is tsdb, rest are hbase ports\nEXPOSE 60000 60010 60030 4242 16010 16070\n\n\n#HBase is configured to store data in /data/hbase, vol-mount it to persist your data.\nVOLUME [\"/data/hbase\", \"/tmp\", \"/opentsdb-plugins\"]\n\nCMD [\"/entrypoint.sh\"]\n"
+}

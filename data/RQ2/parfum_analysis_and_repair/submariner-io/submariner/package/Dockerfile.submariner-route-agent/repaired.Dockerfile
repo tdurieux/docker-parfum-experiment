@@ -1,0 +1,41 @@
+ARG BASE_BRANCH
+ARG FEDORA_VERSION=36
+ARG SOURCE=/go/src/github.com/submariner-io/submariner
+
+FROM --platform=${BUILDPLATFORM} quay.io/submariner/shipyard-dapper-base:${BASE_BRANCH} AS builder
+ARG FEDORA_VERSION
+ARG SOURCE
+ARG TARGETPLATFORM
+
+COPY . ${SOURCE}
+
+RUN make -C ${SOURCE} LOCAL_BUILD=1 bin/${TARGETPLATFORM}/submariner-route-agent
+
+FROM --platform=${BUILDPLATFORM} fedora:${FEDORA_VERSION} AS base
+ARG FEDORA_VERSION
+ARG SOURCE
+ARG TARGETPLATFORM
+
+COPY package/dnf_install /
+
+RUN /dnf_install -a ${TARGETPLATFORM} -v ${FEDORA_VERSION} -r /output/route-agent \
+    glibc bash glibc-minimal-langpack coreutils-single \
+    iproute iptables-legacy iptables-nft ipset openvswitch procps-ng grep
+
+FROM --platform=${TARGETPLATFORM} scratch
+ARG SOURCE
+ARG TARGETPLATFORM
+
+WORKDIR /var/submariner
+
+COPY --from=base /output/route-agent /
+
+COPY --from=builder ${SOURCE}/package/submariner-route-agent.sh ${SOURCE}/bin/${TARGETPLATFORM}/submariner-route-agent /usr/local/bin/
+
+# Wrapper scripts to choose the appropriate iptables
+# https://github.com/kubernetes-sigs/iptables-wrappers
+COPY --from=builder ${SOURCE}/package/iptables-wrapper-installer.sh /usr/sbin/
+# The sanity checks can fail when building foreign arch images; we know we meet the requirements
+RUN /usr/sbin/iptables-wrapper-installer.sh --no-sanity-check
+
+ENTRYPOINT submariner-route-agent.sh

@@ -1,0 +1,1 @@
+# MongoDB image with host-based data volume

@@ -1,0 +1,19 @@
+FROM ubuntu:18.04
+
+RUN apt-get update && \
+    apt-get install --no-install-recommends -y python3 python3-dev \
+    wget curl ca-certificates openssl \
+    build-essential git libtinfo-dev zlib1g-dev libedit-dev libxml2-dev \
+    antlr4 gnupg clang-format-10 \
+    && rm -rf /var/lib/apt/lists/* \
+    && curl -f https://bootstrap.pypa.io/pip/3.6/get-pip.py -o get-pip.py && python3 get-pip.py && rm get-pip.py \
+    && rm -rf /root/.cache/pip
+
+RUN wget https://cmake.org/files/v3.22/cmake-3.22.0-linux-x86_64.sh \
+    && bash cmake-3.22.0-linux-x86_64.sh --skip-license --prefix=/usr/local
+
+RUN pip3 install --no-cache-dir -U pip setuptools wheel
+RUN pip3 install --no-cache-dir Cython numpy sklearn pytest
+ENV PYTHON_COMMAND=python3
+
+WORKDIR /workspace

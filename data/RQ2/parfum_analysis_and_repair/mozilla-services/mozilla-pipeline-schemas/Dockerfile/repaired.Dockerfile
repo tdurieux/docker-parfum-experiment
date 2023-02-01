@@ -1,0 +1,50 @@
+# --platform=linux/amd64 added to prevent pulling ARM images when run on Apple Silicon
+FROM --platform=linux/amd64 python:3.8-slim-bullseye
+LABEL maintainer="Mozilla Data Platform"
+
+# man directory is removed in upstream debian:slim, but needed by jdk install
+RUN mkdir -p /usr/share/man/man1 && \
+    apt-get update -qqy && \
+    apt-get install --no-install-recommends -qqy \
+        cmake \
+        diffutils \
+        gcc \
+        g++ \
+        jq \
+        make \
+        wget \
+        git \
+        openjdk-11-jdk-headless \
+        maven \
+        cargo && rm -rf /var/lib/apt/lists/*;
+
+# Install jsonschema-transpiler
+ENV PATH=$PATH:/root/.cargo/bin
+RUN cargo install jsonschema-transpiler --version 1.9.0
+
+# Configure git for testing
+RUN git config --global user.email "mozilla-pipeline-schemas@mozilla.com"
+RUN git config --global user.name "Mozilla Pipeline Schemas"
+
+WORKDIR /app
+
+COPY --from=mozilla/ingestion-sink:latest /app/ingestion-sink/target /app/target
+
+# Install python dependencies
+COPY requirements.txt requirements-dev.txt ./
+RUN pip3 install --no-cache-dir --upgrade pip setuptools && \
+    pip3 install --no-cache-dir -r requirements.txt -r
+
+# Install Java dependencies
+COPY pom.xml .
+RUN mvn dependency:copy-dependencies
+
+COPY . /app
+
+RUN pip3 install --no-cache-dir .
+RUN mkdir release && \
+    cd release && \
+    cmake .. && \
+    make
+
+CMD pytest -v

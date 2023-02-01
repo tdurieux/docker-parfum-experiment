@@ -1,0 +1,26 @@
+{
+  "startTime": 1674253847504,
+  "endTime": 1674253849043,
+  "originalSmells": [
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 22,
+        "lineEnd": 22,
+        "columnStart": 4,
+        "columnEnd": 74
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 28,
+        "lineEnd": 28,
+        "columnStart": 4,
+        "columnEnd": 20
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "ARG base_image=registry.nordix.org/cloud-native/meridio/base:latest\nARG USER=meridio\nARG UID=10002\nARG HOME=/home/${USER}\n\nFROM golang:1.18.1 as build\nARG meridio_version=0.0.0-unknown\nENV GO111MODULE=on\n\nWORKDIR /app\n\nCOPY go.mod .\nCOPY go.sum .\n\nRUN go mod download\n\nCOPY . .\nRUN CGO_ENABLED=0 GOOS=linux go build -ldflags \"-extldflags -static -X main.version=${meridio_version}\" -o load-balancer ./cmd/load-balancer\n\nFROM ${base_image} as lb-builder\nWORKDIR /\nADD https://github.com/Nordix/nfqueue-loadbalancer/releases/download/1.0.0/nfqlb-1.0.0.tar.xz /\nRUN tar --strip-components=1 -xf /nfqlb-1.0.0.tar.xz nfqlb-1.0.0/bin/nfqlb && rm /nfqlb-1.0.0.tar.xz\n\nFROM ${base_image}\nARG USER\nARG UID\nARG HOME\nRUN apk add --no-cache nftables\nRUN addgroup --gid $UID $USER \\\n  && adduser $USER --home $HOME --uid $UID -G $USER --disabled-password \\\n  && chown -R :root \"${HOME}\" && chmod -R g+s=u \"${HOME}\"\nWORKDIR $HOME\nCOPY --from=build /app/load-balancer .\nCOPY --from=lb-builder /bin/nfqlb /bin/nfqlb\n# cap_dac_override required by non-root user because of nsm-socket hostPath file permissions\n# (while file permissions of hostPath unix spire-agent-socket grant \"write\" access for \"others\")\nRUN setcap 'cap_net_admin,cap_dac_override+ep' ./load-balancer \\\n  && chown root:root /bin/nfqlb && setcap 'cap_net_admin,cap_ipc_lock,cap_ipc_owner+ep' /bin/nfqlb \\\n  && setcap 'cap_net_admin+ep' /usr/sbin/nft\nUSER ${UID}:${UID}\nCMD [\"./load-balancer\"]\n"
+}

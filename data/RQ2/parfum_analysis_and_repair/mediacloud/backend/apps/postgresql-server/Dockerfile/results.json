@@ -1,0 +1,90 @@
+{
+  "startTime": 1674251323897,
+  "endTime": 1674251324963,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 15,
+        "lineEnd": 15,
+        "columnStart": 4,
+        "columnEnd": 23
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 22,
+        "lineEnd": 22,
+        "columnStart": 4,
+        "columnEnd": 40
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 58,
+        "lineEnd": 58,
+        "columnStart": 13,
+        "columnEnd": 56
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 47,
+        "lineEnd": 48,
+        "columnStart": 8,
+        "columnEnd": 31
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 12,
+        "lineEnd": 12,
+        "columnStart": 4,
+        "columnEnd": 85
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 19,
+        "lineEnd": 19,
+        "columnStart": 4,
+        "columnEnd": 95
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 47,
+        "lineEnd": 48,
+        "columnStart": 8,
+        "columnEnd": 31
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 58,
+        "lineEnd": 58,
+        "columnStart": 13,
+        "columnEnd": 56
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 47,
+        "lineEnd": 48,
+        "columnStart": 8,
+        "columnEnd": 31
+      }
+    }
+  ],
+  "repairedDockerfile": "#\n# Main backend PostgreSQL server\n#\n\nFROM gcr.io/mcback/postgresql-base:latest\n\nUSER root\nRUN \\\n\n\n    apt-get -y update && \\\n    #\n    apt-get -y --no-install-recommends install python3 python3-pip python3-setuptools && \\\n    #\n    # Upgrade Pip\n    pip3 install --no-cache-dir -U pip && \\\n    #\n    # https://github.com/pypa/pip/issues/5221#issuecomment-382069604\n    hash -r pip3 && \\\n    apt-get -y --no-install-recommends install build-essential python3-dev libffi-dev libpq-dev && \\\n    #\n    # Install package to manage schema migrations\n    pip3 install --no-cache-dir yandex-pgmigrate==1.0.6 && \\\n    #\n    # Remove temporary dependencies\n    apt-get -y remove build-essential python3-dev libffi-dev libpq-dev && \\\n    #\n    # Cleanup\n    apt-get -y autoremove && \\\n    apt-get -y clean && \\\n    rm -rf /root/.cache/ && \\\n    #\n    true && rm -rf /var/lib/apt/lists/*;\n\n# Copy helper scripts, migrations, pgmigrate callbacks/config, create schema dir\nRUN \\\n    mkdir -p \\\n        /opt/postgresql-server/bin/ \\\n        /opt/postgresql-server/pgmigrate \\\n    && \\\n    chmod ugo+rw /opt/postgresql-server/pgmigrate && \\\n    true\n\n# Install Citus Data\nRUN \\\n    if [ \"$(dpkg --print-architecture)\" = \"arm64\" ]; then \\\n        /dl_to_stdout.sh \"https://github.com/mediacloud/postgresql-citus-aws-graviton2/releases/download/14.1-2.pgdg20.04%2B1/postgresql-14-citus-10.2_10.2.3.citus-1_arm64.deb\" > /var/tmp/citus.deb && \\\n        apt-get -y --no-install-recommends install \\\n            libcurl4-gnutls-dev \\\n        && \\\n        dpkg -i /var/tmp/citus.deb && \\\n        rm /var/tmp/*.deb && \\\n        true; rm -rf /var/lib/apt/lists/*; \\\n    else \\\n        curl -fsSL https://repos.citusdata.com/community/gpgkey | apt-key add - && \\\n        echo \"deb https://repos.citusdata.com/community/ubuntu/ focal main\" \\\n            > /etc/apt/sources.list.d/citusdata_community.list && \\\n        apt-get -y update && \\\n        sudo apt-get -y --no-install-recommends install postgresql-14-citus-10.2 && \\\n        true; rm -rf /var/lib/apt/lists/*; \\\n    fi; \\\n    true\n\nCOPY etc/postgresql/14/extra/ /etc/postgresql/14/extra/\n\n# Copy helper scripts, schema, migrations\nCOPY bin/* /opt/postgresql-server/bin/\nCOPY pgmigrate/ /opt/postgresql-server/pgmigrate\n\n# Initialize data volume, create users + database\n# If a new empty volume gets mounted to /var/lib/postgresql/ upon\n# container start, Docker will copy the files from the container to the volume\n\nUSER postgres\nRUN \\\n    unset PGHOST PGPORT && \\\n    /opt/postgresql-server/bin/initialize_db.sh && \\\n    true\n\n# Remove the init script so that someone doesn't accidentally run it in\n# production\nUSER root\nRUN rm /opt/postgresql-server/bin/initialize_db.sh\n\n# dump schema file for reference in development (run ./dev/get_schema.sh to get local copy)\nRUN mv /opt/postgresql-server/pgmigrate/mediawords.sql /opt/mediawords.sql\n\nUSER postgres\nENV \\\n    PATH=\"/opt/postgresql-server/bin:${PATH}\" \\\n    #\n    # Make sure that we can connect via \"psql\" without sudoing into \"postgres\" user\n    PGUSER=mediacloud \\\n    PGPASSWORD=mediacloud \\\n    PGDATABASE=mediacloud\n\n# PostgreSQL data\nVOLUME /var/lib/postgresql/\n\n# Use our own wrapper script which runs schema upgrades first\nCMD [\"/opt/postgresql-server/bin/postgresql.sh\"]\n"
+}

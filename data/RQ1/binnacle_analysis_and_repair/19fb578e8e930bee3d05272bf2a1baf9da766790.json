@@ -1,0 +1,35 @@
+{
+  "startTime": 1674251906911,
+  "endTime": 1674251907210,
+  "originalSmells": [
+    {
+      "rule": "gpgUseBatchFlag",
+      "position": {
+        "lineStart": 25,
+        "lineEnd": 25,
+        "columnStart": 4,
+        "columnEnd": 40
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 37,
+        "lineEnd": 37,
+        "columnStart": 4,
+        "columnEnd": 45
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 39,
+        "lineEnd": 39,
+        "columnStart": 4,
+        "columnEnd": 33
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM node:8.16.0\n\n# Build arguments to change source url, branch or tag\nARG CODIMD_REPOSITORY=https://github.com/codimd/server.git\nARG VERSION=master\nARG UID=10000\n\n# Set some default config variables\nENV DEBIAN_FRONTEND noninteractive\nENV DOCKERIZE_VERSION v0.6.1\nENV NODE_ENV=production\n\nRUN wget https://github.com/jwilder/dockerize/releases/download/$DOCKERIZE_VERSION/dockerize-linux-amd64-$DOCKERIZE_VERSION.tar.gz && \\\n    tar -C /usr/local/bin -xzvf dockerize-linux-amd64-$DOCKERIZE_VERSION.tar.gz && \\\n    rm dockerize-linux-amd64-$DOCKERIZE_VERSION.tar.gz\n\nENV GOSU_VERSION 1.11\nCOPY resources/gosu-gpg.key /tmp/gosu.key\nRUN set -ex; \\\n    dpkgArch=\"$(dpkg --print-architecture | awk -F- '{ print $NF }')\"; \\\n    wget -O /usr/local/bin/gosu \"https://github.com/tianon/gosu/releases/download/$GOSU_VERSION/gosu-$dpkgArch\"; \\\n    wget -O /usr/local/bin/gosu.asc \"https://github.com/tianon/gosu/releases/download/$GOSU_VERSION/gosu-$dpkgArch.asc\"; \\\n\n# verify the signature\n    export GNUPGHOME=\"$(mktemp -d)\"; \\\n    gpg --batch --no-tty --import /tmp/gosu.key; \\\n    gpg --batch --verify /usr/local/bin/gosu.asc /usr/local/bin/gosu; \\\n    rm -rf \"$GNUPGHOME\" /usr/local/bin/gosu.asc; \\\n\n    chmod +x /usr/local/bin/gosu; \\\n# verify that the binary works\n    gosu nobody true\n\n# Add configuraton files\nCOPY resources/config.json resources/.sequelizerc /files/\n\nRUN apt-get update && \\\n    apt-get install --no-install-recommends -y git build-essential jq && \\\n    # Add fonts for PDF export\n    apt-get install --no-install-recommends -y fonts-noto && \\\n\n    # Clone the source\n    git clone --depth 1 --branch \"$VERSION\" \"$CODIMD_REPOSITORY\" /codimd && \\\n    # Print the cloned version and clean up git files\n    cd /codimd && \\\n    git log --pretty=format:'%ad %h %d' --abbrev-commit --date=short -1 && echo && \\\n    git rev-parse HEAD > /tmp/gitref && \\\n    rm -rf /codimd/.git && \\\n\n    # Mime the git repository for fullversion\n    mkdir /codimd/.git && \\\n    mv /tmp/gitref /codimd/.git/HEAD && \\\n    jq \".repository.url = \\\"${CODIMD_REPOSITORY}\\\"\" /codimd/package.json > /codimd/package.new.json && \\\n    mv /codimd/package.new.json /codimd/package.json && \\\n\n    # Symlink configuration files\n    rm -f /codimd/config.json && ln -s /files/config.json /codimd/config.json && \\\n    rm -f /codimd/.sequelizerc && ln -s /files/.sequelizerc /codimd/.sequelizerc && \\\n\n    # Install NPM dependencies and build project\n    yarn install --pure-lockfile && \\\n    yarn install --production=false --pure-lockfile && \\\n    npm run build && \\\n\n    # Clean up this layer\n    yarn install && \\\n    yarn cache clean && \\\n    apt-get remove -y --auto-remove build-essential git jq && \\\n    apt-get clean && apt-get purge && rm -r /var/lib/apt/lists/* && \\\n    # Create codimd user\n    adduser --uid $UID --home /codimd/ --disabled-password --system codimd && \\\n    chown -R codimd /codimd/\n\nWORKDIR /codimd\nEXPOSE 3000\n\nCOPY resources/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh\n\nENTRYPOINT [\"/usr/local/bin/docker-entrypoint.sh\"]\n\nCMD [\"node\", \"app.js\"]\n"
+}

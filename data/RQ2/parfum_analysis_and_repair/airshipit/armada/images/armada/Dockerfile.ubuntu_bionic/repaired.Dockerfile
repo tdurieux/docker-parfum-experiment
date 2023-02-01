@@ -1,0 +1,99 @@
+ARG FROM=ubuntu:18.04
+FROM ${FROM}
+
+LABEL org.opencontainers.image.authors='airship-discuss@lists.airshipit.org, irc://#airshipit@freenode' \
+      org.opencontainers.image.url='https://airshipit.org' \
+      org.opencontainers.image.documentation='https://docs.airshipit.org/armada' \
+      org.opencontainers.image.source='https://opendev.org/airship/armada' \
+      org.opencontainers.image.vendor='The Airship Authors' \
+      org.opencontainers.image.licenses='Apache-2.0'
+
+ENV DEBIAN_FRONTEND noninteractive
+ENV LANG=C.UTF-8
+ENV LC_ALL=C.UTF-8
+
+EXPOSE 8000
+
+RUN set -ex && \
+    apt-get -qq update && \
+    apt-get -y install \
+    ca-certificates \
+    curl \
+    netbase \
+    python3-dev \
+    python3-setuptools \
+    --no-install-recommends \
+    && apt-get autoremove -yqq --purge \
+    && apt-get clean \
+    && rm -rf \
+        /var/lib/apt/lists/* \
+        /tmp/* \
+        /var/tmp/* \
+        /usr/share/man \
+        /usr/share/doc \
+        /usr/share/doc-base
+
+WORKDIR /armada
+
+# Add armada user
+RUN useradd -u 1000 -g users -d $(pwd) armada
+
+ENTRYPOINT ["./entrypoint.sh"]
+CMD ["server"]
+
+COPY requirements.txt ./
+
+ENV LD_LIBRARY_PATH=/usr/local/lib
+
+ARG HELM_ARTIFACT_URL
+ARG LIBYAML_VERSION=0.2.5
+
+# Build
+RUN set -ex \
+    && buildDeps=' \
+      automake \
+      gcc \
+      libssl-dev \
+      libtool \
+      make \
+      python3-pip \
+    ' \
+    && apt-get -qq update \
+    # Keep git separate so it's not removed below
+    && apt-get install -y $buildDeps git --no-install-recommends \
+    && git clone https://github.com/yaml/libyaml.git \
+    && cd libyaml \
+    && git checkout $LIBYAML_VERSION \
+    && ./bootstrap \
+    && ./configure --build="$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)" \
+    && make \
+    && make install \
+    && cd .. \
+    && rm -fr libyaml \
+    && python3 -m pip install -U pip \
+    && pip3 install -r requirements.txt --no-cache-dir \
+    && curl -fSSL -O ${HELM_ARTIFACT_URL} \
+    && tar -xvf $(basename ${HELM_ARTIFACT_URL}) \
+    && mv linux-amd64/helm /usr/local/bin \
+    && apt-get purge -y --auto-remove $buildDeps \
+    && apt-get autoremove -yqq --purge \
+    && apt-get clean \
+    && rm -rf \
+        /var/lib/apt/lists/* \
+        /tmp/* \
+        /var/tmp/* \
+        /usr/share/man \
+        /usr/share/doc \
+        /usr/share/doc-base
+
+COPY . ./
+
+# Setting the version explicitly for PBR
+ENV PBR_VERSION 0.8.0
+
+RUN \
+    mv etc/armada /etc/ && \
+    chown -R armada:users . && \
+    python3 setup.py install
+
+USER armada

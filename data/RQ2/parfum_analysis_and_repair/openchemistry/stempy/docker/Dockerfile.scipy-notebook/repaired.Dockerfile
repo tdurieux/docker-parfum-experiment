@@ -1,0 +1,62 @@
+FROM jupyter/scipy-notebook
+
+USER root
+
+# Install deps
+RUN apt-get update && \
+  apt-get upgrade -y && \
+  apt-get install --no-install-recommends -y \
+  libeigen3-dev \
+  libssl-dev \
+  git \
+  autoconf \
+  automake \
+  gcc \
+  g++ \
+  make \
+  gfortran \
+  wget \
+  zlib1g-dev \
+  libffi-dev \
+  software-properties-common \
+  apt-transport-https \
+  ca-certificates \
+  gnupg \
+  libhdf5-dev && \
+  apt-get clean all && rm -rf /var/lib/apt/lists/*;
+
+# Install CMake
+RUN wget -O - https://apt.kitware.com/keys/kitware-archive-latest.asc 2>/dev/null | apt-key add - && \
+  apt-add-repository 'deb https://apt.kitware.com/ubuntu/ focal main' && \
+  apt-get update && \
+  apt-get install --no-install-recommends -y cmake && \
+  apt-get clean all && \
+  rm -rf /var/lib/apt/lists/*
+
+USER $NB_UID
+WORKDIR $HOME
+
+RUN mkdir build/ && mkdir source/
+
+# Build stempy
+COPY --chown=$NB_UID . source/stempy
+
+RUN mkdir -p build/stempy && \
+  cd build/stempy && \
+  cmake -DCMAKE_BUILD_TYPE:STRING=Release \
+  -Dstempy_ENABLE_VTKm:BOOL=OFF \
+  ../../source/stempy . && \
+  make -j4
+
+# Install stempy
+RUN pip install --no-cache-dir -r source/stempy/requirements.txt && \
+    cp -r -L build/stempy/lib/stempy /opt/conda/lib/python3.9/site-packages
+
+RUN rm -rf build
+
+RUN fix-permissions /home/$NB_USER
+
+# Install ncempy
+RUN pip install --no-cache-dir ncempy
+
+USER $NB_UID

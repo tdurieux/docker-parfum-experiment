@@ -1,0 +1,17 @@
+{
+  "startTime": 1674252064049,
+  "endTime": 1674252065700,
+  "originalSmells": [
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 5,
+        "lineEnd": 5,
+        "columnStart": 4,
+        "columnEnd": 20
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM docker.io/rust:1.53-alpine AS builder\nWORKDIR /usr/src/conduit\n\n# Install required packages to build Conduit and it's dependencies\nRUN apk add --no-cache musl-dev\n\n# == Build dependencies without our own code separately for caching ==\n#\n# Need a fake main.rs since Cargo refuses to build anything otherwise.\n#\n# See https://github.com/rust-lang/cargo/issues/2644 for a Cargo feature\n# request that would allow just dependencies to be compiled, presumably\n# regardless of whether source files are available.\nRUN mkdir src && touch src/lib.rs && echo 'fn main() {}' > src/main.rs\nCOPY Cargo.toml Cargo.lock ./\nRUN cargo build --release && rm -r src\n\n# Copy over actual Conduit sources\nCOPY src src\n\n# main.rs and lib.rs need their timestamp updated for this to work correctly since\n# otherwise the build with the fake main.rs from above is newer than the\n# source files (COPY preserves timestamps).\n#\n# Builds conduit and places the binary at /usr/src/conduit/target/release/conduit\nRUN touch src/main.rs && touch src/lib.rs && cargo build --release\n\n\n\n\n# ---------------------------------------------------------------------------------------------------------------\n# Stuff below this line actually ends up in the resulting docker image\n# ---------------------------------------------------------------------------------------------------------------\nFROM docker.io/alpine:3.15.0 AS runner\n\n# Standard port on which Conduit launches.\n# You still need to map the port when using the docker command or docker-compose.\nEXPOSE 6167\n\n# Note from @jfowl: I would like to remove this in the future and just have the Docker version be configured with envs.\nENV CONDUIT_CONFIG=\"/srv/conduit/conduit.toml\"\n\n# Conduit needs:\n#   ca-certificates: for https\n#   libgcc: Apparently this is needed, even if I (@jfowl) don't know exactly why. But whatever, it's not that big.\nRUN apk add --no-cache \\\n    ca-certificates \\\n    libgcc\n\n\n# Created directory for the database and media files\nRUN mkdir -p /srv/conduit/.local/share/conduit\n\n# Test if Conduit is still alive, uses the same endpoint as Element\nCOPY ./docker/healthcheck.sh /srv/conduit/healthcheck.sh\nHEALTHCHECK --start-period=5s --interval=5s CMD ./healthcheck.sh\n\n# Copy over the actual Conduit binary from the builder stage\nCOPY --from=builder /usr/src/conduit/target/release/conduit /srv/conduit/conduit\n\n# Improve security: Don't run stuff as root, that does not need to run as root:\n# Add www-data user and group with UID 82, as used by alpine\n# https://git.alpinelinux.org/aports/tree/main/nginx/nginx.pre-install\nRUN set -x ; \\\n    addgroup -Sg 82 www-data 2>/dev/null ; \\\n    adduser -S -D -H -h /srv/conduit -G www-data -g www-data www-data 2>/dev/null ; \\\n    addgroup www-data www-data 2>/dev/null && exit 0 ; exit 1\n\n# Change ownership of Conduit files to www-data user and group\nRUN chown -cR www-data:www-data /srv/conduit\nRUN chmod +x /srv/conduit/healthcheck.sh\n\n# Change user to www-data\nUSER www-data\n# Set container home directory\nWORKDIR /srv/conduit\n\n# Run Conduit and print backtraces on panics\nENV RUST_BACKTRACE=1\nENTRYPOINT [ \"/srv/conduit/conduit\" ]"
+}

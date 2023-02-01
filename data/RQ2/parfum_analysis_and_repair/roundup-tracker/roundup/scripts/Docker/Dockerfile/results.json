@@ -1,0 +1,62 @@
+{
+  "startTime": 1674253638189,
+  "endTime": 1674253639330,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 85,
+        "lineEnd": 86,
+        "columnStart": 55,
+        "columnEnd": 57
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 87,
+        "lineEnd": 87,
+        "columnStart": 36,
+        "columnEnd": 56
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 56,
+        "lineEnd": 56,
+        "columnStart": 4,
+        "columnEnd": 74
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 53,
+        "lineEnd": 53,
+        "columnStart": 4,
+        "columnEnd": 41
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 30,
+        "lineEnd": 41,
+        "columnStart": 4,
+        "columnEnd": 19
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 101,
+        "lineEnd": 106,
+        "columnStart": 4,
+        "columnEnd": 14
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# build in root dir using:\n#\n#     docker build -t roundup-app --rm -f scripts/Dockerfile .\n#\n# run using:\n#\n#    docker run --rm -v /.../issue.tracker:/usr/src/app/tracker \\\n#           -p 9017:8080 roundup-app:latest\n\n\n# Global vars for all build stages\n\n# application directory\nARG appdir=/usr/src/app\n\n# support roundup install from 'local' directory,\n# 'local_pip' local directory using pip to install or\n# latest release from 'pypi'\nARG source=local\n\nFROM python:3-alpine as build\n\n# Inherit global values https://github.com/moby/moby/issues/37345\nARG appdir\n\nWORKDIR $appdir\n\n# Add packages needed to compile mysql, pgsql and other python modules.\n# Can't use apk to add them as that installs a 3.9 python version.\n#        g++ installs cc1plus needed by pip install\nRUN apk add --no-cache \\\n    g++ \\\n    gcc \\\n    gpgme-dev \\\n    libxapian \\\n    linux-headers \\\n    make \\\n    musl-dev \\\n    mysql-dev \\\n    postgresql-dev \\\n    swig \\\n    xapian-core-dev\n\n# build xapian bindings:\n# file with sphinx build dependencies to remove after build\n# they are over 70MB of space.\nCOPY scripts/Docker/sphinxdeps.txt .\n\nRUN set -xv && CWD=$PWD && \\\n    VER=$(apk list -I 'xapian-core-dev' | \\\n          sed 's/^xapian-core-dev-\\([0-9.]*\\)-.*/\\1/') && \\\n    cd /tmp && \\\n    wget https://oligarchy.co.uk/xapian/$VER/xapian-bindings-$VER.tar.xz && \\\n    tar -Jxvf xapian-bindings-$VER.tar.xz && \\\n    cd xapian-bindings-$VER/ && \\\n    pip --no-cache-dir install sphinx && \\\n    ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" --prefix=/usr/local --with-python3 --disable-documentation && \\\n    make && make install && \\\n    pip uninstall --no-cache-dir -y -r $CWD/sphinxdeps.txt && rm xapian-bindings-$VER.tar.xz\n\n# add requirements for pip here, e.g. Whoosh, gpg, zstd or other\n#   modules not installed in the base library.\n# ignore warnings from pip to use virtualenv\nCOPY scripts/Docker/requirements.txt .\nRUN pip install --no-cache-dir -r requirements.txt\n\n# copy the elements of the release directory to the docker image\nCOPY setup.py install/\nCOPY doc install/doc/\nCOPY frontends install/frontends/\nCOPY locale install/locale/\nCOPY roundup install/roundup/\nCOPY share install/share/\n\n# verify source has one of two valid values then\n# install in python3 standard directories from local copy\n# or install in python3 standard directories from pypi using pip\n# import from global/command line\nARG source\nRUN set -xv && if [ \"$source\" = \"local\" ] ||  \\\n                  [ \"$source\" = \"pypi\"  ] || \\\n                  [ \"$source\" = \"local_pip\"   ]; then :; \\\n           else echo \"invalid value for source: $source\"; \\\n                echo \"must be local or pypi\"; exit 1; fi; \\\n    if [ \"$source\" = \"local\" ]; then cd install && ./setup.py install; fi; \\\n    if [ \"$source\" = \"local_pip\" ]; then \\\n    cd install && pip install --no-cache-dir \\\n                            --use-feature=in-tree-build .; fi; \\\n    if [ \"$source\" = \"pypi\" ]; then \\\n    pip install --no-cache-dir roundup; \\\n       cp -ril /usr/local/lib/python3.10/site-packages/usr/local/share/* \\\n\t   /usr/local/share;fi\n\n# build a new smaller docker image for execution. Build image above\n# is 1G in size.\nFROM python:3-alpine\n\n# import from global\nARG appdir\n\nWORKDIR $appdir\n\n# add libraries needed to run gpg/mysql/pgsql/brotli\nRUN apk add --no-cache \\\n     gpgme \\\n     mariadb-connector-c \\\n     libpq \\\n     libstdc++ \\\n     libxapian\n\nARG source\nLABEL \"org.roundup-tracker.vendor\"=\"Roundup Issue Tracker Team\" \\\n      \"org.roundup-tracker.description\"=\"Roundup Issue Tracker using sqlite\" \\\n      \"version\"=\"2.1.0 $source\" \\\n      \"org.opencontainers.image.authors\"=\"roundup-devel@lists.sourceforge.net\"\n\n\n# pull over built assets\nCOPY --from=build /usr/local/lib/python3.10/site-packages /usr/local/lib/python3.10/site-packages/\nCOPY --from=build /usr/local/bin/roundup* /usr/local/bin/\nCOPY --from=build /usr/local/share /usr/local/share/\nCOPY scripts/Docker/roundup_start .\n\n# map port 8080 to your local port\nEXPOSE 8080/tcp\n\n# mount a trackerdir on tracker location\nRUN mkdir tracker\nVOLUME $appdir/tracker\n\nHEALTHCHECK --start-period=1m \\\n   CMD wget -q -O /dev/null --no-verbose http://localhost:8080/issues/\n\n# do not run roundup as root. This creates roundup user and group.\nRUN adduser -D -h /usr/src/app roundup\nUSER roundup\n\n# run the server, disable output buffering so we can see logs.\nENV PYTHONUNBUFFERED=1\n#ENTRYPOINT [ \"roundup-server\", \"-n\", \"0.0.0.0\" ]\nENTRYPOINT [ \"./roundup_start\" ]\n\n# allow the invoker to override cmd with multiple trackers\n# in each subdirectory under $appdir/tracker. E.G.\n# docker run .... \\\n#   issues=tracker/issues foo=tracker/foo\n#\n# note using \"issue=$appdir/tracker\" results in error:\n#\n#  No valid configuration files found in directory /usr/src/app/$appdir/tracker\n#\n# so $appdir not expanded and $PWD prefixed onto the (relative path)\n#   $appdir/tracker. Hence use relative path for spec.\nCMD [  \"issues=tracker\" ]\n"
+}

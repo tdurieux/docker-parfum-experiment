@@ -1,0 +1,44 @@
+{
+  "startTime": 1674246602546,
+  "endTime": 1674246603743,
+  "originalSmells": [
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 25,
+        "lineEnd": 25,
+        "columnStart": 1,
+        "columnEnd": 23
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 16,
+        "lineEnd": 16,
+        "columnStart": 1,
+        "columnEnd": 64
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 16,
+        "lineEnd": 16,
+        "columnStart": 1,
+        "columnEnd": 64
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 40,
+        "lineEnd": 50,
+        "columnStart": 1,
+        "columnEnd": 8
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "#Stage 1 : builder debian image\nFROM debian:buster as builder\n\n# properly setup debian sources\nENV DEBIAN_FRONTEND noninteractive\nRUN echo \"deb http://http.debian.net/debian buster main\\n\\\ndeb-src http://http.debian.net/debian buster main\\n\\\ndeb http://http.debian.net/debian buster-updates main\\n\\\ndeb-src http://http.debian.net/debian buster-updates main\\n\\\ndeb http://security.debian.org buster/updates main\\n\\\ndeb-src http://security.debian.org buster/updates main\\n\\\n\" > /etc/apt/sources.list\n\n# install package building helpers\n# rsyslog for logging (ref https://github.com/stilliard/docker-pure-ftpd/issues/17)\nRUN apt-get -y update && \\\n\tapt-get -y --no-install-recommends --force-yes --fix-missing install dpkg-dev debhelper && \\\n\tapt-get -y build-dep pure-ftpd && rm -rf /var/lib/apt/lists/*;\n\n\n# Build from source - we need to remove the need for CAP_SYS_NICE and CAP_DAC_READ_SEARCH\nRUN mkdir /tmp/pure-ftpd/ && \\\n\tcd /tmp/pure-ftpd/ && \\\n\tapt-get source pure-ftpd && \\\n\tcd pure-ftpd-* && \\\n\t./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" --with-tls | grep -v '^checking' | grep -v ': Entering directory' | grep -v ': Leaving directory' && \\\n\tsed -i '/CAP_SYS_NICE,/d; /CAP_DAC_READ_SEARCH/d; s/CAP_SYS_CHROOT,/CAP_SYS_CHROOT/;' src/caps_p.h && \\\n\tdpkg-buildpackage -b -uc | grep -v '^checking' | grep -v ': Entering directory' | grep -v ': Leaving directory'\n\n\n#Stage 2 : actual pure-ftpd image\nFROM debian:buster-slim\n\n# feel free to change this ;)\nLABEL maintainer \"Andrew Stilliard <andrew.stilliard@gmail.com>\"\n\n# install dependencies\n# FIXME : libcap2 is not a dependency anymore. .deb could be fixed to avoid asking this dependency\nENV DEBIAN_FRONTEND noninteractive\nRUN apt-get -y update && \\\n\tapt-get  --no-install-recommends --yes install \\\n\tlibc6 \\\n\tlibcap2 \\\n    libmariadb3 \\\n\tlibpam0g \\\n\tlibssl1.1 \\\n    lsb-base \\\n    openbsd-inetd \\\n    openssl \\\n    perl \\\n\trsyslog && rm -rf /var/lib/apt/lists/*;\n\nCOPY --from=builder /tmp/pure-ftpd/*.deb /tmp/pure-ftpd/\n\n# install the new deb files\nRUN dpkg -i /tmp/pure-ftpd/pure-ftpd-common*.deb &&\\\n\tdpkg -i /tmp/pure-ftpd/pure-ftpd_*.deb && \\\n\t# dpkg -i /tmp/pure-ftpd/pure-ftpd-ldap_*.deb && \\\n\t# dpkg -i /tmp/pure-ftpd/pure-ftpd-mysql_*.deb && \\\n\t# dpkg -i /tmp/pure-ftpd/pure-ftpd-postgresql_*.deb && \\\n\trm -Rf /tmp/pure-ftpd\n\n# prevent pure-ftpd upgrading\nRUN apt-mark hold pure-ftpd pure-ftpd-common\n\n# setup ftpgroup and ftpuser\nRUN groupadd ftpgroup &&\\\n\tuseradd -g ftpgroup -d /home/ftpusers -s /dev/null ftpuser\n\n# configure rsyslog logging\nRUN echo \"\" >> /etc/rsyslog.conf && \\\n\techo \"#PureFTP Custom Logging\" >> /etc/rsyslog.conf && \\\n\techo \"ftp.* /var/log/pure-ftpd/pureftpd.log\" >> /etc/rsyslog.conf && \\\n\techo \"Updated /etc/rsyslog.conf with /var/log/pure-ftpd/pureftpd.log\"\n\n# setup run/init file\nCOPY run.sh /run.sh\nRUN chmod u+x /run.sh\n\n# cleaning up\nRUN apt-get -y clean \\\n\t&& apt-get -y autoclean \\\n\t&& apt-get -y autoremove \\\n\t&& rm -rf /var/lib/apt/lists/*\n\n# default publichost, you'll need to set this for passive support\nENV PUBLICHOST localhost\n\n# couple available volumes you may want to use\nVOLUME [\"/home/ftpusers\", \"/etc/pure-ftpd/passwd\"]\n\n# startup\nCMD /run.sh -l puredb:/etc/pure-ftpd/pureftpd.pdb -E -j -R -P $PUBLICHOST\n\nEXPOSE 21 30000-30009\n"
+}

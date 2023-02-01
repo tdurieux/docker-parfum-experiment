@@ -1,0 +1,12 @@
+FROM --platform=linux/arm/v7 alpine:3.13
+LABEL maintainer="Team Teapot @ Zalando SE <team-teapot@zalando.de>"
+RUN apk --no-cache add ca-certificates && update-ca-certificates
+ADD build/linux/arm/v7/skipper \
+    build/linux/arm/v7/eskip \
+    build/linux/arm/v7/webhook \
+    build/linux/arm/v7/routesrv /usr/bin/
+ENV PATH $PATH:/usr/bin
+
+EXPOSE 9090 9911
+
+CMD ["/usr/bin/skipper"]

@@ -1,0 +1,35 @@
+{
+  "startTime": 1674252169613,
+  "endTime": 1674252170222,
+  "originalSmells": [
+    {
+      "rule": "mkdirUsrSrcThenRemove",
+      "position": {
+        "lineStart": 11,
+        "lineEnd": 11,
+        "columnStart": 5,
+        "columnEnd": 33
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 30,
+        "lineEnd": 30,
+        "columnStart": 5,
+        "columnEnd": 48
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 21,
+        "lineEnd": 21,
+        "columnStart": 4,
+        "columnEnd": 27
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM alpine:3.13 AS builder\n\nARG LIBRDKAFKA_VERSION=\"v1.6.1\"\n\nRUN apk update\nRUN apk add --no-cache curl\n\n# install librdkafka from source as alpine package repositories may lag behind python confluent kafka requirements\n# librdkafka installation procedure is attributed to https://github.com/confluentinc/confluent-kafka-python\nRUN \\\n     echo Installing librdkafka && \\\n     mkdir -p /usr/src/librdkafka && \\\n     cd /usr/src/librdkafka && \\\n     curl -LfsS https://github.com/edenhill/librdkafka/archive/${LIBRDKAFKA_VERSION}.tar.gz | tar xvzf - --strip-components=1 && rm -rf /usr/src/librdkafka\n\nFROM python:3.9.4-alpine3.13\n\nARG CONNECT_CERT_PATH_BUILD_ARG=\"./local-config/connect\"\nARG CONNECT_CONFIG_PATH_BUILD_ARG=\"./local-config/connect\"\n\nRUN apk update && \\\n    apk add --no-cache ca-certificates && \\\n    apk add --no-cache --virtual .dev-packages bash \\\n        build-base \\\n        curl \\\n        openssl\n\n# build librdkafka\nCOPY --from=builder /usr/src/librdkafka /usr/src/librdkafka\nRUN cd /usr/src/librdkafka && \\\n     ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" --prefix=/usr --disable-lz4-ext && \\\n     make -j && \\\n     make install && \\\n     cd / && \\\n     rm -rf /usr/src/librdkafka\n\n# install certificates\n# copy certificates and keys\nWORKDIR /usr/local/share/ca-certificates/\nCOPY $CONNECT_CERT_PATH_BUILD_ARG/*.pem ./\nCOPY $CONNECT_CERT_PATH_BUILD_ARG/*.key ./\nRUN chmod 644 *.pem *.key\nRUN update-ca-certificates\n\n# configure the connect app\nRUN addgroup -S lfh && adduser -S lfh -G lfh -h /home/lfh\n\nWORKDIR /home/lfh/connect\nRUN mkdir config && \\\n    chown -R lfh:lfh /home/lfh/connect\n\n# copy config files\nCOPY --chown=lfh:lfh $CONNECT_CERT_PATH_BUILD_ARG/nats-server.nk ./config/\nCOPY --chown=lfh:lfh Pipfile.lock logging.yaml ./\n\n# configure application\nCOPY --chown=lfh:lfh ./connect ./connect\nUSER lfh\nRUN python -m pip install --user --upgrade pip pipenv\nRUN /home/lfh/.local/bin/pipenv sync\n\n# hang onto dev packages until python libs are installed. Required for native dependencies.\nUSER root\nRUN apk del .dev-packages\n\nUSER lfh\nEXPOSE 5000\nWORKDIR /home/lfh/connect\nENV PYTHONPATH=\".\"\nCMD [\"/home/lfh/.local/bin/pipenv\", \"run\", \"python\", \"connect/main.py\"]\n"
+}

@@ -1,0 +1,62 @@
+{
+  "startTime": 1674238805361,
+  "endTime": 1674238805851,
+  "originalSmells": [
+    {
+      "rule": "wgetUseHttpsUrl",
+      "position": {
+        "lineStart": 115,
+        "lineEnd": 115,
+        "columnStart": 4,
+        "columnEnd": 58
+      }
+    },
+    {
+      "rule": "wgetUseHttpsUrl",
+      "position": {
+        "lineStart": 120,
+        "lineEnd": 120,
+        "columnStart": 10,
+        "columnEnd": 51
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 101,
+        "lineEnd": 101,
+        "columnStart": 4,
+        "columnEnd": 70
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 102,
+        "lineEnd": 102,
+        "columnStart": 4,
+        "columnEnd": 36
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 103,
+        "lineEnd": 109,
+        "columnStart": 4,
+        "columnEnd": 16
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 92,
+        "lineEnd": 99,
+        "columnStart": 4,
+        "columnEnd": 17
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# This Dockerfile is used to construct container images for all of the bugs\n# belonging to the ROBUST dataset.\n#\n# Build Arguments:\n#\n#   ROS_DISTRO -- the name of the ROS distribution that should be used when\n#     replicating the bug.\n#   UBUNTU_VERSION -- the version of Ubuntu that should be used when\n#     replicating the bug; should be given as a numbered version to avoid\n#     non-deterministic build outcomes.\n#   USE_APT_OLD_RELEASES -- a flag that accepts the values \"True\" or \"False\".\n#     If set to true, the resulting Docker image will attempt to use archival\n#     package sources. Allows \"apt-get\" to be used with versions of Ubuntu\n#     that are no longer maintained.\n#   CATKIN_PACKAGES -- a space-colon-delimited list of the names of the\n#     packages under test.\n#   REPO_FORK_URL -- the URL of the ROBUST fork Git repository for this bug.\n#   REPO_BUG_COMMIT -- the SHA-1 hash for the commit in the forked repository\n#     that provides the buggy version of the code. This version of the code\n#     also contains supplementary files that, where possible, provide a test\n#     case for the bug.\n#   REPO_FIX_COMMIT -- the SHA-1 hash for the commit in the forked repository\n#     that provides the fixed version of the code. This version of the code\n#     also contains supplementary files that, where possible, provide a test\n#     case for the bug.\n#   IS_BUILD_FAILURE -- indicates whether or not the package under test is\n#     expected to encounter a build failure. Accepts values of \"True\" and\n#     \"False\".\n#\nARG UBUNTU_VERSION\n\n\n##############################################################################\n# Download the forked repository as a build stage to improve build caching.\n##############################################################################\nFROM alpine:3.7 as fork\nARG REPO_FORK_URL\nRUN apk --no-cache add git\nRUN echo \"[ROBUST] cloning repo: '${REPO_FORK_URL}'\" \\\n && git clone \"${REPO_FORK_URL}\" /repo-under-test \\\n && cd /repo-under-test \\\n && git config remote.origin.fetch \"+refs/heads/*:refs/remotes/origin/*\" \\\n && echo \"[ROBUST] cloned repo.\"\nARG REPO_FIX_COMMIT\nARG REPO_BUG_COMMIT\nRUN cd /repo-under-test \\\n && echo \"[ROBUST] fetching latest buggy and fixed verisons...\" \\\n && echo \"[ROBUST] fetching bug version: ${REPO_BUG_COMMIT}\" \\\n && echo \"[ROBUST] fetching fix version: ${REPO_FIX_COMMIT}\" \\\n && git fetch --all \\\n && echo \"[ROBUST] fetched latest buggy and fixed versions.\" \\\n && echo \"[ROBUST] generating patch diff...\" \\\n && git diff \"${REPO_BUG_COMMIT}\" \"${REPO_FIX_COMMIT}\" > /fix.patch \\\n && echo \"[ROBUST] generated patch diff.\"\n\n\n##############################################################################\n# Build a (reusable) base image for the ROS distro\n##############################################################################\nFROM ubuntu:${UBUNTU_VERSION} as distro\nENV ROS_WSPACE /ros_ws\nENV DEBIAN_FRONTEND noninteractive\nENV LANG C.UTF-8\nENV LC_ALL C.UTF-8\nARG ROS_DISTRO\nENV ROS_DISTRO \"${ROS_DISTRO}\"\nRUN echo \"[ROBUST]: building image for ROS_DISTRO: '${ROS_DISTRO}'\"\nRUN echo \"#!/bin/bash \\n\\\nset -e \\n\\\nsource \\\"/opt/ros/\\${ROS_DISTRO}/setup.bash\\\" \\n\\\nsource \\\"${ROS_WSPACE}/devel/setup.bash\\\" \\n\\\nexec \\\"\\$@\\\"\" > /entrypoint.sh \\\n && chmod +x /entrypoint.sh\nENTRYPOINT [\"/entrypoint.sh\"]\nCMD [\"bash\"]\n\n# fix the package sources list to use archival sources\n# https://askubuntu.com/questions/1000291/error-the-repository-xxx-does-not-have-a-release-file\n# https://askubuntu.com/questions/91815/how-to-install-software-or-upgrade-from-an-old-unsupported-release\nARG USE_APT_OLD_RELEASES\nRUN echo \"[ROBUST] use archival sources? '${USE_APT_OLD_RELEASES}'\" \\\n && if [ \"${USE_APT_OLD_RELEASES}\" = \"True\" ]; then \\\n      echo \"[ROBUST] using archival sources\" \\\n      && sed -i -re 's/([a-z]{2}\\.)?archive.ubuntu.com|security.ubuntu.com/old-releases.ubuntu.com/g' \\\n        /etc/apt/sources.list \\\n      && apt-get update \\\n      && apt-get dist-upgrade \\\n    ; else \\\n      echo \"[ROBUST] not using archival sources\" \\\n    ; fi\n\nRUN apt-get update \\\n && apt-get install -y --no-install-recommends \\\n      build-essential \\\n      ca-certificates \\\n      git \\\n      python-pip \\\n      cmake \\\n      wget \\\n      lsb-release \\\n && pip --version \\\n && pip install --no-cache-dir --upgrade -i https://pypi.python.org/simple pip==9.0.3 && rm -rf /var/lib/apt/lists/*;\nRUN pip install --no-cache-dir --upgrade setuptools\nRUN pip install --no-cache-dir --upgrade \\\n      wheel \\\n      rosdep \\\n      wstool \\\n      rosinstall \\\n      rospkg \\\n      catkin_pkg \\\n && apt-get clean \\\n && rm -rf /var/lib/apt/lists/*\n\n# add OSRF repository to prevent Gazebo installation problems\nRUN echo \"deb http://packages.osrfoundation.org/gazebo/ubuntu-stable `lsb_release -cs` main\" > /etc/apt/sources.list.d/gazebo-stable.list \\\n && wget https://packages.osrfoundation.org/gazebo.key -O - | apt-key add -\n# optionally add packages.ros.org as a source\nARG USE_OSRF_REPOS\nRUN if [ \"${USE_OSRF_REPOS}\" = \"True\" ]; then \\\n         echo \"deb http://packages.ros.org/ros/ubuntu $(lsb_release -cs) main\" > /etc/apt/sources.list.d/ros-latest.list \\\n       && wget https://packages.ros.org/ros.key -O - | apt-key add - \\\n    ; fi\n\n# create an empty workspace\nWORKDIR \"${ROS_WSPACE}\"\nRUN mkdir src\n\n\n##############################################################################\n# Build a base image for the PUT that contains its dependencies\n##############################################################################\nFROM distro as put_base_with_deps\nARG CATKIN_PACKAGES\nENV CATKIN_PACKAGES \"${CATKIN_PACKAGES}\"\n# NOTE assumes catkin >= 0.5.78 (supports --only-pkg-with-deps)\nRUN echo \"[ROBUST] creating build script\" \\\n && echo \"#!/bin/bash\\n\\\n          source /opt/ros/$ROS_DISTRO/setup.bash \\\n          && echo '[ROBUST] attempting to build PUT...' \\\n          && echo \\\"[ROBUST] building packages: ${CATKIN_PACKAGES}\\\" \\\n          && catkin_make --only-pkg-with-deps ${CATKIN_PACKAGES}\" > build.sh \\\n && chmod +x build.sh \\\n && echo \"[ROBUST] created build script\"\n\n# setup workspace and import packages\nCOPY deps.rosinstall .\nRUN wstool init -j8 ${ROS_WSPACE}/src ${ROS_WSPACE}/deps.rosinstall\n\n# install binary dependencies via rosdep\nRUN apt-get clean \\\n && apt-get update \\\n && rosdep init \\\n && rosdep update \\\n && rosdep install --from-paths src -i --rosdistro=${ROS_DISTRO} -y \\\n      --skip-keys=\"python-rosdep python-catkin-pkg python-rospkg\" \\\n && apt-get clean \\\n && rm -rf /var/lib/apt/lists/* \\\n && cd /usr/src/gtest \\\n && cmake CMakeLists.txt \\\n && make\n\n# install source dependencies, then destroy workspace\nRUN ${ROS_WSPACE}/src/catkin/bin/catkin_make_isolated \\\n      --install \\\n      --install-space /opt/ros/${ROS_DISTRO} \\\n      -DCMAKE_BUILD_TYPE=Release \\\n && rm -rf \\\n       ${ROS_WSPACE}/src \\\n       ${ROS_WSPACE}/build_isolated \\\n       ${ROS_WSPACE}/devel_isolated\n\nCOPY --from=fork fix.patch fix.patch\nCOPY --from=fork repo-under-test src/repo-under-test\n\n\n##############################################################################\n# Build an image for the buggy verison of the PUT\n##############################################################################\nFROM put_base_with_deps as bug\nARG REPO_BUG_COMMIT\nARG IS_BUILD_FAILURE\nRUN cd src/repo-under-test \\\n && echo \"[ROBUST] building buggy PUT...\" \\\n && echo \"[ROBUST] is a build failure expected? ${IS_BUILD_FAILURE}.\" \\\n && echo \"[ROBUST] using bug commit: ${REPO_BUG_COMMIT}\" \\\n && git reset --hard \"${REPO_BUG_COMMIT}\" \\\n && cd \"${ROS_WSPACE}\" \\\n && ./build.sh || [ \"${IS_BUILD_FAILURE}\" = \"yes\" ]\nCOPY test.sh .\n\n##############################################################################\n# Build an image for the fixed verison of the PUT\n##############################################################################\nFROM put_base_with_deps as fix\nARG REPO_FIX_COMMIT\nRUN cd src/repo-under-test \\\n && echo \"[ROBUST] building fixed PUT...\" \\\n && echo \"[ROBUST] using fix commit: ${REPO_FIX_COMMIT}\" \\\n && git reset --hard \"${REPO_FIX_COMMIT}\" \\\n && cd \"${ROS_WSPACE}\" \\\n && ./build.sh\nCOPY test.sh .\n"
+}

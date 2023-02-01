@@ -1,0 +1,44 @@
+{
+  "startTime": 1674253369193,
+  "endTime": 1674253370465,
+  "originalSmells": [
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 55,
+        "lineEnd": 56,
+        "columnStart": 7,
+        "columnEnd": 57
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 86,
+        "lineEnd": 86,
+        "columnStart": 4,
+        "columnEnd": 26
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 108,
+        "lineEnd": 108,
+        "columnStart": 7,
+        "columnEnd": 68
+      }
+    },
+    {
+      "rule": "gpgUseBatchFlag",
+      "position": {
+        "lineStart": 45,
+        "lineEnd": 45,
+        "columnStart": 7,
+        "columnEnd": 102
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM centos:7\n\n# Ideas mostly from:\n# https://github.com/giovtorres/slurm-docker-cluster/releases/tag/18.08.6\n\nLABEL org.label-schema.docker.cmd=\"docker-compose up -d\" \\\n      org.label-schema.name=\"slurm-docker-cluster\" \\\n      org.label-schema.description=\"Slurm Docker cluster on CentOS 7\" \\\n      maintainer=\"John Garbutt\"\n\nARG SLURM_TAG=slurm-19-05-7-1\nARG GOSU_VERSION=1.12\n\nRUN set -ex \\\n    && yum makecache fast \\\n    && yum -y update \\\n    && yum -y install epel-release \\\n    && yum -y install \\\n       wget \\\n       bzip2 \\\n       perl \\\n       gcc \\\n       gcc-c++\\\n       git \\\n       json-c \\\n       json-c-devel \\\n       gnupg \\\n       make \\\n       munge \\\n       munge-devel \\\n       python-devel \\\n       python-pip \\\n       python-virtualenv \\\n       mariadb-server \\\n       mariadb-devel \\\n       psmisc \\\n       bash-completion \\\n       vim-enhanced \\\n    && yum clean all \\\n    && rm -rf /var/cache/yum\n\nRUN set -ex \\\n    && wget -O /usr/local/bin/gosu \"https://github.com/tianon/gosu/releases/download/$GOSU_VERSION/gosu-amd64\" \\\n    && wget -O /usr/local/bin/gosu.asc \"https://github.com/tianon/gosu/releases/download/$GOSU_VERSION/gosu-amd64.asc\" \\\n    && export GNUPGHOME=\"$(mktemp -d)\" \\\n    && gpg --batch --keyserver ha.pool.sks-keyservers.net --recv-keys B42F6819007F00F88E364FD4036A9C25BF357DD4 \\\n    && gpg --batch --verify /usr/local/bin/gosu.asc /usr/local/bin/gosu \\\n    && rm -rf \"${GNUPGHOME}\" /usr/local/bin/gosu.asc \\\n    && chmod +x /usr/local/bin/gosu \\\n    && gosu nobody true\n\nRUN set -x \\\n    && git clone https://github.com/SchedMD/slurm.git \\\n    && pushd slurm \\\n    && git checkout tags/$SLURM_TAG \\\n    && ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" --enable-debug --prefix=/usr --sysconfdir=/etc/slurm \\\n        --with-mysql_config=/usr/bin --libdir=/usr/lib64 \\\n    && make install \\\n    && install -D -m644 etc/cgroup.conf.example /etc/slurm/cgroup.conf.example \\\n    && install -D -m644 etc/slurm.conf.example /etc/slurm/slurm.conf.example \\\n    && install -D -m644 etc/slurmdbd.conf.example /etc/slurm/slurmdbd.conf.example \\\n    && install -D -m644 contribs/slurm_completion_help/slurm_completion.sh /etc/profile.d/slurm_completion.sh \\\n    && popd \\\n    && rm -rf slurm \\\n    && groupadd -r --gid=995 slurm \\\n    && useradd -r -g slurm --uid=995 slurm \\\n    && mkdir /etc/sysconfig/slurm \\\n        /var/spool/slurmd \\\n        /var/run/slurmd \\\n        /var/run/slurmdbd \\\n        /var/lib/slurmd \\\n        /var/log/slurm \\\n        /data \\\n    && touch /var/lib/slurmd/node_state \\\n        /var/lib/slurmd/front_end_state \\\n        /var/lib/slurmd/job_state \\\n        /var/lib/slurmd/resv_state \\\n        /var/lib/slurmd/trigger_state \\\n        /var/lib/slurmd/assoc_mgr_state \\\n        /var/lib/slurmd/assoc_usage \\\n        /var/lib/slurmd/qos_usage \\\n        /var/lib/slurmd/fed_mgr_state \\\n    && chown -R slurm:slurm /var/*/slurm* \\\n    && /sbin/create-munge-key\n\n# Install envsubst, used by docker-entrypoint.sh\nRUN yum install -y gettext && rm -rf /var/cache/yum\n\nCOPY slurm.conf /etc/slurm/slurm.conf.template\nCOPY slurmdbd.conf /etc/slurm/slurmdbd.conf.template\nCOPY burst_buffer.conf /etc/slurm/burst_buffer.conf\n\n# Download and install etcd client\nARG ETCD_VERSION=3.3.13\nARG ETCD_DOWNLOAD_URL=\"https://github.com/etcd-io/etcd/releases/download/v$ETCD_VERSION/etcd-v$ETCD_VERSION-linux-amd64.tar.gz\"\n\nRUN set -x \\\n    && wget -O etcd.tar.gz \"$ETCD_DOWNLOAD_URL\" \\\n    && mkdir /usr/local/src/etcd \\\n    && tar xf etcd.tar.gz -C /usr/local/src/etcd --strip-components=1 \\\n    && install -D -m755 /usr/local/src/etcd/etcdctl /usr/local/bin/etcdctl \\\n    && rm etcd.tar.gz \\\n    && rm -rf /usr/local/src/etcd\n\n# TODO: may want a separate dwstat binary\nCOPY bin/data-acc.tgz /usr/local/bin/\nRUN set -x \\\n    && mkdir /usr/local/bin/data-acc \\\n    && tar xf /usr/local/bin/data-acc.tgz -C /usr/local/bin/data-acc \\\n    && install -D -m755 /usr/local/bin/data-acc/bin/dacd /usr/local/bin/dacd \\\n    && install -D -m755 /usr/local/bin/data-acc/bin/dacctl /usr/local/bin/dacctl \\\n    && install -D -m755 /usr/local/bin/dacctl /opt/cray/dw_wlm/default/bin/dw_wlm_cli \\\n    && install -D -m755 /usr/local/bin/dacctl /opt/cray/dws/default/bin/dwstat \\\n    && mkdir -p /var/lib/data-acc/ \\\n    && cp -r /usr/local/bin/data-acc/fs-ansible /var/lib/data-acc/ \\\n    && cd /var/lib/data-acc/fs-ansible \\\n    && virtualenv .venv && rm /usr/local/bin/data-acc.tgz\n# TODO: need lots more work to get ansible running in here\n#    && . .venv/bin/activate \\\n#    && pip install -U pip \\\n#    && pip install -U ansible \\\n#    && deactivate\n\nRUN touch /var/log/dacctl.log \\\n    && chown slurm /var/log/dacctl.log \\\n    && chgrp slurm /var/log/dacctl.log\n\nCOPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh\n\nENTRYPOINT [\"/usr/local/bin/docker-entrypoint.sh\"]\n\nCMD [\"slurmdbd\"]\n"
+}

@@ -1,0 +1,44 @@
+{
+  "startTime": 1674250058721,
+  "endTime": 1674250059432,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 3,
+        "lineEnd": 3,
+        "columnStart": 22,
+        "columnEnd": 74
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 45,
+        "lineEnd": 45,
+        "columnStart": 22,
+        "columnEnd": 59
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 3,
+        "lineEnd": 3,
+        "columnStart": 22,
+        "columnEnd": 74
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 45,
+        "lineEnd": 45,
+        "columnStart": 22,
+        "columnEnd": 59
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM golang:1.9 as base\n\n# Install oracle related software\nRUN apt-get update && apt-get install --no-install-recommends -y unzip vim pkg-config libaio1 wget && rm -rf /var/lib/apt/lists/*;\n\nRUN mkdir -p /usr/lib/oracle/18.3/client64/lib && mkdir -p /usr/include/oracle/18.3/client64/\n\nRUN wget https://github.com/bumpx/oracle-instantclient/raw/master/instantclient-basic-linux.x64-18.3.0.0.0dbru.zip\nRUN wget https://github.com/bumpx/oracle-instantclient/raw/master/instantclient-sdk-linux.x64-18.3.0.0.0dbru.zip\n\nRUN mv instantclient-basic-linux.x64-18.3.0.0.0dbru.zip /tmp/\nRUN mv instantclient-sdk-linux.x64-18.3.0.0.0dbru.zip /tmp/\n\nRUN cd /tmp && unzip instantclient-basic-linux.x64-18.3.0.0.0dbru.zip\nRUN cp -r /tmp/instantclient_18_3/* /usr/lib/oracle/18.3/client64/lib/\n\nRUN cd /tmp && unzip instantclient-sdk-linux.x64-18.3.0.0.0dbru.zip\nRUN cp -r /tmp/instantclient_18_3/sdk/include/* /usr/include/oracle/18.3/client64/\n\n### Build API\nFROM golang:1.12 as builder\n\n#COPY --from=dependencies /go/src /go/src\nADD . /go/src/gAPI/api\n\nWORKDIR /go/src/gAPI/api/server\n\nENV GO111MODULE on\n\nRUN go mod download\n\nRUN go build -o server\n\n### Create final image\nFROM golang:1.12\n\nENV RABBITMQ_HOST rabbit\nENV RABBITMQ_PORT 5672\nENV RABBITMQ_USER gapi\nENV RABBITMQ_PASSWORD gapi\nENV RABBITMQ_QUEUE gAPI-logqueue\n\nENV LD_LIBRARY_PATH /usr/lib:/usr/local/lib:/usr/lib/oracle/18.3/client64/lib\n\n# 1. Install oracle\nRUN apt-get update && apt-get install --no-install-recommends -y pkg-config libaio1 && rm -rf /var/lib/apt/lists/*;\n\nRUN mkdir -p /usr/lib/oracle/18.3/client64/lib && mkdir -p /usr/include/oracle/18.3/client64/\n\nCOPY --from=base /usr/lib/oracle/ /usr/lib/oracle/\nCOPY --from=base /usr/include/oracle/ /usr/include/oracle/\n\n#RUN ln -s /usr/lib/oracle/18.3/client64/lib/libclntsh.so.18.1 /usr/lib/oracle/18.3/client64/lib/libclntsh.so\n#RUN ln -s /usr/lib/oracle/18.3/client64/lib/libocci.so.18.1 /usr/lib/oracle/18.3/client64/lib/libocci.so\n\nCOPY oci8.pc  /usr/lib/pkgconfig/\n\n# 2. Copy api runtime and configs\nCOPY --from=builder /go/src/gAPI/api/server/server /go/src/gAPI/api/server\nCOPY --from=builder /go/src/gAPI/api/server/migrations /go/src/gAPI/api/migrations\nCOPY --from=builder /go/src/gAPI/api/generate_config.sh /go/src/gAPI/api/generate_config.sh\n\nWORKDIR /go/src/gAPI/api\n\nARG db=mongo\nARG logs_type=Elastic\nARG queue_type=Internal\n\nRUN sh generate_config.sh db=$db logs_type=$logs_type queue_type=$queue_type\nRUN cat configs/gAPI.json\n\nCMD [\"/go/src/gAPI/api/server\"]"
+}

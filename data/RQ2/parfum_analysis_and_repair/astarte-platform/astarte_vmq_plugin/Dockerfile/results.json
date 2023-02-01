@@ -1,0 +1,71 @@
+{
+  "startTime": 1674251777525,
+  "endTime": 1674251778624,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 67,
+        "lineEnd": 67,
+        "columnStart": 19,
+        "columnEnd": 93
+      }
+    },
+    {
+      "rule": "aptGetInstallUseY",
+      "position": {
+        "lineStart": 6,
+        "lineEnd": 6,
+        "columnStart": 26,
+        "columnEnd": 59
+      }
+    },
+    {
+      "rule": "aptGetInstallUseY",
+      "position": {
+        "lineStart": 60,
+        "lineEnd": 60,
+        "columnStart": 26,
+        "columnEnd": 92
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 6,
+        "lineEnd": 6,
+        "columnStart": 26,
+        "columnEnd": 59
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 60,
+        "lineEnd": 60,
+        "columnStart": 26,
+        "columnEnd": 92
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 6,
+        "lineEnd": 6,
+        "columnStart": 26,
+        "columnEnd": 59
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 60,
+        "lineEnd": 60,
+        "columnStart": 26,
+        "columnEnd": 92
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Build with Elixir 1.11.3/OTP 23\nFROM elixir:1.11.4 as builder\n\nWORKDIR /build\n\n# Needed for VerneMQ 1.11.0\nRUN apt-get -qq update && apt-get -qq -y --no-install-recommends install libsnappy-dev && rm -rf /var/lib/apt/lists/*;\n\n# Let's start by building VerneMQ\nRUN git clone https://github.com/vernemq/vernemq.git -b 1.11.0 && \\\n\t\tcd vernemq && \\\n\t\tmake rel && \\\n\t\tcd ..\n\nRUN mix local.hex --force && \\\n  mix local.rebar --force && \\\n  mix hex.info\n\nENV MIX_ENV prod\n\n# Pass --build-arg BUILD_ENV=dev to build a dev image\nARG BUILD_ENV=prod\n\nENV MIX_ENV=$BUILD_ENV\n\n# Cache elixir deps\nADD mix.exs mix.lock astarte_vmq_plugin/\nRUN cd astarte_vmq_plugin && \\\n  mix do deps.get, deps.compile && \\\n  cd ..\n\n# Add all the rest\nADD . astarte_vmq_plugin/\n\n# Build and release\nRUN cd astarte_vmq_plugin && \\\n  mix do compile, release && \\\n  cd ..\n\n# Copy the schema over\nRUN cp astarte_vmq_plugin/priv/astarte_vmq_plugin.schema vernemq/_build/default/rel/vernemq/share/schema/\n\n# Copy configuration files here - mainly because we want to keep the target image as small as possible\n# and avoid useless layers.\nCOPY docker/files/vm.args /build/vernemq/_build/default/rel/vernemq/etc/\nCOPY docker/files/vernemq.conf /build/vernemq/_build/default/rel/vernemq/etc/\nCOPY docker/bin/rand_cluster_node.escript /build/vernemq/_build/default/rel/vernemq/bin/\nCOPY docker/bin/vernemq.sh /build/vernemq/_build/default/rel/vernemq/bin/\nRUN chmod +x /build/vernemq/_build/default/rel/vernemq/bin/vernemq.sh\n\n# Note: it is important to keep Debian versions in sync, or incompatibilities between libcrypto will happen\nFROM debian:buster-slim\n\n# Set the locale\nENV LANG C.UTF-8\n\n# We have to redefine this here since it goes out of scope for each build stage\nARG BUILD_ENV=prod\n\n# We need SSL, curl, iproute2 and jq - and to ensure /etc/ssl/astarte\nRUN apt-get -qq update && apt-get -qq -y --no-install-recommends install libssl1.1 curl jq iproute2 netcat libsnappy1v5 && apt-get clean && mkdir -p /etc/ssl/astarte && rm -rf /var/lib/apt/lists/*;\n\n# Copy our built stuff (both are self-contained with their ERTS release)\nCOPY --from=builder /build/vernemq/_build/default/rel/vernemq /opt/vernemq/\nCOPY --from=builder /build/astarte_vmq_plugin/_build/$BUILD_ENV/rel/astarte_vmq_plugin /opt/astarte_vmq_plugin/\n\n# Add the wait-for utility\nRUN cd /usr/bin && curl -f -O https://raw.githubusercontent.com/eficode/wait-for/master/wait-for && chmod +x wait-for && cd -\n\n# MQTT\nEXPOSE 1883\n\n# MQTT for Reverse Proxy\nEXPOSE 1885\n\n# MQTT/SSL\nEXPOSE 8883\n\n# VerneMQ Message Distribution\nEXPOSE 44053\n\n# EPMD - Erlang Port Mapper Daemon\nEXPOSE 4369\n\n# Specific Distributed Erlang Port Range\nEXPOSE 9100 9101 9102 9103 9104 9105 9106 9107 9108 9109\n\n# Prometheus Metrics\nEXPOSE 8888\n\n# Expose port for webroot ACME verification (in case)\nEXPOSE 80\n\nCMD [\"/opt/vernemq/bin/vernemq.sh\"]\n"
+}

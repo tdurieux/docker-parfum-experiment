@@ -1,0 +1,5 @@
+FROM quay.io/mongodb/mongodb-enterprise-database:0.5
+
+COPY clean_old_logs.sh /usr/local/bin/
+
+CMD [ "/bin/sh", "-c", "/usr/local/bin/clean_old_logs.sh" ]

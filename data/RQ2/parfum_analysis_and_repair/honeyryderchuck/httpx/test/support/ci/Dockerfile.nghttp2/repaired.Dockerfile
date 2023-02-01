@@ -1,0 +1,14 @@
+FROM alpine:3.10.2
+RUN \
+ NGHTTP2_VERSION='1.46.0' \
+ BUILD_DEPS='build-base wget' \
+ RUN_DEPS='ca-certificates libstdc++ openssl-dev libev-dev zlib-dev jansson-dev libxml2-dev c-ares-dev' \
+ && apk --no-cache add $BUILD_DEPS $RUN_DEPS \
+ && cd /tmp \
+ && wget -qO- "https://github.com/tatsuhiro-t/nghttp2/releases/download/v${NGHTTP2_VERSION}/nghttp2-${NGHTTP2_VERSION}.tar.gz" | tar -xz \
+ && cd /tmp/nghttp2-$NGHTTP2_VERSION \
+ && ./configure --build="$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)" --enable-app \
+ && make \
+ && make install \
+ && apk del $BUILD_DEPS \
+ && rm -rf /tmp/*

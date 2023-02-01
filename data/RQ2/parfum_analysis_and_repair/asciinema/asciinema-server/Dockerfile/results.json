@@ -1,0 +1,26 @@
+{
+  "startTime": 1674255963255,
+  "endTime": 1674255963954,
+  "originalSmells": [
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 28,
+        "lineEnd": 28,
+        "columnStart": 2,
+        "columnEnd": 13
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 14,
+        "lineEnd": 19,
+        "columnStart": 2,
+        "columnEnd": 14
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "ARG ALPINE_VERSION=3.15.3\nARG ERLANG_OTP_VERSION=24.3.3\nARG ELIXIR_VERSION=1.13.4\n\n## Release building image\n\n# https://github.com/hexpm/bob#docker-images\nFROM hexpm/elixir:${ELIXIR_VERSION}-erlang-${ERLANG_OTP_VERSION}-alpine-${ALPINE_VERSION} as builder\n\nARG MIX_ENV=prod\n\nWORKDIR /opt/app\n\nRUN apk upgrade && \\\n  apk add --no-cache \\\n    nodejs \\\n    npm \\\n    rust \\\n    cargo \\\n    build-base && \\\n  mix local.rebar --force && \\\n  mix local.hex --force\n\nCOPY mix.* ./\nRUN mix do deps.get --only prod, deps.compile\n\nCOPY assets/ assets/\nRUN cd assets && \\\n  npm install && \\\n  npm run deploy && npm cache clean --force;\n\nCOPY config/config.exs config/\nCOPY config/prod.exs config/\n\nRUN mix phx.digest\n\nCOPY config/*.exs config/\nCOPY lib lib/\nCOPY priv priv/\nCOPY native native/\n\n# recompile sentry with our source code\nRUN mix deps.compile sentry --force\n\nCOPY rel rel/\n\n# temporary workaround to make rustler work with OTP 24\nENV RUSTLER_NIF_VERSION 2.15\n\nRUN mix release\n\n# Final image\n\nFROM alpine:${ALPINE_VERSION}\n\nRUN apk add --no-cache \\\n  libstdc++ \\\n  tini \\\n  bash \\\n  ca-certificates \\\n  librsvg \\\n  ttf-dejavu \\\n  pngquant\n\nWORKDIR /opt/app\n\nCOPY --from=builder /opt/app/_build/prod/rel/asciinema .\nRUN chgrp -R 0 /opt/app && chmod -R g=u /opt/app\nCOPY .iex.exs .\n\nENV PORT 4000\nENV DATABASE_URL \"postgresql://postgres@postgres/postgres\"\nENV RSVG_FONT_FAMILY \"Dejavu Sans Mono\"\nENV PATH \"/opt/app/bin:${PATH}\"\n\nVOLUME /opt/app/uploads\nVOLUME /opt/app/cache\n\nENTRYPOINT [\"/sbin/tini\", \"--\"]\nCMD [\"/opt/app/bin/asciinema\", \"start\"]\n\nEXPOSE 4000\n"
+}

@@ -1,0 +1,24 @@
+# Node image to use
+FROM node:16-alpine
+
+# Directory where we run all the commands
+WORKDIR /usr/local/apps/gateway-app/test
+
+# Copy the package.json file to out image's filesystem
+COPY ./gateway/package.json ./
+
+# Copy supergraph
+COPY supergraph.graphql ./
+
+# Run a command based on environment, we pass the arguments in the docker-compose
+RUN npm install && npm cache clean --force;
+
+# Copy the rest of our source code
+COPY ./gateway ./
+
+# Set & expose port env
+ENV PORT 3000
+EXPOSE $PORT
+
+# Start the app
+CMD [ "node", "gateway.ts" ]

@@ -1,0 +1,23 @@
+FROM python:3-buster as base
+
+FROM base as builder
+
+# Pull missing packages
+RUN apt-get update && apt-get install --no-install-recommends -y python3 python3-pip libpq-dev python3-dev && rm -rf /var/lib/apt/lists/*;
+
+# Copy over the files we need to start
+RUN mkdir -p /srv/frikanalen
+
+ADD requirements-prod.txt /srv/frikanalen
+ADD requirements.txt /srv/frikanalen
+
+WORKDIR /srv/frikanalen
+RUN pip install --no-cache-dir -r requirements-prod.txt
+
+FROM builder
+
+ADD . /srv/frikanalen/
+
+CMD ["./start.sh"]
+
+EXPOSE 8080

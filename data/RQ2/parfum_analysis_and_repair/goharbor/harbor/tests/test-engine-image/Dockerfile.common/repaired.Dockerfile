@@ -1,0 +1,89 @@
+FROM ubuntu:18.04 as tool_builder
+ENV LANG C.UTF-8
+WORKDIR /tool
+
+#RUN tdnf install -y \
+RUN apt-get update && apt-get install --no-install-recommends -y \
+    build-essential \
+    wget \
+    git \
+    tar \
+
+
+    curl \
+    libssl-dev \
+    uuid-dev && rm -rf /var/lib/apt/lists/*;
+#ubuntu
+RUN apt-get update && apt-get install --no-install-recommends -y software-properties-common && \
+    add-apt-repository -y ppa:longsleep/golang-backports && \
+    apt-get install --no-install-recommends -y golang-go && rm -rf /var/lib/apt/lists/*;
+
+RUN pwd && mkdir /tool/binary && \
+    # Install CONTAINERD
+    CONTAINERD_VERSION=1.4.4 &&  \
+    wget https://github.com/containerd/containerd/releases/download/v$CONTAINERD_VERSION/containerd-$CONTAINERD_VERSION-linux-amd64.tar.gz && \
+    tar zxvf containerd-$CONTAINERD_VERSION-linux-amd64.tar.gz && \
+    cd bin && cp -f containerd ctr /tool/binary/ && \
+    # docker compose
+    curl -f -L "https://github.com/docker/compose/releases/download/1.24.0/docker-compose-$(uname -s)-$(uname -m)" -o /tool/binary/docker-compose && \
+    chmod +x /tool/binary/docker-compose && \
+    # Install helm v2
+    HELM2_VERSION=2.16.12 && wget https://get.helm.sh/helm-v$HELM2_VERSION-linux-amd64.tar.gz && \
+    tar zxvf helm-v$HELM2_VERSION-linux-amd64.tar.gz && \
+    cp linux-amd64/helm /tool/binary/helm && \
+    cp linux-amd64/helm /tool/binary/helm2 && \
+    # Install helm v3
+    HELM3_VERSION=3.3.3 && wget https://get.helm.sh/helm-v$HELM3_VERSION-linux-amd64.tar.gz && \
+    tar zxvf helm-v$HELM3_VERSION-linux-amd64.tar.gz && \
+    ls || pwd && \
+    mv linux-amd64/helm /tool/binary/helm3 && \
+    # Install helm v3.7
+    HELM3_7_VERSION=3.7.0 && wget https://get.helm.sh/helm-v$HELM3_7_VERSION-linux-amd64.tar.gz && \
+    tar zxvf helm-v$HELM3_7_VERSION-linux-amd64.tar.gz && \
+    ls || pwd && \
+    mv linux-amd64/helm /tool/binary/helm3.7 && \
+    # Install ORAS
+    ORAS_VERSION=0.12.0 && curl -f -LO https://github.com/deislabs/oras/releases/download/v$ORAS_VERSION/oras_${ORAS_VERSION}_linux_amd64.tar.gz && \
+    mkdir -p oras-install/ && \
+    tar -zxf oras_${ORAS_VERSION}_*.tar.gz -C oras-install/ && \
+    mv oras-install/oras /tool/binary/ && \
+    # Install notary
+    NOTARY_VERSION=0.6.1 && wget https://github.com/theupdateframework/notary/releases/download/v$NOTARY_VERSION/notary-Linux-amd64 && \
+    chmod +x notary-Linux-amd64 && \
+    mv notary-Linux-amd64 /tool/binary/notary && \
+    # Install CNAB
+    CNAB_PATH=$(go env GOPATH)/src/github.com/cnabio && \
+    mkdir -p $CNAB_PATH && cd $CNAB_PATH && git clone https://github.com/cnabio/cnab-to-oci.git && \
+    cd cnab-to-oci && git checkout v0.3.3 && \
+    go list && \
+    make build && \
+    mv bin/cnab-to-oci /tool/binary/ && \
+    # Install DIND
+    DIND_COMMIT=3b5fac462d21ca164b3778647420016315289034 && \
+    wget "https://raw.githubusercontent.com/docker/docker/${DIND_COMMIT}/hack/dind" -O /tool/binary/dind \
+    && chmod +x /tool/binary/dind && \
+    # Install wasm-to-oci
+    WASM_TO_OCI_VERSION=0.1.2 && wget https://github.com/engineerd/wasm-to-oci/releases/download/v${WASM_TO_OCI_VERSION}/linux-amd64-wasm-to-oci && \
+    chmod +x linux-amd64-wasm-to-oci && mv linux-amd64-wasm-to-oci /tool/binary/wasm-to-oci && \
+    # Install imgpkg
+    IMGPKG_VERSION=0.29.0 && wget https://github.com/vmware-tanzu/carvel-imgpkg/releases/download/v$IMGPKG_VERSION/imgpkg-linux-amd64 && \
+    mv imgpkg-linux-amd64 /tool/binary/imgpkg && chmod +x /tool/binary/imgpkg && \
+    # Install cosign
+    COSIGN_VERSION=1.9.0 && wget https://github.com/sigstore/cosign/releases/download/v$COSIGN_VERSION/cosign-linux-amd64 && \
+    mv cosign-linux-amd64 /tool/binary/cosign && chmod +x /tool/binary/cosign && \
+    pwd && rm containerd-$CONTAINERD_VERSION-linux-amd64.tar.gz
+
+#ubuntu
+RUN wget https://github.com/hpcng/singularity/releases/download/v3.3.0/singularity-3.3.0.tar.gz && \
+    tar -xzf singularity-3.3.0.tar.gz && \
+    cd singularity && \
+    ./mconfig && \
+    make -C builddir && \
+    make -C builddir install && rm singularity-3.3.0.tar.gz
+RUN pwd && \
+    ls -l /usr/local/bin && \
+    rm -rf singularity && \
+    mv /usr/local/bin/singularity /tool/binary/
+
+RUN cd /tool/binary/ && tar czvf tools.tar.gz * && cp tools.tar.gz /tool
+# --- End of base file ---

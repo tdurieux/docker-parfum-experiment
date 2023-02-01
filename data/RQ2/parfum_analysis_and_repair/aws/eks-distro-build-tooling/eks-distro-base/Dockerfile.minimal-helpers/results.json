@@ -1,0 +1,36 @@
+{
+  "startTime": 1674217402575,
+  "endTime": 1674217403334,
+  "originalSmells": [
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 69,
+        "lineEnd": 69,
+        "columnStart": 4,
+        "columnEnd": 60
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 72,
+        "lineEnd": 72,
+        "columnStart": 4,
+        "columnEnd": 38
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 72,
+        "lineEnd": 72,
+        "columnStart": 4,
+        "columnEnd": 38
+      }
+    }
+  ],
+  "repairedDockerfile": "# Copyright Amazon.com Inc. or its affiliates. All Rights Reserved.\n#\n# Licensed under the Apache License, Version 2.0 (the \"License\");\n# you may not use this file except in compliance with the License.\n# You may obtain a copy of the License at\n#\n#      http://www.apache.org/licenses/LICENSE-2.0\n#\n# Unless required by applicable law or agreed to in writing, software\n# distributed under the License is distributed on an \"AS IS\" BASIS,\n# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.\n# See the License for the specific language governing permissions and\n# limitations under the License.\n\nARG BUILT_BUILDER_IMAGE\nARG BASE_IMAGE\nFROM ${BUILT_BUILDER_IMAGE} as builder\n\n################# BASE ########################\nFROM ${BASE_IMAGE} as final\nCOPY --from=builder /newroot /\n\n\n################ Export #######################\n\nFROM builder as prepare-export\n\nARG VARIANT\n\nWORKDIR $NEWROOT\nRUN set -x && \\\n    rpm --root $NEWROOT -qa | sort > /tmp/packages/$VARIANT && \\\n    printf \"****************** Regular Files ******************\\n\\n\" > /tmp/packages/$VARIANT-files && \\\n    find . -type f -printf '%M\\t%s\\t/%P\\n' | numfmt --field=2 --to=iec-i --padding=8 --suffix=B | sort -k 3 >> /tmp/packages/$VARIANT-files && \\\n    printf \"\\n****************** Symlinks ******************\\n\\n\" >> /tmp/packages/$VARIANT-files && \\\n    find . -type l -printf '%M\\t%s\\t/%P\\t%l\\n' | numfmt --field=2 --to=iec-i --padding=8 --suffix=B | sort -k 3 >> /tmp/packages/$VARIANT-files\n\nFROM scratch as export\n\nARG VARIANT\n\nCOPY --from=prepare-export /tmp/packages/$VARIANT* .\n\n\n################ Validate #######################\nARG BUILT_BUILDER_IMAGE\nFROM --platform=$BUILDPLATFORM ${BUILT_BUILDER_IMAGE} as run_validate\n\nCOPY scripts/ /usr/bin\n\nRUN set -x && \\\n    validate_libraries && \\\n    validate_symlinks && \\\n    touch /tmp/success\n\nFROM scratch as validate\nCOPY --from=run_validate /tmp/success .\n\n################## SYMLINKS #####################\n# Instead of building this during the build everytime, this is the dockerfile\n# needed to build it, but it is currently checked into the repo under scripts\n# when we switch to al22 we can remove this\n\n# the al2 version of symlinks does not support the -C chroot option\n# build a static verison so we can use it on al2 too\nFROM public.ecr.aws/amazonlinux/amazonlinux:2022 as al22\n\nENV VERSION=1.7\nRUN set -x && \\\n    yum install cpio gcc glibc-static gzip tar yum-utils  -y && \\\n    yumdownloader --source symlinks && \\\n    rpm2cpio symlinks-*.src.rpm | cpio -idmv && \\\n    tar -xf symlinks-${VERSION}.tar.gz && \\\n    cd symlinks-${VERSION} && \\\n    CFLAGS=\"-O2 -g -Wall -Wstrict-prototypes -static\" make symlinks && \\\n    cp ./symlinks /tmp && rm -rf /var/cache/yum\n"
+}

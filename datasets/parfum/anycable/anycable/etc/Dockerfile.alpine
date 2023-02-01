@@ -1,0 +1,28 @@
+FROM ruby:3.0.1-alpine
+
+RUN apk add --no-cache --update build-base \
+                                linux-headers \
+                                postgresql-dev \
+                                tzdata \
+                                git \
+                                nodejs \
+                                yarn \
+                                libc6-compat
+RUN ln -s /lib/libc.musl-x86_64.so.1 /lib/ld-linux-x86-64.so.2
+
+# Pre-install grpc-related gems to build extensions without hacking Bundler
+# or using BUNDLE_FORCE_RUBY_PLATFORM during bundle install
+# NOTE: Use gems versions from your Gemfile.lock
+RUN gem install --platform ruby google-protobuf -v '3.17.1' -N
+RUN gem install --platform ruby grpc -v '1.38.0' -N --ignore-dependencies && \
+    rm -rf /usr/local/bundle/gems/grpc-1.38.0/src/ruby/ext
+
+WORKDIR /home/app
+COPY Gemfile Gemfile.lock /home/app/
+RUN bundle install --without development test --retry 5
+
+COPY . /home/app/
+EXPOSE 50051
+
+ENTRYPOINT ["bundle", "exec"]
+CMD ["anycable"]

@@ -1,0 +1,44 @@
+{
+  "startTime": 1674218265154,
+  "endTime": 1674218265895,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 17,
+        "lineEnd": 17,
+        "columnStart": 4,
+        "columnEnd": 22
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 35,
+        "lineEnd": 35,
+        "columnStart": 4,
+        "columnEnd": 22
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 21,
+        "lineEnd": 23,
+        "columnStart": 4,
+        "columnEnd": 45
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 29,
+        "lineEnd": 34,
+        "columnStart": 4,
+        "columnEnd": 8
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# This stage builds a dist tarball from the source\nFROM d_base:latest as source-builder\n\n# Specify what version of frr should be built.\n# ARG FRR_VERSION=7.2.1\nARG FRR_VERSION=7.5.1\n\nRUN mkdir /src\n\nRUN wget \"https://github.com/FRRouting/frr/archive/refs/tags/frr-${FRR_VERSION}.tar.gz\" -O - | tar -xz --strip-components=1 --directory /src\n\nRUN source /src/alpine/APKBUILD.in \\\n\t&& apk add \\\n\t\t--no-cache \\\n\t\t--update-cache \\\n\t\t$makedepends \\\n\t\tgzip \\\n\t&& pip install --no-cache-dir pytest\n\nRUN cd /src \\\n\t&& ./bootstrap.sh \\\n\t&& ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" \\\n\t\t--enable-numeric-version \\\n\t\t--with-pkg-extra-version=\"_git$FRR_VERSION\" \\\n\t&& make dist\n\n# This stage builds an apk from the dist tarball\nFROM d_base:latest as alpine-builder\n# Don't use nocache here so that abuild can use the cache\nRUN apk add --no-cache \\\n\t\t--update-cache \\\n\t\tabuild \\\n\t\talpine-conf \\\n\t\talpine-sdk \\\n\t\tpy-pip \\\n\t&& pip install --no-cache-dir pytest \\\n\t&& setup-apkcache /var/cache/apk \\\n\t&& mkdir -p /pkgs/apk \\\n\t&& echo 'builder ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers\n\nCOPY --from=source-builder /src/frr-*.tar.gz /src/alpine/* /dist/\nRUN adduser -D -G abuild builder && chown -R builder /dist /pkgs\nUSER builder\nRUN cd /dist \\\n\t&& abuild-keygen -a -n \\\n\t&& abuild checksum \\\n\t&& git init \\\n\t&& abuild -r -P /pkgs/apk\n\n# This stage installs frr from the apk\nFROM d_base_supervisor:latest\nRUN mkdir -p /pkgs/apk\nCOPY --from=alpine-builder /pkgs/apk/ /pkgs/apk/\nRUN apk add \\\n\t\t--no-cache \\\n\t\t--update-cache \\\n\t\ttini \\\n\t&& apk add \\\n\t\t--no-cache \\\n\t\t--allow-untrusted /pkgs/apk/*/*.apk \\\n\t&& rm -rf /pkgs\n\nRUN apk add --no-cache openssh-server frr frr-rpki frr-pythontools \\\n    && ssh-keygen -A \\\n    && sed -i 's/#PasswordAuthentication yes/PasswordAuthentication no/g' /etc/ssh/sshd_config \\\n    && sed -i 's/#PrintMotd yes/PrintMotd no/g' /etc/ssh/sshd_config \\\n    # Unlocks the root user so that ssh login is allowed.\n    && sed -i s/root:!/\"root:*\"/g /etc/shadow \\\n    && mkdir -p /var/run/sshd /root/.ssh \\\n    && chmod 0755 /var/run/sshd\n\nRUN install -m 755 -o frr -g frr -d /var/log/frr \\\n    && install -m 755 -o frr -g frr -d /var/run/frr \\\n    && install -m 775 -o frr -g frrvty -d /etc/frr \\\n    && install -m 640 -o frr -g frr /dev/null /etc/frr/zebra.conf \\\n    && install -m 640 -o frr -g frr /dev/null /etc/frr/bgpd.conf \\\n    && install -m 640 -o frr -g frr /dev/null /etc/frr/ospfd.conf \\\n    && install -m 640 -o frr -g frr /dev/null /etc/frr/ospf6d.conf \\\n    && install -m 640 -o frr -g frr /dev/null /etc/frr/isisd.conf \\\n    && install -m 640 -o frr -g frr /dev/null /etc/frr/ripd.conf \\\n    && install -m 640 -o frr -g frr /dev/null /etc/frr/ripngd.conf \\\n    && install -m 640 -o frr -g frr /dev/null /etc/frr/pimd.conf \\\n    && install -m 640 -o frr -g frr /dev/null /etc/frr/ldpd.conf \\\n    && install -m 640 -o frr -g frr /dev/null /etc/frr/nhrpd.conf \\\n    && install -m 640 -o frr -g frrvty /dev/null /etc/frr/vtysh.conf\n\nEXPOSE 22\n\nCOPY supervisord.conf /etc/supervisor/conf.d/processes.conf\nCOPY looking_glass.sh /usr/local/bin/looking_glass\nCOPY run_frr.sh /usr/local/bin/run_frr\n\nRUN chmod +x /usr/local/bin/looking_glass /usr/local/bin/run_frr\n"
+}

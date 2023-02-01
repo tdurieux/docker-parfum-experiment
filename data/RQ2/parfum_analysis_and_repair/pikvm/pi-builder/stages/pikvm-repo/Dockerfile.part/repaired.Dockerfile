@@ -1,0 +1,13 @@
+RUN ( \
+		mkdir -p /etc/gnupg \
+		&& echo standard-resolver >> /etc/gnupg/dirmngr.conf \
+		&& ( \
+			pacman-key --keyserver hkps://keyserver.ubuntu.com:443 -r $PIKVM_REPO_KEY \
+			|| pacman-key --keyserver hkps://keys.gnupg.net:443 -r $PIKVM_REPO_KEY \
+			|| pacman-key --keyserver hkps://pgp.mit.edu:443 -r $PIKVM_REPO_KEY \
+		) \
+	) \
+	&& pacman-key --lsign-key $PIKVM_REPO_KEY \
+	&& echo -e "\n[pikvm]" >> /etc/pacman.conf \
+	&& echo "Server = $PIKVM_REPO_URL/$BOARD-$ARCH" >> /etc/pacman.conf \
+	&& echo "SigLevel = Required DatabaseOptional" >> /etc/pacman.conf

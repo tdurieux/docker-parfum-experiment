@@ -1,0 +1,35 @@
+{
+  "startTime": 1674248343114,
+  "endTime": 1674248344559,
+  "originalSmells": [
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 26,
+        "lineEnd": 26,
+        "columnStart": 72,
+        "columnEnd": 138
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 26,
+        "lineEnd": 26,
+        "columnStart": 20,
+        "columnEnd": 48
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 22,
+        "lineEnd": 22,
+        "columnStart": 18,
+        "columnEnd": 203
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "################################################################################\n# vim: filetype=dockerfile:\n#\n# \\file      tools/docker/Dockerfile.quinoa-build-alpine\n# \\copyright 2012-2015 J. Bakosi,\n#            2016-2018 Los Alamos National Security, LLC.,\n#            2019-2021 Triad National Security, LLC.\n#            All rights reserved. See the LICENSE file for details.\n# \\brief     Dockerfile for a static build of Quinoa\n# \\details   Dockerfile for a static build of Quinoa, i.e., all executables\n# statically linked to all libraries.\n#\n# We start from a minimalistic official Alpine Linux distribution (which is\n# based on busybox and musl-libc) and install all prerequisites, OpenMPI, etc.\n# This docker image creates statically built release executables requiring\n# absolutely no dependencies.\n#\n################################################################################\n\nFROM alpine:3.10\n\n# Install system-wide prerequisites\nRUN apk update && apk add --no-cache patch libtool autoconf automake gfortran gcc g++ make boost-dev bash m4 file git cmake perl grep zlib-dev libexecinfo-dev libexecinfo-static graphviz binutils-dev flex bison vim\n\n# Install OpenMPI\nADD https://download.open-mpi.org/release/open-mpi/v3.1/openmpi-3.1.4.tar.gz /openmpi/\nRUN cd /openmpi/ && tar xzf openmpi-3.1.4.tar.gz && cd openmpi-3.1.4 && ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" --disable-shared --enable-static --prefix=/opt/openmpi && make -sj$(grep -c processor /proc/cpuinfo) install && rm openmpi-3.1.4.tar.gz\nENV PATH /opt/openmpi/bin:$PATH\nENV LD_LIBRARY_PATH /opt/openmpi/lib:$LD_LIBRARY_PATH\nENV OMPI_MCA_plm isolated\nRUN rm -rf /openmpi\n\n# Remove /install - no more installs after this line\nRUN rm -rf /install\n\n# Create symbolic link to /lib/cpp for the charm++ build, see\n# https://lists.cs.illinois.edu/lists/arc/charm/2016-05/msg00013.html\nRUN ln -s /usr/bin/cpp /lib/cpp\n\n# Setup user\nRUN addgroup quinoa && adduser -S quinoa quinoa && chown -R quinoa:quinoa /home/quinoa\nUSER quinoa\nWORKDIR /home/quinoa\nCMD [\"/bin/sh\"]\n\n# Clone quinoa\nRUN git clone --recurse-submodules https://github.com/quinoacomputing/quinoa.git\n# Checkout commit to be tested\nARG COMMIT\nRUN cd quinoa && git checkout $COMMIT\n# Update submodules\nRUN cd quinoa && git submodule init && git submodule update --recursive && cd external && git submodule init && git submodule update --recursive && cd .. && git submodule status --recursive\n# Build TPLs\nRUN cd quinoa && mkdir -p external/build && cd external/build && cmake -DCMAKE_CXX_COMPILER=mpicxx -DCMAKE_C_COMPILER=mpicc -DCMAKE_Fortran_COMPILER=mpif90 -DENABLE_OMEGA_H=true -DBUILD_SHARED_LIBS=off -DCXXFLAGS=-w .. && make -sj$(grep -c processor /proc/cpuinfo)\n# Build code\nRUN cd quinoa && mkdir -p build && cd build && cmake -DCMAKE_CXX_COMPILER=mpicxx -DCMAKE_C_COMPILER=mpicc -DBUILD_SHARED_LIBS=off -DRUNNER_ARGS=\"--bind-to none -oversubscribe\" ../src\n#Run tests\nRUN cd quinoa/build && npe=$(grep -c processor /proc/cpuinfo) && make -sj$npe && ./charmrun +p $npe Main/unittest -v -q && ctest -j $npe --output-on-failure -LE extreme\n\n# Ensure all executables are statically linked\nRUN cd quinoa/build && \\\n    if ! ldd Main/unittest | grep -v ldd | wc -l > /dev/null; then \\\n      echo \"Non-static executable: unittest\"; exit 1; \\\n    fi && \\\n    if ! ldd Main/inciter | grep -v ldd | wc -l > /dev/null; then \\\n      echo \"Non-static executable: inciter\"; exit 1; \\\n    fi && \\\n    if ! ldd Main/rngtest | grep -v ldd | wc -l > /dev/null; then \\\n      echo \"Non-static executable: rngtest\"; exit 1; \\\n    fi && \\\n    if ! ldd Main/meshconv | grep -v ldd | wc -l > /dev/null; then \\\n      echo \"Non-static executable: meshconv\"; exit 1; \\\n    fi && \\\n    if ! ldd Main/walker | grep -v ldd | wc -l > /dev/null; then \\\n      echo \"Non-static executable: walker\"; exit 1; \\\n    fi\n"
+}

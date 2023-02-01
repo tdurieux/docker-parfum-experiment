@@ -1,0 +1,35 @@
+{
+  "startTime": 1674242210534,
+  "endTime": 1674242210676,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 14,
+        "lineEnd": 14,
+        "columnStart": 4,
+        "columnEnd": 77
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 6,
+        "lineEnd": 11,
+        "columnStart": 7,
+        "columnEnd": 11
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 35,
+        "lineEnd": 39,
+        "columnStart": 7,
+        "columnEnd": 13
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "################### SQLite3 Build ###################\nFROM debian:stretch-slim as sqlite-build\n\nWORKDIR /root\n\nRUN apt-get update \\\n    && DEBIAN_FRONTEND=noninteractive apt-get --no-install-recommends -y install \\\n        autoconf \\\n        curl \\\n        gcc \\\n        make \\\n        tcl \\\n    && rm -rf /var/lib/apt/lists/*\n\nRUN curl -f -SL https://www.fossil-scm.org/fossil/uv/fossil-linux-x64-2.7.tar.gz \\\n    | tar -xzC /usr/local/bin \\\n    && mkdir sqlite sqlite-build \\\n    && cd sqlite \\\n    && fossil clone --user=root http://www.sqlite.org/cgi/src sqlite.fossil \\\n    && fossil open --user=root sqlite.fossil \\\n    && fossil update --user=root trunk\n\nRUN cd sqlite-build \\\n    && ../sqlite/configure --enable-fts5 --disable-fts3 --disable-fts4\n\nRUN cd sqlite-build \\\n    && make libsqlite3.la \\\n    && make lib_install\n\n\n################### Rust Build ###################\nFROM rust:latest as rust-build\n\n# Clang/LLVM are required for building the libsqlite3-sys bindings\nRUN apt-get update \\\n    && DEBIAN_FRONTEND=noninteractive apt-get --no-install-recommends -y install \\\n        clang-3.9 \\\n        libclang-3.9-dev \\\n        llvm-3.9-dev \\\n        sassc \\\n    && rm -rf /var/lib/apt/lists/*\n\nWORKDIR /usr/src/biblers\n\nRUN USER=root cargo new --bin biblers\n\n# Copy sqlite3 lib (for bindgen)\nCOPY --from=sqlite-build /usr/local/lib/libsqlite3.so.0 /usr/lib/x86_64-linux-gnu/\n\nCOPY ./Cargo.lock ./Cargo.toml ./\nCOPY ./cli/Cargo.toml ./cli/Cargo.toml\nCOPY ./db/Cargo.toml ./db/Cargo.toml\nCOPY ./web/Cargo.toml ./web/Cargo.toml\n\nRUN mkdir cli/src \\\n    && echo \"fn main() {}\" > cli/src/main.rs \\\n    && mkdir db/src \\\n    && echo \"fn main() {}\" > db/src/main.rs \\\n    && mkdir web/src \\\n    && echo \"fn main() {}\" > web/src/main.rs\n\nRUN cargo build --release \\\n    && rm -rf db/src web/src\n\n# Build the crate\nCOPY ./db/src ./db/src\nCOPY ./web/src ./web/src\nRUN cargo build --release -p web\n\n# Build SASS\nCOPY ./web/styles ./web/styles\nRUN mkdir -p web/dist/css \\\n    && sassc web/styles/index.scss web/dist/css/style.css\n\n\n################### Server Build ###################\nFROM debian:stretch-slim\n\nWORKDIR /root\n\n# Copy sqlite3 lib\nCOPY --from=sqlite-build /usr/local/lib/libsqlite3.so.0 /usr/lib/x86_64-linux-gnu/\n\n# Copy built rust binary\nCOPY --from=rust-build /usr/src/biblers/target/release/web ./biblers\n\n# Copy dist and built SASS\nCOPY ./web/dist ./web/dist\nCOPY --from=rust-build /usr/src/biblers/web/dist/css/style.css ./web/dist/css/style.css\n\n# Copy migrations and templates\nCOPY ./db/migrations/ ./db/migrations/\nCOPY ./web/templates/ ./web/templates/\n\n# Set database variable\nENV DATABASE_URL=\"/root/bible.db\"\n\nEXPOSE 8080\nCMD [\"./biblers\"]\n"
+}

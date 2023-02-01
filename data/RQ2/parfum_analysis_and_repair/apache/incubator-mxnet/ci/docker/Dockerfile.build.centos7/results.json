@@ -1,0 +1,35 @@
+{
+  "startTime": 1674252306561,
+  "endTime": 1674252307949,
+  "originalSmells": [
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 100,
+        "lineEnd": 100,
+        "columnStart": 4,
+        "columnEnd": 29
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 37,
+        "lineEnd": 37,
+        "columnStart": 4,
+        "columnEnd": 50
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 38,
+        "lineEnd": 69,
+        "columnStart": 4,
+        "columnEnd": 20
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# -*- mode: dockerfile -*-\n# Licensed to the Apache Software Foundation (ASF) under one\n# or more contributor license agreements.  See the NOTICE file\n# distributed with this work for additional information\n# regarding copyright ownership.  The ASF licenses this file\n# to you under the Apache License, Version 2.0 (the\n# \"License\"); you may not use this file except in compliance\n# with the License.  You may obtain a copy of the License at\n#\n#   http://www.apache.org/licenses/LICENSE-2.0\n#\n# Unless required by applicable law or agreed to in writing,\n# software distributed under the License is distributed on an\n# \"AS IS\" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY\n# KIND, either express or implied.  See the License for the\n# specific language governing permissions and limitations\n# under the License.\n#\n# Dockerfile for CentOS 7 based builds.\n# Via the CentOS 7 Dockerfiles, we ensure MXNet continues to run fine on older systems.\n#\n# See docker-compose.yml for supported BASE_IMAGE ARGs and targets.\n\n####################################################################################################\n# The Dockerfile uses a dynamic BASE_IMAGE (for example centos:7,\n# nvidia/cuda:10.2-cudnn7-devel-centos7 etc).\n# On top of BASE_IMAGE we install all dependencies shared by all MXNet build\n# environments into a \"base\" target. At the end of this file, we specialize\n# \"base\" for specific usecases. The target built by docker can be selected via\n# \"--target\" option or docker-compose.yml\n####################################################################################################\nARG BASE_IMAGE\nFROM $BASE_IMAGE AS base\n\nWORKDIR /work/deps\n\nRUN yum -y check-update || true && \\\n    yum -y install epel-release centos-release-scl && \\\n    yum install -y \\\n        # Utilities\n        wget \\\n        unzip \\\n        patchelf \\\n        pandoc \\\n        # Development tools\n        git \\\n        make \\\n        ninja-build \\\n        automake \\\n        autoconf \\\n        libtool \\\n        protobuf-compiler \\\n        protobuf-devel \\\n        # CentOS Software Collections https://www.softwarecollections.org\n        devtoolset-7 \\\n        devtoolset-8 \\\n        rh-python38 \\\n        rh-maven35 \\\n        # Libraries\n        # Provide clbas headerfiles\n        atlas-devel \\\n        opencv-devel \\\n        openssl-devel \\\n        zeromq-devel \\\n        # Build-dependencies for ccache 3.7.9\n        gperf \\\n        libb2-devel \\\n        libzstd-devel \\\n        # Required by openblas build\n        gcc-gfortran && \\\n    yum clean all && rm -rf /var/cache/yum\n\n# Build OpenBLAS from source\nRUN mkdir ~/openblas && \\\n    cd ~/openblas && \\\n    OPENBLAS_VERSION=0.3.10 && \\\n    wget \\\n        https://github.com/xianyi/OpenBLAS/archive/v${OPENBLAS_VERSION}.zip \\\n        -O openblas.zip && \\\n    unzip -q openblas.zip -d . && \\\n    cd OpenBLAS-${OPENBLAS_VERSION} && \\\n    CXX=\"g++ -fPIC\" CC=\"gcc -fPIC\" make -j DYNAMIC_ARCH=1 DYNAMIC_OLDER=1 && \\\n    make PREFIX=/usr/local install\n\n# Make Python 3.8 and Maven 3.3 Software Collections available by default during\n# the following build steps in this Dockerfile\nSHELL [ \"/usr/bin/scl\", \"enable\", \"devtoolset-7\", \"rh-python38\", \"rh-maven35\" ]\n\n# Install minimum required cmake version\nRUN cd /usr/local/src && \\\n    wget -nv --no-check-certificate https://cmake.org/files/v3.13/cmake-3.13.5-Linux-x86_64.sh && \\\n    sh cmake-3.13.5-Linux-x86_64.sh --prefix=/usr/local --skip-license && \\\n    rm cmake-3.13.5-Linux-x86_64.sh\n\n# ccache 3.7.9 has fixes for caching nvcc outputs\nRUN cd /usr/local/src && \\\n    git clone --recursive https://github.com/ccache/ccache.git && \\\n    cd ccache && \\\n    git checkout v3.7.9 && \\\n    ./autogen.sh && \\\n    ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" --disable-man && \\\n    make -j$(nproc) && \\\n    make install && \\\n    cd /usr/local/src && \\\n    rm -rf ccache\n\n# Fix the en_DK.UTF-8 locale to test locale invariance\nRUN localedef -i en_DK -f UTF-8 en_DK.UTF-8\n\n# Python dependencies\nRUN python3 -m pip install --upgrade pip\nCOPY install/requirements /work/\nRUN python3 -m pip install -r /work/requirements\n\nARG USER_ID=0\nCOPY install/docker_filepermissions.sh /work/\nRUN /work/docker_filepermissions.sh\n\nENV PYTHONPATH=./python/\n# Verify that MXNet works correctly when the C locale is set to a locale that uses a comma as the\n# decimal separator. Please see #16134 for an example of a bug caused by incorrect handling of\n# number serialization and deserialization.\nENV LC_NUMERIC=en_DK.UTF-8\nWORKDIR /work/mxnet\n\nCOPY runtime_functions.sh /work/\n"
+}

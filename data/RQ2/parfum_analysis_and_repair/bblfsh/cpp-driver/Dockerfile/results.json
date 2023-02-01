@@ -1,0 +1,26 @@
+{
+  "startTime": 1674253940881,
+  "endTime": 1674253941633,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 17,
+        "lineEnd": 17,
+        "columnStart": 18,
+        "columnEnd": 38
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 17,
+        "lineEnd": 17,
+        "columnStart": 18,
+        "columnEnd": 38
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# This file can be used directly with Docker.\n#\n# Prerequisites:\n#   go mod vendor\n#   bblfsh-sdk release\n#\n# However, the preferred way is:\n#   go run ./build.go driver:tag\n#\n# This will regenerate all necessary files before building the driver.\n\n#==============================\n# Stage 1: Native Driver Build\n#==============================\nFROM openjdk:8u181-slim as native\n\n# install build dependencies\nRUN apt update && apt install --no-install-recommends -y maven && rm -rf /var/lib/apt/lists/*;\n\n\nADD native /native\nWORKDIR /native\n\n# build native driver\nRUN mvn install:install-file -Dfile=lib/org.eclipse.cdt.core_6.5.0.201807181141.jar -DgroupId=org.eclipse.cdt.core -DartifactId=cdtcore -Dversion=6.5.0 -Dpackaging=jar\nRUN mvn package\n\n\n#================================\n# Stage 1.1: Native Driver Tests\n#================================\nFROM native as native_test\n\n# run native driver tests\nRUN mvn test\n\n\n#=================================\n# Stage 2: Go Driver Server Build\n#=================================\nFROM golang:1.13-alpine as driver\n\nENV DRIVER_REPO=github.com/bblfsh/cpp-driver\nENV DRIVER_REPO_PATH=/go/src/$DRIVER_REPO\n\nADD go.* $DRIVER_REPO_PATH/\nADD vendor $DRIVER_REPO_PATH/vendor\nADD driver $DRIVER_REPO_PATH/driver\n\nWORKDIR $DRIVER_REPO_PATH/\n\nENV GO111MODULE=on GOFLAGS=-mod=vendor\n\n# workaround for https://github.com/golang/go/issues/28065\nENV CGO_ENABLED=0\n\n# build server binary\nRUN go build -o /tmp/driver ./driver/main.go\n# build tests\nRUN go test -c -o /tmp/fixtures.test ./driver/fixtures/\n\n#=======================\n# Stage 3: Driver Build\n#=======================\nFROM openjdk:8u181-jre-alpine\n\n\n\nLABEL maintainer=\"source{d}\" \\\n      bblfsh.language=\"cpp\"\n\nWORKDIR /opt/driver\n\n# copy static files from driver source directory\nADD ./native/native.sh ./bin/native\n\n\n# copy build artifacts for native driver\nCOPY --from=native /native/target/native-jar-with-dependencies.jar ./bin/\n\n\n# copy driver server binary\nCOPY --from=driver /tmp/driver ./bin/\n\n# copy tests binary\nCOPY --from=driver /tmp/fixtures.test ./bin/\n# move stuff to make tests work\nRUN ln -s /opt/driver ../build\nVOLUME /opt/fixtures\n\n# copy driver manifest and static files\nADD .manifest.release.toml ./etc/manifest.toml\n\nENTRYPOINT [\"/opt/driver/bin/driver\"]"
+}

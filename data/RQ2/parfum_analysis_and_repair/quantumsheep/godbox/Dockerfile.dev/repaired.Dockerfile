@@ -1,0 +1,17 @@
+FROM quantumsheep/godbox-base:latest
+
+RUN set -xe && \
+    apt-get update && \
+    rm -rf /var/lib/apt/lists/* && \
+    curl https://sh.rustup.rs -sSf | sh -s -- -y --default-toolchain=stable && \
+    . $HOME/.cargo/env
+
+RUN ~/.cargo/bin/cargo install cargo-watch
+
+WORKDIR /usr/src/app
+
+COPY src src
+
+COPY Cargo.toml .
+
+CMD ~/.cargo/bin/cargo watch -x run

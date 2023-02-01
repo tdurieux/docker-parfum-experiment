@@ -1,0 +1,43 @@
+FROM quay.io/fedora/fedora:33-x86_64 AS builder
+ARG UPGRADE_VERSION=100.0.0
+
+ENV GOPATH=/go
+RUN echo "UPGRADE_VERSION: ${UPGRADE_VERSION}"
+WORKDIR /go/src/github.com/kubevirt/hyperconverged-cluster-operator/
+COPY . .
+USER root
+RUN dnf install -y dep golang make findutils tar && dnf clean all -y
+RUN export UPGRADE_VERSION=${UPGRADE_VERSION} && \
+    export PREV=true && \
+    ./hack/upgrade-create-new-version.sh
+
+FROM quay.io/openshift/origin-operator-registry:latest
+ARG KUBEVIRT_PROVIDER
+ARG UPGRADE_VERSION=100.0.0
+COPY --from=builder /go/src/github.com/kubevirt/hyperconverged-cluster-operator/deploy/olm-catalog /registry
+USER root
+
+# TODO: openshift-ci is currently configured to use two different
+# addresses for its internal registry depending from the OCP version:
+# please adapt this value according to that.
+# This is going to be solved only once we will move to openshift-ci generated
+# index images also for the upgrade tests.
+# OCP 4.5:
+# ARG CI_REGISTRY=registry.svc.ci.openshift.org
+# OCP 4.6:
+ARG CI_REGISTRY=registry.build01.ci.openshift.org
+
+RUN if [ -n "$KUBEVIRT_PROVIDER" ]; then \
+      sed -r -i "s|quay.io/kubevirt/hyperconverged-cluster-operator(@sha256)?:.*$|registry:5000/kubevirt/hyperconverged-cluster-operator:latest|g" /registry/community-kubevirt-hyperconverged/${UPGRADE_VERSION}/manifests/kubevirt-hyperconverged-operator.v${UPGRADE_VERSION}.clusterserviceversion.yaml; \
+      sed -r -i "s|quay.io/kubevirt/hyperconverged-cluster-webhook(@sha256)?:.*$|registry:5000/kubevirt/hyperconverged-cluster-webhook:latest|g" /registry/community-kubevirt-hyperconverged/${UPGRADE_VERSION}/manifests/kubevirt-hyperconverged-operator.v${UPGRADE_VERSION}.clusterserviceversion.yaml; \
+    else \
+      sed -r -i "s|quay.io/kubevirt/hyperconverged-cluster-operator(@sha256)?:.*$|${CI_REGISTRY}/${OPENSHIFT_BUILD_NAMESPACE}/stable:hyperconverged-cluster-operator|g" /registry/community-kubevirt-hyperconverged/${UPGRADE_VERSION}/manifests/kubevirt-hyperconverged-operator.v${UPGRADE_VERSION}.clusterserviceversion.yaml; \
+      sed -r -i "s|quay.io/kubevirt/hyperconverged-cluster-webhook(@sha256)?:.*$|${CI_REGISTRY}/${OPENSHIFT_BUILD_NAMESPACE}/stable:hyperconverged-cluster-webhook|g" /registry/community-kubevirt-hyperconverged/${UPGRADE_VERSION}/manifests/kubevirt-hyperconverged-operator.v${UPGRADE_VERSION}.clusterserviceversion.yaml; \
+    fi
+# Initialize the database
+RUN initializer --manifests /registry/community-kubevirt-hyperconverged --output bundles.db
+
+# There are multiple binaries in the origin-operator-registry
+# We want the registry-server
+ENTRYPOINT ["registry-server"]
+CMD ["--database", "bundles.db"]

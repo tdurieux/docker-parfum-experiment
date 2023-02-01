@@ -1,0 +1,63 @@
+{
+  "startTime": 1674249591703,
+  "endTime": 1674249592430,
+  "originalSmells": [
+    {
+      "rule": "sha256sumEchoOneSpaces",
+      "position": {
+        "lineStart": 27,
+        "lineEnd": 27,
+        "columnStart": 2,
+        "columnEnd": 47
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 28,
+        "lineEnd": 28,
+        "columnStart": 2,
+        "columnEnd": 24
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 75,
+        "lineEnd": 75,
+        "columnStart": 49,
+        "columnEnd": 79
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 75,
+        "lineEnd": 75,
+        "columnStart": 49,
+        "columnEnd": 79
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 75,
+        "lineEnd": 75,
+        "columnStart": 49,
+        "columnEnd": 79
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 75,
+        "lineEnd": 75,
+        "columnStart": 49,
+        "columnEnd": 103
+      }
+    }
+  ],
+  "repairedDockerfile": "###########################\n# The golang build container\nFROM golang:1.17-buster as cosmos-go\n\nWORKDIR /usr/src/agoric-sdk/golang/cosmos\nCOPY go.mod go.sum ../../\nRUN go mod download\n\nCOPY golang/cosmos ./\n\nARG GIT_COMMIT\nRUN make GIT_COMMIT=\"$GIT_COMMIT\" MOD_READONLY= compile-go\n\n###############################\n# OTEL fetch\n# from https://github.com/open-telemetry/opentelemetry-collector-releases/releases\n\nFROM node:16-buster AS otel\n\nARG OTEL_VERSION=0.48.0\nARG OTEL_HASH_arm64=846852f4c34f6e494abe202402fdf1d17e2ec3c7a7f96985b6011126ae553249\nARG OTEL_HASH_amd64=7c6923ecbc045e6d8825479d836d3e8b8a2b3c20185e9dda531b3aa2b973459c\n\nRUN set -eux; \\\n  pkgArch=\"$(dpkg --print-architecture)\"; \\\n  eval \"otelHash=\\$OTEL_HASH_${pkgArch}\"; \\\n  wget -O otel.tgz \"https://github.com/open-telemetry/opentelemetry-collector-releases/releases/download/v${OTEL_VERSION}/otelcol-contrib_${OTEL_VERSION}_linux_${pkgArch}.tar.gz\"; \\\n  echo \"${otelHash}  otel.tgz\" | sha256sum -c -; \\\n  tar -C / -xzf otel.tgz && rm otel.tgz\n\n\n###############################\n# The js build container\nFROM node:16-buster AS build-js\n\n# When changing/adding entries here, make sure to search the whole project for\n# `@@AGORIC_DOCKER_SUBMODULES@@`\nARG MODDABLE_COMMIT_HASH\nARG MODDABLE_URL\nARG XSNAP_NATIVE_COMMIT_HASH\nARG XSNAP_NATIVE_URL\n\nWORKDIR /usr/src/agoric-sdk\nCOPY . .\n\n# add retry for qemu arm64 network fetching and mui issues with qemu\nRUN bash -c \"for i in {1..3}; do yarn install --network-timeout 1000000 && exit 0 || (echo retrying; sleep 15;) done; exit 1\"\n\n# Need to build the Node.js node extension that uses our above Golang shared library.\nCOPY --from=cosmos-go /usr/src/agoric-sdk/golang/cosmos/build golang/cosmos/build/\nRUN cd golang/cosmos && yarn build:gyp\n\n# Install the entry points in GOBIN.\nRUN cd packages/cosmic-swingset && make install-local install-helper install-agd\n\n# Check out the specified submodule versions.\n# When changing/adding entries here, make sure to search the whole project for\n# `@@AGORIC_DOCKER_SUBMODULES@@`\nRUN \\\n  MODDABLE_COMMIT_HASH=\"$MODDABLE_COMMIT_HASH\" \\\n  MODDABLE_URL=\"$MODDABLE_URL\" \\\n  XSNAP_NATIVE_COMMIT_HASH=\"$XSNAP_NATIVE_COMMIT_HASH\" \\\n  XSNAP_NATIVE_URL=\"$XSNAP_NATIVE_URL\" \\\n  yarn build\n\n# Remove dev dependencies.\nRUN rm -rf packages/xsnap/moddable\n# FIXME: This causes bundling differences.  https://github.com/endojs/endo/issues/919\n# RUN yarn install --frozen-lockfile --production --network-timeout 100000\n\n###############################\n# The install container.\nFROM node:16-buster AS install\n\n# Install some conveniences.\nRUN apt-get --allow-releaseinfo-change update && apt-get install --no-install-recommends -y vim jq less && apt-get clean -y && rm -rf /var/lib/apt/lists/*;\n\nWORKDIR /usr/src\nCOPY --from=build-js /usr/src/agoric-sdk agoric-sdk\nCOPY --from=build-js /root/go/bin/agd /usr/local/bin/\nCOPY --from=build-js /root/go/bin/ag-cosmos-helper /usr/local/bin/\nCOPY --from=otel /otelcol-contrib /usr/local/bin/\nRUN ln -s /usr/src/agoric-sdk/packages/cosmic-swingset/bin/ag-chain-cosmos /usr/local/bin/\nRUN ln -s /usr/src/agoric-sdk/packages/solo/bin/ag-solo /usr/local/bin/\nRUN ln -s /usr/src/agoric-sdk/packages/agoric-cli/bin/agoric /usr/local/bin/\nCOPY . lib/ag-solo/\n\nARG GIT_REVISION=unknown\nRUN echo \"$GIT_REVISION\" > /usr/src/agoric-sdk/packages/solo/public/git-revision.txt\n\n# Compatibility links for older containers.\nRUN ln -s /data /agoric\nRUN ln -s /data/solo /usr/src/agoric-sdk/packages/cosmic-swingset/solo\nRUN ln -s /data/chains /usr/src/agoric-sdk/packages/cosmic-swingset/chains\n\n# By default, run the daemon with specified arguments.\nWORKDIR /root\nEXPOSE 1317 9090 26657\nENTRYPOINT [ \"/usr/src/agoric-sdk/packages/cosmic-swingset/scripts/chain-entry.sh\" ]\n"
+}

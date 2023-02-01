@@ -1,0 +1,81 @@
+{
+  "startTime": 1674255113097,
+  "endTime": 1674255114778,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 63,
+        "lineEnd": 63,
+        "columnStart": 4,
+        "columnEnd": 50
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 90,
+        "lineEnd": 90,
+        "columnStart": 4,
+        "columnEnd": 35
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 91,
+        "lineEnd": 91,
+        "columnStart": 4,
+        "columnEnd": 33
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 43,
+        "lineEnd": 55,
+        "columnStart": 4,
+        "columnEnd": 19
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 64,
+        "lineEnd": 64,
+        "columnStart": 4,
+        "columnEnd": 29
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 64,
+        "lineEnd": 64,
+        "columnStart": 4,
+        "columnEnd": 29
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 64,
+        "lineEnd": 64,
+        "columnStart": 4,
+        "columnEnd": 29
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 64,
+        "lineEnd": 64,
+        "columnStart": 4,
+        "columnEnd": 53
+      }
+    }
+  ],
+  "repairedDockerfile": "FROM python:3.8\n\nENV DEBIAN_FRONTEND=noninteractive\nENV LANG=en_US.UTF-8\nENV LANGUAGE=en_US:en\nENV LC_ALL=en_US.UTF-8\nENV VIRTUAL_ENV=/opt/venv\n\nENV KPI_LOGS_DIR=/srv/logs \\\n    DJANGO_SETTINGS_MODULE=kobo.settings.prod \\\n    # The mountpoint of a volume shared with the `nginx` container. Static files will\n    #   be copied there.\n    NGINX_STATIC_DIR=/srv/static \\\n    KPI_SRC_DIR=/srv/src/kpi \\\n    KPI_MEDIA_DIR=/srv/src/kpi/media \\\n    KPI_NODE_PATH=/srv/src/kpi/node_modules \\\n    TMP_DIR=/srv/tmp \\\n    UWSGI_USER=kobo \\\n    UWSGI_GROUP=kobo \\\n    SERVICES_DIR=/etc/service \\\n    CELERY_PID_DIR=/var/run/celery \\\n    INIT_PATH=/srv/init\n\n##########################################\n# Create build directories               #\n##########################################\n\nRUN mkdir -p \"${NGINX_STATIC_DIR}\" && \\\n    mkdir -p \"${KPI_SRC_DIR}\" && \\\n    mkdir -p \"${KPI_NODE_PATH}\" && \\\n    mkdir -p \"${TMP_DIR}\" && \\\n    mkdir -p ${CELERY_PID_DIR} && \\\n    mkdir -p ${SERVICES_DIR}/uwsgi && \\\n    mkdir -p ${SERVICES_DIR}/celery && \\\n    mkdir -p ${SERVICES_DIR}/celery_beat && \\\n    mkdir -p ${SERVICES_DIR}/celery_sync_kobocat_xforms && \\\n    mkdir -p \"${INIT_PATH}\"\n\n##########################################\n# Install `apt` packages.                #\n##########################################\n\nRUN apt-get -qq update && \\\n    apt-get -qq --no-install-recommends -y install \\\n        ffmpeg \\\n        gdal-bin \\\n        gettext \\\n        gosu \\\n        less \\\n        libproj-dev \\\n        locales \\\n        postgresql-client \\\n        rsync \\\n        runit-init \\\n        vim \\\n        wait-for-it && \\\n    apt-get clean && \\\n        rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*\n\n###########################\n# Install NodeJS          #\n###########################\n\nRUN curl -f -sL https://deb.nodesource.com/setup_16.x | bash - && \\\n    apt-get install --no-install-recommends -y nodejs && rm -rf /var/lib/apt/lists/*;\n\n###########################\n# Install locales         #\n###########################\n\nRUN echo 'en_US.UTF-8 UTF-8' > /etc/locale.gen\nRUN locale-gen && dpkg-reconfigure locales -f noninteractive\n\n#################################\n# Create local user UWSGI_USER` #\n#################################\nRUN adduser --disabled-password --gecos '' \"$UWSGI_USER\"\n\n###########################\n# Copy KPI directory      #\n###########################\n\nCOPY . \"${KPI_SRC_DIR}\"\n\n###########################\n# Install `pip` packages. #\n###########################\n\nRUN python3 -m venv \"$VIRTUAL_ENV\"\nENV PATH=\"$VIRTUAL_ENV/bin:$PATH\"\nRUN pip install --no-cache-dir --quiet pip==22.0.4 && \\\n    pip install --no-cache-dir --quiet pip-tools\nCOPY ./dependencies/pip/external_services.txt \"${TMP_DIR}/pip_dependencies.txt\"\nRUN pip-sync \"${TMP_DIR}/pip_dependencies.txt\" 1>/dev/null && \\\n    rm -rf ~/.cache/pip\n\n###########################\n# Install `npm` packages. #\n###########################\n\nWORKDIR ${KPI_SRC_DIR}/\n\nRUN rm -rf ${KPI_NODE_PATH} && \\\n    npm install -g npm@8.5.5 && \\\n    npm install -g check-dependencies && \\\n    npm install --quiet && \\\n    npm cache clean --force\n\nENV PATH $PATH:${KPI_NODE_PATH}/.bin\n\n######################\n# Build client code. #\n######################\n\nRUN rm -rf \"${KPI_SRC_DIR}/jsapp/fonts\" && \\\n    rm -rf \"${KPI_SRC_DIR}/jsapp/compiled\" && \\\n    npm run copy-fonts && npm run build\n\n###########################\n# Organize static assets. #\n###########################\n\nRUN python manage.py collectstatic --noinput\n\n#####################################\n# Retrieve and compile translations #\n#####################################\n\nRUN git submodule init && \\\n    git submodule update --remote && \\\n    python manage.py compilemessages\n\n##########################################\n# Persist the log and email directories. #\n##########################################\n\nRUN mkdir -p \"${KPI_LOGS_DIR}/\" \"${KPI_SRC_DIR}/emails\"\n\n#################################################\n# Handle runtime tasks and create main process. #\n#################################################\n\n# Using `/etc/profile.d/` as a repository for non-hard-coded environment variable overrides.\nRUN echo \"export PATH=${PATH}\" >> /etc/profile && \\\n    echo 'source /etc/profile' >> /root/.bashrc && \\\n    echo 'source /etc/profile' >> /home/${UWSGI_USER}/.bashrc\n\n\n# Remove getty* services to avoid errors of absent tty at sv start-up\nRUN rm -rf /etc/runit/runsvdir/default/getty-tty*\n\n# Create symlinks for runsv services\nRUN ln -s \"${KPI_SRC_DIR}/docker/run_uwsgi.bash\" \"${SERVICES_DIR}/uwsgi/run\" && \\\n    ln -s \"${KPI_SRC_DIR}/docker/run_celery.bash\" \"${SERVICES_DIR}/celery/run\" && \\\n    ln -s \"${KPI_SRC_DIR}/docker/run_celery_beat.bash\" \"${SERVICES_DIR}/celery_beat/run\" && \\\n    ln -s \"${KPI_SRC_DIR}/docker/run_celery_sync_kobocat_xforms.bash\" \"${SERVICES_DIR}/celery_sync_kobocat_xforms/run\"\n\n\n# Add/Restore `UWSGI_USER`'s permissions\nRUN chown -R \":${UWSGI_GROUP}\" ${CELERY_PID_DIR} && \\\n    chmod g+w ${CELERY_PID_DIR} && \\\n    chown -R \"${UWSGI_USER}:${UWSGI_GROUP}\" ${KPI_SRC_DIR}/emails/ && \\\n    chown -R \"${UWSGI_USER}:${UWSGI_GROUP}\" ${KPI_LOGS_DIR} && \\\n    chown -R \"${UWSGI_USER}:${UWSGI_GROUP}\" ${TMP_DIR} && \\\n    chown -R \"${UWSGI_USER}:${UWSGI_GROUP}\" ${VIRTUAL_ENV}\n\n\nEXPOSE 8000\n\nCMD [\"/bin/bash\", \"-c\", \"exec ${KPI_SRC_DIR}/docker/init.bash\"]\n"
+}

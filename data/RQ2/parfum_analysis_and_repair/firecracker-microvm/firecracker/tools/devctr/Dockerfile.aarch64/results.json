@@ -1,0 +1,26 @@
+{
+  "startTime": 1674216320187,
+  "endTime": 1674216321475,
+  "originalSmells": [
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 85,
+        "lineEnd": 85,
+        "columnStart": 7,
+        "columnEnd": 41
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 83,
+        "lineEnd": 83,
+        "columnStart": 7,
+        "columnEnd": 32
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM ubuntu:18.04\n\n# TODO: use a multi-stage build to reduce the download size when updating this container.\n# The Rust toolchain layer will get updated most frequently, but we could keep the system\n# dependencies layer intact for much longer.\n\nARG RUST_TOOLCHAIN=\"1.52.1\"\nARG TINI_VERSION_TAG=\"v0.18.0\"\nARG TMP_BUILD_DIR=/tmp/build\nARG TMP_POETRY_DIR\nARG FIRECRACKER_SRC_DIR=\"/firecracker\"\nARG FIRECRACKER_BUILD_DIR=\"$FIRECRACKER_SRC_DIR/build\"\nARG CARGO_REGISTRY_DIR=\"$FIRECRACKER_BUILD_DIR/cargo_registry\"\nARG CARGO_GIT_REGISTRY_DIR=\"$FIRECRACKER_BUILD_DIR/cargo_git_registry\"\nARG DEBIAN_FRONTEND=noninteractive\n# By default we don't provide a poetry.lock file\nARG POETRY_LOCK_PATH=\"/dev/null/*\"\n\nENV CARGO_HOME=/usr/local/rust\nENV RUSTUP_HOME=/usr/local/rust\nENV PATH=\"$PATH:$CARGO_HOME/bin\"\nENV LC_ALL=C.UTF-8\n\n# Install system dependencies\n#\nRUN apt-get update \\\n    && apt-get -y install --no-install-recommends \\\n        binutils-dev \\\n        # Needed in order to be able to compile `userfaultfd-sys`.\n        clang \\\n        cmake \\\n        curl \\\n        file \\\n        g++ \\\n        gcc \\\n        git \\\n        iperf3 \\\n        iproute2 \\\n        jq \\\n        libbfd-dev \\\n        libcurl4-openssl-dev \\\n        libdw-dev \\\n        libfdt-dev \\\n        libiberty-dev \\\n        libssl-dev \\\n        lsof \\\n        make \\\n        musl-tools \\\n        net-tools \\\n        openssh-client \\\n        pkgconf \\\n        python \\\n        python3 \\\n        python3-dev \\\n        python3-pip \\\n        python3-venv    \\\n        zlib1g-dev \\\n        screen \\\n        tzdata \\\n        xz-utils \\\n        bc \\\n        flex \\\n        bison \\\n        build-essential \\\n        zlib1g-dev \\\n        libncurses5-dev \\\n        libgdbm-dev \\\n        libnss3-dev \\\n        libssl-dev \\\n        libreadline-dev \\\n        libffi-dev \\\n        wget \\\n    && python3 -m pip install \\\n        setuptools \\\n        setuptools_rust \\\n        wheel \\\n    && python3 -m pip install --upgrade pip \\\n    && rm -rf /var/lib/apt/lists/*\n\n# Update Python to 3.10\n# This method isn't ideal, compiling from source can be dropped\n# once the container definition is based on ubuntu:22.04\nRUN wget https://www.python.org/ftp/python/3.10.4/Python-3.10.4.tgz \\\n    && tar -xf Python-3.10.4.tgz \\\n    && cd ./Python-3.10.4 \\\n    && ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" --enable-optimizations \\\n    && make -j 8 \\\n    && make install && rm Python-3.10.4.tgz\n\nRUN python3 -m pip install poetry\nRUN mkdir \"$TMP_POETRY_DIR\"\nCOPY tools/devctr/pyproject.toml $POETRY_LOCK_PATH \"$TMP_POETRY_DIR/\"\nRUN cd \"$TMP_POETRY_DIR\" \\\n    &&  poetry config virtualenvs.create false \\\n    &&  poetry install --no-dev --no-interaction\n\n# Install the Rust toolchain\n#\nRUN mkdir \"$TMP_BUILD_DIR\" \\\n    && curl https://sh.rustup.rs -sSf | sh -s -- -y --profile minimal --default-toolchain \"$RUST_TOOLCHAIN\" \\\n        && rustup target add aarch64-unknown-linux-musl \\\n        && cd \"$TMP_BUILD_DIR\" \\\n                    && cargo install cargo-kcov \\\n                    && cargo kcov --print-install-kcov-sh | sh \\\n        && rm -rf \"$CARGO_HOME/registry\" \\\n        && ln -s \"$CARGO_REGISTRY_DIR\" \"$CARGO_HOME/registry\" \\\n        && rm -rf \"$CARGO_HOME/git\" \\\n        && ln -s \"$CARGO_GIT_REGISTRY_DIR\" \"$CARGO_HOME/git\" \\\n    && cd / \\\n    && rm -rf \"$TMP_BUILD_DIR\"\n\nRUN ln -s /usr/bin/musl-gcc /usr/bin/aarch64-linux-musl-gcc\n\n# help musl-gcc find linux headers\nRUN cd /usr/include/aarch64-linux-musl \\\n    && ln -s ../aarch64-linux-gnu/asm asm \\\n    && ln -s ../linux linux \\\n    && ln -s ../asm-generic asm-generic\n\n# Build iperf3-vsock\nRUN mkdir \"$TMP_BUILD_DIR\" && cd \"$TMP_BUILD_DIR\" \\\n    && git clone https://github.com/stefano-garzarella/iperf-vsock \\\n    && cd iperf-vsock && git checkout 9245f9a \\\n    && mkdir build && cd build \\\n    && ../configure \"LDFLAGS=--static\" --disable-shared && make \\\n    && cp src/iperf3 /usr/local/bin/iperf3-vsock \\\n    && cd / \\\n    && rm -rf \"$TMP_BUILD_DIR\"\n\n# Add the tini init binary.\nADD https://github.com/krallin/tini/releases/download/${TINI_VERSION_TAG}/tini-static-arm64 /sbin/tini\nRUN chmod +x /sbin/tini\n\nWORKDIR \"$FIRECRACKER_SRC_DIR\"\nENTRYPOINT [\"/sbin/tini\", \"--\"]\n"
+}

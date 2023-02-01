@@ -1,0 +1,6 @@
+FROM golang:1.16
+
+ARG GOPROXY="https://proxy.golang.org,direct"
+RUN go install github.com/client9/misspell/cmd/misspell@v0.3.4
+
+CMD [ "/go/bin/misspell" ]

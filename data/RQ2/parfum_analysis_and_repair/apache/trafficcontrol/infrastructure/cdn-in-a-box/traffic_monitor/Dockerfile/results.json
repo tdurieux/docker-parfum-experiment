@@ -1,0 +1,17 @@
+{
+  "startTime": 1674251843287,
+  "endTime": 1674251843963,
+  "originalSmells": [
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 28,
+        "lineEnd": 28,
+        "columnStart": 8,
+        "columnEnd": 26
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Licensed to the Apache Software Foundation (ASF) under one\n# or more contributor license agreements.  See the NOTICE file\n# distributed with this work for additional information\n# regarding copyright ownership.  The ASF licenses this file\n# to you under the Apache License, Version 2.0 (the\n# \"License\"); you may not use this file except in compliance\n# with the License.  You may obtain a copy of the License at\n#\n#   http://www.apache.org/licenses/LICENSE-2.0\n#\n# Unless required by applicable law or agreed to in writing,\n# software distributed under the License is distributed on an\n# \"AS IS\" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY\n# KIND, either express or implied.  See the License for the\n# specific language governing permissions and limitations\n# under the License.\n############################################################\n# Dockerfile to build Traffic Monitor container images\n# Based on CentOS\n############################################################\n\n    # Change BASE_IMAGE to centos when RHEL_VERSION=7\nARG BASE_IMAGE=rockylinux \\\n    RHEL_VERSION=8\nFROM ${BASE_IMAGE}:${RHEL_VERSION} as trafficmonitor-dependencies\nARG RHEL_VERSION=8\n\nRUN if [[ \"${RHEL_VERSION%%.*}\" -eq 7 ]]; then \\\n        yum -y install dnf || exit 1; rm -rf /var/cache/yum \\\n    fi\n\nRUN dnf install -y epel-release && \\\n    dnf install -y \\\n        jq \\\n        nmap-ncat \\\n        iproute \\\n        net-tools \\\n        # find is required by to-access.sh\n        findutils \\\n        gettext \\\n        bind-utils \\\n        openssl \\\n        initscripts && \\\n    dnf clean all\n\nFROM trafficmonitor-dependencies AS trafficmonitor\n\n# Default values for RPM -- override with `docker build --build-arg RPM=...'\nARG RPM=traffic_monitor/traffic_monitor.rpm\nADD $RPM /\nRUN rpm -Uvh  /$(basename $RPM) && \\\n    rm /$(basename $RPM)\n\nRUN mkdir -p /opt/traffic_monitor/conf\nADD traffic_monitor/traffic_monitor.cfg /opt/traffic_monitor/conf/traffic_monitor.cfg.template\n\nADD enroller/server_template.json \\\n    traffic_ops/to-access.sh \\\n    /\n\nCOPY dns/set-dns.sh \\\n     dns/insert-self-into-dns.sh \\\n     /usr/local/sbin/\n\nEXPOSE 80\nADD traffic_monitor/run.sh /\nCMD /run.sh\nHEALTHCHECK --interval=10s --timeout=1s \\\n    CMD bash -c 'source /to-access.sh && [[ \"$(curl -s http://trafficmonitor.infra.ciab.test/api/traffic-ops-uri)\" == \"$TO_URL\" ]]'\n\nFROM trafficmonitor-dependencies as get-delve\n\nRUN dnf -y install golang && \\\n    go install github.com/go-delve/delve/cmd/dlv@latest\n\nFROM trafficmonitor as trafficmonitor-debug\nCOPY --from=get-delve /root/go/bin /usr/bin\n\n# Makes the default target skip the trafficmonitor-debug stage\nFROM trafficmonitor\n"
+}

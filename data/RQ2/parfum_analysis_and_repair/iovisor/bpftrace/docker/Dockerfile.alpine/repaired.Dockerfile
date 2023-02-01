@@ -1,0 +1,45 @@
+ARG ALPINE_VERSION=3.11
+FROM alpine:${ALPINE_VERSION}
+
+ARG LLVM_VERSION="9"
+ARG CEREAL_VERSION=1.3.0
+
+RUN apk add --no-cache --update \
+  asciidoctor \
+  bash \
+  bison \
+  bcc-dev \
+  bcc-static \
+  libbpf-dev \
+  libpcap-dev \
+  build-base \
+  clang-dev \
+  clang-static \
+  cmake \
+  elfutils-dev \
+  flex-dev \
+  git \
+  gtest-dev \
+  libc6-compat \
+  linux-headers \
+  llvm${LLVM_VERSION}-dev \
+  llvm${LLVM_VERSION}-static \
+  python3 \
+  wget \
+  zlib-dev \
+  zlib-static \
+  openssl-dev
+
+WORKDIR /
+
+RUN mv /usr/lib/libbccbpf.a /usr/lib/libbcc_bpf.a && \
+    ln -s $(which python3) /usr/bin/python && \
+    ln -s /lib /lib/x86_64-linux-gnu
+
+RUN wget https://github.com/USCiLab/cereal/archive/refs/tags/v${CEREAL_VERSION}.tar.gz && \
+    tar xf v${CEREAL_VERSION}.tar.gz && \
+    cp -r cereal-${CEREAL_VERSION}/include/cereal /usr/include && rm v${CEREAL_VERSION}.tar.gz
+
+COPY build.sh /build.sh
+RUN chmod 755 /build.sh
+ENTRYPOINT ["/bin/sh", "/build.sh"]

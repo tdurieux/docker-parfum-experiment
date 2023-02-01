@@ -1,0 +1,53 @@
+{
+  "startTime": 1674240296572,
+  "endTime": 1674240296872,
+  "originalSmells": [
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 18,
+        "lineEnd": 18,
+        "columnStart": 67,
+        "columnEnd": 78
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 15,
+        "lineEnd": 15,
+        "columnStart": 7,
+        "columnEnd": 40
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 10,
+        "lineEnd": 12,
+        "columnStart": 7,
+        "columnEnd": 105
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 71,
+        "lineEnd": 85,
+        "columnStart": 7,
+        "columnEnd": 14
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 10,
+        "lineEnd": 12,
+        "columnStart": 7,
+        "columnEnd": 105
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "ARG nginx_version=1.16.0\n\nFROM nginx:${nginx_version} AS build\n\nARG modsecurity_version=v3.0.3\nARG owasp_modsecurity_crs_version=v3.1.0\n\nSHELL [\"/bin/bash\", \"-c\"]\n\nRUN apt-get update \\\n    && apt-get install --no-install-recommends -y --no-install-suggests \\\n       libluajit-5.1-dev libpam0g-dev zlib1g-dev libpcre3-dev \\\n       libexpat1-dev git curl build-essential libxml2 libxslt1.1 libxslt1-dev autoconf libtool libssl-dev \\\n    && export NGINX_RAW_VERSION=$(echo $NGINX_VERSION | sed 's/-.*//g') \\\n    && curl -fSL https://nginx.org/download/nginx-$NGINX_RAW_VERSION.tar.gz -o nginx.tar.gz \\\n    && tar -zxC /usr/src -f nginx.tar.gz && rm nginx.tar.gz && rm -rf /var/lib/apt/lists/*;\n\nRUN git clone https://github.com/SpiderLabs/ModSecurity.git && cd ModSecurity && git checkout ${modsecurity_version} \\\n    && git submodule init && git submodule update && ./build.sh && ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" && make && make install\n\nRUN strip /usr/local/modsecurity/bin/* /usr/local/modsecurity/lib/*.a /usr/local/modsecurity/lib/*.so*\n\nRUN nginx_modsecurity_conf_dir=\"/etc/nginx/conf.d/modsecurity\" \\\n    && mkdir -p ${nginx_modsecurity_conf_dir} \\\n    && cd ${nginx_modsecurity_conf_dir} \\\n    && curl -fSL \"https://github.com/SpiderLabs/owasp-modsecurity-crs/archive/${owasp_modsecurity_crs_version}.tar.gz\" | tar -xvzf - \\\n    && mv owasp-modsecurity-crs{-${owasp_modsecurity_crs_version#v},} \\\n    && cd -\n\nARG modules\n\nRUN export NGINX_RAW_VERSION=$(echo $NGINX_VERSION | sed 's/-.*//g') \\\n    && cd /usr/src/nginx-$NGINX_RAW_VERSION \\\n    && configure_args=$(nginx -V 2>&1 | grep \"configure arguments:\" | awk -F 'configure arguments:' '{print $2}'); \\\n    IFS=','; \\\n    for module in ${modules}; do \\\n        module_repo=$(echo $module | sed -E 's@^(((https?|git)://)?[^:]+).*@\\1@g'); \\\n        module_tag=$(echo $module | sed -E 's@^(((https?|git)://)?[^:]+):?([^:/]*)@\\4@g'); \\\n        dirname=$(echo \"${module_repo}\" | sed -E 's@^.*/|\\..*$@@g'); \\\n        git clone \"${module_repo}\"; \\\n        cd ${dirname}; \\\n        if [ -n \"${module_tag}\" ]; then \\\n            if [[ \"${module_tag}\" =~ ^(pr-[0-9]+.*)$ ]]; then \\\n                pr_numbers=\"${BASH_REMATCH[1]//pr-/}\"; \\\n                IFS=';'; \\\n                for pr_number in ${pr_numbers}; do \\\n                    git fetch origin \"pull/${pr_number}/head:pr-${pr_number}\"; \\\n                    git merge --no-commit pr-${pr_number} master; \\\n                done; \\\n                IFS=','; \\\n            else \\\n                git checkout \"${module_tag}\"; \\\n           fi; \\\n        fi; \\\n        cd ..; \\\n        configure_args=\"${configure_args} --add-dynamic-module=./${dirname}\"; \\\n    done; unset IFS \\\n    && eval ./configure ${configure_args} \\\n    && make modules \\\n    && mkdir /modules \\\n    && cp $(pwd)/objs/*.so /modules\n\nFROM nginx:${nginx_version}\n\nCOPY --from=build /modules/* /usr/lib/nginx/modules/\nCOPY --from=build /usr/local/modsecurity/ /usr/local/modsecurity/\nCOPY --from=build /etc/nginx/conf.d/modsecurity /etc/nginx/conf.d/modsecurity\n\nENV DEBIAN_FRONTEND noninteractive\n\nRUN apt update \\\n    && apt-get install --no-install-recommends -y \\\n      ca-certificates \\\n      curl \\\n      dnsutils \\\n      iputils-ping \\\n      libcurl4-openssl-dev \\\n      libyajl-dev \\\n      libluajit-5.1-2 \\\n      libxml2 \\\n      lua5.1-dev \\\n      luajit \\\n      net-tools \\\n      procps \\\n      tcpdump \\\n      vim-tiny \\\n    && apt clean \\\n    && rm -rf /var/lib/apt/lists/* \\\n    && rm -f /etc/nginx/modules/all.conf \\\n    && ls /etc/nginx/modules/*.so | grep -v debug \\\n      | xargs -I{} sh -c 'echo \"load_module {};\" | tee -a  /etc/nginx/modules/all.conf'\n\nWORKDIR /etc/nginx\n"
+}

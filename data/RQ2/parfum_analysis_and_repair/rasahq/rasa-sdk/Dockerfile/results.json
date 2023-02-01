@@ -1,0 +1,26 @@
+{
+  "startTime": 1674254392946,
+  "endTime": 1674254393555,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 30,
+        "lineEnd": 30,
+        "columnStart": 4,
+        "columnEnd": 89
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 22,
+        "lineEnd": 23,
+        "columnStart": 6,
+        "columnEnd": 8
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM ubuntu:20.04 as base\n\n# hadolint ignore=DL3005,DL3008\nRUN apt-get update -qq \\\n    # Make sure that all security updates are installed\n    && apt-get dist-upgrade -y --no-install-recommends \\\n    && apt-get install -y --no-install-recommends \\\n      python3 \\\n      python3-venv \\\n      python3-pip \\\n      python3-dev \\\n    && apt-get autoremove -y \\\n    && apt-get clean \\\n    && rm -rf /var/lib/apt/lists/*\n\nRUN update-alternatives --install /usr/bin/python python /usr/bin/python3 100 \\\n   && update-alternatives --install /usr/bin/pip pip /usr/bin/pip3 100\n\nFROM base as python_builder\n\n# hadolint ignore=DL3008\nRUN apt-get update -qq \\\n   && apt-get install -y --no-install-recommends \\\n    curl \\\n    && apt-get autoremove -y && rm -rf /var/lib/apt/lists/*;\n\n# install poetry\n# keep this in sync with the version in pyproject.toml and Dockerfile\nENV POETRY_VERSION 1.1.13\nSHELL [\"/bin/bash\", \"-o\", \"pipefail\", \"-c\"]\nRUN curl -f -sSL https://raw.githubusercontent.com/python-poetry/poetry/master/get-poetry.py | python\nENV PATH \"/root/.poetry/bin:/opt/venv/bin:${PATH}\"\n\n# install dependencies\nCOPY . /app/\n\nWORKDIR /app\n\n# hadolint ignore=SC1091,DL3013\nRUN python -m venv /opt/venv && \\\n  . /opt/venv/bin/activate && \\\n  pip install --no-cache-dir -U pip && \\\n  pip install --no-cache-dir wheel && \\\n  poetry install --no-dev --no-root --no-interaction\n\n# install dependencies and build wheels\n# hadolint ignore=SC1091,DL3013\nRUN . /opt/venv/bin/activate && poetry build -f wheel -n \\\n  && pip install --no-cache-dir --no-deps dist/*.whl \\\n  && mkdir /wheels \\\n  && poetry export -f requirements.txt --without-hashes --output /wheels/requirements.txt \\\n  && poetry run pip wheel --wheel-dir=/wheels -r /wheels/requirements.txt \\\n  && find /app/dist -maxdepth 1 -mindepth 1 -name '*.whl' -print0 | xargs -0 -I {} mv {} /wheels/\n\nWORKDIR /wheels\n# install wheels\n# hadolint ignore=SC1091,DL3013\nRUN find . -name '*.whl' -maxdepth 1 -exec basename {} \\; | awk -F - '{ gsub(\"_\", \"-\", $1); print $1 }' | uniq > /wheels/requirements.txt \\\n  && rm -rf /opt/venv \\\n  && python -m venv /opt/venv \\\n  && . /opt/venv/bin/activate \\\n  && pip install --no-cache-dir -U pip \\\n  && pip install --no-cache-dir --no-index --find-links=/wheels -r /wheels/requirements.txt \\\n  && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/* \\\n  && rm -rf /wheels \\\n  && rm -rf /root/.cache/pip/*\n\n# final image\nFROM base\n\n# copy needed files\nCOPY ./entrypoint.sh /app/\nCOPY --from=python_builder /opt/venv /opt/venv\n\nENV PATH=\"/opt/venv/bin:$PATH\"\n\n# update permissions & change user\nRUN chgrp -R 0 /app && chmod -R g=u /app\nUSER 1001\n\n# change shell\nSHELL [\"/bin/bash\", \"-o\", \"pipefail\", \"-c\"]\n\n# create a mount point for custom actions and the entry point\nWORKDIR /app\nEXPOSE 5055\nENTRYPOINT [\"./entrypoint.sh\"]\nCMD [\"start\", \"--actions\", \"actions\"]\n"
+}

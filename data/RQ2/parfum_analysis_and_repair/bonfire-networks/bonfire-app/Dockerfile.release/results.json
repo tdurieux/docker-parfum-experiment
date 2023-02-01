@@ -1,0 +1,35 @@
+{
+  "startTime": 1674250254430,
+  "endTime": 1674250255818,
+  "originalSmells": [
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 102,
+        "lineEnd": 102,
+        "columnStart": 29,
+        "columnEnd": 206
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 33,
+        "lineEnd": 33,
+        "columnStart": 4,
+        "columnEnd": 49
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 36,
+        "lineEnd": 36,
+        "columnStart": 4,
+        "columnEnd": 29
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Define what version of Elixir to use - ATTENTION: when changing Elixir version\n# make sure to update the `ALPINE_VERSION` arg to match,\n# as well as the Elixir version in:\n# - mix.exs\n# - .github/workflows/test.yaml or .gitlab-ci.yml\n# - Dockerfile.dev\n# - .tool-versions\nARG ELIXIR_IMAGE=1.13-alpine\n\n# The version of Alpine to use for the final image\n# This should match the version of Alpine that the current elixir & erlang images (in Step 1) use.\n# To find this you need to:\n# 1. Locate the dockerfile for the elixir image matching the version, and check what erlang version it uses\n#    e.g. https://github.com/erlef/docker-elixir/blob/master/1.13/otp-25-alpine/Dockerfile\n# 2. Locate the corresponding dockerfile for the erlang version used, and check what alpine version it uses, and then copy that number into the ARG below:\n#    e.g. https://github.com/erlang/docker-erlang-otp/blob/master/25/alpine/Dockerfile\nARG ALPINE_VERSION=3.16\n\n# The following are build arguments used to change variable parts of the image, they should be set as env variables.\n# The name of your application/release (required)\nARG APP_NAME\n# The version of the application we are building (required)\nARG APP_VSN\nARG FLAVOUR\nARG FLAVOUR_PATH\n\n#### STEP 1 - Build our app\nFROM elixir:${ELIXIR_IMAGE} as builder\n\nENV HOME=/opt/app/ TERM=xterm MIX_ENV=prod APP_NAME=$APP_NAME FLAVOUR=$FLAVOUR FLAVOUR_PATH=./\nWORKDIR $HOME\n\n# necessary utils\nRUN apk add --no-cache tar curl git rust cargo npm yarn bash\n\n# dependencies for comeonin\nRUN apk add --no-cache make gcc libc-dev\n\n# Cache elixir deps\nCOPY mix.exs mess.exs mix.lock ./\n# sometimes mix tries to read the config\nRUN mkdir -p ./config\nCOPY data/current_flavour/config/config_basics.exs ./config/config.exs\n\n# get deps from hex.pm\nCOPY data/current_flavour/config/deps.hex ./config/\nRUN mix do local.hex --force, local.rebar --force\nRUN mix do deps.get --only prod\n\n# Compile initial hex deps, only if we're not using forks (warning: this makes the assumption that no Bonfire extensions are coming from Hex. otherwise this should be done only after copying config)\nRUN if [ \"$FORKS_TO_COPY_PATH\" = \"data/null\" ] ; then MIX_ENV=prod mix do deps.compile ; else echo \"Skip\" ; fi\n\n# add git deps (typically Bonfire extensions)\nCOPY data/current_flavour/config/deps.git ./config/\n\n# fetch them because we need them for the non-configurable paths in config/deps_hooks.js\nRUN mix do deps.get --only prod\n\n# we need config before compiling Bonfire extensions\nCOPY data/current_flavour/config/ ./config/\n\n# Optionally include local forks\nARG FORKS_TO_COPY_PATH\nRUN if [ \"$FORKS_TO_COPY_PATH\" = \"data/null\" ] ; then rm ./config/deps.path ; else echo \"Include locally forked extensions.\" ; fi\nCOPY ${FORKS_TO_COPY_PATH} ./forks/\n\n# Update Bonfire extensions to latest git version (mostly useful in CI, and temporary: eventually we want to rely on version numbers and lockfile)\n# RUN mix do bonfire.deps.update\n\n# Fetch git deps (should be after forks are copied and updates are fetched, in case a forked/updated extension specified any different deps)\nRUN mix do deps.get --only prod\n\n# Include translations\nCOPY priv/localisation/ priv/localisation/\nRUN ls -la priv/localisation/\n\n# Compile remaining deps\nRUN MIX_ENV=prod mix do deps.compile\n\n# JS package manager\n# RUN npm install -g pnpm\n# install JS deps\nCOPY assets/package.json assets/*.sh ./assets/\n# COPY assets/pnpm-lock.yaml ./assets/\nCOPY assets/yarn.lock ./assets/\nCOPY priv/*.sh ./priv/\nRUN chmod +x assets/*.sh && sh assets/install.sh\nRUN chmod +x config/*.sh && chmod +x priv/*.sh && sh config/deps.js.sh\n\n# Update mime types\nRUN MIX_ENV=prod mix do deps.clean --build mime\n\n# Include migrations\nCOPY data/current_flavour/repo priv/repo\n\n# bonfire-app code & assets\nCOPY lib lib\nCOPY assets assets\n# COPY . .\n\n# include an archive of the source code\nCOPY LICENSE ./\nRUN mkdir -p priv/static/ && tar --exclude=*.env --exclude=assets/node_modules --exclude=assets/static/data -czvf priv/static/source.tar.gz lib deps assets config priv/repo mix.exs mix.lock mess.exs LICENSE && rm priv/static/source.tar.gz\n\n# prepare static assets\nCOPY data/current_flavour/config/deps_hooks.js data/current_flavour/config/deps_hooks.js\nRUN mix assets.build\nRUN MIX_ENV=prod CI=1 mix phx.digest\n\n# build final OTP release\nRUN MIX_ENV=prod CI=1 mix release\n\n##### STEP 2 - Prepare the server image\n# From this line onwards, we're in a new image, which will be the image used in production\nFROM alpine:${ALPINE_VERSION}\n\n# The name of your application/release (required)\nARG APP_NAME\nARG APP_VSN\nARG APP_BUILD\n\nENV APP_NAME=${APP_NAME} APP_VSN=${APP_VSN} APP_REVISION=${APP_VSN}-${APP_BUILD}\n\n# Essentials\nRUN apk add --update --no-cache \\\n  mailcap \\\n  ca-certificates \\\n  openssh-client \\\n  openssl-dev \\\n  # ^ for HTTPS\n  git \\ \n  build-base \\ \n  # ^ required by tree_magic \n  tzdata \\\n  gettext \\\n  # ^ localisation\n  imagemagick \\\n  vips-tools \\\n  # ^ image resizing\n  bash \\\n  curl\n  #^ misc\n\nWORKDIR /opt/app\n\n# copy app build\nCOPY --from=builder /opt/app/_build/prod/rel/bonfire /opt/app\n\n# start\nCMD [\"./bin/bonfire\", \"start\"]\n"
+}

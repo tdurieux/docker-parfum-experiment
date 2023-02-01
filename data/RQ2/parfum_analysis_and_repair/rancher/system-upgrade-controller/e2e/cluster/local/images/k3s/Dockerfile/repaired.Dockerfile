@@ -1,0 +1,21 @@
+# Install the all-in-one binary so we can copy our run-time images into the image
+# which helps avoid pulling them when running e2e tests.
+ARG SLES="registry.suse.com/suse/sle15:15.3"
+FROM ${SLES} AS k3s
+ARG ARCH
+ARG K3S_VERSION="v1.21.9+k3s1"
+RUN set -x \
+ && zypper -n in \
+    ca-certificates \
+    curl \
+ && if [ "${ARCH?required}" != "amd64" ]; then \
+        K3S_SUFFIX="-${ARCH}"; \
+    fi \
+ && curl -fsSL "https://github.com/rancher/k3s/releases/download/${K3S_VERSION}/k3s${K3S_SUFFIX}" > /bin/k3s \
+ && chmod +x /bin/k3s \
+ && ln -s /bin/k3s /bin/kubectl \
+ && ln -s /bin/k3s /bin/ctr \
+ && k3s --version
+
+COPY scratch/*-${ARCH}.tar /var/lib/rancher/k3s/agent/images/
+#ADD https://github.com/rancher/k3s/releases/download/${K3S_VERSION}/k3s-airgap-images-${ARCH}.tar /var/lib/rancher/k3s/agent/images/

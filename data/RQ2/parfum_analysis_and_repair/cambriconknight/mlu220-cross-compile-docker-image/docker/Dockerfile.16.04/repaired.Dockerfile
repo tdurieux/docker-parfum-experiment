@@ -1,0 +1,108 @@
+# -------------------------------------------------------------------------------
+# Filename:     Dockerfile.16.04
+# UpdateDate:   2021/01/25
+# Description:  Build docker images for mlu220-cross-compile.
+# Example:
+# Depends:
+#               neuware-mlu270-$VERSION-1_Ubuntu16.04_amd64.deb(ftp://download.cambricon.com:8821/**/neuware-mlu270-$VERSION-1_Ubuntu16.04_amd64.deb)
+#               gcc-linaro-6.2.1-2016.11-x86_64_aarch64-linux-gnu.tgz(ftp://download.cambricon.com:8821/**/gcc-linaro-6.2.1-2016.11-x86_64_aarch64-linux-gnu.tgz)
+#               gcc-arm-none-eabi-8-2018-q4-major.tar.gz(ftp://download.cambricon.com:8821/**/gcc-arm-none-eabi-8-2018-q4-major.tar.gz)
+#               cntoolkit-edge_1.4.110-1_arm64.tar.gz(ftp://download.cambricon.com:8821/**/cntoolkit-edge_1.4.110-1_arm64.tar.gz)
+# Notes:
+#               1.gcc-linaro&cntoolkit-edge has been deployed to the container.
+#                 gcc-linaro(/opt/work/gcc-linaro-6.2.1-2016.11-x86_64_aarch64-linux-gnu)
+#                 cntoolkit-edge-1.4.110(/opt/work/neuware/pc/lib64)
+#               2.These environment variables has been set in the container
+#                 BIN_DIR_WORK=/opt/work
+#                 BIN_DIR_GCC_Linaro=/opt/work/gcc-linaro-6.2.1-2016.11-x86_64_aarch64-linux-gnu/bin
+#                 BIN_DIR_GCC_ARM=/opt/work/gcc-arm-none-eabi-8-2018-q4-major/bin
+#                 PATH=$BIN_DIR_GCC_Linaro:$BIN_DIR_GCC_ARM:$PATH
+#                 NEUWARE_HOME=/opt/work/neuware/pc
+# -------------------------------------------------------------------------------
+# 0.Start FROM ubuntu:16.04 image
+FROM ubuntu:16.04
+#FROM ubuntu:18.04
+
+MAINTAINER kang <ksp416@163.com>
+
+WORKDIR /opt/work/
+
+ARG neuware_package=neuware-mlu270-1.5.0-1_Ubuntu16.04_amd64.deb
+ARG mlu_platform=MLU270
+ARG with_neuware_installed=no
+
+ARG mlu220_cntoolkit_edge=cntoolkit-edge_1.4.110-1_arm64.tar.gz
+ARG with_cntoolkit_edge_installed=yes
+
+ARG mlu220_gcc_linaro=gcc-linaro-6.2.1-2016.11-x86_64_aarch64-linux-gnu.tgz
+ARG with_gcc_linaro_installed=yes
+
+ARG mlu220_gcc_arm=gcc-arm-none-eabi-8-2018-q4-major.tar.gz
+ARG with_gcc_arm_installed=no
+
+RUN echo -e 'nameserver 114.114.114.114' > /etc/resolv.conf
+
+RUN echo deb http://mirrors.tuna.tsinghua.edu.cn/ubuntu/ xenial main restricted > /etc/apt/sources.list && \
+    echo deb http://mirrors.tuna.tsinghua.edu.cn/ubuntu/ xenial-updates main restricted >> /etc/apt/sources.list && \
+    echo deb http://mirrors.tuna.tsinghua.edu.cn/ubuntu/ xenial universe >> /etc/apt/sources.list && \
+    echo deb http://mirrors.tuna.tsinghua.edu.cn/ubuntu/ xenial-updates universe >> /etc/apt/sources.list && \
+    echo deb http://mirrors.tuna.tsinghua.edu.cn/ubuntu/ xenial multiverse >> /etc/apt/sources.list && \
+    echo deb http://mirrors.tuna.tsinghua.edu.cn/ubuntu/ xenial-updates multiverse >> /etc/apt/sources.list && \
+    echo deb http://mirrors.tuna.tsinghua.edu.cn/ubuntu/ xenial-backports main restricted universe multiverse >> /etc/apt/sources.list && \
+    echo deb http://mirrors.tuna.tsinghua.edu.cn/ubuntu/ xenial-security main restricted >> /etc/apt/sources.list && \
+    echo deb http://mirrors.tuna.tsinghua.edu.cn/ubuntu/ xenial-security universe >> /etc/apt/sources.list && \
+    echo deb http://mirrors.tuna.tsinghua.edu.cn/ubuntu/ xenial-security multiverse >> /etc/apt/sources.list && \
+    apt-get install -y --assume-yes && apt-get update --fix-missing && \
+    rm -rf /var/lib/apt/lists/* && mkdir /var/lib/apt/lists/partial && \
+    apt-get clean && apt-get update --fix-missing && \
+    apt-get update && apt-get upgrade -y && apt-get install -y --no-install-recommends \
+            curl git wget vim build-essential cmake make apt-utils \
+            libopencv-dev libcurl4-openssl-dev \
+            libgoogle-glog-dev \
+            openssh-server \
+            libsdl2-dev  \
+            lcov dos2unix file \
+            ca-certificates \
+            device-tree-compiler libssl-dev bc tree \
+            minicom tftpd-hpa nfs-kernel-server nfs-common \
+            net-tools && \
+    apt-get clean && \
+    apt-get update --fix-missing && \
+    rm -rf /var/lib/apt/lists/*
+
+COPY . /opt/work/
+
+RUN echo '# /etc/default/tftpd-hpa' > /etc/default/tftpd-hpa && \
+    echo 'TFTP_USERNAME="tftp"' >> /etc/default/tftpd-hpa && \
+    echo 'TFTP_DIRECTORY="/data/tftp"' >> /etc/default/tftpd-hpa && \
+    echo 'TFTP_ADDRESS="0.0.0.0:69"' >> /etc/default/tftpd-hpa && \
+    echo 'TFTP_OPTIONS="-l -c -s"' >> /etc/default/tftpd-hpa && \
+    echo '/data/nfs *(rw,sync,no_root_squash)' >> /etc/exports && \
+    if [ "$with_neuware_installed" = "yes" ]; then \
+    dpkg -i /opt/work/$neuware_package && \
+    apt -o Accquire::AllowInsecureRepositories=true update && \
+    apt install --no-install-recommends -y cndev cndrv cnrt cncodec && \
+    rm -rf /opt/work/$neuware_package; rm -rf /var/lib/apt/lists/*; fi && \
+    echo '#!/bin/bash' > /opt/work/env.sh && \
+    echo 'export BIN_DIR_WORK="/opt/work"' >> /opt/work/env.sh && \
+    if [ "$with_gcc_linaro_installed" = "yes" ]; then tar zxf /opt/work/$mlu220_gcc_linaro -C /opt/work && \
+    echo 'export BIN_DIR_GCC_Linaro="/opt/work/gcc-linaro-6.2.1-2016.11-x86_64_aarch64-linux-gnu/bin"' >> /opt/work/env.sh && \
+    echo 'export PATH="$BIN_DIR_GCC_Linaro:$PATH"' >> /opt/work/env.sh && \
+    rm -rf /opt/work/$mlu220_gcc_linaro; fi && \
+    if [ "$with_gcc_arm_installed" = "yes" ]; then tar zxf /opt/work/$mlu220_gcc_arm -C /opt/work && \
+    echo 'export BIN_DIR_GCC_ARM="/opt/work/gcc-arm-none-eabi-8-2018-q4-major/bin"' >> /opt/work/env.sh && \
+    echo 'export PATH="$BIN_DIR_GCC_ARM:$PATH"' >> /opt/work/env.sh && \
+    rm -rf /opt/work/$mlu220_gcc_arm; fi && \
+    if [ "$with_cntoolkit_edge_installed" = "yes" ]; then tar zxf /opt/work/$mlu220_cntoolkit_edge -C /opt/work && \
+    echo 'export NEUWARE_HOME=/opt/work/neuware/pc' >> /opt/work/env.sh && \
+    rm -rf /opt/work/$mlu220_cntoolkit_edge; fi
+
+ENV BIN_DIR_WORK=/opt/work
+ENV BIN_DIR_GCC_Linaro=/opt/work/gcc-linaro-6.2.1-2016.11-x86_64_aarch64-linux-gnu/bin
+ENV BIN_DIR_GCC_ARM=/opt/work/gcc-arm-none-eabi-8-2018-q4-major/bin
+ENV PATH=$BIN_DIR_GCC_Linaro:$BIN_DIR_GCC_ARM:$PATH
+ENV NEUWARE_HOME=/opt/work/neuware/pc
+
+ENV LANG C.UTF-8
+
+WORKDIR /opt/work

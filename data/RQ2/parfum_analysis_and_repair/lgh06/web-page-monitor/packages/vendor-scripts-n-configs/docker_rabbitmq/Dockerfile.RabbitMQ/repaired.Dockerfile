@@ -1,0 +1,11 @@
+FROM rabbitmq:3-management
+# Modify below user and password!!!
+# ENV RABBITMQ_DEFAULT_USER=user
+# ENV RABBITMQ_DEFAULT_PASS=password
+
+COPY --chown=rabbitmq:rabbitmq rabbitmq_delayed_message_exchange-3.9.0.ez /plugins/  
+COPY --chown=rabbitmq:rabbitmq consumer_timeout.conf /etc/rabbitmq/conf.d/  
+RUN rabbitmq-plugins enable rabbitmq_delayed_message_exchange
+
+
+# EXPOSE 4369 5671 5672 15691 15692 25672 15671 15672

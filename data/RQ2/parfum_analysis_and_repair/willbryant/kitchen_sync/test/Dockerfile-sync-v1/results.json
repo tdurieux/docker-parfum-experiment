@@ -1,0 +1,17 @@
+{
+  "startTime": 1674252519430,
+  "endTime": 1674252520239,
+  "originalSmells": [
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 9,
+        "lineEnd": 12,
+        "columnStart": 1,
+        "columnEnd": 33
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# this dockerfile builds kitchen sync and runs a single sync from database to database over SSH.\n# it needs to be built with the project repo root as the buildroot.\n# note that the test is run as part of the build, you don't need to run anything afterwards.\n\n# v1.17 has compatibility problems with mysql 8.0, so we can't run this test successfully on 20.04\nFROM ubuntu:18.04\n\nRUN DEBIAN_FRONTEND=noninteractive apt-get update && \\\n\tDEBIAN_FRONTEND=noninteractive apt-get upgrade -y && \\\n\tDEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \\\n\t\tbuild-essential cmake libssl-dev openssh-server openssh-client \\\n\t\tgit ca-certificates \\\n\t\tmysql-server libmysqlclient-dev && \\\n\tapt-get clean -y && \\\n\trm -rf /var/cache/apt/archives/* && rm -rf /var/lib/apt/lists/*;\n\n# download and build v1.17, the last version that used the v7 protocol\nRUN git clone https://github.com/willbryant/kitchen_sync.git /tmp/v1\nWORKDIR /tmp/v1/build\nRUN git checkout v1.17\nRUN cmake .. && make\n\n# copy those v1 binaries to ~ so that when the ./ks in /tmp/build SSHs in to localhost, ./ks on the 'via' node (which is in fact just this same container) refers to the copy in ~\nRUN cp ks ks_* ~\n\n# now add and build the current version\nADD CMakeLists.txt /tmp/CMakeLists.txt\nADD cmake /tmp/cmake/\nADD src /tmp/src/\n\nWORKDIR /tmp/build\nRUN mkdir /tmp/test\nRUN touch /tmp/test/CMakeLists.txt\nRUN cmake .. && make\n\nADD test/sync-test-source.sql /tmp/source.sql\n\nRUN echo 'starting mysql' && \\\n\t\tmkdir -p /var/run/mysqld && \\\n\t\tchown mysql:mysql /var/run/mysqld && \\\n\t\t(/usr/sbin/mysqld --skip-grant-tables &) && \\\n\techo 'waiting for mysql to start' && \\\n\t\tmysqladmin --wait=30 ping && \\\n\techo 'creating mysql databases' && \\\n\t\tmysqladmin create source && \\\n\t\tmysqladmin create target && \\\n\techo 'populating source database' && \\\n\t\tmysql -u root source </tmp/source.sql && \\\n\techo 'checking builds' && \\\n\t\tls -al ~ && \\\n\t\tls -al /tmp/build && \\\n\t\tmysql -V && \\\n\techo 'starting SSH server' && \\\n\t\tmkdir /run/sshd && \\\n\t\t/usr/sbin/sshd && \\\n\techo 'configuring SSH' && \\\n\t\tmkdir ~/.ssh && \\\n\t\tssh-keyscan localhost >~/.ssh/known_hosts && \\\n\t\tssh-keygen -f ~/.ssh/id_rsa && \\\n\t\tcp ~/.ssh/id_rsa.pub ~/.ssh/authorized_keys && \\\n\techo 'running sync' && \\\n\t\t./ks --via localhost --from mysql://root@localhost/source --to mysql://root@localhost/target --alter --workers 4 --verbose && \\\n\techo 'comparing result' && \\\n\t\tmysqldump -u root --compact source >a.sql && \\\n\t\tmysqldump -u root --compact target >b.sql && \\\n\t\tdiff a.sql b.sql && \\\n\techo 'syncing both directions to check compatibility of created schema' && \\\n\t\t./ks --via localhost --from mysql://root@localhost/source --to mysql://root@localhost/target --workers 4 --verbose && \\\n\t\t./ks --via localhost --from mysql://root@localhost/target --to mysql://root@localhost/source --workers 4 --verbose\n"
+}

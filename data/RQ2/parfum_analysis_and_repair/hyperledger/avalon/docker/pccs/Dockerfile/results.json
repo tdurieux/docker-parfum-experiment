@@ -1,0 +1,90 @@
+{
+  "startTime": 1674255444754,
+  "endTime": 1674255445806,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 79,
+        "lineEnd": 79,
+        "columnStart": 4,
+        "columnEnd": 74
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 87,
+        "lineEnd": 87,
+        "columnStart": 4,
+        "columnEnd": 210
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 60,
+        "lineEnd": 60,
+        "columnStart": 4,
+        "columnEnd": 40
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 31,
+        "lineEnd": 41,
+        "columnStart": 5,
+        "columnEnd": 8
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 82,
+        "lineEnd": 82,
+        "columnStart": 5,
+        "columnEnd": 33
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 82,
+        "lineEnd": 82,
+        "columnStart": 5,
+        "columnEnd": 33
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 31,
+        "lineEnd": 41,
+        "columnStart": 5,
+        "columnEnd": 8
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 82,
+        "lineEnd": 82,
+        "columnStart": 5,
+        "columnEnd": 33
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 82,
+        "lineEnd": 82,
+        "columnStart": 5,
+        "columnEnd": 57
+      }
+    }
+  ],
+  "repairedDockerfile": "# Copyright 2020 Intel Corporation\n#\n# Licensed under the Apache License, Version 2.0 (the \"License\");\n# you may not use this file except in compliance with the License.\n# You may obtain a copy of the License at\n#\n#     http://www.apache.org/licenses/LICENSE-2.0\n#\n# Unless required by applicable law or agreed to in writing, software\n# distributed under the License is distributed on an \"AS IS\" BASIS,\n# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.\n# See the License for the specific language governing permissions and\n# limitations under the License.\n# ------------------------------------------------------------------------------\n\n# Description:\n#   Builds the environment needed to DCAP PCCS server.\n#\n#  Configuration (build) parameters\n#  - proxy configuration: https_proxy http_proxy ftp_proxy\n#  - sgx_mode:\n#\n\n#Build base docker image\nFROM ubuntu:bionic as base_image\n\n# Ignore timezone prompt in apt\nENV DEBIAN_FRONTEND=noninteractive\n\n# Add necessary packages\nRUN apt-get update \\\n  && apt-get install --no-install-recommends -y -q curl \\\n     ca-certificates \\\n     gnupg \\\n     gnupg2 \\\n     gnupg1 \\\n     make \\\n     gcc \\\n     g++ \\\n     systemd \\\n     wget \\\n     tar && rm -rf /var/lib/apt/lists/*;\n\nARG DISTRO\nARG API_KEY\n\nCOPY ./scripts/install_packages /project/avalon/scripts/\n\nRUN echo \"distro = $DISTRO\"\nRUN packages=\"ca-certificates pkg-config make wget tar\"; \\\n#    if [ \"$DISTRO\" = \"centos\" ] ; then \\\n#      packages=\"$packages perl gcc\"; \\\n#    fi; \\\n  /project/avalon/scripts/install_packages -c install -q \"$packages\"\n\nWORKDIR /tmp\n\n# Build (\"Untrusted\") OpenSSL\nRUN OPENSSL_VER=1.1.1g \\\n && wget https://www.openssl.org/source/openssl-$OPENSSL_VER.tar.gz \\\n && tar -zxf openssl-$OPENSSL_VER.tar.gz \\\n && cd openssl-$OPENSSL_VER/ \\\n && ./config \\\n && THREADS=8 \\\n && make -j$THREADS \\\n && make test \\\n && make install -j$THREADS && rm openssl-$OPENSSL_VER.tar.gz\n\n# Created an empty /usr/local/lib64 dir for bionic, because in case of centos\n# we need to COPY /usr/local/lib64 for openssl artifacts which will fail for bionic\n# as bionic doesn't have this directory.\nRUN if [ \"$DISTRO\" = \"bionic\" ] ; then \\\n      mkdir /usr/local/lib64; \\\n    fi\n\nRUN mkdir -p /opt/intel \\\n && mkdir -p /etc/init\n\n# Insall Nodejs for pm2\nRUN curl -f -s -S -o /tmp/setup-node.sh https://deb.nodesource.com/setup_14.x \\\n  && chmod 755 /tmp/setup-node.sh \\\n  && /tmp/setup-node.sh \\\n  && apt-get install --no-install-recommends nodejs -y -q \\\n  && rm /tmp/setup-node.sh \\\n  && apt-get -y -q upgrade && rm -rf /var/lib/apt/lists/*;\n\n# Install pccs\nRUN curl -f https://download.01.org/intel-sgx/sgx-dcap/1.9/linux/distro/ubuntu18.04-server/debian_pkgs/web/sgx-dcap-pccs/sgx-dcap-pccs_1.9.100.3-bionic1_amd64.deb -o /tmp/sgx-dcap-pccs_1.9.100.3-bionic1_amd64.deb \\\n && dpkg -i /tmp/sgx-dcap-pccs_1.9.100.3-bionic1_amd64.deb\n\nWORKDIR /opt/intel/sgx-dcap-pccs\n\n# Configure QPL to use self-signed cert for local PCCS\nCOPY docker/pccs/sgx_default_qcnl.conf /etc/sgx_default_qcnl.conf\n\nRUN echo \"qcnl file copied content >>>>>>>>>>.\" \\\n && sed -i 's/avalon-pccs/localhost/g' /etc/sgx_default_qcnl.conf \\\n && cat /etc/sgx_default_qcnl.conf\n\nRUN (printf \"\\n\\nY\\n\\nN\\n$API_KEY\\n\\nintel123\\nintel123\\navalon123\\navalon123\\nY\\nIN\\nKA\\nBNG\\nIntel\\nESI\\nPCCS Server\\n.\\n\\n\\n\" ) | ./install.sh\n"
+}

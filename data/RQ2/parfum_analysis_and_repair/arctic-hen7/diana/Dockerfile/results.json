@@ -1,0 +1,35 @@
+{
+  "startTime": 1674248276612,
+  "endTime": 1674248277902,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 10,
+        "lineEnd": 10,
+        "columnStart": 4,
+        "columnEnd": 60
+      }
+    },
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 40,
+        "lineEnd": 40,
+        "columnStart": 4,
+        "columnEnd": 44
+      }
+    },
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 67,
+        "lineEnd": 67,
+        "columnStart": 4,
+        "columnEnd": 44
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Setup Stage - set up the ZSH environment for optimal developer experience\nFROM node:14-alpine AS setup\n# Let scripts know we're running in Docker (useful for containerised development)\nENV RUNNING_IN_DOCKER true\n# Use the unprivileged `node` user (pre-created by the Node image) for safety (and because it has permission to install modules)\nRUN mkdir -p /app \\\n    && chown -R node:node /app\n# Set up ZSH and our preferred terminal environment for containers\nRUN apk --no-cache add zsh curl git\nRUN mkdir -p /home/node/.antigen\nRUN curl -f -L git.io/antigen > /home/node/.antigen/antigen.zsh\n# Use my starter Docker ZSH config file for this, or your own ZSH configuration file (https://gist.github.com/arctic-hen7/bbfcc3021f7592d2013ee70470fee60b)\nCOPY .dockershell.sh /home/node/.zshrc\nRUN chown -R node:node /home/node/.antigen /home/node/.zshrc\n# Set up ZSH as the unprivileged user (we just need to start it, it'll initialise our setup itself)\nUSER node\nRUN /bin/zsh /home/node/.zshrc\n# Switch back to root for whatever else we're doing\nUSER root\n\n# Rust Setup Stage - install and set up Rust for development (used for backend)\nFROM setup AS rust-setup\n# Install the necessary system dependencies\nRUN apk add --no-cache build-base clang llvm gcc\n# Download and run the Rust installer, using the default options (needs to be done as the unprivileged user)\nUSER node\nRUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y\n# Install Cargo plugins\n# We have to use the absolute path to the Cargo binary because it isn't aliased in the Docker build process\nRUN /home/node/.cargo/bin/cargo install cargo-watch\n# Switch back to root for the remaining stages\nUSER root\n\n# Dependencies Stage - install all system-level dependencies that won't change (before Rust caching because that gets constantly re-executed)\nFROM rust-setup AS dependencies\n# Install system dependencies\nUSER root\nRUN apk add --no-cache openssl-dev\n# Install global dependencies with NPM\n# See https://answers.netlify.com/t/netlify-cli-fails-to-install/34508/3 for why we use `--unsafe-perm`\nRUN npm install -g --unsafe-perm netlify-cli && npm cache clean --force;\n\n# Rust Cacher Stage - caches all dependencies in the Rust code with `cargo vendor` to speed up builds massively\n# When your dependencies change, this will be re-executed, otherwise you get super-speed caching performance!\nFROM dependencies AS rust-cacher\nUSER node\nRUN mkdir -p /app \\\n    && chown -R node:node /app\n# Copy the Cargo configuration files into the correct place in the container\n# Note that we need to be able to write to Cargo.lock\nWORKDIR /app\nCOPY --chown=node:node ./Cargo.lock Cargo.lock\nCOPY ./Cargo.toml Cargo.toml\n# We also copy over all the manifests of all the integrations (workspace structure)\nCOPY ./integrations/serverful/actix-web/Cargo.toml integrations/serverful/actix-web/Cargo.toml\nCOPY ./integrations/serverless/aws-lambda/Cargo.toml integrations/serverless/aws-lambda/Cargo.toml\n# Vendor all dependencies (stores them all locally, meaning they can be cached)\nRUN mkdir -p /app/.cargo\nRUN chown -Rh node:node /app/.cargo\nRUN /home/node/.cargo/bin/cargo vendor > .cargo/config\n# Switch back to root for the remaining stages\nUSER root\n\n# Base Stage - install system-level dependencies, disable telemetry, and copy files\nFROM rust-cacher AS base\nWORKDIR /app\n# Disable telemetry of various tools for privacy\nRUN yarn config set --home enableTelemetry 0 && yarn cache clean;\n# Copy the Netlify config file into the correct location\n# See `CONTRIBUTING.md` for how to set this up for the first time\nCOPY --chown=node:node ./netlify-config.json /home/node/.config/netlify/config.json\n# Copy our source code into the container\nCOPY . .\n\n# Playground stage - simple ZSH entrypoint for us to shell into the container as the non-root user for developing the main library\nFROM base AS playground\nUSER node\nENTRYPOINT [ \"/bin/zsh\" ]\n"
+}

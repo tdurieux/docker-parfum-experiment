@@ -1,0 +1,26 @@
+{
+  "startTime": 1674250300322,
+  "endTime": 1674250300849,
+  "originalSmells": [
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 27,
+        "lineEnd": 27,
+        "columnStart": 4,
+        "columnEnd": 38
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 15,
+        "lineEnd": 18,
+        "columnStart": 4,
+        "columnEnd": 39
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM centos:7\n\nLABEL maintainer=\"Anton Lokhmotov <anton@dividiti.com>\"\n\n# Use the Bash shell.\nSHELL [\"/bin/bash\", \"-c\"]\n\n# Allow stepping into the Bash shell interactively.\nENTRYPOINT [\"/bin/bash\", \"-c\"]\n\n# Install known system dependencies and immediately clean up to make the image smaller.\n# CK needs: git, wget, zip, unzip.\n# TF needs: curl.\n# Python 3 needs: open-ssl-devel, bzip2-devel, libffi-devel.\nRUN yum upgrade -y\\\n && yum install -y\\\n make which patch gcc gcc-c++\\\n git wget zip unzip\\\n openssl-devel bzip2-devel libffi-devel \\\n && yum clean all && rm -rf /var/cache/yum\n\n# Install Python 3.\nRUN cd /usr/src \\\n && wget https://www.python.org/ftp/python/3.7.3/Python-3.7.3.tgz \\\n && tar xzf Python-3.7.3.tgz \\\n && rm Python-3.7.3.tgz \\\n && cd Python-3.7.3 \\\n && ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" --enable-optimizations \\\n && make altinstall \\\n && cd /usr/src \\\n && rm -rf Python-3.7.3*\n\n# Create non-root user.\nRUN useradd --create-home --user-group --shell /bin/bash dvdt\nUSER dvdt:dvdt\nWORKDIR /home/dvdt\n\n# Install Collective Knowledge (CK).\nENV CK_ROOT=/home/dvdt/CK \\\n    CK_REPOS=/home/dvdt/CK_REPOS \\\n    CK_TOOLS=/home/dvdt/CK_TOOLS \\\n    PATH=${CK_ROOT}/bin:/home/dvdt/.local/bin:${PATH} \\\n    CK_PYTHON=python3.7 \\\n    CK_CC=gcc \\\n    GIT_USER=\"dividiti\" \\\n    GIT_EMAIL=\"info@dividiti.com\" \\\n    LANG=C.UTF-8\nRUN mkdir -p ${CK_ROOT} ${CK_REPOS} ${CK_TOOLS}\nRUN git config --global user.name ${GIT_USER} && git config --global user.email ${GIT_EMAIL}\nRUN git clone https://github.com/ctuning/ck.git ${CK_ROOT}\nRUN cd ${CK_ROOT} \\\n && ${CK_PYTHON} setup.py install --user \\\n && ${CK_PYTHON} -c \"import ck.kernel as ck; print ('Collective Knowledge v%s' % ck.__version__)\"\n\n# Pull CK repositories (including ck-env, ck-autotuning and ck-tensorflow).\nRUN ck pull repo:ck-mlperf\n\n# Use generic Linux settings with dummy frequency setting scripts.\nRUN ck detect platform.os --platform_init_uoa=generic-linux-dummy\n\n# Detect C/C++ compiler (gcc).\nRUN ck detect soft:compiler.gcc --full_path=`which ${CK_CC}`\n# Install TFLite.\nRUN ck install package --tags=lib,tensorflow-lite,tensorflow-static,v1.13.1\n\n# Detect Python.\nRUN ck detect soft:compiler.python --full_path=`which ${CK_PYTHON}`\n# Install the latest Python package installer (pip).\nRUN ${CK_PYTHON} -m pip install --ignore-installed pip setuptools --user\n# Install Python dependencies.\nRUN ck install package --tags=lib,python-package,numpy\nRUN ck install package --tags=lib,python-package,scipy --force_version=1.2.1\nRUN ck install package --tags=lib,python-package,pillow\n\n# Download the MobileNet TF/TFLite models (non-quantized and quantized).\n# https://github.com/mlperf/inference/blob/master/edge/object_classification/mobilenets/tflite/README.md#install-the-mobilenet-models-for-tflite\nRUN ck install package --tags=image-classification,model,tf,tflite,mlperf,mobilenet,non-quantized,from-zenodo\nRUN ck install package --tags=image-classification,model,tf,tflite,mlperf,mobilenet,quantized,from-google\n# Download the ResNet TFLite models (with and without the ArgMax operator).\n# https://github.com/mlperf/inference/blob/master/edge/object_classification/mobilenets/tflite/README.md#install-the-resnet-model\nRUN ck install package --tags=image-classification,model,tflite,mlperf,resnet,downloaded,with-argmax\nRUN ck install package --tags=image-classification,model,tflite,mlperf,resnet,downloaded,no-argmax\n\n# Download and preprocess the first 500 images of the ImageNet 2012 validation dataset.\nRUN ck install package --tags=dataset,imagenet,aux\nRUN ck install package --tags=dataset,imagenet,val,original,min --no_tags=resized\nRUN ck install package --tags=dataset,imagenet,val,preprocessed\n\n# Compile the Image Classification TFLite program.\nRUN ck compile program:image-classification-tflite\n\n# Run the Image Classification TFLite program\n# with the non-quantized MobileNet model twice.\nCMD [\"ck run program:image-classification-tflite \\\n--dep_add_tags.weights=mobilenet,non-quantized \\\n--env.CK_BATCH_COUNT=2\"]\n"
+}

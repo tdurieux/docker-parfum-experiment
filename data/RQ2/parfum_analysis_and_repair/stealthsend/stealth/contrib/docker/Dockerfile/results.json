@@ -1,0 +1,26 @@
+{
+  "startTime": 1674249689310,
+  "endTime": 1674249690056,
+  "originalSmells": [
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 32,
+        "lineEnd": 32,
+        "columnStart": 4,
+        "columnEnd": 32
+      }
+    },
+    {
+      "rule": "gpgUseBatchFlag",
+      "position": {
+        "lineStart": 59,
+        "lineEnd": 59,
+        "columnStart": 4,
+        "columnEnd": 99
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "## TODO: Pin versions in apt get install\n## TODO: make the final container non-root?\n\n#### BUILD STAGE ####\nFROM ubuntu:xenial as build\nLABEL maintainer=\"Ivan Rimac <ivan@33barrage.com>\"\n\n# add bitcoin repo so we can install all dependencies\nRUN apt-key adv --keyserver keyserver.ubuntu.com --recv-keys C70EF1F0305A1ADB9986DBD8D46F45428842CE5E && \\\n    echo \"deb http://ppa.launchpad.net/bitcoin/bitcoin/ubuntu xenial main\" > /etc/apt/sources.list.d/bitcoin.list\n\n# install dependencies\nRUN apt-get update \\\n\t&& apt-get install -y --no-install-recommends \\ \n\tcmake \\\n\tbuild-essential \\\n\tlibssl-dev \\\n\tibdb4.8-dev \\\n\tlibdb4.8++-dev \\\n\tlibboost-all-dev \\\n\tlibqrencode-dev \\\n\tlibevent-dev \\\n\t&& apt-get clean && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*\n\n\n# change workdir to dedicated workspace\nWORKDIR /stealth\n\n# fetch the compressed source of stealth\nADD https://github.com/StealthSend/Stealth/archive/qpos-3.0.tar.gz .\n\n# unpack the source of stealth\nRUN tar xvzf ./*qpos-3.0*.tar.gz && rm ./*qpos-3.0*.tar.gz\n\n# clean up after\nRUN mv ./Stealth-*/* .\nRUN rm -Rf ./Stealth-* ./*qpos-3.0*.tar.gz\n\n# change the workdir to source of stealth\nWORKDIR /stealth/src\n\n# build stealth from source\nRUN make -f makefile.unix\n\n# change to main workspace\nWORKDIR /stealth\n\n# copy built binary to local bin directory\nRUN cp /stealth/src/StealthCoind /usr/local/bin\n\n# grab gosu for easy step-down from root\nENV GOSU_VERSION 1.11\nRUN set -x \\\n\t&& apt-get update && apt-get install -y --no-install-recommends \\\n\t\tca-certificates \\\n\t\twget \\\n\t&& wget -O /usr/local/bin/gosu \"https://github.com/tianon/gosu/releases/download/$GOSU_VERSION/gosu-$(dpkg --print-architecture)\" \\\n\t&& wget -O /usr/local/bin/gosu.asc \"https://github.com/tianon/gosu/releases/download/$GOSU_VERSION/gosu-$(dpkg --print-architecture).asc\" \\\n\t&& export GNUPGHOME=\"$(mktemp -d)\" \\\n\t&& gpg --batch --keyserver ha.pool.sks-keyservers.net --recv-keys B42F6819007F00F88E364FD4036A9C25BF357DD4 \\\n\t&& gpg --batch --verify /usr/local/bin/gosu.asc /usr/local/bin/gosu \\\n\t&& rm -r \"$GNUPGHOME\" /usr/local/bin/gosu.asc \\\n\t&& chmod +x /usr/local/bin/gosu \\\n\t&& gosu nobody true \\\n\t&& apt-get purge -y \\\n\t\tca-certificates \\\n\t\twget \\\n\t&& apt-get clean && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*\n\n# move repo binaries to local bin directory\nCOPY ./scripts /usr/local/bin\nCOPY docker-entrypoint.sh /usr/local/bin/\n\n# make them executable\nRUN chmod -R +x /usr/local/bin\n\n#### FINAL STAGE ####\nFROM phusion/baseimage:0.10.2\n\nARG USER_ID\nARG GROUP_ID\n\nENV HOME /stealth\n\n# add user with specified (or default) user/group ids\nENV USER_ID ${USER_ID:-1000}\nENV GROUP_ID ${GROUP_ID:-1000}\n\n# add our user and group first to make sure their IDs get assigned consistently, regardless of whatever dependencies get added\nRUN groupadd -g ${GROUP_ID} stealth \\\n\t&& useradd -u ${USER_ID} -g stealth -s /bin/bash -m -d /stealth stealth\n\nRUN apt-get update \\\n\t&& apt-get install -y --no-install-recommends \\\n\t\tlibevent-dev \\\n\t\tca-certificates \\\n\t\twget \\\n\t\tp7zip-full \\\n\t&& apt-get clean && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*\n\n# change to main workspace\nWORKDIR /stealth\n\n# copy binaries from build stage\nCOPY --from=build /usr/local/bin /bin\n\n# create a volume for external configuration and blockchain data\nVOLUME [\"/stealth\"]\n\n# change ownership of the working directory\nRUN chown -R stealth:stealth /stealth\n\n# expose p2p and rpc ports\nEXPOSE 4437 4438 46502 46503\n\n# leave entrypoint for extra commands to run\nENTRYPOINT [\"docker-entrypoint.sh\"]\n\n# main command to run when container starts\nCMD [\"stealth_oneshot\"]\n"
+}

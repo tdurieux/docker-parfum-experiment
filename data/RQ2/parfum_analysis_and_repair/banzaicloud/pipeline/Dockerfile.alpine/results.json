@@ -1,0 +1,17 @@
+{
+  "startTime": 1674249591331,
+  "endTime": 1674249592516,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 65,
+        "lineEnd": 65,
+        "columnStart": 4,
+        "columnEnd": 117
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "ARG GO_VERSION=1.16\nARG FROM_IMAGE=alpine:3.13\n\nFROM golang:${GO_VERSION}-alpine3.12 AS builder\n\n# set up nsswitch.conf for Go's \"netgo\" implementation\n# https://github.com/gliderlabs/docker-alpine/issues/367#issuecomment-424546457\nRUN echo 'hosts: files dns' > /etc/nsswitch.conf.build\n\nRUN apk add --update --no-cache bash ca-certificates make curl git mercurial tzdata\n\nENV GOFLAGS=\"-mod=readonly\"\nARG GOPROXY\n\nRUN mkdir -p /build\nWORKDIR /build\n\nCOPY go.* /build/\nCOPY pkg/sdk/go.* /build/pkg/sdk/\nCOPY lib/integrated-service-sdk/go.* /build/lib/integrated-service-sdk/\nRUN go mod download\n\nARG VERSION\nARG COMMIT_HASH\nARG BUILD_DATE\n\nCOPY . /build\nRUN make build-release\n\n\nFROM alpine:3.13 AS iamauth\n\nWORKDIR /tmp\n\nENV IAM_AUTH_VERSION 0.4.0\nENV IAM_AUTH_URL \"https://github.com/kubernetes-sigs/aws-iam-authenticator/releases/download/v${IAM_AUTH_VERSION}\"\nRUN set -xe \\\n    && wget ${IAM_AUTH_URL}/aws-iam-authenticator_${IAM_AUTH_VERSION}_linux_amd64 \\\n    && wget ${IAM_AUTH_URL}/authenticator_${IAM_AUTH_VERSION}_checksums.txt \\\n    && cat authenticator_${IAM_AUTH_VERSION}_checksums.txt | grep \"_linux_amd64\" | sha256sum -c - \\\n    && mv aws-iam-authenticator_${IAM_AUTH_VERSION}_linux_amd64 aws-iam-authenticator\n\nFROM alpine:3.13 AS helms3\n\nWORKDIR /tmp\n\nENV HELM_S3_PLUGIN_VERSION=0.11.0\n\nENV HELM_S3_ARCHIVE_FILE_NAME=\"helm-s3_${HELM_S3_PLUGIN_VERSION}_linux_amd64.tar.gz\" \\\n    HELM_S3_CHECKSUMS_FILE_NAME=\"helm-s3_${HELM_S3_PLUGIN_VERSION}_sha512_checksums.txt\" \\\n    HELM_S3_PLUGIN_URL=\"https://github.com/banzaicloud/helm-s3/releases/download/v${HELM_S3_PLUGIN_VERSION}\"\n\nRUN set -xe \\\n    && mkdir -p helm-plugins/helm-s3 \\\n    && wget \"${HELM_S3_PLUGIN_URL}/${HELM_S3_ARCHIVE_FILE_NAME}\" \\\n    && wget \"${HELM_S3_PLUGIN_URL}/${HELM_S3_CHECKSUMS_FILE_NAME}\" \\\n    && cat \"${HELM_S3_CHECKSUMS_FILE_NAME}\" | grep -E \"^[0-9a-z]+  ${HELM_S3_ARCHIVE_FILE_NAME}$\" | sha512sum -c - \\\n    && tar xzf \"${HELM_S3_ARCHIVE_FILE_NAME}\" -C \"helm-plugins/helm-s3\"\n\nFROM alpine:3.13 AS migrate\n\nENV MIGRATE_VERSION v4.9.1\n\nRUN set -xe && \\\n    apk add --update --no-cache ca-certificates curl && \\\n    curl -f -L https://github.com/golang-migrate/migrate/releases/download/${MIGRATE_VERSION}/migrate.linux-amd64.tar.gz | tar xvz && \\\n    mv migrate.linux-amd64 /tmp/migrate\n\n\nFROM ${FROM_IMAGE}\n\nENV HELM_PLUGINS=/usr/share/helm/plugins\n\nCOPY --from=builder /etc/nsswitch.conf.build /etc/nsswitch.conf\nCOPY --from=builder /usr/share/zoneinfo /usr/share/zoneinfo\nCOPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/\nCOPY --from=iamauth /tmp/aws-iam-authenticator /usr/bin/\nCOPY --from=helms3 /tmp/helm-plugins /usr/share/helm/plugins\nCOPY --from=builder /build/templates /templates/\nCOPY --from=builder /build/build/release/pipeline /\nCOPY --from=builder /build/build/release/worker /\nCOPY --from=builder /build/build/release/pipelinectl /\nCOPY config/anchore/policies/ /policies/\n\nCMD [\"/pipeline\"]\n"
+}

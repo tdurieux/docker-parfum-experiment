@@ -1,0 +1,21 @@
+FROM ubuntu:bionic
+
+RUN apt-get update && \
+    apt-get upgrade -y && \
+    apt-get -y --no-install-recommends install \
+        g++ gcc \
+        build-essential \
+        git \
+        cmake \
+        wget \
+        libmediainfo-dev \
+        ffmpeg \
+        qt5-default \
+        qttools5-dev \
+        qttools5-dev-tools \
+        qtmultimedia5-dev \
+        qtdeclarative5-dev \
+        libqt5opengl5 \
+        libqt5opengl5-dev \
+        libqt5svg5 \
+        libqt5svg5-dev && rm -rf /var/lib/apt/lists/*;

@@ -1,0 +1,22 @@
+FROM botium/kaldi-gstreamer-server:latest
+
+RUN mkdir -p /opt/models && cd /opt/models && \
+    wget --no-check-certificate https://goofy.zamia.org/zamia-speech/asr-models/kaldi-generic-de-tdnn_f-r20190328.tar.xz && \
+    tar xvJf kaldi-generic-de-tdnn_f-r20190328.tar.xz && \
+    sed -i 's:exp/nnet3_chain:/opt/models/kaldi-generic-de-tdnn_f-r20190328:g' /opt/models/kaldi-generic-de-tdnn_f-r20190328/ivectors_test_hires/conf/ivector_extractor.conf && rm kaldi-generic-de-tdnn_f-r20190328.tar.xz
+
+RUN apt-get update && \
+    apt-get install --no-install-recommends -y supervisor && \
+    apt-get clean autoclean && \
+    apt-get autoremove -y && \
+    rm -rf /var/lib/apt/lists/*
+
+COPY models/zamia_20190328_tdnn_f_de.yaml /opt/models/zamia_20190328_tdnn_f_de.yaml
+COPY supervisord.kaldi.de.conf /etc/supervisor/conf.d/supervisord.conf
+
+EXPOSE 56180
+
+RUN groupadd --gid 1000 kaldi && useradd --uid 1000 --gid kaldi --shell /bin/bash --create-home kaldi
+RUN mkdir /opt/logs && chown -R 1000:1000 /opt/models /opt/logs
+USER kaldi
+CMD ["/usr/bin/supervisord", "-c", "/etc/supervisor/conf.d/supervisord.conf"]

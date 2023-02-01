@@ -1,0 +1,63 @@
+{
+  "startTime": 1674249997606,
+  "endTime": 1674249998679,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 29,
+        "lineEnd": 29,
+        "columnStart": 4,
+        "columnEnd": 48
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 73,
+        "lineEnd": 73,
+        "columnStart": 26,
+        "columnEnd": 96
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 29,
+        "lineEnd": 29,
+        "columnStart": 4,
+        "columnEnd": 48
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 29,
+        "lineEnd": 29,
+        "columnStart": 4,
+        "columnEnd": 48
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 73,
+        "lineEnd": 73,
+        "columnStart": 26,
+        "columnEnd": 96
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 29,
+        "lineEnd": 29,
+        "columnStart": 4,
+        "columnEnd": 72
+      }
+    }
+  ],
+  "repairedDockerfile": "ARG REDIS_VER=6.0.9\nARG GEARS_VER=1.0.6\nARG AI_VER=1.0.2\n\nARG OS=L4T\n\nARG OSNICK=bionic\n\n# ARCH=x64|arm64v8|arm32v7\nARG ARCH=arm64v8\n\nARG PACK=0\nARG TEST=0\n\n#----------------------------------------------------------------------------------------------\nFROM redisfab/redis:${REDIS_VER}-${ARCH}-${OSNICK} AS redis\nFROM redisfab/jetpack:4.4.1-${ARCH}-l4t AS builder\n\nARG OS\nARG ARCH\nARG REDIS_VER\nARG GEARS_VER\nARG AI_VER\n\nRUN echo \"Building for $${OS} for ${ARCH} [with Redis ${REDIS_VER}]\"\n\nWORKDIR /build\n\nRUN apt-get update\nRUN apt-get install --no-install-recommends -y locales python3-dev patch && rm -rf /var/lib/apt/lists/*;\nENV LANG en_US.UTF-8\n\nCOPY --from=redis /usr/local/ /usr/local/\n\n# build RedisAI\nRUN  git clone --recursive --depth 1 --branch v${AI_VER} https://github.com/RedisAI/RedisAI.git\n\nWORKDIR /build/RedisAI\n\n# patch system setup script for aarch64\nRUN git lfs install\nADD jetson.patch ./\nRUN git apply jetson.patch\n\nRUN PIP=1 FORCE=1 ./opt/readies/bin/getpy3\nRUN ./opt/system-setup.py\n\nARG DEPS_ARGS=\"GPU=1 WITH_TFLITE=0 WITH_PT=0 WITH_ORT=0 WITH_UNIT_TESTS=0\"\nRUN if [ \"$DEPS_ARGS\" = \"\" ]; then ./get_deps.sh; else env $DEPS_ARGS ./get_deps.sh; fi\n\nARG BUILD_ARGS=\"GPU=1 SHOW=1 WITH_TFLITE=0 WITH_PT=0 WITH_ORT=0 WITH_UNIT_TESTS=0\"\n\n#RUN apt-get install -y libegl1-mesa-dev freeglut3-dev\n\nRUN bash -c \"set -e &&\\\n    . ./opt/readies/bin/sourced ./profile.d &&\\\n    make -C opt build $BUILD_ARGS\"\n\n# build RedisGears\nWORKDIR /build\n\nRUN git clone --recursive https://github.com/RedisGears/RedisGears.git\nRUN cd RedisGears && git checkout tags/v${GEARS_VER} && ./deps/readies/bin/getpy2 && make setup && make fetch && make all\n\n#----------------------------------------------------------------------------------------------\nFROM nvcr.io/nvidia/l4t-base:r32.4.4\n\nARG ARCH\nARG GEARS_VER\n\nENV NVIDIA_VISIBLE_DEVICES all\nENV NVIDIA_DRIVER_CAPABILITIES compute,utility\n\nRUN apt-get -qq update && apt-get -q --no-install-recommends install -y libgomp1 build-essential libatlas-base-dev cmake && rm -rf /var/lib/apt/lists/*;\n\nENV REDIS_MODULES /usr/lib/redis/modules\nRUN mkdir -p $REDIS_MODULES/\nRUN mkdir /artifacts\n\nCOPY --from=redis /usr/local/ /usr/local/\nCOPY --from=builder /build/RedisAI/install-gpu/ $REDIS_MODULES/\nCOPY --from=builder /build/RedisGears/bin/linux-${ARCH}-release/ $REDIS_MODULES/\nCOPY --from=builder /build/RedisGears/artifacts/release/ /artifacts/\n\nRUN $REDIS_MODULES/python3_${GEARS_VER}/bin/python3 -m pip install --upgrade pip\nRUN $REDIS_MODULES/python3_${GEARS_VER}/bin/python3 -m pip install setuptools==49.2.0\n\n# build numpy from source to use ATLAS library\nRUN env LD_LIBRARY_PATH=/usr/lib/aarch64-linux-gnu:$LD_LIBRARY_PATH $REDIS_MODULES/python3_${GEARS_VER}/bin/python3 -m pip install --no-binary :all: numpy\nRUN $REDIS_MODULES/python3_${GEARS_VER}/bin/python3 -m pip install opencv-python imageio\n\nEXPOSE 6379\nENTRYPOINT [\"redis-server\"]\n\nENV GEARS_VER ${GEARS_VER}\n\nCMD [\"--loadmodule\", \"/usr/lib/redis/modules/redisai.so\", \\\n     \"--loadmodule\", \"/usr/lib/redis/modules/redisgears.so\", \\\n     \"PythonHomeDir\", \"/usr/lib/redis/modules/python3_$GEARS_VER/\", \\\n     \"PythonInstallationDir\", \"/usr/lib/redis/modules/\"]\n"
+}

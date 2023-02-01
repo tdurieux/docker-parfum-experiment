@@ -1,0 +1,26 @@
+{
+  "startTime": 1674253376727,
+  "endTime": 1674253377757,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 51,
+        "lineEnd": 51,
+        "columnStart": 4,
+        "columnEnd": 149
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 52,
+        "lineEnd": 52,
+        "columnStart": 4,
+        "columnEnd": 44
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Copyright 2019 The Kubernetes Authors.\n#\n# Licensed under the Apache License, Version 2.0 (the \"License\");\n# you may not use this file except in compliance with the License.\n# You may obtain a copy of the License at\n#\n#     http://www.apache.org/licenses/LICENSE-2.0\n#\n# Unless required by applicable law or agreed to in writing, software\n# distributed under the License is distributed on an \"AS IS\" BASIS,\n# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.\n# See the License for the specific language governing permissions and\n# limitations under the License.\n\nARG BUILDER_IMAGE\nARG DOWNLOADER_IMAGE\nARG CERT_BUILDER_IMAGE\nARG RUNNING_IMAGE\n\n# --------------------------------------------------------------------------------------------------\n# The building stage.\nFROM ${BUILDER_IMAGE} AS builder\n\nWORKDIR /build/minibroker\n# Copy the go.mod over so docker can cache the module downloads if possible.\nCOPY go.mod go.sum ./\nRUN go mod download\n\nCOPY cmd/ ./cmd/\nCOPY pkg/ ./pkg/\nCOPY Makefile ./\nARG TAG\nENV TAG $TAG\nRUN make build\n\n# --------------------------------------------------------------------------------------------------\n# The downloading stage.\nFROM ${DOWNLOADER_IMAGE} AS downloader\n\nRUN wget -O /tmp/dumb-init https://github.com/Yelp/dumb-init/releases/download/v1.2.2/dumb-init_1.2.2_amd64\nRUN chmod +x /tmp/dumb-init\n\n# --------------------------------------------------------------------------------------------------\n# The cert building stage.\nFROM ${CERT_BUILDER_IMAGE} AS cert_builder\n\nARG CURL_VERSION=\"7.70.0\"\n\nRUN zypper refresh\nRUN zypper --non-interactive install perl-Encode make tar gzip curl\n\nRUN curl -f -L -o /tmp/curl-${CURL_VERSION}.tar.gz https://github.com/curl/curl/releases/download/curl-${CURL_VERSION//\\./_}/curl-${CURL_VERSION}.tar.gz\nRUN tar zxf /tmp/curl-${CURL_VERSION}.tar.gz && rm /tmp/curl-${CURL_VERSION}.tar.gz\nWORKDIR /curl-${CURL_VERSION}\n\nRUN make ca-bundle\nRUN cp lib/ca-bundle.crt /tmp/ca-bundle.crt\n\n# --------------------------------------------------------------------------------------------------\n# The running stage.\nFROM ${RUNNING_IMAGE}\n\nCOPY --from=cert_builder /tmp/ca-bundle.crt /etc/ssl/certs/ca-bundle.crt\nCOPY --from=downloader /tmp/dumb-init /usr/local/bin/dumb-init\nCOPY --from=builder /build/minibroker/output/minibroker /usr/local/bin/minibroker\n\nCOPY docker/rootfs/etc/passwd /etc/passwd\nCOPY --chown=1000 docker/rootfs/home/minibroker /home/minibroker\nUSER 1000\n\nVOLUME /home/minibroker\nENV TMPDIR /home/minibroker/tmp\nENTRYPOINT [\"dumb-init\", \"--\"]\nCMD [\"minibroker\", \"--help\"]\n"
+}

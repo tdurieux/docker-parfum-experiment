@@ -1,0 +1,107 @@
+{
+  "startTime": 1674243468943,
+  "endTime": 1674243469425,
+  "originalSmells": [
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 31,
+        "lineEnd": 31,
+        "columnStart": 18,
+        "columnEnd": 29
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 40,
+        "lineEnd": 40,
+        "columnStart": 20,
+        "columnEnd": 31
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 44,
+        "lineEnd": 44,
+        "columnStart": 20,
+        "columnEnd": 31
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 48,
+        "lineEnd": 48,
+        "columnStart": 20,
+        "columnEnd": 31
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 52,
+        "lineEnd": 52,
+        "columnStart": 20,
+        "columnEnd": 31
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 6,
+        "lineEnd": 6,
+        "columnStart": 18,
+        "columnEnd": 62
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 10,
+        "lineEnd": 10,
+        "columnStart": 18,
+        "columnEnd": 91
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 60,
+        "lineEnd": 60,
+        "columnStart": 18,
+        "columnEnd": 80
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 6,
+        "lineEnd": 6,
+        "columnStart": 18,
+        "columnEnd": 62
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 10,
+        "lineEnd": 10,
+        "columnStart": 18,
+        "columnEnd": 91
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 60,
+        "lineEnd": 60,
+        "columnStart": 18,
+        "columnEnd": 80
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM golang:1.12 AS rootlesskit\nADD . /go/src/github.com/rootless-containers/rootlesskit\nRUN go build -o /rootlesskit github.com/rootless-containers/rootlesskit/cmd/rootlesskit\nRUN go build -o /rootlessctl github.com/rootless-containers/rootlesskit/cmd/rootlessctl\n\nFROM rootlesskit AS test-unit\nRUN apt update && apt install --no-install-recommends -y iproute2 socat netcat-openbsd && rm -rf /var/lib/apt/lists/*;\nCMD [\"go\",\"test\",\"-v\",\"-race\",\"github.com/rootless-containers/rootlesskit/...\"]\n\nFROM ubuntu:18.04 as build-c\nRUN apt update && apt install --no-install-recommends -y git make gcc automake autotools-dev libtool libglib2.0-dev && rm -rf /var/lib/apt/lists/*;\n\n# To allow running rootlesskit in a container without CAP_SYS_ADMIN, we need to do either\n#  a) install newuidmap/newgidmap with file capabilities rather than SETUID (requires kernel >= 4.14)\n#  b) install newuidmap/newgidmap >= 20181028\n# We choose b) until kernel >= 4.14 gets widely adopted.\n# See https://github.com/shadow-maint/shadow/pull/132 https://github.com/shadow-maint/shadow/pull/138\nFROM build-c as idmap\nRUN sed -i -e 's/# deb-src/deb-src/' /etc/apt/sources.list \\\n && apt update && apt build-dep -y uidmap\nRUN git clone https://github.com/shadow-maint/shadow.git /shadow\nWORKDIR /shadow\nRUN git checkout 42324e501768675993235e03f7e4569135802d18\nRUN ./autogen.sh --disable-nls --disable-man --without-audit --without-selinux --without-acl --without-attr --without-tcb --without-nscd \\\n&& make \\\n&& cp src/newuidmap src/newgidmap /usr/bin\n\nFROM build-c AS slirp4netns\nARG SLIRP4NETNS_COMMIT=v0.3.0\nRUN git clone https://github.com/rootless-containers/slirp4netns.git /slirp4netns && \\\n  cd /slirp4netns && git checkout ${SLIRP4NETNS_COMMIT} && \\\n  ./autogen.sh && ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" && make\n\n# github.com/moby/vpnkit@67041ad2655038c5462b3466f89a1853f2b894e5\nFROM djs55/vpnkit@sha256:e508a17cfacc8fd39261d5b4e397df2b953690da577e2c987a47630cd0c42f8e AS vpnkit\n\nFROM build-c as vdeplug_slirp\nARG S2ARGVEXECS_COMMIT=880b436157ec5a871cd2ed32c7f7223d9c1e05ee\nRUN git clone https://github.com/rd235/s2argv-execs.git /s2argv-execs && \\\n  cd /s2argv-execs && git checkout ${S2ARGVEXECS_COMMIT} && \\\n  autoreconf -if && ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" && make && make install\nARG VDEPLUG4_COMMIT=979eec056a56814b770f49934a127c718dc87a73\nRUN git clone https://github.com/rd235/vdeplug4.git /vdeplug4 && \\\n  cd /vdeplug4 && git checkout ${VDEPLUG4_COMMIT} && \\\n  autoreconf -if && ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" && make && make install\nARG LIBSLIRP_COMMIT=37fd650ad7fba7eb0360b1e1d0abf69cac6eb403\nRUN git clone https://github.com/rd235/libslirp.git /libslirp && \\\n  cd /libslirp && git checkout ${LIBSLIRP_COMMIT} && \\\n  autoreconf -if && ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" && make && make install\nARG VDEPLUGSLIRP_COMMIT=7ad4ec0871b6cdc1db514958c5e6cbf7d116c85f\nRUN git clone https://github.com/rd235/vdeplug_slirp.git /vdeplug_slirp && \\\n  cd /vdeplug_slirp && git checkout ${VDEPLUGSLIRP_COMMIT} && \\\n  autoreconf -if && ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" && make && make install\n\nFROM ubuntu:18.04 AS test-base\n# iproute2: for `ip` command that rootlesskit needs to exec\n# socat: for `socat` command required for --port-driver=socat\n# iperf3: only for benchmark purpose\n# busybox: only for debugging purpose\n# sudo: only for rootful veth benchmark (for comparison)\nRUN apt update && apt install --no-install-recommends -y iproute2 socat iperf3 busybox sudo libglib2.0-0 && rm -rf /var/lib/apt/lists/*;\nCOPY --from=idmap /usr/bin/newuidmap /usr/bin/newuidmap\nCOPY --from=idmap /usr/bin/newgidmap /usr/bin/newgidmap\nCOPY --from=rootlesskit /rootlesskit /home/user/bin/\nCOPY --from=rootlesskit /rootlessctl /home/user/bin/\nRUN chmod u+s /usr/bin/newuidmap /usr/bin/newgidmap \\\n  && useradd --create-home --home-dir /home/user --uid 1000 user \\\n  && mkdir -p /run/user/1000 \\\n  && chown -R user:user /run/user/1000 /home/user \\\n  && echo \"user ALL=(ALL) NOPASSWD:ALL\" > /etc/sudoers.d/user\nUSER user\nENV HOME /home/user\nENV USER user\nENV XDG_RUNTIME_DIR=/run/user/1000\nENV PATH /home/user/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin\nENV LD_LIBRARY_PATH=/home/user/lib\n\nFROM test-base AS test-light\nCOPY --from=slirp4netns /slirp4netns/slirp4netns /home/user/bin/\n\nFROM test-light AS test-full\nCOPY --from=vpnkit /vpnkit /home/user/bin/vpnkit\nCOPY --from=vdeplug_slirp /usr/local/bin/* /home/user/bin/\nCOPY --from=vdeplug_slirp /usr/local/lib/* /home/user/lib/\nADD ./hack/test/docker-entrypoint.sh /home/user/bin/\nENTRYPOINT [\"/home/user/bin/docker-entrypoint.sh\"]\n"
+}

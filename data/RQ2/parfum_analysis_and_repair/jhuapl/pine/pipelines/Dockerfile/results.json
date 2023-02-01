@@ -1,0 +1,71 @@
+{
+  "startTime": 1674250440632,
+  "endTime": 1674250441354,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 62,
+        "lineEnd": 62,
+        "columnStart": 4,
+        "columnEnd": 58
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 11,
+        "lineEnd": 11,
+        "columnStart": 4,
+        "columnEnd": 65
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 54,
+        "lineEnd": 58,
+        "columnStart": 22,
+        "columnEnd": 15
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 65,
+        "lineEnd": 66,
+        "columnStart": 22,
+        "columnEnd": 17
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 11,
+        "lineEnd": 11,
+        "columnStart": 4,
+        "columnEnd": 65
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 54,
+        "lineEnd": 58,
+        "columnStart": 22,
+        "columnEnd": 15
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 65,
+        "lineEnd": 66,
+        "columnStart": 22,
+        "columnEnd": 17
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# (C) 2019 The Johns Hopkins University Applied Physics Laboratory LLC.\n\nFROM ubuntu:20.04\n\nENV LC_ALL C.UTF-8\nENV LANG C.UTF-8\nENV DEBIAN_FRONTEND noninteractive\n\n# Install basic dependencies\nRUN apt-get clean && \\\n    apt-get -y update && \\\n    apt-get -y --no-install-recommends install software-properties-common ca-certificates && rm -rf /var/lib/apt/lists/*;\n\n# Copy any certs\nCOPY docker/*.crt /usr/local/share/ca-certificates/\nRUN rm /usr/local/share/ca-certificates/empty.crt && update-ca-certificates\n\n# For Controlling Startup Behaviour\nENV SKIP_PERMISSION_FIX 0\n\n# Set Pipeline of interest\nENV PIPELINE $PIPELINE\n\n# Set environment variables associated with click, necessary for use with pipenv?\nENV LC_ALL=C.UTF-8\nENV LANG=C.UTF-8\n\n# Configure Container Default User\nRUN groupadd -r nlp_user && useradd -m -r -g nlp_user nlp_user\n\n# Configure GOSU (https://github.com/tianon/gosu)\nCOPY docker/gosu-110-amd64.bin /usr/local/bin/gosu\nRUN chmod +x /usr/local/bin/gosu \\\n    && sync \\\n    && gosu nobody true\n\n# Configure Tini (https://github.com/krallin/tini)\nCOPY docker/tini-static-amd64.bin /usr/local/bin/tini\nRUN chmod +x /usr/local/bin/tini \\\n    && sync\n\n# Install OS Dependencies\nRUN set -ex \\\n    && apt-get update \\\n    && apt-get --no-install-recommends --yes install \\\n    build-essential \\\n    git curl wget iputils-ping net-tools dnsutils \\\n    htop tmux vim nano screen zsh \\\n    libgdal-dev gdal-bin \\\n    && apt-get -y autoremove \\\n    && apt-get -y clean \\\n    && rm -rf /var/lib/apt/lists/*\n\n#install python\nRUN apt-get update && apt-get install --no-install-recommends -y \\\n    python3.6 \\\n    python3-pip \\\n    python3-setuptools \\\n    python3-dev && rm -rf /var/lib/apt/lists/*;\n\n# Installing spacy requires a lot of memory, need to kill running docker containers or it will fail here on my machine\n# upgrade pip install/upgrade pipenv\nRUN pip3 install --no-cache-dir --default-timeout=30 --upgrade pip pipenv\n\n#Only corenlp/opennlp require java so add later on\nRUN apt-get update && apt-get install --no-install-recommends -y \\\n    openjdk-8-jdk && rm -rf /var/lib/apt/lists/*;\n\n\n# TODO: Will need to refactor all directories in this Dockerfile once we adjust project structure\nARG ROOT_DIR=/nlp-web-app/pipelines\nENV ROOT_DIR ${ROOT_DIR}\nRUN mkdir -p ${ROOT_DIR}\nWORKDIR ${ROOT_DIR}\n\n# pipenv causing container to fail to rebuild if spacy installed previously\n#Install python requirements\nCOPY Pipfile Pipfile.lock ./\nRUN REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt PIPENV_INSTALL_TIMEOUT=30 \\\n    pipenv install --dev --system --deploy\nRUN python3 -m nltk.downloader punkt\n\n#Copy contents of pipeline folder to docker\nCOPY pine ./pine\n\n# ensure that /opt/ is writable regardless of the UID our ctp instance ends up having at runtime\nRUN chown -R nlp_user:nlp_user ${ROOT_DIR} \\\n    && chmod g+s ${ROOT_DIR} \\\n    && sync\n\n# Copy Entrypoint Script\nCOPY docker/docker-entrypoint.sh /usr/local/bin/\n\n## Copy the current directory contents into the container at /opt (order matters for cache/speed)\n#COPY models/ /opt/models/\n#COPY service/ /opt/service/\n#COPY app/ /opt/app/\n#COPY run_service.py /opt/\n#COPY config.yaml /opt/\n\n# Execute and Backwards Compat\nRUN chmod +x /usr/local/bin/docker-entrypoint.sh \\\n    && sync \\\n    && ln -s /usr/local/bin/docker-entrypoint.sh /entrypoint.sh\n\n# Declare Volumes\nVOLUME [\"/opt/logs\"]\n\n# Declare Entrypoint\nENTRYPOINT [\"/usr/local/bin/tini\", \"--\", \"docker-entrypoint.sh\"]\n\n# Set PYTHONPATH\nENV PYTHONPATH \"${PYTHONPATH}:/\"\n\n# Run app.py when the container launches\nCOPY docker_run.sh ./\nCMD [\"./docker_run.sh\"]\n"
+}

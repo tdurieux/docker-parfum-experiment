@@ -1,0 +1,26 @@
+FROM apache/airflow:1.10.14-python3.7
+
+USER root
+RUN apt-get update -yqq \
+    && apt-get install --no-install-recommends -y libpq-dev \
+    && apt-get install --no-install-recommends -y build-essential \
+    && apt-get install --no-install-recommends -y vim \
+    && apt-get install --no-install-recommends -y git \
+    && apt-get install --no-install-recommends -y r-base \
+    && Rscript -e "install.packages('DBI')" \
+    && Rscript -e "install.packages('RPostgres')" \
+    && Rscript -e "install.packages('rmarkdown')" \
+    && Rscript -e "install.packages('dplyr')" && rm -rf /var/lib/apt/lists/*;
+
+# Symbolic link necessary for the apache-airflow-backport-providers-* packages
+RUN ln -s /usr/local/lib/python3.7/site-packages/airflow/providers /home/airflow/.local/lib/python3.7/site-packages/airflow/
+
+COPY ./Airflow@1.10/requirements.txt /requirements.txt
+COPY ./viewflow /viewflow/viewflow
+COPY ./Airflow@1.10/pyproject.toml /viewflow/
+COPY ./README.md /viewflow/
+
+RUN pip install --no-cache-dir --upgrade pip
+RUN pip install --no-cache-dir /viewflow
+
+USER airflow

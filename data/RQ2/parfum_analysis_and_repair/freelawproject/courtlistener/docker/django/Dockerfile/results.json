@@ -1,0 +1,35 @@
+{
+  "startTime": 1674252862101,
+  "endTime": 1674252862753,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 29,
+        "lineEnd": 29,
+        "columnStart": 4,
+        "columnEnd": 47
+      }
+    },
+    {
+      "rule": "aptGetInstallUseY",
+      "position": {
+        "lineStart": 5,
+        "lineEnd": 16,
+        "columnStart": 4,
+        "columnEnd": 59
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 5,
+        "lineEnd": 16,
+        "columnStart": 4,
+        "columnEnd": 59
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "ARG BUILD_ENV=prod\n\nFROM python:3.10-slim as build-base\n\nRUN apt-get update --option \"Acquire::Retries=3\" --quiet=2 && \\\n    apt-get install -y \\\n        --no-install-recommends \\\n        --assume-yes \\\n        --quiet=2 \\\n\n        build-essential gcc python3-dev \\\n\n        libpq-dev postgresql-client \\\n\n        curl git \\\n\n        libffi-dev libxml2-dev libxslt-dev procps vim cmake && rm -rf /var/lib/apt/lists/*;\n\n# poetry\n# https://python-poetry.org/docs/configuration/#using-environment-variables\nENV POETRY_VERSION=1.1.13 \\\n    # make poetry install to this location\n    POETRY_HOME=\"/opt/poetry\" \\\n    # Don't build a virtualenv to save space\n    POETRY_VIRTUALENVS_CREATE=false \\\n    # do not ask any interactive question\n    POETRY_NO_INTERACTION=1\n\n# install poetry - respects $POETRY_VERSION & $POETRY_HOME\nRUN curl -f -sSL https://install.python-poetry.org | python3 -\n\nARG POETRY_HOME\n\nENV PYTHONUNBUFFERED=1 \\\n    # paths\n    # where to create the env\n    VENV_PATH=\"/opt/pysetup/.venv\" \\\n    # this is where our requirements + virtual environment will live\n    PYSETUP_PATH=\"/opt/pysetup\"\n\n# prepend poetry and venv to path\nENV PATH=\"/opt/poetry/bin:$VENV_PATH/bin:$PATH\"\n\n\nFROM build-base as build-dev\n\nWORKDIR $PYSETUP_PATH\n\nCOPY poetry.lock pyproject.toml ./\nRUN poetry install --no-root\n\nCOPY . /opt/courtlistener\n\n\nFROM build-base as build-prod\n\nWORKDIR $PYSETUP_PATH\n\n# copy project requirement files here to ensure they will be cached.\nADD https://raw.githubusercontent.com/freelawproject/courtlistener/main/poetry.lock /opt/poetry.lock\nADD https://raw.githubusercontent.com/freelawproject/courtlistener/main/pyproject.toml /opt/pyproject.toml\n\n# install runtime deps - uses $POETRY_VIRTUALENVS_IN_PROJECT internally\nRUN poetry install --no-root\n\nADD https://github.com/freelawproject/courtlistener/archive/main.tar.gz /opt/courtlistener.tar.gz\nWORKDIR /opt\nRUN tar xvfz courtlistener.tar.gz && \\\n    mv /opt/courtlistener-main /opt/courtlistener && \\\n    rm -r /opt/courtlistener.tar.gz\n\n# `python-base` sets up all our shared environment variables\nFROM build-${BUILD_ENV} as python-base\n\nWORKDIR /opt\n\n# We log to stdout by default, but we have a config for logging here. Even if\n# we don't use this logger, we need to have the file or else Python is unhappy.\nRUN mkdir /var/log/courtlistener \\\n  && chown -R www-data:www-data /var/log/courtlistener \\\n  && mkdir /var/log/juriscraper \\\n  && chown -R www-data:www-data /var/log/juriscraper/ \\\n  && mkdir -p /opt/courtlistener/cl/assets/static/\n\nWORKDIR /opt/courtlistener\n\n# freelawproject/courtlistener:latest-celery\nFROM python-base as celery\n\n## Needs to be two commands so second one can use variables from first.\nENV PYTHONPATH=\"${PYTHONPATH}:/opt/courtlistener\"\nUSER 33\n\nCMD celery \\\n    --app=cl worker \\\n    --loglevel=info \\\n    --events \\\n    --pool=prefork \\\n    --hostname=prefork@%h \\\n    --queues=${CELERY_QUEUES} \\\n    --concurrency=${CELERY_PREFORK_CONCURRENCY:-0} \\\n    --prefetch-multiplier=${CELERY_PREFETCH_MULTIPLIER:-1}\n\n#freelawproject/courtlistener:latest-web-dev\nFROM python-base as web-dev\n\nCMD python /opt/courtlistener/manage.py migrate && \\\n    python /opt/courtlistener/manage.py createcachetable && \\\n    python /opt/courtlistener/manage.py runserver 0.0.0.0:8000\n\n#freelawproject/courtlistener:latest-web-prod\nFROM python-base as web-prod\n\nCMD gunicorn cl_wsgi:application \\\n    --chdir /opt/courtlistener/docker/django/wsgi-configs/ \\\n    --user www-data \\\n    --group www-data \\\n    # Set high number of workers. Docs recommend 2-4× core count`\n    --workers ${NUM_WORKERS:-48} \\\n    # Allow longer queries to solr.\n    --limit-request-line 6000 \\\n    # Reset each worker once in a while\n    --max-requests 10000 \\\n    --max-requests-jitter 100 \\\n    --timeout 180 \\\n    --bind 0.0.0.0:8000\n\n#freelawproject/courtlistener:latest-scrape-rss\nFROM python-base as rss-scraper\n\nUSER www-data\nCMD /opt/courtlistener/manage.py scrape_rss\n\n"
+}

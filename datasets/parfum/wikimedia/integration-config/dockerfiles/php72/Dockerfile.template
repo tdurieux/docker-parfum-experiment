@@ -1,0 +1,36 @@
+FROM {{ "ci-buster" | image_tag }}
+
+# Align with SRE provided packages
+COPY wikimedia-php72.list /etc/apt/sources.list.d/wikimedia-php72.list
+
+# zip is needed for composer to install things from dist
+# others are libraries/MediaWiki related
+{% set packages|replace('\n', ' ') -%}
+php7.2-cli
+php7.2-zip
+php-ast
+php7.2-bcmath
+php7.2-curl
+php7.2-dba
+php7.2-gd
+php7.2-gmp
+php7.2-intl
+php7.2-mbstring
+php7.2-redis
+php7.2-sqlite3
+php7.2-xdebug
+php7.2-xml
+php7.2-yaml
+zip
+unzip
+{%- endset -%}
+
+RUN {{ packages | apt_install }}
+
+# Disable xdebug by default due to its performance impact
+RUN phpdismod xdebug
+
+USER nobody
+
+ENTRYPOINT ["php"]
+CMD ["--help"]

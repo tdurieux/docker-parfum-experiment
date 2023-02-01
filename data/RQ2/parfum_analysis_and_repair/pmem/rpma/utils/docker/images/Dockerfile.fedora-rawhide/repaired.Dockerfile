@@ -1,0 +1,106 @@
+#
+# SPDX-License-Identifier: BSD-3-Clause
+# Copyright 2016-2022, Intel Corporation
+#
+
+#
+# Dockerfile - a 'recipe' for Docker to build an image of fedora-based
+#              environment prepared for running tests of librpma.
+#
+
+# Pull base image
+FROM fedora:rawhide
+MAINTAINER tomasz.gromadzki@intel.com
+
+# Update all packages
+RUN dnf update -y
+
+# base deps
+ENV BASE_DEPS "\
+	clang \
+	gcc \
+	git \
+	make \
+	patch \
+	pkg-config \
+	rpm-build \
+	which"
+
+ENV EXAMPLES_DEPS "\
+	libpmem-devel \
+	libpmem2-devel \
+	protobuf-c-devel"
+
+ENV TOOLS_DEPS "\
+	python3-jinja2"
+
+ENV TESTS_DEPS "\
+	pylint \
+	python3-pip \
+	python3-pytest"
+
+ENV PYTHON_DEPS "\
+	coverage \
+	deepdiff \
+	markdown2 \
+	matplotlib \
+	paramiko \
+	scp"
+
+# RPMA deps
+ENV RPMA_DEPS "\
+	cmake \
+	file \
+	gawk \
+	groff \
+	graphviz \
+	libunwind-devel \
+	pandoc \
+	rdma-core-devel"
+
+# Install all required packages
+RUN dnf install -y \
+	$BASE_DEPS \
+	$EXAMPLES_DEPS \
+	$TOOLS_DEPS \
+	$TESTS_DEPS \
+	$RPMA_DEPS
+
+# Temporarily downgrade python3-wrapt from v1.14.0 to v1.13.3-2
+# to fix the following error:
+#    pkg_resources.ContextualVersionConflict: \
+#      (wrapt 1.14.0 (/usr/lib64/python3.10/site-packages), \
+#       Requirement.parse('wrapt<1.14,>=1.11'), {'astroid'})
+RUN dnf install -y wget
+RUN wget https://kojipkgs.fedoraproject.org//packages/python-wrapt/1.13.3/2.fc36/x86_64/python3-wrapt-1.13.3-2.fc36.x86_64.rpm
+RUN dnf install -y ./python3-wrapt-1.13.3-2.fc36.x86_64.rpm
+RUN rm ./python3-wrapt-1.13.3-2.fc36.x86_64.rpm
+
+RUN dnf clean all
+
+RUN pip3 install --no-cache-dir --upgrade pip
+
+# Install cmocka
+COPY install-cmocka.sh install-cmocka.sh
+RUN ./install-cmocka.sh
+
+# Install txt2man
+COPY install-txt2man.sh install-txt2man.sh
+RUN ./install-txt2man.sh
+
+# Add user
+ENV USER user
+ENV USERPASS p1a2s3s4
+RUN useradd -m $USER
+RUN echo "$USER:$USERPASS" | chpasswd
+RUN gpasswd wheel -a $USER
+USER $USER
+
+# Set required environment variables
+ENV OS fedora
+ENV OS_VER rawhide
+ENV PACKAGE_MANAGER rpm
+ENV NOTTY 1
+
+# install python modules for the default user
+RUN pip3 install --no-cache-dir --user $PYTHON_DEPS

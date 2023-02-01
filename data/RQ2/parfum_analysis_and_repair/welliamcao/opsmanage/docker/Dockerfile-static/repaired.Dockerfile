@@ -1,0 +1,1 @@
+#docker build -t opsmanage-static -f Dockerfile-static ..

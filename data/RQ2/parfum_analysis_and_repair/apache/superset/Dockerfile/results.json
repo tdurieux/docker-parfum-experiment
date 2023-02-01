@@ -1,0 +1,71 @@
+{
+  "startTime": 1674252439281,
+  "endTime": 1674252440477,
+  "originalSmells": [
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 50,
+        "lineEnd": 50,
+        "columnStart": 4,
+        "columnEnd": 33
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 41,
+        "lineEnd": 41,
+        "columnStart": 7,
+        "columnEnd": 55
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 106,
+        "lineEnd": 106,
+        "columnStart": 11,
+        "columnEnd": 27
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 150,
+        "lineEnd": 150,
+        "columnStart": 7,
+        "columnEnd": 56
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 151,
+        "lineEnd": 151,
+        "columnStart": 7,
+        "columnEnd": 68
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 145,
+        "lineEnd": 145,
+        "columnStart": 4,
+        "columnEnd": 40
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 135,
+        "lineEnd": 135,
+        "columnStart": 7,
+        "columnEnd": 97
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "#\n# Licensed to the Apache Software Foundation (ASF) under one or more\n# contributor license agreements.  See the NOTICE file distributed with\n# this work for additional information regarding copyright ownership.\n# The ASF licenses this file to You under the Apache License, Version 2.0\n# (the \"License\"); you may not use this file except in compliance with\n# the License.  You may obtain a copy of the License at\n#\n#    http://www.apache.org/licenses/LICENSE-2.0\n#\n# Unless required by applicable law or agreed to in writing, software\n# distributed under the License is distributed on an \"AS IS\" BASIS,\n# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.\n# See the License for the specific language governing permissions and\n# limitations under the License.\n#\n\n######################################################################\n# PY stage that simply does a pip install on our requirements\n######################################################################\nARG PY_VER=3.8.13\nFROM python:${PY_VER} AS superset-py\n\nRUN mkdir /app \\\n        && apt-get update -y \\\n        && apt-get install -y --no-install-recommends \\\n            build-essential \\\n            default-libmysqlclient-dev \\\n            libpq-dev \\\n            libsasl2-dev \\\n            libecpg-dev \\\n        && rm -rf /var/lib/apt/lists/*\n\n# First, we just wanna install requirements, which will allow us to utilize the cache\n# in order to only build if and only if requirements change\nCOPY ./requirements/*.txt  /app/requirements/\nCOPY setup.py MANIFEST.in README.md /app/\nCOPY superset-frontend/package.json /app/superset-frontend/\nRUN cd /app \\\n    && mkdir -p superset/static \\\n    && touch superset/static/version_info.json \\\n    && pip install --no-cache-dir --no-cache -r requirements/local.txt\n\n\n######################################################################\n# Node stage to deal with static asset construction\n######################################################################\nFROM node:16 AS superset-node\n\nARG NPM_VER=7\nRUN npm install -g npm@${NPM_VER} && npm cache clean --force;\n\nARG NPM_BUILD_CMD=\"build\"\nENV BUILD_CMD=${NPM_BUILD_CMD}\n\n# NPM ci first, as to NOT invalidate previous steps except for when package.json changes\nRUN mkdir -p /app/superset-frontend\nRUN mkdir -p /app/superset/assets\nCOPY ./docker/frontend-mem-nag.sh /\nCOPY ./superset-frontend /app/superset-frontend\nRUN /frontend-mem-nag.sh \\\n        && cd /app/superset-frontend \\\n        && npm ci\n\n# This seems to be the most expensive step\nRUN cd /app/superset-frontend \\\n        && npm run ${BUILD_CMD} \\\n        && rm -rf node_modules\n\n\n######################################################################\n# Final lean image...\n######################################################################\nARG PY_VER=3.8.13\nFROM python:${PY_VER} AS lean\n\nENV LANG=C.UTF-8 \\\n    LC_ALL=C.UTF-8 \\\n    FLASK_ENV=production \\\n    FLASK_APP=\"superset.app:create_app()\" \\\n    PYTHONPATH=\"/app/pythonpath\" \\\n    SUPERSET_HOME=\"/app/superset_home\" \\\n    SUPERSET_PORT=8088\n\nRUN mkdir -p ${PYTHONPATH} \\\n        && useradd --user-group -d ${SUPERSET_HOME} -m --no-log-init --shell /bin/bash superset \\\n        && apt-get update -y \\\n        && apt-get install -y --no-install-recommends \\\n            build-essential \\\n            default-libmysqlclient-dev \\\n            libsasl2-modules-gssapi-mit \\\n            libpq-dev \\\n            libecpg-dev \\\n        && rm -rf /var/lib/apt/lists/*\n\nCOPY --from=superset-py /usr/local/lib/python3.8/site-packages/ /usr/local/lib/python3.8/site-packages/\n# Copying site-packages doesn't move the CLIs, so let's copy them one by one\nCOPY --from=superset-py /usr/local/bin/gunicorn /usr/local/bin/celery /usr/local/bin/flask /usr/bin/\nCOPY --from=superset-node /app/superset/static/assets /app/superset/static/assets\nCOPY --from=superset-node /app/superset-frontend /app/superset-frontend\n\n## Lastly, let's install superset itself\nCOPY superset /app/superset\nCOPY setup.py MANIFEST.in README.md /app/\nRUN cd /app \\\n        && chown -R superset:superset * \\\n        && pip install --no-cache-dir -e . \\\n        && flask fab babel-compile --target superset/translations\n\nCOPY ./docker/run-server.sh /usr/bin/\n\nRUN chmod a+x /usr/bin/run-server.sh\n\nWORKDIR /app\n\nUSER superset\n\nHEALTHCHECK CMD curl -f \"http://localhost:$SUPERSET_PORT/health\"\n\nEXPOSE ${SUPERSET_PORT}\n\nCMD /usr/bin/run-server.sh\n\n######################################################################\n# Dev image...\n######################################################################\nFROM lean AS dev\nARG GECKODRIVER_VERSION=v0.28.0\nARG FIREFOX_VERSION=88.0\n\nCOPY ./requirements/*.txt ./docker/requirements-*.txt/ /app/requirements/\n\nUSER root\n\nRUN apt-get update -y \\\n    && apt-get install -y --no-install-recommends libnss3 libdbus-glib-1-2 libgtk-3-0 libx11-xcb1 && rm -rf /var/lib/apt/lists/*;\n\n# Install GeckoDriver WebDriver\nRUN wget https://github.com/mozilla/geckodriver/releases/download/${GECKODRIVER_VERSION}/geckodriver-${GECKODRIVER_VERSION}-linux64.tar.gz -O /tmp/geckodriver.tar.gz && \\\n    tar xvfz /tmp/geckodriver.tar.gz -C /tmp && \\\n    mv /tmp/geckodriver /usr/local/bin/geckodriver && \\\n    rm /tmp/geckodriver.tar.gz\n\n# Install Firefox\nRUN wget https://download-installer.cdn.mozilla.net/pub/firefox/releases/${FIREFOX_VERSION}/linux-x86_64/en-US/firefox-${FIREFOX_VERSION}.tar.bz2 -O /opt/firefox.tar.bz2 && \\\n    tar xvf /opt/firefox.tar.bz2 -C /opt && \\\n    ln -s /opt/firefox/firefox /usr/local/bin/firefox && rm /opt/firefox.tar.bz2\n\n# Cache everything for dev purposes...\nRUN cd /app \\\n    && pip install --no-cache-dir --no-cache -r requirements/docker.txt \\\n    && pip install --no-cache-dir --no-cache -r requirements/requirements-local.txt || true\nUSER superset\n\n\n######################################################################\n# CI image...\n######################################################################\nFROM lean AS ci\n\nCOPY --chown=superset ./docker/docker-bootstrap.sh /app/docker/\nCOPY --chown=superset ./docker/docker-init.sh /app/docker/\nCOPY --chown=superset ./docker/docker-ci.sh /app/docker/\n\nRUN chmod a+x /app/docker/*.sh\n\nCMD /app/docker/docker-ci.sh\n"
+}

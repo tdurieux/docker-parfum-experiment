@@ -1,0 +1,17 @@
+{
+  "startTime": 1674255201418,
+  "endTime": 1674255202208,
+  "originalSmells": [
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 51,
+        "lineEnd": 51,
+        "columnStart": 4,
+        "columnEnd": 14
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "#\n# STEP 1: Prepare environment\n#\nFROM golang:1.15 AS preparer\n\nRUN apt-get update                                                        && \\\n  DEBIAN_FRONTEND=noninteractive apt-get install -yq --no-install-recommends \\\n    curl git zip unzip wget g++ python gcc jq                                \\\n  && rm -rf /var/lib/apt/lists/*\n\nRUN go version\nRUN python --version\n\nWORKDIR /go/src/github.com/bloxapp/key-vault/\nCOPY go.mod .\nCOPY go.sum .\nRUN go mod download\n\n#\n# STEP 2: Build executable binary\n#\nFROM preparer AS builder\n\n# Copy files and install app\nCOPY . .\nRUN go get -d -v ./...\nRUN CGO_ENABLED=1 GOOS=linux go build -a -ldflags \"-linkmode external -extldflags \\\"-static -lm\\\" -X main.Version=$(git describe --tags $(git rev-list --tags --max-count=1))\" -o ethsign .\n\n#\n# STEP 3: Get vault image and copy the plugin\n#\nFROM vault:1.8.1 AS runner\n\n# Download dependencies\nRUN apk -v --update --no-cache add \\\n    bash ca-certificates curl openssl\n\nWORKDIR /vault/plugins/\n\nCOPY --from=builder /go/src/github.com/bloxapp/key-vault/ethsign ./ethsign\nCOPY ./config/vault-config.json /vault/config/vault-config.json\nCOPY ./config/vault-config-tls.json /vault/config/vault-config-tls.json\nCOPY ./config/entrypoint.sh /vault/config/entrypoint.sh\nCOPY ./config/vault-tls.sh /vault/config/vault-tls.sh\nCOPY ./config/vault-init.sh /vault/config/vault-init.sh\nCOPY ./config/vault-unseal.sh /vault/config/vault-unseal.sh\nCOPY ./config/vault-policies.sh /vault/config/vault-policies.sh\nCOPY ./config/vault-plugin.sh /vault/config/vault-plugin.sh\nCOPY ./policies/signer-policy.hcl /vault/policies/signer-policy.hcl\n\nRUN chown vault /vault/config/entrypoint.sh\nRUN apk add --no-cache jq\n\nWORKDIR /\n\n# Expose port 8200\nEXPOSE 8200\n\n# Run vault\nCMD [\"bash\", \"/vault/config/entrypoint.sh\"]\n"
+}

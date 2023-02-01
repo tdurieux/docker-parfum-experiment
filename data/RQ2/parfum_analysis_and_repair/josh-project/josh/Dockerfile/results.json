@@ -1,0 +1,26 @@
+{
+  "startTime": 1674220612944,
+  "endTime": 1674220613730,
+  "originalSmells": [
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 89,
+        "lineEnd": 89,
+        "columnStart": 18,
+        "columnEnd": 29
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 54,
+        "lineEnd": 56,
+        "columnStart": 4,
+        "columnEnd": 27
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "ARG RUST_VERSION=1.61.0\n\nFROM rust:${RUST_VERSION} as dev-planner\n\nRUN cargo install --version 0.1.35 cargo-chef\n\nWORKDIR /usr/src/josh\nCOPY . .\n\nENV CARGO_TARGET_DIR=/opt/cargo-target\nRUN cargo chef prepare --recipe-path recipe.json\n\nFROM rust:${RUST_VERSION} as dev\n\nRUN <<EOF\napt-get update\napt-get remove --yes git\napt-get install --yes --no-install-recommends \\\n    cmake \\\n    gcc \\\n    make \\\n    libz-dev \\\n    libssl-dev \\\n    libcurl4-openssl-dev \\\n    libexpat1-dev \\\n    gettext \\\n    python3 \\\n    python3-pip \\\n    tree \\\n    psmisc\nrm -rf /var/lib/apt/lists/*\nEOF\n\nARG GIT_VERSION=2.36.1\nWORKDIR /usr/src/git\nRUN <<EOF\nwget https://mirrors.edge.kernel.org/pub/software/scm/git/git-${GIT_VERSION}.tar.gz\ntar --extract --gzip --file git-${GIT_VERSION}.tar.gz\ncd git-${GIT_VERSION}\nmake configure\n./configure --prefix=/opt/git-install --exec-prefix=/opt/git-install\nmake -j$(nproc)\nmake install\nEOF\n\nRUN mkdir /opt/git-install/etc\n\nENV PATH=${PATH}:/opt/git-install/bin\nRUN git config -f /opt/git-install/etc/gitconfig --add safe.directory \"*\"\n\nARG CRAM_VERSION=d245cca\nARG PYGIT2_VERSION=1.9.1\nRUN pip3 install --no-cache-dir \\\n  git+https://github.com/brodie/cram.git@${CRAM_VERSION} \\\n  pygit2==${PYGIT2_VERSION}\n\nRUN <<EOF\ncurl --fail --show-error --silent --location https://deb.nodesource.com/setup_17.x | bash - && \\\napt-get install --yes nodejs\nEOF\n\nWORKDIR /usr/src/josh\nRUN rustup component add rustfmt\nRUN cargo install --version 0.1.35 cargo-chef\nRUN cargo install --version 0.2.1 hyper_cgi --features=test-server\nRUN cargo install --version 0.10.0 graphql_client_cli\n\n\nFROM dev as dev-local\n\nRUN mkdir -p /opt/cache && \\\n    chmod 777 /opt/cache\n\nVOLUME /opt/cache\n\nENV CARGO_TARGET_DIR=/opt/cache/cargo-target\nENV CARGO_HOME=/opt/cache/cargo-cache\nRUN npm config set cache /opt/cache/npm-cache --global\n\nFROM dev as dev-ci\n\nCOPY --from=dev-planner /usr/src/josh/recipe.json .\nENV CARGO_TARGET_DIR=/opt/cargo-target\nRUN cargo chef cook --workspace --recipe-path recipe.json\n\nRUN mkdir -p josh-ui\nCOPY josh-ui/package.json josh-ui/package-lock.json josh-ui/\nRUN cd josh-ui && npm install && npm cache clean --force;\n\nFROM dev as build\n\n\nCOPY . .\nRUN \\\n  cargo build -p josh-proxy --release && \\\n  cargo build -p josh-ui --release\n\nFROM debian:bullseye as run\n\nRUN <<EOF\napt-get update\napt-get install --yes --no-install-recommends \\\n    zlib1g \\\n    libexpat1 \\\n    libcurl4 \\\n    ca-certificates\nrm -rf /var/lib/apt/lists/*\nEOF\n\nCOPY --from=dev --link=false /opt/git-install /opt/git-install\nENV PATH=${PATH}:/opt/git-install/bin\n\nCOPY --from=build --link=false /usr/src/josh/target/release/josh-proxy /usr/bin/\nCOPY --from=build --link=false /usr/src/josh/run-josh.sh /usr/bin/\nCOPY --from=build --link=false /usr/src/josh/static/ /josh/static/\n\nCMD sh /usr/bin/run-josh.sh\n"
+}

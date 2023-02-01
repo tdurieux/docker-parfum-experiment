@@ -1,0 +1,17 @@
+{
+  "startTime": 1674256273468,
+  "endTime": 1674256274090,
+  "originalSmells": [
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 14,
+        "lineEnd": 15,
+        "columnStart": 4,
+        "columnEnd": 113
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# This is a 2-stage Docker build.  In the first stage, we build a\n# Zulip development environment image and use\n# tools/build-release-tarball to generate a production release tarball\n# from the provided Git ref.\nFROM ubuntu:20.04 as base\n\n# Set up working locales and upgrade the base image\nENV LANG=\"C.UTF-8\"\n\nARG UBUNTU_MIRROR\n\nRUN { [ ! \"$UBUNTU_MIRROR\" ] || sed -i \"s|http://\\(\\w*\\.\\)*archive\\.ubuntu\\.com/ubuntu/\\? |$UBUNTU_MIRROR |\" /etc/apt/sources.list; } && \\\n    apt-get -q update && \\\n    apt-get -q dist-upgrade -y && \\\n    DEBIAN_FRONTEND=noninteractive \\\n        apt-get -q install --no-install-recommends -y ca-certificates git locales lsb-release python3 sudo tzdata && rm -rf /var/lib/apt/lists/*;\n\n\nFROM base as build\n\n# Add a zulip user\nRUN useradd -d /home/zulip -m zulip && \\\n    echo 'zulip ALL=(ALL:ALL) NOPASSWD:ALL' >> /etc/sudoers\n\nUSER zulip\nWORKDIR /home/zulip\n\n# You can specify these in docker-compose.yml or with\n#   docker build --build-arg \"ZULIP_GIT_REF=git_branch_name\" .\nARG ZULIP_GIT_URL=https://github.com/zulip/zulip.git\nARG ZULIP_GIT_REF=5.4\n\nRUN git clone \"$ZULIP_GIT_URL\" && \\\n    cd zulip && \\\n    git checkout -b current \"$ZULIP_GIT_REF\"\n\nWORKDIR /home/zulip/zulip\n\nARG CUSTOM_CA_CERTIFICATES\n\n# Finally, we provision the development environment and build a release tarball\nRUN SKIP_VENV_SHELL_WARNING=1 ./tools/provision --build-release-tarball-only\nRUN . /srv/zulip-py3-venv/bin/activate && \\\n    ./tools/build-release-tarball docker && \\\n    mv /tmp/tmp.*/zulip-server-docker.tar.gz /tmp/zulip-server-docker.tar.gz\n\n\n# In the second stage, we build the production image from the release tarball\nFROM base\n\nENV DATA_DIR=\"/data\"\n\n# Then, with a second image, we install the production release tarball.\nCOPY --from=build /tmp/zulip-server-docker.tar.gz /root/\nCOPY custom_zulip_files/ /root/custom_zulip\n\nARG CUSTOM_CA_CERTIFICATES\n\nRUN \\\n    # Make sure Nginx is started by Supervisor.\n    dpkg-divert --add --rename /etc/init.d/nginx && \\\n    ln -s /bin/true /etc/init.d/nginx && \\\n    mkdir -p \"$DATA_DIR\" && \\\n    cd /root && \\\n    tar -xf zulip-server-docker.tar.gz && \\\n    rm -f zulip-server-docker.tar.gz && \\\n    mv zulip-server-docker zulip && \\\n    cp -rf /root/custom_zulip/* /root/zulip && \\\n    rm -rf /root/custom_zulip && \\\n    export PUPPET_CLASSES=\"zulip::profile::docker\" \\\n           ADDITIONAL_PACKAGES=\"expect\" && \\\n    /root/zulip/scripts/setup/install --hostname=\"$(hostname)\" --email=\"docker-zulip\" --no-init-db && \\\n    rm -f /etc/zulip/zulip-secrets.conf /etc/zulip/settings.py && \\\n    apt-get -qq autoremove --purge -y && \\\n    apt-get -qq clean && \\\n    rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*\n\nCOPY entrypoint.sh /sbin/entrypoint.sh\nCOPY certbot-deploy-hook /sbin/certbot-deploy-hook\n\nVOLUME [\"$DATA_DIR\"]\nEXPOSE 80 443\n\nENTRYPOINT [\"/sbin/entrypoint.sh\"]\nCMD [\"app:run\"]\n"
+}

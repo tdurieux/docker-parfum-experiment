@@ -1,0 +1,26 @@
+{
+  "startTime": 1674220760727,
+  "endTime": 1674220761601,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 6,
+        "lineEnd": 6,
+        "columnStart": 25,
+        "columnEnd": 47
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 6,
+        "lineEnd": 6,
+        "columnStart": 25,
+        "columnEnd": 47
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "#\n# BUILD ENVIRONMENT\n# -----------------\nARG GO_VERSION\nFROM golang:${GO_VERSION} as builder\n\nRUN apt-get -y update && apt-get -y --no-install-recommends install upx && rm -rf /var/lib/apt/lists/*;\n\nWORKDIR /workspace\n# Copy the Go Modules manifests\nCOPY go.mod go.mod\nCOPY go.sum go.sum\n# cache deps before building and copying source so that we don't need to re-download as much\n# and so that source changes don't invalidate our downloaded layer\nRUN go mod download\n\n# Copy the go source\nCOPY main.go main.go\nCOPY api/ api/\nCOPY controllers/ controllers/\nCOPY internal/ internal/\nCOPY webhooks/ webhooks/\nCOPY version/ version/\nCOPY cmd/ cmd/\n\nENV CGO_ENABLED=0\nENV GOOS=linux\nENV GOARCH=amd64\nENV GO111MODULE=on\n\n# Do an initial compilation before setting the version so that there is less to\n# re-compile when the version changes\nRUN go build -mod=readonly \"-ldflags=-s -w\" ./...\n\nARG VERSION\nARG BACKUP_AGENT_IMAGE\nARG RESTORE_AGENT_IMAGE\n\n# Compile all the binaries\nRUN go build \\\n    -mod=readonly \\\n    -ldflags=\"-X=github.com/improbable-eng/etcd-cluster-operator/version.Version=${VERSION}\\\n              -X=main.defaultBackupAgentImage=${BACKUP_AGENT_IMAGE}\\\n              -X=main.defaultRestoreAgentImage=${RESTORE_AGENT_IMAGE}\" \\\n    -o manager main.go\nRUN go build -mod=readonly \"-ldflags=-s -w -X=github.com/improbable-eng/etcd-cluster-operator/version.Version=${VERSION}\" -o proxy cmd/proxy/main.go\nRUN go build -mod=readonly \"-ldflags=-s -w -X=github.com/improbable-eng/etcd-cluster-operator/version.Version=${VERSION}\" -o backup-agent cmd/backup-agent/main.go\nRUN go build -mod=readonly \"-ldflags=-s -w -X=github.com/improbable-eng/etcd-cluster-operator/version.Version=${VERSION}\" -o restore-agent cmd/restore-agent/main.go\n\nRUN upx manager proxy backup-agent restore-agent\n\n#\n# IMAGE TARGETS\n# -------------\nFROM gcr.io/distroless/static:nonroot as controller\nWORKDIR /\nCOPY --from=builder /workspace/manager .\nUSER nonroot:nonroot\nENTRYPOINT [\"/manager\"]\n\nFROM gcr.io/distroless/static:nonroot as proxy\nWORKDIR /\nCOPY --from=builder /workspace/proxy .\nUSER nonroot:nonroot\nENTRYPOINT [\"/proxy\"]\n\nFROM gcr.io/distroless/static:nonroot as backup-agent\nWORKDIR /\nCOPY --from=builder /workspace/backup-agent .\nUSER nonroot:nonroot\nENTRYPOINT [\"/backup-agent\"]\n\n# restore-agent must run as root\n# See https://github.com/improbable-eng/etcd-cluster-operator/issues/139\nFROM gcr.io/distroless/static as restore-agent\nWORKDIR /\nCOPY --from=builder /workspace/restore-agent .\nUSER root:root\nENTRYPOINT [\"/restore-agent\"]\n"
+}

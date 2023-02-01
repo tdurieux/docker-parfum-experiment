@@ -1,0 +1,44 @@
+{
+  "startTime": 1674215068980,
+  "endTime": 1674215069955,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 45,
+        "lineEnd": 46,
+        "columnStart": 4,
+        "columnEnd": 88
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 49,
+        "lineEnd": 50,
+        "columnStart": 4,
+        "columnEnd": 106
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 53,
+        "lineEnd": 54,
+        "columnStart": 4,
+        "columnEnd": 84
+      }
+    },
+    {
+      "rule": "curlUseHttpsUrl",
+      "position": {
+        "lineStart": 45,
+        "lineEnd": 46,
+        "columnStart": 4,
+        "columnEnd": 88
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "ARG ARCH=armv7hf\nARG VERSION=3.5\nARG UBUNTU_VERSION=20.04\nARG REPO=axisecp\nARG SDK=acap-sdk\n\nFROM ${REPO}/${SDK}:${VERSION}-${ARCH}-ubuntu${UBUNTU_VERSION}\n\n# Build libyuv\nWORKDIR /opt/build\n# TODO: Investigate why server certs can't be verified\nRUN GIT_SSL_NO_VERIFY=1 git clone -n https://chromium.googlesource.com/libyuv/libyuv\nWORKDIR /opt/build/libyuv\nARG libyuv_version=5b6042fa0d211ebbd8b477c7f3855977c7973048\nRUN git checkout ${libyuv_version}\nCOPY yuv/*.patch /opt/build/libyuv\n\nARG ARCH\nRUN if [ \"$ARCH\" = armv7hf ]; then \\\n        git apply ./*.patch && \\\n        CXXFLAGS=' -O2 -mthumb -mfpu=neon -mfloat-abi=hard -mcpu=cortex-a9 -fomit-frame-pointer' \\\n        make -j -f linux.mk CXX=arm-linux-gnueabihf-g++ CC=arm-linux-gnueabihf-gcc && \\\n        arm-linux-gnueabihf-strip --strip-unneeded libyuv.so*; \\\n    elif [ \"$ARCH\" = aarch64 ]; then \\\n        git apply ./*.patch && \\\n        CXXFLAGS=' -O2 ' \\\n        make -j -f linux.mk CXX=/usr/bin/aarch64-linux-gnu-g++ CC=/usr/bin/aarch64-linux-gnu-gcc && \\\n        aarch64-linux-gnu-strip --strip-unneeded libyuv.so*; \\\n    else \\\n        printf \"Error: '%s' is not a valid value for the ARCH variable\\n\", \"$ARCH\"; \\\n        exit 1; \\\n    fi\n\n# Copy the library to application folder\nWORKDIR /opt/app\nCOPY ./app .\nARG BUILDDIR=/opt/build/libyuv\nRUN mkdir -p lib include && \\\n    cp ${BUILDDIR}/libyuv.so* lib/ && \\\n    cp -a ${BUILDDIR}/include/. include && \\\n    ln -s libyuv.so.1 lib/libyuv.so && \\\n    ln -s libyuv.so.1 lib/libyuv.so.1.0\n\n# Download models and labels\nRUN mkdir -p model && \\\n    curl -f -o model/mobilenet_v2_1.0_224_quant.tgz \\\n    https://download.tensorflow.org/models/tflite_11_05_08/mobilenet_v2_1.0_224_quant.tgz && \\\n    tar -xvf model/mobilenet_v2_1.0_224_quant.tgz -C model && \\\n    rm -f model/*.tgz model/*.pb* model/*.ckpt* model/*.meta model/*.txt && \\\n    curl -f -L -o model/mobilenet_v2_1.0_224_quant_edgetpu.tflite \\\n    https://github.com/google-coral/edgetpu/raw/master/test_data/mobilenet_v2_1.0_224_quant_edgetpu.tflite\n\nRUN mkdir -p label && \\\n    curl -f -L -o label/imagenet_labels.txt \\\n    https://github.com/google-coral/edgetpu/raw/master/test_data/imagenet_labels.txt\n\nARG CHIP=\n# Building the ACAP application\nRUN if [ \"$CHIP\" = cpu ] || [ \"$CHIP\" = artpec8 ]; then \\\n        cp /opt/app/manifest.json.${CHIP} /opt/app/manifest.json && \\\n        . /opt/axis/acapsdk/environment-setup* && acap-build . \\\n        -a 'label/imagenet_labels.txt' -a 'model/mobilenet_v2_1.0_224_quant.tflite'; \\\n    elif [ \"$CHIP\" = edgetpu ]; then \\\n        cp /opt/app/manifest.json.${CHIP} /opt/app/manifest.json && \\\n        . /opt/axis/acapsdk/environment-setup* && acap-build . \\\n        -a 'label/imagenet_labels.txt' -a 'model/mobilenet_v2_1.0_224_quant_edgetpu.tflite'; \\\n    else \\\n        printf \"Error: '%s' is not a valid value for the CHIP variable\\n\", \"$CHIP\"; \\\n        exit 1; \\\n    fi\n"
+}

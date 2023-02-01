@@ -1,0 +1,26 @@
+{
+  "startTime": 1674251534427,
+  "endTime": 1674251534937,
+  "originalSmells": [
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 44,
+        "lineEnd": 44,
+        "columnStart": 4,
+        "columnEnd": 15
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 15,
+        "lineEnd": 15,
+        "columnStart": 4,
+        "columnEnd": 28
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Sets linux/amd64 in case it's not injected by older Docker versions\nARG BUILDPLATFORM=linux/amd64\n\nARG ALPINE_VERSION=3.14\nARG STACKEDIT_VERSION=v5.14.10\nARG GO_VERSION=1.17\nARG XCPUTRANSLATE_VERSION=v0.6.0\nARG GOLANGCI_LINT_VERSION=v1.42.1\n\nFROM --platform=${BUILDPLATFORM} qmcgaw/xcputranslate:${XCPUTRANSLATE_VERSION} AS xcputranslate\nFROM --platform=${BUILDPLATFORM} qmcgaw/binpot:golangci-lint-${GOLANGCI_LINT_VERSION} AS golangci-lint\n\nFROM --platform=${BUILDPLATFORM} golang:${GO_VERSION}-alpine${ALPINE_VERSION} AS base\nENV CGO_ENABLED=0\nWORKDIR /tmp/gobuild\nRUN apk --update --no-cache add git g++\nCOPY --from=xcputranslate /xcputranslate /usr/local/bin/xcputranslate\nCOPY --from=golangci-lint /bin /go/bin/golangci-lint\nCOPY go.mod go.sum ./\nRUN go mod download\nCOPY main.go .\n\nFROM base AS lint\nCOPY .golangci.yml ./\nRUN golangci-lint run --timeout=10m\n\nFROM base AS server\nARG TARGETPLATFORM\nARG VERSION=unknown\nARG CREATED=\"an unknown date\"\nARG COMMIT=unknown\nRUN GOARCH=\"$(xcputranslate translate -targetplatform=${TARGETPLATFORM} -field arch)\" \\\n    GOARM=\"$(xcputranslate translate -targetplatform=${TARGETPLATFORM} -field arm)\" \\\n    go build -trimpath -ldflags=\"-s -w \\\n    -X 'main.version=$VERSION' \\\n    -X 'main.buildDate=$CREATED' \\\n    -X 'main.commit=$COMMIT' \\\n    \" -o app main.go\n\nFROM --platform=amd64 alpine:${ALPINE_VERSION} AS stackedit\nARG STACKEDIT_VERSION\nWORKDIR /stackedit\nRUN apk add -q --progress --update --no-cache git npm python3 make g++\nRUN git clone --branch ${STACKEDIT_VERSION} --single-branch --depth 1 https://github.com/benweet/stackedit.git . &> /dev/null\nRUN npm install && npm cache clean --force;\nENV NODE_ENV=production\nRUN sed -i \"s/assetsPublicPath: '\\/',/assetsPublicPath: '.\\/',/g\" config/index.js\nRUN npm run build\n\nFROM scratch AS final\nARG CREATED\nARG COMMIT\nARG STACKEDIT_VERSION\nLABEL \\\n    org.opencontainers.image.authors=\"quentin.mcgaw@gmail.com\" \\\n    org.opencontainers.image.created=$CREATED \\\n    org.opencontainers.image.version=$STACKEDIT_VERSION \\\n    org.opencontainers.image.revision=$COMMIT \\\n    org.opencontainers.image.url=\"https://github.com/qdm12/stackedit-docker\" \\\n    org.opencontainers.image.documentation=\"https://github.com/qdm12/stackedit-docker/blob/master/README.md\" \\\n    org.opencontainers.image.source=\"https://github.com/qdm12/stackedit-docker\" \\\n    org.opencontainers.image.title=\"stackedit-docker\" \\\n    org.opencontainers.image.description=\"StackEdit server in a lightweight Docker container\"\nEXPOSE 8000\nHEALTHCHECK --start-period=1s --interval=100s --timeout=2s --retries=1 CMD [\"/server\",\"healthcheck\"]\nUSER 1000\nENTRYPOINT [\"/server\"]\nENV \\\n    LISTENING_PORT=8000 \\\n    ROOT_URL=/ \\\n    NODE_ENV=production \\\n    PANDOC_PATH=pandoc \\\n    WKHTMLTOPDF_PATH=wkhtmltopdf \\\n    USER_BUCKET_NAME=stackedit-users \\\n    PAYPAL_RECEIVER_EMAIL= \\\n    DROPBOX_APP_KEY= \\\n    DROPBOX_APP_KEY_FULL= \\\n    GITHUB_CLIENT_ID= \\\n    GITHUB_CLIENT_SECRET= \\\n    GOOGLE_CLIENT_ID= \\\n    GOOGLE_API_KEY= \\\n    WORDPRESS_CLIENT_ID=\nCOPY --from=stackedit --chown=1000 /stackedit/dist   /html/dist\nCOPY --from=stackedit --chown=1000 /stackedit/static /html/static\nCOPY --from=server --chown=1000 /tmp/gobuild/app /server\n"
+}

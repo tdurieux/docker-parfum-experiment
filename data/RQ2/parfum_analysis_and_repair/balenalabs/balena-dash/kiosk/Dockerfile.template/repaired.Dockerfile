@@ -1,0 +1,3 @@
+FROM bh.cr/balenablocks/browser-%%BALENA_ARCH%%/2.3.8
+
+RUN install_packages cec-utils

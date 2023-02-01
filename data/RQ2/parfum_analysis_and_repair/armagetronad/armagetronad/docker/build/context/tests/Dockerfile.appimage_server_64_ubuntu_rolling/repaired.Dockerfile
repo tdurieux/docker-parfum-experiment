@@ -1,0 +1,7 @@
+FROM ubuntu:rolling
+# rolling = most recent
+
+COPY *.AppImage .
+RUN ./*.AppImage --appimage-extract-and-run --version
+
+RUN LD_DEBUG_APP=true ./*.AppImage --appimage-extract-and-run --version

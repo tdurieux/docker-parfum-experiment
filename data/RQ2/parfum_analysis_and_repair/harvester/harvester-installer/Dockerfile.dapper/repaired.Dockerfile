@@ -1,0 +1,49 @@
+FROM quay.io/costoolkit/releases-green:luet-toolchain-0.21.2 as luet
+FROM quay.io/costoolkit/releases-green:luet-makeiso-toolchain-0.4.0 as makeiso
+
+FROM registry.suse.com/bci/bci-base:15.3
+
+ARG http_proxy=$http_proxy
+ARG https_proxy=$https_proxy
+ARG no_proxy=$no_proxy
+ENV http_proxy=$http_proxy
+ENV https_proxy=$https_proxy
+ENV no_proxy=$no_proxy
+
+ARG HARVESTER_INSTALLER_OFFLINE_BUILD
+ENV HARVESTER_INSTALLER_OFFLINE_BUILD=$HARVESTER_INSTALLER_OFFLINE_BUILD
+
+ARG DAPPER_HOST_ARCH
+ENV ARCH $DAPPER_HOST_ARCH
+
+# mtools and dosfstools are requirements for luet-makeiso >= 0.4.0 to build hybrid ISO.
+RUN zypper -n rm container-suseconnect && \
+    zypper -n install go1.18 git curl docker gzip tar wget zstd squashfs xorriso awk jq mtools dosfstools
+RUN curl -sfL https://github.com/mikefarah/yq/releases/download/v4.21.1/yq_linux_${ARCH} -o /usr/bin/yq && chmod +x /usr/bin/yq
+RUN go install golang.org/x/lint/golint@latest
+RUN go install golang.org/x/tools/cmd/goimports@latest
+RUN if [ "${ARCH}" == "amd64" ]; then \
+        curl -f -sL https://install.goreleaser.com/github.com/golangci/golangci-lint.sh | sh -s v1.41.1; \
+    fi
+# set up helm
+ENV HELM_VERSION v3.3.1
+ENV HELM_URL=https://get.helm.sh/helm-${HELM_VERSION}-linux-${ARCH}.tar.gz
+RUN mkdir /usr/tmp && \
+    curl -f ${HELM_URL} | tar xvzf - --strip-components=1 -C /usr/tmp/ && \
+    mv /usr/tmp/helm /usr/bin/helm
+
+# luet & makeiso
+COPY --from=luet /usr/bin/luet /usr/bin/luet
+COPY --from=makeiso /usr/bin/luet-makeiso /usr/bin/luet-makeiso
+
+ENV DAPPER_ENV REPO TAG DRONE_TAG DRONE_BRANCH CROSS
+ENV DAPPER_SOURCE /go/src/github.com/harvester/harvester-installer/
+ENV DAPPER_OUTPUT ./bin ./dist
+ENV DAPPER_DOCKER_SOCKET true
+ENV DAPPER_RUN_ARGS "-v /run/containerd/containerd.sock:/run/containerd/containerd.sock -v harvester-installer-go:/root/go -v harvester-installer-cache:/root/.cache"
+
+ENV HOME ${DAPPER_SOURCE}
+WORKDIR ${DAPPER_SOURCE}
+
+ENTRYPOINT ["./scripts/entry"]
+CMD ["ci"]

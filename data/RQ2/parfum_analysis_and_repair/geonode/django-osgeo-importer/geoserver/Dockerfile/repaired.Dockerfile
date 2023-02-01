@@ -1,0 +1,1 @@
+# Provides this geoserver image with 'localhost' remapped to the host machine so db requests are made to host port 5432.

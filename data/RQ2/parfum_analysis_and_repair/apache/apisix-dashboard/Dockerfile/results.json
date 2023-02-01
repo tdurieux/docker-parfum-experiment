@@ -1,0 +1,26 @@
+{
+  "startTime": 1674252637562,
+  "endTime": 1674252638496,
+  "originalSmells": [
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 48,
+        "lineEnd": 48,
+        "columnStart": 43,
+        "columnEnd": 101
+      }
+    },
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 49,
+        "lineEnd": 49,
+        "columnStart": 7,
+        "columnEnd": 19
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "#\n# Licensed to the Apache Software Foundation (ASF) under one or more\n# contributor license agreements.  See the NOTICE file distributed with\n# this work for additional information regarding copyright ownership.\n# The ASF licenses this file to You under the Apache License, Version 2.0\n# (the \"License\"); you may not use this file except in compliance with\n# the License.  You may obtain a copy of the License at\n#\n#     http://www.apache.org/licenses/LICENSE-2.0\n#\n# Unless required by applicable law or agreed to in writing, software\n# distributed under the License is distributed on an \"AS IS\" BASIS,\n# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.\n# See the License for the specific language governing permissions and\n# limitations under the License.\n#\nFROM alpine:latest as pre-build\n\nARG APISIX_DASHBOARD_VERSION=master\n\nRUN set -x \\\n    && apk add --no-cache --virtual .builddeps git \\\n    && git clone https://github.com/apache/apisix-dashboard.git -b ${APISIX_DASHBOARD_VERSION} /usr/local/apisix-dashboard \\\n    && cd /usr/local/apisix-dashboard && git clean -Xdf \\\n    && rm -f ./.githash && git log --pretty=format:\"%h\" -1 > ./.githash\n\nFROM golang:1.15 as api-builder\n\nARG ENABLE_PROXY=false\n\nWORKDIR /usr/local/apisix-dashboard\n\nCOPY --from=pre-build /usr/local/apisix-dashboard .\n\nRUN if [ \"$ENABLE_PROXY\" = \"true\" ] ; then go env -w GOPROXY=https://goproxy.io,direct ; fi \\\n    && go env -w GO111MODULE=on \\\n    && CGO_ENABLED=0 ./api/build.sh\n\nFROM node:14-alpine as fe-builder\n\nARG ENABLE_PROXY=false\n\nWORKDIR /usr/local/apisix-dashboard\n\nCOPY --from=pre-build /usr/local/apisix-dashboard .\n\nWORKDIR /usr/local/apisix-dashboard/web\n\nRUN if [ \"$ENABLE_PROXY\" = \"true\" ] ; then \\\n yarn config set registry https://registry.npmmirror.com/ ; yarn cache clean; fi \\\n    && yarn install \\\n    && yarn build && yarn cache clean;\n\nFROM alpine:latest as prod\n\nARG ENABLE_PROXY=false\n\nRUN if [ \"$ENABLE_PROXY\" = \"true\" ] ; then sed -i 's/dl-cdn.alpinelinux.org/mirrors.ustc.edu.cn/g' /etc/apk/repositories ; fi\n\nWORKDIR /usr/local/apisix-dashboard\n\nCOPY --from=api-builder /usr/local/apisix-dashboard/output/ ./\n\nCOPY --from=fe-builder /usr/local/apisix-dashboard/output/ ./\n\nRUN mkdir logs\n\nEXPOSE 9000\n\nCMD [ \"/usr/local/apisix-dashboard/manager-api\" ]\n"
+}

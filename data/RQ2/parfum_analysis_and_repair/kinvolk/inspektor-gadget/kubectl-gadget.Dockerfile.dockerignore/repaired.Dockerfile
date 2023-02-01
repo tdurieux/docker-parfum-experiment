@@ -1,0 +1,9 @@
+*
+!go.mod
+!go.sum
+!cmd
+!pkg
+!tools
+!Makefile
+!*.mk
+!.git

@@ -1,0 +1,53 @@
+{
+  "startTime": 1674246019956,
+  "endTime": 1674246021412,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 84,
+        "lineEnd": 84,
+        "columnStart": 28,
+        "columnEnd": 92
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 63,
+        "lineEnd": 63,
+        "columnStart": 4,
+        "columnEnd": 46
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 74,
+        "lineEnd": 74,
+        "columnStart": 4,
+        "columnEnd": 60
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 91,
+        "lineEnd": 91,
+        "columnStart": 4,
+        "columnEnd": 63
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 50,
+        "lineEnd": 52,
+        "columnStart": 26,
+        "columnEnd": 18
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# This is a Dockerfile useful for training models with Coqui STT.\n# You can train \"acoustic models\" with audio + Tensorflow, and\n# you can create \"scorers\" with text + KenLM.\n\nFROM nvcr.io/nvidia/tensorflow:22.02-tf1-py3 AS kenlm-build\nENV DEBIAN_FRONTEND=noninteractive\n\nRUN apt-get update && \\\n    apt-get install -y --no-install-recommends \\\n        build-essential cmake libboost-system-dev \\\n        libboost-thread-dev libboost-program-options-dev \\\n        libboost-test-dev libeigen3-dev zlib1g-dev \\\n        libbz2-dev liblzma-dev && \\\n    rm -rf /var/lib/apt/lists/*\n\n# Build KenLM to generate new scorers\nWORKDIR /code\nCOPY kenlm /code/kenlm\nRUN cd /code/kenlm && \\\n    mkdir -p build && \\\n    cd build && \\\n    cmake .. && \\\n    make -j $(nproc) || \\\n    ( \\\n        echo \"ERROR: Failed to build KenLM.\" \\\n        echo \"ERROR: Make sure you update the kenlm submodule on host before building this Dockerfile.\" \\\n        echo \"ERROR: $ cd STT; git submodule update --init kenlm\" \\\n        exit 1 \\\n    )\n\nFROM nvcr.io/nvidia/tensorflow:22.02-tf1-py3\nENV DEBIAN_FRONTEND=noninteractive\n\nRUN apt-get update && \\\n    apt-get install -y --no-install-recommends \\\n        git \\\n        wget \\\n        libopus0 \\\n        libvorbisfile3 \\\n        libopusfile0 \\\n        libsndfile1 \\\n        sox \\\n        libsox-fmt-mp3 \\\n        python3-venv \\\n        software-properties-common && \\\n    rm -rf /var/lib/apt/lists/*\n\n# For exporting using TFLite\nRUN add-apt-repository ppa:deadsnakes/ppa -y\n\nRUN apt-get -qq update && apt-get -qq install -y --no-install-recommends \\\n    python3.7 \\\n    python3.7-venv && rm -rf /var/lib/apt/lists/*;\n\nRUN python3 -m venv --system-site-packages /venv\nENV VIRTUAL_ENV=/venv\n\n# Venv for upstream tensorflow with tflite api\nRUN python3.7 -m venv /tflite-venv\n\nENV PATH=\"$VIRTUAL_ENV/bin:/tflite-venv/bin:$PATH\"\n\n# Make sure pip and its dependencies are up-to-date\nRUN pip install --no-cache-dir --upgrade pip wheel setuptools\n\nWORKDIR /code\n\nCOPY native_client /code/native_client\nCOPY .git /code/.git\nCOPY training/coqui_stt_training/VERSION /code/training/coqui_stt_training/VERSION\nCOPY training/coqui_stt_training/GRAPH_VERSION /code/training/coqui_stt_training/GRAPH_VERSION\n\n# Build CTC decoder first, to avoid clashes on incompatible versions upgrades\nRUN cd native_client/ctcdecode && make NUM_PROCESSES=$(nproc) bindings\nRUN pip install --no-cache-dir --upgrade native_client/ctcdecode/dist/*.whl\n\nCOPY setup.py /code/setup.py\nCOPY VERSION /code/VERSION\nCOPY training /code/training\n# Copy files from previous build stages\nRUN mkdir -p /code/kenlm/build/\nCOPY --from=kenlm-build /code/kenlm/build/bin /code/kenlm/build/bin\n\n# Pre-built native client tools\nRUN LATEST_STABLE_RELEASE=$( curl -f \"https://api.github.com/repos/coqui-ai/STT/releases/latest\" | python -c 'import sys; import json; print(json.load(sys.stdin)[\"tag_name\"])') \\\n    bash -c 'curl -L https://github.com/coqui-ai/STT/releases/download/${LATEST_STABLE_RELEASE}/native_client.tflite.Linux.tar.xz | tar -xJvf -'\n\n# Install STT\n# No need for the decoder since we did it earlier\n# TensorFlow GPU should already be installed on the base image,\n# and we don't want to break that\nRUN DS_NODECODER=y DS_NOTENSORFLOW=y pip --no-cache-dir install --upgrade -e .\n\n# Install coqui_stt_training (inside tf-venv) for exporting models using tflite\nRUN /tflite-venv/bin/pip install -e .\n\n# Copy rest of the code and test training\nCOPY . /code\nRUN ./bin/run-ldc93s1.sh && rm -rf ~/.local/share/stt\n"
+}

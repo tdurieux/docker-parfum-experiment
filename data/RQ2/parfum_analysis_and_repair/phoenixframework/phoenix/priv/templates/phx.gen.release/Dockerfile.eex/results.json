@@ -1,0 +1,26 @@
+{
+  "startTime": 1674256085500,
+  "endTime": 1674256086431,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 24,
+        "lineEnd": 24,
+        "columnStart": 25,
+        "columnEnd": 63
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 70,
+        "lineEnd": 70,
+        "columnStart": 25,
+        "columnEnd": 82
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Find eligible builder and runner images on Docker Hub. We use Ubuntu/Debian instead of\n# Alpine to avoid DNS resolution issues in production.\n#\n# https://hub.docker.com/r/hexpm/elixir/tags?page=1&name=ubuntu\n# https://hub.docker.com/_/ubuntu?tab=tags\n#\n#\n# This file is based on these images:\n#\n#   - https://hub.docker.com/r/hexpm/elixir/tags - for the build image\n#   - https://hub.docker.com/_/debian?tab=tags&page=1&name=bullseye-20210902-slim - for the release image\n#   - https://pkgs.org/ - resource for finding needed packages\n#   - Ex: hexpm/elixir:<%= elixir_vsn %>-erlang-<%= otp_vsn %>-debian-bullseye-20210902-slim\n#\nARG ELIXIR_VERSION=<%= elixir_vsn %>\nARG OTP_VERSION=<%= otp_vsn %>\nARG DEBIAN_VERSION=bullseye-20210902-slim\n\nARG BUILDER_IMAGE=\"hexpm/elixir:${ELIXIR_VERSION}-erlang-${OTP_VERSION}-debian-${DEBIAN_VERSION}\"\nARG RUNNER_IMAGE=\"debian:${DEBIAN_VERSION}\"\n\nFROM ${BUILDER_IMAGE} as builder\n\n# install build dependencies\nRUN apt-get update -y && apt-get install --no-install-recommends -y build-essential git \\\n    && apt-get clean && rm -f /var/lib/apt/lists/*_*\n\n# prepare build dir\nWORKDIR /app\n\n# install hex + rebar\nRUN mix local.hex --force && \\\n    mix local.rebar --force\n\n# set build ENV\nENV MIX_ENV=\"prod\"\n\n# install mix dependencies\nCOPY mix.exs mix.lock ./\nRUN mix deps.get --only $MIX_ENV\nRUN mkdir config\n\n# copy compile-time config files before we compile dependencies\n# to ensure any relevant config change will trigger the dependencies\n# to be re-compiled.\nCOPY config/config.exs config/${MIX_ENV}.exs config/\nRUN mix deps.compile\n\nCOPY priv priv\n\nCOPY lib lib\n<%= if assets_dir_exists? do %>\nCOPY assets assets\n\n# compile assets\nRUN mix assets.deploy\n<% end %>\n# Compile the release\nRUN mix compile\n\n# Changes to config/runtime.exs don't require recompiling the code\nCOPY config/runtime.exs config/\n\nCOPY rel rel\nRUN mix release\n\n# start a new build stage so that the final image will only contain\n# the compiled release and other runtime necessities\nFROM ${RUNNER_IMAGE}\n\nRUN apt-get update -y && apt-get install --no-install-recommends -y libstdc++6 openssl libncurses5 locales \\\n  && apt-get clean && rm -f /var/lib/apt/lists/*_*\n\n# Set the locale\nRUN sed -i '/en_US.UTF-8/s/^# //g' /etc/locale.gen && locale-gen\n\nENV LANG en_US.UTF-8\nENV LANGUAGE en_US:en\nENV LC_ALL en_US.UTF-8\n\nWORKDIR \"/app\"\nRUN chown nobody /app\n\n# set runner ENV\nENV MIX_ENV=\"prod\"\n\n# Only copy the final release from the build stage\nCOPY --from=builder --chown=nobody:root /app/_build/${MIX_ENV}/rel/<%= otp_app %> ./\n\nUSER nobody\n\nCMD [\"/app/bin/server\"]\n"
+}

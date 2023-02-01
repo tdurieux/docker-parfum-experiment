@@ -1,0 +1,26 @@
+{
+  "startTime": 1674249216652,
+  "endTime": 1674249217086,
+  "originalSmells": [
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 19,
+        "lineEnd": 19,
+        "columnStart": 4,
+        "columnEnd": 67
+      }
+    },
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 76,
+        "lineEnd": 76,
+        "columnStart": 4,
+        "columnEnd": 66
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Global args, set before the first FROM, shared by all stages\nARG PORT=5678\nARG NODE_ENV=\"production\"\nARG ROOT_URL=\"http://localhost:${PORT}\"\nARG TARGET=\"server\"\n\n################################################################################\n# Build stage 1 - `yarn build`\n\nFROM node:12-alpine as builder\n# Import our shared args\nARG NODE_ENV\nARG ROOT_URL\nARG TARGET\n\n# Cache node_modules for as long as possible\nCOPY lerna.json package.json yarn.lock /app/\nCOPY @app/ /app/@app/\nWORKDIR /app/\nRUN yarn install --frozen-lockfile --production=false --no-progress && yarn cache clean;\n\nCOPY tsconfig.json /app/\n# Folders must be copied separately, files can be copied all at once\nCOPY scripts/ /app/scripts/\nCOPY data/ /app/data/\n\n# Finally run the build script\nRUN yarn run build\n\n################################################################################\n# Build stage 2 - COPY the relevant things (multiple steps)\n\nFROM node:12-alpine as clean\n# Import our shared args\nARG NODE_ENV\nARG ROOT_URL\nARG TARGET\n\n# Copy over selectively just the tings we need, try and avoid the rest\nCOPY --from=builder /app/lerna.json /app/package.json /app/yarn.lock /app/\nCOPY --from=builder /app/@app/config /app/@app/config\nCOPY --from=builder /app/@app/db /app/@app/db\nCOPY --from=builder /app/@app/graphql/ /app/@app/graphql/\nCOPY --from=builder /app/@app/client/package.json /app/@app/client/package.json\nCOPY --from=builder /app/@app/client/assets/ /app/@app/client/assets/\nCOPY --from=builder /app/@app/client/src/next.config.js /app/@app/client/src/next.config.js\nCOPY --from=builder /app/@app/$TARGET/package.json /app/@app/$TARGET/\nCOPY --from=builder /app/@app/$TARGET/dist/ /app/@app/$TARGET/dist/\nCOPY --from=builder /app/@app/client/.next /app/@app/client/.next\nCOPY --from=builder /app/@app/server/postgraphile.tags.jsonc /app/@app/server/\n\n# Shared args shouldn't be overridable at runtime (because they're baked into\n# the built JS).\n#\n# Further, they aren't available in ENTRYPOINT (because it's at runtime), so\n# push them to a .env file that we can source from ENTRYPOINT.\nRUN echo -e \"NODE_ENV=$NODE_ENV\\nROOT_URL=$ROOT_URL\\nTARGET=$TARGET\" > /app/.env\n\nRUN rm -Rf /app/node_modules /app/@app/*/node_modules\n\n################################################################################\n# Build stage FINAL - COPY everything, once, and then do a clean `yarn install`\n\nFROM node:12-alpine\n# Import our shared args\nARG PORT\nARG NODE_ENV\nARG ROOT_URL\nARG TARGET\n\nEXPOSE $PORT\nWORKDIR /app/\n# Copy everything from stage 2, it's already been filtered\nCOPY --from=clean /app/ /app/\n\n# Install yarn ASAP because it's the slowest\nRUN yarn install --frozen-lockfile --production=true --no-progress && yarn cache clean;\n\nLABEL description=\"My PostGraphile-powered $TARGET\"\n\n# You might want to disable GRAPHILE_TURBO if you have issues\nENV GRAPHILE_TURBO=1 TARGET=$TARGET PORT=$PORT\nENV DATABASE_HOST=\"pg\"\nENV DATABASE_NAME=\"graphile_starter\"\nENV DATABASE_OWNER=\"${DATABASE_NAME}\"\nENV DATABASE_VISITOR=\"${DATABASE_NAME}_visitor\"\nENV DATABASE_AUTHENTICATOR=\"${DATABASE_NAME}_authenticator\"\n\n# Entrypoint last so that we can run `sh` in previous build steps for debugging\nENTRYPOINT yarn \"${TARGET}\" start\n"
+}

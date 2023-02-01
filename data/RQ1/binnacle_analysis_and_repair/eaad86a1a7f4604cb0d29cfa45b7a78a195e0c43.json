@@ -1,0 +1,53 @@
+{
+  "startTime": 1674236343718,
+  "endTime": 1674236344241,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 86,
+        "lineEnd": 86,
+        "columnStart": 4,
+        "columnEnd": 101
+      }
+    },
+    {
+      "rule": "wgetUseHttpsUrl",
+      "position": {
+        "lineStart": 16,
+        "lineEnd": 16,
+        "columnStart": 4,
+        "columnEnd": 180
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 15,
+        "lineEnd": 15,
+        "columnStart": 4,
+        "columnEnd": 23
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 48,
+        "lineEnd": 48,
+        "columnStart": 4,
+        "columnEnd": 28
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 85,
+        "lineEnd": 85,
+        "columnStart": 4,
+        "columnEnd": 23
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "#######################################################################\n# Creates a base Centos 6.7 image with JBoss EAP-6.4.x                #\n#######################################################################\n\n# Use the centos 6.7 base image\nFROM centos:6.7\n\nMAINTAINER fbascheper <temp01@fam-scheper.nl>\n\n# Update the system\nRUN yum -y update;yum clean all\n\n##########################################################\n# Install Java JDK\n##########################################################\nRUN yum -y install wget && \\\n    wget --no-check-certificate --no-cookies --header \"Cookie: oraclelicense=accept-securebackup-cookie\" https://download.oracle.com/otn-pub/java/jdk/8u65-b17/jdk-8u65-linux-x64.rpm && \\\n    echo \"1e587aca2514a612b10935813b1cef28  jdk-8u65-linux-x64.rpm\" >> MD5SUM && \\\n    md5sum -c MD5SUM && \\\n    rpm -Uvh jdk-8u65-linux-x64.rpm && \\\n    yum -y remove wget && \\\n    rm -f jdk-8u65-linux-x64.rpm MD5SUM && rm -rf /var/cache/yum\n\nENV JAVA_HOME /usr/java/jdk1.8.0_65\n\n# Perform the \"Yes, I want grownup encryption\" Java ceremony\nRUN mkdir -p /tmp/UnlimitedJCEPolicy\nADD ./jce-unlimited/US_export_policy.jar /tmp/UnlimitedJCEPolicy/US_export_policy.jar\nADD ./jce-unlimited/local_policy.jar     /tmp/UnlimitedJCEPolicy/local_policy.jar\nRUN mv /tmp/UnlimitedJCEPolicy/*.*       $JAVA_HOME/jre/lib/security/\nRUN rm -rf /tmp/UnlimitedJCEPolicy*\n\n# Add CA certs\nADD ./trusted-root-ca/StaatderNederlandenRootCA-G2.pem     /tmp/StaatderNederlandenRootCA-G2.pem\nRUN $JAVA_HOME/bin/keytool -import -noprompt -trustcacerts -alias StaatderNederlandenRootCA-G2 -file  /tmp/StaatderNederlandenRootCA-G2.pem -keystore $JAVA_HOME/jre/lib/security/cacerts -storepass changeit\n\n\n##########################################################\n# Create jboss user\n##########################################################\n\n# add our user and group first to make sure their IDs get assigned consistently, regardless of whatever dependencies get added\nRUN groupadd -r jboss && useradd -r -g jboss -m -d /home/jboss jboss\n\n\n############################################\n# Install EAP 6.4.0.GA\n############################################\nRUN yum -y install zip unzip && rm -rf /var/cache/yum\n\nUSER jboss\nENV INSTALLDIR /home/jboss/EAP-6.4.0\nENV HOME /home/jboss\n\nRUN mkdir $INSTALLDIR && \\\n   mkdir $INSTALLDIR/distribution && \\\n   mkdir $INSTALLDIR/resources\n\n\nUSER root\nADD distribution $INSTALLDIR/distribution\nADD distribution-patches $INSTALLDIR/distribution-patches\nRUN chown -R jboss:jboss /home/jboss\nRUN find /home/jboss -type d -execdir chmod 770 {} \\;\nRUN find /home/jboss -type f -execdir chmod 660 {} \\;\n\nUSER jboss\nRUN unzip $INSTALLDIR/distribution/jboss-eap-6.4.0.zip  -d $INSTALLDIR\n\n# Add patch - EAP 6.4.5\nRUN $INSTALLDIR/jboss-eap-6.4/bin/jboss-cli.sh \"patch apply $INSTALLDIR/distribution/jboss-eap-6.4.5-patch.zip\"\n\n# ---------------------------------------------------------------------------------\n# JSF 2.1 API patch\n# See https://github.com/fbascheper/JBoss-EAP6-patch-01477141\n# ---------------------------------------------------------------------------------\n# Add oneoff patch - EBS-01477141-v2.patch\nRUN $INSTALLDIR/jboss-eap-6.4/bin/jboss-cli.sh \"patch apply $INSTALLDIR/distribution-patches/EBS-01477141-v2.patch.zip --override-all\"\n\n\n############################################\n# Create start script to run EAP instance\n############################################\nUSER root\n\nRUN yum -y install curl && rm -rf /var/cache/yum\nRUN curl -f -o /usr/local/bin/gosu -SL \"https://github.com/tianon/gosu/releases/download/1.3/gosu-amd64\" \\\n     && chmod +x /usr/local/bin/gosu\n\n\n############################################\n# Remove install artifacts\n############################################\nRUN rm -rf $INSTALLDIR/distribution\nRUN rm -rf $INSTALLDIR/distribution-patches\nRUN rm -rf $INSTALLDIR/resources\n\n############################################\n# Add customization sub-directories (for entrypoint)\n############################################\nADD docker-entrypoint-initdb.d  /docker-entrypoint-initdb.d\nRUN chown -R jboss:jboss        /docker-entrypoint-initdb.d\nRUN find /docker-entrypoint-initdb.d -type d -execdir chmod 770 {} \\;\nRUN find /docker-entrypoint-initdb.d -type f -execdir chmod 660 {} \\;\n\nADD modules  $INSTALLDIR/modules\nRUN chown -R jboss:jboss $INSTALLDIR/modules\nRUN find $INSTALLDIR/modules -type d -execdir chmod 770 {} \\;\nRUN find $INSTALLDIR/modules -type f -execdir chmod 660 {} \\;\n\n############################################\n# Expose paths and start JBoss\n############################################\n\nEXPOSE 22 5455 9999 8009 8080 8443 3528 3529 7500 45700 7600 57600 5445 23364 5432 8090 4447 4712 4713 9990 8787\n\nRUN mkdir /etc/jboss-as\nRUN mkdir /var/log/jboss/\nRUN chown jboss:jboss /var/log/jboss/\n\nCOPY docker-entrypoint.sh /\nRUN chmod 700 /docker-entrypoint.sh\n\n############################################\n# Start JBoss in stand-alone mode\n############################################\n\nENTRYPOINT [\"/docker-entrypoint.sh\"]\n\nCMD [\"start-jboss\"]\n"
+}

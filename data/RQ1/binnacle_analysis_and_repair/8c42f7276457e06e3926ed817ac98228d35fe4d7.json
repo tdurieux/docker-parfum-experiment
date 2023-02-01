@@ -1,0 +1,53 @@
+{
+  "startTime": 1674245811341,
+  "endTime": 1674245811475,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 44,
+        "lineEnd": 44,
+        "columnStart": 4,
+        "columnEnd": 124
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 49,
+        "lineEnd": 49,
+        "columnStart": 4,
+        "columnEnd": 111
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 11,
+        "lineEnd": 11,
+        "columnStart": 4,
+        "columnEnd": 34
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 6,
+        "lineEnd": 9,
+        "columnStart": 6,
+        "columnEnd": 14
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 34,
+        "lineEnd": 40,
+        "columnStart": 7,
+        "columnEnd": 14
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# 1.1 integration-test deps\n# Depends on pybuild because integration tests run Django shell to fiddle\n# with database.\nFROM python:3.6.6-slim-stretch AS base\n\nRUN apt-get update && \\\n      apt-get install -y --no-install-recommends \\\n        bzip2 \\\n        build-essential \\\n        cython && rm -rf /var/lib/apt/lists/*;\n\nRUN pip install --no-cache-dir pipenv==2018.11.26\n\nRUN true \\\n    && echo '#!/bin/sh\\ncd /app\\nexec pipenv run python \"$@\"' >/usr/bin/pipenv-run-python \\\n    && chmod +x /usr/bin/pipenv-run-python\n\n# Install the Python deps (common across worker & web server, for now)\nRUN mkdir /app\nWORKDIR /app\n\nCOPY autoscrape/ /app/autoscrape/\n\n# Flask API server\nCOPY autoscrape-server.py /app/\nCOPY www/ /app/www/\n\n# Install AutoScrape & celery dependencies (Firefox, etc)\n\n# Install Firefox deps (and curl, xvfb, vnc). Debian Stretch has Firefox v52,\n# which is way too old; but we'll install 52's dependencies and hope they\n# satisfy Firefox v63\nRUN apt-get update \\\n    && bash -c 'apt-get install -y --no-install-recommends $(apt-cache depends firefox-esr | awk \"/Depends:/{print\\$2}\")' \\\n    && apt-get install --no-install-recommends -y \\\n        curl \\\n        xauth \\\n        xvfb \\\n        bzip2 \\\n        build-essential \\\n        cython && rm -rf /var/lib/apt/lists/*;\n#    && rm -rf /var/lib/apt/lists/*\n\n# Install Firefox. It's a separate step so it's easier to resume docker build.\nRUN curl -f -L https://download-installer.cdn.mozilla.net/pub/firefox/releases/64.0.2/linux-x86_64/en-US/firefox-64.0.2.tar.bz2 \\\n        | tar jx -C /opt \\\n        && ln -s /opt/firefox/firefox /usr/bin/firefox\n\n# Install geckodriver. It's a separate step so it's easier to resume docker build.\nRUN curl -f -L https://github.com/mozilla/geckodriver/releases/download/v0.23.0/geckodriver-v0.23.0-linux64.tar.gz \\\n        | tar zx -C /usr/bin/ \\\n        && chmod +x /usr/bin/geckodriver\n\n# NOTE: Chrome/chromedriver explodes when ran as root, disabling this\n# until/if we ever fix that issue\n# # Install Chrome\n# RUN curl https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb -o /chrome.deb\n# RUN dpkg -i /chrome.deb || apt-get install -yf\n# RUN rm /chrome.deb\n# # Install chromedriver for Selenium\n# RUN curl https://chromedriver.storage.googleapis.com/2.31/chromedriver_linux64.zip -o /usr/bin/chromedriver\n# RUN chmod +x /usr/bin/chromedriver\n\nCOPY Pipfile Pipfile.lock /app/\nRUN pipenv install\n\nFROM autoscrape-worker-deps AS autoscrape-worker\nCMD [ \"pipenv\", \"run\", \"celery\", \"-A\", \"autoscrape.tasks\", \"worker\", \"--loglevel=info\" ]\n\nFROM autoscrape-server-deps AS autoscrape-server\nEXPOSE 5000\nCMD [ \"pipenv\", \"run\", \"python\", \"autoscrape-server.py\" ]\n\nFROM rabbitmq:3.7.8-management as rabbitmq\nEXPOSE 15672\n\n"
+}

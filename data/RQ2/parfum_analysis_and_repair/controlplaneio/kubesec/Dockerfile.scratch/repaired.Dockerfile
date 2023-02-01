@@ -1,0 +1,22 @@
+FROM golang:1.18-alpine AS builder
+
+RUN echo "kubesec:x:31012:31012:kubesec:/home/kubesec:/sbin/nologin" > /passwd && \
+    echo "kubesec:x:31012:" > /group
+WORKDIR /kubesec
+RUN apk add --no-cache git ca-certificates
+COPY . .
+RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o kubesec .
+
+# ===
+
+FROM scratch
+WORKDIR /home/kubsec
+COPY --from=stefanprodan/kubernetes-json-schema:latest /schemas/master-standalone /schemas/master-standalone-strict
+COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
+COPY --from=builder /passwd /group /etc/
+COPY --from=builder /kubesec/kubesec /kubesec
+COPY ./templates/ /templates
+USER kubesec
+
+ENTRYPOINT ["/kubesec"]
+CMD ["http", "8080"]

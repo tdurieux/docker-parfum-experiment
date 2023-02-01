@@ -1,0 +1,10 @@
+FROM golang:1.18.3
+
+ENV DISTRIBUTION_DIR /go/src/github.com/docker/distribution
+ENV BUILDTAGS include_oss include_gcs
+ENV GO111MODULE auto
+
+WORKDIR $DISTRIBUTION_DIR
+COPY . $DISTRIBUTION_DIR
+
+RUN CGO_ENABLED=0 make PREFIX=/go clean binaries

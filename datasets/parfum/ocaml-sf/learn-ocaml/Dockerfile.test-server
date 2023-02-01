@@ -1,0 +1,77 @@
+# This Dockerfile is useful for testing purposes
+# to ensure learn-ocaml can be built alone from learn-ocaml.opam
+
+FROM ocaml/opam:alpine-3.13-ocaml-4.12 as compilation
+LABEL Description="learn-ocaml building" Vendor="OCamlPro"
+
+WORKDIR /home/opam/learn-ocaml
+
+# Note: don't copy learn-ocaml.locked
+COPY learn-ocaml.opam learn-ocaml-client.opam ./
+RUN sudo chown -R opam:nogroup .
+
+ENV OPAMYES true
+RUN echo 'archive-mirrors: [ "https://opam.ocaml.org/cache" ]' >> ~/.opam/config \
+  && opam repository set-url default http://opam.ocaml.org \
+  && opam switch 4.12 \
+  && echo 'pre-session-commands: [ "sudo" "apk" "add" depexts ]' >> ~/.opam/config \
+  && opam pin add -n -y -k path learn-ocaml . \
+  && opam install learn-ocaml --deps-only
+
+COPY static static
+COPY translations translations
+COPY src src
+COPY scripts scripts
+COPY Makefile Makefile
+COPY demo-repository demo-repository
+COPY dune-project dune-project
+COPY dune dune
+RUN sudo chown -R opam:nogroup .
+
+ENV OPAMVERBOSE 1
+
+# Run "make detect-libs"
+ENV OPAMWITHTEST 1
+
+RUN opam install learn-ocaml --destdir /home/opam/install-prefix \
+  && ls -l /home/opam/install-prefix/bin/learn-ocaml
+
+
+FROM alpine:3.13 as program
+
+ARG BUILD_DATE
+ARG VCS_BRANCH
+ARG VCS_REF
+
+LABEL org.label-schema.build-date="${BUILD_DATE}" \
+  org.label-schema.name="learn-ocaml" \
+  org.label-schema.description="learn-ocaml app manager" \
+  org.label-schema.url="https://ocaml-sf.org/" \
+  org.label-schema.vendor="The OCaml Software Foundation" \
+  org.label-schema.version="${VCS_BRANCH}" \
+  org.label-schema.vcs-ref="${VCS_REF}" \
+  org.label-schema.vcs-url="https://github.com/ocaml-sf/learn-ocaml" \
+  org.label-schema.schema-version="1.0"
+
+RUN apk update \
+  && apk add ncurses-libs libev dumb-init git openssl \
+  && addgroup learn-ocaml \
+  && adduser learn-ocaml -DG learn-ocaml
+
+VOLUME ["/repository"]
+RUN mkdir -p /sync && chown learn-ocaml:learn-ocaml /sync
+VOLUME ["/sync"]
+EXPOSE 8080
+EXPOSE 8443
+
+USER learn-ocaml
+WORKDIR /home/learn-ocaml
+
+ARG opam_switch="/home/opam/.opam/4.12"
+
+COPY --from=compilation /home/opam/install-prefix /usr
+COPY --from=compilation "$opam_switch/bin"/ocaml* "$opam_switch/bin/"
+COPY --from=compilation "$opam_switch/lib/ocaml" "$opam_switch/lib/ocaml/"
+
+ENTRYPOINT ["dumb-init","/usr/bin/learn-ocaml","--sync-dir=/sync","--repo=/repository"]
+CMD ["build","serve"]

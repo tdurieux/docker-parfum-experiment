@@ -1,0 +1,45 @@
+# how to build and run exabgp using docker (from github with pip)
+# this Dockerfile does not require a local installation but the container is bigger
+
+# docker build --build-arg version=master -f Dockerfile.remote -t exabgp.remote ./
+# docker run -it exabgp.remote exabgp
+
+# debug the build
+# docker build --progress=plain --no-cache --build-arg version=master -f Dockerfile.remote -t exabgp ./
+
+FROM python:3-slim-buster
+
+ARG version="master"
+
+RUN apt update \
+    && apt -y dist-upgrade \
+    && apt install --no-install-recommends -y git \
+    && apt install --no-install-recommends -y dumb-init \
+    && rm -rf /var/lib/apt/lists/* /var/cache/apt/*
+
+ADD . /opt/exabgp
+RUN useradd -r exa \
+    && mkdir /etc/exabgp \
+    && mkfifo /run/exabgp.in \
+    && mkfifo /run/exabgp.out \
+    && chown exa /run/exabgp.in \
+    && chown exa /run/exabgp.out \
+    && chmod 600 /run/exabgp.in \
+    && chmod 600 /run/exabgp.out
+
+COPY <<EOF /usr/local/etc/exabgp/exabgp.env
+[exabgp.daemon]
+user = 'exa'
+EOF
+
+RUN cd /tmp \
+    && echo Building ${version} \
+    && pip install --no-cache-dir -U setuptools \
+    && pip install --no-cache-dir git+https://github.com/Exa-Networks/exabgp.git@${version}
+
+WORKDIR /etc/exabgp
+
+ENTRYPOINT [ \
+    "/usr/bin/dumb-init", "--", \ 
+    "/usr/local/bin/exabgp" \
+]

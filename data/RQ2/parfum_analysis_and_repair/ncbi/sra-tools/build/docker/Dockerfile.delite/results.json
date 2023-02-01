@@ -1,0 +1,53 @@
+{
+  "startTime": 1674217816219,
+  "endTime": 1674217816873,
+  "originalSmells": [
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 33,
+        "lineEnd": 33,
+        "columnStart": 4,
+        "columnEnd": 30
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 35,
+        "lineEnd": 35,
+        "columnStart": 4,
+        "columnEnd": 30
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 37,
+        "lineEnd": 37,
+        "columnStart": 4,
+        "columnEnd": 30
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 24,
+        "lineEnd": 24,
+        "columnStart": 30,
+        "columnEnd": 103
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 24,
+        "lineEnd": 24,
+        "columnStart": 30,
+        "columnEnd": 103
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Example:\n# % docker build -f Dockerfile.delite -t sratoolkit:delite .\n# % docker run --rm sratoolkit:delite vdb-dump --info SRR000123\n# acc    : SRR000123\n# path   : https://sra-downloadb.be-md.ncbi.nlm.nih.gov/sos1/sra-pub-run-5/SRR000123/SRR000123.3\n# size   : 2,975,717\n# type   : Table\n# platf  : SRA_PLATFORM_454\n# SEQ    : 4,583\n# SCHEMA : NCBI:SRA:_454_:tbl:v2#1.0.7\n# UPD    : vdb-copy\n# UPDVER : 2.1.7\n# UPDDATE: Mon Nov  7 18:13:09 2011 (11/7/2011 18:13)\n# % mkdir ~/output\n# % docker run -v ~/output/:/output:rw --rm sratoolkit:delite delite_docker.sh SRR000001 SRR000002\n# % docker run -v ~/output/:/output:rw --rm sratoolkit:delite vdb-dump -R 1 /output/SRR000001/new.kar\n# % docker run -v ~/output/:/output:rw --rm sratoolkit:delite delite_docker.sh --skiptest SRR000001\n# % docker run -v ~/output/:/output:rw --rm sratoolkit:delite delite_test_docker.sh SRR000001\n# If docker container run at AWS, \"-v /etc/pki:/etc/pki:ro -v /etc/ssl:/etc/ssl:ro\" should be added to command line.\n# % docker run -v ~/output/:/output:rw -v /etc/pki:/etc/pki:ro -v /etc/ssl:/etc/ssl:ro --rm sratoolkit:delite delite_docker.sh SRR000001\n#\n\n# bionic is 18.04 LTS\nFROM ubuntu:bionic AS build\nRUN apt-get --quiet update && apt-get --quiet --no-install-recommends install -y make cmake git gcc g++ flex bison uuid-runtime && rm -rf /var/lib/apt/lists/*;\nARG BUILD_STYLE=--without-debug\nARG NGS_BRANCH=engineering\nARG VDB_BRANCH=engineering\nARG SRA_BRANCH=engineering\nRUN git clone -b ${NGS_BRANCH} --depth 1 https://github.com/ncbi/ngs.git\nRUN git clone -b ${VDB_BRANCH} --depth 1 https://github.com/ncbi/ncbi-vdb.git\nRUN git clone -b ${SRA_BRANCH} --depth 1 https://github.com/ncbi/sra-tools.git\nWORKDIR /ncbi-vdb\nRUN ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" ${BUILD_STYLE} && make -s >/dev/null 2>&1 || { echo \"make failed\"; exit 1; }\nWORKDIR /ngs\nRUN ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" ${BUILD_STYLE} && make -s -C ngs-sdk >/dev/null 2>&1 || { echo \"make failed\"; exit 1; }\nWORKDIR /sra-tools\nRUN ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" ${BUILD_STYLE} && make -s >/dev/null 2>&1 || { echo \"make failed\"; exit 1; }\nRUN make install\n\nFROM build AS delited\n### Install delite process binaries and script\nRUN cp -a /root/ncbi-outdir/sra-tools/*/*/*/*/bin/kar+* /root/ncbi-outdir/sra-tools/*/*/*/*/bin/make-read-filter* /sra-tools/tools/kar/sra_delite.sh /sra-tools/tools/kar/sra_delite.kfg /sra-tools/tools/kar/delite_docker.sh /sra-tools/tools/kar/delite_docker_local.sh /sra-tools/tools/kar/delite_test_docker.sh /usr/local/ncbi/sra-tools/bin\nRUN chmod ugo+x /usr/local/ncbi/sra-tools/bin/delite_docker.sh /usr/local/ncbi/sra-tools/bin/delite_test_docker.sh /usr/local/ncbi/sra-tools/bin/delite_docker_local.sh\n### Copy schema files\nWORKDIR /ncbi-vdb/interfaces\nRUN rm -rf csra2 sra/pevents.* ; for i in */*.vschema ; do mkdir -p /schema/`dirname $i` ; cp $i /schema/`dirname $i` ; done\n### Generate installation stamp\nRUN mkdir -p /root/.ncbi\nRUN printf '/LIBS/GUID = \"%s\"\\n' `uuidgen` > /root/.ncbi/user-settings.mkfg\nRUN printf '/libs/cloud/report_instance_identity = \"true\"\\n' >> /root/.ncbi/user-settings.mkfg\nRUN printf '/libs/cloud/accept_aws_charges = \"true\"\\n/libs/cloud/accept_gcp_charges = \"true\"\\n' >> /root/.ncbi/user-settings.mkfg\nRUN printf 'DELITE_GUID=%s\\n' `uuidgen` >> /usr/local/ncbi/sra-tools/bin/sra_delite.kfg\n\nFROM ubuntu:bionic\nCOPY --from=delited /etc/ncbi /etc/ncbi\nCOPY --from=delited /usr/local/ncbi /usr/local/ncbi\n#COPY --from=delited /build-id /root/.ncbi/build-id\nCOPY --from=delited /schema /etc/ncbi/schema\nCOPY --from=delited /root/.ncbi/user-settings.mkfg /root/.ncbi/user-settings.mkfg\n\nENV PATH=/usr/local/ncbi/sra-tools/bin:${PATH}\n# ENV SCHEMA_PATH=/etc/ncbi/schema\n"
+}

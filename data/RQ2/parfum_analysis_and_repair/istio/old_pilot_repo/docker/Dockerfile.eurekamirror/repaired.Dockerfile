@@ -1,0 +1,1 @@
+# This is used for internal Eureka testing. Mirrors k8s endpoint instances to an Eureka server.

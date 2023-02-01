@@ -1,0 +1,25 @@
+FROM ubuntu:19.10
+
+
+RUN apt-get update && apt-get -y dist-upgrade
+
+RUN apt-get -y --no-install-recommends install python3 python-dev python3-dev \
+     build-essential libssl-dev libffi-dev \
+     libxml2-dev libxslt1-dev zlib1g-dev \
+     python-pip ipython3 python3-pip && rm -rf /var/lib/apt/lists/*;
+
+COPY . /rafMetrics
+WORKDIR /rafMetrics
+
+# Install requirements for Python modules
+RUN pip3 install --no-cache-dir -r requirements.txt
+
+# Allows for log messages to be immediately dumped
+ENV PYTHONUNBUFFERED=1
+
+# Execute Resource management
+ENV PYTHONPATH="/rafMetrics"
+ENTRYPOINT ["python3", "./WebMonitoring/ResourceManager.py"]
+
+# For development purpose only
+# ENTRYPOINT ["tail", "-f", "/dev/null"]

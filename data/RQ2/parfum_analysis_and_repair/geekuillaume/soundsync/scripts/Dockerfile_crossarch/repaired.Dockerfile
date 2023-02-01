@@ -1,0 +1,15 @@
+FROM arm32v7/debian:buster
+
+RUN apt-get update && apt-get install --no-install-recommends -y curl build-essential cmake libasound2-dev git ruby-full && rm -rf /var/lib/apt/lists/*;
+RUN ( curl -f -ksS https://curl.haxx.se/ca/cacert.pem | tee /etc/ssl/certs/cacert.pem) && update-ca-certificates -f
+RUN curl -f -sSL https://deb.nodesource.com/setup_16.x | bash -
+RUN ( curl -f -sS https://dl.yarnpkg.com/debian/pubkey.gpg | apt-key add -) && \
+  (echo "deb https://dl.yarnpkg.com/debian/ stable main" | tee /etc/apt/sources.list.d/yarn.list) && \
+  apt-get update && apt-get install --no-install-recommends -y yarn && rm -rf /var/lib/apt/lists/*;
+
+# FPM installed by electron-builder is the x64 version so we need to install it ourself
+# we use a fixed version for fpm because of this issue https://github.com/jordansissel/fpm/issues/1612
+RUN gem install fpm -v 1.10.2
+ENV USE_SYSTEM_FPM="true"
+
+WORKDIR /workspace

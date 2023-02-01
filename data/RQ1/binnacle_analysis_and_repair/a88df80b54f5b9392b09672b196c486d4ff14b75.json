@@ -1,0 +1,89 @@
+{
+  "startTime": 1674243184474,
+  "endTime": 1674243184743,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 46,
+        "lineEnd": 46,
+        "columnStart": 4,
+        "columnEnd": 100
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 39,
+        "lineEnd": 39,
+        "columnStart": 4,
+        "columnEnd": 29
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 67,
+        "lineEnd": 67,
+        "columnStart": 28,
+        "columnEnd": 60
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 72,
+        "lineEnd": 72,
+        "columnStart": 28,
+        "columnEnd": 42
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 36,
+        "lineEnd": 36,
+        "columnStart": 4,
+        "columnEnd": 15
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 34,
+        "lineEnd": 34,
+        "columnStart": 4,
+        "columnEnd": 33
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 1,
+        "lineEnd": 31,
+        "columnStart": 22,
+        "columnEnd": 16
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 1,
+        "lineEnd": 31,
+        "columnStart": 22,
+        "columnEnd": 16
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 56,
+        "lineEnd": 62,
+        "columnStart": 22,
+        "columnEnd": 22
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM ubuntu:16.04 as DEV\nRUN apt-get update && apt-get install --no-install-recommends -y \\\n            autoconf \\\n            automake \\\n            build-essential \\\n            ca-certificates \\\n            curl \\\n            gcc-multilib \\\n            git \\\n            g++-multilib \\\n            gstreamer1.0-plugins-base \\\n            libavcodec-dev \\\n            libavformat-dev \\\n            libboost-regex-dev \\\n            libcairo2-dev \\\n            libgfortran3 \\\n            libglib2.0-dev \\\n            libgstreamer1.0-0 \\\n            libgtk2.0-dev \\\n            libopenblas-dev \\\n            libpango1.0-dev \\\n            libpng12-dev \\\n            libssl-dev \\\n            libswscale-dev \\\n            libtool \\\n            libusb-1.0-0-dev \\\n            pkg-config \\\n            python3-pip \\\n            python-dev \\\n            unzip \\\n            vim \\\n            wget && rm -rf /var/lib/apt/lists/*;\n\nRUN wget https://cmake.org/files/v3.14/cmake-3.14.3.tar.gz && \\\n    tar -xvzf cmake-3.14.3.tar.gz && \\\n    cd cmake-3.14.3/ && \\\n    ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" && \\\n    make -j$(nproc) && \\\n    make install && rm cmake-3.14.3.tar.gz\nRUN pip3 install --no-cache-dir cython numpy\nARG DLDT_DIR=/2019_R1.0.1\nRUN git clone --depth=1 -b 2019_R1.0.1 https://github.com/opencv/dldt.git ${DLDT_DIR} && \\\n    cd ${DLDT_DIR} && git submodule init && git submodule update --recursive && \\\n    rm -Rf .git && rm -Rf model-optimizer\n\nWORKDIR ${DLDT_DIR}\nRUN curl -f -L https://github.com/intel/mkl-dnn/releases/download/v0.18/mklml_lnx_2019.0.3.20190220.tgz | tar -xz\nWORKDIR ${DLDT_DIR}/inference-engine/build\nRUN cmake -DGEMM=MKL  -DMKLROOT=${DLDT_DIR}/mklml_lnx_2019.0.3.20190220 -DENABLE_MKL_DNN=ON -DTHREADING=OMP -DCMAKE_BUILD_TYPE=Release ..\nRUN make -j$(nproc)\nWORKDIR ${DLDT_DIR}/inference-engine/ie_bridges/python/build\nRUN cmake -DInferenceEngine_DIR=${DLDT_DIR}/inference-engine/build -DPYTHON_EXECUTABLE=$(which python3) -DPYTHON_LIBRARY=/usr/lib/x86_64-linux-gnu/libpython3.5m.so -DPYTHON_INCLUDE_DIR=/usr/include/python3.5m ${DLDT_DIR}/inference-engine/ie_bridges/python && \\\n    make -j$(nproc)\n\nFROM ubuntu:16.04 as PROD\n\nRUN apt-get update && apt-get install -y --no-install-recommends \\\n            ca-certificates \\\n            curl \\\n            libgomp1 \\\n            python3-dev \\\n            python3-pip \\\n            virtualenv && rm -rf /var/lib/apt/lists/*;\nWORKDIR /ie-serving-py\n\nCOPY requirements.txt /ie-serving-py/\nRUN virtualenv -p python3 .venv && \\\n    . .venv/bin/activate && pip3 install --no-cache-dir -r requirements.txt\n\nCOPY start_server.sh setup.py requirements.txt version /ie-serving-py/\nCOPY ie_serving /ie-serving-py/ie_serving\n\nRUN . .venv/bin/activate && pip3 install --no-cache-dir .\n\nCOPY --from=DEV /2019_R1.0.1/inference-engine/bin/intel64/Release/lib/*.so /usr/local/lib/\nCOPY --from=DEV /2019_R1.0.1/inference-engine/ie_bridges/python/bin/intel64/Release/python_api/python3.5/openvino/ /usr/local/lib/openvino/\nCOPY --from=DEV /2019_R1.0.1/mklml_lnx_2019.0.3.20190220/lib/lib*.so /usr/local/lib/\nENV LD_LIBRARY_PATH=/usr/local/lib\nENV PYTHONPATH=/usr/local/lib\n\n"
+}

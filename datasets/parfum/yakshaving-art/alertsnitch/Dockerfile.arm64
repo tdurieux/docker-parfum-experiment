@@ -1,0 +1,7 @@
+FROM registry.yakshaving.art:443/tools/multiarch-alpine-base:latest
+
+COPY alertsnitch-arm64 /alertsnitch
+
+EXPOSE 9567
+
+ENTRYPOINT [ "/alertsnitch" ]

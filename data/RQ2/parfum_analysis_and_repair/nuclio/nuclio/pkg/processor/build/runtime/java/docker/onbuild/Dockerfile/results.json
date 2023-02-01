@@ -1,0 +1,35 @@
+{
+  "startTime": 1674248483371,
+  "endTime": 1674248484608,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 32,
+        "lineEnd": 32,
+        "columnStart": 7,
+        "columnEnd": 89
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 56,
+        "lineEnd": 56,
+        "columnStart": 4,
+        "columnEnd": 114
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 31,
+        "lineEnd": 31,
+        "columnStart": 7,
+        "columnEnd": 72
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Copyright 2017 The Nuclio Authors.\n#\n# Licensed under the Apache License, Version 2.0 (the \"License\");\n# you may not use this file except in compliance with the License.\n# You may obtain a copy of the License at\n#\n#\t http://www.apache.org/licenses/LICENSE-2.0\n#\n# Unless required by applicable law or agreed to in writing, software\n# distributed under the License is distributed on an \"AS IS\" BASIS,\n# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.\n# See the License for the specific language governing permissions and\n# limitations under the License.\n\nARG NUCLIO_LABEL=latest\nARG NUCLIO_ARCH=amd64\nARG NUCLIO_DOCKER_REPO=quay.io/nuclio\n\n# Supplies processor\nFROM ${NUCLIO_DOCKER_REPO}/processor:${NUCLIO_LABEL}-${NUCLIO_ARCH} as processor\n\nFROM gcr.io/iguazio/openjdk:11-slim as user-handler-builder\n\nENV GRADLEVERSION=5.6.4\n\nRUN apt-get update -qqy \\\n    && apt-get -s dist-upgrade | \\\n        grep \"^Inst\" | \\\n        grep -i securi | \\\n        awk -F \" \" {'print $2'} | \\\n        xargs apt-get install -y --no-install-recommends \\\n    && apt-get install --no-install-recommends -o APT::Immediate-Configure=false -qqy unzip curl \\\n    && curl -f -LO https://services.gradle.org/distributions/gradle-${GRADLEVERSION}-bin.zip \\\n    && unzip gradle-${GRADLEVERSION}-bin.zip \\\n    && rm gradle-${GRADLEVERSION}-bin.zip \\\n    && ln -s /gradle-${GRADLEVERSION}/bin/gradle /usr/local/bin \\\n    && apt-get clean \\\n    && rm -rf /var/lib/apt/lists/* \\\n    && mkdir /home/gradle\n\nWORKDIR /home/gradle\n\n# Copy processor\nCOPY --from=processor /home/nuclio/bin/processor /home/gradle/bin/processor\n\n#\n# Build user handler jar\n#\n\nRUN mkdir -p /home/gradle/src/userHandler\n\n# Copy the user handler builder script\nCOPY pkg/processor/build/runtime/java/docker/onbuild/build-user-handler.sh /home/gradle/src/userHandler/build-user-handler.sh\nRUN chmod +x /home/gradle/src/userHandler/build-user-handler.sh\n\n# Download the nuclio SDK Jar\nRUN curl -f -LO https://repo1.maven.org/fromsearch?filepath=io/nuclio/nuclio-sdk-java/1.1.0/nuclio-sdk-java-1.1.0.jar\n\n# Copy the downloaded SDK Jar to the userHandler folder\nRUN cp nuclio-sdk-java-1.1.0.jar /home/gradle/src/userHandler/nuclio-sdk-java-1.1.0.jar\n\n# Copy the gradle build script and user sources to /home/gradle/src/userHandler\nONBUILD COPY handler/build.gradle /home/gradle/src/userHandler\n\n# Specify the directory where the handler is kept. By default it is the context dir, but it is overridable\nONBUILD ARG NUCLIO_BUILD_LOCAL_HANDLER_DIR=.\n\n# Copy the entire code to /home/gradle/src/userHandler, where gradle expects it to reside. Note that\n# this will also copy build.gradle... but we'll ignore it\nONBUILD COPY ${NUCLIO_BUILD_LOCAL_HANDLER_DIR} /home/gradle/src/userHandler\n\n# Run the handle builder to create /home/gradle/src/userHandler/build/libs/user-handler.jar.\nONBUILD RUN cd /home/gradle/src/userHandler \\\n    && ./build-user-handler.sh\n\n#\n# Build wrapper\n#\n\n# Create wrapper directory\nRUN mkdir -p /home/gradle/src/wrapper\n\n# Copy user-handler generated earlier to wrapper\nONBUILD RUN mv /home/gradle/src/userHandler/build/libs/user-handler.jar /home/gradle/src/wrapper/user-handler.jar\n\n# The directory will hold wrapper source, SDK jar, user-handler.jar and wrapper gradle build script\nCOPY pkg/processor/runtime/java/build.gradle \\\n    pkg/processor/runtime/java/docker \\\n    pkg/processor/build/runtime/java/docker/onbuild/build-wrapped-handler.sh \\\n    /home/gradle/src/wrapper/\n\n# Copy also the downloaded nuclio SDK Jar to the wrapper folder\nRUN cp nuclio-sdk-java-1.1.0.jar /home/gradle/src/wrapper/nuclio-sdk-java-1.1.0.jar\n\n# Download dependencies\nRUN cd /home/gradle/src/wrapper \\\n    && gradle --build-cache compileJava\n\n# Build nuclio-java-wrapper.jar\nONBUILD RUN /home/gradle/src/wrapper/build-wrapped-handler.sh\n"
+}

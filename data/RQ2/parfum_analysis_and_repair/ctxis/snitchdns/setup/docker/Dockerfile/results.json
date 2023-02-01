@@ -1,0 +1,17 @@
+{
+  "startTime": 1674252612914,
+  "endTime": 1674252614045,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 25,
+        "lineEnd": 33,
+        "columnStart": 4,
+        "columnEnd": 12
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM ubuntu:20.04\nARG DEBIAN_FRONTEND=noninteractive\n\n# Locations.\nARG INSTALL_PATH=/opt/snitchdns\nARG DATA_PATH=$INSTALL_PATH/data\nARG CONFIG_PATH=$DATA_PATH/config\nARG REPO=https://github.com/ctxis/SnitchDNS\n\n# Configuration.\nARG SNITCHDNS_DBMS=sqlite\nARG SNITCHDNS_DB_USER=none\nARG SNITCHDNS_DB_PW=none\nARG SNITCHDNS_DB_URL=none\nARG SNITCHDNS_DB_DB=none\nARG SNITCHDNS_SECRET_KEY=RosesAreRedVioletsAreBlueThisMustBeSecretAsWellAsLongToo\n\nARG SNITCH_DOMAIN=www.snitch.docker\nARG BASE_DOMAIN=snitchdns.docker\n\nENV LC_ALL=C.UTF-8\nENV LANG=C.UTF-8\n\n# Install pre-requisites.\nRUN apt update && \\\n    apt install --no-install-recommends -y \\\n    git \\\n    python3-pip \\\n    python3-venv \\\n    libpq-dev \\\n    apache2 \\\n    openssl \\\n    cron \\\n    iptables && rm -rf /var/lib/apt/lists/*\n\n# Install SnitchDNS.\nRUN git clone $REPO /opt/snitchdns\n\nWORKDIR $INSTALL_PATH\n\nRUN python3 -m venv venv && \\\n    . venv/bin/activate && \\\n    pip --no-cache-dir install -r requirements.txt && \\\n    deactivate\n\n# Configure SnitchDNS.\nRUN mkdir -p $CONFIG_PATH/env\nRUN mkdir -p $CONFIG_PATH/service\nRUN mkdir -p $CONFIG_PATH/http\nRUN touch $CONFIG_PATH/env/snitch.conf && \\\n    echo SNITCHDNS_DBMS=$SNITCHDNS_DBMS > $CONFIG_PATH/env/snitch.conf && \\\n    echo SNITCHDNS_DB_USER=$SNITCHDNS_DB_USER >> $CONFIG_PATH/env/snitch.conf && \\\n    echo SNITCHDNS_DB_PW=$SNITCHDNS_DB_PW >> $CONFIG_PATH/env/snitch.conf && \\\n    echo SNITCHDNS_DB_URL=$SNITCHDNS_DB_URL >> $CONFIG_PATH/env/snitch.conf && \\\n    echo SNITCHDNS_DB_DB=$SNITCHDNS_DB_DB >> $CONFIG_PATH/env/snitch.conf && \\\n    echo SNITCHDNS_SECRET_KEY=$SNITCHDNS_SECRET_KEY >> $CONFIG_PATH/env/snitch.conf\nRUN ln -s $CONFIG_PATH/env/snitch.conf $INSTALL_PATH/.env\n\nRUN ./venv.sh flask db init && \\\n    ./venv.sh flask db migrate && \\\n    ./venv.sh flask db upgrade && \\\n    ./venv.sh flask snitchdb && \\\n    ./venv.sh flask crontab add\n\nRUN ./venv.sh flask settings set --name dns_daemon_bind_ip --value 0.0.0.0 && \\\n    ./venv.sh flask settings set --name dns_daemon_bind_port --value 2024 && \\\n    ./venv.sh flask settings set --name dns_base_domain --value $BASE_DOMAIN\n\nRUN a2enmod proxy proxy_http rewrite ssl\nRUN openssl req \\\n    -x509 \\\n    -nodes \\\n    -days 3650 \\\n    -newkey rsa:2048 \\\n    -keyout $CONFIG_PATH/http/ssl.pem \\\n    -out $CONFIG_PATH/http/ssl.crt \\\n    -subj \"/C=GB/CN=${SNITCH_DOMAIN}\"\n\nRUN cp ./setup/ansible/roles/webserver/templates/apache/ubuntu.vhost.conf.j2 $CONFIG_PATH/http/vhost.conf\nRUN sed -i \"s|https://{{|http://{{|g\" $CONFIG_PATH/http/vhost.conf\nRUN sed -i \"s|{{ web.domain }}|${SNITCH_DOMAIN}|g\" $CONFIG_PATH/http/vhost.conf\nRUN sed -i \"s|{{ web.bind_host }}|127.0.0.1|g\" $CONFIG_PATH/http/vhost.conf\nRUN sed -i \"s|{{ web.bind_port }}|8888|g\" $CONFIG_PATH/http/vhost.conf\nRUN sed -i \"s|{{ var_data_path }}|${DATA_PATH}|g\" $CONFIG_PATH/http/vhost.conf\nRUN ln -s $CONFIG_PATH/http/vhost.conf /etc/apache2/sites-available/snitch.conf\nRUN a2ensite snitch.conf\n\nVOLUME $DATA_PATH\n\nEXPOSE 80 443 2024\n\nCMD [\"/bin/bash\", \"setup/docker/entrypoint.sh\"]"
+}

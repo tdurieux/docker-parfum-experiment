@@ -1,0 +1,1 @@
+# image-name: ghcr.io/dena/unity-meta-check/unity-meta-check-gh-action

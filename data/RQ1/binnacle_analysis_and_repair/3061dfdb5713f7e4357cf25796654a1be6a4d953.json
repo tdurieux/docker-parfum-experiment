@@ -1,0 +1,44 @@
+{
+  "startTime": 1674246301023,
+  "endTime": 1674246301560,
+  "originalSmells": [
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 68,
+        "lineEnd": 68,
+        "columnStart": 36,
+        "columnEnd": 47
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 112,
+        "lineEnd": 120,
+        "columnStart": 4,
+        "columnEnd": 30
+      }
+    },
+    {
+      "rule": "gpgUseBatchFlag",
+      "position": {
+        "lineStart": 95,
+        "lineEnd": 95,
+        "columnStart": 4,
+        "columnEnd": 28
+      }
+    },
+    {
+      "rule": "gpgUseBatchFlag",
+      "position": {
+        "lineStart": 96,
+        "lineEnd": 96,
+        "columnStart": 19,
+        "columnEnd": 81
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM alpine:3.6\n\nENV UID=991 GID=991\n\nARG NGINX_VERSION=1.13.5\nARG GPG_NGINX=\"B0F4 2533 73F8 F6F5 10D4  2178 520A 9993 A1C0 52F8\"\nARG BUILD_CORES\n\nARG NGINX_MODULES=\" \\\n    --with-http_ssl_module \\\n    --with-http_v2_module \\\n    --with-http_gzip_static_module \\\n    --with-http_stub_status_module \\\n    --with-file-aio \\\n    --with-threads \\\n    --with-pcre-jit \\\n    --without-http_ssi_module \\\n    --without-http_scgi_module \\\n    --without-http_uwsgi_module \\\n    --without-http_geo_module \\\n    --without-http_autoindex_module \\\n    --without-http_split_clients_module \\\n    --without-http_memcached_module \\\n    --without-http_empty_gif_module \\\n    --without-http_browser_module\"\n\nARG NGINX_3RD_PARTY_MODULES=\" \\\n    --add-module=/tmp/headers-more-nginx-module \\\n    --add-module=/tmp/ngx_brotli\"\n\nRUN NB_CORES=${BUILD_CORES-$(getconf _NPROCESSORS_CONF)} \\\n\n# Update system\n && apk -U upgrade \\\n\n# Installing runtime dependencies\n && apk add \\\n    ${BUILD_DEPS} \\\n    pcre \\\n    zlib \\\n    libgcc \\\n    libstdc++ \\\n    jemalloc \\\n    su-exec \\\n    libressl \\\n    bind-tools \\\n    tini \\\n\n# Installing build dependencies\n && apk add -t build-dependencies \\\n    build-base \\\n    linux-headers \\\n    ca-certificates \\\n    automake \\\n    autoconf \\\n    git \\\n    jemalloc-dev \\\n    tar \\\n    libtool \\\n    pcre-dev \\\n    zlib-dev \\\n    binutils \\\n    gnupg \\\n    cmake \\\n    go \\\n\n# Brotli\n && cd /tmp && git clone https://github.com/bagder/libbrotli --depth=1 \\\n && cd libbrotli && ./autogen.sh && ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" && make -j ${NB_CORES} && make install \\\n && cd /tmp && git clone https://github.com/google/ngx_brotli --depth=1 \\\n && cd ngx_brotli && git submodule update --init \\\n\n# Headers More\n && cd /tmp && git clone https://github.com/openresty/headers-more-nginx-module --depth=1 \\\n\n# BoringSSL\n && git clone https://boringssl.googlesource.com/boringssl --depth=1 \\\n && cd boringssl \\\n && sed -i 's@out \\([>=]\\) TLS1_2_VERSION@out \\1 TLS1_3_VERSION@' ssl/ssl_lib.cc \\\n && sed -i 's@ssl->version[ ]*=[ ]*TLS1_2_VERSION@ssl->version = TLS1_3_VERSION@' ssl/s3_lib.cc \\\n && sed -i 's@(SSL3_VERSION, TLS1_2_VERSION@(SSL3_VERSION, TLS1_3_VERSION@' ssl/ssl_test.cc \\\n && sed -i 's@\\$shaext[ ]*=[ ]*0;@\\$shaext = 1;@' crypto/*/asm/*.pl \\\n && sed -i 's@\\$avx[ ]*=[ ]*[0|1];@\\$avx = 2;@' crypto/*/asm/*.pl \\\n && sed -i 's@\\$addx[ ]*=[ ]*0;@\\$addx = 1;@' crypto/*/asm/*.pl \\\n && mkdir build && cd build && cmake -DCMAKE_BUILD_TYPE=Release .. \\\n && make -j ${NB_CORES} && cd .. \\\n && mkdir -p .openssl/lib/ && cd .openssl && ln -s ../include && cd .. \\\n && cp build/crypto/libcrypto.a build/ssl/libssl.a .openssl/lib && cd /tmp \\\n\n# Nginx tarball checking\n && NGINX_TARBALL=\"nginx-${NGINX_VERSION}.tar.gz\" \\\n && wget -q https://nginx.org/download/${NGINX_TARBALL} \\\n && echo \"Verifying ${NGINX_TARBALL} using GPG...\" \\\n && wget -q https://nginx.org/download/${NGINX_TARBALL}.asc \\\n && wget -q https://nginx.org/keys/mdounin.key \\\n && gpg --batch --import mdounin.key \\\n && FINGERPRINT=\"$( LANG=C gpg --batch --verify ${NGINX_TARBALL}.asc ${NGINX_TARBALL} 2>&1 \\\n  | sed -n \"s#Primary key fingerprint: \\(.*\\)#\\1#p\")\" \\\n && if [ -z \"${FINGERPRINT}\" ]; then echo \"Warning! Invalid GPG signature!\" && exit 1; fi \\\n && if [ \"${FINGERPRINT}\" != \"${GPG_NGINX}\" ]; then echo \"Warning! Wrong GPG fingerprint!\" && exit 1; fi \\\n && echo \"All seems good, now unpacking ${NGINX_TARBALL}...\" \\\n && tar xzf ${NGINX_TARBALL} && cd nginx-${NGINX_VERSION} \\\n\n# Nginx patch : dynamic TLS records\n && wget -q https://raw.githubusercontent.com/cujanovic/nginx-dynamic-tls-records-patch/master/nginx__dynamic_tls_records_1.13.0%2B.patch -O dynamic_records.patch \\\n && patch -p1 < dynamic_records.patch \\\n\n# Nginx full HPACK encoding support\n# && wget -q https://raw.githubusercontent.com/cloudflare/sslconfig/master/patches/nginx_1.13.1_http2_hpack.patch \\\n# && patch -p1 < nginx_1.13.1_http2_hpack.patch \\\n\n# Nginx compilation\n && ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" \\\n    --prefix=/etc/nginx \\\n    --sbin-path=/usr/sbin/nginx \\\n    --with-cc-opt=\"-O3 -fPIE -fstack-protector-strong -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security -Wno-deprecated-declarations -I ../boringssl/.openssl/include/\" \\\n    --with-ld-opt=\"-lrt -ljemalloc -Wl,-Bsymbolic-functions -Wl,-z,relro -L ../boringssl/.openssl/lib\" \\\n    --http-log-path=/var/log/nginx/access.log \\\n    --error-log-path=/var/log/nginx/error.log \\\n    ${NGINX_MODULES} \\\n    ${NGINX_3RD_PARTY_MODULES} \\\n && make -j ${NB_CORES} && make install && make clean \\\n && strip -s /usr/sbin/nginx \\\n\n# Clean\n && apk del build-dependencies \\\n && rm -rf /tmp/* /var/cache/apk/* /root/.gnupg\n\nCOPY rootfs /\n\nRUN chmod +x /usr/local/bin/*\n\nEXPOSE 8000 4430\n\nVOLUME /sites-enabled /www /conf.d /passwds /certs /var/log/nginx\n\nLABEL description=\"nginx built from source\" \\\n      openssl=\"BoringSSL\" \\\n      nginx=\"nginx ${NGINX_VERSION}\" \\\n      maintainer=\"Wonderfall <wonderfall@targaryen.house>\"\n\nCMD [\"run.sh\"]\n"
+}

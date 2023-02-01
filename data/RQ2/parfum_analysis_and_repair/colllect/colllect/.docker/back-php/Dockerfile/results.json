@@ -1,0 +1,26 @@
+{
+  "startTime": 1674255214178,
+  "endTime": 1674255214946,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 50,
+        "lineEnd": 50,
+        "columnStart": 4,
+        "columnEnd": 100
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 66,
+        "lineEnd": 66,
+        "columnStart": 7,
+        "columnEnd": 134
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM composer:2.1.14 as composer\n\n# See https://github.com/docker-library/php/blob/master/8.0/alpine3.15/fpm/Dockerfile\nFROM php:8.1.1-fpm-alpine3.15\n\nARG APCU_VERSION=5.1.21\nARG TIMEZONE\nARG DOCKER_HOST_IP\nARG IDE_KEY\n\nRUN apk add --no-cache \\\n    make \\\n    openssl \\\n    git \\\n    zip \\\n    unzip\n\n# Add some php extensions\nRUN apk add --no-cache --virtual .build-deps \\\n        $PHPIZE_DEPS \\\n        icu-dev \\\n    && \\\n    docker-php-ext-configure \\\n        intl \\\n    && \\\n    docker-php-ext-install \\\n        intl \\\n        pdo_mysql \\\n    && \\\n    pecl install \\\n        apcu-${APCU_VERSION} \\\n    && \\\n    docker-php-ext-enable \\\n        apcu \\\n        opcache \\\n    && \\\n\trunDeps=\"$( \\\n\t\tscanelf --needed --nobanner --format '%n#p' --recursive /usr/local/lib/php/extensions \\\n\t\t\t| tr ',' '\\n' \\\n\t\t\t| sort -u \\\n\t\t\t| awk 'system(\"[ -e /usr/local/lib/\" $1 \" ]\") == 0 { next } { print \"so:\" $1 }' \\\n\t)\" && \\\n\tapk add --no-cache --virtual .api-phpexts-rundeps $runDeps \\\n    && \\\n    apk del .build-deps\n\n# Install Composer\nCOPY --from=composer /usr/bin/composer /usr/bin/composer\n\n# Install wait-for\nRUN curl -f -sL -o /usr/bin/wait-for https://raw.githubusercontent.com/eficode/wait-for/v2.2.1/wait-for \\\n    && chmod +x /usr/bin/wait-for\n\n# Set timezone\nRUN ln -snf /usr/share/zoneinfo/${TIMEZONE} /etc/localtime && echo ${TIMEZONE} > /etc/timezone && \\\n    printf '[PHP]\\ndate.timezone = \"%s\"\\n', ${TIMEZONE} > /usr/local/etc/php/conf.d/tzone.ini\n\n# Improve performances\nRUN echo \"opcache.memory_consumption=256\" >> /usr/local/etc/php/conf.d/docker-php-ext-opcache.ini && \\\n    echo \"opcache.max_accelerated_files=20000\" >> /usr/local/etc/php/conf.d/docker-php-ext-opcache.ini && \\\n#    echo \"opcache.validate_timestamps=0\" >> /usr/local/etc/php/conf.d/docker-php-ext-opcache.ini && \\\n    echo \"realpath_cache_size=4096K\" > /usr/local/etc/php/conf.d/custom.ini && \\\n    echo \"realpath_cache_ttl=600\" >> /usr/local/etc/php/conf.d/custom.ini\n\n# Blackfire\nRUN version=$(php -r \"echo PHP_MAJOR_VERSION.PHP_MINOR_VERSION;\") \\\n    && curl -f -A \"Docker\" -o /tmp/blackfire-probe.tar.gz -D - -L -s https://blackfire.io/api/v1/releases/probe/php/alpine/amd64/$version \\\n    && mkdir -p /tmp/blackfire \\\n    && tar zxpf /tmp/blackfire-probe.tar.gz -C /tmp/blackfire \\\n    && mv /tmp/blackfire/blackfire-*.so $(php -r \"echo ini_get ('extension_dir');\")/blackfire.so \\\n    && printf \"extension=blackfire.so\\nblackfire.agent_socket=tcp://back-blackfire:8307\\n\" > $PHP_INI_DIR/conf.d/blackfire.ini \\\n    && rm -rf /tmp/blackfire /tmp/blackfire-probe.tar.gz\n\n# Install Xdebug\n#RUN pecl install xdebug && docker-php-ext-enable xdebug && \\\n#    echo \"error_reporting = E_ALL\" >> /usr/local/etc/php/conf.d/docker-php-ext-xdebug.ini && \\\n#    echo \"display_startup_errors = On\" >> /usr/local/etc/php/conf.d/docker-php-ext-xdebug.ini && \\\n#    echo \"display_errors = On\" >> /usr/local/etc/php/conf.d/docker-php-ext-xdebug.ini && \\\n#    echo \"xdebug.remote_enable=1\" >> /usr/local/etc/php/conf.d/docker-php-ext-xdebug.ini && \\\n#    echo \"xdebug.remote_autostart=1\" >> /usr/local/etc/php/conf.d/docker-php-ext-xdebug.ini && \\\n#    echo \"xdebug.remote_connect_back=0\" >> /usr/local/etc/php/conf.d/docker-php-ext-xdebug.ini && \\\n#    echo \"xdebug.remote_host=${DOCKER_HOST_IP}\" >> /usr/local/etc/php/conf.d/docker-php-ext-xdebug.ini && \\\n#    echo \"xdebug.idekey=\\\"${IDE_KEY}\\\"\" >> /usr/local/etc/php/conf.d/docker-php-ext-xdebug.ini && \\\n#    echo \"xdebug.remote_port=9001\" >> /usr/local/etc/php/conf.d/docker-php-ext-xdebug.ini && \\\n#    echo \"xdebug.remote_log=\\\"/var/www/back/var/logs/xdebug.log\\\"\" >> /usr/local/etc/php/conf.d/docker-php-ext-xdebug.ini\n\n# Install Xdebug profiler\n#RUN echo \"xdebug.profiler_enable=1\" >> /usr/local/etc/php/conf.d/docker-php-ext-xdebug.ini && \\\n#    echo \"xdebug.profiler_output_dir=\\\"/var/www/back/var/logs/xdebug_profiler\\\"\" >> /usr/local/etc/php/conf.d/docker-php-ext-xdebug.ini\n\nCOPY php-fpm.conf /usr/local/etc/\n\nRUN apk add --no-cache shadow\nRUN usermod -u 1000 www-data \\\n    && groupmod -g 1000 www-data\n\nUSER www-data\n\nWORKDIR /var/www/back\n\nCOPY entrypoint.sh /opt/\n\nENTRYPOINT [\"/opt/entrypoint.sh\", \"docker-php-entrypoint\"]\nCMD [\"php-fpm\"]\n"
+}

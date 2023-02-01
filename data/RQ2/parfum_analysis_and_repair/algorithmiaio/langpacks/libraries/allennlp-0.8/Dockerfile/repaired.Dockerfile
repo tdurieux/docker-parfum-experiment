@@ -1,0 +1,1 @@
+RUN pip install --no-cache-dir "allennlp>=0.8,<0.9"

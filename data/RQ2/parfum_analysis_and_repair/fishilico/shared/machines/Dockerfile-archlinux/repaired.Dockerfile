@@ -1,0 +1,106 @@
+FROM docker.io/archlinux/archlinux:latest
+# Use official Arch Linux Docker image:
+# https://gitlab.archlinux.org/archlinux/archlinux-docker
+LABEL Description="Arch Linux with build dependencies for shared"
+
+# Arch Linux no longer provides python2-z3, since 2019-03-19:
+#   https://git.archlinux.org/svntogit/community.git/commit/?h=packages/z3&id=ce606b542b80ae8af30beda4c3838bd14818e51f
+RUN \
+    echo '[multilib]' >> /etc/pacman.conf && \
+    echo 'Include = /etc/pacman.d/mirrorlist' >> /etc/pacman.conf && \
+    pacman --noconfirm -Sy && \
+    pacman --noconfirm -S \
+        base-devel \
+        clang \
+        coq \
+        gcc \
+        gdb \
+        gtk3 \
+        jdk-openjdk \
+        kernel-headers-musl \
+        libpulse \
+        linux-headers \
+        make \
+        mingw-w64-gcc \
+        musl \
+        openssh \
+        pkgconf \
+        python \
+        python-cffi \
+        python-cryptography \
+        python-gmpy2 \
+        python-numpy \
+        python-pillow \
+        python-pycryptodomex \
+        python-pynacl \
+        python-setuptools \
+        python-z3 \
+        python2 \
+        python2-setuptools \
+        rust \
+        sagemath \
+        sdl2 \
+        which \
+        wine && \
+    archlinux-java set java-18-openjdk && \
+    (pacman --noconfirm -Sc ; rm -rf /var/cache/pacman/pkg/* )
+
+WORKDIR /shared
+RUN ln -s shared/machines/run_shared_test.sh /run_shared_test.sh
+COPY . /shared/
+
+CMD ["/run_shared_test.sh"]
+
+# make list-nobuild:
+#    Global blacklist: latex%
+#    In sub-directories:
+#       c:
+#       glossaries:
+#       java/keystore:
+#       linux:
+#       python:
+#       python/crypto:
+#       python/network:
+#       python/network/dnssec:
+#       python/qrcode:
+#       rust:
+#       verification:
+#    With gcc -m32:
+#       Global blacklist: latex%
+#       In sub-directories:
+#          c: gmp_functions gtk_alpha_window
+#          glossaries:
+#          java/keystore:
+#          linux: enum_link_addrs pulseaudio_echo
+#          python:
+#          python/crypto:
+#          python/network:
+#          python/network/dnssec:
+#          python/qrcode:
+#          rust:
+#          verification:
+#    Compilers:
+#       gcc -m64: ok
+#       gcc -m32: ok
+#       clang -m64: ok
+#       clang -m32: ok
+#       musl-gcc: ok
+#       x86_64-w64-mingw32-gcc: ok
+#       i686-w64-mingw32-gcc: ok
+#    Versions:
+#       gcc: gcc (GCC) 12.1.0
+#       clang: clang version 13.0.1
+#       x86_64-w64-mingw32-gcc: x86_64-w64-mingw32-gcc (GCC) 12.1.0
+#       i686-w64-mingw32-gcc: i686-w64-mingw32-gcc (GCC) 12.1.0
+#       wine: wine-7.11
+#       Linux kernel: 5.18.5-arch1-1
+#       /lib/ld-linux.so.2: ld.so (GNU libc) stable release version 2.35.
+#       /lib/ld-musl-x86_64.so.1: musl libc (x86_64) Version 1.2.3
+#       python: Python 3.10.5
+#       python3: Python 3.10.5
+#       javac: javac 18.0.1.1
+#       java: openjdk 18.0.1.1 2022-04-22
+#       rustc: rustc 1.61.0 (Arch Linux rust 1:1.61.0-1)
+#       cargo: cargo 1.61.0
+#       coqc: The Coq Proof Assistant, version 8.15.0 compiled with OCaml 4.13.1
+#       openssl: OpenSSL 1.1.1o  3 May 2022

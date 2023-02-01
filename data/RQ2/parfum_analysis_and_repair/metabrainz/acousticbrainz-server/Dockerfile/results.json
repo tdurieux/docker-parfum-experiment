@@ -1,0 +1,35 @@
+{
+  "startTime": 1674249862268,
+  "endTime": 1674249862977,
+  "originalSmells": [
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 125,
+        "lineEnd": 125,
+        "columnStart": 4,
+        "columnEnd": 15
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 50,
+        "lineEnd": 50,
+        "columnStart": 4,
+        "columnEnd": 27
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 5,
+        "lineEnd": 5,
+        "columnStart": 7,
+        "columnEnd": 82
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM metabrainz/python:3.7 AS acousticbrainz-base\n\n# Dockerize\nENV DOCKERIZE_VERSION v0.6.1\nRUN wget https://github.com/jwilder/dockerize/releases/download/$DOCKERIZE_VERSION/dockerize-linux-amd64-$DOCKERIZE_VERSION.tar.gz \\\n    && tar -C /usr/local/bin -xzvf dockerize-linux-amd64-$DOCKERIZE_VERSION.tar.gz && rm dockerize-linux-amd64-$DOCKERIZE_VERSION.tar.gz\n\n# Install dependencies\n# Hadolint DL4006\nSHELL [\"/bin/bash\", \"-o\", \"pipefail\", \"-c\"]\n# Node\nRUN wget -q -O - https://deb.nodesource.com/setup_12.x | bash - && apt-get update \\\n    && apt-get install -y --no-install-recommends \\\n                       build-essential \\\n                       ca-certificates \\\n                       git \\\n                       ipython \\\n                       libavcodec-dev \\\n                       libavformat-dev \\\n                       libavutil-dev \\\n                       libavresample-dev \\\n                       libffi-dev \\\n                       libfftw3-dev \\\n                       libpq-dev \\\n                       libsamplerate0-dev \\\n                       libqt4-dev \\\n                       libssl-dev \\\n                       libtag1-dev \\\n                       libxml2-dev \\\n                       libxslt1-dev \\\n                       libyaml-dev \\\n                       nodejs \\\n                       pkg-config \\\n                       pxz \\\n                       python-dev \\\n                       python-numpy-dev \\\n                       python-numpy \\\n                       swig2.0 \\\n                       zstd \\\n    && rm -rf /var/lib/apt/lists/*\n\nRUN mkdir /code\nRUN mkdir /data\nWORKDIR /code\n\nRUN groupadd --gid 901 acousticbrainz\nRUN useradd --create-home --shell /bin/bash --uid 901 --gid 901 acousticbrainz\n\nRUN chown acousticbrainz:acousticbrainz /code\n\nRUN pip install --no-cache-dir pip==21.1.2\n\n# By default annoy compiles its C++ code using gcc's -march=native flag. This means that if it compiles\n# on a recent Intel machine (e.g. in github actions) it might use extensions that aren't available\n# on our production machines (AVX512). Force it to a lower arch that is compatible over all of our\n# productions servers (skylake, zen1, zen2)\nENV ANNOY_COMPILER_ARGS=-D_CRT_SECURE_NO_WARNINGS,-DANNOYLIB_MULTITHREADED_BUILD,-march=haswell,-mno-rdrnd,-O3,-ffast-math,-fno-associative-math,-std=c++14\n\n# Python dependencies\nRUN mkdir /code/docs/ && chown acousticbrainz:acousticbrainz /code/docs/\nCOPY --chown=acousticbrainz:acousticbrainz docs/requirements.txt /code/docs/requirements.txt\nCOPY --chown=acousticbrainz:acousticbrainz requirements.txt /code/requirements.txt\nRUN pip install --no-cache-dir -r requirements.txt\n\n\nFROM acousticbrainz-base AS acousticbrainz-dev\n\nCOPY --chown=acousticbrainz:acousticbrainz requirements_development.txt /code/requirements_development.txt\nRUN pip install --no-cache-dir -r requirements_development.txt\n\n\n# We don't copy code to the dev image because it's added with a volume mount\n# during development, however it's needed for tests. Add it here.\nFROM acousticbrainz-dev AS acousticbrainz-test\n\nCOPY . /code\n\n\nFROM acousticbrainz-base AS acousticbrainz-prod\nUSER root\n\nRUN pip install --no-cache-dir uWSGI==2.0.17.1\n\nRUN mkdir /cache_namespaces && chown -R acousticbrainz:acousticbrainz /cache_namespaces\n\n# runit service files\n# All services are created with a `down` file, preventing them from starting\n# rc.local removes the down file for the specific service we want to run in a container\n# http://smarden.org/runit/runsv.8.html\n\n# uwsgi service files\nCOPY ./docker/uwsgi/uwsgi.service /etc/service/uwsgi/run\nCOPY ./docker/uwsgi/uwsgi.ini /etc/uwsgi/uwsgi.ini\nCOPY ./docker/uwsgi/consul-template-uwsgi.conf /etc/consul-template-uwsgi.conf\nRUN touch /etc/service/uwsgi/down\n\n# Standalone version of uwsgi that doesn't require consul\nCOPY ./docker/uwsgistandalone/uwsgi.service /etc/service/uwsgistandalone/run\nCOPY ./docker/uwsgistandalone/uwsgi.ini /etc/uwsgi/uwsgi-standalone.ini\nRUN touch /etc/service/uwsgistandalone/down\n\n# hl_extractor service files\nCOPY ./docker/hl_extractor/hl_extractor.service /etc/service/hl_extractor/run\nCOPY docker/hl_extractor/consul-template-hl-extractor.conf /etc/consul-template-hl-extractor.conf\nRUN touch /etc/service/hl_extractor/down\n\n# dataset evaluator service files\nCOPY ./docker/dataset_eval/dataset_eval.service /etc/service/dataset_eval/run\nCOPY ./docker/dataset_eval/consul-template-dataset-eval.conf /etc/consul-template-dataset-eval.conf\nRUN touch /etc/service/dataset_eval/down\n\n# Add cron jobs\nCOPY ./docker/cron/crontab /etc/cron.d/acousticbrainz\nRUN chmod 0644 /etc/cron.d/acousticbrainz\nCOPY ./docker/cron/cron-config.service /etc/service/cron-config/run\nCOPY docker/cron/consul-template-cron-config.conf /etc/consul-template-cron-config.conf\nRUN touch /etc/service/cron/down\nRUN touch /etc/service/cron-config/down\n\nCOPY ./docker/rc.local /etc/rc.local\nCOPY ./docker/run-ab-command /usr/bin/run-ab-command\n\nCOPY --chown=acousticbrainz:acousticbrainz package.json /code\n\nUSER acousticbrainz\nRUN npm install && npm cache clean --force;\n\nCOPY --chown=acousticbrainz:acousticbrainz . /code\n\nRUN npm run build:prod\n\n# Our entrypoint runs as root\nUSER root\n\nARG GIT_COMMIT_SHA\nENV GIT_SHA ${GIT_COMMIT_SHA}\n"
+}

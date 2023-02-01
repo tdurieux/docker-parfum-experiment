@@ -1,0 +1,98 @@
+{
+  "startTime": 1674252769458,
+  "endTime": 1674252769775,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 28,
+        "lineEnd": 31,
+        "columnStart": 4,
+        "columnEnd": 24
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 38,
+        "lineEnd": 38,
+        "columnStart": 4,
+        "columnEnd": 73
+      }
+    },
+    {
+      "rule": "curlUseHttpsUrl",
+      "position": {
+        "lineStart": 28,
+        "lineEnd": 31,
+        "columnStart": 4,
+        "columnEnd": 24
+      }
+    },
+    {
+      "rule": "curlUseHttpsUrl",
+      "position": {
+        "lineStart": 38,
+        "lineEnd": 38,
+        "columnStart": 4,
+        "columnEnd": 73
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 5,
+        "lineEnd": 6,
+        "columnStart": 4,
+        "columnEnd": 52
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 13,
+        "lineEnd": 13,
+        "columnStart": 4,
+        "columnEnd": 123
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 98,
+        "lineEnd": 98,
+        "columnStart": 4,
+        "columnEnd": 74
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 5,
+        "lineEnd": 6,
+        "columnStart": 4,
+        "columnEnd": 52
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 13,
+        "lineEnd": 13,
+        "columnStart": 4,
+        "columnEnd": 123
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 98,
+        "lineEnd": 98,
+        "columnStart": 4,
+        "columnEnd": 74
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM debian:latest\nLABEL maintainer pierre@senellart.com\n\n# needed to build provsql the tools + libc6-i386 for running c2d\nRUN apt-get update && \\\n    apt-get -y --no-install-recommends install git build-essential curl \\\n               libc6-i386 unzip mercurial libgmp-dev && rm -rf /var/lib/apt/lists/*;\n\n# Specify which version we are building against\nARG PSQL_VERSION=9.6\nENV PSQL_VERSION=$PSQL_VERSION\n\nRUN apt-get update && \\\n    apt-get -y --no-install-recommends install postgresql-${PSQL_VERSION} postgresql-server-dev-${PSQL_VERSION} postgresql-contrib-${PSQL_VERSION} && rm -rf /var/lib/apt/lists/*;\n\n\n# Ensure a sane environment\nENV LANG=C.UTF-8 LC_ALL=C.UTF-8 DEBIAN_FRONTEND=noninteractive\n\n# Ensure that bash is the default shell\nENV SHELL=/bin/bash\n\n\n############################## GETTING ADD-ON TOOLS ##############################  \n\nRUN mkdir /tmp/tools/\n\n# TOOL c2d\nRUN curl -f 'https://reasoning.cs.ucla.edu/c2d/fetchme.php' \\\n         -H 'Content-Type: application/x-www-form-urlencoded' \\\n         --data 'os=Linux+i386&type=&s=&n=Pierre+Senellart+DOCKER&e=pierre@senellart.com&o=ENS' \\\n         -o /tmp/c2d.zip && \\\n         unzip /tmp/c2d.zip -d /tmp/ && \\\n         rm /tmp/c2d.zip && \\\n         mv /tmp/c2d_linux /tmp/tools/c2d && \\\n         chmod a+x /tmp/tools/c2d\n\n# TOOL d4\nRUN curl -f https://www.cril.univ-artois.fr/KC/ressources/d4 -o /tmp/tools/d4 && \\\n    chmod a+x /tmp/tools/d4\n\n# TOOL dsharp\nRUN cd /tmp/ &&\\\n    hg clone https://bitbucket.org/haz/dsharp &&\\\n    cd dsharp &&\\\n    mv Makefile_gmp Makefile &&\\\n    make &&\\\n    mv dsharp /tmp/tools/ &&\\\n    chmod a+x /tmp/tools/dsharp\n\n# mv the additional tools\nRUN bash -c \"mv /tmp/tools/* /usr/local/bin\"\n\n##############################   GETTING  PROVSQL  ##############################  \n\n# Add a folder for ProvSQL\nWORKDIR /opt/provsql\n\n# Provsql will be built & run as user postgres\nRUN chown postgres:postgres /opt/provsql\nUSER postgres\n\n# Getting and building\nRUN git clone https://github.com/PierreSenellart/provsql.git /opt/provsql\nRUN cd /opt/provsql && make\n\n# install provsql\nUSER root\nRUN echo \"shared_preload_libraries = 'provsql'\" >> /etc/postgresql/${PSQL_VERSION}/main/postgresql.conf\nRUN echo \"local all all trust\" > /etc/postgresql/${PSQL_VERSION}/main/pg_hba.conf \n\nEXPOSE 5432\n\nRUN cd /opt/provsql ; make install\n\nUSER postgres\n#create a db test\nRUN /etc/init.d/postgresql start &&\\\n    createuser -s test &&\\\n    createdb test &&\\\n    psql -f /opt/provsql/test/sql/setup.sql test test  &&\\\n    psql -f /opt/provsql/test/sql/add_provenance.sql test test &&\\\n    psql -f /opt/provsql/test/sql/formula.sql test test  &&\\\n    psql -f /opt/provsql/test/sql/security.sql test test &&\\\n    psql -c \"ALTER ROLE test SET search_path TO public, provsql\";    \n\n############################## FINISHING THE DOCKER  ##############################  \n\n#allow access\nRUN echo \"listen_addresses = '*'\"  >> /etc/postgresql/${PSQL_VERSION}/main/postgresql.conf\nRUN echo \"host all all 0.0.0.0/0 trust\" >> /etc/postgresql/${PSQL_VERSION}/main/pg_hba.conf \nRUN echo \"host all all ::/0 trust\" >> /etc/postgresql/${PSQL_VERSION}/main/pg_hba.conf \n\nUSER postgres\nCMD /usr/bin/pg_ctlcluster $PSQL_VERSION main start --foreground\n\nUSER root\nRUN apt-get update && \\\n    apt-get -y --no-install-recommends install apache2 libapache2-mod-php7.0 php7.0-pgsql graphviz && rm -rf /var/lib/apt/lists/*;\n\nCMD /bin/bash /opt/provsql/docker/demo.sh\nEXPOSE 80\n"
+}

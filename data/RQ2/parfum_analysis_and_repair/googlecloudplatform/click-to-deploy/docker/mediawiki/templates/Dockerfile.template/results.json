@@ -1,0 +1,26 @@
+{
+  "startTime": 1674249588020,
+  "endTime": 1674249588938,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 109,
+        "lineEnd": 109,
+        "columnStart": 7,
+        "columnEnd": 97
+      }
+    },
+    {
+      "rule": "sha256sumEchoOneSpaces",
+      "position": {
+        "lineStart": 110,
+        "lineEnd": 110,
+        "columnStart": 7,
+        "columnEnd": 63
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "#!/bin/bash\n#\n# Copyright (C) 2019  Google LLC\n#\n# This program is free software; you can redistribute it and/or\n# modify it under the terms of the GNU General Public License\n# as published by the Free Software Foundation; either version 2\n# of the License, or (at your option) any later version.\n#\n# This program is distributed in the hope that it will be useful,\n# but WITHOUT ANY WARRANTY; without even the implied warranty of\n# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the\n# GNU General Public License for more details.\n#\n# You should have received a copy of the GNU General Public License\n# along with this program; if not, write to the Free Software\n# Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.\n\nFROM {{ .From }}\n\n{{- $mediawiki := index .Packages \"mediawiki\" }}\n{{- $composer := index .Packages \"composer\" }}\n\nENV MEDIAWIKI_MAJOR_VERSION {{ $mediawiki.Major }}\nENV MEDIAWIKI_VERSION {{ $mediawiki.Version }}\nENV MEDIAWIKI_SHA512 {{ $mediawiki.Sha512 }}\n\nENV COMPOSER_VERSION {{ $composer.Version }}\nENV COMPOSER_SHA256 {{ $composer.Sha256 }}\n\nENV MEDIAWIKI_HOSTNAME localhost\nENV MEDIAWIKI_SITENAME my_first_wiki\n\nENV C2D_RELEASE {{ $mediawiki.Version }}\n\n# System dependencies\nRUN apt-get update; \\\n    apt-get install -y --no-install-recommends \\\n        gettext-base \\\n        git \\\n        librsvg2-bin \\\n        netcat \\\n        imagemagick \\\n        # Required for SyntaxHighlighting\n        python3 \\\n        unzip \\\n        zip \\\n    && rm -rf /var/lib/apt/lists/*\n\n# Install the PHP extensions we need\nRUN savedAptMark=\"$(apt-mark showmanual)\"; \\\n    \\\n    apt-get update; \\\n    apt-get install -y --no-install-recommends \\\n        libicu-dev \\\n    ; \\\n    \\\n    docker-php-ext-install -j \"$(nproc)\" \\\n        intl \\\n        mbstring \\\n        mysqli \\\n        opcache \\\n    ; \\\n    \\\n    pecl install apcu-5.1.17; \\\n    docker-php-ext-enable \\\n        apcu \\\n    ; \\\n    \\\n    # reset apt-mark's \"manual\" list so that \"purge --auto-remove\" will remove all build dependencies\n    apt-mark auto '.*' > /dev/null; \\\n    apt-mark manual $savedAptMark; \\\n    ldd \"$(php -r 'echo ini_get(\"extension_dir\");')\"/*.so \\\n        | awk '/=>/ { print $3 }' \\\n        | sort -u \\\n        | xargs -r dpkg-query -S \\\n        | cut -d: -f1 \\\n        | sort -u \\\n        | xargs -rt apt-mark manual; \\\n    \\\n    apt-get purge -y --auto-remove -o APT::AutoRemove::RecommendsImportant=false; \\\n    rm -rf /var/lib/apt/lists/*\n\n# Enable Short URLs\nRUN a2enmod rewrite; \\\n    { \\\n        echo '<Directory /var/www/html>'; \\\n        echo '  RewriteEngine On'; \\\n        echo '  RewriteCond %{REQUEST_URI} !=/server-status'; \\\n        echo '  RewriteCond %{REQUEST_FILENAME} !-f'; \\\n        echo '  RewriteCond %{REQUEST_FILENAME} !-d'; \\\n        echo '  RewriteRule ^ %{DOCUMENT_ROOT}/index.php [L]'; \\\n        echo '</Directory>'; \\\n    } > \"$APACHE_CONFDIR/conf-available/short-url.conf\"; \\\n    a2enconf short-url\n\n# set recommended PHP.ini settings\n# see https://secure.php.net/manual/en/opcache.installation.php\nRUN { \\\n        echo 'opcache.memory_consumption=128'; \\\n        echo 'opcache.interned_strings_buffer=8'; \\\n        echo 'opcache.max_accelerated_files=4000'; \\\n        echo 'opcache.revalidate_freq=60'; \\\n        echo 'opcache.fast_shutdown=1'; \\\n    } > /usr/local/etc/php/conf.d/opcache-recommended.ini\n\n# Install composer binary\nRUN set -e \\\n    && cd /usr/local/bin \\\n    && curl -f -o composer.phar \"https://getcomposer.org/download/${COMPOSER_VERSION}/composer.phar\" \\\n    && echo \"${COMPOSER_SHA256}  composer.phar\" | sha256sum -c - \\\n    && chmod +x composer.phar\n\nWORKDIR /mediawiki\n\n# MediaWiki setup\nRUN curl -fSL \"https://releases.wikimedia.org/mediawiki/${MEDIAWIKI_MAJOR_VERSION}/mediawiki-${MEDIAWIKI_VERSION}.tar.gz\" -o mediawiki.tar.gz; \\\n    echo \"${MEDIAWIKI_SHA512} *mediawiki.tar.gz\" | sha512sum -c -; \\\n    tar -x --strip-components=1 -f mediawiki.tar.gz; \\\n    rm mediawiki.tar.gz; \\\n    chown -R www-data:www-data extensions skins cache images \\\n    && mkdir -p /data\n\nCOPY docker-entrypoint.sh /docker-entrypoint.sh\nCOPY common_functions.sh /common_functions.sh\nCOPY custom_settings.php /mediawiki-config/custom_settings.php\n\nWORKDIR /var/www/html\n\nENTRYPOINT [ \"/docker-entrypoint.sh\" ]\nCMD [\"apache2-foreground\"]\n"
+}

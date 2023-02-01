@@ -1,0 +1,38 @@
+FROM ubuntu:16.04
+
+RUN apt-get -yqq update
+RUN apt-get -yqq --no-install-recommends install python3-pip python3-dev libssl-dev libffi-dev && rm -rf /var/lib/apt/lists/*;
+RUN apt-get install --no-install-recommends -y openssh-server mongodb && rm -rf /var/lib/apt/lists/*;
+RUN apt-get -y --no-install-recommends install build-essential libssl-dev libffi-dev python3-dev && rm -rf /var/lib/apt/lists/*;
+RUN pip3 install --no-cache-dir --upgrade pip
+RUN apt-get install --no-install-recommends -y sshpass nano && rm -rf /var/lib/apt/lists/*;
+
+# Taken from quynh's network profiler
+RUN pip install --no-cache-dir cryptography
+
+
+ADD requirements.txt /requirements.txt
+
+RUN pip3 install --no-cache-dir -r requirements.txt
+
+RUN echo 'root:PASSWORD' | chpasswd
+RUN sed -i 's/PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config
+
+# SSH login fix. Otherwise user is kicked off after login
+RUN sed 's@session\s*required\s*pam_loginuid.so@session optional pam_loginuid.so@g' -i /etc/pam.d/sshd
+
+ENV NOTVISIBLE "in users profile"
+RUN echo "export VISIBLE=now" >> /etc/profile
+
+RUN apt-get install -y --no-install-recommends stress && rm -rf /var/lib/apt/lists/*;
+ADD stress_test.py /stress_test.py
+ADD start_home.sh /start.sh
+ADD keep_alive.py /keep_alive.py
+RUN chmod +x /start.sh
+
+
+WORKDIR /
+
+EXPOSE 22 8888
+
+CMD ["./start.sh"]

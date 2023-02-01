@@ -1,0 +1,26 @@
+{
+  "startTime": 1674255441152,
+  "endTime": 1674255441792,
+  "originalSmells": [
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 13,
+        "lineEnd": 13,
+        "columnStart": 7,
+        "columnEnd": 57
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 39,
+        "lineEnd": 43,
+        "columnStart": 7,
+        "columnEnd": 23
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Build Postgres\nFROM neondatabase/rust:1.58 AS pg-build\nWORKDIR /pg\n\nUSER root\n\nCOPY vendor/postgres vendor/postgres\nCOPY Makefile Makefile\n\nENV BUILD_TYPE release\nRUN set -e \\\n    && mold -run make -j $(nproc) -s postgres \\\n    && rm -rf tmp_install/build \\\n    && tar -C tmp_install -czf /postgres_install.tar.gz . && rm /postgres_install.tar.gz\n\n# Build zenith binaries\nFROM neondatabase/rust:1.58 AS build\nARG GIT_VERSION=local\n\nARG CACHEPOT_BUCKET=zenith-rust-cachepot\nARG AWS_ACCESS_KEY_ID\nARG AWS_SECRET_ACCESS_KEY\n\nCOPY --from=pg-build /pg/tmp_install/include/postgresql/server tmp_install/include/postgresql/server\nCOPY . .\n\n# Show build caching stats to check if it was used in the end.\n# Has to be the part of the same RUN since cachepot daemon is killed in the end of this RUN, losing the compilation stats.\nRUN set -e \\\n    && sudo -E \"PATH=$PATH\" mold -run cargo build --release \\\n    && cachepot -s\n\n# Build final image\n#\nFROM debian:bullseye-slim\nWORKDIR /data\n\nRUN set -e \\\n    && apt-get update \\\n    && apt-get install --no-install-recommends -y \\\n        libreadline-dev \\\n        libseccomp-dev \\\n        openssl \\\n        ca-certificates \\\n    && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/* \\\n    && useradd -d /data zenith \\\n    && chown -R zenith:zenith /data\n\nCOPY --from=build --chown=zenith:zenith /home/runner/target/release/pageserver /usr/local/bin\nCOPY --from=build --chown=zenith:zenith /home/runner/target/release/safekeeper /usr/local/bin\nCOPY --from=build --chown=zenith:zenith /home/runner/target/release/proxy      /usr/local/bin\n\nCOPY --from=pg-build /pg/tmp_install/         /usr/local/\nCOPY --from=pg-build /postgres_install.tar.gz /data/\n\nCOPY docker-entrypoint.sh /docker-entrypoint.sh\n\nVOLUME [\"/data\"]\nUSER zenith\nEXPOSE 6400\nENTRYPOINT [\"/docker-entrypoint.sh\"]\nCMD [\"pageserver\"]\n"
+}

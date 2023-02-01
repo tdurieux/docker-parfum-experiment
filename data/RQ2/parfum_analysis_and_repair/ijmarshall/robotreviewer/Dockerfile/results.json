@@ -1,0 +1,35 @@
+{
+  "startTime": 1674252117380,
+  "endTime": 1674252118582,
+  "originalSmells": [
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 6,
+        "lineEnd": 6,
+        "columnStart": 4,
+        "columnEnd": 28
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 48,
+        "lineEnd": 48,
+        "columnStart": 4,
+        "columnEnd": 30
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 73,
+        "lineEnd": 73,
+        "columnStart": 4,
+        "columnEnd": 31
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "ARG OSVER=ubuntu:16.04\nFROM node:12-alpine as build-stage\n\nWORKDIR /app\n# node.js and utils\nRUN npm update\nRUN npm install -g requirejs && npm cache clean --force;\nCOPY ./robotreviewer/static/ static/\n\n# compile client side assets\nRUN r.js -o static/build.js && \\\n    mv static static.bak && \\\n    mv build static && \\\n    rm -rf static.bak\n\nFROM $OSVER as production-stage\nARG OSVER\n\nENV DEBIAN_FRONTEND noninteractive\n\n# create deploy user\nRUN useradd --create-home --home /var/lib/deploy deploy\n\n# install apt-get requirements\nADD apt-requirements.txt /tmp/apt-requirements.txt\nRUN apt-get -qq update -y\nRUN xargs -a /tmp/apt-requirements.txt apt-get install -y --no-install-recommends && apt-get clean && rm -rf /etc/cron.*/*\n\n# Certs\nRUN mkdir -p /etc/pki/tls/certs && \\\n    ln -s /etc/ssl/certs/ca-certificates.crt /etc/pki/tls/certs/ca-bundle.crt\n\nRUN chown -R deploy.deploy /var/lib/deploy/\n\nUSER deploy\n# install Anaconda\nRUN aria2c -s 16 -x 16 -k 30M https://repo.continuum.io/miniconda/Miniconda3-latest-Linux-x86_64.sh -o /var/lib/deploy/Anaconda.sh\nRUN cd /var/lib/deploy && bash Anaconda.sh -b && rm -rf Anaconda.sh\nENV PATH=/var/lib/deploy/miniconda3/bin:$PATH\nADD robotreviewer_env.yml tmp/robotreviewer_env.yml\nRUN conda env create -f tmp/robotreviewer_env.yml\n# from https://stackoverflow.com/questions/37945759/condas-source-activate-virtualenv-does-not-work-within-dockerfile\nENV PATH /var/lib/deploy/miniconda3/envs/robotreviewer/bin:$PATH\nRUN python -m nltk.downloader punkt stopwords\n#RUN python -m spacy.en.download all\nRUN python -m spacy download en\n\nARG TFVER=tensorflow\nRUN pip install --no-cache-dir $TFVER==1.12.0\n\n#strange Theano problem\n#ENV MKL_THREADING_LAYER=GNU\n\n# Get data\nUSER root\n\nRUN mkdir -p /var/lib/deploy/robotreviewer/data\nADD server.py /var/lib/deploy/\nADD server_api.py /var/lib/deploy/\nADD entrypoint.sh /var/lib/deploy/\nADD clean_uploaded_pdfs.py /var/lib/deploy/\nADD crontab /etc/cron.d/crontab\nADD robotreviewer /var/lib/deploy/robotreviewer\nRUN chown -R deploy.deploy /var/lib/deploy/robotreviewer\n\nUSER deploy\n\nCOPY --from=build-stage /app/static /var/lib/deploy/robotreviewer/static\n\nENV HOME /var/lib/deploy\n\nUSER root\n\nRUN pip install --no-cache-dir gunicorn gevent\nRUN chmod +x /var/lib/deploy/entrypoint.sh\n\nENTRYPOINT [ \"./var/lib/deploy/entrypoint.sh\" ]\n"
+}

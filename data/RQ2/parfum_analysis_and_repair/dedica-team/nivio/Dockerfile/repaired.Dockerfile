@@ -1,0 +1,1 @@
+# use not slim base image, because libfontmanager needs libfreetype (mfbieber)

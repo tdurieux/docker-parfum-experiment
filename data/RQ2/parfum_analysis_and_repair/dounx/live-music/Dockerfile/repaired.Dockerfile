@@ -1,0 +1,18 @@
+FROM ruby:2.7.1
+
+ARG SECRET_KEY_BASE=fake_secure_for_compile
+
+RUN gem install bundler
+RUN curl -f -sS https://dl.yarnpkg.com/debian/pubkey.gpg | apt-key add - && \
+    echo "deb https://dl.yarnpkg.com/debian/ stable main" | tee /etc/apt/sources.list.d/yarn.list && \
+    apt-get update && \
+    apt-get -y --no-install-recommends install postgresql-client yarn nginx gettext certbot python-certbot-nginx && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+
+ENV RAILS_ENV production
+WORKDIR /usr/src/live-music
+COPY . .
+RUN bundle config set without 'development test' && \
+    bundle install && \
+    rails assets:precompile

@@ -1,0 +1,1 @@
+# {json:scada} Timescaledb docker container - (c) 2021 - Ricardo L. Olsen 

@@ -1,0 +1,44 @@
+{
+  "startTime": 1674250723271,
+  "endTime": 1674250724426,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 31,
+        "lineEnd": 31,
+        "columnStart": 4,
+        "columnEnd": 77
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 46,
+        "lineEnd": 46,
+        "columnStart": 4,
+        "columnEnd": 73
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 47,
+        "lineEnd": 47,
+        "columnStart": 20,
+        "columnEnd": 31
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 28,
+        "lineEnd": 28,
+        "columnStart": 4,
+        "columnEnd": 76
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# for debug container we need to build our own copy of musl\n# with -fno-omit-frame-pointer to make sure that perf(1)\n# has a fast path for stack unwinding. This also happens\n# to be a perfect place to put any other kind of debug info\n# into the package: see abuild/etc/abuild.conf.\nARG EVE_BUILDER_IMAGE=lfedge/eve-alpine:6.7.0\n# hadolint ignore=DL3006\nFROM ${EVE_BUILDER_IMAGE} as build\nENV BUILD_PKGS abuild curl tar make linux-headers patch g++ git gcc ncurses-dev autoconf\n# Feel free to add additional packages here, but be aware that\n# EVE's rootfs image can be no larger than 300Mb (and don't\n# forget to check on all supported architectures: e.g. arm64\n# binaries are typically larger and amd64 ones).\n# RUN apk add --no-cache gdb valgrind\nENV PKGS openssl openssh-client openssh-server tini util-linux ca-certificates pciutils usbutils vim tcpdump perf strace iproute2-minimal\nRUN eve-alpine-deploy.sh\n\nENV LSHW_VERSION 02.19.2\n\n# setting up building account\nRUN adduser -G abuild -D builder || :\nRUN su builder -c 'abuild-keygen -a -n'\n\nCOPY --chown=builder:abuild abuild/ /\nRUN su builder -c 'cd /musl && abuild checksum && abuild -r'\n\n# now install it locally so we can pick it up later on below\n# hadolint ignore=DL3019,DL3018\nRUN apk add --no-cache -p /out --allow-untrusted /home/builder/packages/*/musl-1.2*.apk\n\n# hadolint ignore=DL4006\nRUN curl -f -L https://www.ezix.org/software/files/lshw-B.${LSHW_VERSION}.tar.gz | tar xzvf -\n\nCOPY lshw/ lshw-B.${LSHW_VERSION}/\n\nWORKDIR /lshw-B.${LSHW_VERSION}\n\n# order is important\nRUN for patch in fix-musl-sc_long_bit.patch wrapper-for-basename.patch 15565229509455527de9ce7cbb9530e2b31d043b.patch\\\n 2b1c730b493d647bbab4854713571458e82a81e7.patch; do patch -p1 < $patch; done &&\\\n make -C src RPM_OPT_FLAGS=-DNONLS static &&\\\n cp src/lshw-static /out/usr/bin/lshw && strip /out/usr/bin/lshw\n\n# building hexedit\nWORKDIR /tmp/hexedit/hexedit-1.5\n# hadolint ignore=DL4006\nRUN curl -f -L https://github.com/pixel/hexedit/archive/refs/tags/1.5.tar.gz | tar -C .. -xzvf -\nRUN ./autogen.sh && ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" && make DESTDIR=/out install\n\n# tweaking various bit\nWORKDIR /out\nCOPY ssh.sh spec.sh ./usr/bin/\nRUN mkdir -p ./etc/ssh ./root/.ssh && chmod 0700 ./root/.ssh\nRUN cp /etc/passwd /etc/group ./etc/\nRUN ln -s /run ./var/run\nRUN sed -i -e 's#AllowTcpForwarding.*$#AllowTcpForwarding yes#' ./etc/ssh/sshd_config\n\nFROM scratch\nENTRYPOINT []\nWORKDIR /\n\nCOPY --from=build /out/ /\n\nCMD [\"/sbin/tini\", \"/usr/bin/ssh.sh\"]\n"
+}

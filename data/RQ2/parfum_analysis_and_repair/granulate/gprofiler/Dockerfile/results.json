@@ -1,0 +1,54 @@
+{
+  "startTime": 1674252073564,
+  "endTime": 1674252074861,
+  "originalSmells": [
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 89,
+        "lineEnd": 91,
+        "columnStart": 4,
+        "columnEnd": 9
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 65,
+        "lineEnd": 67,
+        "columnStart": 2,
+        "columnEnd": 19
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 70,
+        "lineEnd": 82,
+        "columnStart": 4,
+        "columnEnd": 18
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 89,
+        "lineEnd": 91,
+        "columnStart": 4,
+        "columnEnd": 9
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 89,
+        "lineEnd": 91,
+        "columnStart": 4,
+        "columnEnd": 9
+      }
+    }
+  ],
+  "repairedDockerfile": "# these need to be defined before any FROM - otherwise, the ARGs expand to empty strings.\n\n# pyspy & rbspy, using the same builder for both pyspy and rbspy since they share build dependencies - rust:latest 1.52.1\nARG RUST_BUILDER_VERSION=@sha256:9c106c1222abe1450f45774273f36246ebf257623ed51280dbc458632d14c9fc\n# pyperf - ubuntu 20.04\nARG PYPERF_BUILDER_UBUNTU=@sha256:cf31af331f38d1d7158470e095b132acd126a7180a54f263d386da88eb681d93\n# perf - ubuntu:16.04\nARG PERF_BUILDER_UBUNTU=@sha256:d7bb0589725587f2f67d0340edb81fd1fcba6c5f38166639cf2a252c939aa30c\n# phpspy - ubuntu:20.04\nARG PHPSPY_BUILDER_UBUNTU=@sha256:cf31af331f38d1d7158470e095b132acd126a7180a54f263d386da88eb681d93\n# async-profiler glibc build\n# requires CentOS 7 so the built DSO can be loaded into machines running with old glibc (tested up to centos:6),\n# we do make some modifications to the selected versioned symbols so that we don't use anything from >2.12 (what centos:6\n# has)\nARG AP_BUILDER_CENTOS=@sha256:0f4ec88e21daf75124b8a9e5ca03c37a5e937e0e108a255d890492430789b60e\n# async-profiler musl build - alpine 3.14.2\nARG AP_BUILDER_ALPINE=@sha256:69704ef328d05a9f806b6b8502915e6a0a4faa4d72018dc42343f511490daf8a\n# burn - golang:1.16.3\nARG BURN_BUILDER_GOLANG=@sha256:f7d3519759ba6988a2b73b5874b17c5958ac7d0aa48a8b1d84d66ef25fa345f1\n# gprofiler - ubuntu 20.04\nARG GPROFILER_BUILDER_UBUNTU=@sha256:cf31af331f38d1d7158470e095b132acd126a7180a54f263d386da88eb681d93\n\n# pyspy & rbspy builder base\nFROM rust${RUST_BUILDER_VERSION} AS pyspy-rbspy-builder-common\nWORKDIR /tmp\n\nCOPY scripts/prepare_machine-unknown-linux-musl.sh .\nRUN ./prepare_machine-unknown-linux-musl.sh\n\n# pyspy\nFROM pyspy-rbspy-builder-common AS pyspy-builder\nWORKDIR /tmp\n\nCOPY scripts/pyspy_build.sh .\nRUN ./pyspy_build.sh\nRUN mv \"/tmp/py-spy/target/$(uname -m)-unknown-linux-musl/release/py-spy\" /tmp/py-spy/py-spy\n\n# rbspy\nFROM pyspy-rbspy-builder-common AS rbspy-builder\nWORKDIR /tmp\n\nCOPY scripts/rbspy_build.sh .\nRUN ./rbspy_build.sh\nRUN mv \"/tmp/rbspy/target/$(uname -m)-unknown-linux-musl/release/rbspy\" /tmp/rbspy/rbspy\n\n# perf\nFROM ubuntu${PERF_BUILDER_UBUNTU} AS perf-builder\nWORKDIR /tmp\n\nCOPY scripts/perf_env.sh .\nRUN ./perf_env.sh\n\nCOPY scripts/libunwind_build.sh .\nRUN ./libunwind_build.sh\n\nCOPY scripts/perf_build.sh .\nRUN ./perf_build.sh\n\n# pyperf (bcc)\nFROM ubuntu${PYPERF_BUILDER_UBUNTU} AS bcc-builder-base\n\n# not cleaning apt lists here - they are used by subsequent layers that base\n# on bcc-builder-base.\n# hadolint ignore=DL3009\nRUN apt-get update && \\\n  apt-get install -y --no-install-recommends \\\n    git \\\n    ca-certificates \\\n    && \\\n  if [ \"$(uname -m)\" != \"aarch64\" ]; then \\\n    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \\\n      curl \\\n      build-essential \\\n      iperf llvm-9-dev \\\n      libclang-9-dev \\\n      cmake \\\n      python3 \\\n      flex \\\n      libfl-dev \\\n      bison \\\n      libelf-dev \\\n      libz-dev \\\n      liblzma-dev; \\\n  fi && rm -rf /var/lib/apt/lists/*;\n\n# bcc helpers\nFROM bcc-builder-base AS bcc-helpers\nWORKDIR /tmp\n\nRUN apt-get install -y --no-install-recommends \\\n  clang-10 \\\n  llvm-10 && rm -rf /var/lib/apt/lists/*;\n\nCOPY --from=perf-builder /bpftool /bpftool\n\nCOPY scripts/bcc_helpers_build.sh .\nRUN ./bcc_helpers_build.sh\n\nFROM bcc-builder-base AS bcc-builder\nWORKDIR /tmp\n\nCOPY ./scripts/libunwind_build.sh .\nRUN if [ \"$(uname -m)\" = \"aarch64\" ]; then \\\n      exit 0; \\\n    fi && \\\n    ./libunwind_build.sh\n\nWORKDIR /bcc\n\nCOPY ./scripts/pyperf_build.sh .\nRUN ./pyperf_build.sh\n\n# phpspy\nFROM ubuntu${PHPSPY_BUILDER_UBUNTU} AS phpspy-builder\nWORKDIR /tmp\nCOPY scripts/phpspy_env.sh .\nRUN ./phpspy_env.sh\nCOPY scripts/phpspy_build.sh .\nRUN ./phpspy_build.sh\n\n# async-profiler glibc\nFROM centos${AP_BUILDER_CENTOS} AS async-profiler-builder-glibc\nWORKDIR /tmp\nCOPY scripts/async_profiler_env_glibc.sh .\nRUN ./async_profiler_env_glibc.sh\nCOPY scripts/async_profiler_build_shared.sh .\nCOPY scripts/async_profiler_build_glibc.sh .\nRUN ./async_profiler_build_shared.sh /tmp/async_profiler_build_glibc.sh\n\n# async-profiler musl\nFROM alpine${AP_BUILDER_ALPINE} AS async-profiler-builder-musl\nWORKDIR /tmp\nCOPY scripts/async_profiler_env_musl.sh .\nRUN ./async_profiler_env_musl.sh\nCOPY scripts/async_profiler_build_shared.sh .\nCOPY scripts/async_profiler_build_musl.sh .\nRUN ./async_profiler_build_shared.sh /tmp/async_profiler_build_musl.sh\n\n# burn\nFROM golang${BURN_BUILDER_GOLANG} AS burn-builder\nWORKDIR /tmp\nCOPY scripts/burn_build.sh .\nRUN ./burn_build.sh\n\n# the gProfiler image itself, at last.\nFROM ubuntu${GPROFILER_BUILDER_UBUNTU}\nWORKDIR /app\n\n# for Aarch64 - it has no .whl file for psutil - so it's trying to build from source.\nRUN set -e; \\\n    apt-get update && \\\n    apt-get upgrade -y && \\\n    apt-get install --no-install-recommends -y python3-pip && \\\n    if [ \"$(uname -m)\" = \"aarch64\" ]; then \\\n      apt-get install -y --no-install-recommends build-essential python3.8-dev; \\\n    fi && \\\n    apt-get clean && \\\n    rm -rf /var/lib/apt/lists/*\n\nCOPY --from=bcc-builder /bcc/root/share/bcc/examples/cpp/PyPerf gprofiler/resources/python/pyperf/\n# copy licenses and notice file.\nCOPY --from=bcc-builder /bcc/bcc/LICENSE.txt gprofiler/resources/python/pyperf/\nCOPY --from=bcc-builder /bcc/bcc/licenses gprofiler/resources/python/pyperf/licenses\nCOPY --from=bcc-builder /bcc/bcc/NOTICE gprofiler/resources/python/pyperf/\nCOPY --from=bcc-helpers /bpf_get_fs_offset/get_fs_offset gprofiler/resources/python/pyperf/\nCOPY --from=bcc-helpers /bpf_get_stack_offset/get_stack_offset gprofiler/resources/python/pyperf/\n\nCOPY --from=pyspy-builder /tmp/py-spy/py-spy gprofiler/resources/python/py-spy\n\nCOPY --from=perf-builder /perf gprofiler/resources/perf\n\nCOPY --from=phpspy-builder /tmp/phpspy/phpspy gprofiler/resources/php/phpspy\nCOPY --from=phpspy-builder /tmp/binutils/binutils-2.25/bin/bin/objdump gprofiler/resources/php/objdump\nCOPY --from=phpspy-builder /tmp/binutils/binutils-2.25/bin/bin/strings gprofiler/resources/php/strings\n\nCOPY --from=async-profiler-builder-glibc /tmp/async-profiler/build/jattach gprofiler/resources/java/jattach\nCOPY --from=async-profiler-builder-glibc /tmp/async-profiler/build/async-profiler-version gprofiler/resources/java/async-profiler-version\nCOPY --from=async-profiler-builder-glibc /tmp/async-profiler/build/libasyncProfiler.so gprofiler/resources/java/glibc/libasyncProfiler.so\nCOPY --from=async-profiler-builder-musl /tmp/async-profiler/build/libasyncProfiler.so gprofiler/resources/java/musl/libasyncProfiler.so\nCOPY --from=async-profiler-builder-glibc /tmp/async-profiler/build/fdtransfer gprofiler/resources/java/fdtransfer\n\nCOPY --from=rbspy-builder /tmp/rbspy/rbspy gprofiler/resources/ruby/rbspy\n\nCOPY --from=burn-builder /tmp/burn/burn gprofiler/resources/burn\n\n# we want the latest pip\n# hadolint ignore=DL3013\nRUN pip3 install --upgrade --no-cache-dir pip\n\n# done separately from the 'pip3 install -e' below; so we don't reinstall all dependencies on each\n# code change.\nCOPY requirements.txt ./\nCOPY granulate-utils/setup.py granulate-utils/requirements.txt granulate-utils/README.md granulate-utils/\nCOPY granulate-utils/granulate_utils granulate-utils/granulate_utils\nRUN pip3 install --no-cache-dir -r requirements.txt\n\nCOPY LICENSE.md MANIFEST.in README.md setup.py  ./\nCOPY gprofiler gprofiler\nRUN pip3 install --no-cache-dir -e .\n\n# lets gProfiler know it is running in a container\nENV GPROFILER_IN_CONTAINER=1\n\nENTRYPOINT [ \"python3\", \"-m\", \"gprofiler\" ]\n"
+}

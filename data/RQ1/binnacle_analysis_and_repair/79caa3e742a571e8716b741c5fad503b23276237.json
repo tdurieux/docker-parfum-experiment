@@ -1,0 +1,53 @@
+{
+  "startTime": 1674244072856,
+  "endTime": 1674244073711,
+  "originalSmells": [
+    {
+      "rule": "curlUseHttpsUrl",
+      "position": {
+        "lineStart": 31,
+        "lineEnd": 31,
+        "columnStart": 4,
+        "columnEnd": 126
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 27,
+        "lineEnd": 27,
+        "columnStart": 17,
+        "columnEnd": 28
+      }
+    },
+    {
+      "rule": "sha256sumEchoOneSpaces",
+      "position": {
+        "lineStart": 32,
+        "lineEnd": 32,
+        "columnStart": 4,
+        "columnEnd": 160
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 12,
+        "lineEnd": 16,
+        "columnStart": 22,
+        "columnEnd": 32
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 12,
+        "lineEnd": 16,
+        "columnStart": 22,
+        "columnEnd": 32
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM debian:jessie\n\nARG DOCKER_RELEASE_STAGE\nARG INSTALLER_VERSION\nARG DOCKER_VERSION\nARG DOCKER_COMPOSE_VERSION\nARG DOCKER_MACHINE_VERSION\nARG KITEMATIC_VERSION\nARG VBOX_VERSION\nARG VBOX_REV\nARG MIXPANEL_TOKEN\n\nRUN apt-get update && apt-get -y --no-install-recommends install \\\n\t\tautoconf build-essential curl \\\n\t\tlibxml2-dev libssl-dev \\\n\t\tp7zip-full \\\n\t\thfsplus hfsutils hfsprogs cpio && rm -rf /var/lib/apt/lists/*;\n\n# We need the bomutils to create the Mac OS X Bill of Materials (BOM) files.\n# https://github.com/hogliux/bomutils\nRUN curl -fsSL https://github.com/hogliux/bomutils/archive/0.2.tar.gz | tar xvz && \\\n\tcd bomutils-* && \\\n\tmake && make install\n\n# Needed to pack/unpack the .pkg files\nRUN curl -fsSL https://github.com/mackyle/xar/archive/xar-1.6.1.tar.gz | tar xvz && \\\n\tcd xar-*/xar && \\\n\t./autogen.sh && ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" && \\\n\tmake && make install\n\n\nRUN curl -fsSL -o /vbox.dmg https://download.virtualbox.org/virtualbox/$VBOX_VERSION/VirtualBox-$VBOX_VERSION-$VBOX_REV-OSX.dmg \\\n\t&& echo \"$(curl -fsSL 'https://virtualbox.org/download/hashes/'\"$VBOX_VERSION\"'/SHA256SUMS' | awk '$2 ~ /-OSX.dmg$/ { print $1 }')  */vbox.dmg\" | sha256sum -c -\n\n# Why '--strip-components 3'?  The client binary is in usr/local/bin/docker in\n# the tar archive.  If we extract directly, it will create a usr/local/bin\n# subdirectory (not what we want).  So we use --strip-components to remove the\n# `usr/local/bin` part and drop the bin in the current directory.\nRUN curl -fsSL -o dockerbins.tgz \"https://download.docker.com/mac/static/${DOCKER_RELEASE_STAGE}/x86_64/docker-${DOCKER_VERSION}.tgz\" && \\\n    tar xvf dockerbins.tgz docker/docker --strip-components 1 && \\\n    rm dockerbins.tgz\nRUN chmod +x /docker\n\nRUN curl -fsSL -o /docker-machine https://github.com/docker/machine/releases/download/v$DOCKER_MACHINE_VERSION/docker-machine-Darwin-x86_64\nRUN chmod +x /docker-machine\n\nRUN curl -fsSL -o /docker-compose https://github.com/docker/compose/releases/download/$DOCKER_COMPOSE_VERSION/docker-compose-Darwin-x86_64\nRUN chmod +x /docker-compose\n\nRUN curl -fsSL -o /boot2docker.iso https://github.com/boot2docker/boot2docker/releases/download/v$DOCKER_VERSION/boot2docker.iso\nRUN curl -fsSL -o /kitematic.zip https://github.com/kitematic/kitematic/releases/download/v$KITEMATIC_VERSION/Kitematic-$KITEMATIC_VERSION-Mac.zip\n\n#  Extract the VirtualBox .pkg\nRUN mkdir -p /mpkg/vbox && \\\n\tcd /mpkg/vbox && \\\n\t7z x /vbox.dmg -ir'!*.hfs' && \\\n\t7z x `find . -name '*.hfs'` -ir'!*.pkg' && \\\n\tmv VirtualBox/VirtualBox.pkg . && \\\n\trm -rf vbox.dmg && \\\n\trm -rf `find . -name '*.hfs'`\n\n# Extract the .pkg files\nRUN cd /mpkg/vbox && \\\n\tmv VirtualBox.pkg /tmp && \\\n\txar -xf /tmp/VirtualBox.pkg && \\\n\trm -rf /tmp/VirtualBox.pkg\n\nRUN cd /mpkg/vbox && \\\n\tmv *.pkg .. && \\\n\trm -rf vbox\n\n# Add components\nCOPY osx/mpkg/Distribution /mpkg/Distribution\n\n# docker.pkg\nCOPY osx/mpkg/docker.pkg /mpkg/docker.pkg\nRUN cd /mpkg/docker.pkg && \\\n\tmkdir rootfs && \\\n\tcd rootfs && \\\n  mkdir -p usr/local/bin && \\\n  mv /docker usr/local/bin/ && \\\n  ls -al /usr/local/bin/ && \\\n\tfind . | cpio -o --format odc | gzip -c > ../Payload && \\\n\tmkbom . ../Bom && \\\n\tsed -i \\\n\t\t-e \"s/%DOCKER_NUMBER_OF_FILES%/`find . | wc -l`/g\" \\\n\t\t-e \"s/%DOCKER_INSTALL_KBYTES%/`du -sk | cut -f1`/g\" \\\n\t\t-e \"s/%DOCKER_VERSION%/$DOCKER_VERSION/g\" \\\n\t\t../PackageInfo /mpkg/Distribution && \\\n\tcd .. && \\\n\trm -rf ./rootfs\n\n# kitematicapp.pkg\nCOPY osx/mpkg/kitematicapp.pkg /mpkg/kitematicapp.pkg\nRUN cd /mpkg/kitematicapp.pkg && \\\n\tmkdir ./rootfs && \\\n\tcd ./rootfs && \\\n  7z x /kitematic.zip && \\\n  rm -rf ./__MACOSX && \\\n  ls -al . && \\\n\tfind . | cpio -o --format odc | gzip -c > ../Payload && \\\n\tmkbom . ../Bom && \\\n\tsed -i \\\n\t\t-e \"s/%KITEMATICAPP_NUMBER_OF_FILES%/`find . | wc -l`/g\" \\\n\t\t-e \"s/%KITEMATICAPP_INSTALL_KBYTES%/`du -sk | cut -f1`/g\" \\\n\t\t-e \"s/%KITEMATICAPP_VERSION%/$KITEMATIC_VERSION/g\" \\\n\t\t../PackageInfo /mpkg/Distribution && \\\n\tcd .. && \\\n\trm -rf ./rootfs\n\n# dockermachine.pkg\nCOPY osx/mpkg/dockermachine.pkg /mpkg/dockermachine.pkg\nRUN cd /mpkg/dockermachine.pkg && \\\n\tmkdir rootfs && \\\n\tcd rootfs && \\\n  mkdir -p usr/local/bin && \\\n  mv /docker-machine usr/local/bin/ && \\\n  ls -al /usr/local/bin/ && \\\n\tfind . | cpio -o --format odc | gzip -c > ../Payload && \\\n\tmkbom . ../Bom && \\\n\tsed -i \\\n\t\t-e \"s/%DOCKERMACHINE_NUMBER_OF_FILES%/`find . | wc -l`/g\" \\\n\t\t-e \"s/%DOCKERMACHINE_INSTALL_KBYTES%/`du -sk | cut -f1`/g\" \\\n\t\t-e \"s/%DOCKERMACHINE_VERSION%/$DOCKER_MACHINE_VERSION/g\" \\\n\t\t../PackageInfo /mpkg/Distribution && \\\n\tcd .. && \\\n\trm -rf ./rootfs\n\n# dockercompose.pkg\nCOPY osx/mpkg/dockercompose.pkg /mpkg/dockercompose.pkg\nRUN cd /mpkg/dockercompose.pkg && \\\n\tmkdir rootfs && \\\n\tcd rootfs && \\\n  mkdir -p usr/local/bin && \\\n  mv /docker-compose usr/local/bin/ && \\\n  ls -al /usr/local/bin/ && \\\n\tfind . | cpio -o --format odc | gzip -c > ../Payload && \\\n\tmkbom . ../Bom && \\\n\tsed -i \\\n\t\t-e \"s/%DOCKERCOMPOSE_NUMBER_OF_FILES%/`find . | wc -l`/g\" \\\n\t\t-e \"s/%DOCKERCOMPOSE_INSTALL_KBYTES%/`du -sk | cut -f1`/g\" \\\n\t\t-e \"s/%DOCKERCOMPOSE_VERSION%/$DOCKER_COMPOSE_VERSION/g\" \\\n\t\t../PackageInfo /mpkg/Distribution && \\\n\tcd .. && \\\n\trm -rf ./rootfs\n\n# boot2dockeriso.pkg\nCOPY osx/mpkg/boot2dockeriso.pkg /mpkg/boot2dockeriso.pkg\nRUN cd /mpkg/boot2dockeriso.pkg && \\\n  cd Scripts && find . | cpio -o --format odc | gzip -c > ../Scripts.bin && cd .. && \\\n  rm -r Scripts && mv Scripts.bin Scripts && \\\n\tmkdir ./rootfs && \\\n\tcd ./rootfs && \\\n\tcp /boot2docker.iso . && \\\n\tfind . | cpio -o --format odc | gzip -c > ../Payload && \\\n\tmkbom . ../Bom && \\\n\tsed -i \\\n\t\t-e \"s/%BOOT2DOCKER_ISO_NUMBER_OF_FILES%/`find . | wc -l`/g\" \\\n\t\t-e \"s/%BOOT2DOCKER_ISO_INSTALL_KBYTES%/`du -sk | cut -f1`/g\" \\\n\t\t-e \"s/%DOCKER_VERSION%/$DOCKER_VERSION/g\" \\\n\t\t../PackageInfo /mpkg/Distribution && \\\n\tcd .. && \\\n\trm -rf ./rootfs\n\n# dockerquickstartterminalapp.pkg\nCOPY osx/mpkg/dockerquickstartterminalapp.pkg /mpkg/dockerquickstartterminalapp.pkg\nCOPY osx/mpkg/quickstart.app /mpkg/quickstart.app\nRUN cd /mpkg/dockerquickstartterminalapp.pkg && \\\n\tmkdir ./rootfs && \\\n\tcd ./rootfs && \\\n\tmv /mpkg/quickstart.app ./Docker\\ Quickstart\\ Terminal.app && \\\n\tfind . | cpio -o --format odc | gzip -c > ../Payload && \\\n\tmkbom . ../Bom && \\\n\tsed -i \\\n\t\t-e \"s/%DOCKERQUICKSTARTTERMINALAPP_NUMBER_OF_FILES%/`find . | wc -l`/g\" \\\n\t\t-e \"s/%DOCKERQUICKSTARTTERMINALAPP_INSTALL_KBYTES%/`du -sk | cut -f1`/g\" \\\n\t\t-e \"s/%DOCKERQUICKSTARTTERMINALAPP_VERSION%/$INSTALLER_VERSION/g\" \\\n\t\t../PackageInfo /mpkg/Distribution && \\\n\tcd .. && \\\n\trm -rf ./rootfs\n\nCOPY osx/mpkg/Resources /mpkg/Resources\nCOPY osx/mpkg/Plugins /mpkg/Plugins\n\nRUN sed -i \\\n    -e \"s/%MIXPANEL_TOKEN%/$MIXPANEL_TOKEN/g\" \\\n    -e \"s/%INSTALLER_VERSION%/$INSTALLER_VERSION/g\" \\\n    mpkg/Plugins/*.bundle/Contents/Info.plist\nRUN sed -i \\\n\t\t-e \"s/%INSTALLER_VERSION%/$INSTALLER_VERSION/g\" \\\n\t\tmpkg/Plugins/*.bundle/Contents/Resources/*.html\nRUN sed -i \\\n\t\t-e \"s/%INSTALLER_VERSION%/$INSTALLER_VERSION/g\" \\\n\t\tmpkg/Resources/en.lproj/welcome.rtfd/TXT.rtf\nRUN sed -i \\\n\t\t-e \"s/%VBOX_VERSION%/$VBOX_VERSION/g\" \\\n\t\t/mpkg/Distribution && \\\n\t\tsed -i \\\n\t\t-e \"s/%VBOX_VERSION%/$VBOX_VERSION/g\" \\\n\t\t-e \"s/%DOCKER_VERSION%/$DOCKER_VERSION/g\" \\\n\t\t-e \"s/%DOCKERMACHINE_VERSION%/$DOCKER_MACHINE_VERSION/g\" \\\n\t\t-e \"s/%DOCKERCOMPOSE_VERSION%/$DOCKER_COMPOSE_VERSION/g\" \\\n\t\t-e \"s/%DOCKER_VERSION%/$DOCKER_VERSION/g\" \\\n\t\t-e \"s/%DOCKERQUICKSTARTTERMINALAPP_VERSION%/$INSTALLER_VERSION/g\" \\\n\t\t-e \"s/%KITEMATICAPP_VERSION%/$KITEMATIC_VERSION/g\" \\\n\t\tmpkg/Resources/en.lproj/Localizable.strings\n\n# Repackage back. Yes, --compression=none is mandatory.\n# or this won't install in OSX.\nRUN cd /mpkg && \\\n\txar -c --compression=none -f /DockerToolbox.pkg .\n"
+}

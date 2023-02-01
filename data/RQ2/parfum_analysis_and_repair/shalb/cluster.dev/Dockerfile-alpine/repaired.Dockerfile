@@ -1,0 +1,23 @@
+ARG GO_VERSION=1.16.0-alpine
+ARG TERRAFORM_VERSION=0.14.8
+ARG ALPINE_VERSION=3.13.5
+
+FROM golang:${GO_VERSION} as builder
+
+RUN apk add --no-cache make git bash
+WORKDIR /workspace/cluster-dev
+COPY . /workspace/cluster-dev
+RUN make linux_amd64
+
+FROM hashicorp/terraform:${TERRAFORM_VERSION} as terraform
+
+FROM alpine:${ALPINE_VERSION}
+
+RUN apk add --no-cache git bash curl jq \
+    && curl -f -LO "https://dl.k8s.io/release/$( curl -f -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl" \
+    && chmod +x ./kubectl && mv ./kubectl /usr/local/bin/kubectl
+
+COPY --from=terraform /bin/terraform /bin/terraform
+COPY --from=builder /workspace/cluster-dev/bin/linux-amd64/cdev /bin/cdev
+
+ENTRYPOINT ["/bin/cdev"]

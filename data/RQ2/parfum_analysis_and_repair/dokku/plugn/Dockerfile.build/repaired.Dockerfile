@@ -1,0 +1,14 @@
+FROM golang:1.18.3-buster
+
+# hadolint ignore=DL3027
+RUN apt-get update \
+    && apt install --no-install-recommends apt-transport-https bats build-essential curl gnupg2 jq lintian rpm rsync rubygems-integration ruby-dev ruby -qy \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# hadolint ignore=DL3028
+RUN gem install --no-ri --no-rdoc --quiet rake fpm package_cloud
+
+WORKDIR /src
+
+RUN curl -fsSLO https://get.docker.com/builds/Linux/x86_64/docker-1.12.1.tgz && tar --strip-components=1 -xvzf docker-1.12.1.tgz -C /usr/local/bin && rm docker-1.12.1.tgz

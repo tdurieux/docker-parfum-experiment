@@ -1,0 +1,44 @@
+{
+  "startTime": 1674253978935,
+  "endTime": 1674253980569,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 86,
+        "lineEnd": 86,
+        "columnStart": 11,
+        "columnEnd": 68
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 88,
+        "lineEnd": 88,
+        "columnStart": 8,
+        "columnEnd": 70
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 90,
+        "lineEnd": 90,
+        "columnStart": 7,
+        "columnEnd": 71
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 140,
+        "lineEnd": 140,
+        "columnStart": 25,
+        "columnEnd": 52
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "ARG python_version=3.7\nARG mass_version=0.1.6\n# Image to checkout and install a specific version of MASSpy\nFROM python:${python_version} AS env-setup\nARG python_version\nARG mass_version\n\n# Define build arguments\n# User information\nARG user=mass_user\nARG group=mass_group\nARG project=mass_project\nARG uid=1000\nARG gid=1000\n# Verbosity of dockerfile output when possible\nARG verbose\n\n# User environment variables\nENV USER=${user} \\\n    GROUP=${group} \\\n    UID=${uid} \\\n    GID=${gid} \\\n    HOME=/home/${user} \\\n    PROJECT_VOLUME=/${project}\n\n# MASSpy environment variable, allow version to be changed at time of build\nENV MASS_VERSION=${mass_version}\nENV MASS_INSTALL /opt/MASSpy\nENV LICENSE_DIR /opt/licenses\n# Verbosity of image build and entrypoint script\nENV VERBOSE=${verbose:-0}\n\nRUN [ ${VERBOSE} -ne 0 ] \\\n    && echo 'Building image using the following:\\n' \\\n    && echo 'PYTHON_VERSION '${PYTHON_VERSION} \\\n    && echo 'MASS_VERSION: '${MASS_VERSION} \\\n    && echo 'USER (UID): '${USER}' ('${UID}')' \\\n    && echo 'GROUP (GID): '${GROUP}' ('${GID}')' \\\n    && echo 'PROJECT_VOLUME: '${HOME}${PROJECT_VOLUME} \\\n    || :\n\n# CPLEX environment variables\nENV CPLEX_VERSION 12.10.0\nENV CPLEX_INSTALL /opt/CPLEX\nENV CPLEX_HOME ${CPLEX_INSTALL}/cplex/python/$python_version/x86-64_linux\n\n# Gurobi environment variables\nENV GUROBI_VERSION 9.0.3\nENV GUROBI_INSTALL /opt/gurobi\nENV GUROBI_HOME ${GUROBI_INSTALL}/linux64\nENV LD_LIBRARY_PATH=$LD_LIBRARY_PATH:${HOME}${GUROBI_HOME}/lib\n\nFROM env-setup AS mass-setup\n# # Copy build context files into tmp\nWORKDIR ${HOME}/tmp/MASSpy\nCOPY ./  ./\n\n# Make directory for MASSpy installation\nWORKDIR ${HOME}/opt\nRUN echo \\\n    && if [ \"${MASS_VERSION}\" != \"local\" ] ; then \\\n        git clone https://github.com/SBRG/MASSpy.git $( [ ${VERBOSE} -eq 0 ] && echo '--quiet' ) \\\n        && dirpath=../tmp/MASSpy ; \\\n    else \\\n        # Copy local MASSpy files to expected install path\n        cp -R ../tmp/MASSpy/ ${HOME}/opt/ \\\n        && dirpath=../tmp/MASSpy/docker ; \\\n    fi \\\n    # Make directory for licenses volume and move license files into it\n    && mkdir ..${LICENSE_DIR} \\\n    # Copy license files into license directory\n    && if [ -e $dirpath/**/*.lic ] ; then mv $dirpath/**/*.lic ..${LICENSE_DIR}/ ; fi\n\n# Checkout a specific version of MASSpy if desired and install\nWORKDIR ${HOME}${MASS_INSTALL}\nRUN echo \\\n    # If a local version of MASSpy, do nothing with branch checkouts \\\n    && if [ \"${MASS_VERSION}\" != \"local\" ] ; then \\\n        if echo ${MASS_VERSION} | grep -Eq '^(latest|main)$' ; then \\\n            # Use latest (main) branch\n            git checkout main $( [ ${VERBOSE} -eq 0 ] && echo '--quiet' ) ; \\\n        else \\\n            # Assume SemVer given otherwise\n            git checkout v${MASS_VERSION} $( [ ${VERBOSE} -eq 0 ] && echo '--quiet' ) ; \\\n        fi \\\n        && pip install --no-cache-dir . $( [ ${VERBOSE} -eq 0 ] && echo '--quiet' ); \\\n    else \\\n        pip install --no-cache-dir -e . $( [ ${VERBOSE} -eq 0 ] && echo '--quiet' ); \\\n    fi \\\n    && pip install --no-cache-dir notebook $( [ ${VERBOSE} -eq 0 ] && echo '--quiet' )\n\n# Install IBM CPLEX Optimization Studio if install.bin file present in build context\nWORKDIR ${HOME}\nRUN echo \\\n    && cplex_installer=cplex_studio*.linux*.bin \\\n    && if [ -f $dirpath/cplex/$cplex_installer ] ; then \\\n        if [ ${VERBOSE} -ne 0 ] ; then echo \"Installing CPLEX\" ; fi \\\n        && chmod a+rwx $dirpath/cplex/$cplex_installer \\\n        && $dirpath/cplex/$cplex_installer \\\n            -f ./cplex.installer.properties \\\n            -DUSER_INSTALL_DIR=${HOME}${CPLEX_INSTALL} \\\n        # Copy CPLEX license into license directory\n        && mkdir .${LICENSE_DIR}/CPLEX \\\n        && mv .${CPLEX_INSTALL}/license/*.txt .${LICENSE_DIR}/CPLEX/ \\\n        # Clean files that aren't needed\n        && for to_clean in 'concert' 'cpoptimizer' 'doc' 'license' 'opl' 'python' 'Uninstall' ; \\\n            do rm -rf .${CPLEX_INSTALL}/$to_clean ; \\\n            done \\\n        && for to_clean in 'examples' 'matlab' 'readmeUNIX.html' ; \\\n            do rm -rf .${CPLEX_INSTALL}/cplex/$to_clean ; \\\n            done ; \\\n    else \\\n        if [ ${VERBOSE} -ne 0 ] ; then echo \"No installer found for CPLEX\" ; fi \\\n    fi\n\n# Install Gurobi Optimizer if gurobi.lic present\nWORKDIR ${HOME}\nRUN echo \\\n    # Only build if gurobi.lic file present\n    && if [ -f .${LICENSE_DIR}/gurobi.lic ] ; then \\\n        gurobi_package='gurobi'${GUROBI_VERSION}'_linux64.tar.gz' \\\n        && if [ ! -f tmp/$gurobi_package ] ; then \\\n            if [ ${VERBOSE} -ne 0 ] ; then echo 'Fetching Gurobi...' ; fi \\\n            && wget -qP tmp/ 'https://packages.gurobi.com/'$( echo ${GUROBI_VERSION} | sed 's/\\(^[0-9]*.[0-9]*\\).*/\\1/' )'/'$gurobi_package ; \\\n        fi \\\n        && mkdir -p .${GUROBI_HOME} \\\n        && tar xzf tmp/$gurobi_package -C ./tmp \\\n        #Only keep what is necessary\n        && for to_keep in 'lib' 'include' 'bin' 'setup.py'; \\\n            do mv './tmp/gurobi'$( echo ${GUROBI_VERSION} | sed -e 's/\\.//g' )'/linux64/'$to_keep .${GUROBI_HOME}/ ; \\\n            done ; \\\n    else \\\n        if [ ${VERBOSE} -ne 0 ] ; then echo \"No Gurobi license, skipping Gurobi installation\" ; fi ; \\\n    fi\n\n# Remove tmp & remove dos2unix\nRUN echo \\\n    && rm -rf tmp \\\n    # Ensure scripts are Unix compatible using dos2unix\n    && apt-get update && apt-get install --no-install-recommends -y dos2unix \\\n    && find .${MASS_INSTALL}/docker/docker-scripts/ -name \"*.sh\" -exec dos2unix {} \";\" \\\n    && apt-get --purge remove -y dos2unix \\\n    && rm -rf /var/lib/apt/lists/*\n\n# Final build stage install Python API if they exist and adds new user with necessary permissions\nFROM mass-setup AS mass-builder\nWORKDIR ${HOME}\nRUN echo \\\n    # Install cplex module (Python API) for the IBM CPLEX Optimization Studio if present\n    && .${MASS_INSTALL}/docker/docker-scripts/pyinstall-solver.sh \\\n        --directory ${HOME}${CPLEX_HOME} \\\n        --solver \"CPLEX\" \\\n        --verbose ${VERBOSE} \\\n    # Install gurobipy module (Python API) for the Gurobi Optimizer if present\n    && .${MASS_INSTALL}/docker/docker-scripts/pyinstall-solver.sh \\\n        --directory ${HOME}${GUROBI_HOME} \\\n        --solver \"Gurobi\" \\\n        --verbose ${VERBOSE}\n\n# Make directories for volume in product workspace\nWORKDIR ${HOME}${PROJECT_VOLUME}\n\n# Set home as final work directory\nWORKDIR ${HOME}\n\n# Add user and set user permissions for everything in home folder\nRUN echo \\\n    && groupadd -g ${GID} ${GROUP} \\\n    && useradd -M -g ${GID} -G ${GROUP} -u ${UID} ${USER} \\\n    && chown -R ${USER} ${HOME}/ \\\n    && chmod -R 777 ${HOME}/\n\nUSER ${USER}\nENTRYPOINT [ \"./opt/MASSpy/docker/docker-scripts/docker-entrypoint.sh\" ]\nCMD [ \"sh\" ]\n"
+}

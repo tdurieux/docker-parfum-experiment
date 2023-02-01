@@ -1,0 +1,43 @@
+# Package for building the problemtools .deb package
+# Ends up in the /usr/local/problemtools_build/deb/ directory
+#
+# Setting build argument PROBLEMTOOLS_VERSION causes a specific
+# version of problemtools to be built (default is latest version of
+# develop branch on GitHub)
+
+FROM ubuntu:20.04
+
+LABEL maintainer="austrin@kattis.com"
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install packages needed for build
+RUN apt update && \
+    apt install --no-install-recommends -y \
+        automake \
+        debhelper \
+        dh-python \
+        dpkg-dev \
+        g++ \
+        git \
+        make \
+        libboost-regex-dev \
+        libgmp-dev \
+        libgmp10 \
+        libgmpxx4ldbl \
+        python3 \
+        python3-pytest \
+        python3-setuptools \
+        python3-yaml \
+        python3-setuptools && rm -rf /var/lib/apt/lists/*;
+
+RUN mkdir -p /usr/local/problemtools_build
+
+WORKDIR /usr/local/problemtools_build
+RUN git clone --recursive https://github.com/kattis/problemtools
+
+ARG PROBLEMTOOLS_VERSION=develop
+RUN cd problemtools && git checkout ${PROBLEMTOOLS_VERSION} && make builddeb
+
+RUN mkdir -p deb
+RUN mv kattis-problemtools*.deb deb/

@@ -1,0 +1,32 @@
+{{#amd64}}
+FROM debian:stretch-20190506-slim
+{{/amd64}}
+
+{{#arm32v6}}
+FROM balenalib/rpi-debian:stretch-20190511
+{{/arm32v6}}
+
+ARG VERSION=0.27.0
+
+{{#cross}}
+RUN [ "cross-build-start" ]
+{{/cross}}
+
+ENV LANG C.UTF-8
+
+RUN apt-get update && apt-get -y upgrade
+
+# https://github.com/fatedier/frp/releases/
+{{#amd64}}
+ADD frp_${VERSION}_linux_amd64.tar.gz /tmp/
+RUN mv /tmp/frp_${VERSION}_linux_amd64 /root/frp
+{{/amd64}}
+
+{{#arm32v6}}
+ADD frp_${VERSION}_linux_arm.tar.gz /tmp/
+RUN mv /tmp/frp_${VERSION}_linux_arm /root/frp
+{{/arm32v6}}
+
+{{#cross}}
+RUN [ "cross-build-end" ]
+{{/cross}}

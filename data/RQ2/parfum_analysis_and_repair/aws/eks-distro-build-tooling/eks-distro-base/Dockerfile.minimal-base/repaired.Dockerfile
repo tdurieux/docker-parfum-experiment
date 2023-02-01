@@ -1,0 +1,71 @@
+# Copyright Amazon.com Inc. or its affiliates. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+
+# *NOTE* we have to limit our number of layers heres because in presubmits there
+# is no overlay fs and we will run out of space quickly
+
+################# BUILDER ######################
+ARG BASE_IMAGE
+ARG BUILDER_IMAGE
+ARG BUILT_BUILDER_IMAGE
+FROM ${BUILDER_IMAGE} as builder
+
+ENV DOWNLOAD_DIR /tmp/download
+ENV NEWROOT /newroot
+ENV FAKE_INSTALLS bash glibc p11-kit p11-kit-trust
+
+ARG TARGETARCH
+ARG TARGETOS
+
+COPY scripts/ /usr/bin
+COPY ${TARGETOS}-${TARGETARCH}/ /
+
+WORKDIR $NEWROOT
+
+# non root user
+RUN mkdir -p $NEWROOT/home/nonroot && \
+    chown 65532:65532 $NEWROOT/home/nonroot && \
+    # tmp directory with correct permissions
+    mkdir -p -m 1777 $NEWROOT/tmp
+
+RUN set -x && \
+    yum upgrade -y && \
+    yum update -y && \
+    yum install -y cpio findutils yum-utils && \
+    # setup rpm + yum
+    clean_install system-release true && \
+    # "install" excluded deps we do not want in final image
+    clean_install "$FAKE_INSTALLS" true true && \
+    clean_install "basesystem filesystem setup tzdata" && \    
+    # postinstall scriptlet for ca-certs will fail, manually extract and copy
+    # key files from host after running update-ca-trust
+    clean_install ca-certificates true true true && \
+    update-ca-trust && \
+    cp -rf /etc/pki $NEWROOT/etc && \
+    remove_package "$FAKE_INSTALLS" true && \
+    # uneccessary symlink to debuginfo which will not exist in these images
+    unlink $NEWROOT/usr/lib/debug/usr/.dwz && \
+    cleanup "base" && rm -rf /var/cache/yum
+
+COPY files/ $NEWROOT
+
+
+################# BASE ########################
+FROM ${BUILT_BUILDER_IMAGE} as base-builder
+FROM ${BASE_IMAGE} as final
+ENV PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+USER 0
+
+COPY --from=base-builder /newroot /

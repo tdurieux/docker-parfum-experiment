@@ -1,0 +1,1 @@
+# devicedevex.azurecr.io/public/iot-device-cube:1.0.1-azure-c-app-20190705-ubuntu-arm32

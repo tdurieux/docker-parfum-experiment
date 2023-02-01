@@ -1,0 +1,44 @@
+{
+  "startTime": 1674256084053,
+  "endTime": 1674256085126,
+  "originalSmells": [
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 19,
+        "lineEnd": 19,
+        "columnStart": 4,
+        "columnEnd": 31
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 30,
+        "lineEnd": 33,
+        "columnStart": 4,
+        "columnEnd": 29
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 2,
+        "lineEnd": 2,
+        "columnStart": 4,
+        "columnEnd": 31
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 48,
+        "lineEnd": 48,
+        "columnStart": 7,
+        "columnEnd": 107
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM public.ecr.aws/amazonlinux/amazonlinux:2 as builder\nRUN yum group install -y \"Development Tools\"\nRUN yum install -y glibc-static && rm -rf /var/cache/yum\n\nARG musl_version=1.2.2\nARG bash_version=5.1.16\n\nWORKDIR /opt/build\nCOPY ./sdk-fetch ./\n\nWORKDIR /opt/build\nCOPY ./hashes/musl ./hashes\n\nRUN \\\n  ./sdk-fetch hashes && \\\n  tar -xf musl-${musl_version}.tar.gz && \\\n  rm musl-${musl_version}.tar.gz hashes\n\nWORKDIR /opt/build/musl-${musl_version}\nRUN ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" --enable-static && make -j$(nproc) && make install\n\nWORKDIR /opt/build\nCOPY ./hashes/bash ./hashes\n\nRUN \\\n  ./sdk-fetch hashes && \\\n  tar -xf bash-${bash_version}.tar.gz && \\\n  rm bash-${bash_version}.tar.gz hashes\n\nWORKDIR /opt/build/bash-${bash_version}\nRUN CC=\"\"/usr/local/musl/bin/musl-gcc CFLAGS=\"-Os -DHAVE_DLOPEN=0\" \\\n    ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" \\\n\n        --enable-static-link \\\n        --without-bash-malloc \\\n    || { cat config.log; exit 1; }\nRUN make -j`nproc`\nRUN cp bash /opt/bash\nRUN mkdir -p /usr/share/licenses/bash && \\\n    cp -p COPYING /usr/share/licenses/bash\n\nFROM public.ecr.aws/amazonlinux/amazonlinux:2\n\nARG IMAGE_VERSION\n# Make the container image version a mandatory build argument\nRUN test -n \"$IMAGE_VERSION\"\nLABEL \"org.opencontainers.image.version\"=\"$IMAGE_VERSION\"\n\nRUN yum update -y \\\n    && yum install -y openssh-server sudo shadow-utils util-linux procps-ng jq openssl ec2-instance-connect \\\n    && yum clean all && rm -rf /var/cache/yum\n\nCOPY --from=builder /opt/bash /opt/bin/\nCOPY --from=builder /usr/share/licenses/bash /usr/share/licenses/bash\n\nRUN rm -f /etc/motd /etc/issue\nCOPY --chown=root:root motd /etc/\n\nCOPY --chown=root:root units /etc/systemd/user/\n\nARG CUSTOM_PS1='[\\u@admin]\\$ '\nRUN echo \"PS1='$CUSTOM_PS1'\" > \"/etc/profile.d/bottlerocket-ps1.sh\" \\\n    && echo \"PS1='$CUSTOM_PS1'\" >> \"/root/.bashrc\" \\\n    && echo \"cat /etc/motd\" >> \"/root/.bashrc\"\n\nCOPY --chmod=755 start_admin.sh /usr/sbin/\nCOPY ./sshd_config /etc/ssh/\nCOPY --chmod=755 ./sheltie /usr/bin/\n\nRUN groupadd -g 274 api\n\n# Reduces issues related to logger and our implementation of systemd. This is\n# necessary for scripts logging to logger, such as in EC2 Instance Connect.\nRUN ln -sf /usr/bin/true /usr/bin/logger\n\nCMD [\"/usr/sbin/start_admin.sh\"]\nENTRYPOINT [\"/bin/bash\", \"-c\"]\n"
+}

@@ -1,0 +1,44 @@
+{
+  "startTime": 1674250334374,
+  "endTime": 1674250335219,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 98,
+        "lineEnd": 98,
+        "columnStart": 22,
+        "columnEnd": 44
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 153,
+        "lineEnd": 153,
+        "columnStart": 2,
+        "columnEnd": 29
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 98,
+        "lineEnd": 98,
+        "columnStart": 22,
+        "columnEnd": 44
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 153,
+        "lineEnd": 153,
+        "columnStart": 2,
+        "columnEnd": 29
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Copyright 2022 Google LLC\n#\n# Licensed under the Apache License, Version 2.0 (the \"License\");\n# you may not use this file except in compliance with the License.\n# You may obtain a copy of the License at\n#\n#      http://www.apache.org/licenses/LICENSE-2.0\n#\n# Unless required by applicable law or agreed to in writing, software\n# distributed under the License is distributed on an \"AS IS\" BASIS,\n# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.\n# See the License for the specific language governing permissions and\n# limitations under the License.\n\n# Build all nomos go binaries\nFROM golang:1.17 as bins\n\nWORKDIR /workspace\n\nCOPY . .\n\n# Version string to embed in built binary.\nARG VERSION\nARG HELM_INFLATOR_FUNCTIOPN_VERSION=v0.2.0\n\nARG HELM_VERSION=v3.6.3\nARG KUSTOMIZE_VERSION=v4.5.2\n\n# Install Helm\nRUN wget https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz -O /tmp/helm-${HELM_VERSION}-linux-amd64.tar.gz && \\\n  tar -zxvf /tmp/helm-${HELM_VERSION}-linux-amd64.tar.gz -C /tmp && \\\n  mv /tmp/linux-amd64/helm /usr/local/bin/helm && \\\n  rm -rf /tmp/linux-amd64 /tmp/helm-${HELM_VERSION}-linux-amd64.tar.gz\n\n# Install Kustomize\nRUN wget https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2F${KUSTOMIZE_VERSION}/kustomize_${KUSTOMIZE_VERSION}_linux_amd64.tar.gz -O /tmp/kustomize_${KUSTOMIZE_VERSION}_linux_amd64.tar.gz && \\\n  tar -zxvf /tmp/kustomize_${KUSTOMIZE_VERSION}_linux_amd64.tar.gz -C /tmp && \\\n  mv /tmp/kustomize /usr/local/bin/kustomize && \\\n  rm /tmp/kustomize_${KUSTOMIZE_VERSION}_linux_amd64.tar.gz\n\n# Install the render-helm-chart function.\nRUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 GO111MODULE=on \\\n  go install github.com/GoogleContainerTools/kpt-functions-catalog/functions/go/render-helm-chart@${HELM_INFLATOR_FUNCTIOPN_VERSION}\n\n# Build all our stuff.\nRUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 GO111MODULE=on \\\n  go install \\\n    -mod=vendor \\\n    -ldflags \"-X kpt.dev/configsync/pkg/version.VERSION=${VERSION}\" \\\n    ./cmd/reconciler \\\n    ./cmd/reconciler-manager \\\n    ./cmd/monitor \\\n    ./cmd/git-importer \\\n    ./cmd/hydration-controller \\\n    ./cmd/nomos \\\n    ./cmd/admission-webhook \\\n    ./cmd/oci-sync\n\n# Hydration controller image\nFROM gcr.io/distroless/static:nonroot as hydration-controller\nWORKDIR /\nCOPY --from=bins /go/bin/hydration-controller .\nCOPY --from=bins /go/bin/render-helm-chart /usr/local/bin/render-helm-chart\nCOPY --from=bins /usr/local/bin/helm /usr/local/bin/helm\nCOPY --from=bins /usr/local/bin/kustomize /usr/local/bin/kustomize\n\n# License file required for on-prem release.\nCOPY LICENSE LICENSE\nCOPY LICENSES.txt LICENSES.txt\n\n# Switch to non-root user\nUSER 1000\n\nENTRYPOINT [\"/hydration-controller\"]\n\n# OCI-sync image\nFROM gcr.io/distroless/static:latest as oci-sync\n# Setting HOME ensures that whatever UID this ultimately runs as can write files.\nENV HOME=/tmp\nWORKDIR /\nCOPY --from=bins /go/bin/oci-sync .\n\n# License file required for on-prem release.\nCOPY LICENSE LICENSE\nCOPY LICENSES.txt LICENSES.txt\n\n# Switch to non-root user\nUSER 1000\n\nENTRYPOINT [\"/oci-sync\"]\n\n# Hydration controller image with shell\nFROM k8s.gcr.io/build-image/debian-base-amd64:bullseye-v1.3.0 as hydration-controller-with-shell\nWORKDIR /\nCOPY --from=bins /go/bin/hydration-controller .\nCOPY --from=bins /go/bin/render-helm-chart /usr/local/bin/render-helm-chart\nCOPY --from=bins /usr/local/bin/helm /usr/local/bin/helm\nCOPY --from=bins /usr/local/bin/kustomize /usr/local/bin/kustomize\nRUN apt-get update && apt-get install --no-install-recommends -y git && rm -rf /var/lib/apt/lists/*;\n\n# License file required for on-prem release.\nCOPY LICENSE LICENSE\nCOPY LICENSES.txt LICENSES.txt\n\n# Switch to non-root user\nUSER 1000\n\nENTRYPOINT [\"/hydration-controller\"]\n\n# Reconciler image\nFROM gcr.io/distroless/static:nonroot as reconciler\nWORKDIR /\nCOPY --from=bins /go/bin/reconciler .\n\n# License file required for on-prem release.\nCOPY LICENSE LICENSE\nCOPY LICENSES.txt LICENSES.txt\n\n# Switch to non-root user\nUSER 1000\n\nENTRYPOINT [\"/reconciler\"]\n\n# Reconciler Manager image\nFROM gcr.io/distroless/static:nonroot as reconciler-manager\nWORKDIR /\nCOPY --from=bins /go/bin/reconciler-manager reconciler-manager\nUSER nonroot:nonroot\n\n# License file required for on-prem release.\nCOPY LICENSE LICENSE\nCOPY LICENSES.txt LICENSES.txt\n\nENTRYPOINT [\"/reconciler-manager\"]\n\n# Admission Webhook image\nFROM gcr.io/distroless/static:nonroot as admission-webhook\nWORKDIR /\nCOPY --from=bins /go/bin/admission-webhook admission-webhook\nUSER nonroot:nonroot\n\n# License file required for on-prem release.\nCOPY LICENSE LICENSE\nCOPY LICENSES.txt LICENSES.txt\n\nENTRYPOINT [\"/admission-webhook\"]\n\n# Nomos image\nFROM k8s.gcr.io/build-image/debian-base-amd64:bullseye-v1.3.0 as nomos\n\n# https://github.com/GoogleCloudPlatform/google-cloud-go/issues/791#issuecomment-353689746\nRUN apt-get update && \\\n  apt-get -y upgrade && \\\n  apt-get install --no-install-recommends -y bash git && rm -rf /var/lib/apt/lists/*;\n\nRUN mkdir -p /opt/nomos/bin\nENV PATH=\"/opt/nomos/bin:${PATH}\"\nWORKDIR /opt/nomos/bin\n\n# Nomos binaries.\nCOPY --from=bins /go/bin/git-importer git-importer\nCOPY --from=bins /go/bin/monitor monitor\nCOPY --from=bins /go/bin/nomos nomos\n\n# License file required for on-prem release.\nCOPY LICENSE LICENSE\nCOPY LICENSES.txt LICENSES.txt\n\n# Set up a HOME directory for non-root user\nRUN mkdir -p /nomos\nRUN chown 1000 /nomos\nENV HOME=\"/nomos\"\n\n# Switch to non-root user\nUSER 1000\n\nCMD echo \"Please specify a specific binary:\\n\\n$(find . -type f -executable -printf '\\t%f\\n')\\n\" && exit 1\n"
+}

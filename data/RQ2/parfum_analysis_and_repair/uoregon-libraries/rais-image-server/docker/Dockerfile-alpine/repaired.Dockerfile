@@ -1,0 +1,54 @@
+# This generates a production alpine image for RAIS
+#
+# Example:
+#
+#     docker build --rm -t uolibraries/rais:latest-alpine -f ./docker/Dockerfile-alpine .
+FROM golang:1-alpine AS build
+LABEL maintainer="Jeremy Echols <jechols@uoregon.edu>"
+
+# Install all the build dependencies
+RUN apk add --no-cache openjpeg-dev git gcc make
+
+# This is necessary for our openjp2 C bindings
+RUN apk add --no-cache musl-dev
+
+# This is just getting absurd, but results in a dramatically smaller rais-server
+RUN apk add --no-cache upx
+
+# Add the go mod stuff first so we aren't re-downloading dependencies except
+# when they actually change
+WORKDIR /opt/rais-src
+ADD ./go.mod /opt/rais-src/go.mod
+ADD ./go.sum /opt/rais-src/go.sum
+RUN go mod download
+
+# Make sure we don't just add every little thing, otherwise unimportant changes
+# trigger a rebuild
+ADD ./Makefile /opt/rais-src/Makefile
+ADD ./src /opt/rais-src/src
+ADD ./scripts /opt/rais-src/scripts
+RUN make rais-server
+
+RUN upx ./bin/rais-server
+
+# Production image just installs runtime deps and copies in the binaries
+FROM alpine:3.10 AS production
+LABEL maintainer="Jeremy Echols <jechols@uoregon.edu>"
+
+# Add our user and group first to make sure their IDs get assigned consistently
+RUN addgroup -S rais && adduser -S rais -G rais
+
+# Deps
+RUN apk update && apk add --no-cache ca-certificates && rm -rf /var/cache/apk/*
+RUN apk add --no-cache openjpeg
+
+ENV RAIS_TILEPATH /var/local/images
+ENV RAIS_PLUGINS "-"
+RUN touch /etc/rais.toml && chown rais:rais /etc/rais.toml
+
+# Though we compile everything, we want our default alpine image tiny, so we offer *no* plugins
+COPY --from=build /opt/rais-src/bin/rais-server /opt/rais/
+
+USER rais
+EXPOSE 12415
+ENTRYPOINT ["/opt/rais/rais-server"]

@@ -1,0 +1,48 @@
+ARG GO_VERSION=1.16
+
+FROM golang:${GO_VERSION}-alpine3.12 AS builder
+
+# set up nsswitch.conf for Go's "netgo" implementation
+# https://github.com/gliderlabs/docker-alpine/issues/367#issuecomment-424546457
+RUN echo 'hosts: files dns' > /etc/nsswitch.conf.build
+
+RUN apk add --update --no-cache ca-certificates git tzdata
+
+RUN go get -d github.com/kubernetes-sigs/aws-iam-authenticator/cmd/aws-iam-authenticator
+RUN cd $GOPATH/src/github.com/kubernetes-sigs/aws-iam-authenticator && \
+    git checkout 981ecbe && \
+    go install ./cmd/aws-iam-authenticator
+
+
+ENV HELM_S3_PLUGIN_VERSION=0.11.0
+
+ENV HELM_S3_ARCHIVE_FILE_NAME="helm-s3_${HELM_S3_PLUGIN_VERSION}_linux_amd64.tar.gz" \
+    HELM_S3_CHECKSUMS_FILE_NAME="helm-s3_${HELM_S3_PLUGIN_VERSION}_sha512_checksums.txt" \
+    HELM_S3_PLUGIN_URL="https://github.com/banzaicloud/helm-s3/releases/download/v${HELM_S3_PLUGIN_VERSION}"
+
+RUN set -xe \
+    && mkdir -p helm-plugins/helm-s3 \
+    && wget "${HELM_S3_PLUGIN_URL}/${HELM_S3_ARCHIVE_FILE_NAME}" \
+    && wget "${HELM_S3_PLUGIN_URL}/${HELM_S3_CHECKSUMS_FILE_NAME}" \
+    && cat "${HELM_S3_CHECKSUMS_FILE_NAME}" | grep -E "^[0-9a-z]+  ${HELM_S3_ARCHIVE_FILE_NAME}$" | sha512sum -c - \
+    && tar xzf "${HELM_S3_ARCHIVE_FILE_NAME}" -C "helm-plugins/helm-s3"
+
+FROM alpine:3.13
+
+RUN apk add --update --no-cache bash curl
+
+ENV HELM_PLUGINS=/usr/share/helm/plugins
+
+COPY --from=builder /etc/nsswitch.conf.build /etc/nsswitch.conf
+COPY --from=builder /usr/share/zoneinfo /usr/share/zoneinfo
+COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
+COPY --from=builder /go/bin/aws-iam-authenticator /usr/bin/
+COPY --from=builder /tmp/helm-plugins /usr/share/helm/plugins
+
+COPY build/release/pipeline /
+COPY build/release/worker /
+COPY build/release/pipelinectl /
+COPY templates/ /templates/
+COPY config/anchore/policies/ /policies/
+
+CMD ["/pipeline"]

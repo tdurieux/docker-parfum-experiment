@@ -1,0 +1,17 @@
+{
+  "startTime": 1674252590396,
+  "endTime": 1674252591154,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 50,
+        "lineEnd": 50,
+        "columnStart": 4,
+        "columnEnd": 89
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# `python-base` sets up all our shared environment variables\nFROM python:3.9.8-buster as python-base\n\n    # python\nENV PYTHONUNBUFFERED=1 \\\n    # prevents python creating .pyc files\n    PYTHONDONTWRITEBYTECODE=1 \\\n    \\\n    # pip\n    PIP_NO_CACHE_DIR=off \\\n    PIP_DISABLE_PIP_VERSION_CHECK=on \\\n    PIP_DEFAULT_TIMEOUT=100 \\\n    \\\n    # poetry\n    # https://python-poetry.org/docs/configuration/#using-environment-variables\n    POETRY_VERSION=1.1.12 \\\n    # make poetry install to this location\n    POETRY_HOME=\"/opt/poetry\" \\\n    # make poetry create the virtual environment in the project's root\n    # it gets named `.venv`\n    POETRY_VIRTUALENVS_IN_PROJECT=true \\\n    # do not ask any interactive question\n    POETRY_NO_INTERACTION=1 \\\n    \\\n    # paths\n    # this is where our requirements + virtual environment will live\n    PYSETUP_PATH=\"/opt/pysetup\" \\\n    VENV_PATH=\"/opt/pysetup/.venv\"\\\n    # cache\n    PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1\n\n\n\n# prepend poetry and venv to path\nENV PATH=\"$POETRY_HOME/bin:$VENV_PATH/bin:$PATH\"\n\n# `builder-base` stage is used to build deps + create our virtual environment\nFROM python-base as builder-base\n\nSHELL [\"/bin/bash\", \"-o\", \"pipefail\", \"-c\"]\nRUN apt-get update \\\n    && apt-get install --no-install-recommends -y \\\n        # deps for installing poetry\n        curl \\\n        # deps for building python deps\n        build-essential \\\n    && apt-get install -y --no-install-recommends build-essential gcc git && apt-get clean \\\n && rm -rf /var/lib/apt/lists/*\n\n# with_changed_query_model poetry - respects $POETRY_VERSION & $POETRY_HOME\nRUN curl -f -sSL https://raw.githubusercontent.com/python-poetry/poetry/master/get-poetry.py | python -\n\n# copy project requirement files here to ensure they will be cached.\nWORKDIR $PYSETUP_PATH\nCOPY ./poetry.lock ./pyproject.toml ./\n\n# update poetry and with_changed_query_model runtime deps - uses $POETRY_VIRTUALENVS_IN_PROJECT internally\nRUN poetry self update && poetry install --no-dev\n\n\n# Прод-образ, куда копируются все собранные ранее зависимости\nFROM builder-base as production\n# create the app user\nRUN addgroup --system app && adduser --system --group app\nWORKDIR $PYSETUP_PATH\n# copy in our built poetry + venv\nCOPY --from=builder-base $POETRY_HOME $POETRY_HOME\nCOPY --from=builder-base $PYSETUP_PATH $PYSETUP_PATH\n\n# quicker install as runtime deps are already installed\nRUN poetry install\n\n# chown all the files to the app user\n\nENV WORKDIR=/bot\nWORKDIR $WORKDIR\nENV PATH=\"/opt/venv/bin:$PATH\"\nCOPY . $WORKDIR\n\nRUN chown -R app:app $WORKDIR\n"
+}

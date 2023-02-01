@@ -1,0 +1,5 @@
+FROM golang:latest
+
+ARG PROJECT=XXX
+ENV GOPATH /go
+WORKDIR /go/src/$PROJECT

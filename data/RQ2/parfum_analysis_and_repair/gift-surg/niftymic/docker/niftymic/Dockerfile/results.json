@@ -1,0 +1,89 @@
+{
+  "startTime": 1674253719586,
+  "endTime": 1674253720271,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 47,
+        "lineEnd": 47,
+        "columnStart": 8,
+        "columnEnd": 30
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 96,
+        "lineEnd": 112,
+        "columnStart": 4,
+        "columnEnd": 16
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 115,
+        "lineEnd": 122,
+        "columnStart": 8,
+        "columnEnd": 5
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 124,
+        "lineEnd": 124,
+        "columnStart": 4,
+        "columnEnd": 20
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 126,
+        "lineEnd": 127,
+        "columnStart": 8,
+        "columnEnd": 5
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 133,
+        "lineEnd": 135,
+        "columnStart": 8,
+        "columnEnd": 26
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 62,
+        "lineEnd": 62,
+        "columnStart": 8,
+        "columnEnd": 32
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 25,
+        "lineEnd": 27,
+        "columnStart": 4,
+        "columnEnd": 11
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 90,
+        "lineEnd": 92,
+        "columnStart": 4,
+        "columnEnd": 19
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "#\n# Building of Docker image with default monaifbs segmentation tool:\n#   docker build --build-arg VERSION=v? -t renbem/niftymic:v? -t renbem/niftymic .\n#\n# If building with fetal_brain_seg as segmentation pipeline:\n#   docker build --build-arg VERSION=v? --build-arg FETAL_SEG_TOOL=fetal_brain_seg -t renbem/niftymic:v? -t renbem/niftymic .\n\nARG VERSION=latest\nARG REPO=NiftyMIC\n# default use monaifbs for segmentation. Define this arg as fetal_brain_seg to use previous app\n# https://github.com/gift-surg/fetal_brain_seg.git\nARG FETAL_SEG_TOOL=monaifbs\n\n\n# GUI with ITK-Snap does not work at the moment, unfortunately\nARG IMAGE=renbem/simplereg_dependencies:noitksnap\n\n# -----------------------------------------------------------------------------\nFROM $IMAGE as compile-image\n\nARG REPO\nARG VERSION\nARG FETAL_SEG_TOOL\n\nRUN apt-get update && \\\n    apt-get install --no-install-recommends -y \\\n        build-essential \\\n        git \\\n        && \\\n    rm -rf /var/lib/apt/lists/*\n\n# download NiftyMIC\nRUN if [ \"$VERSION\" = \"latest\" ] ; then \\\n        git clone \\\n        https://github.com/gift-surg/${REPO}.git /app/${REPO} \\\n    ;else \\\n        git clone \\\n        --branch ${VERSION} \\\n        https://github.com/gift-surg/${REPO}.git /app/${REPO} \\\n    ;fi\n\n# fetch MONAIfbs and download pretrained model for MONAIfbs\nRUN if [ \"$FETAL_SEG_TOOL\" = \"monaifbs\" ] ; then \\\n        cd /app/${REPO} && \\\n        git submodule update --init && \\\n        # fetch the pretrained model\n        cd /app && \\\n        pip install --no-cache-dir zenodo-get && \\\n        zenodo_get 10.5281/zenodo.4282679 && \\\n        tar xvf models.tar.gz && \\\n        mv models /app/${REPO}/MONAIfbs/monaifbs/ && \\\n        # remove the downloaded compressed file\n        rm -r /app/models.tar.gz \\\n    ; fi\n\n# download fetal_brain_seg if required (need to create an empty directory for following copy, line 105)\nRUN mkdir /app/fetal_brain_seg\nADD https://github.com/taigw/Demic/archive/v0.1.tar.gz /app/Demic-0.1.tar.gz\nRUN if [ \"$FETAL_SEG_TOOL\" = \"fetal_brain_seg\" ] ; then \\\n        git clone \\\n        https://github.com/gift-surg/fetal_brain_seg.git /app/fetal_brain_seg  && \\\n        cd /app && \\\n        tar xvf Demic-0.1.tar.gz && \\\n        mv Demic-0.1 /app/fetal_brain_seg/Demic && \\\n        # remove unecessary .git folders\n        rm -r /app/fetal_brain_seg/.git* && \\\n        rm -r /app/fetal_brain_seg/Demic/.git* \\\n    ; rm Demic-0.1.tar.gzfi\n\n# remove unnecessary folders\nRUN rm -r /app/${REPO}/.git*\nRUN rm -r /app/Demic-0.1.tar.gz\n\n# -----------------------------------------------------------------------------\nFROM $IMAGE AS runtime-image\n\nARG REPO\nARG VERSION\nARG FETAL_SEG_TOOL\n\nLABEL author=\"Michael Ebner\"\nLABEL email=\"michael.ebner@kcl.ac.uk\"\nLABEL title=\"$REPO\"\nLABEL version=\"$VERSION\"\nLABEL uri=\"https://github.com/gift-surg/${REPO}\"\n\n# install NiftyMIC with specific python library versions\nCOPY --from=compile-image /app/${REPO} /app/${REPO}\nWORKDIR /app/${REPO}\nRUN apt-get update && \\\n    apt-get install --no-install-recommends -y \\\n        build-essential \\\n        nifti2dicom \\\n        && \\\n    rm -rf /var/lib/apt/lists/*\n\nRUN pip install --no-cache-dir \\\n    matplotlib==3.1.1 \\\n    natsort==6.0.0 \\\n    nibabel==2.4.1 \\\n    nipype==1.2.0 \\\n    nose==1.3.7 \\\n    numpy==1.16.4 \\\n    pandas==0.25.0 \\\n    pydicom==1.3.0 \\\n    scikit_image==0.15.0 \\\n    scipy==1.3.0 \\\n    seaborn==0.9.0 \\\n    SimpleITK==1.2.4 \\\n    six==1.12.0 \\\n    pysitk==0.2.19 \\\n    simplereg==0.3.2 \\\n    nsol==0.1.14\n# install monaifbs dependencies\nRUN if [ \"$FETAL_SEG_TOOL\" = \"monaifbs\" ] ; then \\\n        pip install --no-cache-dir \\\n        torch==1.4.0 \\\n        torch-summary==1.4.3 \\\n        monai==0.3.0 \\\n        pyyaml==5.3.1 \\\n        pytorch-ignite==0.4.2 \\\n        tensorboard==2.3.0 \\\n    ; fi\n# install packages for niftymic and monaifbs\nRUN pip install --no-cache-dir -e .\nRUN if [ \"$FETAL_SEG_TOOL\" = \"monaifbs\" ] ; then \\\n        pip install --no-cache-dir -e /app/${REPO}/MONAIfbs/ \\\n    ; fi\n\n# prepare fetal_brain_seg with specific python library versions if required\nCOPY --from=compile-image /app/fetal_brain_seg /app/fetal_brain_seg\nRUN if [ \"$FETAL_SEG_TOOL\" = \"fetal_brain_seg\" ] ; then \\\n        cd /app/fetal_brain_seg && \\\n        pip install --no-cache-dir \\\n        niftynet==0.2 \\\n        tensorflow==1.12.0 && \\\n        SITEDIR=$(python -m site --user-site) && \\\n        mkdir -p $SITEDIR && \\\n        echo /app/fetal_brain_seg > $SITEDIR/Demic.pth && \\\n        export FETAL_BRAIN_SEG=/app/fetal_brain_seg \\\n    ; else \\\n        rm -r /app/fetal_brain_seg \\\n    ;fi\n\n# add Dockerfile to image\nADD Dockerfile /\n\nWORKDIR /app\n\n# use bash with color output\nRUN echo 'alias ls=\"ls --color=auto\"' >> ~/.bashrc\nCMD bash"
+}

@@ -1,0 +1,26 @@
+{
+  "startTime": 1674249598378,
+  "endTime": 1674249598981,
+  "originalSmells": [
+    {
+      "rule": "mkdirUsrSrcThenRemove",
+      "position": {
+        "lineStart": 79,
+        "lineEnd": 79,
+        "columnStart": 5,
+        "columnEnd": 30
+      }
+    },
+    {
+      "rule": "mkdirUsrSrcThenRemove",
+      "position": {
+        "lineStart": 92,
+        "lineEnd": 92,
+        "columnStart": 5,
+        "columnEnd": 33
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM alpine:3.9.4 as base_stage\n\nLABEL maintainer=\"beardedeagle <randy@heroictek.com>\"\n\n# Important!  Update this no-op ENV variable when this Dockerfile\n# is updated with the current date. It will force refresh of all\n# of the base images.\nENV REFRESHED_AT=2019-06-24 \\\n  ELIXIR_VER=1.9.0 \\\n  HEX_VER=0.20.1 \\\n  REBAR3_VER=3.11.1 \\\n  MIX_HOME=/usr/local/lib/elixir/.mix \\\n  TERM=xterm \\\n  LANG=C.UTF-8\n\nRUN set -xe \\\n  && apk --update --no-cache upgrade \\\n  && apk add --no-cache \\\n    bash \\\n    openssl \\\n    lksctp-tools \\\n  && rm -rf /root/.cache \\\n  && rm -rf /var/cache/apk/*\n\nFROM beardedeagle/alpine-erlang-builder:22.0.4 as deps_stage\n\nENV ELIXIR_VER=1.9.0 \\\n  HEX_VER=0.20.1 \\\n  REBAR3_VER=3.11.1 \\\n  MIX_HOME=/usr/local/lib/elixir/.mix \\\n  TERM=xterm \\\n  LANG=C.UTF-8\n\nRUN set -xe \\\n  && rm -rf /usr/local/bin/rebar \\\n  && rm -rf /usr/local/bin/rebar3 \\\n  && apk add --no-cache --virtual .build-deps \\\n    autoconf \\\n    binutils-gold \\\n    curl curl-dev \\\n    dpkg dpkg-dev \\\n    g++ \\\n    gcc \\\n    libc-dev \\\n    linux-headers \\\n    lksctp-tools-dev \\\n    make \\\n    musl musl-dev \\\n    rsync \\\n    tar\n\nFROM deps_stage as elixir_stage\n\nRUN set -xe \\\n  && ELIXIR_DOWNLOAD_URL=\"https://github.com/elixir-lang/elixir/archive/v${ELIXIR_VER}.tar.gz\" \\\n  && ELIXIR_DOWNLOAD_SHA256=\"dbf4cb66634e22d60fe4aa162946c992257f700c7db123212e7e29d1c0b0c487\" \\\n  && curl -fSL -o elixir-src.tar.gz \"$ELIXIR_DOWNLOAD_URL\" \\\n  && echo \"$ELIXIR_DOWNLOAD_SHA256  elixir-src.tar.gz\" | sha256sum -c - \\\n  && export ELIXIR_TOP=\"/usr/src/elixir_src_${ELIXIR_VER%%@*}\" \\\n  && mkdir -vp $ELIXIR_TOP \\\n  && tar -xzf elixir-src.tar.gz -C $ELIXIR_TOP --strip-components=1 \\\n  && rm elixir-src.tar.gz \\\n  && ( cd $ELIXIR_TOP \\\n    && make -j$(getconf _NPROCESSORS_ONLN) \\\n    && make install clean ) \\\n  && rm -rf $ELIXIR_TOP \\\n  && find /usr/local -regex '/usr/local/lib/elixir/\\(lib/\\|erts-\\).*/\\(man\\|doc\\|obj\\|c_src\\|emacs\\|info\\|examples\\)' | xargs rm -rf \\\n  && find /usr/local -name src | xargs -r find | grep -v '\\.hrl$' | xargs rm -v || true \\\n  && find /usr/local -name src | xargs -r find | xargs rmdir -vp || true \\\n  && scanelf --nobanner -E ET_EXEC -BF '%F' --recursive /usr/local | xargs -r strip --strip-all \\\n  && scanelf --nobanner -E ET_DYN -BF '%F' --recursive /usr/local | xargs -r strip --strip-unneeded\n\nFROM elixir_stage as hex_stage\n\nRUN set -xe \\\n  && HEX_DOWNLOAD_URL=\"https://github.com/hexpm/hex/archive/v${HEX_VER}.tar.gz\" \\\n  && HEX_DOWNLOAD_SHA256=\"6af8bda12e3c81d15b9d274c1ab2d6afd9a40e28c1db7bb50baf79b6a73bb3ea\" \\\n  && curl -fSL -o hex-src.tar.gz \"$HEX_DOWNLOAD_URL\" \\\n  && echo \"$HEX_DOWNLOAD_SHA256  hex-src.tar.gz\" | sha256sum -c - \\\n  && mkdir -p /usr/src/hex-src \\\n  && tar -xzf hex-src.tar.gz -C /usr/src/hex-src --strip-components=1 \\\n  && rm hex-src.tar.gz \\\n  && cd /usr/src/hex-src \\\n  && MIX_ENV=prod mix install && rm -rf /usr/src/hex-src\n\nFROM elixir_stage as rebar3_stage\n\nRUN set -xe \\\n  && REBAR3_DOWNLOAD_URL=\"https://github.com/erlang/rebar3/archive/${REBAR3_VER}.tar.gz\" \\\n  && REBAR3_DOWNLOAD_SHA256=\"a1822db5210b96b5f8ef10e433b22df19c5fc54dfd847bcaab86c65151ce4171\" \\\n  && curl -fSL -o rebar3-src.tar.gz \"$REBAR3_DOWNLOAD_URL\" \\\n  && echo \"$REBAR3_DOWNLOAD_SHA256  rebar3-src.tar.gz\" | sha256sum -c - \\\n  && mkdir -p /usr/src/rebar3-src \\\n  && tar -xzf rebar3-src.tar.gz -C /usr/src/rebar3-src --strip-components=1 \\\n  && rm rebar3-src.tar.gz \\\n  && cd /usr/src/rebar3-src \\\n  && HOME=$PWD ./bootstrap \\\n  && MIX_ENV=prod mix local.rebar rebar3 ./rebar3 && rm -rf /usr/src/rebar3-src\n\nFROM deps_stage as stage\n\nCOPY --from=elixir_stage /usr/local /opt/elixir\nCOPY --from=hex_stage /usr/local /opt/hex\nCOPY --from=rebar3_stage /usr/local /opt/rebar3\n\nRUN set -xe \\\n  && rsync -a /opt/elixir/ /usr/local \\\n  && rsync -a /opt/hex/ /usr/local \\\n  && rsync -a /opt/rebar3/ /usr/local \\\n  && apk del .build-deps \\\n  && rm -rf /root/.cache \\\n  && rm -rf /var/cache/apk/*\n\nFROM base_stage\n\nCOPY --from=stage /usr/local /usr/local\n"
+}

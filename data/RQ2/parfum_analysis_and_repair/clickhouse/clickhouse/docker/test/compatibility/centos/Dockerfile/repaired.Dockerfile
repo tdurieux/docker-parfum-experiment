@@ -1,0 +1,1 @@
+# docker build -t clickhouse/test-old-centos .

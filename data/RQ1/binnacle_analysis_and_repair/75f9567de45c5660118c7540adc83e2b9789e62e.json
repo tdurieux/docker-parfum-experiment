@@ -1,0 +1,44 @@
+{
+  "startTime": 1674246720155,
+  "endTime": 1674246720354,
+  "originalSmells": [
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 35,
+        "lineEnd": 35,
+        "columnStart": 43,
+        "columnEnd": 89
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 11,
+        "lineEnd": 30,
+        "columnStart": 7,
+        "columnEnd": 23
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 54,
+        "lineEnd": 57,
+        "columnStart": 7,
+        "columnEnd": 12
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 73,
+        "lineEnd": 75,
+        "columnStart": 7,
+        "columnEnd": 12
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# the tag this Dockerfile will build, either \"-b2d\" or \"\"\nARG TAG\n\n#===============================\nFROM debian:stretch-slim AS base\n#===============================\n\nLABEL maintainer=\"Marius Millea <mariusmillea@gmail.com>\"\n\n# install packages\nRUN apt-get update \\\n    && apt-get install -y --no-install-recommends \\\n        ca-certificates \\\n        curl \\\n        dh-autoreconf \\\n        g++ \\ \n        git \\\n        libcurl4-gnutls-dev \\\n        default-libmysqlclient-dev \\\n        libssl-dev \\\n        m4 \\\n        make \\\n        mysql-client \\\n        php7.0-cli \\\n        php7.0-mysql \\\n        php7.0-xml \\\n        pkg-config \\\n        python \\\n        python3 \\\n        python-mysqldb \\\n        python3-mysqldb \\\n    && rm -rf /var/lib/apt/lists && rm -rf /var/lib/apt/lists/*;\n\n# get source and compile server\nCOPY --chown=1000 boinc /usr/local/boinc\nRUN cd /usr/local/boinc && ./_autosetup && ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" --disable-client --disable-manager && make\n\n# project-making scripts\nCOPY makeproject-step1.sh makeproject-step2.sh /usr/local/bin/\n\n# some other project files (some of which will be put in the correct place with\n# ONBUILD instructions later)\nCOPY --chown=1000 db_dump_spec.xml /.project_root/\nCOPY --chown=1000 html /.project_root/html/\nCOPY --chown=1000 secrets.env /run/secrets/\n\n#==============================\nFROM debian:stretch-slim AS b2d\n#==============================\n\n# do boinc2docker as a separate stage so we don't have to keep re-downloading\n# things whenever the build cache is invalidated\n\nRUN apt-get update \\\n    && apt-get install -y --no-install-recommends \\\n        ca-certificates \\\n        python-yaml \\\n        wget && rm -rf /var/lib/apt/lists/*;\n\n# the version of vboxwrapper/iso/appver installed is specified in\n# boinc2docker/boinc2docker.yml\nCOPY boinc2docker /root/boinc2docker\nRUN /root/boinc2docker/boinc2docker_create_app --download_only\n\n\n\n#====================\nFROM base AS base-b2d\n#====================\n\n# copy/install extra things needed for the `-b2d` version\n\nRUN apt-get update \\\n    && apt-get install -y --no-install-recommends \\\n        python-yaml \\\n        wget \\\n    && rm -rf /var/lib/apt/lists && rm -rf /var/lib/apt/lists/*;\n\nCOPY --from=b2d --chown=1000 /root/boinc2docker $HOME/boinc2docker\nENV PATH=$HOME/boinc2docker:$PATH\n\n\n\n#===========================\nFROM base$TAG AS makeproject\n#===========================\n\n# everything which depends on build-args is done as ONBUILD in this stage, so\n# the user can customize it\n\nARG TAG\nENV TAG=$TAG\nONBUILD ARG BOINC_USER\nONBUILD ARG PROJECT_ROOT\nONBUILD ENV BOINC_USER=$BOINC_USER \\\n            PROJECT_ROOT=$PROJECT_ROOT \\\n            USER=$BOINC_USER \\\n            HOME=/home/$BOINC_USER \\\n            MYSQL_HOST=mysql\n\n# set up the non-root user who compiles the server\nONBUILD RUN adduser $BOINC_USER --disabled-password --gecos \"\"\n\n# ensure the project/secrets volumes have the right permissions when mounted\nONBUILD RUN mkdir $PROJECT_ROOT.dst && chown $BOINC_USER:$BOINC_USER $PROJECT_ROOT.dst\n\nONBUILD USER $BOINC_USER\n\n\n# build server\nONBUILD RUN makeproject-step1.sh\nONBUILD RUN test -z \"$TAG\" || boinc2docker_create_app --projhome $PROJECT_ROOT\nONBUILD CMD makeproject-step2.sh\n\nONBUILD WORKDIR $PROJECT_ROOT\n\n\n\n#==========================================\nFROM makeproject AS makeproject-defaultargs\n#==========================================\n\n# this triggers the ONBUILD directives using the default ARGs so we also get a\n# fully built example image\n"
+}

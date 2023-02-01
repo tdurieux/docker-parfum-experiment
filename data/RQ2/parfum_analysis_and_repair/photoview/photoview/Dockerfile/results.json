@@ -1,0 +1,63 @@
+{
+  "startTime": 1674250213238,
+  "endTime": 1674250213833,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 77,
+        "lineEnd": 77,
+        "columnStart": 5,
+        "columnEnd": 65
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 81,
+        "lineEnd": 81,
+        "columnStart": 2,
+        "columnEnd": 27
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 81,
+        "lineEnd": 81,
+        "columnStart": 2,
+        "columnEnd": 27
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 77,
+        "lineEnd": 77,
+        "columnStart": 5,
+        "columnEnd": 65
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 81,
+        "lineEnd": 81,
+        "columnStart": 2,
+        "columnEnd": 27
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 81,
+        "lineEnd": 81,
+        "columnStart": 2,
+        "columnEnd": 51
+      }
+    }
+  ],
+  "repairedDockerfile": "### Build UI ###\nFROM --platform=${BUILDPLATFORM:-linux/amd64} node:18 as ui\n\nARG REACT_APP_API_ENDPOINT\nENV REACT_APP_API_ENDPOINT=${REACT_APP_API_ENDPOINT}\n\n# Set environment variable UI_PUBLIC_URL from build args, uses \"/\" as default\nARG UI_PUBLIC_URL\nENV UI_PUBLIC_URL=${UI_PUBLIC_URL:-/}\n\nARG VERSION\nENV VERSION=${VERSION:-undefined}\nENV REACT_APP_BUILD_VERSION=${VERSION:-undefined}\n\nARG BUILD_DATE\nENV BUILD_DATE=${BUILD_DATE:-undefined}\nENV REACT_APP_BUILD_DATE=${BUILD_DATE:-undefined}\n\nARG COMMIT_SHA\nENV COMMIT_SHA=${COMMIT_SHA:-}\nENV REACT_APP_BUILD_COMMIT_SHA=${COMMIT_SHA:-}\n\nRUN mkdir -p /app\nWORKDIR /app\n\n# Download dependencies\nCOPY ui/package*.json /app/\nRUN npm ci --omit=dev --ignore-scripts\n\n# Build frontend\nCOPY ui /app\nRUN npm run build -- --base=$UI_PUBLIC_URL\n\n### Build API ###\nFROM --platform=${BUILDPLATFORM:-linux/amd64} debian:bookworm AS api\nARG TARGETPLATFORM\n\nCOPY docker/install_build_dependencies.sh /tmp/\nRUN chmod +x /tmp/install_build_dependencies.sh && /tmp/install_build_dependencies.sh\n\nCOPY docker/go_wrapper.sh /go/bin/go\nRUN chmod +x /go/bin/go\nENV GOPATH=\"/go\"\nENV PATH=\"${GOPATH}/bin:${PATH}\"\n\nENV CGO_ENABLED 1\n\nRUN go env\n\nRUN mkdir -p /app\nWORKDIR /app\n\n# Download dependencies\nCOPY api/go.mod api/go.sum /app/\nRUN go mod download\n\n# Patch go-face\nRUN sed -i 's/-march=native//g' ${GOPATH}/pkg/mod/github.com/!kagami/go-face*/face.go\n\n# Build dependencies that use CGO\nRUN go install \\\n  github.com/mattn/go-sqlite3 \\\n  github.com/Kagami/go-face\n\n# Copy and build api source\nCOPY api /app\nRUN go build -v -o photoview .\n\n### Copy api and ui to production environment ###\nFROM debian:bookworm\nARG TARGETPLATFORM\nWORKDIR /app\n\nCOPY api/data /app/data\n\nRUN apt update \\\n  # Required dependencies \\\n  && apt install --no-install-recommends -y curl gpg libdlib19.1 ffmpeg exiftool libheif1 && rm -rf /var/lib/apt/lists/*;\n\n# Install Darktable if building for a supported architecture\nRUN if [ \"${TARGETPLATFORM}\" = \"linux/amd64\" ] || [ \"${TARGETPLATFORM}\" = \"linux/arm64\" ]; then \\\n  apt install --no-install-recommends -y darktable; rm -rf /var/lib/apt/lists/*; fi\n\n# Remove build dependencies and cleanup\nRUN apt purge -y gpg \\\n  && apt autoremove -y \\\n  && apt clean \\\n  && rm -rf /var/lib/apt/lists/*\n\nCOPY --from=ui /app/dist /ui\nCOPY --from=api /app/photoview /app/photoview\n\nENV PHOTOVIEW_LISTEN_IP 127.0.0.1\nENV PHOTOVIEW_LISTEN_PORT 80\n\nENV PHOTOVIEW_SERVE_UI 1\nENV PHOTOVIEW_UI_PATH /ui\n\nEXPOSE 80\n\nHEALTHCHECK --interval=60s --timeout=10s CMD curl --fail 'http://localhost:80/api/graphql' -X POST -H 'Content-Type: application/json' --data-raw '{\"operationName\":\"CheckInitialSetup\",\"variables\":{},\"query\":\"query CheckInitialSetup { siteInfo { initialSetup }}\"}'\n\nENTRYPOINT [\"/app/photoview\"]\n"
+}

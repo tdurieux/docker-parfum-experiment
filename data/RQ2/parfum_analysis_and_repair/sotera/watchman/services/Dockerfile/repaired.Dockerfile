@@ -1,0 +1,29 @@
+FROM python:2.7
+
+ENV TERM=xterm
+
+# docker build-time args
+ARG SERVICE
+ARG MAIN=main.py
+
+RUN mkdir -p /usr/src/app && rm -rf /usr/src/app
+WORKDIR /usr/src/app
+
+RUN apt-get update && apt-get install --no-install-recommends -y \
+  vim \
+  less \
+  nano && rm -rf /var/lib/apt/lists/*;
+
+RUN apt-get autoremove -y
+
+COPY $SERVICE/requirements.txt .
+RUN pip install --no-cache-dir --upgrade pip
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY $SERVICE .
+# create consistent top-level filename
+COPY $SERVICE/$MAIN main.py
+# match project dir structure to satisfy imports
+COPY util /usr/src/util
+
+ENTRYPOINT ["python", "-u", "main.py"]

@@ -1,0 +1,90 @@
+# This file works properly only with Docker.
+# Assumed that docker.io registry is used.
+#
+# `podman buildx build` doesn't work at this point because it doesn't support
+# the following build arguments that docker set automagically:
+#
+#   BUILDPLATFORM
+#   TARGETPLATFORM
+
+FROM --platform=$BUILDPLATFORM rust:slim-buster AS buildenv
+ARG BUILDPLATFORM
+ARG TARGETPLATFORM
+ENV DEBIAN_FRONTEND=noninteractive
+COPY ./docker/build-scripts/vars.* /build-scripts/
+COPY ./docker/build-scripts/buildenv.sh /build-scripts/
+RUN sh /build-scripts/buildenv.sh debian $BUILDPLATFORM $TARGETPLATFORM
+RUN mkdir -p /build
+WORKDIR /build
+
+FROM buildenv AS recdvb-build
+ARG BUILDPLATFORM
+ARG TARGETPLATFORM
+COPY ./docker/build-scripts/recdvb.sh /build-scripts/
+RUN sh /build-scripts/recdvb.sh debian $BUILDPLATFORM $TARGETPLATFORM
+
+FROM buildenv AS recpt1-build
+ARG BUILDPLATFORM
+ARG TARGETPLATFORM
+COPY ./docker/build-scripts/recpt1.sh /build-scripts/
+RUN sh /build-scripts/recpt1.sh debian $BUILDPLATFORM $TARGETPLATFORM
+
+FROM buildenv AS mirakc-arib-build
+ARG BUILDPLATFORM
+ARG TARGETPLATFORM
+COPY ./docker/build-scripts/mirakc-arib.sh /build-scripts/
+RUN sh /build-scripts/mirakc-arib.sh debian $BUILDPLATFORM $TARGETPLATFORM
+
+FROM scratch AS mirakc-tools
+COPY --from=recdvb-build /usr/local/bin/recdvb /usr/local/bin/
+COPY --from=recpt1-build /usr/local/bin/recpt1 /usr/local/bin/
+COPY --from=mirakc-arib-build /build/build/bin/mirakc-arib /usr/local/bin/
+
+FROM buildenv AS mirakc-build
+ARG BUILDPLATFORM
+ARG TARGETPLATFORM
+COPY ./Cargo.* ./
+COPY ./mirakc ./mirakc/
+COPY ./mirakc-core ./mirakc-core/
+COPY ./mirakc-timeshift-fs ./mirakc-timeshift-fs/
+COPY ./resources ./resources/
+COPY ./docker/build-scripts/mirakc.sh /build-scripts/
+RUN sh /build-scripts/mirakc.sh debian $BUILDPLATFORM $TARGETPLATFORM
+
+FROM debian:buster-slim AS mirakc
+LABEL maintainer="Contributors of mirakc"
+COPY --from=mirakc-tools /usr/local/bin/* /usr/local/bin/
+COPY --from=mirakc-build /usr/local/bin/mirakc /usr/local/bin/
+COPY --from=mirakc-build /build/resources/strings.yml /etc/mirakc/strings.yml
+COPY --from=mirakc-build /build/resources/mirakurun.openapi.json /etc/mirakurun.openapi.json
+RUN set -eux \
+ && export DEBIAN_FRONTEND=noninteractive \
+ && apt-get update \
+ && apt-get install -y --no-install-recommends ca-certificates curl socat \
+ # cleanup
+ && apt-get clean \
+ && rm -rf /var/lib/apt/lists/* \
+ && rm -rf /var/tmp/* \
+ && rm -rf /tmp/*
+ENV MIRAKC_CONFIG=/etc/mirakc/config.yml
+EXPOSE 40772
+ENTRYPOINT ["mirakc"]
+CMD []
+
+FROM debian:buster-slim AS mirakc-timeshift-fs
+LABEL maintainer="Contributors of mirakc"
+COPY --from=mirakc-build /usr/local/bin/mirakc-timeshift-fs /usr/local/bin/
+COPY --from=mirakc-build /usr/local/bin/run-mirakc-timeshift-fs /usr/local/bin/
+COPY --from=mirakc-build /build/resources/strings.yml /etc/mirakc/strings.yml
+COPY --from=mirakc-build /build/resources/mirakurun.openapi.json /etc/mirakurun.openapi.json
+RUN set -eux \
+ && export DEBIAN_FRONTEND=noninteractive \
+ && apt-get update \
+ && apt-get install -y --no-install-recommends fuse3 \
+ # cleanup
+ && apt-get clean \
+ && rm -rf /var/lib/apt/lists/* \
+ && rm -rf /var/tmp/* \
+ && rm -rf /tmp/*
+ENV MIRAKC_CONFIG=/etc/mirakc/config.yml
+ENTRYPOINT ["/usr/local/bin/run-mirakc-timeshift-fs"]

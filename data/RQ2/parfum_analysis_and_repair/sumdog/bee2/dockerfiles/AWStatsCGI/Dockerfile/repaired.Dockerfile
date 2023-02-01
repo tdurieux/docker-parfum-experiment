@@ -1,0 +1,18 @@
+FROM httpd
+
+RUN apt-get update -y && \
+    apt-get install --no-install-recommends -y awstats && rm -rf /var/lib/apt/lists/*;
+
+COPY httpd.conf /usr/local/apache2/conf/httpd.conf
+
+RUN  mkdir -p  /usr/local/apache2/htdocs/stats
+
+COPY index.shell /usr/local/apache2/htdocs/index.shell
+RUN chmod 755 /usr/local/apache2/htdocs/index.shell
+
+RUN ln -s /usr/lib/cgi-bin/awstats.pl /usr/local/apache2/htdocs/stats
+RUN ln -s ln -s /usr/share/awstats/icon /usr/local/apache2/htdocs/stats
+RUN sed -i "s/\/etc\/opt\/awstats/\/awstats\/config/g" /usr/lib/cgi-bin/awstats.pl
+RUN rm -f /etc/awstats/awstats.conf
+
+EXPOSE 8080

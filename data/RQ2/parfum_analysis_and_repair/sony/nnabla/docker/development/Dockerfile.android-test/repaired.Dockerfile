@@ -1,0 +1,54 @@
+# Copyright 2019,2020,2021 Sony Corporation.
+# Copyright 2021 Sony Group Corporation.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# for nnabla>=1.5.0
+
+FROM gradle:4.10.0-jdk8
+
+ARG PIP_INS_OPTS
+ARG PYTHONWARNINGS
+ARG CURL_OPTS
+ARG WGET_OPTS
+ARG APT_OPTS
+
+USER root
+
+ENV SDK_URL="https://dl.google.com/android/repository/sdk-tools-linux-3859397.zip" \
+    ANDROID_HOME="/usr/local/android-sdk" \
+    ANDROID_VERSION=28 \
+    ANDROID_BUILD_TOOLS_VERSION=27.0.3
+
+RUN eval ${APT_OPTS} && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*;
+
+# Download Android SDK
+RUN mkdir "$ANDROID_HOME" .android \
+    && cd "$ANDROID_HOME" \
+    && curl -f ${CURL_OPTS} -o sdk.zip $SDK_URL \
+    && unzip sdk.zip \
+    && rm sdk.zip \
+    && yes | $ANDROID_HOME/tools/bin/sdkmanager --licenses --list --verbose --no_https --proxy=http --proxy_host=proxy.kanto.sony.co.jp --proxy_port=10080
+
+# Install Android Build Tool and Libraries
+RUN $ANDROID_HOME/tools/bin/sdkmanager --update --list --verbose --no_https --proxy=http --proxy_host=proxy.kanto.sony.co.jp --proxy_port=10080
+
+RUN $ANDROID_HOME/tools/bin/sdkmanager "build-tools;${ANDROID_BUILD_TOOLS_VERSION}" \
+    "platforms;android-${ANDROID_VERSION}" \
+    "platform-tools" --no_https --proxy=http --proxy_host=proxy.kanto.sony.co.jp --proxy_port=10080
+
+# Install Build Essentials
+
+RUN apt-get update && apt-get install --no-install-recommends build-essential -y && apt-get install --no-install-recommends file -y && apt-get install --no-install-recommends apt-utils -y && rm -rf /var/lib/apt/lists/*;
+
+

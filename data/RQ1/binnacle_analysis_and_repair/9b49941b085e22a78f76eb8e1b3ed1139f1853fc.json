@@ -1,0 +1,89 @@
+{
+  "startTime": 1674239606139,
+  "endTime": 1674239606425,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 105,
+        "lineEnd": 106,
+        "columnStart": 4,
+        "columnEnd": 36
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 113,
+        "lineEnd": 114,
+        "columnStart": 48,
+        "columnEnd": 61
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 121,
+        "lineEnd": 121,
+        "columnStart": 4,
+        "columnEnd": 63
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 122,
+        "lineEnd": 124,
+        "columnStart": 34,
+        "columnEnd": 9
+      }
+    },
+    {
+      "rule": "curlUseHttpsUrl",
+      "position": {
+        "lineStart": 113,
+        "lineEnd": 114,
+        "columnStart": 48,
+        "columnEnd": 61
+      }
+    },
+    {
+      "rule": "curlUseHttpsUrl",
+      "position": {
+        "lineStart": 121,
+        "lineEnd": 121,
+        "columnStart": 4,
+        "columnEnd": 63
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 89,
+        "lineEnd": 89,
+        "columnStart": 4,
+        "columnEnd": 31
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 18,
+        "lineEnd": 38,
+        "columnStart": 22,
+        "columnEnd": 9
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 18,
+        "lineEnd": 38,
+        "columnStart": 22,
+        "columnEnd": 9
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "#\n# RISC-V Dockerfile\n#\n# https://github.com/sbates130272/docker-riscv\n#\n# This Dockerfile creates a container full of lots of useful tools for\n# RISC-V development. See associated README.md for more\n# information. This Dockerfile is mostly based on the instructions\n# found at https://github.com/riscv/riscv-tools.\n\n# Pull base image (use Wily for now).\nFROM ubuntu:15.10\n\n# Set the maintainer\nMAINTAINER Stephen Bates (sbates130272) <sbates@raithlin.com>\n\n# Install some base tools that we will need to get the risc-v\n# toolchain working.\nRUN apt-get update && apt-get install --no-install-recommends -y \\\n  autoconf \\\n  automake \\\n  autotools-dev \\\n  bc \\\n  bison \\\n  build-essential \\\n  curl \\\n  emacs24-nox \\\n  flex \\\n  gawk \\\n  git \\\n  gperf \\\n  libmpc-dev \\\n  libmpfr-dev \\\n  libgmp-dev \\\n  libtool \\\n  ncurses-dev \\\n  patchutils \\\n  squashfs-tools \\\n  texinfo && rm -rf /var/lib/apt/lists/*;\n\n# Make a working folder and set the necessary environment variables.\nENV RISCV /opt/riscv\nENV NUMJOBS 1\nRUN mkdir -p $RISCV\n\n# Add the GNU utils bin folder to the path.\nENV PATH $RISCV/bin:$PATH\n\n# Obtain the RISCV-tools repo which consists of a number of submodules\n# so make sure we get those too.\nWORKDIR $RISCV\nRUN git clone https://github.com/riscv/riscv-tools.git && \\\n  cd riscv-tools && git submodule update --init --recursive\n\n# Obtain the RISC-V branch of the Linux kernel\nWORKDIR $RISCV\nRUN mkdir linux-4.1.y && cd linux-4.1.y && git init && \\\n  git remote add origin https://github.com/riscv/riscv-linux.git && \\\n  git fetch && git checkout -b linux origin/linux-4.1.y-riscv\n\n#RUN curl -L https://www.kernel.org/pub/linux/kernel/v3.x/linux-3.14.41.tar.xz | \\\n#  tar -xJ && cd linux-3.14.41 && git init && \\\n#  git remote add origin https://github.com/riscv/riscv-linux.git && \\\n#  git fetch && git checkout -f -t origin/master\n\n# Before building the GNU tools make sure the headers there are up-to\n# date.\nWORKDIR $RISCV/linux-4.1.y\nRUN make ARCH=riscv headers_check && \\\n  make ARCH=riscv INSTALL_HDR_PATH=\\\n  $RISCV/riscv-tools/riscv-gnu-toolchain/linux-headers headers_install\n\n# Now build the toolchain for RISCV. Set -j 1 to avoid issues on VMs.\nWORKDIR $RISCV/riscv-tools\nRUN sed -i 's/JOBS=16/JOBS=$NUMJOBS/' build.common && \\\n  ./build.sh\n\n# Run a simple test to make sure at least spike, pk and the Newlib\n# compiler are setup correctly.\nRUN mkdir -p $RISCV/test\nWORKDIR $RISCV/test\nRUN echo '#include <stdio.h>\\n int main(void) { printf(\"Hello \\\n  world!\\\\n\"); return 0; }' > hello.c && \\\n  riscv64-unknown-elf-gcc -o hello hello.c && spike pk hello\n\n# Now build the glibc toolchain as well. This complements the newlib\n# tool chain we added above. When done we clean up the intermediate\n# folders as this saves a ton (>6G of space).\nWORKDIR $RISCV/riscv-tools/riscv-gnu-toolchain\nRUN ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" --prefix=$RISCV && make linux && rm -rf \\\n  build-binutils-linux \\\n  build-gcc-linux-stage1 \\\n  build-gcc-linux-stage2 \\\n  build-glibc-linux-headers \\\n  build-glibc-linux64 \\\n  src \\\n  build/src \\\n  stamps\n\n# Now build the linux kernel image. Note that the RISC-V Linux GitHub\n# site has a -j in the make command and that seems to break things on\n# a VM so here we use NUMJOBS to set the parallelism. We also get the\n# .config from my GitHub site since we have enabled more than the\n# default (squashfs for example).\nWORKDIR $RISCV/linux-4.1.y\nRUN curl -f -L https://raw.githubusercontent.com/sbates130272/docker-riscv/\\\nmaster/.config-linux-4.1.y > .config && make ARCH=riscv -j $NUMJOBS \\\n  vmlinux\n\n# Now create a mnt subfolder that we will squashfs into our root\n# filesystem for the linux environment.\nWORKDIR $RISCV\nRUN mkdir mnt && cd mnt && mkdir -p bin etc dev lib proc \\\n  sbin sys tmp usr usr/bin usr/lib usr/sbin && curl -f -L \\\n  https://riscv.org/install-guides/linux-inittab > etc/inittab\n\n# Now install busybox as we will use that in our linux based\n# environment. We grab the .config for this from our GitHub site\n# because we want more stuff in it than the default and we want to\n# make sure it installs to the right place (using some sed magic).\nWORKDIR $RISCV\nRUN curl -f -L https://busybox.net/downloads/busybox-1.21.1.tar.bz2 | \\\n  tar -xj && cd busybox-1.21.1 && curl -f -L https://raw.githubusercontent\\\n.com/sbates130272/docker-riscv/master/.config-busybox-1.21.1 > \\\n  .config && make -j $NUMJOBS install\n\n# Create the root filesystem using squashfs.\nWORKDIR $RISCV\nRUN mksquashfs mnt root.bin.sqsh && cd .. && \\\n  rm -rf mnt\n\n# To save some space we do a make distclean in the linux folder\n# (whilst copying the vmlinux out and back in again).\nWORKDIR $RISCV/linux-4.1.y\nRUN cp vmlinux ../ && make ARCH=riscv distclean \\\n  && mv ../vmlinux .\n\n# Set the WORKDIR to be in the $RISCV folder and we are done!\nWORKDIR $RISCV\n\n# Now you can launch the container and run a command like:\n#\n# spike -m128 -p1 +disk=root.bin.sqsh bbl linux-4.1.y/vmlinux\n#\n"
+}

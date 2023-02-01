@@ -1,0 +1,29 @@
+ARG DOCKER_TAG
+
+FROM consensys/teku:${DOCKER_TAG}
+
+#Next two are unused but included to avoid warnings
+ARG BUILD_TARGET
+
+ARG UID=10002
+
+USER root
+
+RUN groupmod -g "${UID}" teku && usermod -u "${UID}" -g "${UID}" teku
+
+RUN set -eux; \
+        apt-get update; \
+        DEBIAN_FRONTEND=noninteractive TZ=Etc/UTC apt-get --no-install-recommends install -y gosu ca-certificates tzdata jq; \
+        rm -rf /var/lib/apt/lists/*; \
+# verify that the binary works
+        gosu nobody true
+
+# Create data mount point with permissions
+RUN mkdir -p /var/lib/teku/validator-keys && mkdir -p /var/lib/teku/validator-passwords && chown -R teku:teku /var/lib/teku && chmod -R 700 /var/lib/teku
+# Script to query and store validator key passwords
+COPY ./validator-import.sh /usr/local/bin/
+COPY ./docker-entrypoint.sh /usr/local/bin/
+
+USER ${USER}
+
+ENTRYPOINT ["/opt/teku/bin/teku"]

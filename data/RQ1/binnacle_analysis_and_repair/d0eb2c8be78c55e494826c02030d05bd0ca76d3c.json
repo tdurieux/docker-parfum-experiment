@@ -1,0 +1,26 @@
+{
+  "startTime": 1674239047496,
+  "endTime": 1674239047646,
+  "originalSmells": [
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 23,
+        "lineEnd": 23,
+        "columnStart": 4,
+        "columnEnd": 15
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 45,
+        "lineEnd": 45,
+        "columnStart": 4,
+        "columnEnd": 15
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# XOA Build container\nFROM mhart/alpine-node:8 as build\n\nWORKDIR /home/node\n\nRUN apk add --no-cache git python g++ make bash\n\n# Clone git and remove .git\nRUN git clone -b master https://github.com/vatesfr/xen-orchestra/ && \\\n    rm -rf /home/node/xen-orchestra/.git\n\n# configurations\nCOPY xo-server.config.yaml xen-orchestra/packages/xo-server/.xo-server.yaml\n\n# patches\nCOPY patches /home/node/xen-orchestra/patches\n\n# no quilt in alpine\nRUN git clone https://git.savannah.nongnu.org/git/quilt.git\n\nRUN apk add --no-cache diffutils gawk gettext patch perl sed\n\nRUN cd quilt && \\\n    ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" && \\\n    make && \\\n    make install\n\nRUN cd /home/node/xen-orchestra &&\\\n    quilt push gh_issue_redirect &&\\\n    yarn &&\\\n    yarn build\n\nCOPY link_plugins.sh /home/node/xen-orchestra/packages/xo-server/link_plugins.sh\nRUN /home/node/xen-orchestra/packages/xo-server/link_plugins.sh\n\n# VHDIMOUNT support\nFROM alpine:3.8 as build-libvhdi\n\nWORKDIR /home/node\nRUN apk add --no-cache git g++ make bash automake autoconf libtool gettext-dev pkgconf fuse-dev\n\nRUN git clone https://github.com/libyal/libvhdi.git\n\nRUN cd libvhdi && ./synclibs.sh && \\\n    ./autogen.sh && \\\n    ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" && \\\n    make && \\\n    make install\n\n# Runner container\nFROM alpine:3.8\n\nENV USER=node \\\n    XOA_PLAN=5 \\\n    DEBUG=xo:main\n\n## Add a user\nRUN adduser -D -u 1000 node\n\nWORKDIR /home/node\n\nRUN apk add --no-cache tini su-exec bash util-linux nfs-utils lvm2 fuse gettext\n\nRUN mkdir -p /storage && \\\n    chown node:node /storage\n\n# Copy our App from the build container\nCOPY --from=build /home/node/xen-orchestra /home/node/xen-orchestra\n\n# Only copy over the node pieces we need from the above image\nCOPY --from=build /usr/bin/node /usr/bin/\nCOPY --from=build /usr/lib/libgcc* /usr/lib/libstdc* /usr/lib/\n\n# Get libvhdi\nCOPY --from=build-libvhdi /usr/local/bin/vhdimount /usr/local/bin/\nCOPY --from=build-libvhdi /usr/local/bin/vhdiinfo /usr/local/bin/\nCOPY --from=build-libvhdi /usr/local/lib/libvhdi* /usr/local/lib/\n\n# Run the App\nCOPY xo-entry.sh /entrypoint.sh\nEXPOSE 8000\nWORKDIR /home/node/xen-orchestra/packages/xo-server/\nENTRYPOINT [\"/sbin/tini\", \"--\", \"/entrypoint.sh\" ]\nCMD [\"./bin/xo-server\"]\n"
+}

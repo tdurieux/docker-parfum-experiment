@@ -1,0 +1,26 @@
+{
+  "startTime": 1674249423017,
+  "endTime": 1674249424687,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 38,
+        "lineEnd": 38,
+        "columnStart": 4,
+        "columnEnd": 109
+      }
+    },
+    {
+      "rule": "gpgUseBatchFlag",
+      "position": {
+        "lineStart": 26,
+        "lineEnd": 26,
+        "columnStart": 114,
+        "columnEnd": 126
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM openjdk:11-jre-slim\n\nLABEL com.jfrog.artifactory.retention.maxCount=\"25\"\n\nARG HIVEMQ_VERSION=4.3.2\nENV HIVEMQ_GID=10000\nENV HIVEMQ_UID=10000\n\n# Additional JVM options, may be overwritten by user\nENV JAVA_OPTS \"-XX:+UnlockExperimentalVMOptions -XX:+UseNUMA\"\n\n# Default allow all extension, set this to false to disable it\nENV HIVEMQ_ALLOW_ALL_CLIENTS \"true\"\n\n# gosu for root step-down to user-privileged process\nENV GOSU_VERSION 1.11\n\n# Set locale\nENV LANG=en_US.UTF-8\n\n# gosu setup\nRUN set -x \\\n        && apt-get update && apt-get install -y --no-install-recommends curl gnupg-agent gnupg dirmngr unzip \\\n        && curl -fSL \"https://github.com/tianon/gosu/releases/download/$GOSU_VERSION/gosu-$(dpkg --print-architecture)\" -o /usr/local/bin/gosu \\\n        && curl -fSL \"https://github.com/tianon/gosu/releases/download/$GOSU_VERSION/gosu-$(dpkg --print-architecture).asc\" -o /usr/local/bin/gosu.asc \\\n        && export GNUPGHOME=\"$(mktemp -d)\" \\\n        && curl -fsSL \"https://keys.openpgp.org/vks/v1/by-fingerprint/B42F6819007F00F88E364FD4036A9C25BF357DD4\" | gpg --batch --import \\\n        && gpg --batch --verify /usr/local/bin/gosu.asc /usr/local/bin/gosu \\\n        && rm -rf \"$GNUPGHOME\" /usr/local/bin/gosu.asc \\\n        && { command -v gpgconf && gpgconf --kill all || :; } \\\n        && chmod +x /usr/local/bin/gosu \\\n        && gosu nobody true \\\n        && apt-get purge -y gpg dirmngr && rm -rf /var/lib/apt/lists/*\n\nCOPY config.xml /opt/config.xml\nCOPY docker-entrypoint.sh /opt/docker-entrypoint.sh\n\n# HiveMQ setup\nRUN curl -f -L https://www.hivemq.com/releases/hivemq-${HIVEMQ_VERSION}.zip -o /opt/hivemq-${HIVEMQ_VERSION}.zip \\\n    && unzip /opt/hivemq-${HIVEMQ_VERSION}.zip  -d /opt/ \\\n    && rm -f /opt/hivemq-${HIVEMQ_VERSION}.zip \\\n    && ln -s /opt/hivemq-${HIVEMQ_VERSION} /opt/hivemq \\\n    && mv /opt/config.xml /opt/hivemq-${HIVEMQ_VERSION}/conf/config.xml \\\n    && groupadd --gid ${HIVEMQ_GID} hivemq \\\n    && useradd -g hivemq -d /opt/hivemq -s /bin/bash --uid ${HIVEMQ_UID} hivemq \\\n    && chmod -R 775 /opt \\\n    && chmod +x /opt/hivemq/bin/run.sh /opt/docker-entrypoint.sh\n\n# Substitute eval for exec and replace OOM flag if necessary (for older releases). This is necessary for proper signal propagation\nRUN sed -i -e 's|eval \\\\\"java\\\\\" \"$HOME_OPT\" \"$JAVA_OPTS\" -jar \"$JAR_PATH\"|exec \"java\" $HOME_OPT $JAVA_OPTS -jar \"$JAR_PATH\"|' /opt/hivemq/bin/run.sh && \\\n    sed -i -e \"s|-XX:OnOutOfMemoryError='sleep 5; kill -9 %p'|-XX:+CrashOnOutOfMemoryError|\" /opt/hivemq/bin/run.sh\n\n# Make broker data persistent throughout stop/start cycles\nVOLUME /opt/hivemq/data\n\n# Persist log data\nVOLUME /opt/hivemq/log\n\n#mqtt-clients\nEXPOSE 1883\n\n#websockets\nEXPOSE 8000\n\n#HiveMQ Control Center\nEXPOSE 8080\n\nWORKDIR /opt/hivemq\n\nENTRYPOINT [\"/opt/docker-entrypoint.sh\"]\nCMD [\"/opt/hivemq/bin/run.sh\"]\n"
+}

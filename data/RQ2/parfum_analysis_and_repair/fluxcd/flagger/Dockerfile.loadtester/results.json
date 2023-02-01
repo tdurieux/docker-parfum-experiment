@@ -1,0 +1,26 @@
+{
+  "startTime": 1674214978488,
+  "endTime": 1674214979319,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 9,
+        "lineEnd": 9,
+        "columnStart": 0,
+        "columnEnd": 81
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 17,
+        "lineEnd": 17,
+        "columnStart": 0,
+        "columnEnd": 82
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM golang:1.17-alpine as builder\n\nARG TARGETPLATFORM\nARG TARGETARCH\nARG REVISION\n\nRUN apk --no-cache add alpine-sdk perl curl bash tar\n\nRUN HELM3_VERSION=3.7.2 && \\\n curl -f -sSL \"https://get.helm.sh/helm-v${HELM3_VERSION}-linux-${TARGETARCH}.tar.gz\" | tar xvz && \\\nchmod +x linux-${TARGETARCH}/helm && mv linux-${TARGETARCH}/helm /usr/local/bin/helm\n\nRUN GRPC_HEALTH_PROBE_VERSION=v0.4.6 && \\\nwget -qO /usr/local/bin/grpc_health_probe https://github.com/grpc-ecosystem/grpc-health-probe/releases/download/${GRPC_HEALTH_PROBE_VERSION}/grpc_health_probe-linux-${TARGETARCH} && \\\nchmod +x /usr/local/bin/grpc_health_probe\n\nRUN GHZ_VERSION=0.105.0 && \\\n curl -f -sSL \"https://github.com/bojand/ghz/archive/refs/tags/v${GHZ_VERSION}.tar.gz\" | tar xz -C /tmp && \\\ncd /tmp/ghz-${GHZ_VERSION}/cmd/ghz && GOARCH=$TARGETARCH go build . && mv ghz /usr/local/bin && \\\nchmod +x /usr/local/bin/ghz\n\nWORKDIR /workspace\n\n# copy modules manifests\nCOPY go.mod go.mod\nCOPY go.sum go.sum\n\n# cache modules\nRUN go mod download\n\n# copy source code\nCOPY cmd/ cmd/\nCOPY pkg/ pkg/\n\n# build\nRUN CGO_ENABLED=0 go build -o loadtester ./cmd/loadtester/*\n\nFROM bash:5.0\n\nARG TARGETPLATFORM\n\nRUN addgroup -S app && \\\nadduser -S -g app app && \\\napk --no-cache add ca-certificates curl jq libgcc wrk hey\n\nWORKDIR /home/app\n\nCOPY --from=bats/bats:v1.1.0 /opt/bats/ /opt/bats/\nRUN ln -s /opt/bats/bin/bats /usr/local/bin/\n\nCOPY --from=builder /usr/local/bin/helm /usr/local/bin/\nCOPY --from=builder /usr/local/bin/ghz /usr/local/bin/\nCOPY --from=builder /usr/local/bin/grpc_health_probe /usr/local/bin/\n\nADD https://raw.githubusercontent.com/grpc/grpc-proto/master/grpc/health/v1/health.proto /tmp/ghz/health.proto\n\nRUN chown -R app:app ./\nRUN chown -R app:app /tmp/ghz\n\nUSER app\n\n# test load generator tools\nRUN hey -n 1 -c 1 https://flagger.app > /dev/null && echo $? | grep 0\nRUN wrk -d 1s -c 1 -t 1 https://flagger.app > /dev/null && echo $? | grep 0\n\nCOPY --from=builder --chown=app:app /workspace/loadtester .\n\nENTRYPOINT [\"./loadtester\"]\n"
+}

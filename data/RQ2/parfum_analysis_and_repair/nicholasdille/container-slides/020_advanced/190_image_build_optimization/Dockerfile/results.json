@@ -1,0 +1,26 @@
+{
+  "startTime": 1674250411280,
+  "endTime": 1674250412701,
+  "originalSmells": [
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 40,
+        "lineEnd": 43,
+        "columnStart": 4,
+        "columnEnd": 10
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 53,
+        "lineEnd": 56,
+        "columnStart": 4,
+        "columnEnd": 10
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Vanilla\nFROM golang:1.17 AS step1\nWORKDIR /go/src/gitlab.com/nicholasdille/cc21_container_image_build_optimization\nCOPY . .\nRUN go build -o /usr/local/bin/hello .\n\n# Multi-stage\nFROM golang:1.17 AS step2-build\nWORKDIR /go/src/gitlab.com/nicholasdille/cc21_container_image_build_optimization\nCOPY . .\nRUN go build -o hello .\nRUN go mod download\nRUN cp hello /\n\nFROM ubuntu:20.04 AS step2\nCOPY --from=step2-build /hello /usr/local/bin/\n\n# Order of commands\nFROM golang:1.17 AS step3-build\nWORKDIR /go/src/gitlab.com/nicholasdille/cc21_container_image_build_optimization\nCOPY go.* .\nRUN go mod download\nCOPY . .\nRUN go build -o hello .\nRUN cp hello /\n\nFROM ubuntu:20.04 AS step3\nCOPY --from=step3-build /hello /usr/local/bin/\n\n# USER\nFROM ubuntu:20.04 AS step4\nCOPY --from=step3-build /hello /usr/local/bin/\nUSER nobody\n\n# apt with bloat\nFROM ubuntu:20.04 AS step4\nCOPY --from=step3-build /hello /usr/local/bin/\nRUN apt-get update \\\n && apt-get -y install --no-install-recommends \\\n        curl \\\n        ca-certificates \\\n        jq && rm -rf /var/lib/apt/lists/*;\nUSER nobody\n\n# cache\nFROM ubuntu:20.04 AS step6\nCOPY --from=step3-build /hello /usr/local/bin/\nRUN --mount=type=cache,target=/var/lib/apt/lists \\\n    --mount=type=cache,target=/var/cache \\\n    --mount=type=cache,target=/var/log \\\n    apt-get update \\\n && apt-get -y install --no-install-recommends \\\n        curl \\\n        ca-certificates \\\n        jq && rm -rf /var/lib/apt/lists/*;\nUSER nobody\n\n# heredocs\nFROM ubuntu:20.04 AS step7\nCOPY --from=step3-build /hello /usr/local/bin/\nRUN --mount=type=cache,target=/var/lib/apt/lists \\\n    --mount=type=cache,target=/var/cache \\\n    --mount=type=cache,target=/var/log \\\n    <<EOF\napt-get update\napt-get -y install --no-install-recommends \\\n    curl \\\n    ca-certificates \\\n    jq\nEOF\nUSER nobody\n\n# parallel\nFROM ubuntu:21.04 AS step8-base\nRUN --mount=type=cache,target=/var/lib/apt/lists \\\n    --mount=type=cache,target=/var/cache \\\n    --mount=type=cache,target=/var/log \\\n    <<EOF\napt-get update\napt-get -y install --no-install-recommends \\\n    curl \\\n    ca-certificates \\\n    jq\nEOF\n\nFROM step8-base AS step8-kubectl\nARG KUBECTL_VERSION=1.22.3\nRUN <<EOF\ncurl -sLo /usr/local/bin/kubectl \"https://storage.googleapis.com/kubernetes-release/release/v${KUBECTL_VERSION}/bin/linux/amd64/kubectl\"\nchmod +x /usr/local/bin/kubectl\nEOF\n\nFROM step8-base AS step8-helm\nARG HELM_VERSION=3.7.1\nRUN <<EOF\ncurl -sL \"https://get.helm.sh/helm-v${HELM_VERSION}-linux-amd64.tar.gz\" \\\n    | tar -xzC /usr/local/bin/ --strip-components=1 --no-same-owner \\\n        linux-amd64/helm\nEOF\n\nFROM step8-base AS step8\nCOPY --from=step3-build /hello /usr/local/bin/\nCOPY --from=step8-kubectl /usr/local/bin/kubectl /usr/local/bin/\nCOPY --from=step8-helm    /usr/local/bin/helm    /usr/local/bin/\nUSER nobody\n\n# RenovateBot\nFROM step8-base AS base\n\nFROM step8-base AS step9-kubectl\n# renovate: datasource=github-releases depName=kubernetes/kubernetes\nARG KUBECTL_VERSION=1.22.3\nRUN <<EOF\ncurl -sLo /usr/local/bin/kubectl \"https://storage.googleapis.com/kubernetes-release/release/v${KUBECTL_VERSION}/bin/linux/amd64/kubectl\"\nchmod +x /usr/local/bin/kubectl\nEOF\n\nFROM step8-base AS step9-helm\n# renovate: datasource=github-releases depName=helm/helm\nARG HELM_VERSION=3.7.1\nRUN <<EOF\ncurl -sL \"https://get.helm.sh/helm-v${HELM_VERSION}-linux-amd64.tar.gz\" \\\n    | tar -xzC /usr/local/bin/ --strip-components=1 --no-same-owner \\\n        linux-amd64/helm\nEOF\n\nFROM step8-base AS step9\nCOPY --from=step3-build /hello /usr/local/bin/\nCOPY --from=step9-kubectl /usr/local/bin/kubectl /usr/local/bin/\nCOPY --from=step9-helm    /usr/local/bin/helm    /usr/local/bin/\nUSER nobody\n"
+}

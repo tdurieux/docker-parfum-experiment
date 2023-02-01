@@ -1,0 +1,17 @@
+{
+  "startTime": 1674256309683,
+  "endTime": 1674256310381,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 65,
+        "lineEnd": 65,
+        "columnStart": 4,
+        "columnEnd": 27
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM rust:1.41-slim as builder\n\nRUN apt-get update -y && \\\n    apt-get install -y --no-install-recommends \\\n    \tbuild-essential cmake lcov && \\\n    rm -rf /var/lib/apt/lists/*\n\nADD libindy_vdr .\nRUN --mount=type=cache,target=target \\\n    --mount=type=cache,target=/usr/local/cargo/registry \\\n    cargo build --lib $cargo_build_flags && \\\n    cp target/*/libindy_vdr.so .\n\n\n## Start fresh (new image) ##\nFROM debian:buster-slim\n\n\nARG uid=1001\nARG user=indy\n\nENV HOME=\"/home/$user\" \\\n    APP_ROOT=\"$HOME\" \\\n    LC_ALL=C.UTF-8 \\\n    LANG=C.UTF-8 \\\n    PIP_NO_CACHE_DIR=off \\\n    PYTHONUNBUFFERED=1 \\\n    PYTHONIOENCODING=UTF-8 \\\n    SHELL=/bin/bash\n\n# Add indy user\nRUN useradd -U -ms /bin/bash -u $uid $user\n\n# Install environment\nRUN apt-get update -y && \\\n    apt-get install -y --no-install-recommends \\\n        python3 python3-pip python3-setuptools && \\\n    rm -rf /var/lib/apt/lists/* /usr/share/doc/*\n\nWORKDIR $HOME\n\n# Copy build results\nCOPY --from=builder --chown=indy:indy $HOME/.local .local\n\n# - In order to drop the root user, we have to make some directories writable\n#   to the root group as OpenShift default security model is to run the container\n#   under random UID.\nRUN usermod -a -G 0 indy\n\nUSER $user\n\n# Create standard directories to allow volume mounting and set permissions\n# Note: PIP_NO_CACHE_DIR environment variable should be cleared to allow caching\nRUN mkdir -p \\\n        $HOME/.cache/pip/http \\\n        $HOME/config \\\n        $HOME/log && \\\n    chown -R indy:indy $HOME/.cache $HOME/config $HOME/log && \\\n    chmod -R ug+rw $HOME/.cache $HOME/config $HOME/log\n\nCOPY --chown=indy:indy wrappers/python/* wrapper/\nCOPY --from=builder /home/indy/libindy_vdr.so wrapper/indy_vdr/\n\nRUN pip3 install --no-cache-dir -e wrapper\n\nENV RUST_LOG=${RUST_LOG:-debug}\nENV RUST_BACKTRACE=full\n\nCMD python3 -m indy_vdr.test config/genesis.txn\n"
+}

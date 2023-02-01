@@ -1,0 +1,1 @@
+# Dockerfile Bareos storage daemon

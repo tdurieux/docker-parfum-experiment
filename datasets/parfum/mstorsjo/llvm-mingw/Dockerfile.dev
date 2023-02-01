@@ -1,0 +1,187 @@
+FROM ubuntu:18.04
+
+RUN apt-get update -qq && apt-get install -qqy --no-install-recommends \
+    git wget bzip2 file unzip libtool pkg-config cmake build-essential \
+    automake yasm gettext autopoint vim-tiny python3 python3-distutils \
+    ninja-build ca-certificates curl less zip && \
+    apt-get clean -y && \
+    rm -rf /var/lib/apt/lists/*
+
+# Manually install a newer version of CMake; this is needed since building
+# LLVM requires CMake 3.13.4, while Ubuntu 18.04 ships with 3.10.2. If
+# updating to a newer distribution, this can be dropped.
+RUN cd /opt && \
+    wget https://github.com/Kitware/CMake/releases/download/v3.20.1/cmake-3.20.1-Linux-$(uname -m).tar.gz && \
+    tar -zxvf cmake-*.tar.gz && \
+    rm cmake-*.tar.gz && \
+    mv cmake-* cmake
+ENV PATH=/opt/cmake/bin:$PATH
+
+# Install a newer version of Git; the version of Git in Ubuntu 18.04 is
+# said to have issues with submodules, see e.g.
+# https://github.com/mstorsjo/llvm-mingw/pull/210#issuecomment-870104971 and
+# https://github.com/mstorsjo/llvm-mingw/pull/210#issuecomment-873486503.
+# This isn't needed for building LLVM itself, but makes the built Docker
+# image more useful for use as image for building other projects. If updating
+# to a newer distribution, this can be dropped.
+RUN apt-get update -qq && \
+    apt-get install -qqy --no-install-recommends software-properties-common && \
+    add-apt-repository ppa:git-core/ppa && \
+    apt-get update -qq && \
+    apt-get upgrade -qqy git && \
+    apt-get clean -y && \
+    rm -rf /var/lib/apt/lists/*
+
+
+RUN git config --global user.name "LLVM MinGW" && \
+    git config --global user.email root@localhost
+
+WORKDIR /build
+
+ENV TOOLCHAIN_PREFIX=/opt/llvm-mingw
+
+ARG FULL_LLVM
+
+# Build LLVM
+COPY build-llvm.sh ./
+RUN ./build-llvm.sh $TOOLCHAIN_PREFIX
+
+# Build LLDB-MI
+COPY build-lldb-mi.sh ./
+RUN ./build-lldb-mi.sh $TOOLCHAIN_PREFIX
+
+# Strip the LLVM install output immediately. (This doesn't reduce the
+# total docker image size as long as it is in a separate RUN layer though,
+# but reduces build times if tweaking the contents of strip-llvm.sh.)
+# Most of the size of the docker image comes from the build directory that
+# we keep in any case.
+COPY strip-llvm.sh ./
+RUN ./strip-llvm.sh $TOOLCHAIN_PREFIX
+
+ARG TOOLCHAIN_ARCHS="i686 x86_64 armv7 aarch64"
+
+# Install the usual $TUPLE-clang binaries
+COPY wrappers/*.sh wrappers/*.c wrappers/*.h ./wrappers/
+COPY install-wrappers.sh ./
+RUN ./install-wrappers.sh $TOOLCHAIN_PREFIX
+
+ARG DEFAULT_CRT=ucrt
+
+# Build MinGW-w64
+COPY build-mingw-w64.sh ./
+RUN ./build-mingw-w64.sh $TOOLCHAIN_PREFIX --with-default-msvcrt=$DEFAULT_CRT
+
+COPY build-mingw-w64-tools.sh ./
+RUN ./build-mingw-w64-tools.sh $TOOLCHAIN_PREFIX
+
+# Build compiler-rt
+COPY build-compiler-rt.sh ./
+RUN ./build-compiler-rt.sh $TOOLCHAIN_PREFIX
+
+# Build libunwind/libcxxabi/libcxx
+COPY build-libcxx.sh ./
+RUN ./build-libcxx.sh $TOOLCHAIN_PREFIX
+
+# Build mingw-w64's extra libraries
+COPY build-mingw-w64-libraries.sh ./
+RUN ./build-mingw-w64-libraries.sh $TOOLCHAIN_PREFIX
+
+# Build C test applications
+ENV PATH=$TOOLCHAIN_PREFIX/bin:$PATH
+
+COPY test/*.c test/*.h test/*.idl ./test/
+RUN cd test && \
+    for arch in $TOOLCHAIN_ARCHS; do \
+        mkdir -p $arch && \
+        for test in hello hello-tls crt-test setjmp; do \
+            $arch-w64-mingw32-clang $test.c -o $arch/$test.exe || exit 1; \
+        done; \
+        for test in autoimport-lib; do \
+            $arch-w64-mingw32-clang $test.c -shared -o $arch/$test.dll -Wl,--out-implib,$arch/lib$test.dll.a || exit 1; \
+        done; \
+        for test in autoimport-main; do \
+            $arch-w64-mingw32-clang $test.c -o $arch/$test.exe -L$arch -l${test%-main}-lib || exit 1; \
+        done; \
+        for test in idltest; do \
+            # The IDL output isn't arch specific, but test each arch frontend \
+            $arch-w64-mingw32-widl $test.idl -h -o $arch/$test.h && \
+            $arch-w64-mingw32-clang $test.c -I$arch -o $arch/$test.exe -lole32 || exit 1; \
+        done; \
+    done
+
+# Build C++ test applications
+COPY test/*.cpp ./test/
+RUN cd test && \
+    for arch in $TOOLCHAIN_ARCHS; do \
+        mkdir -p $arch && \
+        for test in hello-cpp hello-exception tlstest-main exception-locale exception-reduced global-terminate longjmp-cleanup; do \
+            $arch-w64-mingw32-clang++ $test.cpp -o $arch/$test.exe || exit 1; \
+        done; \
+        for test in hello-exception; do \
+            $arch-w64-mingw32-clang++ $test.cpp -static -o $arch/$test-static.exe || exit 1; \
+        done; \
+        for test in tlstest-lib throwcatch-lib; do \
+            $arch-w64-mingw32-clang++ $test.cpp -shared -o $arch/$test.dll -Wl,--out-implib,$arch/lib$test.dll.a || exit 1; \
+        done; \
+        for test in throwcatch-main; do \
+            $arch-w64-mingw32-clang++ $test.cpp -o $arch/$test.exe -L$arch -l${test%-main}-lib || exit 1; \
+        done; \
+    done
+
+# Build sanitizers. Ubsan includes <typeinfo> from the C++ headers, so
+# we need to build this after libcxx.
+RUN ./build-compiler-rt.sh $TOOLCHAIN_PREFIX --build-sanitizers
+
+# Sanitizers on windows only support x86.
+RUN cd test && \
+    for arch in $TOOLCHAIN_ARCHS; do \
+        case $arch in \
+        i686|x86_64) \
+            ;; \
+        *) \
+            continue \
+            ;; \
+        esac && \
+        for test in stacksmash; do \
+            $arch-w64-mingw32-clang $test.c -o $arch/$test-asan.exe -fsanitize=address -g -gcodeview -Wl,-pdb,$arch/$test-asan.pdb || exit 1; \
+        done; \
+        for test in ubsan; do \
+            $arch-w64-mingw32-clang $test.c -o $arch/$test.exe -fsanitize=undefined || exit 1; \
+        done; \
+    done
+
+# Build libssp
+COPY build-libssp.sh libssp-Makefile ./
+RUN ./build-libssp.sh $TOOLCHAIN_PREFIX
+
+RUN cd test && \
+    for arch in $TOOLCHAIN_ARCHS; do \
+        mkdir -p $arch && \
+        for test in stacksmash; do \
+            $arch-w64-mingw32-clang $test.c -o $arch/$test.exe -fstack-protector-strong || exit 1; \
+        done; \
+    done
+
+# Build OpenMP
+COPY build-openmp.sh ./
+RUN ./build-openmp.sh $TOOLCHAIN_PREFIX
+
+# OpenMP on windows only supports x86.
+RUN cd test && \
+    for arch in $TOOLCHAIN_ARCHS; do \
+        case $arch in \
+        i686|x86_64) \
+            ;; \
+        *) \
+            continue \
+            ;; \
+        esac && \
+        for test in hello-omp; do \
+            $arch-w64-mingw32-clang $test.c -o $arch/$test.exe -fopenmp=libomp || exit 1; \
+        done; \
+    done
+
+RUN cd test && \
+    for arch in $TOOLCHAIN_ARCHS; do \
+        cp $TOOLCHAIN_PREFIX/$arch-w64-mingw32/bin/*.dll $arch || exit 1; \
+    done

@@ -1,0 +1,1 @@
+# Simple Dockerfile illustrating Lambda container images in LocalStack

@@ -1,0 +1,26 @@
+{
+  "startTime": 1674250265050,
+  "endTime": 1674250266041,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 15,
+        "lineEnd": 15,
+        "columnStart": 22,
+        "columnEnd": 56
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 15,
+        "lineEnd": 15,
+        "columnStart": 22,
+        "columnEnd": 56
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Copyright 2019 The Skaffold Authors All rights reserved.\n#\n# Licensed under the Apache License, Version 2.0 (the \"License\");\n# you may not use this file except in compliance with the License.\n# You may obtain a copy of the License at\n#\n#     http://www.apache.org/licenses/LICENSE-2.0\n#\n# Unless required by applicable law or agreed to in writing, software\n# distributed under the License is distributed on an \"AS IS\" BASIS,\n# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.\n# See the License for the specific language governing permissions and\n# limitations under the License.\n\nFROM golang:1.15 AS generate-files\nRUN apt-get update && apt-get install --no-install-recommends -y unzip moreutils && rm -rf /var/lib/apt/lists/*;\n\nWORKDIR /protoc\nENV PROTOC_VERSION=3.17.3\nRUN plat=$(case $(uname -s)-$(uname -m) in Linux-x86_64) echo linux-x86_64;; Linux-aarch64) echo linux-aarch_64;; *) echo UNKNOWN;; esac); \\\n  wget -O protoc.zip https://github.com/google/protobuf/releases/download/v${PROTOC_VERSION}/protoc-${PROTOC_VERSION}-${plat}.zip\nRUN unzip protoc.zip\nENV PATH=\"/protoc/bin:${PATH}\"\n\nWORKDIR /grpc-gateway\nRUN wget -q -O- https://github.com/grpc-ecosystem/grpc-gateway/tarball/v2.5.0 | tar --strip-components 1 -zx\n\nWORKDIR /tmp\nENV GOPROXY=https://proxy.golang.org\nENV GO111MODULE=on\n\nRUN go get \\\n    github.com/golang/protobuf/protoc-gen-go@v1.5.2 \\\n    github.com/grpc-ecosystem/grpc-gateway/v2/protoc-gen-grpc-gateway@v2.5.0 \\\n    github.com/grpc-ecosystem/grpc-gateway/protoc-gen-swagger@v1.7.0 \\\n    github.com/pseudomuto/protoc-gen-doc/cmd/protoc-gen-doc@v1.5.0 \\\n    google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.1.0\n\n\nWORKDIR /proto/google/api\nCOPY google/api/*.proto ./\n\n# Generate proto files for common enums\nWORKDIR /proto/enums\nCOPY enums/enums.proto enums/markdown.tmpl ./\nRUN protoc \\\n  -I . \\\n  -I /proto/google/api \\\n  --grpc-gateway_out=logtostderr=true:. \\\n  --go_out=plugins=grpc:. \\\n  --doc_out=. \\\n  --doc_opt=./markdown.tmpl,enums.md \\\n  *.proto\n\n# Generate proto files for v1 API\nWORKDIR /proto\nCOPY v1/skaffold.proto v1/markdown.tmpl v1/\nRUN protoc \\\n  -I . \\\n  -I enums/ \\\n  -I /protoc/include \\\n  -I /proto/google/api \\\n  --grpc-gateway_out=logtostderr=true:. \\\n  --go_out=. \\\n  --doc_out=v1/ \\\n  --doc_opt=v1/markdown.tmpl,v1/index.md \\\n  --swagger_out=logtostderr=true:. \\\n  --go-grpc_out=. \\\n  --go-grpc_opt=require_unimplemented_servers=false \\\n  v1/*.proto\n\n# Generate proto files for v2 API\nWORKDIR /proto\nCOPY v2/skaffold.proto v2/markdown.tmpl v2/\nRUN protoc \\\n  -I . \\\n  -I enums/ \\\n  -I /protoc/include \\\n  -I /proto/google/api \\\n  --grpc-gateway_out=logtostderr=true:. \\\n  --go_out=. \\\n  --doc_out=v2/ \\\n  --doc_opt=v2/markdown.tmpl,v2/index.md \\\n  --swagger_out=logtostderr=true:. \\\n  --go-grpc_out=. \\\n  --go-grpc_opt=require_unimplemented_servers=false \\\n  v2/*.proto\n\n# this is a hack - seemingly grpc-gateway-swagger-gen is sometimes generating titles when they should be descriptions\nRUN wget -O jq https://github.com/stedolan/jq/releases/download/jq-1.6/jq-linux64 && chmod +x ./jq\nRUN ./jq 'walk(if type == \"object\" and has(\"title\") then .description = ([.title, .description] | map(values) | join (\"\\n\")) | del(.title) else .  end)' v1/skaffold.swagger.json | sponge v1/skaffold.swagger.json\nRUN ./jq 'walk(if type == \"object\" and has(\"title\") then .description = ([.title, .description] | map(values) | join (\"\\n\")) | del(.title) else .  end)' v2/skaffold.swagger.json | sponge v2/skaffold.swagger.json\n\n# Append enum docs content to main docs content\nRUN cat enums/enums.md >> v1/index.md\nRUN cat enums/enums.md >> v2/index.md\n\n# Compare the proto files with the existing proto files\nFROM generate-files AS compare\nWORKDIR /compare/v1\nCOPY v1/*.go ./\nCOPY --from=generate-files /proto/v1/index.md ./\n\nWORKDIR /compare/v2\nCOPY v2/*.go ./\nCOPY --from=generate-files /proto/v2/index.md ./\nCMD cmp /proto/v1/skaffold.pb.go /compare/v1/skaffold.pb.go && cmp /proto/v1/skaffold.pb.gw.go /compare/v1/skaffold.pb.gw.go && \\\n    cmp /proto/v2/skaffold.pb.go /compare/v2/skaffold.pb.go && cmp /proto/v2/skaffold.pb.gw.go /compare/v2/skaffold.pb.gw.go\n"
+}

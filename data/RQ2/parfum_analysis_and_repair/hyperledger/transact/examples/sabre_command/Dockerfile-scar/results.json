@@ -1,0 +1,35 @@
+{
+  "startTime": 1674215550216,
+  "endTime": 1674215551003,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 38,
+        "lineEnd": 38,
+        "columnStart": 4,
+        "columnEnd": 104
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 19,
+        "lineEnd": 25,
+        "columnStart": 4,
+        "columnEnd": 6
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 19,
+        "lineEnd": 25,
+        "columnStart": 4,
+        "columnEnd": 6
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Copyright 2019-2021 Cargill Incorporated\n#\n# Licensed under the Apache License, Version 2.0 (the \"License\");\n# you may not use this file except in compliance with the License.\n# You may obtain a copy of the License at\n#\n#     http://www.apache.org/licenses/LICENSE-2.0\n#\n# Unless required by applicable law or agreed to in writing, software\n# distributed under the License is distributed on an \"AS IS\" BASIS,\n# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.\n# See the License for the specific language governing permissions and\n# limitations under the License.\n\nFROM ubuntu:bionic\n\n# Install base dependencies\n\nRUN apt-get update \\\n && apt-get install --no-install-recommends -y \\\n curl \\\n gcc \\\n libssl-dev \\\n libzmq3-dev \\\n pkg-config \\\n unzip && rm -rf /var/lib/apt/lists/*;\n\nENV PATH=$PATH:/protoc3/bin:/root/.cargo/bin\n\n# Install Rust\nRUN curl https://sh.rustup.rs -sSf > /usr/bin/rustup-init \\\n && chmod +x /usr/bin/rustup-init \\\n && rustup-init -y\n\nRUN rustup update \\\n && rustup target add wasm32-unknown-unknown\n\n# Install protoc\nRUN curl -f -OLsS https://github.com/google/protobuf/releases/download/v3.7.1/protoc-3.7.1-linux-x86_64.zip \\\n && unzip -o protoc-3.7.1-linux-x86_64.zip -d /usr/local \\\n && rm protoc-3.7.1-linux-x86_64.zip\n\nWORKDIR /build\n\n# Create empty cargo project for transact\nRUN USER=root cargo new --lib libtransact\n\n# Copy over Cargo.toml file\nCOPY libtransact/Cargo.toml /build/libtransact/Cargo.toml\nCOPY libtransact/build.rs /build/libtransact/build.rs\nCOPY libtransact/protos /build/libtransact/protos\n\nWORKDIR /build/libtransact\n\n# Do a release build to cache dependencies\nRUN cargo build --no-default-features --features sabre-compat,family-command\n\n# Copy over source files\nCOPY libtransact/src /build/libtransact/src\n\nWORKDIR /build\n\n# Create empty cargo project for sabre command\nRUN mkdir examples \\\n && USER=root cargo new --bin examples/sabre_command\n\n# Copy over Cargo.toml file\nCOPY examples/sabre_command/Cargo.toml /build/examples/sabre_command/Cargo.toml\n\nWORKDIR /build/examples/sabre_command\n\n# Do a release build to cache dependencies\nRUN cargo build --target wasm32-unknown-unknown --release\n\n# Remove the auto-generated .rs files and the built files\nRUN rm target/wasm32-unknown-unknown/release/sabre-command* \\\n    target/wasm32-unknown-unknown/release/deps/sabre_command*\n\n# Copy over source files\nCOPY examples/sabre_command/src /build/examples/sabre_command/src\n\n# Update version in Cargo.toml\nARG REPO_VERSION\nRUN sed -i -e \"0,/version.*$/ s/version.*$/version\\ =\\ \\\"${REPO_VERSION}\\\"/\" Cargo.toml\n\n# Build the contract\nRUN cargo build --target wasm32-unknown-unknown --release\n\n# Copy the packaging directory\nCOPY examples/sabre_command/packaging/scar/* \\\n     /build/examples/sabre_command/packaging/scar/\n\n# Copy the contract to the packaging directory\nRUN cp target/wasm32-unknown-unknown/release/sabre-command.wasm \\\n    packaging/scar\n\nWORKDIR /build/examples/sabre_command/packaging/scar\n\n# Create .scar file\nRUN tar -jcvf /tmp/command_${REPO_VERSION}.scar .\n"
+}

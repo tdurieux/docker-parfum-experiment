@@ -1,0 +1,29 @@
+# From https://github.com/docker-library/postgres/blob/master/13/alpine/Dockerfile
+FROM postgres:14.3-alpine3.15
+
+RUN apk add --update --no-cache bash openssl shadow netcat-openbsd
+
+# We need to use the same gid and uid as on old installations
+RUN set -ex; \
+    deluser postgres; \
+    groupmod -g 9999 ping; \
+    addgroup -g 999 -S postgres; \
+    adduser -u 999 -S -D -G postgres -H -h /var/lib/postgresql -s /bin/sh postgres
+
+# Fix default permissions
+RUN set -ex; \
+    chown -R postgres:postgres /var/lib/postgresql; \
+    chown -R postgres:postgres /var/run/postgresql; \
+    chown -R postgres:postgres "$PGDATA"
+
+COPY start.sh /usr/bin/
+COPY init-user-db.sh /docker-entrypoint-initdb.d/
+RUN chmod +x /usr/bin/start.sh; \
+    chmod +xr /docker-entrypoint-initdb.d/init-user-db.sh
+
+RUN mkdir /mnt/data; \
+    chown postgres:postgres /mnt/data;
+
+VOLUME /mnt/data
+
+# Give root a random password

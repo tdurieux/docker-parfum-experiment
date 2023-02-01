@@ -1,0 +1,73 @@
+# Copyright 2016 the original author or authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# -------------
+# Build stage
+
+FROM --platform=linux/amd64 golang:1.16.3-alpine3.13 AS dev
+
+# Install required packages
+RUN apk add --no-cache build-base=0.5-r3
+
+# Use Standard go build directory structure
+WORKDIR /go/src
+
+# Copy common files.
+COPY db ./db
+COPY vendor ./vendor
+
+# Copy files
+COPY rw_core ./rw_core
+COPY go.mod ./
+COPY go.sum ./
+
+ARG EXTRA_GO_BUILD_TAGS=""
+
+ARG CGO_PARAMETER="CGO_ENABLED=0"
+
+ARG org_label_schema_version=unknown
+ARG org_label_schema_vcs_url=unknown
+ARG org_label_schema_vcs_ref=unknown
+ARG org_label_schema_build_date=unknown
+ARG org_opencord_vcs_commit_date=unknown
+ARG org_opencord_vcs_dirty=unknown
+
+# Build
+WORKDIR /go/src/rw_core
+SHELL ["/bin/ash", "-o", "pipefail", "-c"]
+RUN \
+export ${CGO_PARAMETER?} && go build $EXTRA_GO_BUILD_TAGS -mod=vendor -o /app/rw_core \
+-ldflags \
+"-X github.com/opencord/voltha-lib-go/v7/pkg/version.version=$org_label_schema_version \
+-X github.com/opencord/voltha-lib-go/v7/pkg/version.vcsRef=$org_label_schema_vcs_ref  \
+-X github.com/opencord/voltha-lib-go/v7/pkg/version.vcsDirty=$org_opencord_vcs_dirty \
+-X github.com/opencord/voltha-lib-go/v7/pkg/version.goVersion=$(go version 2>&1 | sed -E  's/.*go([0-9]+\.[0-9]+\.[0-9]+).*/\1/g') \
+-X github.com/opencord/voltha-lib-go/v7/pkg/version.os=$(go env GOHOSTOS) \
+-X github.com/opencord/voltha-lib-go/v7/pkg/version.arch=$(go env GOHOSTARCH) \
+-X github.com/opencord/voltha-lib-go/v7/pkg/version.buildTime=$org_label_schema_build_date" \
+.
+
+WORKDIR /app
+
+# -------------
+# Image creation stage
+FROM --platform=linux/amd64 gcr.io/distroless/static:nonroot as prod
+
+# Set the working directory
+WORKDIR /app
+
+# Copy required files
+COPY --from=dev /app/rw_core /app/rw_core
+
+# Label image

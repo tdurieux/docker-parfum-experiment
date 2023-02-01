@@ -1,0 +1,23 @@
+# Need to use version number so that it gets updated here and triggers a build
+FROM debian:11.2-slim
+
+ENV LC_ALL=C.UTF-8
+ENV PS1="(deb) \w \$ "
+
+RUN apt-get update && \
+    apt-get -y --no-install-recommends install bash ruby ruby-dev rubygems build-essential curl git zip bzip2 jq && rm -rf /var/lib/apt/lists/*;
+# https://github.com/jordansissel/fpm/issues/1663
+RUN gem install --no-document backports -v 3.15.0
+RUN gem install --no-document fpm
+
+ARG GO_INSTALL_VERSION=1.16.7
+
+# Install go
+RUN echo downloading go${GO_INSTALL_VERSION} && \
+    curl -f -sSL --retry 3 -o golang.tar.gz https://golang.org/dl/go${GO_INSTALL_VERSION}.linux-amd64.tar.gz && \
+    tar xzf golang.tar.gz && \
+    mv go /usr/lib/ && rm golang.tar.gz && \
+    ln -s /usr/lib/go/bin/go /usr/bin/go
+
+
+WORKDIR /packages

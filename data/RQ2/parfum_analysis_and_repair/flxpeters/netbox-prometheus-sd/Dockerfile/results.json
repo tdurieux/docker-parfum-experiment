@@ -1,0 +1,17 @@
+{
+  "startTime": 1674215031370,
+  "endTime": 1674215032352,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 28,
+        "lineEnd": 28,
+        "columnStart": 4,
+        "columnEnd": 85
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "###############################################\n# Base Image\n###############################################\nFROM python:3.8-alpine as python-base\n# https://www.mktr.ai/the-data-scientists-quick-guide-to-dockerfiles-with-examples/\n\nENV PYTHONUNBUFFERED=1 \\\n  PYTHONDONTWRITEBYTECODE=1 \\\n  PIP_NO_CACHE_DIR=off \\\n  PIP_DISABLE_PIP_VERSION_CHECK=on \\\n  PIP_DEFAULT_TIMEOUT=100 \\\n  POETRY_VERSION=1.1.4 \\\n  POETRY_HOME=\"/opt/poetry\" \\\n  POETRY_VIRTUALENVS_IN_PROJECT=true \\\n  POETRY_NO_INTERACTION=1 \\\n  PYSETUP_PATH=\"/opt/pysetup\" \\\n  VENV_PATH=\"/opt/pysetup/.venv\"\n\n# prepend poetry and venv to path\nENV PATH=\"$POETRY_HOME/bin:$VENV_PATH/bin:$PATH\"\n\n###############################################\n# Builder Image\n###############################################\nFROM python-base as builder-base\nRUN apk add --no-cache curl\n\n# install poetry - respects $POETRY_VERSION & $POETRY_HOME\nRUN curl -f -sSL https://raw.githubusercontent.com/sdispater/poetry/master/get-poetry.py | python\n\n# copy project requirement files here to ensure they will be cached.\nWORKDIR $PYSETUP_PATH\nCOPY poetry.lock pyproject.toml ./\n\n# install runtime deps - uses $POETRY_VIRTUALENVS_IN_PROJECT internally\nRUN poetry install --no-dev\n\n###############################################\n# Production Image\n###############################################\nFROM python-base as production\n\nCOPY --from=builder-base $PYSETUP_PATH $PYSETUP_PATH\n\nCOPY netbox-prometheus-sd.py /app/netbox-prometheus-sd.py\nCOPY netbox_sd /app/netbox_sd\nRUN chmod +x /app/netbox-prometheus-sd.py\n\n# Create data volume directory\nRUN mkdir -p /data/netbox&& \\\n  chown -R nobody:nogroup /data/netbox\n\n# Add curl and upgrade all os packages\nRUN apk --update --no-cache upgrade && apk --no-cache add curl\nHEALTHCHECK --interval=30s --timeout=1s --start-period=5s \\\n  CMD curl -f http://localhost:8000/ || exit 1\n\nVOLUME \"/data/netbox\"\nUSER nobody\nWORKDIR /data/netbox\n\nENV NETBOX_SD_FILE_PATH /data/netbox/netbox.json\nENV NETBOX_SD_METRICS_PORT 8000\n\nEXPOSE 8000\n\nCMD [ \"/app/netbox-prometheus-sd.py\"]"
+}

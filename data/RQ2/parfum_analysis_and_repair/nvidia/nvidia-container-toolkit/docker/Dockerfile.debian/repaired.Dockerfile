@@ -1,0 +1,81 @@
+ARG BASEIMAGE
+FROM ${BASEIMAGE}
+
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        wget \
+        ca-certificates \
+        git \
+        build-essential \
+        dh-make \
+        fakeroot \
+        devscripts \
+        lsb-release && \
+    rm -rf /var/lib/apt/lists/*
+
+RUN echo "deb http://ftp.debian.org/debian $(lsb_release -cs)-backports main" > /etc/apt/sources.list.d/backports.list
+
+ARG GOLANG_VERSION=0.0.0
+RUN set -eux; \
+    \
+    arch="$(uname -m)"; \
+    case "${arch##*-}" in \
+        x86_64 | amd64) ARCH='amd64' ;; \
+        ppc64el | ppc64le) ARCH='ppc64le' ;; \
+        aarch64) ARCH='arm64' ;; \
+        *) echo "unsupported architecture" ; exit 1 ;; \
+    esac; \
+    wget -nv -O - https://storage.googleapis.com/golang/go${GOLANG_VERSION}.linux-${ARCH}.tar.gz \
+    | tar -C /usr/local -xz
+
+ENV GOPATH /go
+ENV PATH $GOPATH/bin:/usr/local/go/bin:$PATH
+
+# packaging
+ARG PKG_NAME
+ARG PKG_VERS
+ARG PKG_REV
+
+ENV DEBFULLNAME "NVIDIA CORPORATION"
+ENV DEBEMAIL "cudatools@nvidia.com"
+ENV REVISION "$PKG_VERS-$PKG_REV"
+ENV SECTION ""
+
+# output directory
+ENV DIST_DIR=/tmp/nvidia-container-toolkit-$PKG_VERS
+RUN mkdir -p $DIST_DIR /dist
+
+# nvidia-container-toolkit
+WORKDIR $GOPATH/src/nvidia-container-toolkit
+COPY . .
+
+ARG GIT_COMMIT
+ENV GIT_COMMIT ${GIT_COMMIT}
+RUN make PREFIX=${DIST_DIR} cmds
+
+ARG CONFIG_TOML_SUFFIX
+ENV CONFIG_TOML_SUFFIX ${CONFIG_TOML_SUFFIX}
+COPY config/config.toml.${CONFIG_TOML_SUFFIX} $DIST_DIR/config.toml
+
+# Debian Jessie still had ldconfig.real
+RUN if [ "$(lsb_release -cs)" = "jessie" ]; then \
+       sed -i 's;"@/sbin/ldconfig";"@/sbin/ldconfig.real";' $DIST_DIR/config.toml; \
+    fi
+
+WORKDIR $DIST_DIR
+COPY packaging/debian ./debian
+
+ARG LIBNVIDIA_CONTAINER_TOOLS_VERSION
+ENV LIBNVIDIA_CONTAINER_TOOLS_VERSION ${LIBNVIDIA_CONTAINER_TOOLS_VERSION}
+
+RUN dch --create --package="${PKG_NAME}" \
+        --newversion "${REVISION}" \
+            "See https://gitlab.com/nvidia/container-toolkit/container-toolkit/-/blob/${GIT_COMMIT}/CHANGELOG.md for the changelog" && \
+    dch --append "Bump libnvidia-container dependency to ${LIBNVIDIA_CONTAINER1_VERSION}" && \
+    dch -r "" && \
+    if [ "$REVISION" != "$(dpkg-parsechangelog --show-field=Version)" ]; then exit 1; fi
+
+CMD export DISTRIB="$(lsb_release -cs)" && \
+    debuild -eDISTRIB -eSECTION -eLIBNVIDIA_CONTAINER_TOOLS_VERSION \
+    --dpkg-buildpackage-hook='sh debian/prepare' -i -us -uc -b && \
+    mv /tmp/nvidia-container-toolkit_*.deb /dist

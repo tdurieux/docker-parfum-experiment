@@ -1,0 +1,29 @@
+{% set is_centos_8 = true if image_name == 'centos' and image_rev == '8' else false %}
+{% set is_centos_9 = true if image_name == 'centos' and image_rev == '9' else false %}
+{% set image_tag = 'stream' + image_rev if image_name == 'centos' and image_rev != '7' else image_rev %}
+# {{ distro_name }} pbench-agent base image
+FROM {{ image_repo }}/{{ image_name }}:{{ image_tag }}
+
+# Install the appropriate pbench repository file for {{ distro_name }}.
+COPY ./{{ pbench_repo_file }} /etc/yum.repos.d/pbench.repo
+
+# Install the pbench-agent RPM, which should have all its dependencies enumerated;
+# ... and make sure we have a proper pbench-agent.cfg file in place;
+# ... and finally, ensure the proper pbench-agent environment variables are set up.
+RUN \
+{% if is_centos_8 %}
+    {{ pkgmgr }} module -y enable python39 && \
+{% endif %}
+{% if image_name == 'centos' %}
+    {{ pkgmgr }} install -y --setopt=tsflags=nodocs https://dl.fedoraproject.org/pub/epel/epel-release-latest-{{ image_rev }}.noarch.rpm && \
+{% endif %}
+    {{ pkgmgr }} install -y --setopt=tsflags=nodocs \
+        {% if is_centos_8 %}--enablerepo powertools {% endif %} \
+        {% if is_centos_9 %}--enablerepo crb {% endif %} \
+        {% if is_centos_8 or is_centos_9 %} glibc-locale-source {% endif %} \
+        pbench-agent && \
+{% if is_centos_8 or is_centos_9 %}
+    localedef -i en_US -f UTF-8 en_US.UTF-8 && \
+{% endif %}
+    {{ pkgmgr }} -y clean all && \
+    rm -rf /var/cache/{{ pkgmgr }}

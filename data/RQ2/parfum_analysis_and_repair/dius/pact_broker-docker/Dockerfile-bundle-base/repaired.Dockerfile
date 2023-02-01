@@ -1,0 +1,12 @@
+FROM phusion/passenger-ruby27:2.0.1
+
+# Installation path
+ENV HOME=/pact_broker
+WORKDIR $HOME
+
+RUN bash -lc 'rvm --default use ruby-2.4.5'
+
+RUN bundler -v
+RUN gem install --no-document --minimal-deps bundler -v 2.1.4
+COPY pact_broker/Gemfile pact_broker/Gemfile.lock $HOME/
+RUN bundle install --no-cache

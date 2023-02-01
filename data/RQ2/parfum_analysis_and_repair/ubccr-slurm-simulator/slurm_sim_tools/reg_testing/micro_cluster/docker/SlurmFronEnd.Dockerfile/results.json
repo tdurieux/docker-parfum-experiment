@@ -1,0 +1,35 @@
+{
+  "startTime": 1674219432054,
+  "endTime": 1674219433061,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 17,
+        "lineEnd": 17,
+        "columnStart": 4,
+        "columnEnd": 23
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 6,
+        "lineEnd": 6,
+        "columnStart": 4,
+        "columnEnd": 55
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 7,
+        "lineEnd": 16,
+        "columnStart": 4,
+        "columnEnd": 23
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM centos:7\n\nLABEL description=\"slurm modeling\"\n\n# install dependencies\nRUN yum -y update && \\\n    yum -y install --setopt=tsflags=nodocs epel-release && \\\n    yum -y install --setopt=tsflags=nodocs \\\n        vim mc wget bzip2 git\\\n        autoconf make gcc gcc-c++ rpm-build \\\n        openssl openssh-clients openssl-devel openssh-server \\\n        mariadb-server mariadb-devel \\\n        munge munge-devel \\\n        readline readline-devel \\\n        hdf5 hdf5-devel pam-devel hwloc hwloc-devel \\\n        perl perl-ExtUtils-MakeMaker python3 python36-PyMySQL python36-psutil \\\n        sudo perl-Date* && \\\n    pip3 install --no-cache-dir pandas && rm -rf /var/cache/yum\n\n\n# add users\nRUN echo 'root:root' |chpasswd && \\\n    useradd -m -s /bin/bash slurm && \\\n    echo 'slurm:slurm' |chpasswd && \\\n    usermod -a -G wheel slurm && \\\n    echo \"slurm ALL=(ALL) NOPASSWD: ALL\" >> /etc/sudoers && \\\n    useradd -m -s /bin/bash user1 && echo 'user1:user' |chpasswd && \\\n    useradd -m -s /bin/bash user2 && echo 'user2:user' |chpasswd && \\\n    useradd -m -s /bin/bash user3 && echo 'user3:user' |chpasswd && \\\n    useradd -m -s /bin/bash user4 && echo 'user4:user' |chpasswd && \\\n    useradd -m -s /bin/bash user5 && echo 'user5:user' |chpasswd\n\n# copy daemons starters\nCOPY ./docker/utils/cmd_setup ./docker/utils/cmd_start ./docker/utils/cmd_stop /usr/local/sbin/\n\n# configure sshd\nRUN mkdir /var/run/sshd && \\\n    ssh-keygen -t rsa -f /etc/ssh/ssh_host_rsa_key -N '' && \\\n    ssh-keygen -t ecdsa -f /etc/ssh/ssh_host_ecdsa_key -N '' && \\\n    ssh-keygen -t ed25519 -f /etc/ssh/ssh_host_ed25519_key -N '' && \\\n    echo 'root:root' |chpasswd && \\\n    echo 'PermitRootLogin yes' >> /etc/ssh/sshd_config\n# uncomment two previous line if there is a need for root access through ssh\n\n# setup munge\nRUN echo \"secret munge key secret munge key secret munge key\" >/etc/munge/munge.key &&\\\n    chown -R munge:munge /var/log/munge /run/munge /var/lib/munge /etc/munge &&\\\n    chmod 600 /etc/munge/munge.key &&\\\n    cmd_start munged &&\\\n    munge -n | unmunge &&\\\n    cmd_stop munged\n\nEXPOSE 22\n\n#configure mysqld\nRUN chmod g+rw /var/lib/mysql /var/log/mariadb /var/run/mariadb && \\\n    mysql_install_db && \\\n    chown -R mysql:mysql /var/lib/mysql && \\\n    cmd_start mysqld && \\\n    mysql -e 'DELETE FROM mysql.user WHERE user NOT LIKE \"root\";' && \\\n    mysql -e 'DELETE FROM mysql.user WHERE Host NOT IN (\"localhost\",\"127.0.0.1\",\"%\");' && \\\n    mysql -e 'GRANT ALL PRIVILEGES ON *.* TO \"root\"@\"%\" WITH GRANT OPTION;' && \\\n    mysql -e 'GRANT ALL PRIVILEGES ON *.* TO \"root\"@\"localhost\" WITH GRANT OPTION;' && \\\n    mysql -e 'CREATE USER \"slurm\"@\"localhost\" IDENTIFIED BY \"slurm\";' && \\\n    mysql -e 'CREATE USER \"slurm\"@\"%\" IDENTIFIED BY \"slurm\";' && \\\n    mysql -e 'GRANT ALL PRIVILEGES ON *.* TO \"slurm\"@\"%\" WITH GRANT OPTION;' && \\\n    mysql -e 'GRANT ALL PRIVILEGES ON *.* TO \"slurm\"@\"localhost\" WITH GRANT OPTION;' && \\\n    mysql -e 'DROP DATABASE IF EXISTS test;' && \\\n    cmd_stop mysqld\n\n# install mini apps\nCOPY ./miniapps /usr/local/miniapps\nRUN cd /usr/local/miniapps && make\n\n# setup entry point\nWORKDIR /root\n\n# source of slurm\n# ENV SLURM_TAR_BZ2_SOURCE=https://download.schedmd.com/slurm/slurm-20.02.3.tar.bz2\nENV SLURM_GIT_REPO=https://github.com/ubccr-slurm-simulator/slurm_simulator.git \\\n    SLURM_GIT_BRANCH=slurm-20.02-sim\n\n# install slurm\nRUN git clone --depth 1  --branch $SLURM_GIT_BRANCH $SLURM_GIT_REPO && \\\n    cd ~/slurm_simulator && mkdir bld_frontend && cd bld_frontend && \\\n    ~/slurm_simulator/configure --prefix=/opt/slurm_front_end \\\n        --disable-x11 --enable-front-end --with-hdf5=no  && \\\n    make -j install && \\\n    cd .. && mkdir bld && cd bld && \\\n    ~/slurm_simulator/configure --prefix=/opt/slurm \\\n        --disable-x11 --with-hdf5=no  && \\\n    make -j install && \\\n    cd && rm -rf ~/slurm_simulator\n\n# copy slurm configs\nCOPY reg_testing/micro_cluster/docker/etc /opt/cluster/micro1/etc\nCOPY src /opt/slurm_sim_tools/src\nCOPY reg_testing/micro_cluster/docker/bin/run_test_trace_front_end.sh \\\n     reg_testing/micro_cluster/docker/bin/run_test_trace_shrinked_front_end.sh \\\n     /opt/bin/\n\n# prepere directory layout\nRUN mkdir -p /opt/cluster/micro1/run /opt/cluster/micro1/log && \\\n    mkdir -p /opt/cluster/micro1/var/spool /opt/cluster/micro1/var/state && \\\n    chown -R slurm:slurm /opt/cluster && \\\n    chmod 755 /opt/cluster /opt/cluster/micro1 /opt/cluster/micro1/var && \\\n    chmod 777 /opt/cluster/micro1/var/spool /opt/cluster/micro1/var/state && \\\n    chown -R slurm:slurm /opt\n\nENTRYPOINT [\"/usr/local/sbin/cmd_start\"]\nCMD [\"sshd\", \"munged\", \"mysqld\", \"bash_slurm\"]\n"
+}

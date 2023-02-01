@@ -1,0 +1,62 @@
+{
+  "startTime": 1674250948022,
+  "endTime": 1674250949753,
+  "originalSmells": [
+    {
+      "rule": "mkdirUsrSrcThenRemove",
+      "position": {
+        "lineStart": 187,
+        "lineEnd": 187,
+        "columnStart": 4,
+        "columnEnd": 38
+      }
+    },
+    {
+      "rule": "mkdirUsrSrcThenRemove",
+      "position": {
+        "lineStart": 188,
+        "lineEnd": 188,
+        "columnStart": 4,
+        "columnEnd": 38
+      }
+    },
+    {
+      "rule": "sha256sumEchoOneSpaces",
+      "position": {
+        "lineStart": 175,
+        "lineEnd": 175,
+        "columnStart": 4,
+        "columnEnd": 99
+      }
+    },
+    {
+      "rule": "sha256sumEchoOneSpaces",
+      "position": {
+        "lineStart": 186,
+        "lineEnd": 186,
+        "columnStart": 4,
+        "columnEnd": 107
+      }
+    },
+    {
+      "rule": "gpgUseBatchFlag",
+      "position": {
+        "lineStart": 23,
+        "lineEnd": 23,
+        "columnStart": 6,
+        "columnEnd": 19
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 7,
+        "lineEnd": 13,
+        "columnStart": 4,
+        "columnEnd": 5
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# DO NOT EDIT: created by update.sh from Dockerfile-debian.template\nFROM php:7.4-fpm-bullseye\n\n# entrypoint.sh and cron.sh dependencies\nRUN set -ex; \\\n\n    apt-get update; \\\n    apt-get install -y --no-install-recommends \\\n        rsync \\\n        bzip2 \\\n# For mail() support\n        msmtp \\\n        tini \\\n    ; rm -rf /var/lib/apt/lists/*;\n\nENV GOSU_VERSION 1.14\nRUN set -eux; \\\n# save list of currently installed packages for later so we can clean up\n\tsavedAptMark=\"$(apt-mark showmanual)\"; \\\n\tapt-get update; \\\n\tapt-get install -y --no-install-recommends ca-certificates wget; \\\n\tif ! command -v gpg;then \\\n\t\tapt-get install -y --no-install-recommends gnupg2 dirmngr; \\\n\telif gpg --batch --version | grep -q '^gpg (GnuPG) 1\\.'; then \\\n# \"This package provides support for HKPS keyservers.\" (GnuPG 1.x only)\n\t\tapt-get install -y --no-install-recommends gnupg-curl; \\\n\tfi; \\\n\trm -rf /var/lib/apt/lists/*; \\\n\n\tdpkgArch=\"$(dpkg --print-architecture | awk -F- '{ print $NF }')\"; \\\n\twget -O /usr/local/bin/gosu \"https://github.com/tianon/gosu/releases/download/$GOSU_VERSION/gosu-$dpkgArch\"; \\\n\twget -O /usr/local/bin/gosu.asc \"https://github.com/tianon/gosu/releases/download/$GOSU_VERSION/gosu-$dpkgArch.asc\"; \\\n\n# verify the signature\n\texport GNUPGHOME=\"$(mktemp -d)\"; \\\n\tgpg --batch --keyserver hkps://keys.openpgp.org --recv-keys B42F6819007F00F88E364FD4036A9C25BF357DD4; \\\n\tgpg --batch --verify /usr/local/bin/gosu.asc /usr/local/bin/gosu; \\\n\tcommand -v gpgconf && gpgconf --kill all || :; \\\n\trm -rf \"$GNUPGHOME\" /usr/local/bin/gosu.asc; \\\n\n# clean up fetch dependencies\n\tapt-mark auto '.*' > /dev/null; \\\n\t[ -z \"$savedAptMark\" ] || apt-mark manual $savedAptMark; \\\n\tapt-get purge -y --auto-remove -o APT::AutoRemove::RecommendsImportant=false; \\\n\n\tchmod +x /usr/local/bin/gosu; \\\n# verify that the binary works\n\tgosu --version; \\\n\tgosu nobody true\n\n# install the PHP extensions we need\n# see https://friendi.ca/resources/requirements/\nRUN set -ex; \\\n    \\\n    savedAptMark=\"$(apt-mark showmanual)\"; \\\n    \\\n    apt-get update; \\\n    apt-get install -y --no-install-recommends \\\n        mariadb-client \\\n        bash \\\n        libpng-dev \\\n        libjpeg62-turbo-dev \\\n        libtool \\\n        libmagick++-dev \\\n        libmemcached-dev \\\n        libgraphicsmagick1-dev \\\n        libfreetype6-dev \\\n        libwebp-dev \\\n        librsvg2-2 \\\n        libzip-dev \\\n        libldap2-dev \\\n    ; \\\n    \\\n        debMultiarch=\"$(dpkg-architecture --query DEB_BUILD_MULTIARCH)\"; \\\n    \\\n    docker-php-ext-configure gd \\\n        --with-freetype \\\n        --with-jpeg \\\n        --with-webp \\\n    ; \\\n    docker-php-ext-configure ldap \\\n        --with-libdir=lib/$debMultiarch/ \\\n    ;\\\n    docker-php-ext-install -j \"$(nproc)\" \\\n        pdo_mysql \\\n        gd \\\n        exif \\\n        zip \\\n        opcache \\\n        ctype \\\n        pcntl \\\n        ldap \\\n    ; \\\n    \\\n# pecl will claim success even if one install fails, so we need to perform each install separately\n    pecl install apcu-5.1.21; \\\n    pecl install memcached-3.2.0RC2; \\\n    pecl install redis-5.3.7; \\\n    pecl install imagick-3.7.0; \\\n    \\\n    docker-php-ext-enable \\\n        apcu \\\n        memcached \\\n        redis \\\n        imagick \\\n    ; \\\n    \\\n# reset apt-mark's \"manual\" list so that \"purge --auto-remove\" will remove all build dependencies\n    apt-mark auto '.*' > /dev/null; \\\n    apt-mark manual $savedAptMark; \\\n    ldd \"$(php -r 'echo ini_get(\"extension_dir\");')\"/*.so \\\n        | awk '/=>/ { print $3 }' \\\n        | sort -u \\\n        | xargs -r dpkg-query -S \\\n        | cut -d: -f1 \\\n        | sort -u \\\n        | xargs -rt apt-mark manual; \\\n    \\\n    apt-get purge -y --auto-remove -o APT::AutoRemove::RecommendsImportant=false; \\\n    rm -rf /var/lib/apt/lists/*\n\n# set recommended PHP.ini settings\nENV PHP_MEMORY_LIMIT 512M\nENV PHP_UPLOAD_LIMIT 512M\nRUN set -ex; \\\n    { \\\n        echo 'opcache.enable=1' ; \\\n        echo 'opcache.interned_strings_buffer=8'; \\\n        echo 'opcache.max_accelerated_files=10000'; \\\n        echo 'opcache.memory_consumption=128'; \\\n        echo 'opcache.save_comments=1'; \\\n        echo 'opcache.revalidte_freq=1'; \\\n    } > /usr/local/etc/php/conf.d/opcache-recommended.ini; \\\n    \\\n    { \\\n        echo sendmail_path = \"/usr/bin/msmtp -t\"; \\\n    } > /usr/local/etc/php/conf.d/sendmail.ini; \\\n    \\\n    echo 'apc.enable_cli=1' >> /usr/local/etc/php/conf.d/docker-php-ext-apcu.ini; \\\n    \\\n    { \\\n        echo 'memory_limit=${PHP_MEMORY_LIMIT}'; \\\n        echo 'upload_max_filesize=${PHP_UPLOAD_LIMIT}'; \\\n        echo 'post_max_size=${PHP_UPLOAD_LIMIT}'; \\\n    } > /usr/local/etc/php/conf.d/friendica.ini; \\\n    \\\n    mkdir /var/www/data; \\\n    chown -R www-data:root /var/www; \\\n    chmod -R g=u /var/www\n\nVOLUME /var/www/html\n\n\n# 39 = LOG_PID | LOG_ODELAY | LOG_CONS | LOG_PERROR\nENV FRIENDICA_SYSLOG_FLAGS 39\nENV FRIENDICA_VERSION \"2022.06\"\nENV FRIENDICA_ADDONS \"2022.06\"\nENV FRIENDICA_DOWNLOAD_SHA256 \"05a43d9ec085c06d3bde8b637286dd5fb397d9bdd75e30359e710bcba73082a9\"\nENV FRIENDICA_DOWNLOAD_ADDONS_SHA256 \"3f7ee1ee6591a0183de99b994c25e55e34ac966ba58f7a98f6323d48cee9969d\"\n\nRUN set -ex; \\\n    fetchDeps=\" \\\n        gnupg \\\n    \"; \\\n    apt-get update; \\\n    apt-get install -y --no-install-recommends $fetchDeps; \\\n\n    export GNUPGHOME=\"$(mktemp -d)\"; \\\n    gpg --batch --keyserver keyserver.ubuntu.com --recv-keys 08656443618E6567A39524083EE197EF3F9E4287; \\\n\n    curl -fsSL -o friendica-full-${FRIENDICA_VERSION}.tar.gz \\\n        \"https://files.friendi.ca/friendica-full-${FRIENDICA_VERSION}.tar.gz\"; \\\n    curl -fsSL -o friendica-full-${FRIENDICA_VERSION}.tar.gz.asc \\\n        \"https://files.friendi.ca/friendica-full-${FRIENDICA_VERSION}.tar.gz.asc\"; \\\n    gpg --batch --verify friendica-full-${FRIENDICA_VERSION}.tar.gz.asc friendica-full-${FRIENDICA_VERSION}.tar.gz; \\\n    echo \"${FRIENDICA_DOWNLOAD_SHA256}  *friendica-full-${FRIENDICA_VERSION}.tar.gz\" | sha256sum -c; \\\n    tar -xzf friendica-full-${FRIENDICA_VERSION}.tar.gz -C /usr/src/; \\\n    rm friendica-full-${FRIENDICA_VERSION}.tar.gz friendica-full-${FRIENDICA_VERSION}.tar.gz.asc; \\\n    mv -f /usr/src/friendica-full-${FRIENDICA_VERSION}/ /usr/src/friendica; \\\n    chmod 777 /usr/src/friendica/view/smarty3; \\\n\n    curl -fsSL -o friendica-addons-${FRIENDICA_ADDONS}.tar.gz \\\n            \"https://files.friendi.ca/friendica-addons-${FRIENDICA_ADDONS}.tar.gz\"; \\\n    curl -fsSL -o friendica-addons-${FRIENDICA_ADDONS}.tar.gz.asc \\\n            \"https://files.friendi.ca/friendica-addons-${FRIENDICA_ADDONS}.tar.gz.asc\"; \\\n    gpg --batch --verify friendica-addons-${FRIENDICA_ADDONS}.tar.gz.asc friendica-addons-${FRIENDICA_ADDONS}.tar.gz; \\\n    echo \"${FRIENDICA_DOWNLOAD_ADDONS_SHA256}  *friendica-addons-${FRIENDICA_ADDONS}.tar.gz\" | sha256sum -c; \\\n    mkdir -p /usr/src/friendica/proxy; rm -rf /usr/src/friendica/proxy \\\n    mkdir -p /usr/src/friendica/addon; \\\n    tar -xzf friendica-addons-${FRIENDICA_ADDONS}.tar.gz -C /usr/src/friendica/addon --strip-components=1; \\\n    rm friendica-addons-${FRIENDICA_ADDONS}.tar.gz friendica-addons-${FRIENDICA_ADDONS}.tar.gz.asc; \\\n\n    gpgconf --kill all; \\\n    rm -rf \"$GNUPGHOME\"; \\\n\n    apt-get purge -y --auto-remove -o APT::AutoRemove::RecommendsImportant=false $fetchDeps; \\\n    rm -rf /var/lib/apt/lists/*\n\nCOPY *.sh upgrade.exclude /\nCOPY config/* /usr/src/friendica/config/\n\nENTRYPOINT [\"/entrypoint.sh\"]\nCMD [\"php-fpm\"]\n"
+}

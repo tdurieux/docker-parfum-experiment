@@ -1,0 +1,43 @@
+FROM ruby:3.1-slim
+
+LABEL maintainer="dev@quintel.com"
+
+RUN apt-get update -yqq && \
+  DEBIAN_FRONTEND=noninteractive apt-get install -yqq --no-install-recommends \
+    automake \
+    autoconf \
+    build-essential \
+    curl \
+    default-libmysqlclient-dev \
+    git \
+    gnupg \
+    nodejs \
+    && apt-get clean \
+    && rm -rf /var/cache/apt/archives/* \
+    && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/* \
+    && truncate -s 0 /var/log/*log
+
+RUN curl -f -sS https://dl.yarnpkg.com/debian/pubkey.gpg | apt-key add - \
+  && echo "deb https://dl.yarnpkg.com/debian/ stable main" | tee /etc/apt/sources.list.d/yarn.list \
+  && apt-get update \
+  && apt-get install --no-install-recommends -y yarn \
+  && apt-get clean \
+  && rm -rf /var/cache/apt/archives/* \
+  && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/* \
+  && truncate -s 0 /var/log/*log
+
+ # Throw errors if Gemfile has been modified since Gemfile.lock
+RUN bundle config --global frozen 1
+
+COPY Gemfile* package.json yarn.lock /app/
+WORKDIR /app
+
+RUN bundle config set deployment 'true'
+RUN bundle install --jobs=4 --retry=3 --without="development test"
+RUN yarn install && yarn cache clean;
+
+COPY . /app/
+
+RUN RAILS_ENV=production bundle exec rails assets:precompile
+
+CMD ["bundle", "exec", "--keep-file-descriptors", "puma", "-C", "config/puma.rb"]

@@ -1,0 +1,71 @@
+{
+  "startTime": 1674249564832,
+  "endTime": 1674249565963,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 52,
+        "lineEnd": 52,
+        "columnStart": 4,
+        "columnEnd": 89
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 113,
+        "lineEnd": 113,
+        "columnStart": 4,
+        "columnEnd": 81
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 150,
+        "lineEnd": 150,
+        "columnStart": 4,
+        "columnEnd": 134
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 151,
+        "lineEnd": 151,
+        "columnStart": 4,
+        "columnEnd": 126
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 180,
+        "lineEnd": 180,
+        "columnStart": 4,
+        "columnEnd": 101
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 185,
+        "lineEnd": 185,
+        "columnStart": 4,
+        "columnEnd": 94
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 136,
+        "lineEnd": 136,
+        "columnStart": 4,
+        "columnEnd": 32
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Dockerfile\n#\n# This source file is part of the FoundationDB open source project\n#\n# Copyright 2013-2021 Apple Inc. and the FoundationDB project authors\n#\n# Licensed under the Apache License, Version 2.0 (the \"License\");\n# you may not use this file except in compliance with the License.\n# You may obtain a copy of the License at\n#\n#     http://www.apache.org/licenses/LICENSE-2.0\n#\n# Unless required by applicable law or agreed to in writing, software\n# distributed under the License is distributed on an \"AS IS\" BASIS,\n# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.\n# See the License for the specific language governing permissions and\n# limitations under the License.\n#\nFROM centos:7.9.2009 as base\n\nRUN yum install -y \\\n    epel-release-7-11 \\\n    centos-release-scl-2-3.el7.centos && \\\n    yum install -y \\\n    bind-utils-9.11.4-26.P2.el7_9.7 \\\n    binutils-2.27-44.base.el7_9.1 \\\n    curl-7.29.0-59.el7_9.1 \\\n    gdb-7.6.1-120.el7 \\\n    hostname-3.13-3.el7_7.1 \\\n    jq-1.6-2.el7  \\\n    less-458-9.el7 \\\n    libubsan-7.3.1-5.16.el7 \\\n    lsof-4.87-6.el7 \\\n    net-tools-2.0-0.25.20131004git.el7 \\\n    nmap-ncat-6.40-19.el7 \\\n    perf-3.10.0-1160.45.1.el7 \\\n    perl-5.16.3-299.el7_9 \\\n    procps-ng-3.3.10-28.el7 \\\n    strace-4.24-6.el7 \\\n    sysstat-10.1.5-19.el7 \\\n    tar-1.26-35.el7 \\\n    tcpdump-4.9.2-4.el7_7.1 \\\n    telnet-0.17-66.el7 \\\n    traceroute-2.0.22-2.el7 \\\n    unzip-6.0-22.el7_9 \\\n    openssl-1.0.2k-24.el7_9.x86_64 \\\n    vim-enhanced-7.4.629-8.el7_9 && \\\n    yum clean all && \\\n    rm -rf /var/cache/yum\n\nWORKDIR /tmp\n\nRUN curl -f -Ls https://github.com/krallin/tini/releases/download/v0.19.0/tini-amd64 -o tini && \\\n    echo \"93dcc18adc78c65a028a84799ecf8ad40c936fdfc5f2a57b1acda5a8117fa82c  tini\" > tini-sha.txt && \\\n    sha256sum --quiet -c tini-sha.txt && \\\n    chmod +x tini && \\\n    mv tini /usr/bin/ && \\\n    rm -rf /tmp/*\n\nWORKDIR /\n\nFROM golang:1.17.11-bullseye AS go-build\n\nCOPY fdbkubernetesmonitor/ /fdbkubernetesmonitor\nWORKDIR /fdbkubernetesmonitor\nRUN go build -o /fdb-kubernetes-monitor *.go\n\nFROM base as foundationdb-base\n\nWORKDIR /tmp\nARG FDB_VERSION=6.3.22\nARG FDB_LIBRARY_VERSIONS=\"${FDB_VERSION}\"\nARG FDB_WEBSITE=https://github.com/apple/foundationdb/releases/download\n\nRUN mkdir -p /var/fdb/{logs,tmp,lib} && \\\n    mkdir -p /usr/lib/fdb/multiversion && \\\n    echo ${FDB_VERSION} > /var/fdb/version\n\n# Set up a non-root user\nRUN groupadd --gid 4059 \\\n             fdb && \\\n    useradd --gid 4059 \\\n            --uid 4059 \\\n            --no-create-home \\\n            --shell /bin/bash \\\n            fdb && \\\n    chown -R fdb:fdb /var/fdb\n\nCOPY website /tmp/website/\n\n# Install FoundationDB Binaries\nRUN for file in fdbserver fdbbackup fdbcli fdbmonitor; do \\\n        curl --fail -Ls ${FDB_WEBSITE}/${FDB_VERSION}/$file.x86_64 -o $file; \\\n        chmod +x $file; \\\n        mv $file /usr/bin; \\\n    done\n\n# Setup all symlinks for the other binaries that are a copy of fdbbackup\nRUN for file in fdbdr fdbrestore backup_agent dr_agent fastrestore_tool; do \\\n        ln -s /usr/bin/fdbbackup /usr/bin/$file; \\\n    done\n\n# Install additional FoundationDB Client Libraries\nRUN for version in $FDB_LIBRARY_VERSIONS; do \\\n    curl --fail -Ls ${FDB_WEBSITE}/${version}/libfdb_c.x86_64.so -o /usr/lib/fdb/multiversion/libfdb_c_${version%.*}.so; \\\n    done\n\n# Install additional FoundationDB Client Libraries (for sidecar)\nRUN mkdir -p /var/fdb/lib && \\\n    for version in $FDB_LIBRARY_VERSIONS; do \\\n    curl --fail -Ls ${FDB_WEBSITE}/${version}/libfdb_c.x86_64.so -o /var/fdb/lib/libfdb_c_${version%.*}.so; \\\n    done\n\nRUN curl -f -Ls $FDB_WEBSITE/$FDB_VERSION/libfdb_c.x86_64.so -o /usr/lib/libfdb_c.so\n\nRUN rm -rf /tmp/*\nWORKDIR /\n\nFROM foundationdb-base as fdb-kubernetes-monitor\n\n# Install the kubernetes monitor binary\nCOPY --from=go-build /fdb-kubernetes-monitor /usr/bin/\n\n# Runtime Configuration Options\nUSER fdb\nWORKDIR /var/fdb\nVOLUME /var/fdb/data\nENTRYPOINT [\"/usr/bin/fdb-kubernetes-monitor\"]\n\nFROM foundationdb-base as foundationdb-kubernetes-sidecar\n\nRUN yum -y install \\\n    rh-python38-2.0-4.el7 \\\n    yum clean all && \\\n    rm -rf /var/cache/yum && \\\n    source /opt/rh/rh-python38/enable && \\\n    pip3 install --no-cache-dir watchdog==0.9.0\n\nWORKDIR /\nADD entrypoint.bash sidecar.py /\nRUN chmod a+x /entrypoint.bash /sidecar.py\nUSER fdb\nVOLUME /var/input-files\nVOLUME /var/output-files\nENV LISTEN_PORT 8080\nENTRYPOINT [\"/usr/bin/tini\", \"-g\", \"--\", \"/entrypoint.bash\"]\n\nFROM foundationdb-base as foundationdb\n\nWORKDIR /tmp\nRUN curl -f -LsO https://raw.githubusercontent.com/brendangregg/FlameGraph/90533539b75400297092f973163b8a7b067c66d3/stackcollapse-perf.pl && \\\n    curl -f -LsO https://raw.githubusercontent.com/brendangregg/FlameGraph/90533539b75400297092f973163b8a7b067c66d3/flamegraph.pl && \\\n    echo \"a682ac46497d6fdbf9904d1e405d3aea3ad255fcb156f6b2b1a541324628dfc0  flamegraph.pl\" > flamegraph-sha.txt && \\\n    echo \"5bcfb73ff2c2ab7bf2ad2b851125064780b58c51cc602335ec0001bec92679a5  stackcollapse-perf.pl\" >> flamegraph-sha.txt && \\\n    sha256sum --quiet -c flamegraph-sha.txt && \\\n    chmod +x stackcollapse-perf.pl flamegraph.pl && \\\n    mv stackcollapse-perf.pl flamegraph.pl /usr/bin && \\\n    rm -rf /tmp/*\nWORKDIR /\n# Set Up Runtime Scripts and Directories\nADD fdb.bash /var/fdb/scripts/\nRUN chmod a+x /var/fdb/scripts/fdb.bash\nVOLUME /var/fdb/data\nENV FDB_PORT 4500\nENV FDB_CLUSTER_FILE /var/fdb/fdb.cluster\nENV FDB_NETWORKING_MODE container\nENV FDB_COORDINATOR \"\"\nENV FDB_COORDINATOR_PORT 4500\nENV FDB_CLUSTER_FILE_CONTENTS \"\"\nENV FDB_PROCESS_CLASS unset\nENTRYPOINT [\"/usr/bin/tini\", \"-g\", \"--\", \"/var/fdb/scripts/fdb.bash\"]\n\nFROM base as ycsb\n\nRUN yum -y install \\\n    java-11-openjdk-11.0.13.0.8-1.el7_9 && \\\n    yum clean all && \\\n    rm -rf /var/cache/yum\n\nWORKDIR /tmp\nRUN curl -f -Ls https://amazon-eks.s3.amazonaws.com/1.19.6/2021-01-05/bin/linux/amd64/kubectl -o kubectl && \\\n    echo \"08ff68159bbcb844455167abb1d0de75bbfe5ae1b051f81ab060a1988027868a  kubectl\" > kubectl.txt && \\\n    sha256sum --quiet -c kubectl.txt && \\\n    mv kubectl /usr/local/bin/kubectl && \\\n    chmod 755 /usr/local/bin/kubectl && \\\n    curl -f -Ls https://awscli.amazonaws.com/awscli-exe-linux-x86_64-2.2.43.zip -o \"awscliv2.zip\" && \\\n    echo \"9a8b3c4e7f72bbcc55e341dce3af42479f2730c225d6d265ee6f9162cfdebdfd  awscliv2.zip\" > awscliv2.txt && \\\n    sha256sum --quiet -c awscliv2.txt && \\\n    unzip -qq awscliv2.zip && \\\n    ./aws/install && \\\n    rm -rf /tmp/*\n\n# TODO: Log4J complains that it's eating the HTracer logs.  Even without it, we get per-operation\n# time series graphs of throughput, median, 90, 99, 99.9 and 99.99 (in usec).\nADD run_ycsb.sh /usr/local/bin/run_ycsb.sh\nRUN mkdir -p /var/log/fdb-trace-logs && \\\n    chmod +x /usr/local/bin/run_ycsb.sh\n\nADD YCSB /YCSB\nWORKDIR /YCSB\nENV FDB_NETWORK_OPTION_EXTERNAL_CLIENT_DIRECTORY=/var/dynamic-conf/lib/multiversion/\nENV FDB_NETWORK_OPTION_TRACE_ENABLE=/var/log/fdb-trace-logs\nENV LD_LIBRARY_PATH=/var/dynamic-conf/lib/\nENV BUCKET=\"\"\nCMD [\"run_ycsb.sh\"]\n"
+}

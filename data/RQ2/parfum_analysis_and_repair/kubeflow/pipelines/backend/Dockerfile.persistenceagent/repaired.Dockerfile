@@ -1,0 +1,46 @@
+# Copyright 2021 The Kubeflow Authors
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+FROM golang:1.17.6-alpine3.15 as builder
+
+WORKDIR /go/src/github.com/kubeflow/pipelines
+COPY . .
+
+# Needed musl-dev for github.com/mattn/go-sqlite3
+RUN apk update && apk upgrade && \
+    apk add --no-cache bash git openssh gcc musl-dev
+
+RUN GO111MODULE=on go build -o /bin/persistence_agent backend/src/agent/persistence/*.go
+# Check licenses and comply with license terms.
+RUN ./hack/install-go-licenses.sh
+# First, make sure there's no forbidden license.
+RUN go-licenses check ./backend/src/agent/persistence
+RUN go-licenses csv ./backend/src/agent/persistence > /tmp/licenses.csv && \
+    diff /tmp/licenses.csv backend/third_party_licenses/persistence_agent.csv && \
+    go-licenses save ./backend/src/agent/persistence --save_path /tmp/NOTICES
+
+FROM alpine:3.8
+WORKDIR /bin
+
+COPY --from=builder /bin/persistence_agent /bin/persistence_agent
+# Copy licenses and notices.
+COPY --from=builder /tmp/licenses.csv /third_party/licenses.csv
+COPY --from=builder /tmp/NOTICES /third_party/NOTICES
+
+ENV NAMESPACE ""
+
+# Set Workflow TTL to 1 day. The way to use a different value for a particular Kubeflow Pipelines deployment is demonstrated in manifests/kustomize/base/pipeline/ml-pipeline-persistenceagent-deployment.yaml
+ENV TTL_SECONDS_AFTER_WORKFLOW_FINISH 86400
+
+# NUM_WORKERS indicates now many worker goroutines

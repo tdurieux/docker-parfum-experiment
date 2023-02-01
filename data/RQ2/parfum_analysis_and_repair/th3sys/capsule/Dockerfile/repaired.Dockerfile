@@ -1,0 +1,66 @@
+FROM ubuntu:14.04
+
+# Install dependencies
+RUN apt-get update -y
+RUN apt-get install --no-install-recommends -y supervisor && rm -rf /var/lib/apt/lists/*;
+RUN apt-get install --no-install-recommends -y python3-pip && rm -rf /var/lib/apt/lists/*;
+RUN apt-get install --no-install-recommends -y wget && rm -rf /var/lib/apt/lists/*;
+
+# create directories
+RUN mkdir -p /capsule/sim/gw
+
+# Install tightvnc
+ENV DEBIAN_FRONTEND noninteractive
+ENV USER root
+RUN apt-get autoremove
+RUN apt-get install -y --no-install-recommends ubuntu-desktop && rm -rf /var/lib/apt/lists/*;
+RUN apt-get install -y --no-install-recommends tightvncserver xfce4 xfce4-goodies && rm -rf /var/lib/apt/lists/*;
+# apt-get install -y gnome-panel gnome-settings-daemon metacity nautilus gnome-terminal
+RUN mkdir /root/.vnc && echo "password" > /root/.vnc/passwd && chmod 600 /root/.vnc/passwd
+ADD docker_files/xstartup /root/.vnc/xstartup
+
+# Vnc startup script
+ADD docker_files/vnc.sh /capsule/vnc.sh
+RUN chmod +x /capsule/vnc.sh
+
+
+# Install Oracle's JDK
+RUN apt-get install -y --no-install-recommends software-properties-common && rm -rf /var/lib/apt/lists/*;
+RUN add-apt-repository -y ppa:openjdk-r/ppa
+RUN apt-get update
+RUN apt-get install --no-install-recommends -y openjdk-8-jdk && rm -rf /var/lib/apt/lists/*;
+RUN apt-get install --no-install-recommends -y openjdk-8-jre && rm -rf /var/lib/apt/lists/*;
+RUN update-alternatives --config java
+RUN update-alternatives --config javac
+
+# Install IB
+RUN cd /capsule
+RUN wget https://github.com/ib-controller/ib-controller/releases/download/3.4.0/IBController-3.4.0.zip
+RUN wget https://github.com/th3sys/capsule/raw/master/IBJts.963.zip
+RUN apt-get install --no-install-recommends -y unzip && rm -rf /var/lib/apt/lists/*;
+RUN unzip IBController-3.4.0.zip -d /capsule/sim/gw
+RUN unzip IBJts.963.zip -d /capsule/sim/gw
+ADD docker_files/IBController.ini /capsule/sim/gw/IBController.ini
+ADD docker_files/gw.sh /capsule/gw.sh
+
+# Python
+RUN cd /capsule
+RUN wget https://raw.githubusercontent.com/th3sys/capsule/master/ibmarketdata.py -P /capsule
+#ADD ibmarketdata.py /capsule/ibmarketdata.py
+RUN pip3 install --no-cache-dir boto3
+ADD docker_files/credentials.aws /root/.aws/credentials
+ADD docker_files/config.aws /root/.aws/config
+RUN mkdir /capsule/api
+RUN mkdir /capsule/ibapi
+RUN wget https://interactivebrokers.github.io/downloads/twsapi_macunix.973.06.zip
+RUN unzip -o twsapi_macunix.973.06.zip -d /capsule/api
+RUN cp -r /capsule/api/IBJts/source/pythonclient/ibapi/* /capsule/ibapi
+
+# Scripts
+RUN chmod +x /capsule/gw.sh
+ADD docker_files/supervisord.conf /capsule/supervisord.conf
+ADD docker_files/start.sh /capsule/start.sh
+RUN chmod +x /capsule/start.sh
+
+EXPOSE 4002
+ENTRYPOINT ["/capsule/start.sh", "-D", "FOREGROUND"]

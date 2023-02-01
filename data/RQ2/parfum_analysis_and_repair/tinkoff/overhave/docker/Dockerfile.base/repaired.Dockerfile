@@ -1,0 +1,42 @@
+FROM python:3.10-slim
+
+RUN groupadd -r app && useradd -r -g app app
+
+ENV PIP_DISABLE_PIP_VERSION_CHECK=on
+ENV PIP_NO_CACHE_DIR=off
+
+WORKDIR /code
+
+RUN apt-get update -o Acquire::Check-Valid-Until=false \
+ && apt-get install -y --no-install-recommends \
+        gcc \
+        libsasl2-dev \
+        libldap2-dev \
+        libssl-dev \
+        libpq-dev \
+        make \
+        g++ \
+        libgnutls28-dev \
+        git \
+ && rm -rf /var/lib/apt/lists/*
+
+ARG README=/code/README.rst
+ARG OVERHAVEDIR=/code/overhave
+ARG POETRYCACHEDIR=/tmp/.cache/pypoetry
+
+COPY pyproject.toml poetry.lock /code/
+
+RUN mkdir -p ${OVERHAVEDIR} \
+  && touch ${OVERHAVEDIR}/__init__.py \
+  && touch ${README}
+
+RUN pip install --no-cache-dir --no-compile --upgrade pip \
+ && pip install --no-cache-dir --no-compile poetry
+RUN poetry config virtualenvs.create false \
+ && poetry config cache-dir ${POETRYCACHEDIR} \
+ && poetry install --no-interaction --no-ansi
+RUN tox -v --notest
+
+RUN rm -rf ${POETRYCACHEDIR} \
+  && rm -rf ${OVERHAVEDIR} \
+  && rm ${README}

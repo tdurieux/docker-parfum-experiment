@@ -1,0 +1,35 @@
+{
+  "startTime": 1674255598385,
+  "endTime": 1674255599085,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 46,
+        "lineEnd": 46,
+        "columnStart": 90,
+        "columnEnd": 122
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 27,
+        "lineEnd": 27,
+        "columnStart": 18,
+        "columnEnd": 59
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 27,
+        "lineEnd": 27,
+        "columnStart": 18,
+        "columnEnd": 59
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# First stage: build war file\n#==================================================================================================\nFROM maven:3.6-openjdk-11-slim as builder\n\n# Copy all files into root's home, including the source, pom file, ./m2 directory and credentials\nADD . /root\n\n# Populate settings templates with credentials, repo name\nWORKDIR /root/.m2\n# (Note that | rather than / is used as the sed delimiter, since encrypted passwords can contain the former, but not the latter\nRUN sed -i \"s|MASTER_PASSWORD|$(mvn --encrypt-master-password master_password)|\" settings-security.xml\nRUN sed -i \"s|WA_REPO_USERNAME|$(cat ../credentials/wa_repo_username.txt)|;s|WA_REPO_PASSWORD|$(cat ../credentials/wa_repo_password.txt|xargs mvn --encrypt-password)|;s|CMCL_REPO_USERNAME|$(cat ../credentials/cmcl_repo_username.txt)|;s|CMCL_REPO_PASSWORD|$(cat ../credentials/cmcl_repo_password.txt|xargs mvn --encrypt-password)|\" settings.xml\n\n# Build\nWORKDIR /root/mods-simple-agent\nRUN --mount=type=cache,target=/root/.m2/repository mvn package\n#==================================================================================================\n\n# Second stage: copy the downloaded dependency into a new image and build into an app\n#==================================================================================================\nFROM python:3.6.15-buster\n\nARG MODS_BIN_DIR=\"/usr/local/mods-simple-agent/bin\"\n\nARG USER=\"user\"\nRUN useradd -s /bin/bash ${USER}\n\nRUN apt update && apt install --no-install-recommends openjdk-11-jre mpich rsync -y && \\\n    mkdir -p \"${MODS_BIN_DIR}\" && \\\n    chown user:user \"${MODS_BIN_DIR}\" && \\\n    ln -s /usr/lib/x86_64-linux-gnu/libmpi.so \"${MODS_BIN_DIR}/libmpi.so.12\" && \\\n    ln -s /usr/lib/x86_64-linux-gnu/libmpifort.so \"${MODS_BIN_DIR}/libmpifort.so.12\" && \\\n    ln -s /usr/local/lib/libpython3.6m.so.1.0 \"${MODS_BIN_DIR}/libpython3.6m.so.1.0\" && rm -rf /var/lib/apt/lists/*;\nRUN apt remove *python* -y\n\nCOPY --chown=user:user mods-simple-agent/src/python/requirements.txt \"${MODS_BIN_DIR}\"\n\nUSER ${USER}\nWORKDIR /usr/local/mods-simple-agent\nCOPY --chown=user:user --from=builder /root/mods-simple-agent/target/*.jar app.jar\nCOPY --chown=user:user --from=builder /root/mods-simple-agent/target/bin \"${MODS_BIN_DIR}\"\n\nENV MODS_BIN_DIR=\"${MODS_BIN_DIR}\"\nARG MODS_VENV_PATH=\"${MODS_BIN_DIR}/env\"\nENV MODS_VENV_PATH=\"${MODS_VENV_PATH}\"\n\nRUN cd \"${MODS_BIN_DIR}\" && python3 -m venv env --copies --clear && . env/bin/activate && pip3 install --no-cache-dir -r requirements.txt\n\nCOPY --chown=user:user mods-simple-agent/src/python/*.py \"${MODS_VENV_PATH}\"\n\nRUN rsync -av --exclude 'site-packages' --exclude '*/test*' --exclude '__pycache__' \"/usr/local/lib/python3.6\" \"${MODS_VENV_PATH}/lib\"\n\nENV LD_LIBRARY_PATH=\"${MODS_BIN_DIR}:${MODS_VENV_PATH}:${LD_LIBRARY_PATH}\"\nENV PATH=\"${MODS_BIN_DIR}:${PATH}\"\n\nARG CMCL_LICENSE_PATH=6200@host.docker.internal\nENV CMCL_LICENSE_PATH=\"${CMCL_LICENSE_PATH}\"\n\nENTRYPOINT [\"java\",\"-jar\",\"app.jar\"]"
+}

@@ -1,0 +1,4 @@
+FROM envoyproxy/envoy:v1.14.1
+FROM circleci/golang:1-node-browsers
+
+COPY --from=0 /usr/local/bin/envoy /usr/local/bin/envoy

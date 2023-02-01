@@ -1,0 +1,44 @@
+{
+  "startTime": 1674252158143,
+  "endTime": 1674252158845,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 7,
+        "lineEnd": 7,
+        "columnStart": 4,
+        "columnEnd": 50
+      }
+    },
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 16,
+        "lineEnd": 16,
+        "columnStart": 4,
+        "columnEnd": 28
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 5,
+        "lineEnd": 5,
+        "columnStart": 2,
+        "columnEnd": 25
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 5,
+        "lineEnd": 5,
+        "columnStart": 2,
+        "columnEnd": 25
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "ARG MIX_ENV=\"prod\"\n\nFROM hexpm/elixir:1.13.2-erlang-24.1.7-debian-bullseye-20210902-slim as build\n\nRUN apt-get update && \\\n  apt-get install --no-install-recommends -y curl && rm -rf /var/lib/apt/lists/*;\n\nRUN curl -f -sL https://deb.nodesource.com/setup_14.x | bash -\n\nRUN apt-get update && apt-get upgrade -y && \\\n    apt-get install --no-install-recommends -y \\\n        build-essential git nodejs && \\\n    apt-get purge -y --auto-remove -o APT::AutoRemove::RecommendsImportant=false && \\\n    apt-get clean -y && \\\n    rm -rf /var/lib/apt/lists/*\n\nRUN npm install npm@8.5.3 -g && npm cache clean --force;\n\n# Install hex and rebar\nRUN mix local.hex --force && \\\n    mix local.rebar --force\n\n# Create app directory and copy the Elixir projects into it\nRUN mkdir /app\nWORKDIR /app\n\n# set build ENV\nARG MIX_ENV\nENV MIX_ENV=\"${MIX_ENV}\"\n\n# install mix dependencies\nCOPY mix.exs mix.lock ./\nCOPY config config\nRUN mix deps.get --only $MIX_ENV\nRUN mix deps.compile\n\n# build assets\n# COPY assets assets\nCOPY assets/package.json assets/package-lock.json ./assets/\nRUN npm --prefix ./assets ci --progress=false --no-audit --loglevel=error\n\n# build project and compile\nCOPY priv priv\nCOPY assets assets\nCOPY lib lib\n\nRUN npm run --prefix ./assets deploy\nRUN mix phx.digest\n\nRUN mix do compile, release\n\n# prepare release image\nFROM hexpm/elixir:1.13.2-erlang-24.1.7-debian-bullseye-20210902-slim AS app\n\n# install runtime dependencies\nRUN apt-get update && apt-get upgrade -y && \\\n    apt-get install --no-install-recommends -y \\\n        # Runtime dependencies\n        build-essential ca-certificates libncurses5-dev \\\n        # In case someone uses `Mix.install/2` and point to a git repo\n        git \\\n        # Additional standard tools\n        wget \\\n        # We need it to check the state of the db server\n        postgresql-client && \\\n    apt-get purge -y --auto-remove -o APT::AutoRemove::RecommendsImportant=false && \\\n    apt-get clean -y && \\\n    rm -rf /var/lib/apt/lists/*\n\nENV MIX_ENV=prod\n\n# prepare app directory\nRUN mkdir /app\nWORKDIR /app\n\n# extend hex timeout\nENV HEX_HTTP_TIMEOUT=20\n\n# Install hex and rebar for `Mix.install/2` and Mix runtime\nRUN mix local.hex --force && \\\n    mix local.rebar --force\n\n# Override the default 127.0.0.1 address, so that the app\n# can be accessed outside the container by binding ports\nENV LIVESUP_IP 0.0.0.0\n\n# copy release to app container\nCOPY --from=build /app/_build/prod/rel/live_sup .\nCOPY entrypoint.sh .\nRUN chown -R nobody: /app\nUSER nobody\n\nENV HOME=/app\nCMD [\"bash\", \"/app/entrypoint.sh\"]"
+}

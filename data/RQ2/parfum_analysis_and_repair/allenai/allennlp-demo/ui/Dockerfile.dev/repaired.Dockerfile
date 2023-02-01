@@ -1,0 +1,18 @@
+# This Dockerfile is used when developing the UI locally. The source code
+# should be mounted into the container from the host for things to work
+# properly.
+FROM node:12.16.2 as build
+
+WORKDIR /ui
+
+COPY package.json yarn.lock ./
+RUN yarn && yarn cache clean;
+
+COPY . .
+
+ENV NODE_ENV=development
+ENV SENTRY_ENVIRONMENT=dev
+ENV SENTRY_RELEASE=none
+
+ENTRYPOINT [ "yarn" ]
+CMD [ "start" ]

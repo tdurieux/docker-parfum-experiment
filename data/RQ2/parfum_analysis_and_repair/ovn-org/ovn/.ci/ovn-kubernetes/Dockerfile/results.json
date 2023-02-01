@@ -1,0 +1,26 @@
+{
+  "startTime": 1674251172319,
+  "endTime": 1674251172882,
+  "originalSmells": [
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 26,
+        "lineEnd": 26,
+        "columnStart": 4,
+        "columnEnd": 18
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 33,
+        "lineEnd": 33,
+        "columnStart": 4,
+        "columnEnd": 15
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "ARG OVNKUBE_COMMIT=master\nARG LIBOVSDB_COMMIT=8081fe24e48f\n\nFROM fedora:35 AS ovnbuilder\n\nUSER root\n\nENV PYTHONDONTWRITEBYTECODE yes\n\n# install needed rpms - openvswitch must be 2.10.4 or higher\nRUN INSTALL_PKGS=\" \\\n    python3-pyyaml bind-utils procps-ng openssl numactl-libs firewalld-filesystem \\\n    libpcap hostname desktop-file-utils \\\n    python3-openvswitch python3-pyOpenSSL \\\n    autoconf automake libtool g++ gcc fedora-packager rpmdevtools \\\n    unbound unbound-devel groff python3-sphinx graphviz openssl openssl-devel \\\n    checkpolicy libcap-ng-devel selinux-policy-devel\" && \\\n    dnf install --best --refresh -y --setopt=tsflags=nodocs $INSTALL_PKGS && \\\n    dnf clean all && rm -rf /var/cache/dnf/*\n\n# Build OVS and OVN rpms from current folder\nRUN mkdir /tmp/ovn\nCOPY . /tmp/ovn\nWORKDIR /tmp/ovn/ovs\n\nRUN ./boot.sh\nRUN ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" -v\nRUN make rpm-fedora\nRUN rm rpm/rpmbuild/RPMS/x86_64/*debug*\nRUN rm rpm/rpmbuild/RPMS/x86_64/*devel*\n\nWORKDIR /tmp/ovn\nRUN ./boot.sh\nRUN ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\"\nRUN make rpm-fedora\nRUN rm rpm/rpmbuild/RPMS/x86_64/*debug*\nRUN rm rpm/rpmbuild/RPMS/x86_64/*docker*\n\n# Build ovn-kubernetes\nFROM golang:1.17 as ovnkubebuilder\nARG OVNKUBE_COMMIT\nARG LIBOVSDB_COMMIT\n\n# Get a working version of libovsdb (for modelgen).\nRUN GO111MODULE=on go install github.com/ovn-org/libovsdb/cmd/modelgen@${LIBOVSDB_COMMIT}\n\n# Clone OVN Kubernetes and build the binary based on the commit passed as argument\nWORKDIR /root\nRUN git clone https://github.com/ovn-org/ovn-kubernetes.git\nWORKDIR /root/ovn-kubernetes/go-controller\nRUN git checkout ${OVNKUBE_COMMIT} && git log -n 1\n\n# Make sure we use the OVN NB/SB schema from the local code.\nCOPY --from=ovnbuilder /tmp/ovn/ovn-nb.ovsschema pkg/nbdb/ovn-nb.ovsschema\nCOPY --from=ovnbuilder /tmp/ovn/ovn-sb.ovsschema pkg/sbdb/ovn-sb.ovsschema\nRUN go generate ./pkg/nbdb && go generate ./pkg/sbdb && make\n\n# Build the final image\nFROM fedora:35\n\n# install needed dependencies\nRUN INSTALL_PKGS=\" \\\n    iptables iproute iputils hostname unbound-libs kubernetes-client kmod socat\" && \\\n    dnf install --best --refresh -y --setopt=tsflags=nodocs $INSTALL_PKGS && \\\n    dnf clean all && rm -rf /var/cache/dnf/*\n\nRUN mkdir -p /var/run/openvswitch\n\n# install openvswitch and ovn rpms built in previous stages\nCOPY --from=ovnbuilder /tmp/ovn/rpm/rpmbuild/RPMS/x86_64/*rpm ./\nCOPY --from=ovnbuilder /tmp/ovn/ovs/rpm/rpmbuild/RPMS/x86_64/*rpm ./\nCOPY --from=ovnbuilder /tmp/ovn/ovs/rpm/rpmbuild/RPMS/noarch/*rpm ./\nRUN dnf install -y *.rpm && rm -f *.rpm\n\n# install ovn-kubernetes binaries built in previous stage\nRUN mkdir -p /usr/libexec/cni/\nCOPY --from=ovnkubebuilder /root/ovn-kubernetes/go-controller/_output/go/bin/ovnkube /usr/bin/\nCOPY --from=ovnkubebuilder /root/ovn-kubernetes/go-controller/_output/go/bin/ovn-kube-util /usr/bin/\nCOPY --from=ovnkubebuilder /root/ovn-kubernetes/go-controller/_output/go/bin/ovndbchecker /usr/bin/\nCOPY --from=ovnkubebuilder /root/ovn-kubernetes/go-controller/_output/go/bin/ovn-k8s-cni-overlay /usr/libexec/cni/ovn-k8s-cni-overlay\n\n# ovnkube.sh is the entry point. This script examines environment\n# variables to direct operation and configure ovn\nCOPY --from=ovnkubebuilder /root/ovn-kubernetes/dist/images/ovnkube.sh /root/\nCOPY --from=ovnkubebuilder /root/ovn-kubernetes/dist/images/ovndb-raft-functions.sh /root/\nCOPY --from=ovnkubebuilder /root/ovn-kubernetes/dist/images/iptables-scripts /usr/sbin/\n\nLABEL io.k8s.display-name=\"ovn-kubernetes\" \\\n    io.k8s.description=\"This is a Kubernetes network plugin that provides an overlay network using OVN.\" \\\n    maintainer=\"ovn team\"\n\nWORKDIR /root\nENTRYPOINT /root/ovnkube.sh\n"
+}

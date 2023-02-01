@@ -1,0 +1,21 @@
+ARG ARCH=amd64
+FROM $ARCH/nginx:1.20-alpine
+LABEL maintainer="devops@radixdlt.com"
+
+RUN apk add --no-cache --update libressl wget openssl && \
+    apk del curl libcurl
+
+# good idea to persist this
+VOLUME ["/etc/nginx/secrets"]
+
+COPY docker-healthcheck.sh /
+HEALTHCHECK CMD /docker-healthcheck.sh
+
+COPY docker-entrypoint.sh /
+ENTRYPOINT ["/bin/sh", "/docker-entrypoint.sh"]
+
+CMD ["nginx", "-g", "daemon off;"]
+
+# see .env for the defaults
+COPY certs/* /etc/nginx/certs/
+COPY conf.d/* /etc/nginx/conf.d/

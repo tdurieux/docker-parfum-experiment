@@ -1,0 +1,17 @@
+{
+  "startTime": 1674243406634,
+  "endTime": 1674243406716,
+  "originalSmells": [
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 3,
+        "lineEnd": 7,
+        "columnStart": 4,
+        "columnEnd": 11
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM centos:7 as base\n\n# Packages needed at both build and runtime.\nRUN yum install -y \\\n      java-1.8.0-openjdk.x86_64 \\\n      java-1.8.0-openjdk-devel.x86_64 \\\n      libaio \\\n      which \\\n    && yum clean all && rm -rf /var/cache/yum\n\n\n# -----------------\n# BUILD\n# -----------------\nFROM base as build\n\nWORKDIR /src\n\nCOPY cuebot/build.gradle cuebot/\nCOPY cuebot/gradlew cuebot/\nCOPY cuebot/gradlew.bat cuebot/\nCOPY cuebot/settings.gradle cuebot/\nCOPY cuebot/gradle/ cuebot/gradle/\n\nCOPY proto/ proto/\nCOPY cuebot/src/main/resources/ cuebot/src/main/resources/\nCOPY cuebot/src/main/java/ cuebot/src/main/java/\n\nRUN mkdir logs\n\n# Run as builduser in case tests get run later.\nRUN chmod -R 777 .\nRUN adduser builduser\nRUN su -c \"cd cuebot && ./gradlew build --stacktrace\" builduser\n\nCOPY VERSION.in VERSIO[N] ./\nRUN test -e VERSION || echo \"$(cat VERSION.in)-custom\" | tee VERSION\n\n\n# -----------------\n# TEST\n# -----------------\nFROM build as test\n\nENV CUEBOT_DB_ENGINE=postgres\n\nCOPY cuebot/src/test/ cuebot/src/test/\n\n# Tests must be run as a non-root user as the embedded Postgres server will not\n# work otherwise.\nRUN su -c \"cd cuebot && ./gradlew build --stacktrace\" builduser\n\n\n# -----------------\n# PACKAGE\n# -----------------\nFROM build as package\n\nRUN su -c \"cd cuebot && ./gradlew shadowJar --stacktrace\" builduser\n\nRUN mv cuebot/build/libs/cuebot-all.jar cuebot/build/libs/cuebot-$(cat ./VERSION)-all.jar\n\n\n# -----------------\n# RUN\n# -----------------\nFROM base\n\nARG CUEBOT_GRPC_CUE_PORT=8443\nARG CUEBOT_GRPC_RQD_PORT=8444\n\nWORKDIR /opt/opencue\n\nCOPY --from=package /src/cuebot/build/libs/cuebot-*-all.jar ./\n\nRUN ln -s $(ls ./cuebot-*-all.jar) ./cuebot-latest.jar\n\n# TODO(bcipriano) Implement a new GRPC-based health check.\n# https://github.com/imageworks/OpenCue/issues/73\n# HEALTHCHECK --start-period=30s --timeout=5s CMD python check_ice.py localhost CueStatic 9019\n\nVOLUME [\"/opt/opencue/logs\"]\n\nENV grpc_cue_port ${CUEBOT_GRPC_CUE_PORT}\nENV grpc_rqd_port ${CUEBOT_GRPC_RQD_PORT}\n\nEXPOSE $grpc_cue_port\n\nENTRYPOINT [\"java\", \"-jar\", \"/opt/opencue/cuebot-latest.jar\"]\n\n"
+}

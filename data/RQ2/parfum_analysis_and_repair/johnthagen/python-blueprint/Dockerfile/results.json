@@ -1,0 +1,26 @@
+{
+  "startTime": 1674247985532,
+  "endTime": 1674247986278,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 34,
+        "lineEnd": 34,
+        "columnStart": 4,
+        "columnEnd": 43
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 58,
+        "lineEnd": 58,
+        "columnStart": 4,
+        "columnEnd": 26
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Use a multi-stage build to reduce the size of the final image.\n#   This example is optimized to reduce final image size rather than for simplicity.\n# Using a -slim image also greatly reduces image size.\n# It is possible to use -alpine images instead to further reduce image size, but this comes\n# with several important caveats.\n#   - Alpine images use MUSL rather than GLIBC (as used in the default Debian-based images).\n#   - Most Python packages that require C code are tested against GLIBC, so there could be\n#     subtle errors when using MUSL.\n#   - These Python packages usually only provide binary wheels for GLIBC, so the packages\n#     will need to be recompiled fully within the Docker images, increasing build times.\nFROM python:3.9-slim-bullseye AS python_builder\n\n# Pin Poetry to a specific version to make Docker builds reproducible.\nENV POETRY_VERSION 1.1.13\n\n# Set ENV variables that make Python more friendly to running inside a container.\nENV PYTHONDONTWRITEBYTECODE 1\nENV PYTHONBUFFERED 1\n\n# By default, pip caches copies of downloaded packages from PyPI. These are not useful within\n# a Docker image, so disable this to reduce the size of images.\nENV PIP_NO_CACHE_DIR 1\nENV WORKDIR /src\n\nWORKDIR ${WORKDIR}\n\n# Install any system dependencies required to build wheels, such as C compilers or system packages\n# For example:\n#RUN apt-get update && apt-get install -y \\\n#    gcc \\\n#    && rm -rf /var/lib/apt/lists/*\n\n# Install Poetry into the global environment to isolate it from the venv. This prevents Poetry\n# from uninstalling parts of itself.\nRUN pip install --no-cache-dir \"poetry==${POETRY_VERSION}\"\n\n# Pre-download/compile wheel dependencies into a virtual environment.\n# Doing this in a multi-stage build allows omitting compile dependencies from the final image.\n# This must be the same path that is used in the final image as the virtual environment has\n# absolute symlinks in it.\nENV VIRTUAL_ENV /opt/venv\nRUN python -m venv ${VIRTUAL_ENV}\nENV PATH \"${VIRTUAL_ENV}/bin:${PATH}\"\n\n# Copy in project dependency specification.\nCOPY pyproject.toml poetry.lock ./\n\n# Don't install the package itself with Poetry because it will install it as an editable install.\n# TODO: Improve this when non-editable `poetry install` is supported in Poetry.\n#    https://github.com/python-poetry/poetry/issues/1382\nRUN poetry install --no-root --no-dev\n\n# Copy in source files.\nCOPY README.md ./\nCOPY src src\n\n# Manually build/install the package.\nRUN poetry build && \\\n    pip install --no-cache-dir dist/*.whl\n\n## Final Image\n# The image used in the final image MUST match exactly to the python_builder image.\nFROM python:3.9-slim-bullseye\n\nENV PYTHONDONTWRITEBYTECODE 1\nENV PYTHONBUFFERED 1\nENV PIP_NO_CACHE_DIR 1\nENV VIRTUAL_ENV /opt/venv\n\nENV HOME /home/user\nENV APP_HOME ${HOME}/app\n\n# Create the home directory for the new user.\nRUN mkdir -p ${HOME}\n\n# Create the user so the program doesn't run as root. This increases security of the container.\nRUN groupadd -r user && \\\n    useradd -r -g user -d ${HOME} -s /sbin/nologin -c \"Docker image user\" user\n\n# Setup application install directory.\nRUN mkdir ${APP_HOME}\n\n# If you use Docker Compose volumes, you might need to create the directories in the image,\n# otherwise when Docker Compose creates them they are owned by the root user and are inaccessible\n# by the non-root user. See https://github.com/docker/compose/issues/3270\n\nWORKDIR ${APP_HOME}\n\n# Copy and activate pre-built virtual environment.\nCOPY --from=python_builder ${VIRTUAL_ENV} ${VIRTUAL_ENV}\nENV PATH \"${VIRTUAL_ENV}/bin:${PATH}\"\n\n# For Python applications that are not installable libraries, you may need to copy in source\n# files here in the final image rather than in the python_builder image.\n\n# Give access to the entire home folder to the new user so that files and folders can be written\n# there. Some packages such as matplotlib, want to write to the home folder.\nRUN chown -R user:user ${HOME}\n\nENTRYPOINT [\"fact\"]\n"
+}

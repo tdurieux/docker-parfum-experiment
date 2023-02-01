@@ -1,0 +1,26 @@
+{
+  "startTime": 1674254344907,
+  "endTime": 1674254345743,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 3,
+        "lineEnd": 5,
+        "columnStart": 4,
+        "columnEnd": 7
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 3,
+        "lineEnd": 5,
+        "columnStart": 4,
+        "columnEnd": 7
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM azul/zulu-openjdk-debian:14\n\nRUN apt-get update && \\\n    DEBIAN_FRONTEND=noninteractive apt-get --no-install-recommends install -y wget unzip htop \\\n    golang-go \\\n    git && rm -rf /var/lib/apt/lists/*;\n\n# Install protoc\nENV PROTOC_VERSION=3.11.4\nRUN wget https://github.com/google/protobuf/releases/download/v${PROTOC_VERSION}/protoc-${PROTOC_VERSION}-linux-x86_64.zip \\\n    -O /protoc-${PROTOC_VERSION}-linux-x86_64.zip && \\\n    unzip /protoc-${PROTOC_VERSION}-linux-x86_64.zip -d /usr/local/ && \\\n    rm -f /protoc-${PROTOC_VERSION}-linux-x86_64.zip\n\nRUN mkdir -p /code/output/\nRUN mkdir -p /code/bin\nENV BASEPATH /code\nENV OUTPATH /code/output\nENV BINPATH /code/bin\n\nCOPY / ${BASEPATH}/\nWORKDIR  $BASEPATH\n\nENV JAVA_TOOL_OPTIONS=-Dfile.encoding=UTF8\nRUN ./gradlew clean installDist\n\nRUN mkdir /go\nENV GOPATH /go\nENV PATH $GOPATH/bin:/usr/local/go/bin:$PATH\n\nRUN mkdir -p \"$GOPATH/src\" \"$GOPATH/bin\" && chmod -R 777 \"$GOPATH\"\n\n#use go modules to pin module versions\nENV GO111MODULE=on\nENV GRPC_GATEWAY_VERSION=1.15.2\nENV PROTOC_GEN_GO_VERSION=1.5.1\nENV GRPC_VERSION=1.38.0\n\nRUN go mod init github.com/Yelp/nrtsearch\n\n#install required go protoc plugins to build grpc-gateway server\nRUN go get \\\n    github.com/grpc-ecosystem/grpc-gateway/protoc-gen-grpc-gateway@v${GRPC_GATEWAY_VERSION} \\\n    github.com/grpc-ecosystem/grpc-gateway/protoc-gen-swagger@v${GRPC_GATEWAY_VERSION} \\\n    github.com/golang/protobuf/protoc-gen-go@v${PROTOC_GEN_GO_VERSION} \\\n    google.golang.org/grpc@v${GRPC_VERSION}\n\nENV PROTO_PATH=/code/clientlib/src/main/proto\nENV PROTO_BUILD_PATH=/code/clientlib/build\n\n#run protoc plugin for protoc-gen-go\nRUN protoc \\\n-I $PROTO_PATH \\\n-I  $PROTO_BUILD_PATH/extracted-protos/main \\\n-I $PROTO_BUILD_PATH/extracted-include-protos/main \\\n--plugin=protoc-gen-go=$GOPATH/bin/protoc-gen-go \\\n--go_out=plugins=grpc:$OUTPATH \\\n$PROTO_PATH/yelp/nrtsearch/analysis.proto \\\n$PROTO_PATH/yelp/nrtsearch/luceneserver.proto \\\n$PROTO_PATH/yelp/nrtsearch/search.proto \\\n$PROTO_PATH/yelp/nrtsearch/suggest.proto\n\nRUN protoc \\\n-I $PROTO_PATH \\\n-I $PROTO_BUILD_PATH/extracted-protos/main \\\n-I $PROTO_BUILD_PATH/extracted-include-protos/main \\\n--plugin=protoc-gen-grpc-gateway=$GOPATH/bin/protoc-gen-grpc-gateway \\\n--grpc-gateway_out=logtostderr=true:$OUTPATH \\\n$PROTO_PATH/yelp/nrtsearch/analysis.proto \\\n$PROTO_PATH/yelp/nrtsearch/luceneserver.proto \\\n$PROTO_PATH/yelp/nrtsearch/search.proto \\\n$PROTO_PATH/yelp/nrtsearch/suggest.proto\n\nRUN protoc \\\n-I $PROTO_PATH \\\n-I $PROTO_BUILD_PATH/extracted-protos/main \\\n-I $PROTO_BUILD_PATH/extracted-include-protos/main \\\n--plugin=protoc-gen-swagger=$GOPATH/bin/protoc-gen-swagger \\\n--swagger_out=logtostderr=true:$OUTPATH \\\n$PROTO_PATH/yelp/nrtsearch/analysis.proto \\\n$PROTO_PATH/yelp/nrtsearch/luceneserver.proto \\\n$PROTO_PATH/yelp/nrtsearch/search.proto \\\n$PROTO_PATH/yelp/nrtsearch/suggest.proto\n\nRUN cp $OUTPATH/yelp/nrtsearch/* grpc-gateway/\nRUN cp $OUTPATH/github.com/Yelp/nrtsearch/* grpc-gateway/\n\n# build go executables for various platforms\nRUN for GOOS in darwin linux windows; do \\\n    for GOARCH in 386 amd64; do \\\n        echo \"Building $GOOS-$GOARCH\"; \\\n        export GOOS=$GOOS; \\\n        export GOARCH=$GOARCH; \\\n        go build -o bin/http_wrapper-$GOOS-$GOARCH http_wrapper.go; \\\n    done; \\\ndone\n\nCMD /bin/sh\n"
+}

@@ -1,0 +1,19 @@
+FROM ghcr.io/codysk/bgmi-all-in-one-base:1.1  AS test-env
+MAINTAINER me@iskywind.com
+
+ENV LANG=C.UTF-8 BGMI_PATH="/bgmi/conf/bgmi"
+ADD ./ /home/bgmi-docker
+WORKDIR /home/bgmi-docker/BGmi
+
+RUN curl -f -sSL https://raw.githubusercontent.com/python-poetry/poetry/master/get-poetry.py | python3 - && \
+	source $HOME/.poetry/env && \
+        python3 -m venv .venv && \
+        source .venv/bin/activate && \
+	poetry build && \
+	poetry install && \
+	pip install --no-cache-dir coverage[toml] && \
+	coverage run -a -m bgmi.main install && \
+	bgmi -h && \
+	coverage run -a -m pytest tests \
+            --cache-requests --reruns=2 --reruns-delay=1 --maxfail=2 \
+            --ignore=tests/downloader

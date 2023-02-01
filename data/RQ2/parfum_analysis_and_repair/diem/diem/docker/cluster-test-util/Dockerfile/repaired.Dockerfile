@@ -1,0 +1,2 @@
+# Please only make changes to this Dockerfile which are backward compatible. Avoid breaking changes like removing yum packages
+# Since we only use the "latest" version of this image, older jobs might still be using the "latest" image

@@ -1,0 +1,53 @@
+{
+  "startTime": 1674217437613,
+  "endTime": 1674217439230,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 34,
+        "lineEnd": 34,
+        "columnStart": 4,
+        "columnEnd": 77
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 42,
+        "lineEnd": 42,
+        "columnStart": 4,
+        "columnEnd": 77
+      }
+    },
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 47,
+        "lineEnd": 47,
+        "columnStart": 4,
+        "columnEnd": 40
+      }
+    },
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 48,
+        "lineEnd": 48,
+        "columnStart": 4,
+        "columnEnd": 29
+      }
+    },
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 49,
+        "lineEnd": 49,
+        "columnStart": 4,
+        "columnEnd": 56
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "#\n# Licensed to the Apache Software Foundation (ASF) under one\n# or more contributor license agreements.  See the NOTICE file\n# distributed with this work for additional information\n# regarding copyright ownership.  The ASF licenses this file\n# to you under the Apache License, Version 2.0 (the\n# \"License\"); you may not use this file except in compliance\n# with the License.  You may obtain a copy of the License at\n#\n#   http://www.apache.org/licenses/LICENSE-2.0\n#\n# Unless required by applicable law or agreed to in writing,\n# software distributed under the License is distributed on an\n# \"AS IS\" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY\n# KIND, either express or implied.  See the License for the\n# specific language governing permissions and limitations\n# under the License.\n#\n\nFROM debian:stretch-slim\n\nENV LANG=en_GB.UTF-8\nENV TZ=Europe/London\n\n# Install x11vnc and xserver-xorg-video-dummy\nRUN apt-get update && DEBIAN_FRONTEND=noninteractive \\\n    apt-get install -y --no-install-recommends \\\n    curl xz-utils ca-certificates \\\n    libgl1-mesa-glx libgl1-mesa-dri \\\n    x11vnc xserver-xorg-video-dummy locales jwm && \\\n    # Download noVNC.\n    NOVNC_VERSION=1.1.0 && \\\n    NOVNC=/usr/local/bin/noVNC-${NOVNC_VERSION} && \\\n    APP=/usr/local/bin/noVNC/app && \\\n    curl -f -sSL https://github.com/novnc/noVNC/archive/v${NOVNC_VERSION}.tar.gz | tar -xzv -C /usr/local/bin && \\\n    # Temporarily install Node.js and npm to transpile\n    # ECMAScript 6 modules. As well as speeding up load times\n    # on browsers that don't support modules this circumvents\n    # an issue with pre 0.9.12 LibVNCServer where the MIME\n    # type for Javascript was set incorrectly causing Chrome\n    # to reject them due to strict MIME type checking being\n    # enabled for modules.\n    curl -f -sSL https://nodejs.org/dist/v10.16.3/node-v10.16.3-linux-x64.tar.xz | tar -xJv -C /usr/local/lib && \\\n    NODE=/usr/local/lib/node-v10.16.3-linux-x64/bin && \\\n    ln -s ${NODE}/node /usr/local/bin/node && \\\n    ln -s ${NODE}/npm /usr/local/bin/npm && \\\n    ln -s ${NODE}/npx /usr/local/bin/npx && \\\n    npm install -g es6-module-transpiler && \\\n    npm install -g @babel/cli && \\\n    npm install --save-dev @babel/core @babel/preset-env && \\\n    ln -s ${NODE}/babel /usr/local/bin/babel && \\\n    ln -s ${NODE}/compile-modules \\\n          /usr/local/bin/compile-modules && \\\n    cd ${NOVNC} && \\\n    # Tweak noVNC configuration as the defaults point to \n    # websockify not the built-in x11vnc websocket support.\n    sed -i \"s/UI.initSetting('port', port)/UI.initSetting('port', 5900)/g\" app/ui.js && \\\n    sed -i \"s/UI.initSetting('path', 'websockify')/UI.initSetting('path', '')/g\" app/ui.js && \\\n    # Tweak the vnc.html to use the transpiled app.js\n    # instead of modules.\n    sed -i 's/type=\"module\" crossorigin=\"anonymous\" src=\"app\\/ui.js\"/src=\"app.js\"/g' vnc.html && \\\n    sed -i 's/<script src=\"vendor\\/promise.js\"><\\/script>//g' vnc.html && \\\n    sed -i 's/if (window._noVNC_has_module_support) //g' vnc.html && \\\n    # Transpile the Javascript to speed up loading and\n    # allow it to work on a wider variety of browsers.\n    echo '{\"presets\": [\"@babel/preset-env\"]}' > .babelrc && \\\n    compile-modules convert app/ui.js > app.js && \\\n    babel app.js --out-file app.js && \\\n    mkdir -p ${APP} && \\\n    mv ${NOVNC}/app/images ${APP}/images && \\\n    mv ${NOVNC}/app/locale ${APP}/locale && \\\n    mv ${NOVNC}/app/sounds ${APP}/sounds && \\\n    mv ${NOVNC}/app/styles ${APP}/styles && \\\n    mv ${NOVNC}/app/error-handler.js \\\n       ${APP}/error-handler.js && \\\n    mv ${NOVNC}/app.js ${APP}.js && \\\n    # Renaming vnc.html to index.vnc seems necessary as the\n    # x11vnc built-in web server seems to serve index.vnc\n    # by default and there's no obvious configuration\n    # option to change this.\n    mv ${NOVNC}/vnc.html \\\n       /usr/local/bin/noVNC/index.vnc && \\\n    #\n    # Create script to start Xorg, jwm and x11vnc\n    echo '#!/bin/bash\\nXorg $DISPLAY -cc 4 &\\nsleep 0.5\\njwm &\\nx11vnc -forever -usepw -httpdir /usr/local/bin/noVNC' > /usr/local/bin/startup && \\\n    chmod +x /usr/local/bin/startup && \\\n    # Generate locales\n    sed -i \"s/^# *\\($LANG\\)/\\1/\" /etc/locale.gen && \\\n    locale-gen && \\\n    # Set up the timezone\n    echo $TZ > /etc/timezone && \\\n    ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && \\\n    DEBIAN_FRONTEND=noninteractive \\\n    dpkg-reconfigure tzdata && \\\n    # Tidy up JWM for single app use case\n    sed -i \"s/Desktops width=\\\"4\\\"/Desktops width=\\\"1\\\"/g\" /etc/jwm/system.jwmrc && \\\n    sed -i \"s/<TrayButton icon=\\\"\\/usr\\/share\\/jwm\\/jwm-red.svg\\\">root:1<\\/TrayButton>//g\" /etc/jwm/system.jwmrc && \\\n    sed -i \"s/<TrayButton label=\\\"_\\\">showdesktop<\\/TrayButton>//g\" /etc/jwm/system.jwmrc && \\\n    sed -i \"s/<Include>\\/etc\\/jwm\\/debian-menu<\\/Include>//g\" /etc/jwm/system.jwmrc && \\\n    # We export /tmp/.X11-unix as a volume and we need\n    # the mode of /tmp/.X11-unix to be set to 1777\n    mkdir /tmp/.X11-unix && \\\n    chmod 1777 /tmp/.X11-unix && \\\n    # Tidy up\n    rm -rf ${NOVNC} && \\\n    rm -rf /usr/local/lib/node-v10.16.3-linux-x64 && \\\n    rm -rf /root/.npm && \\\n    rm /usr/local/bin/node && \\\n    rm /usr/local/bin/npm && \\\n    rm /usr/local/bin/npx && \\\n    apt-get clean && \\\n    apt-get purge -y curl xz-utils && \\\n    apt-get autoremove -y && \\\n    rm -rf /var/lib/apt/lists/* && npm cache clean --force;\n\nVOLUME /tmp/.X11-unix\n\nCOPY xorg.conf /etc/X11/xorg.conf\n\nCMD [\"/usr/local/bin/startup\"]\n\n#-------------------------------------------------------------------------------\n#\n# To build the image\n# docker build -t x11novnc-xdummy -f Dockerfile-standalone .\n#\n\n"
+}

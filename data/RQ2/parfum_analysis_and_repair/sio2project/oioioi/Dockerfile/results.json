@@ -1,0 +1,53 @@
+{
+  "startTime": 1674216497453,
+  "endTime": 1674216498975,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 54,
+        "lineEnd": 54,
+        "columnStart": 4,
+        "columnEnd": 60
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 59,
+        "lineEnd": 59,
+        "columnStart": 4,
+        "columnEnd": 43
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 61,
+        "lineEnd": 61,
+        "columnStart": 4,
+        "columnEnd": 50
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 6,
+        "lineEnd": 26,
+        "columnStart": 4,
+        "columnEnd": 19
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 6,
+        "lineEnd": 26,
+        "columnStart": 4,
+        "columnEnd": 19
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM python:3.7\n\nENV PYTHONUNBUFFERED 1\n\nRUN dpkg --add-architecture i386 && \\\n    apt-get update && \\\n    apt-get install --no-install-recommends -y \\\n        git \\\n        libpq-dev \\\n        postgresql-client \\\n        libdb-dev \\\n        fp-compiler fp-units-base fp-units-math \\\n        texlive-latex-base \\\n        texlive-lang-polish \\\n        texlive-latex-extra \\\n        texlive-lang-german \\\n        texlive-lang-european \\\n        texlive-lang-czechslovak \\\n        texlive-pstricks \\\n        ghostscript \\\n        texlive-fonts-recommended \\\n        gcc-multilib \\\n        sudo \\\n        libstdc++6:i386 \\\n        zlib1g:i386 \\\n        locales \\\n        python3-pip && \\\n    apt-get clean && rm -rf /var/lib/apt/lists/*;\n\n# This is oioioi user linux uid. Setting it is useful in development.\n# By default we use an unused uid of 1234.\n# This is placed here to avoid redownloading package on uid change\nARG oioioi_uid=1234\n\n#Bash as shell, setup folders, create oioioi user\nRUN rm /bin/sh && ln -s /bin/bash /bin/sh && \\\n    mkdir -pv /sio2/oioioi && \\\n    mkdir -pv /sio2/sandboxes && \\\n    useradd -U oioioi -m -d /home/oioioi/ -u $oioioi_uid && \\\n    echo \"oioioi ALL=(ALL) NOPASSWD: ALL\" >> /etc/sudoers && \\\n    chown -R oioioi:oioioi /sio2\n\n# Modify locale\nRUN sed -i -e \"s/# en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/\" /etc/locale.gen && \\\n    locale-gen\n\nCOPY ./entrypoint_checks.sh /entrypoint_checks.sh\nRUN chmod +x /entrypoint_checks.sh && chown oioioi /entrypoint_checks.sh\n\n# Installing python dependencies\nUSER oioioi\n\nENV PATH $PATH:/home/oioioi/.local/bin/\n\nRUN pip3 install --no-cache-dir --user psycopg2-binary==2.8.6 twisted uwsgi\n\nWORKDIR /sio2/oioioi\n\nCOPY --chown=oioioi:oioioi setup.py requirements.txt ./\nRUN pip3 install --no-cache-dir -r requirements.txt --user\nCOPY --chown=oioioi:oioioi requirements_static.txt ./\nRUN pip3 install --no-cache-dir -r requirements_static.txt --user\n\nCOPY --chown=oioioi:oioioi . /sio2/oioioi\n\nRUN oioioi-create-config /sio2/deployment\n\nWORKDIR /sio2/deployment\n\nRUN sed -i -e \\\n       \"s/SERVER = 'django'/SERVER = 'uwsgi-http'/g;\\\n        s/DEBUG = True/DEBUG = False/g;\\\n        s/django.db.backends./django.db.backends.postgresql/g;\\\n        s/'NAME': ''/'NAME': 'oioioi'/g;\\\n        s/'USER': ''/'USER': 'oioioi'/g;\\\n        s/'HOST': '',/'HOST': 'db',/g;\\\n        s/'PASSWORD': ''/'PASSWORD': 'password'/g;\\\n        s/#BROKER_URL/BROKER_URL/g;\\\n        s/#FILETRACKER_LISTEN_ADDR/FILETRACKER_LISTEN_ADDR/g;\\\n        s/#FILETRACKER_LISTEN_PORT/FILETRACKER_LISTEN_PORT/g;\\\n        s|#FILETRACKER_URL = '.*'|FILETRACKER_URL = 'http://web:9999'|g;\\\n        s/#RUN_SIOWORKERSD$/RUN_SIOWORKERSD/g;\\\n        s/#SIOWORKERS_LISTEN_ADDR/SIOWORKERS_LISTEN_ADDR/g;\\\n        s/#SIOWORKERS_LISTEN_PORT/SIOWORKERS_LISTEN_PORT/g;\\\n        s/RUN_LOCAL_WORKERS = True/RUN_LOCAL_WORKERS = False/g;\\\n        s/AVAILABLE_COMPILERS = SYSTEM_COMPILERS/#AVAILABLE_COMPILERS = SYSTEM_COMPILERS/g;\\\n        s/DEFAULT_COMPILERS = SYSTEM_DEFAULT_COMPILERS/#DEFAULT_COMPILERS = SYSTEM_DEFAULT_COMPILERS/g;\\\n        s/USE_UNSAFE_EXEC = True/USE_UNSAFE_EXEC = True/g;\\\n        s/#DEFAULT_SAFE_EXECUTION_MODE/#DEFAULT_SAFE_EXECUTION_MODE/g;\\\n        s/#USE_UNSAFE_CHECKER = True/#USE_UNSAFE_CHECKER = False/g;\\\n        \\$afrom basic_settings import *\\nALLOWED_HOSTS = ALLOWED_HOSTS + \\\\['oioioi', '127.0.0.1', 'localhost', 'web'\\\\]\" \\\n        settings.py && \\\n    cp /sio2/oioioi/oioioi/selenium_settings.py selenium_settings.py && \\\n    mkdir -p /sio2/deployment/logs/{supervisor,runserver}\n\n# Download sandboxes\nRUN ./manage.py supervisor > /dev/null --daemonize --nolaunch=uwsgi && \\\n    ./manage.py download_sandboxes -q -y -c /sio2/sandboxes && \\\n    ./manage.py supervisor stop all\n"
+}

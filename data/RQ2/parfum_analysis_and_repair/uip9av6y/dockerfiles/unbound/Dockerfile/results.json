@@ -1,0 +1,80 @@
+{
+  "startTime": 1674250334750,
+  "endTime": 1674250336173,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 16,
+        "lineEnd": 16,
+        "columnStart": 5,
+        "columnEnd": 78
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 17,
+        "lineEnd": 17,
+        "columnStart": 5,
+        "columnEnd": 82
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 28,
+        "lineEnd": 44,
+        "columnStart": 5,
+        "columnEnd": 21
+      }
+    },
+    {
+      "rule": "gpgUseBatchFlag",
+      "position": {
+        "lineStart": 20,
+        "lineEnd": 20,
+        "columnStart": 5,
+        "columnEnd": 76
+      }
+    },
+    {
+      "rule": "gpgUseBatchFlag",
+      "position": {
+        "lineStart": 21,
+        "lineEnd": 21,
+        "columnStart": 5,
+        "columnEnd": 74
+      }
+    },
+    {
+      "rule": "gpgUseBatchFlag",
+      "position": {
+        "lineStart": 22,
+        "lineEnd": 22,
+        "columnStart": 5,
+        "columnEnd": 60
+      }
+    },
+    {
+      "rule": "gpgUseHaPools",
+      "position": {
+        "lineStart": 20,
+        "lineEnd": 20,
+        "columnStart": 5,
+        "columnEnd": 76
+      }
+    },
+    {
+      "rule": "gpgUseHaPools",
+      "position": {
+        "lineStart": 21,
+        "lineEnd": 21,
+        "columnStart": 5,
+        "columnEnd": 74
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM alpine:3.10 AS builder\n\nARG UNBOUND_VERSION=1.9.4\nWORKDIR /src\nRUN set -xe; \\\n  apk add --no-cache \\\n    dnssec-root \\\n    libsodium-dev \\\n    libevent-dev \\\n    libressl-dev \\\n    linux-headers \\\n    expat-dev \\\n    build-base \\\n    gnupg \\\n    curl \\\n    file \\\n  && curl -f -sSLO http://unbound.net/downloads/unbound-${UNBOUND_VERSION}.tar.gz \\\n  && curl -f -sSLO http://unbound.net/downloads/unbound-${UNBOUND_VERSION}.tar.gz.asc \\\n  && key='EDFAA3F2CA4E6EB05681AF8E9F6F1C2D7E045F8D' \\\n  && export GNUPGHOME=\"$(mktemp -d)\" \\\n  && gpg --batch --keyserver hkp://p80.ha.pool.sks-keyservers.net:80 --recv-keys \"$key\" \\\n  || gpg --batch --keyserver hkp://ipv4.ha.pool.sks-keyservers.net --recv-keys \"$key\" \\\n  || gpg --batch --keyserver hkp://pgp.mit.edu:80 --recv-keys \"$key\" \\\n  && gpg --batch --verify unbound-${UNBOUND_VERSION}.tar.gz.asc unbound-${UNBOUND_VERSION}.tar.gz \\\n  && rm -rf \"$GNUPGHOME\" unbound-${UNBOUND_VERSION}.tar.gz.asc \\\n  && tar -xzf unbound-${UNBOUND_VERSION}.tar.gz \\\n  && rm unbound-${UNBOUND_VERSION}.tar.gz \\\n  && cd unbound-${UNBOUND_VERSION} \\\n  && ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" \\\n    --prefix=/usr \\\n    --sysconfdir=/etc \\\n    --mandir=/usr/share/man \\\n    --localstatedir=/var \\\n    --with-username=unbound \\\n    --with-run-dir=\"\" \\\n    --with-pidfile=\"\" \\\n    --with-rootkey-file=/usr/share/dnssec-root/trusted-key.key \\\n    --with-libevent \\\n    --with-pthreads \\\n    --disable-static \\\n    --disable-rpath \\\n    --with-ssl \\\n    --without-pythonmodule \\\n    --without-pyunbound \\\n    --enable-dnscrypt \\\n  && sed -i '/^LIBS=/s/-lpython.*[[:space:]]/ /' Makefile \\\n\t&& make \\\n  && make DESTDIR=\"/app\" install\n\nFROM alpine:3.10\n\nARG UNBOUND_VERSION=1.9.4\nENV UNBOUND_VERSION=${UNBOUND_VERSION}\nENV UNBOUND_HOME=/etc/unbound\nRUN set -xe; \\\n  addgroup -S unbound \\\n  && adduser -S -D -H -h \"${UNBOUND_HOME}\" -s /sbin/nologin -G unbound unbound \\\n  && apk add --no-cache \\\n    dnssec-root \\\n    libsodium \\\n    libevent \\\n    libressl \\\n    openssl \\\n    expat \\\n  && mkdir -p \\\n    \"${UNBOUND_HOME}/conf.d\" \\\n    \"${UNBOUND_HOME}/server-conf.d\" \\\n    \"${UNBOUND_HOME}/remote-conf.d\" \\\n    \"${UNBOUND_HOME}/ssl\" \\\n    \"${UNBOUND_HOME}/aux\" \\\n  && chown -R \\\n    unbound:unbound \\\n    \"${UNBOUND_HOME}\"\n\nWORKDIR ${UNBOUND_HOME}\nEXPOSE 53 53/udp 853 853/udp 8953\n\nCOPY --from=builder /app/usr/sbin/ \\\n  /usr/sbin/\nCOPY --from=builder /app/usr/lib/ \\\n  /usr/lib/\n# minimal config which merely includes other files.\n# can be mounted with a custom file in RO mode, as\n# it is not modified.\nCOPY unbound.conf \\\n  ${UNBOUND_HOME}/\n# opiniated defaults\nCOPY include.d/ \\\n  ${UNBOUND_HOME}/include.d/\nCOPY bin/ \\\n  /usr/local/bin/\n\nVOLUME [ \\\n  \"${UNBOUND_HOME}/aux\", \\\n  \"${UNBOUND_HOME}/ssl\", \\\n  \"${UNBOUND_HOME}/conf.d\", \\\n  \"${UNBOUND_HOME}/remote-conf.d\", \\\n  \"${UNBOUND_HOME}/server-conf.d\" \\\n]\nHEALTHCHECK --interval=1m --timeout=3s --start-period=10s \\\n  CMD /usr/sbin/unbound-control -c ${UNBOUND_HOME}/unbound.conf status -s 127.0.0.1:8953 || exit 1\nENTRYPOINT [\"/usr/local/bin/docker-entrypoint.sh\"]\nCMD [ \"unbound\", \"-c\", \"/etc/unbound/unbound.conf\" ]\n\nARG BUILD_DATE=\"1970-01-01T00:00:00Z\"\nARG REVISION=\"0\"\nARG VCS_URL=\"http://localhost/\"\nARG VCS_REF=\"master\"\nLABEL org.opencontainers.image.created=$BUILD_DATE \\\n    org.opencontainers.image.title=\"Unbound\" \\\n    org.opencontainers.image.description=\"Unbound is a validating, recursive, and caching DNS resolver\" \\\n    org.opencontainers.image.url=\"https://unbound.net/\" \\\n    org.opencontainers.image.source=$VCS_URL \\\n    org.opencontainers.image.revision=$VCS_REF \\\n    org.opencontainers.image.vendor=\"NLnet Labs\" \\\n    org.opencontainers.image.version=\"${UNBOUND_VERSION}-${REVISION}\" \\\n    com.microscaling.docker.dockerfile=\"/Dockerfile\" \\\n    org.opencontainers.image.licenses=\"BSD\"\n"
+}

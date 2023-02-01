@@ -1,0 +1,17 @@
+{
+  "startTime": 1674251278008,
+  "endTime": 1674251278539,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 28,
+        "lineEnd": 29,
+        "columnStart": 29,
+        "columnEnd": 115
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM ubuntu:trusty\n\n# add our user and group first to make sure their IDs get assigned consistently, regardless of whatever dependencies get added\nRUN groupadd -r mysql && useradd -r -g mysql mysql\n\nENV PERCONA_XTRADB_VERSION 5.6\nENV MYSQL_VERSION 5.6\nENV TERM linux\n\n# FATAL ERROR: please install the following Perl modules before executing /usr/local/mysql/scripts/mysql_install_db:\n# File::Basename\n# File::Copy\n# Sys::Hostname\n# Data::Dumper\nRUN apt-get update && \\\n  DEBIAN_FRONTEND=noninteractive apt-get install -y perl curl --no-install-recommends && rm -rf /var/lib/apt/lists/*\n\n# gpg: key 5072E1F5: public key \"MySQL Release Engineering <mysql-build@oss.oracle.com>\" imported\nRUN apt-key adv --keyserver keys.gnupg.net --recv-keys 1C4CBDCDCD2EFD2A && \\\n  echo \"deb http://repo.percona.com/apt trusty main\" > /etc/apt/sources.list.d/percona.list && \\\n  echo \"deb-src http://repo.percona.com/apt trusty main\" >> /etc/apt/sources.list.d/percona.list\n\n# the \"/var/lib/mysql\" stuff here is because the mysql-server postinst doesn't have an explicit way to disable the mysql_install_db codepath besides having a database already \"configured\" (ie, stuff in /var/lib/mysql/mysql)\n# also, we set debconf keys to make APT a little quieter\nRUN { \\\n                echo percona-server-server-5.6 percona-server-server/data-dir select ''; \\\n                echo percona-server-server-5.6 percona-server-server/root_password password ''; \\\n        } | debconf-set-selections \\\n        && apt-get update && DEBIAN_FRONTEND=nointeractive apt-get --no-install-recommends install -y percona-xtradb-cluster-client-\"${MYSQL_VERSION}\" \\\n           percona-xtradb-cluster-common-\"${MYSQL_VERSION}\" percona-xtradb-cluster-server-\"${MYSQL_VERSION}\" xinetd \\\n        && rm -rf /var/lib/apt/lists/* \\\n        && rm -rf /var/lib/mysql && mkdir -p /var/lib/mysql && chown -R mysql:mysql /var/lib/mysql\n\nVOLUME /var/lib/mysql\n\nCOPY my.cnf /etc/mysql/my.cnf\nCOPY cluster.cnf /tmp/cluster.cnf\n# need random.sh because otherwise, ENV $RANDOM is not set\nCOPY random.sh /tmp/random.sh\nRUN /tmp/random.sh\n\n\nADD zurmo.sql /zurmo.sql\nADD check_cluster_size.sql /check_cluster_size.sql\nADD xinetd_zurmochk /etc/xinetd.d/xinetd_zurmochk\nADD zurmochk.sh /usr/local/bin/zurmochk.sh\n# add confd\nADD https://github.com/kelseyhightower/confd/releases/download/v0.7.1/confd-0.7.1-linux-amd64 /usr/local/bin/confd\nRUN chmod u+x /usr/local/bin/confd && \\\n  mkdir -p /etc/confd/conf.d && \\\n  mkdir -p /etc/confd/templates && \\\n  chmod u+x /usr/local/bin/zurmochk.sh\nADD conf.d /etc/confd/mysql/conf.d\nADD templates /etc/confd/mysql/templates\n\n\nCOPY docker-entrypoint.sh /entrypoint.sh\nCOPY restart_mysql.sh /restart_mysql.sh\nENTRYPOINT [\"/entrypoint.sh\"]\n\nEXPOSE 3306 4444 4567 4568\nCMD [\"mysqld\"]\n\n"
+}

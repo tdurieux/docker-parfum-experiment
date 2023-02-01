@@ -1,0 +1,86 @@
+ARG PlatformRelease
+FROM $PlatformRelease
+ENV container docker
+LABEL maintainer="Gregory Boland <boland@us.ibm.com>"
+
+ARG USER_ID
+# Docker Container for Alpine HElib Base
+
+USER root
+
+# Update the base OS
+RUN apk update && apk upgrade
+
+# Install the compilation toolchain and additional packages we need..
+RUN apk add --no-cache autoconf bash xz curl wget tar git gcc g++ cmake make diffutils file patchelf vim
+
+RUN apk add coreutils ncurses
+RUN curl -#L https://github.com/bats-core/bats-core/archive/master.zip | unzip -
+RUN bash bats-core-master/install.sh /usr/local
+RUN rm -rf ./bats-core-master
+
+# Install Doxygen so we can build the docs inside the container
+RUN apk add --no-cache doxygen 
+
+# Install GMP dependency
+RUN apk add --no-cache gmp-dev
+
+# Install IBM Fully Homomorphic Encryption Library for ML Dependency
+RUN apk add --no-cache --repository http://dl-cdn.alpinelinux.org/alpine/edge/community hdf5-dev
+
+# Create dependencies build environment.
+RUN mkdir -p /opt/IBM/FHE-distro
+
+# Download, build and install NTL as system library in /usr/local
+COPY ./DEPENDENCIES/NTL                /opt/IBM/FHE-distro/NTL
+WORKDIR /opt/IBM/FHE-distro/NTL
+RUN cd ./src && \
+    ./configure SHARED=on NTL_GMP_LIP=on NTL_THREADS=on NTL_THREAD_BOOST=on NTL_RANDOM_AES256CTR=on && \
+    make -j4 && \
+    make install && \
+    ldconfig / && \
+    cd ../.. && \
+    rm -rf NTL
+
+# Download, build and install HElib as system library in /usr/local
+COPY ./DEPENDENCIES/HElib              /opt/IBM/FHE-distro/HElib
+WORKDIR /opt/IBM/FHE-distro/HElib
+RUN  mkdir ./build && \
+    cd ./build && \
+    cmake -DCMAKE_BUILD_TYPE=RelWithDebInfo -DBUILD_SHARED=ON -DENABLE_THREADS=ON .. && \
+    make -j4 && \
+    make install && \
+    ldconfig /
+
+#Generate the docs of HElib from their source
+WORKDIR /opt/IBM/FHE-distro/HElib/documentation
+RUN doxygen Doxyfile
+
+# Download, build and install Boost as system library in /usr/local
+COPY ./DEPENDENCIES/boost              /opt/IBM/FHE-distro/boost
+WORKDIR /opt/IBM/FHE-distro/boost
+RUN ./bootstrap.sh --with-libraries=filesystem,system,thread && \
+    ./b2 -d0 -j4 install && \
+    ldconfig / && \
+    cd .. && \
+    rm -rf boost
+
+# Build and install ML-HElib as system library in /usr/local
+COPY ./DEPENDENCIES/ML-HElib    /opt/IBM/FHE-distro/ML-HElib
+WORKDIR /opt/IBM/FHE-distro/ML-HElib
+RUN /bin/bash ./install_system_wide.sh && \
+    ldconfig /
+
+#Generate the docs of ML-HElib from their source
+WORKDIR /opt/IBM/FHE-distro/ML-HElib/documentation
+RUN doxygen Doxyfile
+
+
+# Create user fhe:fhe with no login
+RUN adduser --uid ${USER_ID} --disabled-password fhe
+WORKDIR /home/fhe
+RUN mkdir -p /home/fhe/FHE_Examples
+RUN cp -pr /opt/IBM/FHE-distro/HElib/examples /home/fhe/FHE_Examples
+RUN chown -R fhe:fhe /opt/IBM
+
+CMD ["bash"]

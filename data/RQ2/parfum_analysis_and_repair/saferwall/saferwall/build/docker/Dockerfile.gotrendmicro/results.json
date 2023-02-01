@@ -1,0 +1,17 @@
+{
+  "startTime": 1674249756835,
+  "endTime": 1674249757465,
+  "originalSmells": [
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 48,
+        "lineEnd": 48,
+        "columnStart": 4,
+        "columnEnd": 23
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "################################\n# STEP 1 build executable binary\n################################\n\nFROM golang:1.17-alpine AS build-stage\n\nENV VENDOR trendmicro\n\n# Install git + SSL ca certificates.\n# Git is required for fetching the dependencies.\n# Ca-certificates is required to call HTTPS endpoints.\nRUN apk update && apk add --no-cache git ca-certificates tzdata \\\n\t&& update-ca-certificates 2>/dev/null || true\n\n# Set the Current Working Directory inside the container.\nWORKDIR $GOPATH/src/saferwall/$VENDOR/\n\n# Copy go mod and sum files.\nCOPY go.mod go.sum ./\n\n# Download all dependencies. Dependencies will be cached if the go.mod\n# and go.sum files are not changed.\nRUN go mod download\n\n# Copy our go files.\nCOPY . .\n\n# Build the binary.\nRUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \\\n\tgo build -a -installsuffix cgo -ldflags '-extldflags \"-static\"' \\\n\t-o /go/bin/$VENDOR-svc cmd/services/multiav/$VENDOR/main.go\n\n############################\n# STEP 2 build a small image\n############################\n\nFROM saferwall/trendmicro:latest\nLABEL maintainer=\"https://github.com/saferwall\"\nLABEL version=\"0.0.3\"\nLABEL description=\"trendmicro linux version with nsq consumer\"\n\n# Environment variables.\nENV TREND_MICRO_DB_UPDATE_DATE    /av_db_update_date.txt\n\n# Set the Current Working Directory inside the container.\nWORKDIR /saferwall\n\n# Install requirements.\nRUN yum install -y sudo && rm -rf /var/cache/yum\n\n# Update virus definition file.\nRUN /etc/init.d/splx start \\\n    && cd /opt/TrendMicro/SProtectLinux/SPLX.vsapiapp \\\n    && ./splxmain -u \\\n    && echo -n \"$(date +%s)\" >> $TREND_MICRO_DB_UPDATE_DATE\n\n# Temporary fix to splx_manual_scan to ignore (defunct) proc.\nRUN sed -i 's/gdb/def/g' /opt/TrendMicro/SProtectLinux/SPLX.vsapiapp/splx_manual_scan\n\n# Performs a simple detection test.\n# ServerProtect does not seem to be able to scan a file directly,\n# it only take a directory as argument. So we create a tmp dir\n# and we place a copy of the file inside.\nRUN mkdir -p /tmp/sample/  \\\n    && cp /eicar /tmp/sample/ \\\n    && rm -f /var/log/TrendMicro/SProtectLinux/* \\\n    && $TREND_MICRO_SLPXMAIN -m /tmp/sample/ \\\n    && sleep 15s \\\n    && cat /var/log/TrendMicro/SProtectLinux/Virus* | grep -q 'virus_name=Eicar_test_file'\n\n# Create an app user so our program doesn't run as root.\nRUN groupadd -r saferwall \\\n    && useradd --no-log-init -r -g saferwall saferwall\n\n# Copy our static executable.\nCOPY --from=build-stage /go/bin/trendmicro-svc .\n\n# Copy the config files.\nCOPY configs/services/multiav/trendmicro conf/\n\n# Update permissions.\nRUN usermod -u 101 saferwall \\\n\t&& groupmod -g 102 saferwall \\\n    && usermod -aG wheel saferwall \\\n    && chown -R saferwall:saferwall . \\\n    && chown -R saferwall:saferwall /opt/TrendMicro/ \\\n    && chown -R saferwall:saferwall /var/log/TrendMicro/ \\\n\t&& echo 'saferwall    ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers\n\n# Switch to our user.\nUSER saferwall\n\nENTRYPOINT [\"/saferwall/trendmicro-svc\", \"-config\", \"/saferwall/conf\"]\n"
+}

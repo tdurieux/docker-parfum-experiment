@@ -1,0 +1,35 @@
+{
+  "startTime": 1674217841129,
+  "endTime": 1674217842621,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 57,
+        "lineEnd": 57,
+        "columnStart": 8,
+        "columnEnd": 89
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 31,
+        "lineEnd": 36,
+        "columnStart": 7,
+        "columnEnd": 17
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 53,
+        "lineEnd": 55,
+        "columnStart": 7,
+        "columnEnd": 48
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# NAME bbs-io/synchronet\n# VERSION 3.18\n\n# BUILD ARGS\n#   docker build --build-arg NAME=VALUE ...\n#\n#   REPURL\n#       default: https://github.com/SynchronetBBS/sbbs.git\n#                github mirror, which should be faster in build environment\n#       upstream: use https://gitlab.synchro.net/main/sbbs.git\n#   TAGNAME = specific tag/commit/branch to build from\n#       default: dailybuild_linux-x64 - latest nightly for default REPOURL above\n\n# Using bullseye-slim as baseline, to be able to use node based scripts.\nFROM debian:bullseye-slim as base\n\nENV TERM=xterm\n\nARG DEBIAN_FRONTEND=noninteractive\nONBUILD ARG DEBIAN_FRONTEND=noninteractive\n\n# Utilities & Runtime Pre-requisites\nRUN (echo \"deb http://deb.debian.org/debian/ bullseye main\" > /etc/apt/sources.list.d/contrib.list) \\\n    && (echo \"deb-src http://deb.debian.org/debian/ bullseye main\" > /etc/apt/sources.list.d/contrib.list) \\\n    && (echo \"deb http://deb.debian.org/debian/ bullseye testing\" > /etc/apt/sources.list.d/contrib.list) \\\n    && (echo \"deb-src http://deb.debian.org/debian/ bullseye testing\" > /etc/apt/sources.list.d/contrib.list) \\\n    && (echo \"deb http://deb.debian.org/debian/ bullseye contrib\" > /etc/apt/sources.list.d/contrib.list) \\\n    && (echo \"deb-src http://deb.debian.org/debian/ bullseye contrib\" > /etc/apt/sources.list.d/contrib.list)\n\nRUN apt-get update \\\n    && apt-get upgrade -yqq \\\n    && apt-get install --no-install-recommends -yqq \\\n    curl wget ftp openssh-client \\\n    nano less procps libcap2-bin \\\n    libarchive13 libarchive-tools \\\n    zip unzip arj unrar-free p7zip-full lhasa arc \\\n    libnspr4 sudo \\\n    && cd /tmp \\\n    && apt-get -y autoremove \\\n    && apt-get clean \\\n    && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*\n\nCOPY --from=denoland/deno:bin /deno /usr/local/bin/deno\n\n\n# Build Stage\nFROM base AS build\n\nENV SBBSCTRL=/sbbs/ctrl\nENV SBBSEXEC=/sbbs/exec\n\n# Build dependencies\nRUN apt-get update \\\n    && apt-get install --no-install-recommends -yqq \\\n    build-essential libarchive-dev git \\\n    libnspr4-dev libncurses5-dev python2 pkgconf \\\n    && cd /tmp \\\n    && ( curl -f -s https://packagecloud.io/install/repositories/github/git-lfs/script.deb.sh | bash) \\\n    && git config --global core.autocrlf false \\\n    && apt-get -y autoremove \\\n    && apt-get clean \\\n    && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*\n\n# Shallow git checkout, adjusts TAGNAME for \"nightly\" or \"release\"\nWORKDIR /sbbs/repo\nARG REPOURL=https://github.com/SynchronetBBS/sbbs.git\nARG TAGNAME=dailybuild_linux-x64\nRUN echo \"\\n--------------------------------------------------------\\nChecking out $TAGNAME\\n\" \\\n    && git init \\\n    && git remote add origin $REPOURL \\\n    && git fetch --depth 1 origin $TAGNAME \\\n    && git checkout FETCH_HEAD\n\n# Build Synchronet - Install\nRUN cd ./install \\\n    && sed -i.bak '/git/d' ./GNUmakefile \\\n    && make RELEASE=1 NO_X=1 SBBSDIR=/sbbs install\n\n# Build Synchronet - Other executables (upgrade_*)\nRUN cd ./src/sbbs3 \\\n    && make RELEASE=1 NO_X=1 SBBSDIR=/sbbs install\n\n# capture hash and version\nRUN (cd /sbbs/repo; echo \"Git Hash $(git log -1 --format='%H')\"> /sbbs/exec/version.txt) \\\n    && (echo \"$(/sbbs/exec/sbbs version)\" >> /sbbs/exec/version.txt)\n\nWORKDIR /sbbs/scripts\nRUN cp /sbbs/exec/node /sbbs/exec/sbbsnode \\\n    && mkdir -p /sbbs/dist \\\n    && mv /sbbs/ctrl /sbbs/dist/ctrl \\\n    && mv /sbbs/docs /sbbs/dist/docs \\\n    && mv /sbbs/node1 /sbbs/dist/node1 \\\n    && mv /sbbs/text /sbbs/dist/text \\\n    && mv /sbbs/xtrn /sbbs/dist/xtrn \\\n    && mv /sbbs/web /sbbs/dist/web-runemaster \\\n    && mv /sbbs/webv4 /sbbs/dist/web-ecweb4 \\\n    && rm -rf /sbbs/node2 \\\n    && rm -rf /sbbs/node3 \\\n    && rm -rf /sbbs/node4 \\\n    && rm -rf /sbbs/3rdp \\\n    && rm -rf /sbbs/src \\\n    && rm -rf /sbbs/repo\n\n# Copy utility scripts and run post-build script\nCOPY scripts /sbbs/scripts\nRUN cd /sbbs/scripts \\\n    && chmod +x /sbbs/scripts/* \\\n    && /sbbs/scripts/post-build.ts \\\n    && rm /sbbs/scripts/post-build.ts\n\nFROM base AS runtime\n\nCOPY --from=build /sbbs /sbbs\n\nWORKDIR /sbbs\n\n# Environment variables for use\nENV SBBSCTRL=/sbbs/ctrl\nENV SBBSEXEC=/sbbs/exec\nENV PATH=$PATH:/sbbs/scripts:/sbbs/exec:\n\n# Cache dependencies for sbbs scripts\nRUN deno cache --unstable /sbbs/scripts/*.ts\n\n# Start SBBS by Default\nCMD [\"/sbbs/scripts/sbbs\"]\n\n# Declare expected volume mounts\nVOLUME [ \"/sbbs-data\" ]\n\n# Show version built\nRUN cat /sbbs/exec/version.txt && echo \"\"\n"
+}

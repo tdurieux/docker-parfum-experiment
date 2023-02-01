@@ -1,0 +1,44 @@
+{
+  "startTime": 1674216412806,
+  "endTime": 1674216414037,
+  "originalSmells": [
+    {
+      "rule": "rmRecursiveAfterMktempD",
+      "position": {
+        "lineStart": 51,
+        "lineEnd": 51,
+        "columnStart": 21,
+        "columnEnd": 30
+      }
+    },
+    {
+      "rule": "rmRecursiveAfterMktempD",
+      "position": {
+        "lineStart": 72,
+        "lineEnd": 72,
+        "columnStart": 21,
+        "columnEnd": 30
+      }
+    },
+    {
+      "rule": "gpgUseBatchFlag",
+      "position": {
+        "lineStart": 42,
+        "lineEnd": 42,
+        "columnStart": 6,
+        "columnEnd": 19
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 101,
+        "lineEnd": 106,
+        "columnStart": 4,
+        "columnEnd": 39
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "#\n# NOTE: THIS DOCKERFILE IS GENERATED VIA \"apply-templates.sh\"\n#\n# PLEASE DO NOT EDIT IT DIRECTLY.\n#\n\nFROM ubuntu:focal\n\n# add our user and group first to make sure their IDs get assigned consistently, regardless of whatever dependencies get added\nRUN set -eux; \\\n\tgroupadd --gid 999 --system mongodb; \\\n\tuseradd --uid 999 --system --gid mongodb --home-dir /data/db mongodb; \\\n\tmkdir -p /data/db /data/configdb; \\\n\tchown -R mongodb:mongodb /data/db /data/configdb\n\nRUN set -eux; \\\n\tapt-get update; \\\n\tapt-get install -y --no-install-recommends \\\n\t\tca-certificates \\\n\t\tjq \\\n\t\tnumactl \\\n\t; \\\n\tif ! command -v ps > /dev/null; then \\\n\t\tapt-get install -y --no-install-recommends procps; \\\n\tfi; \\\n\trm -rf /var/lib/apt/lists/*\n\n# grab gosu for easy step-down from root (https://github.com/tianon/gosu/releases)\nENV GOSU_VERSION 1.12\n# grab \"js-yaml\" for parsing mongod's YAML config files (https://github.com/nodeca/js-yaml/releases)\nENV JSYAML_VERSION 3.13.1\n\nRUN set -ex; \\\n\n\tsavedAptMark=\"$(apt-mark showmanual)\"; \\\n\tapt-get update; \\\n\tapt-get install -y --no-install-recommends \\\n\t\twget \\\n\t; \\\n\tif ! command -v gpg > /dev/null;then \\\n\t\tapt-get install -y --no-install-recommends gnupg dirmngr; \\\n\t\tsavedAptMark=\"$savedAptMark gnupg dirmngr\"; \\\n\telif gpg --batch --version | grep -q '^gpg (GnuPG) 1\\.'; ;then \\\n# \"This package provides support for HKPS keyservers.\" (GnuPG 1.x only)\n\t\tapt-get install -y --no-install-recommends gnupg-curl; \\\n\tfi; \\\n\trm -rf /var/lib/apt/lists/*; \\\n\n\tdpkgArch=\"$(dpkg --print-architecture | awk -F- '{ print $NF }')\"; \\\n\twget -O /usr/local/bin/gosu \"https://github.com/tianon/gosu/releases/download/$GOSU_VERSION/gosu-$dpkgArch\"; \\\n\twget -O /usr/local/bin/gosu.asc \"https://github.com/tianon/gosu/releases/download/$GOSU_VERSION/gosu-$dpkgArch.asc\"; \\\n\texport GNUPGHOME=\"$(mktemp -d)\"; rm -rf -d \\\n\tgpg --batch --keyserver hkps://keys.openpgp.org --recv-keys B42F6819007F00F88E364FD4036A9C25BF357DD4; \\\n\tgpg --batch --verify /usr/local/bin/gosu.asc /usr/local/bin/gosu; \\\n\tcommand -v gpgconf && gpgconf --kill all || :; \\\n\trm -r \"$GNUPGHOME\" /usr/local/bin/gosu.asc; \\\n\n\twget -O /js-yaml.js \"https://github.com/nodeca/js-yaml/raw/${JSYAML_VERSION}/dist/js-yaml.js\"; \\\n# TODO some sort of download verification here\n\n\tapt-mark auto '.*' > /dev/null; \\\n\tapt-mark manual $savedAptMark > /dev/null; \\\n\tapt-get purge -y --auto-remove -o APT::AutoRemove::RecommendsImportant=false; \\\n\n# smoke test\n\tchmod +x /usr/local/bin/gosu; \\\n\tgosu --version; \\\n\tgosu nobody true\n\nRUN mkdir /docker-entrypoint-initdb.d\n\nRUN set -ex; \\\n\texport GNUPGHOME=\"$(mktemp -d)\"; rm -rf -d \\\n\tset -- '20691EEC35216C63CAF66CE1656408E390CFB1F5'; \\\n\tfor key; do \\\n\t\tgpg --batch --keyserver keyserver.ubuntu.com --recv-keys \"$key\"; \\\n\tdone; \\\n\tmkdir -p /etc/apt/keyrings; \\\n\tgpg --batch --export \"$@\" > /etc/apt/keyrings/mongodb.gpg; \\\n\tcommand -v gpgconf && gpgconf --kill all || :; \\\n\trm -r \"$GNUPGHOME\"\n\n# Allow build-time overrides (eg. to build image with MongoDB Enterprise version)\n# Options for MONGO_PACKAGE: mongodb-org OR mongodb-enterprise\n# Options for MONGO_REPO: repo.mongodb.org OR repo.mongodb.com\n# Example: docker build --build-arg MONGO_PACKAGE=mongodb-enterprise --build-arg MONGO_REPO=repo.mongodb.com .\nARG MONGO_PACKAGE=mongodb-org\nARG MONGO_REPO=repo.mongodb.org\nENV MONGO_PACKAGE=${MONGO_PACKAGE} MONGO_REPO=${MONGO_REPO}\n\nENV MONGO_MAJOR 4.4\nRUN echo \"deb [ signed-by=/etc/apt/keyrings/mongodb.gpg ] http://$MONGO_REPO/apt/ubuntu focal/${MONGO_PACKAGE%-unstable}/$MONGO_MAJOR multiverse\" | tee \"/etc/apt/sources.list.d/${MONGO_PACKAGE%-unstable}.list\"\n\n# https://docs.mongodb.org/master/release-notes/4.4/\nENV MONGO_VERSION 4.4.15\n# 06/15/2022, https://github.com/mongodb/mongo/tree/bc17cf2c788c5dda2801a090ea79da5ff7d5fac9\n\nRUN set -x \\\n# installing \"mongodb-enterprise\" pulls in \"tzdata\" which prompts for input\n\t&& export DEBIAN_FRONTEND=noninteractive \\\n\t&& apt-get update \\\n\t&& apt-get install --no-install-recommends -y \\\n\t\t${MONGO_PACKAGE}=$MONGO_VERSION \\\n\t\t${MONGO_PACKAGE}-server=$MONGO_VERSION \\\n\t\t${MONGO_PACKAGE}-shell=$MONGO_VERSION \\\n\t\t${MONGO_PACKAGE}-mongos=$MONGO_VERSION \\\n\t\t${MONGO_PACKAGE}-tools=$MONGO_VERSION \\\n\t&& rm -rf /var/lib/apt/lists/* \\\n\t&& rm -rf /var/lib/mongodb \\\n\t&& mv /etc/mongod.conf /etc/mongod.conf.orig\n\nVOLUME /data/db /data/configdb\n\n# ensure that if running as custom user that \"mongosh\" has a valid \"HOME\"\n# https://github.com/docker-library/mongo/issues/524\nENV HOME /data/db\n\nCOPY docker-entrypoint.sh /usr/local/bin/\nENTRYPOINT [\"docker-entrypoint.sh\"]\n\nEXPOSE 27017\nCMD [\"mongod\"]\n"
+}

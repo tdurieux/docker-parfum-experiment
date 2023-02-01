@@ -1,0 +1,1 @@
+# Image for building OpenGL & Allegro 5 programs for Linux.

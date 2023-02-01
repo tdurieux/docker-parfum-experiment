@@ -1,0 +1,54 @@
+{
+  "startTime": 1674251170423,
+  "endTime": 1674251171189,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 17,
+        "lineEnd": 17,
+        "columnStart": 2,
+        "columnEnd": 86
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 36,
+        "lineEnd": 39,
+        "columnStart": 2,
+        "columnEnd": 14
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 24,
+        "lineEnd": 28,
+        "columnStart": 2,
+        "columnEnd": 9
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 36,
+        "lineEnd": 39,
+        "columnStart": 2,
+        "columnEnd": 14
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 35,
+        "lineEnd": 38,
+        "columnStart": 2,
+        "columnEnd": 14
+      }
+    }
+  ],
+  "repairedDockerfile": "# bump: yt-dlp link \"Release notes\" https://github.com/yt-dlp/yt-dlp/releases/tag/$LATEST\nARG YT_DLP=2022.06.29\n# bump: static-ffmpeg /FFMPEG_VERSION=([\\d.-]+)/ docker:mwader/static-ffmpeg|/^\\d[0-9.-]*$/|sort\nARG FFMPEG_VERSION=5.0.1-3\n# bump: golang /GOLANG_VERSION=([\\d.]+)/ docker:golang|^1\n# bump: golang link \"Release notes\" https://golang.org/doc/devel/release.html\nARG GOLANG_VERSION=1.18.4\n# bump: alpine /ALPINE_VERSION=([\\d.]+)/ docker:alpine|^3\n# bump: alpine link \"Release notes\" https://alpinelinux.org/posts/Alpine-$LATEST-released.html\nARG ALPINE_VERSION=3.16.0\n\nFROM mwader/static-ffmpeg:$FFMPEG_VERSION AS ffmpeg\n\nFROM golang:$GOLANG_VERSION AS yt-dlp\nARG YT_DLP\nRUN \\\n  curl -f -L https://github.com/yt-dlp/yt-dlp/releases/download/$YT_DLP/yt-dlp -o /yt-dlp && \\\n  chmod a+x /yt-dlp\n\nFROM golang:$GOLANG_VERSION AS ydls-base\nWORKDIR /src\nRUN \\\n  apt-get update -q && \\\n  apt-get install --no-install-recommends -qy \\\n  python-is-python3 \\\n  python3-pycryptodome \\\n  rtmpdump \\\n  mplayer && rm -rf /var/lib/apt/lists/*;\n\nCOPY --from=ffmpeg /ffmpeg /ffprobe /usr/local/bin/\nCOPY --from=yt-dlp /yt-dlp /usr/local/bin/\n\nFROM ydls-base AS ydls-dev\nARG TARGETARCH\nRUN \\\n  apt-get install --no-install-recommends -qy \\\n  less \\\n  jq \\\n  bsdmainutils && rm -rf /var/lib/apt/lists/*;\n\nFROM ydls-base AS ydls-builder\nCOPY go.mod go.sum /src/\nCOPY cmd /src/cmd\nCOPY internal /src/internal\nCOPY ydls.json /src\nCOPY ydls.json /etc\n\n# hack to conditionally get git commit if possible\nCOPY Dockerfile .git* /src/.git/\nRUN (git describe --always 2>/dev/null || echo nogit) > .GIT_COMMIT\n\n# -buildvcs=false for now\n# https://github.com/golang/go/issues/51723\n# -race only for amd64 for now, should work on arm64 etc but seems to not work in qemu\nRUN \\\n  CONFIG=/src/ydls.json \\\n  TEST_EXTERNAL=1 \\\n  go test -timeout=30m -buildvcs=false -v -cover $([ \"$TARGETARCH\" = \"amd64\" ] && echo -race) ./...\n\nRUN \\\n  go install \\\n  -buildvcs=false \\\n  -installsuffix netgo \\\n  -tags netgo \\\n  -ldflags \"-X main.gitCommit=$(cat .GIT_COMMIT)\" \\\n  ./cmd/ydls\nRUN \\\n  CONFIG=/etc/ydls.json cmd/ydls/ydls_server_test.sh && \\\n  CONFIG=/etc/ydls.json cmd/ydls/ydls_get_test.sh\n\nFROM alpine:$ALPINE_VERSION\nLABEL maintainer=\"Mattias Wadman mattias.wadman@gmail.com\"\nENV PORT=8080\nENV LISTEN=:$PORT\nENV CONFIG=/etc/ydls.json\n\nRUN apk add --no-cache \\\n  ca-certificates \\\n  tini \\\n  python3 \\\n  py3-pycryptodome \\\n  rtmpdump \\\n  mplayer\n# make python3 default python, symlink seems to be the way the official python alpine\n# image does it https://github.com/docker-library/python/blob/master/3.8/alpine3.10/Dockerfile\nRUN ln -s /usr/bin/python3 /usr/bin/python\nCOPY --from=ffmpeg /ffmpeg /ffprobe /usr/local/bin/\nCOPY --from=yt-dlp /yt-dlp /usr/local/bin/\nCOPY --from=ydls-builder /go/bin/ydls /usr/local/bin/\nCOPY entrypoint.sh /usr/local/bin\nCOPY ydls.json $CONFIG\n\n# make sure all binaries work\nRUN \\\n  ffmpeg -version && \\\n  ffprobe -version && \\\n  yt-dlp --version && \\\n  ydls -version\n\nUSER nobody\nEXPOSE $PORT/tcp\nENTRYPOINT [\"/usr/local/bin/entrypoint.sh\"]\n"
+}

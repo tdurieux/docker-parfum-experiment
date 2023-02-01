@@ -1,0 +1,1 @@
+#FROM dev.sf.dockerhub.stgwebank/webank/mlss-di:nginx-1.10-auth-request

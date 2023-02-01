@@ -1,0 +1,81 @@
+{
+  "startTime": 1674242366771,
+  "endTime": 1674242367121,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 21,
+        "lineEnd": 21,
+        "columnStart": 4,
+        "columnEnd": 93
+      }
+    },
+    {
+      "rule": "curlUseHttpsUrl",
+      "position": {
+        "lineStart": 21,
+        "lineEnd": 21,
+        "columnStart": 4,
+        "columnEnd": 93
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 59,
+        "lineEnd": 59,
+        "columnStart": 4,
+        "columnEnd": 53
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 6,
+        "lineEnd": 17,
+        "columnStart": 4,
+        "columnEnd": 12
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 45,
+        "lineEnd": 54,
+        "columnStart": 4,
+        "columnEnd": 7
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 59,
+        "lineEnd": 59,
+        "columnStart": 4,
+        "columnEnd": 53
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 71,
+        "lineEnd": 75,
+        "columnStart": 4,
+        "columnEnd": 19
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 59,
+        "lineEnd": 59,
+        "columnStart": 4,
+        "columnEnd": 53
+      }
+    }
+  ],
+  "repairedDockerfile": "# In the first container we want to assemble the `wasi-sysroot` by compiling it\n# from source. This requires a clang 8.0+ compiler with enough wasm support and\n# then we're just running a standard `make` inside of what we clone.\nFROM ubuntu:18.04 as wasi-sysroot\n\nRUN apt-get update && \\\n    apt-get install -y --no-install-recommends \\\n    ca-certificates \\\n    clang \\\n    cmake \\\n    curl \\\n    g++ \\\n    git \\\n    libc6-dev \\\n    libclang-dev \\\n    make \\\n    ssh \\\n    xz-utils && rm -rf /var/lib/apt/lists/*;\n\n# Fetch clang 8.0+ which is used to compile the wasi target and link our\n# programs together.\nRUN curl -f https://releases.llvm.org/8.0.0/clang+llvm-8.0.0-x86_64-linux-gnu-ubuntu-18.04.tar.xz | tar xJf -\nRUN mv /clang+llvm-8.0.0-x86_64-linux-gnu-ubuntu-18.04 /wasmcc\n\n# Note that we're using `git reset --hard` to pin to a specific commit for\n# verification for now. The sysroot is currently in somewhat of a state of flux\n# and is expected to have breaking changes, so this is an attempt to mitigate\n# those breaking changes on `libc`'s own CI\nRUN git clone https://github.com/CraneStation/wasi-sysroot && \\\n  cd wasi-sysroot && \\\n  git reset --hard eee6ee7566e26f2535eb6088c8494a112ff423b9\nRUN make -C wasi-sysroot install -j $(nproc) WASM_CC=/wasmcc/bin/clang INSTALL_DIR=/wasi-sysroot\n\n# This is a small wrapper script which executes the actual clang binary in\n# `/wasmcc` and then is sure to pass the right `--sysroot` argument which we\n# just built above.\nCOPY docker/wasm32-wasi/clang.sh /wasi-sysroot/bin/clang\n\n# In the second container we're going to build the `wasmtime` binary which is\n# used to execute wasi executables. This is a standard Rust project so we're\n# just checking out a known revision (which pairs with the sysroot one we\n# downlaoded above) and then we're building it with Cargo\nFROM ubuntu:18.04 as wasmtime\n\nRUN apt-get update && \\\n    apt-get install -y --no-install-recommends \\\n    ca-certificates \\\n    clang \\\n    cmake \\\n    curl \\\n    g++ \\\n    git \\\n    libclang-dev \\\n    make \\\n    ssh && rm -rf /var/lib/apt/lists/*;\n\nRUN curl -sSf https://sh.rustup.rs |  sh -s -- -y\nENV PATH=/root/.cargo/bin:$PATH\n\nRUN apt-get install -y --no-install-recommends python && rm -rf /var/lib/apt/lists/*;\nRUN git clone --recursive https://github.com/CraneStation/wasmtime wasmtime && \\\n  cd wasmtime && \\\n  git reset --hard 67edb00f29b62864b00179fe4bfa99bc29973285\nRUN cargo build --release --manifest-path wasmtime/Cargo.toml\n\n# And finally in the last image we're going to assemble everything together.\n# We'll install things needed at runtime for now and then copy over the\n# sysroot/wasmtime artifacts into their final location.\nFROM ubuntu:18.04\n\nRUN apt-get update && \\\n    apt-get install -y --no-install-recommends \\\n    gcc \\\n    libc6-dev \\\n    libxml2 \\\n    ca-certificates && rm -rf /var/lib/apt/lists/*;\n\n# Copy over clang we downloaded to link executables ...\nCOPY --from=wasi-sysroot /wasmcc /wasmcc/\n# ... and the sysroot we built to link executables against ...\nCOPY --from=wasi-sysroot /wasi-sysroot/ /wasi-sysroot/\n# ... and finally wasmtime to actually execute binaries\nCOPY --from=wasmtime /wasmtime/target/release/wasmtime /usr/bin/\n\n# Of note here is our clang wrapper which just executes a normal clang\n# executable with the right sysroot, and then we're sure to turn off the\n# crt-static feature to ensure that the CRT that we're specifying with `clang`\n# is used.\nENV CARGO_TARGET_WASM32_WASI_RUNNER=wasmtime \\\n  CARGO_TARGET_WASM32_WASI_LINKER=/wasi-sysroot/bin/clang \\\n  CC_wasm32_wasi=/wasi-sysroot/bin/clang \\\n  PATH=$PATH:/rust/bin \\\n  RUSTFLAGS=-Ctarget-feature=-crt-static\n"
+}

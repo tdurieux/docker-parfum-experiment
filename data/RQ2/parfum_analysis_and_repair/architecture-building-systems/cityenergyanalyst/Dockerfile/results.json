@@ -1,0 +1,44 @@
+{
+  "startTime": 1674254972745,
+  "endTime": 1674254973634,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 22,
+        "lineEnd": 27,
+        "columnStart": 18,
+        "columnEnd": 16
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 53,
+        "lineEnd": 53,
+        "columnStart": 22,
+        "columnEnd": 47
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 22,
+        "lineEnd": 27,
+        "columnStart": 18,
+        "columnEnd": 16
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 53,
+        "lineEnd": 53,
+        "columnStart": 22,
+        "columnEnd": 47
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM condaforge/mambaforge:latest as cea-build\n\n# create the conda environment and install cea\nCOPY environment.yml /tmp/environment.yml\nRUN mamba env create -f /tmp/environment.yml -n cea && mamba clean -afy\n\n# conda-pack the environment\nRUN mamba install -c conda-forge conda-pack\nRUN conda-pack -n cea -o /tmp/env.tar \\\n&& mkdir /venv \\\n&& cd /venv \\\n&& tar xf /tmp/env.tar \\\n&& rm /tmp/env.tar\nRUN /venv/bin/conda-unpack\n\n# install cea after dependencies to avoid running conda too many times when rebuilding\nCOPY . /cea\nRUN /bin/bash -c \"source /venv/bin/activate && pip install /cea\"\n\n# Build Daysim in image to prevent errors in OS lib dependencies\nFROM ubuntu:focal AS daysim-build\n\nRUN apt update && DEBIAN_FRONTEND=\"noninteractive\" apt --no-install-recommends install -y \\\ngit \\\ncmake \\\nbuild-essential \\\nlibgl1-mesa-dev \\\nlibglu1-mesa-dev && rm -rf /var/lib/apt/lists/*;\n\nRUN git clone https://github.com/MITSustainableDesignLab/Daysim.git /Daysim\n\n# only build required binaries\nRUN mkdir build \\\n&& cd build \\\n&& cmake -DCMAKE_BUILD_TYPE=Release -DBUILD_HEADLESS=ON -DOpenGL_GL_PREFERENCE=GLVND /Daysim \\\n&& make ds_illum \\\n&& make epw2wea \\\n&& make gen_dc \\\n&& make oconv \\\n&& make radfiles2daysim \\\n&& mv ./bin /Daysim_build\n\n# uncommenting line in CMakeLists to build rtrace_dc\nRUN sed -i 's/#add_definitions(-DDAYSIM)/add_definitions(-DDAYSIM)/' /Daysim/src/rt/CMakeLists.txt \\\n&& cd build \\\n&& cmake -DCMAKE_BUILD_TYPE=Release -DBUILD_HEADLESS=ON -DOpenGL_GL_PREFERENCE=GLVND /Daysim \\\n&& make rtrace \\\n&& mv ./bin/rtrace /Daysim_build/rtrace_dc\n\n\nFROM ubuntu:latest AS cea-runtime\n\n# For pythonOCC to work (used by py4design)\nRUN apt-get update && apt-get install --no-install-recommends -y libgl1 && rm -rf /var/lib/apt/lists/*;\n\nCOPY --from=cea-build /venv /venv\nCOPY --from=daysim-build /Daysim_build /venv/Daysim\n\n# bugfix for matplotlib, see here: https://stackoverflow.com/questions/37604289/tkinter-tclerror-no-display-name-and-no-display-environment-variable\nRUN mkdir -p ~/.config/matplotlib && echo \"backend: Agg\" > ~/.config/matplotlib/matplotlibrc\n\n# add a folder for projects\nRUN mkdir /projects\nRUN /bin/bash -c \"source /venv/bin/activate && cea-config write --general:project /projects\"\n\n# When image is run, run the code with the environment\n# activated:\nENV PATH \"/venv/bin:/venv/cea/bin:/venv/Daysim:$PATH\"\nSHELL [\"/bin/bash\", \"-c\"]\nCMD cea dashboard\n"
+}

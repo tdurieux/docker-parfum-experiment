@@ -1,0 +1,35 @@
+{
+  "startTime": 1674215317151,
+  "endTime": 1674215318241,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 9,
+        "lineEnd": 9,
+        "columnStart": 5,
+        "columnEnd": 65
+      }
+    },
+    {
+      "rule": "gemUpdateSystemRmRootGem",
+      "position": {
+        "lineStart": 37,
+        "lineEnd": 37,
+        "columnStart": 4,
+        "columnEnd": 23
+      }
+    },
+    {
+      "rule": "gemUpdateNoDocument",
+      "position": {
+        "lineStart": 37,
+        "lineEnd": 37,
+        "columnStart": 4,
+        "columnEnd": 23
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "ARG RUBY_VERSION=3.1.1\nFROM ruby:$RUBY_VERSION-slim-buster as base\n\nCOPY .docker/Aptfile /tmp/Aptfile\n\nARG PG_MAJOR=13\nENV DEBIAN_FRONTEND=noninteractive\nRUN apt-get update -qq \\\n  && apt-get install -yq --no-install-recommends curl gnupg2 \\\n  && curl -f -sSL https://www.postgresql.org/media/keys/ACCC4CF8.asc | apt-key add - \\\n  && echo 'deb http://apt.postgresql.org/pub/repos/apt/ buster-pgdg main' $PG_MAJOR > /etc/apt/sources.list.d/pgdg.list \\\n  && apt-get update -qq \\\n  && apt-get -yq dist-upgrade \\\n  && apt-get install -yq --no-install-recommends \\\n    libpq-dev \\\n    postgresql-client-$PG_MAJOR \\\n  $(cat /tmp/Aptfile | xargs) \\\n  && apt-get purge -y curl gnupg2 \\\n  && apt-get clean \\\n  && rm -rf /var/cache/apt/archives/* \\\n  && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/* \\\n  && truncate -s 0 /var/log/*log\n\nARG BUNDLER_VERSION=2.3.9\nENV GEM_HOME=/usr/local/bundle\nENV BUNDLE_PATH=$GEM_HOME\nENV BUNDLE_APP_CONFIG=$BUNDLE_PATH\nENV BUNDLE_BIN=/usr/local/bin \\\n  BUNDLE_JOBS=4 \\\n  BUNDLE_RETRY=3 \\\n  MAKE=\"make --jobs 8\" \\\n  LANG=C.UTF-8 \\\n  PATH=/app/bin:$PATH\n\nRUN groupadd --gid 1001 nonroot \\\n  && useradd --uid 1001 --gid nonroot --shell /bin/bash --create-home nonroot\nRUN mkdir -p /usr/local/etc \\\n  && { \\\n    echo 'install: --no-document'; \\\n    echo 'update: --no-document'; \\\n  } >> /usr/local/etc/gemrc;\n\nRUN gem update --system && \\\n  rm -f /usr/local/bin/ruby/gems/*/specifications/default/bundler-*.gemspec && \\\n  gem install bundler -v $BUNDLER_VERSION && rm -rf /root/.gem;\n\n# chown /app so it's writable by yarn & bootsnap\nRUN mkdir /app && chown -R nonroot:nonroot /app\n\nWORKDIR /app\n\nFROM base as builder\n\nRUN apt-get update -qq \\\n  && apt-get install -yq --no-install-recommends build-essential git \\\n  && apt-get clean \\\n  && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/* \\\n  && truncate -s 0 /var/log/*log\n\nFROM builder as gems\n\nCOPY --chown=nonroot:nonroot .bundle/ci-deploy/config /app/.bundle/config\nCOPY --chown=nonroot:nonroot Gemfile* /app/\nRUN bundle install\n\nFROM gems as test\nCOPY --chown=nonroot:nonroot .bundle/ci-build/config /app/.bundle/config\nENV RAILS_ENV=test\n\nRUN bundle config set --local without deploy && bundle install\nCOPY --chown=nonroot:nonroot . /app\n\nFROM gems as gems_and_assets\n\nCOPY --chown=nonroot:nonroot . /app\nCOPY --chown=nonroot:nonroot .docker/application.yml /app/config\nARG RAILS_ENV=production\n\nRUN --mount=type=secret,id=app_secrets,target=/app/config/application.yml bundle exec rails assets:precompile \\\n  && (rm -rf /tmp/* || true) \\\n  && rm -rf $BUNDLE_PATH/*.gem \\\n  && find $BUNDLE_PATH/ruby -name \"*.c\" -delete \\\n  && find $BUNDLE_PATH/ruby -name \"*.o\" -delete \\\n  && find $BUNDLE_PATH/ruby -name \".git\"  -type d -prune -execdir rm -rf {} + \\\n  && bundle exec rails tmp:clear \\\n  && bundle exec bootsnap precompile --gemfile app/ lib/\n\n# https://github.com/rubygems/rubygems/issues/3225\nRUN rm -rf /usr/local/bundle/ruby/*/cache\n\nFROM base as deploy\n\n# copy the gems\nCOPY --chown=nonroot:nonroot --from=gems_and_assets $BUNDLE_PATH $BUNDLE_PATH\n# copy app code\nCOPY --chown=nonroot:nonroot . /app\n# copy bootsnap cache\nCOPY --chown=nonroot:nonroot --from=gems_and_assets /app/tmp /app/tmp\n# copy assets\nCOPY --chown=nonroot:nonroot --from=gems_and_assets /app/public/assets /app/public/assets\n\nUSER nonroot\nENV RAILS_LOG_TO_STDOUT=true\n\nCMD bundle exec rails s -b 0.0.0.0\n"
+}

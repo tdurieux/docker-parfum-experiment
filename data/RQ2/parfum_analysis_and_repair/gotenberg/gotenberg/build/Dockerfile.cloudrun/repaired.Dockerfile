@@ -1,0 +1,12 @@
+# Note: ARG instructions do not create additional layers.
+# Instead, next layers will concatenate them.
+ARG DOCKER_REPOSITORY
+ARG GOTENBERG_VERSION
+
+FROM $DOCKER_REPOSITORY/gotenberg:$GOTENBERG_VERSION
+
+USER root
+
+# For security reasons, the non-root user gotenberg does not own the Tini binary by default.
+# However, some providers like Cloud Run from Google Cloud cannot start a Docker container in that case.
+# See https://github.com/gotenberg/gotenberg/issues/90#issuecomment-543551353.

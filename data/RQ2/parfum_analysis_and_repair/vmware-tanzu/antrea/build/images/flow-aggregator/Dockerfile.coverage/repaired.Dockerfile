@@ -1,0 +1,20 @@
+ARG GO_VERSION
+FROM golang:${GO_VERSION} as flow-aggregator-build
+
+WORKDIR /antrea
+
+COPY . /antrea
+
+RUN make flow-aggregator antctl-linux flow-aggregator-instr-binary antctl-instr-binary
+RUN mv bin/antctl-linux bin/antctl
+
+FROM ubuntu:20.04
+
+LABEL maintainer="Antrea <projectantrea-dev@googlegroups.com>"
+LABEL description="The docker image for the flow aggregator with code coverage measurement enabled for testing purposes."
+
+USER root
+
+COPY --from=flow-aggregator-build /antrea/bin/flow-aggregator* /usr/local/bin/
+COPY --from=flow-aggregator-build /antrea/test/e2e/coverage/flow-aggregator-arg-file /
+COPY --from=flow-aggregator-build /antrea/bin/antctl* /usr/local/bin/

@@ -1,0 +1,27 @@
+FROM amazeeio/node:14-builder as builder
+
+COPY packages/components /app/packages/components
+COPY src /app/src
+COPY package.json yarn.lock .eslintrc.js babel.config.js /app/
+RUN yarn install && yarn cache clean;
+WORKDIR /app/src
+RUN yarn run build-storybook && yarn cache clean;
+
+FROM amazeeio/node:14
+COPY --from=builder /app/src/public /app
+
+ARG LAGOON_GIT_BRANCH
+ENV LAGOON_GIT_BRANCH ${LAGOON_GIT_BRANCH}
+
+# force it to load the environment variable during build time. Otherwise it cannot read $LAGOON_GIT_BRANCH.
+RUN . /home/.bashrc \
+    && npm config set unsafe-perm true \
+    && npm install http-server -g \
+    # For JIRA commit script work. \
+    && if [ $LAGOON_GIT_BRANCH != "production" ] ; then \
+    apk --update --no-cache add curl; fi && npm cache clean --force;
+
+ENV HOST 0.0.0.0
+EXPOSE 3000
+
+CMD ["http-server", "-p", "3000"]

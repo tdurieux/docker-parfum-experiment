@@ -1,0 +1,1 @@
+# Copied from https://github.com/postgis/docker-postgis/blob/master/12-3.1/Dockerfile

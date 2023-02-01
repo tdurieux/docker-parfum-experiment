@@ -1,0 +1,1 @@
+RUN echo "I'm <${transformerName}, ${transformerSubName}> transformer! Install additional dependencies if this transformer requires them."

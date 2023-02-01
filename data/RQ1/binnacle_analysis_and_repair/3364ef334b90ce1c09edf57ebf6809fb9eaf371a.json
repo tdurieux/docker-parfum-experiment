@@ -1,0 +1,17 @@
+{
+  "startTime": 1674238692729,
+  "endTime": 1674238692848,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 39,
+        "lineEnd": 42,
+        "columnStart": 1,
+        "columnEnd": 2
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM debian:stretch\nMAINTAINER support@openremote.io\n\n# Install utilities\nRUN apt-get update && apt-get install -y --no-install-recommends \\\n        apt-transport-https \\\n        gnupg2 \\\n        software-properties-common \\\n        procps \\\n\t\tca-certificates \\\n\t\tcurl \\\n\t\twget \\\n\t&& rm -rf /var/lib/apt/lists/*\n\n# Default to UTF-8 file.encoding\nENV LANG C.UTF-8\n\n# add a simple script that can auto-detect the appropriate JAVA_HOME value\n# based on whether the JDK or only the JRE is installed\nRUN { \\\n\t\techo '#!/bin/sh'; \\\n\t\techo 'set -e'; \\\n\t\techo; \\\n\t\techo 'dirname \"$(dirname \"$(readlink -f \"$(which javac || which java)\")\")\"'; \\\n\t} > /usr/local/bin/docker-java-home \\\n\t&& chmod +x /usr/local/bin/docker-java-home\n\n# do some fancy footwork to create a JAVA_HOME that's cross-architecture-safe\nRUN ln -svT \"/usr/lib/jvm/java-8-openjdk-$(dpkg --print-architecture)\" /docker-java-home\nENV JAVA_HOME /docker-java-home\n\nRUN set -ex; \\\n\n# deal with slim variants not having man page directories (which causes \"update-alternatives\" to fail)\n\tif [ ! -d /usr/share/man/man1 ]; then \\\n\t\tmkdir -p /usr/share/man/man1; \\\n\tfi; \\\n\n\tapt-get update; \\\n\tapt-get install --no-install-recommends -y \\\n\t\topenjdk-8-jdk \\\n\t\tca-certificates-java \\\n\t; \\\n\trm -rf /var/lib/apt/lists/*; \\\n\n# verify that \"docker-java-home\" returns what we expect\n\t[ \"$(readlink -f \"$JAVA_HOME\")\" = \"$(docker-java-home)\" ]; \\\n\n# update-alternatives so that future installs of other OpenJDK versions don't change /usr/bin/java\n\tupdate-alternatives --get-selections | awk -v home=\"$(readlink -f \"$JAVA_HOME\")\" 'index($3, home) == 1 { $2 = \"manual\"; print | \"update-alternatives --set-selections\" }'; \\\n# ... and verify that it actually worked for one of the alternatives we care about\n\tupdate-alternatives --query java | grep -q 'Status: manual'\n\n# Run postinst because it might not happen on install\nRUN /var/lib/dpkg/info/ca-certificates-java.postinst configure\n\n# Add git commit label must be specified at build time using --build-arg GIT_COMMIT=dadadadadad\nARG GIT_COMMIT=unknown\nLABEL git-commit=$GIT_COMMIT\n\n############ EDITS ABOVE THIS LINE SHOULD BE DONE IN ALL DOCKERFILES! ################\n\nENV JAVA_OPTS -Xmx1g\n\nENV APP_DOCROOT /deployment/manager/app\nENV UI_DOCROOT /deployment/manager/ui\nENV SHARED_DOCROOT /deployment/manager/shared\nENV LOGGING_CONFIG_FILE /deployment/manager/logging.properties\nENV MAP_TILES_PATH /deployment/map/mapdata.mbtiles\nENV MAP_SETTINGS_PATH /deployment/map/mapsettings.json\n\nEXPOSE 8080\n\nHEALTHCHECK --interval=3s --timeout=3s --start-period=2s --retries=120 CMD curl --fail --silent http://localhost:8080 || exit 1\n\nWORKDIR /opt/app\n\nRUN mkdir -p /deployment/extensions\n\nADD lib /opt/app/lib\n\nENTRYPOINT java $JAVA_OPTS -cp /opt/app/lib/*:/deployment/manager/extensions/* org.openremote.manager.Main\n"
+}

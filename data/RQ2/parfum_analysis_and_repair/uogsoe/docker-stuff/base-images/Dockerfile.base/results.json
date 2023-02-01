@@ -1,0 +1,53 @@
+{
+  "startTime": 1674255030498,
+  "endTime": 1674255031655,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 40,
+        "lineEnd": 40,
+        "columnStart": 7,
+        "columnEnd": 72
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 41,
+        "lineEnd": 41,
+        "columnStart": 7,
+        "columnEnd": 79
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 70,
+        "lineEnd": 70,
+        "columnStart": 7,
+        "columnEnd": 92
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 74,
+        "lineEnd": 74,
+        "columnStart": 7,
+        "columnEnd": 32
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 71,
+        "lineEnd": 71,
+        "columnStart": 7,
+        "columnEnd": 28
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "ARG PHP_VERSION\n\nFROM php:${PHP_VERSION}-apache as prod\n\nARG PHP_VERSION\nARG PHP_REDIS_VERSION=5.0.2\nARG COMPOSER_VERSION=2.0.1\n\nLABEL org.opencontainers.image.source=https://github.com/UoGSoE/docker-stuff/ \\\n      org.opencontainers.image.vendor=\"University of Glasgow, School of Engineering\" \\\n      org.opencontainers.image.licenses=\"MIT\" \\\n      org.opencontainers.image.title=\"PHP ${PHP_VERSION} + Apache\" \\\n      org.opencontainers.image.description=\"PHP ${PHP_VERSION} with Apache and a set of php/os packages suitable for running Laravel apps\"\n\n# our default timezone and langauge\nENV TZ=Europe/London\nENV LANG=en_GB.UTF-8\n\n# Note: we only install reliable/core 1st-party php extensions here.\n#       If your app needs custom ones install them in the apps own\n#       Dockerfile _and pin the versions_! Eg:\n#       RUN pecl install memcached-2.2.0\n\nRUN apt-get update \\\n    # install some OS packages we need\n    && apt-get install -y --no-install-recommends libfreetype6-dev libjpeg62-turbo-dev libpng-dev libgmp-dev libldap2-dev netcat curl sqlite3 libsqlite3-dev libzip-dev unzip vim-tiny gosu git \\\n    # install php extensions\n    && case \"${PHP_VERSION}\" in \"7.4\"|\"rc\") docker-php-ext-configure gd --with-freetype --with-jpeg ;; *) docker-php-ext-configure gd --with-freetype-dir=/usr/include/ --with-jpeg-dir=/usr/include/ ;; esac \\\n    && docker-php-ext-install -j$(nproc) gd pdo pdo_mysql pdo_sqlite zip gmp bcmath pcntl ldap sysvmsg exif \\\n    # install the redis php extension\n    && pecl install redis-${PHP_REDIS_VERSION} \\\n    && echo \"extension=redis.so\" > /usr/local/etc/php/conf.d/redis.ini \\\n    # clear the apt cache\n    && rm -rf /var/lib/apt/lists/* /var/cache/debconf/templates* /var/lib/dpkg/status/* /var/log/dpkg.log /var/log/apt/term.log /var/cache/debconf/config.dat \\\n    # enable apache mod_rewrite for 'pretty' urls and mod_headers so we can add the container id\n    && a2enmod rewrite \\\n    && a2enmod headers \\\n    # give apache access to the system hostname (ie, the container-id)\n    && echo 'export HOSTNAME=`uname -n`' >> /etc/apache2/envvars \\\n    # install composer \\\n    && curl -f -o /tmp/composer-setup.php https://getcomposer.org/installer \\\n    && curl -f -o /tmp/composer-setup.sig https://composer.github.io/installer.sig \\\n    && php -r \"if (hash('SHA384', file_get_contents('/tmp/composer-setup.php')) !== trim(file_get_contents('/tmp/composer-setup.sig'))) { unlink('/tmp/composer-setup.php'); echo 'Invalid installer' . PHP_EOL; exit(1); }\" \\\n    && php /tmp/composer-setup.php --version=${COMPOSER_VERSION} --no-ansi --install-dir=/usr/local/bin --filename=composer --snapshot \\\n    && rm -f /tmp/composer-setup.* \\\n    # set the system timezone\n    && ln -snf /usr/share/zoneinfo/$TZ /etc/localtime \\\n    && echo $TZ > /etc/timezone\n\n# copy in the generic vhost for our 'default' app setup\nCOPY vhost.conf /etc/apache2/sites-available/000-default.conf\n# add in the basic php ini settings for uploading files and our timezone\nCOPY uploads.ini timezone.ini /usr/local/etc/php/conf.d/\n# and expose apache to docker\nEXPOSE 80\n\nFROM prod as ci\n\nARG PCOV_VERSION=1.0.6\n\n# The only additions for CI/QA is the 'pcov' extension by PHP internals developer\n# Joe Watkins (it provides code-coverage statistics without slowing down code.\n# https://github.com/krakjoe/pcov)\nENV DRIVER pcov\n# pecl install currently commented out as no pre-built package for ARM\n#RUN pecl install pcov \\\n#    && docker-php-ext-enable pcov \\\n#    && echo \"pcov.enabled = 1\" > /usr/local/etc/php/conf.d/pcov.ini\nWORKDIR /tmp\nRUN apt-get update \\\n    && curl -f -sLo pcov.tar.gz https://github.com/krakjoe/pcov/archive/v${PCOV_VERSION}.tar.gz \\\n    && tar -xvzf pcov.tar.gz \\\n    && cd pcov-${PCOV_VERSION} \\\n    && phpize \\\n    && ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" --enable-pcov \\\n    && make \\\n    && make install \\\n    && cd .. \\\n    && rm -fr pcov* && rm pcov.tar.gz\n"
+}

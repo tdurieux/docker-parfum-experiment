@@ -1,0 +1,35 @@
+{
+  "startTime": 1674216844407,
+  "endTime": 1674216845730,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 38,
+        "lineEnd": 38,
+        "columnStart": 4,
+        "columnEnd": 73
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 49,
+        "lineEnd": 49,
+        "columnStart": 4,
+        "columnEnd": 61
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 4,
+        "lineEnd": 25,
+        "columnStart": 25,
+        "columnEnd": 12
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# based on armhf-gnu/Dockerfile\nFROM ubuntu:20.04\n\nRUN echo 'debconf debconf/frontend select Noninteractive' | debconf-set-selections\nRUN apt-get update -y && apt-get install -y --no-install-recommends \\\n    bc \\\n    bison \\\n    ca-certificates \\\n    cmake \\\n    cpio \\\n    curl \\\n    debian-ports-archive-keyring \\\n    debootstrap \\\n    flex \\\n    gcc \\\n    gcc-riscv64-linux-gnu \\\n    git \\\n    g++-riscv64-linux-gnu \\\n    g++ \\\n    libc6-dev \\\n    libc6-dev-riscv64-cross \\\n    make \\\n    patch \\\n    python3 \\\n    qemu-system-misc \\\n    xz-utils && rm -rf /var/lib/apt/lists/*;\n\nENV ARCH=riscv\nENV CROSS_COMPILE=riscv64-linux-gnu-\n\nWORKDIR /build\n\n# From https://github.com/michaeljclark/busybear-linux/blob/master/conf/linux.config\nCOPY host-x86_64/riscv64gc-linux/linux.config /build\n\n# Compile the kernel that we're going to be emulating with. This is\n# basically just done to be compatible with the QEMU target that we're going\n# to be using when running tests.\nRUN curl -f https://cdn.kernel.org/pub/linux/kernel/v5.x/linux-5.6.16.tar.xz | tar xJf - && \\\n    cp linux.config linux-5.6.16/.config && \\\n    cd /build/linux-5.6.16 && \\\n    make olddefconfig && \\\n    make -j$(nproc) vmlinux && \\\n    cp vmlinux /tmp && \\\n    rm -rf linux-5.6.16\n\n# Compile an instance of busybox as this provides a lightweight system and init\n# binary which we will boot into. Only trick here is configuring busybox to\n# build static binaries.\nRUN curl -f https://busybox.net/downloads/busybox-1.31.1.tar.bz2 | tar xjf -\nCOPY host-x86_64/riscv64gc-linux/0001-Remove-stime-function-calls.patch /build/busybox-1.31.1/\nRUN cd /build/busybox-1.31.1 && \\\n    patch -p1 -i 0001-Remove-stime-function-calls.patch && \\\n    make defconfig && \\\n    sed -i 's/.*CONFIG_STATIC.*/CONFIG_STATIC=y/' .config && \\\n    make -j$(nproc) && \\\n    make install && \\\n    mv _install /tmp/rootfs && \\\n    cd /build && \\\n    rm -rf busybox-1.31.1\n\n# Download the ubuntu rootfs, which we'll use as a chroot for all our tests\n# This is only needed to provide /lib/* and /usr/lib/*\nWORKDIR /tmp\nRUN debootstrap --variant=minbase --arch=riscv64 --foreign focal /tmp/rootfs/ubuntu\nRUN cd rootfs && mkdir proc sys dev etc etc/init.d\n# rootfs/ubuntu/proc is in a weird state (access fails with ELOOP) until\n# rootfs/ubuntu/debootstrap/debootstrap --second-stage is run (under emulation),\n# but this takes ages. Instead hack it into a good enough state.\n# /proc is used by std::env::current_exe() (which is roughly\n# `readlink /proc/self/exe`)\nRUN cd rootfs/ubuntu && rm -rf proc && mkdir proc\n\n# Copy over our init script, which starts up our test server and also a few other\n# misc tasks\nCOPY scripts/qemu-bare-bones-rcS rootfs/etc/init.d/rcS\nRUN chmod +x rootfs/etc/init.d/rcS\n\n# Helper to quickly fill the entropy pool in the kernel\nCOPY scripts/qemu-bare-bones-addentropy.c /tmp/addentropy.c\nRUN riscv64-linux-gnu-gcc addentropy.c -o rootfs/addentropy -static\n\n# download and build the riscv bootloader\nRUN git clone https://github.com/riscv/riscv-pk\nWORKDIR /tmp/riscv-pk\n# nothing special about this revision: it is just master at the time of writing\n# v1.0.0 doesn't build\nRUN git checkout 5d9ed238e1cabfbca3c47f50d32894ce94bfc304\nRUN mkdir build && cd build && \\\n    ../configure --with-payload=/tmp/vmlinux --host=riscv64-linux-gnu && \\\n    make -j$(nproc) && \\\n    cp bbl /tmp\nWORKDIR /tmp\nRUN rm -rf /tmp/riscv-pk\n\nCOPY scripts/sccache.sh /scripts/\nRUN sh /scripts/sccache.sh\n\nENV RUST_CONFIGURE_ARGS --qemu-riscv64-rootfs=/tmp/rootfs\nENV SCRIPT python3 ../x.py test --target riscv64gc-unknown-linux-gnu\n\nENV NO_CHANGE_USER=1\n"
+}

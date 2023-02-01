@@ -1,0 +1,26 @@
+{
+  "startTime": 1674250868393,
+  "endTime": 1674250869675,
+  "originalSmells": [
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 21,
+        "lineEnd": 21,
+        "columnStart": 7,
+        "columnEnd": 25
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 13,
+        "lineEnd": 13,
+        "columnStart": 7,
+        "columnEnd": 54
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Build image\nFROM rust:alpine3.14 AS chef\n\nRUN set -x \\\n    # Add user\n    && addgroup --gid 10001 app \\\n    && adduser --disabled-password \\\n        --gecos '' \\\n        --ingroup app \\\n        --home /app \\\n        --uid 10001 \\\n        app \\\n    # Install required packages \\\n    && apk add --no-cache npm openssl-dev musl-dev make perl curl\n\nUSER app\nWORKDIR /app\n\nRUN set -x \\\n    # Install build tools\n    && RUSTFLAGS=-Ctarget-feature=-crt-static cargo install wasm-pack cargo-chef \\\n    && npm install rollup \\\n    && rustup target add wasm32-unknown-unknown && npm cache clean --force;\n\n# Prepare the dependency list.\nFROM chef AS planner\nCOPY . .\nRUN cargo chef prepare --recipe-path /tmp/recipe.json\n\n# Build dependencies.\nFROM chef AS builder\nCOPY --from=planner /tmp/recipe.json recipe.json\nRUN cargo chef cook --release -p lldap_app --target wasm32-unknown-unknown \\\n    && cargo chef cook --release -p lldap \\\n    && cargo chef cook --release -p migration-tool\n\n# Copy the source and build the app and server.\nCOPY --chown=app:app . .\nRUN cargo build --release -p lldap -p migration-tool \\\n    # Build the frontend.\n    && ./app/build.sh\n\n# Final image\nFROM alpine:3.14\n\nWORKDIR /app\n\nCOPY --from=builder /app/app/index_local.html app/index.html\nCOPY --from=builder /app/app/static app/static\nCOPY --from=builder /app/app/pkg app/pkg\nCOPY --from=builder /app/target/release/lldap /app/target/release/migration-tool ./\nCOPY docker-entrypoint.sh lldap_config.docker_template.toml ./\n\nRUN set -x \\\n    && apk add --no-cache bash \\\n    && for file in $(cat app/static/libraries.txt); do wget -P app/static \"$file\"; done \\\n    && for file in $(cat app/static/fonts/fonts.txt); do wget -P app/static/fonts \"$file\"; done \\\n    && chmod a+r -R .\n\nENV LDAP_PORT=3890\nENV HTTP_PORT=17170\n\nEXPOSE ${LDAP_PORT} ${HTTP_PORT}\n\nENTRYPOINT [\"/app/docker-entrypoint.sh\"]\nCMD [\"run\", \"--config-file\", \"/data/lldap_config.toml\"]\n"
+}

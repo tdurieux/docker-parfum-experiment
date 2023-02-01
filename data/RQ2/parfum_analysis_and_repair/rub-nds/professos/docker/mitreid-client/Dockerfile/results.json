@@ -1,0 +1,35 @@
+{
+  "startTime": 1674249377749,
+  "endTime": 1674249378384,
+  "originalSmells": [
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 27,
+        "lineEnd": 27,
+        "columnStart": 4,
+        "columnEnd": 23
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 7,
+        "lineEnd": 7,
+        "columnStart": 44,
+        "columnEnd": 76
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 7,
+        "lineEnd": 7,
+        "columnStart": 44,
+        "columnEnd": 76
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM maven:3-jdk-8 as builder\n\nENV HOME /opt/mitreidc-sp\n\n# Override from docker build --build-arg if you want.\nARG BRANCH=master\n\nRUN apt-get update && apt-get upgrade -y && apt-get install --no-install-recommends -y git wget sudo && apt-get clean && \\\n        mkdir -p $HOME && rm -rf /var/lib/apt/lists/*;\n\n# Install\nWORKDIR $HOME\n\n# fetch the source code using provided branch\nRUN git clone --branch $BRANCH https://github.com/mitreid-connect/simple-web-app.git .\n\n# update config\n#COPY ./config/servlet-context.xml $HOME/src/main/webapp/WEB-INF/spring/appServlet/servlet-context.xml\n\n# compile simple-web-app without generating doc and tests\nRUN mvn -Dmaven.javadoc.skip=true -Dmaven.test.skip=true clean package\n\n#####\n\nFROM jboss/wildfly:14.0.1.Final\n\nUSER root\nRUN yum -y install perl && rm -rf /var/cache/yum\nUSER jboss\n\nENV HOME /opt/mitreidc-sp\n\n# copy demo client to deployment folder\nCOPY --from=builder $HOME/target/simple-web-app.war /opt/jboss/wildfly/standalone/deployments/simple-web-app.war\n\n# update config in .war, so we dont need to recompile when updating config\nUSER root\nARG TEST_RP_HOST\nCOPY ./config/servlet-context-template.xml ./servlet-context-template.xml\nRUN mkdir -p WEB-INF/spring/appServlet/\nRUN perl -p -e 's/\\$\\{(\\w+)\\}/(exists $ENV{$1}?$ENV{$1}:\"missing variable $1\")/eg' < ./servlet-context-template.xml > WEB-INF/spring/appServlet/servlet-context.xml\nUSER jboss\nRUN jar uf /opt/jboss/wildfly/standalone/deployments/simple-web-app.war WEB-INF/spring/appServlet/servlet-context.xml\n\n## add a safeguard file that contains controller domain\nARG CONTROLLER_URL\nRUN mkdir -p /opt/jboss/wildfly/static/\nRUN echo \"$CONTROLLER_URL\" > /opt/jboss/wildfly/static/static-professos.txt\nUSER root\nRUN chown jboss:jboss -R /opt/jboss/wildfly/static/static-professos.txt\n# add wildfly config that serves the static safeguard file\nCOPY ./config/standalone.xml /opt/jboss/wildfly/standalone/configuration/standalone.xml\n\n# copy ca certificates\nCOPY ./config/*.crt /etc/pki/ca-trust/source/anchors/\nRUN chmod 0644 /etc/pki/ca-trust/source/anchors/*\nRUN update-ca-trust\n\n# comment, to allow debugging as root\nUSER jboss\n\n# Expose the ports we're interested in\nEXPOSE 8080\n\n# uncomment below, if you need to acces the management interface\n# EXPOSE 9990\n# RUN /opt/jboss/wildfly/bin/add-user.sh admin Admin#70365 --silent\n\n# Set the default command to run on boot\n# This will boot WildFly in the standalone mode and bind to all interface\nCMD [\"/opt/jboss/wildfly/bin/standalone.sh\", \"-b\", \"0.0.0.0\", \"-bmanagement\", \"0.0.0.0\"]\n"
+}

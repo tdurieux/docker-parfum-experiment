@@ -1,0 +1,11 @@
+FROM ubuntu:18.04
+
+RUN apt-get update && apt-get install --no-install-recommends -y \
+    ca-certificates && rm -rf /var/lib/apt/lists/*;
+
+ADD https://github.com/aktau/github-release/releases/download/v0.7.2/linux-amd64-github-release.tar.bz2 /tmp/github-release.tar.bz2
+
+RUN tar -xjf /tmp/github-release.tar.bz2 \
+    && cp ./bin/linux/amd64/* /bin && rm /tmp/github-release.tar.bz2
+
+

@@ -1,0 +1,44 @@
+{
+  "startTime": 1674220720952,
+  "endTime": 1674220722154,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 147,
+        "lineEnd": 147,
+        "columnStart": 4,
+        "columnEnd": 20
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 171,
+        "lineEnd": 171,
+        "columnStart": 4,
+        "columnEnd": 40
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 90,
+        "lineEnd": 90,
+        "columnStart": 4,
+        "columnEnd": 51
+      }
+    },
+    {
+      "rule": "aptGetInstallUseY",
+      "position": {
+        "lineStart": 27,
+        "lineEnd": 54,
+        "columnStart": 4,
+        "columnEnd": 13
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Copyright (c) Microsoft Corporation. All rights reserved.\n# Licensed under the MIT License.\n\nFROM nvidia/cuda:11.1-cudnn8-devel-ubuntu18.04\n\nUSER root:root\n\n# ------------------------------------------------------------------------------------------------ #\n# Environment variables\n# ------------------------------------------------------------------------------------------------ #\n\nENV LANG=C.UTF-8 LC_ALL=C.UTF-8\nENV DEBIAN_FRONTEND noninteractive\nENV LD_LIBRARY_PATH \"/usr/local/cuda/extras/CUPTI/lib64:${LD_LIBRARY_PATH}\"\n\nENV STAGE_DIR=/root/gpu/install \\\n    CUDA_HOME=/usr/local/cuda \\\n    CUDNN_HOME=/usr/lib/x86_64-linux-gnu \\\n    CUDACXX=/usr/local/cuda/bin/nvcc\n\nRUN mkdir -p $STAGE_DIR\n\n# ------------------------------------------------------------------------------------------------ #\n#\n# ------------------------------------------------------------------------------------------------ #\n\nRUN apt-get -y update && \\\n    apt-get --assume-yes -y --no-install-recommends install \\\n    build-essential \\\n    autotools-dev \\\n    curl \\\n    wget \\\n    openssh-server \\\n    openssh-client \\\n    tmux \\\n    vim \\\n    sudo \\\n    g++ \\\n    gcc \\\n    git \\\n    bc \\\n    tar \\\n    bash \\\n    pbzip2 \\\n    pv bzip2 \\\n    cabextract \\\n    dos2unix \\\n    less \\\n    unzip \\\n    pdsh \\\n    pssh \\\n    nfs-common \\\n    libfuse-dev \\\n    htop iftop iotop rsync iputils-ping \\\n    net-tools && \\\n    rm -rf /var/lib/apt/lists/*\n\n# ------------------------------------------------------------------------------------------------ #\n# Conda, python and pip\n# ------------------------------------------------------------------------------------------------ #\n\nARG PYTHON_INSTALL_VERSION=3.7\nARG PIP_INSTALL_VERSION=20.1.1\n\nENV PATH /opt/miniconda/bin:$PATH\nRUN wget -qO /tmp/miniconda.sh https://repo.continuum.io/miniconda/Miniconda3-latest-Linux-x86_64.sh    && \\\n    bash /tmp/miniconda.sh -bf -p /opt/miniconda && \\\n    conda clean -ay && \\\n    rm -rf /opt/miniconda/pkgs && \\\n    rm /tmp/miniconda.sh && \\\n    find / -type d -name __pycache__ | xargs rm -rf\n\nRUN conda install -y python=$PYTHON_INSTALL_VERSION\nRUN conda install -y pip=$PIP_INSTALL_VERSION\n\n# ------------------------------------------------------------------------------------------------ #\n# IB user space libs\n# ------------------------------------------------------------------------------------------------ #\n\nRUN apt-get update && apt-get install -y --no-install-recommends pciutils ibutils ibverbs-utils rdmacm-utils infiniband-diags perftest librdmacm-dev && rm -rf /var/lib/apt/lists/*\n\n# ------------------------------------------------------------------------------------------------ #\n# OPENMPI\n# ------------------------------------------------------------------------------------------------ #\n\nENV OPENMPI_BASEVERSION=4.1\nENV OPENMPI_VERSION_STRING=${OPENMPI_BASEVERSION}.0\nRUN cd ${STAGE_DIR} && \\\n    wget -q -O - https://download.open-mpi.org/release/open-mpi/v${OPENMPI_BASEVERSION}/openmpi-${OPENMPI_VERSION_STRING}.tar.gz | tar xzf - && \\\n    cd openmpi-${OPENMPI_VERSION_STRING} && \\\n    ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" --enable-orterun-prefix-by-default && \\\n    make uninstall && \\\n    make -j\"$(nproc)\" install && \\\n    # Sanity check:\n    test -f /usr/local/bin/mpic++ && \\\n    ldconfig && \\\n    cd ${STAGE_DIR} && \\\n    rm -r ${STAGE_DIR}/openmpi-${OPENMPI_VERSION_STRING}\nENV PATH=/usr/local/bin:${PATH} \\\n    LD_LIBRARY_PATH=/usr/local/lib:${LD_LIBRARY_PATH}\n\n# ------------------------------------------------------------------------------------------------ #\n# cmake\n# ------------------------------------------------------------------------------------------------ #\n\nENV CMAKE_VERSION=3.16.4\nRUN cd /usr/local && \\\n    wget -q -O - https://github.com/Kitware/CMake/releases/download/v${CMAKE_VERSION}/cmake-${CMAKE_VERSION}-Linux-x86_64.tar.gz | tar zxf -\nENV PATH=/usr/local/cmake-${CMAKE_VERSION}-Linux-x86_64/bin:${PATH}\n\nWORKDIR /workspace\n\n# ------------------------------------------------------------------------------------------------ #\n# PyTorch\n# ------------------------------------------------------------------------------------------------ #\n\nRUN pip install --no-cache-dir torch==1.8.1+cu111 torchvision==0.9.1+cu111 torchaudio==0.8.1 -f https://download.pytorch.org/whl/torch_stable.html\n\n# ------------------------------------------------------------------------------------------------ #\n# Tensorflow, tensorboard, tensorboardX\n# ------------------------------------------------------------------------------------------------ #\n\nRUN pip install --no-cache-dir tensorflow tensorboard tensorboardX\n\n# ------------------------------------------------------------------------------------------------ #\n# pymarlin install\n# ------------------------------------------------------------------------------------------------ #\n\nRUN pip install --no-cache-dir pymarlin[plugins]\n\n# ------------------------------------------------------------------------------------------------ #\n# Install Apex\n# ------------------------------------------------------------------------------------------------ #\n\nRUN git clone https://github.com/NVIDIA/apex &&\\\n    cd apex &&\\\n    pip install -v --no-cache-dir --global-option=\"--cpp_ext\" --global-option=\"--cuda_ext\" ./\n\n# ------------------------------------------------------------------------------------------------ #\n# Install DeepSpeed\n# ------------------------------------------------------------------------------------------------ #\n\nRUN git clone https://github.com/microsoft/DeepSpeed.git /DeepSpeed\nRUN cd /DeepSpeed && \\\n    git config pull.ff only && \\\n    git pull && \\\n    git checkout master && \\\n    pip install --no-cache-dir -v . && \\\n    ds_report\n\n# ------------------------------------------------------------------------------------------------ #\n# Install ORT\n# ------------------------------------------------------------------------------------------------ #\n\nRUN git clone https://github.com/microsoft/onnxruntime.git &&\\\n    cd onnxruntime &&\\\n    git submodule update --init --recursive && \\\n    python tools/ci_build/build.py \\\n        --cmake_extra_defines \\\n            ONNXRUNTIME_VERSION=`cat ./VERSION_NUMBER` \\\n        --config Release \\\n        --enable_training \\\n        --use_cuda \\\n        --cuda_home /usr/local/cuda \\\n        --cudnn_home /usr/lib/x86_64-linux-gnu/ \\\n        --update \\\n        --parallel \\\n        --build_dir build \\\n        --build \\\n        --build_wheel \\\n        --skip_tests && \\\n    pip install --no-cache-dir build/Release/dist/*.whl && \\\n    cd .. && \\\n    rm -rf onnxruntime /opt/cmake\n"
+}

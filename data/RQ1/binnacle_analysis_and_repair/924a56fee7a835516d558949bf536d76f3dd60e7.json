@@ -1,0 +1,62 @@
+{
+  "startTime": 1674250947594,
+  "endTime": 1674250948080,
+  "originalSmells": [
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 50,
+        "lineEnd": 50,
+        "columnStart": 51,
+        "columnEnd": 99
+      }
+    },
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 88,
+        "lineEnd": 88,
+        "columnStart": 1,
+        "columnEnd": 63
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 38,
+        "lineEnd": 45,
+        "columnStart": 4,
+        "columnEnd": 6
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 71,
+        "lineEnd": 78,
+        "columnStart": 4,
+        "columnEnd": 5
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 38,
+        "lineEnd": 45,
+        "columnStart": 4,
+        "columnEnd": 6
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 71,
+        "lineEnd": 78,
+        "columnStart": 4,
+        "columnEnd": 5
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "ARG ARCH=amd64\n\n# The node version here should match the version of the runtime image which is\n# specified in the base-image subdirectory in the project\nFROM balenalib/raspberry-pi-node:10-run as rpi-node-base\nFROM balenalib/armv7hf-node:10-run as armv7hf-node-base\nFROM balenalib/aarch64-node:10-run as aarch64-node-base\nRUN [ \"cross-build-start\" ]\nRUN sed -i '/security.debian.org jessie/d' /etc/apt/sources.list\nRUN [ \"cross-build-end\" ]\n\nFROM balenalib/amd64-node:10-run as amd64-node-base\nRUN echo '#!/bin/sh\\nexit 0' > /usr/bin/cross-build-start && chmod +x /usr/bin/cross-build-start \\\n\t&& echo '#!/bin/sh\\nexit 0' > /usr/bin/cross-build-end && chmod +x /usr/bin/cross-build-end\n\nFROM balenalib/i386-node:10-run as i386-node-base\nRUN echo '#!/bin/sh\\nexit 0' > /usr/bin/cross-build-start && chmod +x /usr/bin/cross-build-start \\\n\t&& echo '#!/bin/sh\\nexit 0' > /usr/bin/cross-build-end && chmod +x /usr/bin/cross-build-end\n\nFROM balenalib/i386-nlp-node:6-run as i386-nlp-node-base\nRUN echo '#!/bin/sh\\nexit 0' > /usr/bin/cross-build-start && chmod +x /usr/bin/cross-build-start \\\n\t&& echo '#!/bin/sh\\nexit 0' > /usr/bin/cross-build-end && chmod +x /usr/bin/cross-build-end\n\n# Setup webpack building base images\n# We always do the webpack build on amd64, cause it's way faster\nFROM amd64-node-base as rpi-node-build\nFROM amd64-node-base as amd64-node-build\nFROM amd64-node-base as armv7hf-node-build\nFROM amd64-node-base as aarch64-node-build\nFROM amd64-node-base as i386-node-build\nFROM balenalib/amd64-node:6-build as i386-nlp-node-build\n##############################################################################\n\nFROM $ARCH-node-build as node-build\n\nWORKDIR /usr/src/app\n\nRUN apt-get update \\\n\t&& apt-get install --no-install-recommends -y \\\n\t\tg++ \\\n\t\tgit \\\n\t\tlibsqlite3-dev \\\n\t\tmake \\\n\t\tpython \\\n\t\trsync \\\n\t\twget \\\n\t&& rm -rf /var/lib/apt/lists/ && rm -rf /var/lib/apt/lists/*;\n\nCOPY package.json package-lock.json /usr/src/app/\n\nRUN JOBS=MAX npm ci --no-optional --unsafe-perm || JOBS=MAX npm install --no-optional --unsafe-perm && npm cache clean --force;\n\nCOPY webpack.config.js fix-jsonstream.js hardcode-migrations.js tsconfig.json tsconfig.release.json /usr/src/app/\nCOPY src /usr/src/app/src\nCOPY test /usr/src/app/test\nCOPY typings /usr/src/app/typings\n\nRUN npm test \\\n\t&& npm run build\n\n##############################################################################\n\n# Build nodejs dependencies\nFROM $ARCH-node-base as node-deps\nARG ARCH\n\nRUN [ \"cross-build-start\" ]\n\nWORKDIR /usr/src/app\n\nRUN apt-get update \\\n\t&& apt-get install --no-install-recommends -y \\\n\tg++ \\\n\tgit \\\n\tlibsqlite3-dev \\\n\tmake \\\n\tpython \\\n\trsync \\\n\twget \\\n\t&& rm -rf /var/lib/apt/lists/ && rm -rf /var/lib/apt/lists/*;\n\nRUN mkdir -p rootfs-overlay && \\\n\tln -s /lib rootfs-overlay/lib64\n\nCOPY package.json package-lock.json /usr/src/app/\n\n# Install only the production modules that have C extensions\nRUN (if [ $ARCH = \"i386-nlp\" ]; then \\\n JOBS=MAX npm install --no-optional --unsafe-perm --production; npm cache clean --force; \\\nelse \\\n JOBS=MAX npm ci --no-optional --unsafe-perm --production; \\\nfi) && npm dedupe\n\n# Remove various uneeded filetypes in order to reduce space\n# We also remove the spurious node.dtps, see https://github.com/mapbox/node-sqlite3/issues/861\nRUN find . -path '*/coverage/*' -o -path '*/test/*' -o -path '*/.nyc_output/*' \\\n\t-o -name '*.tar.*'      -o -name '*.in'     -o -name '*.cc' \\\n\t-o -name '*.c'          -o -name '*.coffee' -o -name '*.eslintrc' \\\n\t-o -name '*.h'          -o -name '*.html'   -o -name '*.markdown' \\\n\t-o -name '*.md'         -o -name '*.patch'  -o -name '*.png' \\\n\t-o -name '*.yml'        -o -name \"*.ts\" \\\n\t-delete \\\n\t&& find . -type f -path '*/node_modules/sqlite3/deps*' -delete \\\n\t&& find . -type f -path '*/node_modules/knex/build*' -delete \\\n\t&& rm -rf node_modules/sqlite3/node.dtps\n\nCOPY entry.sh package.json rootfs-overlay/usr/src/app/\n\nRUN rsync -a --delete node_modules rootfs-overlay /build\n\nRUN [ \"cross-build-end\" ]\n\n##############################################################################\n\n# Minimal runtime image\nFROM balena/$ARCH-supervisor-base:v1.4.7\nARG ARCH\nARG VERSION=master\nARG DEFAULT_MIXPANEL_TOKEN=bananasbananas\n\nWORKDIR /usr/src/app\n\nCOPY --from=node-build /usr/src/app/dist ./dist\nCOPY --from=node-deps /build/node_modules ./node_modules\nCOPY --from=node-deps /build/rootfs-overlay/ /\n\n# Remove default nproc limit for Avahi for it to work in-container\nCOPY avahi-daemon.conf /etc/avahi/avahi-daemon.conf\n\nVOLUME /data\n\nENV CONFIG_MOUNT_POINT=/boot/config.json \\\n\tLED_FILE=/dev/null \\\n\tSUPERVISOR_IMAGE=resin/$ARCH-supervisor \\\n\tVERSION=$VERSION \\\n\tDEFAULT_MIXPANEL_TOKEN=$DEFAULT_MIXPANEL_TOKEN\n\nHEALTHCHECK --interval=5m --start-period=1m --timeout=30s --retries=3 \\\n\tCMD wget -qO- http://127.0.0.1:${LISTEN_PORT:-48484}/v1/healthy || exit 1\n\nCMD [ \"./entry.sh\" ]\n"
+}

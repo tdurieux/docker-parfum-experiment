@@ -1,0 +1,52 @@
+# Copyright 2021 The Kubernetes Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# hash below relates to tag: bullseye-v1.4.0
+FROM k8s.gcr.io/build-image/debian-base@sha256:9a4b40b8837c4b3e4e45716baea6e1461b7c51a3f723aeaf52e8acdcd1aa40b2
+WORKDIR /work
+
+RUN apt-get update && apt-get install --no-install-recommends -y wget xz-utils libapparmor-dev && rm -rf /var/lib/apt/lists/*;
+
+ENV USER=root
+
+ARG NIX_VERSION=2.9.2
+RUN wget https://nixos.org/releases/nix/nix-${NIX_VERSION}/nix-${NIX_VERSION}-x86_64-linux.tar.xz && \
+    tar xf nix-${NIX_VERSION}-x86_64-linux.tar.xz && \
+    groupadd -r -g 30000 nixbld && \
+    for i in $(seq 1 30); do useradd -rM -u $((30000 + i)) -G nixbld nixbld$i ; done && \
+    mkdir -m 0755 /etc/nix /nix && \
+    printf "sandbox = false\nfilter-syscalls = false\n" > /etc/nix/nix.conf && \
+    nix-${NIX_VERSION}-x86_64-linux/install && \
+    ln -s /nix/var/nix/profiles/default/etc/profile.d/nix.sh /etc/profile.d && \
+    rm -rf nix-* && rm nix-${NIX_VERSION}-x86_64-linux.tar.xz
+
+ENV ENV=/etc/profile \
+    PATH=/nix/var/nix/profiles/default/bin:/nix/var/nix/profiles/default/sbin:/bin:/sbin:/usr/bin:/usr/sbin \
+    GIT_SSL_CAINFO=/etc/ssl/certs/ca-certificates.crt \
+    NIX_SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt \
+    NIX_PATH=/nix/var/nix/profiles/per-user/root/channels
+
+RUN nix-env -iA cachix -f https://cachix.org/api/v1/install && \
+    cachix use security-profiles-operator
+
+RUN nix-collect-garbage --delete-old -d && \
+    nix-store --optimise && \
+    nix-store --verify --check-contents
+
+# Cache build dependencies
+COPY . /build
+RUN nix-build /build/nix
+RUN rm -rf /build
+
+# vim: ft=dockerfile

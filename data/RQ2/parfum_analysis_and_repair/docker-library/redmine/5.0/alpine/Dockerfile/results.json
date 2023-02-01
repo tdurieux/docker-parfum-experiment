@@ -1,0 +1,26 @@
+{
+  "startTime": 1674220561830,
+  "endTime": 1674220563037,
+  "originalSmells": [
+    {
+      "rule": "sha256sumEchoOneSpaces",
+      "position": {
+        "lineStart": 48,
+        "lineEnd": 48,
+        "columnStart": 1,
+        "columnEnd": 66
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 105,
+        "lineEnd": 105,
+        "columnStart": 1,
+        "columnEnd": 58
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM ruby:3.1-alpine3.15\n\n# explicitly set uid/gid to guarantee that it won't change in the future\n# the values 999:999 are identical to the current user/group id assigned\n# alpine already has a gid 999, so we'll use the next id\nRUN addgroup -S -g 1000 redmine && adduser -S -H -G redmine -u 999 redmine\n\nRUN set -eux; \\\n\tapk add --no-cache \\\n\t\tbash \\\n\t\tca-certificates \\\n\t\tfindutils \\\n\t\tsu-exec \\\n\t\ttini \\\n\t\ttzdata \\\n\t\twget \\\n\t\t\\\n\t\tbreezy \\\n\t\tgit \\\n\t\tmercurial \\\n\t\topenssh-client \\\n\t\tsubversion \\\n\t\t\\\n# we need \"gsfonts\" for generating PNGs of Gantt charts\n# and \"ghostscript\" for creating PDF thumbnails (in 4.1+)\n\t\tghostscript \\\n\t\tghostscript-fonts \\\n\t\timagemagick \\\n\t;\n\nENV RAILS_ENV production\nWORKDIR /usr/src/redmine\n\n# https://github.com/docker-library/redmine/issues/138#issuecomment-438834176\n# (bundler needs this for running as an arbitrary user)\nENV HOME /home/redmine\nRUN set -eux; \\\n\t[ ! -d \"$HOME\" ]; \\\n\tmkdir -p \"$HOME\"; \\\n\tchown redmine:redmine \"$HOME\"; \\\n\tchmod 1777 \"$HOME\"\n\nENV REDMINE_VERSION 5.0.2\nENV REDMINE_DOWNLOAD_URL https://www.redmine.org/releases/redmine-5.0.2.tar.gz\nENV REDMINE_DOWNLOAD_SHA256 4e718f44ba33716faf58c8fabf5d5f55b33c93426b7a33a83b5fc1b880585d57\n\nRUN set -eux; \\\n\twget -O redmine.tar.gz \"$REDMINE_DOWNLOAD_URL\"; \\\n\techo \"$REDMINE_DOWNLOAD_SHA256  *redmine.tar.gz\" | sha256sum -c -; \\\n\ttar -xf redmine.tar.gz --strip-components=1; \\\n\trm redmine.tar.gz files/delete.me log/delete.me; \\\n\tmkdir -p log public/plugin_assets sqlite tmp/pdf tmp/pids; \\\n\tchown -R redmine:redmine ./; \\\n# log to STDOUT (https://github.com/docker-library/redmine/issues/108)\n\techo 'config.logger = Logger.new(STDOUT)' > config/additional_environment.rb; \\\n# fix permissions for running as an arbitrary user\n\tchmod -R ugo=rwX config db sqlite; \\\n\tfind log tmp -type d -exec chmod 1777 '{}' +\n\n# build for musl-libc, not glibc (see https://github.com/sparklemotion/nokogiri/issues/2075, https://github.com/rubygems/rubygems/issues/3174)\nENV BUNDLE_FORCE_RUBY_PLATFORM 1\nRUN set -eux; \\\n\n\tapk add --no-cache --virtual .build-deps \\\n\t\tcoreutils \\\n\t\tfreetds-dev \\\n\t\tgcc \\\n\t\tmake \\\n\t\tmariadb-dev \\\n\t\tmusl-dev \\\n\t\tpatch \\\n\t\tpostgresql-dev \\\n\t\tsqlite-dev \\\n\t\tttf2ufm \\\n\t\tzlib-dev \\\n\t; \\\n\n\tsu-exec redmine bundle config --local without 'development test'; \\\n# https://github.com/redmine/redmine/commit/23dc108e70a0794f444803ac827a690085dcd557\n# (\"gem puma\" already exists in the Gemfile, but under \"group :test\" and we want it all the time)\n\tpuma=\"$(grep -E \"^[[:space:]]*gem [:'\\\"]puma['\\\",[:space:]].*\\$\" Gemfile)\"; \\\n\t{ echo; echo \"$puma\"; } | sed -re 's/^[[:space:]]+//' >> Gemfile; \\\n# fill up \"database.yml\" with bogus entries so the redmine Gemfile will pre-install all database adapter dependencies\n# https://github.com/redmine/redmine/blob/e9f9767089a4e3efbd73c35fc55c5c7eb85dd7d3/Gemfile#L50-L79\n\techo '# the following entries only exist to force `bundle install` to pre-install all database adapter dependencies -- they can be safely removed/ignored' > ./config/database.yml; \\\n\tfor adapter in mysql2 postgresql sqlserver sqlite3; do \\\n\t\techo \"$adapter:\" >> ./config/database.yml; \\\n\t\techo \"  adapter: $adapter\" >> ./config/database.yml; \\\n\tdone; \\\n\tsu-exec redmine bundle install --jobs \"$(nproc)\"; \\\n\trm ./config/database.yml; \\\n# fix permissions for running as an arbitrary user\n\tchmod -R ugo=rwX Gemfile.lock \"$GEM_HOME\"; \\\n# this requires coreutils because \"chmod +X\" in busybox will remove +x on files (and coreutils leaves files alone with +X)\n\trm -rf ~redmine/.bundle; \\\n\n# https://github.com/naitoh/rbpdf/issues/31\n\trm /usr/local/bundle/gems/rbpdf-font-1.19.*/lib/fonts/ttf2ufm/ttf2ufm; \\\n\n\trunDeps=\"$( \\\n\t\tscanelf --needed --nobanner --format '%n#p' --recursive /usr/local/bundle/gems \\\n\t\t| tr ',' '\\n' \\\n\t\t| sort -u \\\n\t\t| awk 'system(\"[ -e /usr/local/lib/\" $1 \" ]\") == 0 { next } { print \"so:\" $1 }' \\\n\t)\"; \\\n\tapk add --no-cache --no-network --virtual .redmine-rundeps $runDeps; \\\n\tapk del --no-network .build-deps\n\nVOLUME /usr/src/redmine/files\n\nCOPY docker-entrypoint.sh /\nENTRYPOINT [\"/docker-entrypoint.sh\"]\n\nEXPOSE 3000\nCMD [\"rails\", \"server\", \"-b\", \"0.0.0.0\"]\n"
+}

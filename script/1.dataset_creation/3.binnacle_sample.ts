@@ -21,12 +21,12 @@ function getRandomSubarray(arr: any[], size: number) {
 }
 
 const files = walkSync(
-  join(config.dataFolder, "reproduction/deduplicated-sources")
+  join(config.datasetFolder, "binnacle/deduplicated-sources")
 );
 const sample = getRandomSubarray(files, SAMPLE_SIZE);
 for (const file of sample) {
   copyFileSync(
     file,
-    join(config.dataFolder, "reproduction/sample", basename(file))
+    join(config.datasetFolder, "ground-truth/dockerfiles", basename(file))
   );
 }

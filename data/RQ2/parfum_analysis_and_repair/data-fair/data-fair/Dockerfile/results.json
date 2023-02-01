@@ -1,0 +1,44 @@
+{
+  "startTime": 1674249813959,
+  "endTime": 1674249815179,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 11,
+        "lineEnd": 11,
+        "columnStart": 4,
+        "columnEnd": 111
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 20,
+        "lineEnd": 20,
+        "columnStart": 4,
+        "columnEnd": 88
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 12,
+        "lineEnd": 12,
+        "columnStart": 4,
+        "columnEnd": 23
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 21,
+        "lineEnd": 21,
+        "columnStart": 4,
+        "columnEnd": 27
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "######################################################\n# Stage: install prepair that depends on gdal and cgal\nFROM node:16.13.2-alpine3.14 AS geodeps\n\nRUN apk add --no-cache curl cmake make g++ linux-headers\nRUN apk add --no-cache gdal gdal-dev\nRUN apk add --no-cache boost-dev gmp gmp-dev mpfr-dev\nRUN apk add --no-cache libressl3.3-libcrypto\n\n# build CGAL (not yet present in alpine repos)\nWORKDIR /tmp\nRUN curl -f -L https://github.com/CGAL/cgal/releases/download/releases%2FCGAL-4.14/CGAL-4.14.tar.xz -o cgal.tar.xz\nRUN tar -xf cgal.tar.xz && rm cgal.tar.xz\nWORKDIR /tmp/CGAL-4.14\nRUN cmake -D CMAKE_BUILD_TYPE=Release .\nRUN make\nRUN make install\n\n# build prepair from source\nWORKDIR /tmp\nRUN curl -f -L https://github.com/tudelft3d/prepair/archive/v0.7.1.tar.gz -o prepair.tar.gz\nRUN tar -xzf prepair.tar.gz && rm prepair.tar.gz\nWORKDIR /tmp/prepair-0.7.1\nRUN cmake -D CMAKE_BUILD_TYPE=Release .\nRUN make\nRUN mv prepair /usr/bin/prepair\n\nRUN prepair --help\n\n############################################################################################################\n# Stage: prepare a base image with all native utils pre-installed, used both by builder and definitive image\n\nFROM node:16.13.2-alpine3.14 AS nativedeps\n\n# these are also geodeps, but we need to install them here as they pull many dependencies\nRUN apk add --no-cache gmp gdal-tools\nRUN test -f /usr/bin/ogr2ogr\nCOPY --from=geodeps /usr/bin/prepair /usr/bin/prepair\nCOPY --from=geodeps /usr/local/lib/libCGAL.so.13 /usr/local/lib/libCGAL.so.13\nCOPY --from=geodeps /usr/lib/libmpfr.so.6 /usr/lib/libmpfr.so.6\nRUN ln -s /usr/lib/libproj.so.21.1.2 /usr/lib/libproj.so\nRUN test -f /usr/lib/libproj.so\n# check that geo execs actually load\nRUN prepair --help\n\nRUN apk add --no-cache unzip dumb-init\n\n######################################\n# Stage: nodejs dependencies and build\nFROM nativedeps AS builder\n\nRUN apk add --no-cache python3 make g++ curl\nRUN ln -s /usr/bin/python3 /usr/bin/python\nRUN apk add --no-cache sqlite-dev\n\nWORKDIR /webapp\nADD package.json .\nADD package-lock.json .\nADD patches patches\n# use clean-modules on the same line as npm ci to be lighter in the cache\nRUN npm ci && \\\n    ./node_modules/.bin/clean-modules --yes --exclude exceljs/lib/doc/ --exclude mocha/lib/test.js --exclude \"**/*.mustache\"\n\n# Adding UI files\nADD public public\nADD nuxt.config.js .\nADD config config\nADD shared shared\nADD contract contract\n\n# Build UI\nENV NODE_ENV production\nRUN npm run build && \\\n    rm -rf dist\n\n# Adding server files\nADD server server\nADD scripts scripts\nADD upgrade upgrade\n\n# Check quality\nADD .gitignore .gitignore\nADD test test\nRUN npm run lint\nRUN npm run test\n\n# Cleanup /webapp/node_modules so it can be copied by next stage\nRUN npm prune --production && \\\n    rm -rf node_modules/.cache\n\n##################################\n# Stage: main nodejs service stage\nFROM nativedeps\nMAINTAINER \"contact@koumoul.com\"\n\nWORKDIR /webapp\n\n# We could copy /webapp whole, but this is better for layering / efficient cache use\nCOPY --from=builder /webapp/node_modules /webapp/node_modules\nCOPY --from=builder /webapp/nuxt-dist /webapp/nuxt-dist\nADD nuxt.config.js nuxt.config.js\nADD server server\nADD scripts scripts\nADD upgrade upgrade\nADD config config\nADD shared shared\nADD contract contract\n\n# Adding licence, manifests, etc.\nADD package.json .\nADD README.md BUILD.json* ./\nADD LICENSE .\nADD nodemon.json .\n\n# configure node webapp environment\nENV NODE_ENV production\nENV DEBUG db,upgrade*\n# the following line would be a good practice\n# unfortunately it is a problem to activate now that the service was already deployed\n# with volumes belonging to root\n#USER node\nVOLUME /data\nEXPOSE 8080\n\nCMD [\"dumb-init\", \"node\", \"--max-http-header-size\", \"64000\", \"server\"]\n"
+}

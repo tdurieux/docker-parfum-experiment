@@ -1,0 +1,63 @@
+{
+  "startTime": 1674247939229,
+  "endTime": 1674247939541,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 4,
+        "lineEnd": 9,
+        "columnStart": 1,
+        "columnEnd": 29
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 15,
+        "lineEnd": 15,
+        "columnStart": 9,
+        "columnEnd": 57
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 15,
+        "lineEnd": 15,
+        "columnStart": 9,
+        "columnEnd": 57
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 4,
+        "lineEnd": 9,
+        "columnStart": 1,
+        "columnEnd": 29
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 15,
+        "lineEnd": 15,
+        "columnStart": 9,
+        "columnEnd": 57
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 15,
+        "lineEnd": 15,
+        "columnStart": 9,
+        "columnEnd": 81
+      }
+    }
+  ],
+  "repairedDockerfile": "FROM ubuntu:16.04\nMAINTAINER Jonathan Cran <jcran@intrigue.io>\n\nRUN apt-get update -qq && apt-get -y upgrade && \\\n\tapt-get -y --no-install-recommends install libxml2-dev libxslt-dev zmap nmap sudo default-jre \\\n\tlibsqlite3-dev sqlite3 git gcc g++ make libpcap-dev zlib1g-dev curl \\\n\tlibcurl4-openssl-dev libpq-dev wget libgdbm-dev \\\n\tlibncurses5-dev automake libtool bison libffi-dev libgmp-dev \\\n\tsoftware-properties-common bzip2 gawk libreadline6-dev libyaml-dev pkg-config \\\n\tredis-server net-tools clang && rm -rf /var/lib/apt/lists/*;\n\n# set up postgres\nRUN sudo sh -c 'echo \"deb http://apt.postgresql.org/pub/repos/apt/ `lsb_release -cs`-pgdg main\" >> /etc/apt/sources.list.d/pgdg.list'\nRUN wget -q https://www.postgresql.org/media/keys/ACCC4CF8.asc -O - | sudo apt-key add -\nRUN sudo apt-get update\nRUN sudo apt-get -y --no-install-recommends install postgresql postgresql-contrib && rm -rf /var/lib/apt/lists/*;\n\n# Set up nginx?\n# TODO\n\n# Masscan build and installation\nWORKDIR /usr/share\nRUN git clone https://github.com/robertdavidgraham/masscan\nWORKDIR /usr/share/masscan\nRUN make -j 3 && make install\n\n# create an app user (would require us setting up sudo)\n#RUN useradd -ms /bin/bash app\n#USER app\n\n# Install rbenv and ruby-build\nWORKDIR /root\nRUN git clone https://github.com/sstephenson/rbenv.git /root/.rbenv\nRUN git clone https://github.com/sstephenson/ruby-build.git /root/.rbenv/plugins/ruby-build\nRUN git clone https://github.com/rbenv/rbenv-default-gems.git /root/.rbenv/plugins/rbenv-default-gems\nRUN /root/.rbenv/plugins/ruby-build/install.sh\nENV PATH /root/.rbenv/bin:$PATH\n#RUN echo 'eval \"$(rbenv init -)\"' >> /etc/profile.d/rbenv.sh\nRUN echo 'eval \"$(rbenv init -)\"' >> .bashrc\n\n# Install multiple versions of ruby\nENV CONFIGURE_OPTS --disable-install-doc\nRUN rbenv install 2.4.0\nRUN rbenv global 2.4.0\n\n# Fix an rbenv path issue\nRUN echo export PATH=/root/.rbenv/shims:$PATH >> /etc/profile.d/rbenv.sh\nRUN echo export PATH=/root/.rbenv/shims:$PATH >> .bashrc\n\n# Install the deps\n# https://medium.com/@fbzga/how-to-cache-bundle-install-with-docker-7bed453a5800#.f2hrjsvnz\nCOPY Gemfile* /tmp/\nWORKDIR /tmp\nENV BUNDLE_JOBS=12\nRUN /bin/bash -l -c \"gem install bundler\"\nRUN /bin/bash -l -c \"bundle config --global silence_root_warning 1\"\nRUN /bin/bash -l -c \"bundle install --system\"\n\n# get intrigue-core code\nRUN /bin/bash -l -c \"rm -rf /core && mkdir -p /core\"\nADD . /core/\n\n# check networks\n#RUN /bin/bash -l -c \"apt-get install net-tools && ifconfig && netstat -lnt\"\n\n# Migrate!\nWORKDIR /core\n\n# Ensure we listen on all ipv4 interfaces, and background the file\nRUN cp /core/config/puma.rb.default /core/config/puma.rb\nRUN sed -i \"s/tcp:\\/\\/127.0.0.1:7777/tcp:\\/\\/0.0.0.0:7777/g\" /core/config/puma.rb\nRUN sed -i \"s/daemonize true/daemonize false/g\" /core/config/puma.rb\n\n# Expose a port\nEXPOSE 7777\n\n# Set up the service file\nRUN cp /core/util/control.sh.default /core/util/control.sh\nRUN sed -i \"s/\\/path\\/to\\/install\\/directory/\\/core/g\" /core/util/control.sh\nRUN ln -s /core/util/control.sh /etc/init.d/intrigue\n\n# Configure postgres\nRUN /bin/bash -l -c \"sed -i 's/md5/trust/g' /etc/postgresql/9.6/main/pg_hba.conf\"\n\n# start the app (also migrates DB)\nCMD /bin/bash -l -c \"PATH=/root/.rbenv/shims:$PATH && service postgresql start && service redis-server start && su - postgres -c 'createuser -d -w intrigue && createdb intrigue_dev' && service intrigue start\"\n\n#ENTRYPOINT \"/bin/bash\""
+}

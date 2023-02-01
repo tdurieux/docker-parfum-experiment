@@ -1,0 +1,26 @@
+{
+  "startTime": 1674254750412,
+  "endTime": 1674254751270,
+  "originalSmells": [
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 39,
+        "lineEnd": 41,
+        "columnStart": 4,
+        "columnEnd": 143
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 17,
+        "lineEnd": 19,
+        "columnStart": 22,
+        "columnEnd": 65
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "################################################################################\n# base system\n################################################################################\nFROM ubuntu:18.04 as system\n\nENV USERNAME diUser\nRUN useradd -m $USERNAME && \\\n    echo \"$USERNAME:$USERNAME\" | chpasswd && \\\n    usermod --shell /bin/bash $USERNAME && \\\n    usermod -aG video,audio $USERNAME\n\n\n################################################################################\n# builder\n################################################################################\nFROM system as builder\n\nRUN apt-get update && apt-get install -y --no-install-recommends \\\n    libsdl2-dev libsdl2-mixer-dev libsdl2-image-dev libtiff-dev libavcodec-dev libavformat-dev libswscale-dev \\\n    byacc gcc g++ automake libtool unzip flex git ca-certificates && rm -rf /var/lib/apt/lists/*;\n\n### set default compilers\nRUN cc --version && \\\n    c++ --version && \\\n    cpp --version\n\nENV LD_LIBRARY_PATH \"${LD_LIBRARY_PATH}:/usr/local/lib\"\n\n## ctp2CD/ copy not done in builder stage such that stages before are compatible with travis docker build\n## not using `COPY  ./ /ctp2/` to avoid cache out-dating when ctp2CD/ is populated for 3rd stage\nCOPY autogen.sh configure.ac GNUmakefile.am   /ctp2/\nCOPY ctp2_data/  /ctp2/ctp2_data/\n## done after copying ctp2_data/ because ctp2_code/ more likely to change\nCOPY ctp2_code/  /ctp2/ctp2_code/\n\nARG BTYP\n\nRUN cd /ctp2 \\\n    && ./autogen.sh && \\\n    CFLAGS=\"$CFLAGS $( [ \"${BTYP##*debug*}\" ] && echo -O3 || echo -g -rdynamic ) -fuse-ld=gold\" \\\n    CXXFLAGS=\"$CXXFLAGS -fpermissive $( [ \"${BTYP##*debug*}\" ] && echo -O3 || echo -g -rdynamic ) -fuse-ld=gold\" \\\n    ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" \\\n\n    --prefix=/opt/ctp2 --bindir=/opt/ctp2/ctp2_program/ctp --enable-silent-rules $( [ \"${BTYP##*debug*}\" ] || echo --enable-debug ) \\\n    && make -j\"$(nproc)\" \\\n    && make -j\"$(nproc)\" install \\\n    && cp -r /ctp2/ctp2_data/ /opt/ctp2/ \\\n    && mkdir -p /opt/ctp2/ctp2_program/ctp/dll/map/ \\\n    && cp -v /ctp2/ctp2_code/mapgen/.libs/*.so /opt/ctp2/ctp2_program/ctp/dll/map/\n\n\n################################################################################\n# merge\n################################################################################\nFROM system as install\n\nARG BTYP\n\n## ctp2CD/ copy done in install stage such that stages before are compatible with travis docker build, results in one additional layer in the final DI (incr. DI download size)\nCOPY ctp2CD/ /opt/ctp2/\n\n## ctp2 install has to be after ctp2CD/ to overwrite with newer versions from civctp2\n## deb-file has to be copied first, sadly this adds a layer (which is not necessary with COPY --from=builder): https://stackoverflow.com/questions/52211895/docker-build-avoid-adding-files-only-needed-at-build-time\nCOPY deb/ /deb/\n\n## apt install installs local deb-file with its dependencies: https://unix.stackexchange.com/questions/159094/how-to-install-a-deb-file-by-dpkg-i-or-by-apt#159114\nRUN apt-get update && apt install -y --no-install-recommends \\\n    /deb/ctp2-${BTYP}.deb && \\\n    apt-get clean && \\\n    rm -rf /var/lib/apt/lists/*\n\nUSER $USERNAME\n\nWORKDIR /opt/ctp2/ctp2_program/ctp/\n\nCMD [\"./ctp2\"]\n"
+}

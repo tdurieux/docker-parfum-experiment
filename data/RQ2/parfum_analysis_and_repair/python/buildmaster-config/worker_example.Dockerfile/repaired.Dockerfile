@@ -1,0 +1,1 @@
+# This is an example worker setup, currently used by the ware-alpine worker.

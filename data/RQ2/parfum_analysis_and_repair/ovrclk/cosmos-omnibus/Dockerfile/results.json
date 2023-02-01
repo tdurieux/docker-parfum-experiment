@@ -1,0 +1,71 @@
+{
+  "startTime": 1674255907168,
+  "endTime": 1674255907951,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 47,
+        "lineEnd": 47,
+        "columnStart": 4,
+        "columnEnd": 47
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 81,
+        "lineEnd": 81,
+        "columnStart": 4,
+        "columnEnd": 42
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 124,
+        "lineEnd": 124,
+        "columnStart": 4,
+        "columnEnd": 85
+      }
+    },
+    {
+      "rule": "aptGetInstallUseY",
+      "position": {
+        "lineStart": 15,
+        "lineEnd": 15,
+        "columnStart": 2,
+        "columnEnd": 85
+      }
+    },
+    {
+      "rule": "aptGetInstallUseY",
+      "position": {
+        "lineStart": 92,
+        "lineEnd": 92,
+        "columnStart": 2,
+        "columnEnd": 113
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 15,
+        "lineEnd": 15,
+        "columnStart": 2,
+        "columnEnd": 85
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 92,
+        "lineEnd": 92,
+        "columnStart": 2,
+        "columnEnd": 113
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "ARG BUILD_IMAGE=default\nARG BUILD_METHOD=source\nARG GOLANG_VERSION=1.17-buster\nARG BASE_IMAGE=golang:${GOLANG_VERSION}\n\n#\n# Default build environment for standard Tendermint chains\n#\nFROM ${BASE_IMAGE} AS build_base\n\nARG PROJECT\nARG PROJECT_BIN=$PROJECT\nARG INSTALL_PACKAGES\n\nRUN apt-get update && \\\n  apt-get install -y --no-install-recommends --assume-yes curl unzip ${INSTALL_PACKAGES} && \\\n  apt-get clean && rm -rf /var/lib/apt/lists/*;\n\n#\n# Optional build environment when libwasmvm.so is required\n#\nFROM build_base AS build_wasmvm\n\nARG WASMVM_VERSION=v0.16.7\nARG WASMVM_URL=https://raw.githubusercontent.com/CosmWasm/wasmvm/${WASMVM_VERSION}/api/libwasmvm.so\nADD ${WASMVM_URL} /lib/libwasmvm.so\n\n#\n# Default build from source method\n#\nFROM build_base AS build_source\n\nARG VERSION\nARG REPOSITORY\nARG BUILD_CMD=\"make install\"\n\nRUN git clone $REPOSITORY /data\nWORKDIR /data\nRUN git checkout $VERSION\n\n#\n# Optional build environment for Starport chains\n#\nFROM build_source AS build_starport\n\nARG BUILD_CMD=\"starport chain build\"\n\nRUN curl -f https://get.starport.network/starport! | bash\n\n#\n# Final build environment\n# Note optional `BUILD_METHOD` argument controls the base image\n#\nFROM build_${BUILD_METHOD} AS build\n\nARG BUILD_PATH=$GOPATH/bin\nRUN $BUILD_CMD\n\nRUN ldd $BUILD_PATH/$PROJECT_BIN | tr -s '[:blank:]' '\\n' | grep '^/' | \\\n    xargs -I % sh -c 'mkdir -p $(dirname deps%); cp % deps%;'\n\nRUN mv $BUILD_PATH/$PROJECT_BIN /bin/$PROJECT_BIN\n\n#\n# Default image\n#\nFROM debian:buster AS default\n\nARG PROJECT\nARG PROJECT_BIN=$PROJECT\n\nCOPY --from=build /bin/$PROJECT_BIN /bin/$PROJECT_BIN\nCOPY --from=build /data/deps/ /\n\n#\n# Optional image to install from binary\n#\nFROM build_base AS binary\n\nARG BINARY_URL\n\nRUN curl -f -Lo /bin/$PROJECT_BIN $BINARY_URL\nRUN chmod +x /bin/$PROJECT_BIN\n\n#\n# Final Omnibus image\n# Note optional `BUILD_IMAGE` argument controls the base image\n#\nFROM ${BUILD_IMAGE} AS omnibus\nLABEL org.opencontainers.image.source https://github.com/ovrclk/cosmos-omnibus\n\nRUN apt-get update && \\\n  apt-get install -y --no-install-recommends --assume-yes ca-certificates curl wget file unzip liblz4-tool gnupg2 jq && \\\n  apt-get clean && rm -rf /var/lib/apt/lists/*;\n\nARG PROJECT\nARG PROJECT_BIN\nARG PROJECT_DIR\nARG CONFIG_DIR\nARG START_CMD\nARG INIT_CMD\nARG VERSION\nARG REPOSITORY\nARG NAMESPACE\n\nENV PROJECT=$PROJECT\nENV PROJECT_BIN=$PROJECT_BIN\nENV PROJECT_DIR=$PROJECT_DIR\nENV CONFIG_DIR=$CONFIG_DIR\nENV START_CMD=$START_CMD\nENV INIT_CMD=$INIT_CMD\nENV VERSION=$VERSION\nENV REPOSITORY=$REPOSITORY\nENV NAMESPACE=$NAMESPACE\n\nENV MONIKER=my-omnibus-node\n\nEXPOSE 26656 \\\n       26657 \\\n       1317  \\\n       9090  \\\n       8080\n\n# Install AWS\nRUN curl -f \"https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip\" -o \"awscliv2.zip\" \\\n  && unzip awscliv2.zip -d /usr/src && rm -f awscliv2.zip \\\n  && /usr/src/aws/install --bin-dir /usr/bin\n\n# Copy scripts\nCOPY run.sh snapshot.sh /usr/bin/\nRUN chmod +x /usr/bin/run.sh /usr/bin/snapshot.sh\nENTRYPOINT [\"run.sh\"]\n\nCMD $START_CMD\n"
+}

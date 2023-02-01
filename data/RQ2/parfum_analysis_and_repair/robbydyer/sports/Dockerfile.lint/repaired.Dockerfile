@@ -1,0 +1,21 @@
+FROM debian:buster AS builder
+
+# What's the meaning of all this? Well, you apparently can't run the linter
+# without the requried libs for the cgo imports. So here we are, building the C
+# lib just so we can lint the Go code.
+RUN apt-get update && \
+    apt-get install --no-install-recommends -y \
+    automake \
+    build-essential \
+    gcc \
+    g++ \
+    git && rm -rf /var/lib/apt/lists/*;
+
+COPY ./internal/rgbmatrix-rpi/lib/rpi-rgb-led-matrix.BASE /tmp/rpi-rgb-led-matrix
+
+RUN cd /tmp/rpi-rgb-led-matrix && \
+    make
+
+FROM golangci/golangci-lint:v1.46.2
+
+COPY --from=builder /tmp/rpi-rgb-led-matrix /sportslibs/rpi-rgb-led-matrix

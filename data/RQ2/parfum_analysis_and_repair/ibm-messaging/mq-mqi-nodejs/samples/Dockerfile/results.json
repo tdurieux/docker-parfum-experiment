@@ -1,0 +1,62 @@
+{
+  "startTime": 1674255547452,
+  "endTime": 1674255548135,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 44,
+        "lineEnd": 44,
+        "columnStart": 7,
+        "columnEnd": 85
+      }
+    },
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 46,
+        "lineEnd": 46,
+        "columnStart": 7,
+        "columnEnd": 25
+      }
+    },
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 57,
+        "lineEnd": 57,
+        "columnStart": 4,
+        "columnEnd": 27
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 45,
+        "lineEnd": 45,
+        "columnStart": 7,
+        "columnEnd": 33
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 43,
+        "lineEnd": 43,
+        "columnStart": 7,
+        "columnEnd": 87
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 45,
+        "lineEnd": 45,
+        "columnStart": 7,
+        "columnEnd": 33
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# © Copyright IBM Corporation 2019, 2022\n#\n# Licensed under the Apache License, Version 2.0 (the \"License\");\n# you may not use this file except in compliance with the License.\n# You may obtain a copy of the License at\n#\n# http://www.apache.org/licenses/LICENSE-2.0\n#\n# Unless required by applicable law or agreed to in writing, software\n# distributed under the License is distributed on an \"AS IS\" BASIS,\n# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.\n# See the License for the specific language governing permissions and\n# limitations under the License.\n\n\n# This Dockerfile has two separate stages.\n#\n# The first stage is builds the Node program, where we need tools like the C compiler for the ref-napi capability.\n# It also downloads the MQ client.\n# The second stage is a runtime-only container that holds just the things we need to\n# execute the compiled program.\n#\n# Files and directories are copied from the builder container to the runtime container as needed.\n# I've used two different base images, trying to get the runtime image as small\n# as possible while still using a \"regular\" libc-based container.\n\n###########################################################\n# This starts the BUILD phase\n###########################################################\nFROM ubuntu:18.04 as builder\n\n# Set some parameters.\nENV NODE_VERSION 14\nENV APP_DIR    /usr/local/nodejs/mqput\n\nWORKDIR ${APP_DIR}\n\n# Create the application directory so we can put stuff in there immediately\nRUN mkdir -p ${APP_DIR}\n\n# Update the base image and make sure we've installed basic capabilities including\n# the C++ compiler needed for the ref-napi dependency. Also install node and npm.\nRUN apt-get update \\\n    && apt-get install -y --no-install-recommends curl gcc g++ make git ca-certificates \\\n    && curl -f --silent -k --location https://deb.nodesource.com/setup_${NODE_VERSION}.x | bash - \\\n    && apt-get install --no-install-recommends -y nodejs \\\n    && npm install -g npm && npm cache clean --force; && rm -rf /var/lib/apt/lists/*;\n\n# Copy project files into the container. In this source directory, the\n# package file has been given a different name, to avoid any attempt to\n# reference it with the rest of the samples. But it gets renamed to the\n# correct name during this copy.\nCOPY amqsput.js     ${APP_DIR}/\nCOPY package.docker ${APP_DIR}/package.json\n\n# Now get all the prereq packages installed and cleanup the\n# pieces that are not needed after building the C interface.\nRUN npm install --only=prod \\\n   && apt-get autoremove -y curl make gcc g++ python3 git \\\n   && apt-get purge -y \\\n   && rm -rf /var/lib/apt/lists/* \\\n   && chmod a+rx ${APP_DIR}/* && npm cache clean --force;\n\n###########################################################\n# This starts the RUNTIME phase\n###########################################################\n# Now that there is a container with the compiled program we can build a smaller\n# runtime image. Start from one of the smaller base container images. This container\n# is an official Node image with the runtime already embedded\nFROM  node:16-slim\n\n# This is a queue predefined in the MQ Developer Edition server container. Though\n# the values can be overridden by setting environment variables during the 'docker run' phase.\nENV DOCKER_Q    DEV.QUEUE.1\nENV DOCKER_QMGR QM1\nENV MQSERVER SYSTEM.DEF.SVRCONN/TCP/localhost\n\nENV APP_DIR    /usr/local/nodejs/mqput\nWORKDIR ${APP_DIR}\n\n# Copy over the tree containing the program and all its dependencies\n# including the ref-napi compiled code and the MQ client libraries which\n# have been installed under the node_modules directory\nCOPY --from=builder ${APP_DIR}/ ${APP_DIR}\n\n# We are now ready to run the amqsput program.\nCMD node amqsput ${DOCKER_Q} ${DOCKER_QMGR}\n"
+}

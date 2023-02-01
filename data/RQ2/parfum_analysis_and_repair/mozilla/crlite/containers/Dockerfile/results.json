@@ -1,0 +1,26 @@
+{
+  "startTime": 1674220713400,
+  "endTime": 1674220714011,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 52,
+        "lineEnd": 52,
+        "columnStart": 4,
+        "columnEnd": 22
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 26,
+        "lineEnd": 26,
+        "columnStart": 7,
+        "columnEnd": 37
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM golang:1.18.1-bullseye as go-builder\nRUN mkdir /build\nADD go /build/\nWORKDIR /build\nRUN mkdir bin gopath\nENV GOPATH /build/gopath\nRUN go build -o bin/aggregate-crls /build/cmd/aggregate-crls\nRUN go build -o bin/aggregate-known /build/cmd/aggregate-known\nRUN go build -o bin/ct-fetch /build/cmd/ct-fetch\n\n\n# rust-cascade with the builder feature needs rust >= 1.61.\nFROM rust:1.61-bullseye as rust-builder\nRUN mkdir /build\n\nADD rust-create-cascade /build/rust-create-cascade/\nWORKDIR /build/rust-create-cascade\nRUN cargo build --release --target-dir /build\n\nADD rust-query-crlite /build/rust-query-crlite/\nWORKDIR /build/rust-query-crlite\nRUN cargo build --release --target-dir /build\n\n\nFROM python:3.8-bullseye\nRUN apt update \\\n    && apt install --no-install-recommends -y ca-certificates \\\n    && apt -y upgrade \\\n    && apt-get autoremove --purge -y \\\n    && apt-get -y clean \\\n    && rm -rf /var/lib/apt/lists/*\n\nRUN adduser --system --uid 10001 --group --home /app app\n\nENV crlite_log /var/log\nENV crlite_processing /processing\nENV crlite_persistent /persistent\nENV crlite_workflow /app/workflow\nENV crlite_bin /app\n\nRUN mkdir /processing && chown app /processing && chmod 777 /processing\nVOLUME /var/log /processing /persistent\n\nCOPY --from=go-builder /build/bin /app/\nCOPY --from=rust-builder /build/release/rust-create-cascade /app/\nCOPY --from=rust-builder /build/release/rust-query-crlite /app/\n\nCOPY moz_kinto_publisher /app/moz_kinto_publisher\nCOPY workflow /app/workflow\nCOPY containers/scripts /app/scripts\nCOPY setup.py version.json /app/\n\nRUN pip3 install --no-cache-dir /app/\n\nENV TINI_VERSION v0.19.0\nADD https://github.com/krallin/tini/releases/download/${TINI_VERSION}/tini /tini\nRUN chmod +x /tini\nENTRYPOINT [\"/tini\", \"-g\", \"--\"]\n\nUSER app\nWORKDIR /app\n\n# For crlite-fetch\nENV runForever true\nENV logExpiredEntries false\n\nEXPOSE 8080/tcp\n\n# For crlite-generate\nENV numThreads 16\nENV cacheSize 64\n"
+}

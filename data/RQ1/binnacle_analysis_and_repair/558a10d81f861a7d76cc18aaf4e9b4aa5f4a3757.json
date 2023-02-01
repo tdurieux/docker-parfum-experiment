@@ -1,0 +1,62 @@
+{
+  "startTime": 1674250526184,
+  "endTime": 1674250526521,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 27,
+        "lineEnd": 27,
+        "columnStart": 4,
+        "columnEnd": 111
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 32,
+        "lineEnd": 32,
+        "columnStart": 4,
+        "columnEnd": 115
+      }
+    },
+    {
+      "rule": "wgetUseHttpsUrl",
+      "position": {
+        "lineStart": 45,
+        "lineEnd": 45,
+        "columnStart": 4,
+        "columnEnd": 144
+      }
+    },
+    {
+      "rule": "wgetUseHttpsUrl",
+      "position": {
+        "lineStart": 48,
+        "lineEnd": 48,
+        "columnStart": 4,
+        "columnEnd": 170
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 2,
+        "lineEnd": 7,
+        "columnStart": 26,
+        "columnEnd": 13
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 67,
+        "lineEnd": 71,
+        "columnStart": 4,
+        "columnEnd": 13
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM ubuntu:16.04 as builder\n\nRUN apt-get update -qq && apt-get install --no-install-recommends -y -q \\\n        git \\\n        curl \\\n        wget \\\n        openjdk-8-jdk \\\n        maven \\\n    && apt-get clean -qq && rm -rf /var/lib/apt/lists/*\n\nRUN mkdir -p /opt\n\nARG HADOOP_VERSION=\"2.9.2\"\nARG SPARK_VERSION=\"2.4.2\"\nARG TF_VERSION=\"1.13.1\"\n# Required for building tensorflow spark connector\nARG SCALA_VERSION=\"2.12\"\n# Scalatest version from https://github.com/apache/spark/blob/v2.4.2/pom.xml\nARG SCALATEST_VERSION=\"3.0.3\"\n# Check aws-java-sdk-bundle dependency version: https://mvnrepository.com/artifact/org.apache.hadoop/hadoop-aws/$HADOOP_VERSION\nARG AWS_JAVA_SDK_VERSION=\"1.11.199\"\n\nENV JAVA_HOME=\"/usr/lib/jvm/java-8-openjdk-amd64\"\nENV HADOOP_HOME=\"/opt/hadoop\"\nENV SPARK_HOME=\"/opt/spark\"\n\n# Hadoop (code for e.g. finding a mirror, checking the checksum: https://github.com/smizy/docker-hadoop-base/blob/master/Dockerfile, https://github.com/liubin/docker-hadoop/blob/master/Dockerfile)\nRUN curl -f https://archive.apache.org/dist/hadoop/common/hadoop-${HADOOP_VERSION}/hadoop-${HADOOP_VERSION}.tar.gz | tar -zx && \\\n    mv hadoop-${HADOOP_VERSION} $HADOOP_HOME && \\\n    rm -rf $HADOOP_HOME/share/doc\n\n# Spark\nRUN curl -f https://archive.apache.org/dist/spark/spark-${SPARK_VERSION}/spark-${SPARK_VERSION}-bin-without-hadoop.tgz | tar -zx && \\\n    mv spark-${SPARK_VERSION}-bin-without-hadoop $SPARK_HOME\n\n# Tensorflow Spark connector\nRUN rm -rf ~/tf-ecosystem && git clone https://github.com/tensorflow/ecosystem.git ~/tf-ecosystem && \\\n    mvn -f ~/tf-ecosystem/hadoop/pom.xml versions:set -DnewVersion=${TF_VERSION} -q && \\\n    mvn -f ~/tf-ecosystem/hadoop/pom.xml -Dmaven.test.skip=true clean install -q && \\\n    mvn -f ~/tf-ecosystem/spark/spark-tensorflow-connector/pom.xml versions:set -DnewVersion=${TF_VERSION} -q && \\\n    mvn -f ~/tf-ecosystem/spark/spark-tensorflow-connector/pom.xml -Dmaven.test.skip=true clean install \\\n        -Dspark.version=${SPARK_VERSION} -Dscala.binary.version=${SCALA_VERSION} -Dscala.test.version=${SCALATEST_VERSION} -q && \\\n    mv ~/tf-ecosystem/spark/spark-tensorflow-connector/target/spark-tensorflow-connector_2.11-${TF_VERSION}.jar $SPARK_HOME/jars/\n\n# Hadoop AWS\nRUN wget -q -P $SPARK_HOME/jars/ https://central.maven.org/maven2/org/apache/hadoop/hadoop-aws/${HADOOP_VERSION}/hadoop-aws-${HADOOP_VERSION}.jar\n\n# AWS SDK\nRUN wget -q -P $SPARK_HOME/jars/ https://central.maven.org/maven2/com/amazonaws/aws-java-sdk-bundle/${AWS_JAVA_SDK_VERSION}/aws-java-sdk-bundle-${AWS_JAVA_SDK_VERSION}.jar\n\n# Configuration\nCOPY images/spark-base/conf/* $SPARK_HOME/conf/\n\n\nFROM ubuntu:16.04\n\nENV JAVA_HOME=\"/usr/lib/jvm/java-8-openjdk-amd64\"\nENV HADOOP_HOME=\"/opt/hadoop\"\nENV SPARK_HOME=\"/opt/spark\"\n\nENV PATH=\"${PATH}:${HADOOP_HOME}/lib/native\"\nENV HADOOP_OPTS=\"${HADOOP_OPTS} -Djava.library.path=${HADOOP_HOME}/lib/native\"\nENV LD_LIBRARY_PATH=\"${HADOOP_HOME}/lib/native/:${LD_LIBRARY_PATH}\"\nENV HADOOP_COMMON_LIB_NATIVE_DIR=\"${HADOOP_HOME}/lib/native\"\n\nRUN set -ex && \\\n    apt-get update -qq && \\\n    apt-get install --no-install-recommends -y -q \\\n        git \\\n        bash \\\n        openjdk-8-jre \\\n        cmake \\\n    && apt-get clean -qq && rm -rf /var/lib/apt/lists/* && \\\n    mkdir -p $SPARK_HOME/work-dir && \\\n    touch $SPARK_HOME/RELEASE && \\\n    rm /bin/sh && \\\n    ln -sv /bin/bash /bin/sh && \\\n    chgrp root /etc/passwd && chmod ug+rw /etc/passwd\n\nCOPY --from=builder $HADOOP_HOME $HADOOP_HOME\nCOPY --from=builder $SPARK_HOME $SPARK_HOME\n\nRUN mkdir ~/tini && cd ~/tini && git clone https://github.com/krallin/tini.git ~/tini && \\\n    CFLAGS=\"-DPR_SET_CHILD_SUBREAPER=36 -DPR_GET_CHILD_SUBREAPER=37\" cmake . && make && mv tini /sbin/tini\n"
+}

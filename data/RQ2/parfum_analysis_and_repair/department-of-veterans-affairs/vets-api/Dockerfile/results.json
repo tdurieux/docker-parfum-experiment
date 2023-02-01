@@ -1,0 +1,81 @@
+{
+  "startTime": 1674256155700,
+  "endTime": 1674256156553,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 15,
+        "lineEnd": 15,
+        "columnStart": 4,
+        "columnEnd": 47
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 16,
+        "lineEnd": 17,
+        "columnStart": 22,
+        "columnEnd": 95
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 48,
+        "lineEnd": 49,
+        "columnStart": 22,
+        "columnEnd": 57
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 15,
+        "lineEnd": 15,
+        "columnStart": 4,
+        "columnEnd": 47
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 15,
+        "lineEnd": 15,
+        "columnStart": 4,
+        "columnEnd": 47
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 16,
+        "lineEnd": 17,
+        "columnStart": 22,
+        "columnEnd": 95
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 48,
+        "lineEnd": 49,
+        "columnStart": 22,
+        "columnEnd": 57
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 15,
+        "lineEnd": 15,
+        "columnStart": 4,
+        "columnEnd": 71
+      }
+    }
+  ],
+  "repairedDockerfile": "# XXX: using stretch here for pdftk dep, which is not availible after\n#      stretch (or in alpine) and is switched automatically to pdftk-java in buster\n#      https://github.com/department-of-veterans-affairs/va.gov-team/issues/3032\n\n###\n# shared build/settings for all child images, reuse these layers yo\n###\nFROM ruby:2.7.6-slim-bullseye AS base\n\nARG userid=993\nSHELL [\"/bin/bash\", \"-c\"]\nRUN groupadd -g $userid -r vets-api && \\\n    useradd -u $userid -r -m -d /srv/vets-api -g vets-api vets-api\nRUN echo \"deb http://ftp.debian.org/debian testing main contrib non-free\" >> /etc/apt/sources.list\nRUN apt-get update\nRUN apt-get install --no-install-recommends -y -t testing poppler-utils && rm -rf /var/lib/apt/lists/*;\nRUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get --no-install-recommends install -y \\\n    dumb-init clamav clamdscan clamav-daemon imagemagick pdftk curl libpq5 vim libboost-all-dev && rm -rf /var/lib/apt/lists/*;\n\n# The pki work below is for parity with the non-docker BRD deploys to mount certs into\n# the container, we need to get rid of it and refactor the configuration bits into\n# something more continer friendly in a later bunch of work\nRUN mkdir -p /srv/vets-api/{clamav/database,pki/tls,secure,src} && \\\n    chown -R vets-api:vets-api /srv/vets-api && \\\n    ln -s /srv/vets-api/pki /etc/pki\n# XXX: get rid of the CA trust manipulation when we have a better model for it\nCOPY config/ca-trust/* /usr/local/share/ca-certificates/\n# rename .pem files to .crt because update-ca-certificates ignores files that are not .crt\nRUN cd /usr/local/share/ca-certificates ; for i in *.pem ; do mv $i ${i/pem/crt} ; done ; update-ca-certificates\n# Relax ImageMagick PDF security. See https://stackoverflow.com/a/59193253.\nRUN sed -i '/rights=\"none\" pattern=\"PDF\"/d' /etc/ImageMagick-6/policy.xml\nWORKDIR /srv/vets-api/src\n\n###\n# dev stage; use --target=development to stop here\n# Be sure to pass required ARGs as `--build-arg`\n# This stage useful for mounting your local checkout with compose\n# into the container to dev against.\n###\nFROM base AS development\n\nARG sidekiq_license\nARG rails_env=development\n\nENV BUNDLE_ENTERPRISE__CONTRIBSYS__COM=$sidekiq_license\nENV RAILS_ENV=$rails_env\n\n# only extra dev/build opts go here, common packages go in base 👆\nRUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get --no-install-recommends install -y \\\n    git build-essential libxml2-dev libxslt-dev libpq-dev && rm -rf /var/lib/apt/lists/*;\nCOPY --chown=vets-api:vets-api config/freshclam.conf docker-entrypoint.sh ./\nUSER vets-api\n# XXX: this is tacky\nRUN freshclam --config-file freshclam.conf\nRUN gem install vtk\nENTRYPOINT [\"/usr/bin/dumb-init\", \"--\", \"./docker-entrypoint.sh\"]\n\n###\n# build stage; use --target=builder to stop here\n# Also be sure to add build-args from development stage above\n#\n# This is development with the app copied in and built.  The build results are used in\n# prod below, but also useful if you want to have a container with the app and not\n# mount your local checkout.\n###\nFROM development AS builder\n# XXX: move modules/ to seperate repos so we can only copy Gemfile* and install a slim layer\nARG bundler_opts\nCOPY --chown=vets-api:vets-api . .\nUSER vets-api\n# --no-cache doesn't do the right thing, so trim it during build\n# https://github.com/bundler/bundler/issues/6680\nRUN bundle install --binstubs=\"${BUNDLE_APP_CONFIG}/bin\" $bundler_opts && \\\n    find ${BUNDLE_APP_CONFIG}/cache -type f -name \\*.gem -delete\n\n###\n# prod stage; default if no target given\n# to build prod you probably want options like below to get a good build\n# --build-arg sidekiq_license=\"$BUNDLE_ENTERPRISE__CONTRIBSYS__COM\" --build-arg rails_env=production --build-arg bundler_opts=\"--no-cache --without development test\"\n# This inherits from base again to avoid bringing in extra built time binary packages\n###\nFROM base AS production\n\nENV RAILS_ENV=production\nCOPY --from=builder $BUNDLE_APP_CONFIG $BUNDLE_APP_CONFIG\nCOPY --from=builder --chown=vets-api:vets-api /srv/vets-api/src ./\nCOPY --from=builder --chown=vets-api:vets-api /srv/vets-api/clamav/database ../clamav/database\nRUN if [ -d certs-tmp ] ; then cd certs-tmp ; for i in * ; do cp $i /usr/local/share/ca-certificates/${i/pem/crt} ; done ; fi && update-ca-certificates\nUSER vets-api\nENTRYPOINT [\"/usr/bin/dumb-init\", \"--\", \"./docker-entrypoint.sh\"]\n"
+}

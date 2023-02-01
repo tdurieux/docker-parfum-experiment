@@ -1,0 +1,17 @@
+{
+  "startTime": 1674254203384,
+  "endTime": 1674254204238,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 33,
+        "lineEnd": 33,
+        "columnStart": 2,
+        "columnEnd": 153
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "ARG CASSANDRA_VERSION=6.8.9\n\nFROM maven:3.6.3-jdk-8-slim as builder\n\nARG METRICS_COLLECTOR_VERSION=0.2.0\nARG CDC_AGENT_VERSION=2.0.0\nARG CDC_AGENT_EDITION=agent-dse4\n\nWORKDIR /build\n\nCOPY pom.xml ./\nCOPY management-api-agent-common/pom.xml ./management-api-agent-common/pom.xml\nCOPY management-api-agent-3.x/pom.xml ./management-api-agent-3.x/pom.xml\nCOPY management-api-agent-4.x/pom.xml ./management-api-agent-4.x/pom.xml\nCOPY management-api-agent-dse-6.8/pom.xml ./management-api-agent-dse-6.8/pom.xml\nCOPY management-api-common/pom.xml ./management-api-common/pom.xml\nCOPY management-api-server/pom.xml ./management-api-server/pom.xml\nCOPY settings.xml settings.xml /root/.m2/\n# this duplicates work done in the next steps, but this should provide\n# a solid cache layer that only gets reset on pom.xml changes\nRUN mvn -q -ff -T 1C install -Pdse -DskipOpenApi && rm -rf target\n\nCOPY management-api-agent-common ./management-api-agent-common\nCOPY management-api-agent-3.x ./management-api-agent-3.x\nCOPY management-api-agent-4.x ./management-api-agent-4.x\nCOPY management-api-agent-dse-6.8 ./management-api-agent-dse-6.8\nCOPY management-api-common ./management-api-common\nCOPY management-api-server ./management-api-server\nRUN mvn -q -ff package -DskipTests -Pdse\n\n# Download CDC agent\nENV CDC_AGENT_PATH /opt/cdc_agent\nRUN mkdir ${CDC_AGENT_PATH} && \\\n  curl -f -L -O \"https://github.com/datastax/cdc-apache-cassandra/releases/download/v${CDC_AGENT_VERSION}/${CDC_AGENT_EDITION}-${CDC_AGENT_VERSION}-all.jar\" && \\\n  mv ${CDC_AGENT_EDITION}-${CDC_AGENT_VERSION}-all.jar ${CDC_AGENT_PATH}/cdc-agent.jar\n\n\nFROM datastax/dse-server:${CASSANDRA_VERSION}\n\n# accept the License\nENV DS_LICENSE=accept\n\nENV CASSANDRA_PATH /opt/dse\nENV MAAC_PATH /opt/management-api\nENV CDC_AGENT_PATH /opt/cdc_agent\n\n\nENV CASSANDRA_HOME ${CASSANDRA_PATH}\nENV CASSANDRA_CONF ${CASSANDRA_PATH}/resources/cassandra/conf\nENV CASSANDRA_LOGS ${CASSANDRA_PATH}/logs\n# Log directory for Management API startup logs to avoid issues:\n# https://datastax.jira.com/browse/DB-4627\n# https://issues.apache.org/jira/browse/CASSANDRA-16027\nENV MGMT_API_LOG_DIR /var/log/cassandra\n\nCOPY --from=builder /build/management-api-agent-dse-6.8/target/datastax-mgmtapi-agent-dse-6.8-0.1.0-SNAPSHOT.jar ${MAAC_PATH}/datastax-mgmtapi-agent-0.1.0-SNAPSHOT.jar\nCOPY --from=builder /build/management-api-server/target/datastax-mgmtapi-server-0.1.0-SNAPSHOT.jar ${MAAC_PATH}/\nCOPY --from=builder ${CDC_AGENT_PATH} ${CDC_AGENT_PATH}\n\nUSER root\nRUN set -eux; \\\n  apt-get update; \\\n  apt-get install -y --no-install-recommends wget iproute2; \\\n  rm -rf /var/lib/apt/lists/*\n\nRUN chown -R dse:root ${CDC_AGENT_PATH} && \\\n    chmod -R g+w ${CDC_AGENT_PATH}\n\n# backwards compat with upstream ENTRYPOINT\nCOPY scripts/dse-6.8-docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh\nRUN chmod +x /usr/local/bin/docker-entrypoint.sh && \\\n  ln -sf /usr/local/bin/docker-entrypoint.sh /docker-entrypoint.sh && \\\n# fix for the missing mtab in the containerd\n  ln -sf /proc/mounts /etc/mtab\n\nEXPOSE 9103\nEXPOSE 8080\n\nUSER dse\n\nENTRYPOINT [\"/docker-entrypoint.sh\"]\nCMD [\"mgmtapi\"]\n"
+}

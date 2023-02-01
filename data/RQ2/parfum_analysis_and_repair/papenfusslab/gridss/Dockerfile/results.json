@@ -1,0 +1,107 @@
+{
+  "startTime": 1674217065027,
+  "endTime": 1674217066296,
+  "originalSmells": [
+    {
+      "rule": "wgetUseHttpsUrl",
+      "position": {
+        "lineStart": 95,
+        "lineEnd": 95,
+        "columnStart": 1,
+        "columnEnd": 56
+      }
+    },
+    {
+      "rule": "wgetUseHttpsUrl",
+      "position": {
+        "lineStart": 101,
+        "lineEnd": 101,
+        "columnStart": 1,
+        "columnEnd": 66
+      }
+    },
+    {
+      "rule": "wgetUseHttpsUrl",
+      "position": {
+        "lineStart": 105,
+        "lineEnd": 105,
+        "columnStart": 1,
+        "columnEnd": 75
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 31,
+        "lineEnd": 31,
+        "columnStart": 18,
+        "columnEnd": 29
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 33,
+        "lineEnd": 33,
+        "columnStart": 18,
+        "columnEnd": 29
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 88,
+        "lineEnd": 88,
+        "columnStart": 1,
+        "columnEnd": 12
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 84,
+        "lineEnd": 84,
+        "columnStart": 1,
+        "columnEnd": 31
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 113,
+        "lineEnd": 113,
+        "columnStart": 1,
+        "columnEnd": 28
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 7,
+        "lineEnd": 21,
+        "columnStart": 22,
+        "columnEnd": 11
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 54,
+        "lineEnd": 58,
+        "columnStart": 22,
+        "columnEnd": 7
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 63,
+        "lineEnd": 78,
+        "columnStart": 19,
+        "columnEnd": 6
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "ARG UBUNTU_VERSION=20.04\nFROM ubuntu:$UBUNTU_VERSION AS gridss_base_closest_mirror\n# Use the closest mirror so apt-get doesnt take ages\nRUN sed -i -e 's/http:\\/\\/archive\\.ubuntu\\.com\\/ubuntu\\//mirror:\\/\\/mirrors\\.ubuntu\\.com\\/mirrors\\.txt/' /etc/apt/sources.list\n\n# Set up a C build environment for gridsstools, samtools, and R packages\nFROM gridss_base_closest_mirror AS gridss_c_build_environment\nRUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get --no-install-recommends install -y \\\n\tlibssl-dev \\\n\tlibcurl4-openssl-dev \\\n\tlibxml2-dev \\\n\tzlib1g-dev \\\n\tlibbz2-dev \\\n\tliblzma-dev \\\n\tlibdeflate-dev \\\n\tbuild-essential \\\n\tautotools-dev \\\n\tautoconf \\\n\tautogen \\\n\tmake \\\n\twget \\\n\tlibomp-dev \\\n\t&& rm -rf /var/lib/apt/lists/*\n\n# compile gridsstools\nFROM gridss_c_build_environment AS gridss_builder_c\nRUN mkdir /opt/gridss/\nARG GRIDSS_VERSION\nCOPY src/main/c /opt/gridss/src/main/c\nCOPY src/test/resources /opt/gridss/src/test/resources\nRUN cd /opt/gridss/src/main/c/gridsstools/htslib && \\\n\tautoreconf -i && ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" && make -j 8 && \\\n\tcd .. && \\\n\tautoreconf -i && ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" && make -j 8 && \\\n\tcp gridsstools /opt/gridss/\n\n# compile GRIDSS Java code\nFROM maven:3.8.4-jdk-11 AS gridss_builder_java\nRUN mkdir /opt/gridss/\nWORKDIR /opt/gridss/\n# Download maven dependencies first so docker can cache them\nCOPY pom.xml /opt/gridss/\nCOPY repo /opt/gridss/repo\n# run all stages so all dependencies are cached\nRUN mvn -Dmaven.artifact.threads=8 verify && rm -rf target\n# Build GRIDSS jar\nARG GRIDSS_VERSION\nCOPY src /opt/gridss/src\nRUN mvn -T 1C -Drevision=${GRIDSS_VERSION} package && \\\n\tcp target/gridss-${GRIDSS_VERSION}-gridss-jar-with-dependencies.jar /opt/gridss/\n\nFROM gridss_c_build_environment AS gridss\n# Setup CRAN ubuntu package repository\n# apt-get clean not required for ubuntu images\nRUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get --no-install-recommends install -y \\\n\t\tapt-transport-https \\\n\t\tsoftware-properties-common \\\n\t\tdirmngr \\\n\t\tgnupg && \\\n\tapt-key adv \\\n\t--keyserver hkp://keyserver.ubuntu.com:80 \\\n\t--recv-keys 0xE298A3A825C0D65DFD57CBB651716619E084DAB9 && \\\n\tadd-apt-repository 'deb https://cloud.r-project.org/bin/linux/ubuntu focal-cran40/' && \\\n\tapt-get update && apt-get install --no-install-recommends -y \\\n\t\tapt-utils \\\n\t\tgawk \\\n\t\topenjdk-11-jre-headless \\\n\t\tbwa \\\n\t\thmmer \\\n\t\tbedtools \\\n\t\tbcftools \\\n\t\tr-base \\\n\t\ttime \\\n\t\tlibomp-dev \\\n\t\tperl-modules \\\n\t\tlibtext-soundex-perl \\\n\t\tpython3-h5py \\\n\t\trsync \\\n\t\tcurl \\\n\t&& rm -rf /var/lib/apt/lists/*\n# samtools needs to be installed from source since the OS package verion is too old\nRUN mkdir /opt/samtools && \\\n\tcd /opt/samtools && \\\n\twget https://github.com/samtools/samtools/releases/download/1.14/samtools-1.14.tar.bz2 && \\\n\ttar -jxf samtools-1.14.tar.bz2 && \\\n\tcd samtools-1.14 && \\\n\tautoheader && \\\n\tautoconf -Wno-syntax && \\\n\t./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" && \\\n\tmake install && \\\n\tcd ~ && \\\n\trm -rf /opt/samtools && rm samtools-1.14.tar.bz2\n### Repeat Masker and dependencies\nRUN mkdir /opt/trf && \\\n\tcd /opt/trf && \\\n\twget https://tandem.bu.edu/trf/downloads/trf407b.linux64 && \\\n\tchmod +x trf*.linux64 && \\\n\tln -s trf*.linux64 trf\n# Turns out we need makeblastdb as well as rmblastn (https://github.com/PapenfussLab/gridss/issues/535)\nRUN mkdir /opt/rmblast && \\\n\tcd /opt/rmblast && \\\n\twget https://www.repeatmasker.org/rmblast-2.11.0+-x64-linux.tar.gz && \\\n\ttar --no-anchored --strip-components 2 -xvzf rmblast-2.11.0+-x64-linux.tar.gz rmblastn makeblastdb && \\\n\trm rmblast-2.11.0+-x64-linux.tar.gz\nRUN cd /opt/ && \\\n\twget https://www.repeatmasker.org/RepeatMasker/RepeatMasker-4.1.2-p1.tar.gz && \\\n\ttar zxf RepeatMasker-*.tar.gz && \\\n\trm RepeatMasker-*.tar.gz\n### Kraken2 and dependencies\n# dustmasker from e-direct: (or is this in ncbi-blast as well?)\nRUN mkdir /opt/blast && \\\n\tcd /opt/blast && \\\n\twget https://ftp.ncbi.nlm.nih.gov/blast/executables/blast+/2.11.0/ncbi-blast-2.11.0+-x64-linux.tar.gz && \\\n\ttar zxf ncbi-blast-*.tar.gz && \\\n\tmv ncbi-blast-*/bin/* . && \\\n\trm -r ncbi-blast-* && rm ncbi-blast-*.tar.gz\nENV KRAKEN_VERSION=2.1.2\nRUN mkdir /opt/kraken2 && \\\n\tcd /opt/kraken2 && \\\n\twget https://github.com/DerrickWood/kraken2/archive/refs/tags/v$KRAKEN_VERSION.tar.gz && \\\n\ttar zxf v*.tar.gz && \\\n\tcd kraken2* && \\\n\t./install_kraken2.sh /opt/kraken2 && \\\n\tcd .. && \\\n\trm -r kraken2-$KRAKEN_VERSION v*.tar.gz\nRUN sh -c \"$(wget -q ftp://ftp.ncbi.nlm.nih.gov/entrez/entrezdirect/install-edirect.sh -O -)\" && \\\n\tmv $HOME/edirect /opt/edirect\nENV PATH=\"/opt/gridss/:/opt/RepeatMasker:/opt/rmblast/:/opt/trf:/opt/kraken2:/opt/blast:/opt/edirect:$PATH\"\n# configure repeatmasker\nRUN cd /opt/RepeatMasker && \\\n\tperl configure \\\n\t\t-default_search_engine rmblast \\\n\t\t-rmblast_dir /opt/rmblast \\\n\t\t-trf_prgm /opt/trf/trf \\\n\t\t-hmmer_dir /usr/local/bin\n# R packages used by GRIDSS - R package need the C toolchain installed\nENV R_INSTALL_STAGED=false\nRUN Rscript -e 'options(Ncpus=8L, repos=\"https://cloud.r-project.org/\");install.packages(c( \"tidyverse\", \"assertthat\", \"testthat\", \"randomForest\", \"stringdist\", \"stringr\", \"argparser\", \"R.cache\", \"BiocManager\", \"Rcpp\", \"blob\", \"RSQLite\" ))'\nRUN Rscript -e 'options(Ncpus=8L, repos=\"https://cloud.r-project.org/\");BiocManager::install(ask=FALSE, pkgs=c( \"copynumber\", \"StructuralVariantAnnotation\", \"VariantAnnotation\", \"rtracklayer\", \"BSgenome\", \"Rsamtools\", \"biomaRt\", \"org.Hs.eg.db\", \"TxDb.Hsapiens.UCSC.hg19.knownGene\", \"TxDb.Hsapiens.UCSC.hg38.knownGene\" ))'\n# Install GRIDSS\nARG GRIDSS_VERSION\nENV GRIDSS_VERSION=${GRIDSS_VERSION}\nENV GRIDSS_JAR=/opt/gridss/gridss-${GRIDSS_VERSION}-gridss-jar-with-dependencies.jar\nLABEL software=\"GRIDSS\"\nLABEL software.version=\"$GRIDSS_VERSION\"\nLABEL about.summary=\"Genomic Rearrangement IDentification Software Suite\"\nLABEL about.home=\"https://github.com/PapenfussLab/gridss\"\nLABEL about.tags=\"Genomics\"\nRUN mkdir /opt/gridss/ /data\nCOPY --from=gridss_builder_c /opt/gridss/gridsstools /opt/gridss/\nCOPY --from=gridss_builder_java /opt/gridss/gridss-${GRIDSS_VERSION}-gridss-jar-with-dependencies.jar /opt/gridss/\nCOPY scripts/gridss \\\n\tscripts/gridss_annotate_vcf_kraken2 \\\n\tscripts/gridss_annotate_vcf_repeatmasker \\\n\tscripts/gridss_extract_overlapping_fragments \\\n\tscripts/gridss_somatic_filter \\\n\tscripts/virusbreakend \\\n\tscripts/virusbreakend-build \\\n\tscripts/gridss.config.R \\\n\tscripts/libgridss.R \\\n\t/opt/gridss/\nRUN chmod +x /opt/gridss/* && \\\n\tchmod -x /opt/gridss/*.R\nWORKDIR /data/\n\n# Copy build artifact locally\nFROM scratch AS gridss_export_build_artefacts\nARG GRIDSS_VERSION\nCOPY --from=gridss /opt/gridss/* /\n\n"
+}

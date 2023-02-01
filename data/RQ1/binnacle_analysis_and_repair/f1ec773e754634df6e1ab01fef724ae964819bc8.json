@@ -1,0 +1,62 @@
+{
+  "startTime": 1674236706718,
+  "endTime": 1674236706956,
+  "originalSmells": [
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 51,
+        "lineEnd": 51,
+        "columnStart": 1,
+        "columnEnd": 12
+      }
+    },
+    {
+      "rule": "wgetUseHttpsUrl",
+      "position": {
+        "lineStart": 31,
+        "lineEnd": 31,
+        "columnStart": 4,
+        "columnEnd": 57
+      }
+    },
+    {
+      "rule": "gpgUseBatchFlag",
+      "position": {
+        "lineStart": 32,
+        "lineEnd": 32,
+        "columnStart": 4,
+        "columnEnd": 38
+      }
+    },
+    {
+      "rule": "gpgUseBatchFlag",
+      "position": {
+        "lineStart": 33,
+        "lineEnd": 33,
+        "columnStart": 4,
+        "columnEnd": 41
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 35,
+        "lineEnd": 35,
+        "columnStart": 4,
+        "columnEnd": 34
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 35,
+        "lineEnd": 35,
+        "columnStart": 4,
+        "columnEnd": 34
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM mapcentia/gc2core:gdal\nMAINTAINER Martin Høgh<mh@mapcentia.com>\n\nRUN export DEBIAN_FRONTEND=noninteractive\nENV DEBIAN_FRONTEND noninteractive\n\n# Set php session timeout to one day\nRUN sed -i \"s/session.gc_maxlifetime = 1440/session.gc_maxlifetime = 86400/g\" /etc/php/7.0/fpm/php.ini\n\n# Install MapServer 7.4 from source\nRUN git clone https://github.com/mapserver/mapserver.git --branch branch-7-4 &&\\\n    cd mapserver &&\\\n    mkdir build &&\\\n    cd build &&\\\n    cmake -DCMAKE_INSTALL_PREFIX=/opt \\\n    -DCMAKE_PREFIX_PATH=/usr/local/pgsql/94:/usr/local:/opt:/usr/include \\\n    -DWITH_CLIENT_WFS=ON \\\n    -DWITH_CLIENT_WMS=ON \\\n    -DWITH_CURL=ON \\\n    -DWITH_SOS=ON \\\n    -DWITH_PHP=OFF \\\n    -DWITH_PYTHON=ON \\\n    -DWITH_ORACLESPATIAL=0 \\\n    -DWITH_RSVG=ON \\\n    -DWITH_SVGCAIRO=0 .. &&\\\n    make && make install\n\nRUN cp /mapserver/build/mapserv /usr/lib/cgi-bin/mapserv.fcgi\n\n# Install QGIS-server\nRUN echo \"deb http://qgis.org/debian stretch main\" >> /etc/apt/sources.list && \\\n    wget -O - https://qgis.org/downloads/qgis-2017.gpg.key | gpg --import --batch && \\\n    gpg --batch --fingerprint CAEB3DC3BDF7FB45 && \\\n    gpg --batch --export --armor CAEB3DC3BDF7FB45 | apt-key add - && \\\n    apt-get -y update && \\\n    apt-get -y --no-install-recommends install qgis-server && rm -rf /var/lib/apt/lists/*;\n\n# Symlink font for QGIS Server\nRUN ln -s /usr/share/fonts directory /usr/lib/x86_64-linux-gnu\n\n# Add some projections to Proj4\nRUN echo \"<900913> +proj=merc +a=6378137 +b=6378137 +lat_ts=0.0 +lon_0=0.0 +x_0=0.0 +y_0=0 +k=1.0 +units=m +nadgrids=@null +no_defs <>\" >> /usr/share/proj/epsg && \\\n\techo \"<34004> +proj=omerc +lonc=11.81 +lat_0=55.3333332 +x_0=-118947.024 +y_0=101112.545 +k=0.9999855 +alpha=1.190005 +gamma=0.0 +datum=WGS84\" >> /usr/share/proj/epsg && \\\n\techo \"<34005> +proj=omerc +lonc=11.81 +lat_0=55.3333332 +x_0=-118947.024 +y_0=101112.545 +k=0.9999855 +alpha=1.190005 +gamma=0.0 +datum=WGS84\" >> /usr/share/proj/epsg\n\n# Clone GC2 from GitHub\nRUN cd /var/www/ &&\\\n\tgit clone http://github.com/mapcentia/geocloud2.git --branch master\n\n# Install npm packages run Grunt\nRUN cd /var/www/geocloud2 &&\\\n\tnpm install && \\\n\tgrunt production --force && npm cache clean --force;\n\n# Add the custom config files from the Docker repo.\nADD conf/gc2/App.php /var/www/geocloud2/app/conf/\nADD conf/gc2/Connection.php /var/www/geocloud2/app/conf/\n\n# Add apache config file from Docker repo\nADD conf/apache/000-default.conf /etc/apache2/sites-enabled/\n\n# Add php-fpm config file from Docker repo\nADD conf/fpm/www.conf /etc/php/7.0/fpm/pool.d/www.conf\n\n# Add the check-if-fpm-is-alive script\nCOPY check-fpm.sh /check-fpm.sh\nRUN chmod +x /check-fpm.sh\n\nADD conf/apache/run-apache.sh /\nRUN chmod +x /run-apache.sh\n\nADD conf/apache/run-fpm.sh /\nRUN chmod +x /run-fpm.sh\n\nCOPY entrypoint.sh /entrypoint.sh\nRUN chmod +x /entrypoint.sh\nENTRYPOINT [\"/entrypoint.sh\"]\n\n# Share dirs\nVOLUME  [\"/var/www/geocloud2\",\"/etc/apache2\",\"/etc/php/7.0/fpm\",\"/var/log\", \"/usr/share/proj\"]\n\n# Expose standard ports for HTTP and HTTPS\nEXPOSE 80\nEXPOSE 443\n\n# Add Supervisor config and run the deamon\nADD conf/supervisor/supervisord.conf /etc/supervisor/conf.d/supervisord.conf\nCMD [\"/usr/bin/supervisord\", \"-c\", \"/etc/supervisor/conf.d/supervisord.conf\"]\n"
+}

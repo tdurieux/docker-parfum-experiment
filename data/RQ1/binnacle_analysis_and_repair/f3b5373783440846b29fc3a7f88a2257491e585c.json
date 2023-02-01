@@ -1,0 +1,17 @@
+{
+  "startTime": 1674245380973,
+  "endTime": 1674245381162,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 9,
+        "lineEnd": 12,
+        "columnStart": 0,
+        "columnEnd": 54
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "ARG QEMU_IMAGE=calico/go-build:latest\nFROM ${QEMU_IMAGE} as qemu\n\nFROM s390x/debian:buster-slim as bpftool-build\n\nCOPY --from=qemu /usr/bin/qemu-s390x-static /usr/bin/\n\nRUN apt-get update && \\\napt-get upgrade -y && \\\napt-get install -y --no-install-recommends \\\n    gpg gpg-agent libelf-dev libmnl-dev libc-dev iptables libgcc-8-dev \\\n    bash-completion binutils binutils-dev ca-certificates make git curl \\\n    xz-utils gcc pkg-config bison flex build-essential && \\\napt-get purge --auto-remove && \\\napt-get clean && rm -rf /var/lib/apt/lists/*;\n\nWORKDIR /tmp\n\nRUN \\\ngit clone --depth 1 -b master git://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git && \\\ncd linux/tools/bpf/bpftool/ && \\\nsed -i '/CFLAGS += -O2/a CFLAGS += -static' Makefile && \\\nsed -i 's/LIBS = -lelf $(LIBBPF)/LIBS = -lelf -lz $(LIBBPF)/g' Makefile && \\\nprintf 'feature-libbfd=0\\nfeature-libelf=1\\nfeature-bpf=1\\nfeature-libelf-mmap=1' >> FEATURES_DUMP.bpftool && \\\nFEATURES_DUMP=`pwd`/FEATURES_DUMP.bpftool make -j `getconf _NPROCESSORS_ONLN` && \\\nstrip bpftool && \\\nldd bpftool 2>&1 | grep -q -e \"Not a valid dynamic program\" \\\n\t-e \"not a dynamic executable\" || \\\n\t( echo \"Error: bpftool is not statically linked\"; false ) && \\\nmv bpftool /usr/bin && rm -rf /tmp/linux\n\nFROM s390x/alpine:3.8 as base\nMAINTAINER LoZ Open Source Ecosystem (https://www.ibm.com/developerworks/community/groups/community/lozopensource)\n\n# Enable non-native builds of this image on an amd64 hosts.\n# This must be the first RUN command in this file!\n# we only need this for the intermediate \"base\" image, so we can run all the apk and other commands\n# when running on a kernel >= 4.8, this will become less relevant\nCOPY --from=qemu /usr/bin/qemu-s390x-static /usr/bin/\n\n\n# Install our dependencies.\nRUN apk --no-cache add ip6tables tini ipset iputils iproute2 conntrack-tools file\n\nADD felix.cfg /etc/calico/felix.cfg\nADD calico-felix-wrapper /usr/bin\n\n# Put our binary in /code rather than directly in /usr/bin.  This allows the downstream builds\n# to more easily extract the Felix build artefacts from the container.\nADD bin/calico-felix-s390x /code/calico-felix\nRUN ln -s /code/calico-felix /usr/bin\nCOPY --from=bpftool-build /usr/bin/bpftool /usr/bin\nWORKDIR /code\n\n# Since our binary isn't designed to run as PID 1, run it via the tini init daemon.\nENTRYPOINT [\"/sbin/tini\", \"--\"]\n# Run felix (via the wrapper script) by default\nCMD [\"calico-felix-wrapper\"]\n"
+}

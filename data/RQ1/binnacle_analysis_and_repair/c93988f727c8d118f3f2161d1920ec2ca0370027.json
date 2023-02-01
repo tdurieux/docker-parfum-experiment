@@ -1,0 +1,62 @@
+{
+  "startTime": 1674243986608,
+  "endTime": 1674243986771,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 17,
+        "lineEnd": 17,
+        "columnStart": 4,
+        "columnEnd": 16
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 29,
+        "lineEnd": 30,
+        "columnStart": 7,
+        "columnEnd": 31
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 45,
+        "lineEnd": 48,
+        "columnStart": 7,
+        "columnEnd": 28
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 29,
+        "lineEnd": 30,
+        "columnStart": 7,
+        "columnEnd": 31
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 45,
+        "lineEnd": 48,
+        "columnStart": 7,
+        "columnEnd": 28
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 10,
+        "lineEnd": 12,
+        "columnStart": 4,
+        "columnEnd": 7
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Using multistage build:\n# \thttps://docs.docker.com/develop/develop-images/multistage-build/\n# \thttps://whitfin.io/speeding-up-rust-docker-builds/\n####################### VAULT BUILD IMAGE  #######################\nFROM alpine as vault\n\nENV VAULT_VERSION \"v2.10.1\"\n\nENV URL \"https://github.com/dani-garcia/bw_web_builds/releases/download/$VAULT_VERSION/bw_web_$VAULT_VERSION.tar.gz\"\n\nRUN apk add --no-cache --update-cache --upgrade \\\n    curl \\\n    tar\n\nRUN mkdir /web-vault\nWORKDIR /web-vault\n\nRUN curl -f -L $URL | tar xz\nRUN ls\n\n########################## BUILD IMAGE  ##########################\n# We need to use the Rust build image, because\n# we need the Rust compiler and Cargo tooling\nFROM rust as build\n\n# set sqlite as default for DB ARG for backward comaptibility\nARG DB=sqlite\n\nRUN apt-get update \\\n    && apt-get install --no-install-recommends -y \\\n        gcc-arm-linux-gnueabihf \\\n    && mkdir -p ~/.cargo \\\n    && echo '[target.armv7-unknown-linux-gnueabihf]' >> ~/.cargo/config \\\n    && echo 'linker = \"arm-linux-gnueabihf-gcc\"' >> ~/.cargo/config && rm -rf /var/lib/apt/lists/*;\n\nENV CARGO_HOME \"/root/.cargo\"\nENV USER \"root\"\n\nWORKDIR /app\n\n# Prepare openssl armhf libs\nRUN sed 's/^deb/deb-src/' /etc/apt/sources.list > \\\n        /etc/apt/sources.list.d/deb-src.list \\\n    && dpkg --add-architecture armhf \\\n    && apt-get update \\\n    && apt-get install --no-install-recommends -y \\\n        libssl-dev:armhf \\\n        libc6-dev:armhf \\\n        libmariadb-dev:armhf && rm -rf /var/lib/apt/lists/*;\n\n\nENV CC_armv7_unknown_linux_gnueabihf=\"/usr/bin/arm-linux-gnueabihf-gcc\"\nENV CROSS_COMPILE=\"1\"\nENV OPENSSL_INCLUDE_DIR=\"/usr/include/arm-linux-gnueabihf\"\nENV OPENSSL_LIB_DIR=\"/usr/lib/arm-linux-gnueabihf\"\n\n# Copies the complete project\n# To avoid copying unneeded files, use .dockerignore\nCOPY . .\n\n# Build\nRUN rustup target add armv7-unknown-linux-gnueabihf\nRUN cargo build --features ${DB} --release --target=armv7-unknown-linux-gnueabihf -v\n\n######################## RUNTIME IMAGE  ########################\n# Create a new stage with a minimal image\n# because we already have a binary built\nFROM balenalib/armv7hf-debian:stretch\n\nENV ROCKET_ENV \"staging\"\nENV ROCKET_PORT=80\nENV ROCKET_WORKERS=10\n\nRUN [ \"cross-build-start\" ]\n\n# Install needed libraries\nRUN apt-get update && apt-get install -y\\\n    openssl\\\n    ca-certificates\\\n    libmariadbclient-dev\\\n    --no-install-recommends\\\n && rm -rf /var/lib/apt/lists/*\n\nRUN mkdir /data\n\nRUN [ \"cross-build-end\" ] \n\nVOLUME /data\nEXPOSE 80\n\n# Copies the files from the context (Rocket.toml file and web-vault)\n# and the binary from the \"build\" stage to the current stage\nCOPY Rocket.toml .\nCOPY --from=vault /web-vault ./web-vault\nCOPY --from=build /app/target/armv7-unknown-linux-gnueabihf/release/bitwarden_rs .\n\n# Configures the startup!\nCMD ./bitwarden_rs"
+}

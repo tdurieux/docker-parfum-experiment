@@ -1,0 +1,8 @@
+{% extends "base.jinja2" %}
+
+{% set dependencies = [
+    {"pkgs": requires("debian", "bullseye", "lava-common") },
+    {"pkgs": requires("debian", "bullseye", "lava-dispatcher") },
+    {"pkgs": "android-sdk-libsparse-utils docker.io dfu-util git libguestfs-tools ser2net telnet tftpd-hpa u-boot-tools unzip xz-utils zstd rpcbind nfs-common" },
+    {"pkgs": "qemu-system-arm qemu-system-mips qemu-system-misc qemu-system-ppc qemu-system-sparc qemu-system-x86", "from": "bullseye-backports" },
+] %}

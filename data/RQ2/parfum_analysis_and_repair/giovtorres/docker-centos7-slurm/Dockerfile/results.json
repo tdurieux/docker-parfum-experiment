@@ -1,0 +1,35 @@
+{
+  "startTime": 1674248128444,
+  "endTime": 1674248129589,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 99,
+        "lineEnd": 99,
+        "columnStart": 7,
+        "columnEnd": 29
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 108,
+        "lineEnd": 108,
+        "columnStart": 12,
+        "columnEnd": 38
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 117,
+        "lineEnd": 118,
+        "columnStart": 7,
+        "columnEnd": 56
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM centos:7.9.2009\n\nLABEL org.opencontainers.image.source=\"https://github.com/giovtorres/docker-centos7-slurm\" \\\n      org.opencontainers.image.title=\"docker-centos7-slurm\" \\\n      org.opencontainers.image.description=\"Slurm All-in-one Docker container on CentOS 7\" \\\n      org.label-schema.docker.cmd=\"docker run -it -h slurmctl giovtorres/docker-centos7-slurm:latest\" \\\n      maintainer=\"Giovanni Torres\"\n\nENV PATH \"/root/.pyenv/shims:/root/.pyenv/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/local/bin\"\n\nEXPOSE 6817 6818 6819 6820 3306\n\n# Install common YUM dependency packages\n# The IUS repo install epel-release as a dependency while also providing a newer version of Git\nRUN set -ex \\\n    && yum makecache fast \\\n    && yum -y update \\\n    && yum -y install https://repo.ius.io/ius-release-el7.rpm \\\n    && yum -y install \\\n        autoconf \\\n        bash-completion \\\n        bzip2 \\\n        bzip2-devel \\\n        file \\\n        iproute \\\n        gcc \\\n        gcc-c++ \\\n        gdbm-devel \\\n        git236 \\\n        glibc-devel \\\n        gmp-devel \\\n        libffi-devel \\\n        libGL-devel \\\n        libX11-devel \\\n        make \\\n        mariadb-server \\\n        mariadb-devel \\\n        munge \\\n        munge-devel \\\n        ncurses-devel \\\n        patch \\\n        perl-core \\\n        pkgconfig \\\n        psmisc \\\n        readline-devel \\\n        sqlite-devel \\\n        tcl-devel \\\n        tix-devel \\\n        tk \\\n        tk-devel \\\n        supervisor \\\n        wget \\\n        which \\\n        vim-enhanced \\\n        xz-devel \\\n        zlib-devel http-parser-devel json-c-devel libjwt-devel libyaml-devel \\\n    && yum clean all \\\n    && rm -rf /var/cache/yum\n\n# Set Vim and Git defaults\nRUN set -ex \\\n    && echo \"syntax on\"           >> \"$HOME/.vimrc\" \\\n    && echo \"set tabstop=4\"       >> \"$HOME/.vimrc\" \\\n    && echo \"set softtabstop=4\"   >> \"$HOME/.vimrc\" \\\n    && echo \"set shiftwidth=4\"    >> \"$HOME/.vimrc\" \\\n    && echo \"set expandtab\"       >> \"$HOME/.vimrc\" \\\n    && echo \"set autoindent\"      >> \"$HOME/.vimrc\" \\\n    && echo \"set fileformat=unix\" >> \"$HOME/.vimrc\" \\\n    && echo \"set encoding=utf-8\"  >> \"$HOME/.vimrc\" \\\n    && git config --global color.ui auto \\\n    && git config --global push.default simple\n\n# Add Tini\nENV TINI_VERSION v0.18.0\nADD https://github.com/krallin/tini/releases/download/${TINI_VERSION}/tini /tini\nRUN chmod +x /tini\n\n# Install OpenSSL1.1.1\n# See PEP 644: https://www.python.org/dev/peps/pep-0644/\nARG OPENSSL_VERSION=\"1.1.1l\"\nRUN set -ex \\\n    && wget --quiet https://www.openssl.org/source/openssl-${OPENSSL_VERSION}.tar.gz \\\n    && tar xzf openssl-${OPENSSL_VERSION}.tar.gz \\\n    && pushd openssl-${OPENSSL_VERSION} \\\n    && ./config --prefix=/opt/openssl --openssldir=/etc/ssl \\\n    && make \\\n    && make test \\\n    && make install \\\n    && echo \"/opt/openssl/lib\" >> /etc/ld.so.conf.d/openssl.conf \\\n    && ldconfig \\\n    && popd \\\n    && rm -rf openssl-${OPENSSL_VERSION}.tar.gz\n\n# Install supported Python versions and install dependencies.\n# Set the default global to the latest supported version.\n# Use pyenv inside the container to switch between Python versions.\nARG PYTHON_VERSIONS=\"3.6.15 3.7.12 3.8.12 3.9.9 3.10.0\"\nARG CONFIGURE_OPTS=\"--with-openssl=/opt/openssl\"\nRUN set -ex \\\n    && curl -f https://pyenv.run | bash \\\n    && echo \"eval \\\"\\$(pyenv init --path)\\\"\" >> \"${HOME}/.bashrc\" \\\n    && echo \"eval \\\"\\$(pyenv init -)\\\"\" >> \"${HOME}/.bashrc\" \\\n    && source \"${HOME}/.bashrc\" \\\n    && pyenv update \\\n    && for python_version in ${PYTHON_VERSIONS}; \\\n        do \\\n            pyenv install $python_version; \\\n            pyenv global $python_version; \\\n            pip install --no-cache-dir Cython pytest; \\\n        done\n\n# Compile, build and install Slurm from Git source\nARG SLURM_TAG=slurm-21-08-8-2\nARG JOBS=4\nRUN set -ex \\\n    && git clone -b ${SLURM_TAG} --single-branch --depth=1 https://github.com/SchedMD/slurm.git \\\n    && pushd slurm \\\n    && ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" --prefix=/usr --sysconfdir=/etc/slurm --enable-slurmrestd \\\n        --with-mysql_config=/usr/bin --libdir=/usr/lib64 \\\n    && sed -e 's|#!/usr/bin/env python3|#!/usr/bin/python|' -i doc/html/shtml2html.py \\\n    && make -j ${JOBS} install \\\n    && install -D -m644 etc/cgroup.conf.example /etc/slurm/cgroup.conf.example \\\n    && install -D -m644 etc/slurm.conf.example /etc/slurm/slurm.conf.example \\\n    && install -D -m600 etc/slurmdbd.conf.example /etc/slurm/slurmdbd.conf.example \\\n    && install -D -m644 contribs/slurm_completion_help/slurm_completion.sh /etc/profile.d/slurm_completion.sh \\\n    && popd \\\n    && rm -rf slurm \\\n    && groupadd -r slurm \\\n    && useradd -r -g slurm slurm \\\n    && mkdir -p /etc/sysconfig/slurm \\\n        /var/spool/slurmd \\\n        /var/spool/slurmctld \\\n        /var/log/slurm \\\n        /var/run/slurm \\\n    && chown -R slurm:slurm /var/spool/slurmd \\\n        /var/spool/slurmctld \\\n        /var/log/slurm \\\n        /var/run/slurm \\\n    && /sbin/create-munge-key\n\nRUN dd if=/dev/random of=/etc/slurm/jwt_hs256.key bs=32 count=1 \\\n    && chmod 600 /etc/slurm/jwt_hs256.key && chown slurm.slurm /etc/slurm/jwt_hs256.key\n\nCOPY --chown=slurm files/slurm/slurm.conf files/slurm/gres.conf files/slurm/slurmdbd.conf /etc/slurm/\nCOPY files/supervisord.conf /etc/\n\nRUN chmod 0600 /etc/slurm/slurmdbd.conf\n\n# Mark externally mounted volumes\nVOLUME [\"/var/lib/mysql\", \"/var/lib/slurmd\", \"/var/spool/slurm\", \"/var/log/slurm\"]\n\nCOPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh\n\nENTRYPOINT [\"/tini\", \"--\", \"/usr/local/bin/docker-entrypoint.sh\"]\nCMD [\"/bin/bash\"]\n"
+}

@@ -1,0 +1,17 @@
+{
+  "startTime": 1674249363514,
+  "endTime": 1674249364156,
+  "originalSmells": [
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 3,
+        "lineEnd": 6,
+        "columnStart": 4,
+        "columnEnd": 5
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# If you change this major version, change the --multi-release jdeps flag below\nFROM openjdk:18-alpine AS build\n\nRUN apk add --no-cache \\\n\n      binutils \\\n    ;\nWORKDIR /app\n\n# Cache the Gradle binary separately from the build.\nCOPY gradlew ./\nCOPY gradle/wrapper ./gradle/wrapper\nRUN ./gradlew --version\n\nCOPY gradle ./gradle\nCOPY build.gradle settings.gradle ./\nCOPY src ./src\nRUN ./gradlew assemble\n\n# Find modules which are required.\nRUN jdeps \\\n      --ignore-missing-deps \\\n      # Keep in sync with major version of container above.\n      --multi-release 18 \\\n      --print-module-deps \\\n      --class-path build/install/ui-spy/lib/* \\\n    # Split comma-separated items into lines.\n    | tr ',' '\\n' \\\n    # Used only by kotlinx.coroutines debug agent which we do not use.\n    | grep -v java.instrument \\\n    # Used only by kotlinx.coroutines debug agent which we do not use.\n    | grep -v jdk.unsupported \\\n    # Add crypto module to the list so TLS works for HTTPS requests.\n    | awk '{print $1 \"\\n\" \"jdk.crypto.ec\"}' \\\n    # Join lines with comma.\n    | tr '\\n' ',' \\\n    # Replace trailing comma with a newline.\n    | sed 's/,$/\\n/' \\\n    # Print to stdout AND write to this file.\n    | tee jdeps.txt \\\n  ;\n\n# Build custom minimal JRE with only the modules we need.\nRUN jlink \\\n      --verbose \\\n      --compress 2 \\\n      --strip-debug \\\n      --no-header-files \\\n      --no-man-pages \\\n      --output jre \\\n      --add-modules $(cat jdeps.txt) \\\n   ;\n\nFROM alpine:3.16.0\n\nCOPY --from=build /app/jre /jre\nENV JAVA_HOME=\"/jre\"\n\nCOPY --from=build /app/build/install/ui-spy/ /app\n\nENTRYPOINT [\"/app/bin/ui-spy\"]\nCMD [\"--data\", \"/data\", \"/config/config.toml\"]\n"
+}

@@ -1,0 +1,45 @@
+{
+  "startTime": 1674217075239,
+  "endTime": 1674217076460,
+  "originalSmells": [
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 48,
+        "lineEnd": 48,
+        "columnStart": 4,
+        "columnEnd": 8
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 8,
+        "lineEnd": 8,
+        "columnStart": 4,
+        "columnEnd": 68
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 14,
+        "lineEnd": 14,
+        "columnStart": 4,
+        "columnEnd": 57
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "yarnCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 48,
+        "lineEnd": 48,
+        "columnStart": 12,
+        "columnEnd": 28
+      }
+    }
+  ],
+  "repairedDockerfile": "FROM ruby:3.1.2-alpine\n\nARG APPNAME=get-help-with-tech\n\nUSER root\n\n# dependencies relied upon to build native-extension gems etc\nRUN apk update\nRUN apk add --no-cache libxml2-dev libxslt-dev build-base postgresql-dev tzdata\n# Fix incompatibility with slim tzdata from 2020b onwards\n# see https://github.com/tzinfo/tzinfo/issues/120 for details\nRUN wget https://data.iana.org/time-zones/tzdb/tzdata.zi -O /usr/share/zoneinfo/tzdata.zi && \\\n    /usr/sbin/zic -b fat /usr/share/zoneinfo/tzdata.zi\n\nRUN apk add --no-cache nodejs yarn postgresql-contrib libpq less git\n\nENV RAILS_ROOT /var/www/${APPNAME}\nRUN mkdir -p $RAILS_ROOT\nWORKDIR $RAILS_ROOT\n\nRUN addgroup deploy && adduser -S -u 1001 -s bash -D -G deploy deploy\nRUN chown deploy:deploy /var/www/${APPNAME}\n\nENV BUNDLER_VERSION 2.2.32\nRUN gem install bundler\nRUN chown -R deploy:deploy /usr/local/bundle/\nUSER 1001\n\n# make it easier to get a rails console when ssh-ed on\nRUN echo \"PATH=/usr/local/bundle/bin:/usr/local/bundle/gems/bin:/usr/local/sbin:/usr/local/bin:${PATH}\" >> /home/deploy/.profile\nRUN echo \"cd ${RAILS_ROOT}\" >> /home/deploy/.profile\nRUN chown deploy:deploy /home/deploy/.profile\n\n# install all gems\nCOPY --chown=deploy:deploy Gemfile Gemfile.lock .ruby-version ./\nARG BUNDLE_FLAGS=\"--jobs 2\"\nRUN bundle config set cache_all true\nRUN bundle config set without 'development test'\nRUN bundle install\nRUN bundle package\n\nCOPY --chown=deploy:deploy . .\n\n# allow access to port 3000\nENV APP_PORT 3000\nEXPOSE $APP_PORT\n\n# precompile assets\nRUN yarn && yarn cache clean;\nARG RAILS_ENV=production\nRUN RAILS_ENV=${RAILS_ENV} SECRET_KEY_BASE=$(bin/rake secret) bundle exec rails webpacker:compile\n\n# Render the 'too many requests' error page\nRUN RAILS_ENV=${RAILS_ENV} SECRET_KEY_BASE=$(bin/rake secret) bundle exec rake release:render_429_to_file\n\n# Cache the git commit sha & branch\nARG GIT_COMMIT_SHA=\"\"\nARG GIT_BRANCH=\"\"\nENV GIT_COMMIT_SHA=${GIT_COMMIT_SHA}\nENV GIT_BRANCH=${GIT_BRANCH}\nRUN echo \"[{'commit_sha': '${GIT_COMMIT_SHA}', 'branch': '${GIT_BRANCH}'}]\" > ./.gitinfo.json\n\n# run the rails server\nARG RAILS_ENV=production\nCMD bundle exec rake db:migrate && bundle exec rails s -e ${RAILS_ENV} -p ${APP_PORT} --binding=0.0.0.0\n"
+}

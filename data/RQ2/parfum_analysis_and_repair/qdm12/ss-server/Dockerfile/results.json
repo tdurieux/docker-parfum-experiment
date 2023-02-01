@@ -1,0 +1,17 @@
+{
+  "startTime": 1674252157839,
+  "endTime": 1674252158607,
+  "originalSmells": [
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 14,
+        "lineEnd": 14,
+        "columnStart": 4,
+        "columnEnd": 28
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Sets linux/amd64 in case it's not injected by older Docker versions\nARG BUILDPLATFORM=linux/amd64\n\nARG ALPINE_VERSION=3.15\nARG GO_VERSION=1.17\nARG XCPUTRANSLATE_VERSION=v0.6.0\nARG GOLANGCI_LINT_VERSION=v1.45.2\n\nFROM --platform=${BUILDPLATFORM} qmcgaw/xcputranslate:${XCPUTRANSLATE_VERSION} AS xcputranslate\nFROM --platform=${BUILDPLATFORM} qmcgaw/binpot:golangci-lint-${GOLANGCI_LINT_VERSION} AS golangci-lint\n\nFROM --platform=${BUILDPLATFORM} golang:${GO_VERSION}-alpine${ALPINE_VERSION} AS base\nENV CGO_ENABLED=0\nWORKDIR /tmp/gobuild\nRUN apk --update --no-cache add git g++\nCOPY --from=xcputranslate /xcputranslate /usr/local/bin/xcputranslate\nCOPY --from=golangci-lint /bin /go/bin/golangci-lint\nCOPY go.mod go.sum ./\nRUN go mod download\nCOPY pkg/ ./pkg/\nCOPY cmd/ ./cmd/\nCOPY internal/ ./internal/\n\nFROM base AS test\n# Note on the go race detector:\n# - we set CGO_ENABLED=1 to have it enabled\n# - we installed g++ in the base stage to support the race detector\nENV CGO_ENABLED=1\nENTRYPOINT go test -race -coverpkg=./... -coverprofile=coverage.txt -covermode=atomic ./...\n\nFROM base AS lint\nCOPY .golangci.yml ./\nRUN golangci-lint run --timeout=10m\n\nFROM base AS build\nARG TARGETPLATFORM\nARG VERSION=unknown\nARG CREATED=\"an unknown date\"\nARG COMMIT=unknown\nRUN GOARCH=\"$(xcputranslate translate -targetplatform=${TARGETPLATFORM} -field arch)\" \\\r\n    GOARM=\"$(xcputranslate translate -targetplatform=${TARGETPLATFORM} -field arm)\" \\\r\n    go build -trimpath -ldflags=\"-s -w \\\r\n    -X 'main.version=$VERSION' \\\r\n    -X 'main.date=$CREATED' \\\r\n    -X 'main.commit=$COMMIT' \\\r\n    \" -o app cmd/ss-server/main.go\n\nFROM scratch\nARG VERSION=unknown\nARG CREATED=unknown\nARG COMMIT=unknown\nLABEL \\\r\n    org.opencontainers.image.authors=\"quentin.mcgaw@gmail.com\" \\\r\n    org.opencontainers.image.version=$VERSION \\\r\n    org.opencontainers.image.created=$CREATED \\\r\n    org.opencontainers.image.revision=$COMMIT \\\r\n    org.opencontainers.image.url=\"https://github.com/qdm12/ss-server\" \\\r\n    org.opencontainers.image.documentation=\"https://github.com/qdm12/ss-server/internal/blob/master/README.md\" \\\r\n    org.opencontainers.image.source=\"https://github.com/qdm12/ss-server\" \\\r\n    org.opencontainers.image.title=\"ss-server\" \\\r\n    org.opencontainers.image.description=\"Shadowsocks server written in Go, aimed for Docker containers\"\nENV TZ= \\\r\n    LOG_LEVEL=INFO \\\r\n    PORT=8388 \\\r\n    CIPHER=chacha20-ietf-poly1305\nENTRYPOINT [\"/ss-server\"]\n# HEALTHCHECK --interval=10s --timeout=5s --start-period=5s --retries=2 CMD [\"/app\",\"healthcheck\"]\nUSER 1000\nCOPY --from=build --chown=1000 /tmp/gobuild/app /ss-server\n"
+}

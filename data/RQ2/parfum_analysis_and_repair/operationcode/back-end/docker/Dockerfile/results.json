@@ -1,0 +1,17 @@
+{
+  "startTime": 1674221160003,
+  "endTime": 1674221161354,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 26,
+        "lineEnd": 26,
+        "columnStart": 4,
+        "columnEnd": 22
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM python:3.7-alpine AS base\n\n# Using seperate docker stage for building dependencies\nFROM base as builder\n\nENV PIP_DISABLE_PIP_VERSION_CHECK on\nENV PYTHONDONTWRITEBYTECODE 1\nENV PYTHONUNBUFFERED 1\nENV PIP_NO_BINARY psycopg2\n\n# Install tools for building dependencies\nRUN apk update && \\\n    apk add --no-cache libffi-dev \\\n                       postgresql-dev \\\n                       gcc \\\n                       python3-dev \\\n                       musl-dev \\\n                       zlib-dev \\\n                       jpeg-dev\n\nRUN python -m venv /opt/venv\n# Make sure we use the virtualenv:\nENV PATH=\"/opt/venv/bin:$PATH\"\n\nCOPY poetry.lock pyproject.toml ./\n\nRUN pip install --no-cache-dir poetry && \\\n    poetry config virtualenvs.create false && \\\n    poetry install --no-dev --no-interaction --no-ansi\n\n\n# The `built-image` stage is the base for all remaining images\n# Pulls all of the built dependencies from the builder stage\nFROM base as built-image\nENV PIP_DISABLE_PIP_VERSION_CHECK on\nENV PYTHONDONTWRITEBYTECODE 1\nENV PYTHONUNBUFFERED 1\nENV PIP_NO_BINARY psycopg2\n\n# copy installed deps from builder image\nCOPY --from=builder /opt/venv /opt/venv\n\n# Add libpq and libjpeg which psycopg2 and pillow need at runtime\nRUN apk add --no-cache libpq libjpeg-turbo\n\n# Make sure we use the virtualenv\nENV PATH=\"/opt/venv/bin:$PATH\"\n\n# The `app` stage is used as the base for images that don't\n# need the development dependencies\nFROM built-image as app\n\nENV DJANGO_ENV production\nENV DB_ENGINE django.db.backends.postgresql\nRUN mkdir /static\nCOPY src /src\nCOPY .dev /src/.dev\nWORKDIR /src\n\n\n# `Shell` will build an image that, when run, drops you into a\n# python shell with the application context loaded\n# Note this stage name is capitalised, this is purely\n# a convetion for stages which result in useful images. Think of it like\n# hint that this is a public interface\nFROM app AS Shell\nLABEL shell=true\nCMD python manage.py shell\n\n\n# The `Prod` stage creates an image that will run the application using a\n# production webserver and the `environments/production.py` configuration\nFROM app As Prod\n\nEXPOSE 8000\nCMD python manage.py process_tasks &\\\n  gunicorn operationcode_backend.wsgi -c /src/gunicorn_config.py\n"
+}

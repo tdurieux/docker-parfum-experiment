@@ -1,0 +1,26 @@
+{
+  "startTime": 1674250258981,
+  "endTime": 1674250260080,
+  "originalSmells": [
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 46,
+        "lineEnd": 46,
+        "columnStart": 4,
+        "columnEnd": 29
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 77,
+        "lineEnd": 78,
+        "columnStart": 4,
+        "columnEnd": 79
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM lfedge/eve-uefi:2dbd55c5aaa69de821e510ca416ce88ffe60555f as uefi-build\n\nFROM lfedge/eve-alpine:6.7.0 as runx-build\nENV BUILD_PKGS mkinitfs gcc musl-dev e2fsprogs\nRUN eve-alpine-deploy.sh\n\nRUN rm -f /sbin/poweroff /etc/mkinitfs/features.d/base.files\nCOPY initrd/base.files /etc/mkinitfs/features.d/base.files\nCOPY initrd/init-initrd initrd/mount_disk.sh initrd/udhcpc_script.sh /\nCOPY initrd/poweroff /sbin/poweroff\nCOPY initrd/chroot2.c initrd/hacf.c /tmp/\nCOPY initrd/00000080 /etc/acpi/PWRF/\nRUN gcc -s -o /chroot2 /tmp/chroot2.c\nRUN gcc -s -o /hacf /tmp/hacf.c\nRUN mkinitfs -n -F base -i /init-initrd -o /runx-initrd\n\nFROM lfedge/eve-alpine:6.7.0 as build\nENV BUILD_PKGS \\\n    gcc make libc-dev dev86 xz-dev perl bash python3-dev \\\n    gettext iasl util-linux-dev ncurses-dev glib-dev \\\n    pixman-dev libaio-dev yajl-dev argp-standalone \\\n    linux-headers git patch texinfo curl tar libcap-ng-dev \\\n    attr-dev flex bison cmake libusb-dev\nENV BUILD_PKGS_arm64 dtc-dev\n\nENV PKGS alpine-baselayout musl-utils bash libaio libbz2 glib pixman yajl keyutils libusb xz-libs libuuid sudo\nENV PKGS_arm64 libfdt\n\nRUN eve-alpine-deploy.sh\n\n# Alpine linux defines all 64bit integer types as long. Patch\n# /usr/include/bits/alltypes.h to fix compilation with -m32\nWORKDIR /\nCOPY alpine.patch /\nRUN patch -p1 < alpine.patch\n\nENV LIBURING_VERSION 0.7\nENV LIBURING_SOURCE=https://git.kernel.dk/cgit/liburing/snapshot/liburing-${LIBURING_VERSION}.tar.bz2\n\n# Download and verify liburing\nRUN \\\n    [ -f \"$(basename ${LIBURING_SOURCE})\" ] || curl -fsSLO \"${LIBURING_SOURCE}\" && \\\n    tar --absolute-names -xj < \"$(basename ${LIBURING_SOURCE})\" && mv \"/liburing-${LIBURING_VERSION}\" /liburing\n\nWORKDIR /liburing\nRUN ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" --prefix=/usr\nRUN make src && make install DESTDIR=/out && make install\n\n# Filter out unneeded stuff\nRUN rm -rf /out/usr/man\nRUN strip /out/usr/lib/* || :\n\nENV XEN_VERSION 4.15.0\nENV XEN_SOURCE=https://downloads.xenproject.org/release/xen/${XEN_VERSION}/xen-${XEN_VERSION}.tar.gz\nENV EXTRA_QEMUU_CONFIGURE_ARGS=\"--enable-libusb --enable-linux-aio \\\n    --enable-vhost-net --enable-vhost-vsock --enable-vhost-scsi --enable-vhost-kernel \\\n    --enable-vhost-user --enable-linux-io-uring\"\n\nWORKDIR /\n\n# Download and verify xen\n#TODO: verify Xen\nRUN \\\n    [ -f \"$(basename ${XEN_SOURCE})\" ] || curl -fsSLO \"${XEN_SOURCE}\" && \\\n    tar --absolute-names -xz < \"$(basename ${XEN_SOURCE})\" && mv \"/xen-${XEN_VERSION}\" /xen\n\n# Apply local patches\nCOPY patches-${XEN_VERSION} /patches\nWORKDIR /xen\nRUN cat /patches/*.patch /patches/\"$(uname -m)\"/*.patch | patch -p1\n\nRUN mkdir -p /out\n\n# FEATURES=\"--enable-stubdom --enable-vtpm-stubdom --enable-vtpmmgr-stubdom\"\nCOPY gmp.patch /xen/stubdom\nWORKDIR /xen\nRUN ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" --prefix=/usr --disable-xen --disable-qemu-traditional --disable-docs --enable-9pfs \\\n                --with-system-ovmf=/usr/lib/xen/boot/ovmf.bin --disable-stubdom\nRUN make -j \"$(getconf _NPROCESSORS_ONLN)\" && make dist\nRUN dist/install.sh /out\n\n# Filter out a few things that we don't currently need\nRUN rm -rf /out/usr/share/qemu-xen/qemu/edk2-* /out/var/run /usr/include /usr/lib/*.a\n# FIXME: this is a workaround for Xen on ARM still requiring qemu-system-i386\n#   https://wiki.xenproject.org/wiki/Xen_ARM_with_Virtualization_Extensions#Use_of_qemu-system-i386_on_ARM\nWORKDIR /out/usr/lib/xen/bin/\nRUN strip * || :\nRUN if [ \"$(uname -m)\" = \"x86_64\" ]; then rm -f qemu-system-i386 && ln -s \"qemu-system-$(uname -m)\" qemu-system-i386 ;fi\n\nCOPY --from=uefi-build / /uefi/\nRUN mkdir -p /out/usr/lib/xen/boot && cp /uefi/OVMF.fd /out/usr/lib/xen/boot/ovmf.bin && \\\n  cp /uefi/OVMF_PVH.fd /out/usr/lib/xen/boot/ovmf-pvh.bin\nRUN if [ \"$(uname -m)\" = \"x86_64\" ]; then cp /uefi/*.rom /out/usr/lib/xen/boot/;fi\n\nFROM scratch\nCOPY --from=build /out/ /\nCOPY --from=runx-build /runx-initrd /usr/lib/xen/boot/runx-initrd\nCOPY init.sh /\nCOPY qemu-ifup xen-start /etc/xen/scripts/\n\n# We need to keep a slim profile, which means removing things we don't need\nRUN rm -rf /usr/lib/libxen*.a /usr/lib/libxl*.a /usr/lib/debug /usr/lib/python*\n\n# Adjust /var/run, /var/lib and /var/lock to be shared\nRUN mv /var /var.template && ln -s /run /var && ln -s /run /var.template/run\n\n# Add a few mountpoints so we can use lowerfs in R/O mode\nRUN mkdir /persist /hostfs\n\nENTRYPOINT []\nCMD [\"/init.sh\"]\n"
+}

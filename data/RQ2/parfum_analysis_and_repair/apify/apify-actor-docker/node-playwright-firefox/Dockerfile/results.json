@@ -1,0 +1,54 @@
+{
+  "startTime": 1674248393556,
+  "endTime": 1674248394366,
+  "originalSmells": [
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 90,
+        "lineEnd": 90,
+        "columnStart": 7,
+        "columnEnd": 78
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 21,
+        "lineEnd": 60,
+        "columnStart": 4,
+        "columnEnd": 12
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 8,
+        "lineEnd": 10,
+        "columnStart": 7,
+        "columnEnd": 10
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 21,
+        "lineEnd": 60,
+        "columnStart": 4,
+        "columnEnd": 12
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 21,
+        "lineEnd": 60,
+        "columnStart": 4,
+        "columnEnd": 12
+      }
+    }
+  ],
+  "repairedDockerfile": "ARG NODE_VERSION=16\n# Use buster to be consistent across node versions.\nFROM node:${NODE_VERSION}-buster-slim\n\nLABEL maintainer=\"support@apify.com\" Description=\"Base image for Apify actors using Firefox\"\n# Install Firefox dependencies + tools\nRUN sh -c 'echo \"deb http://ftp.us.debian.org/debian buster main non-free\" >> /etc/apt/sources.list.d/fonts.list' \\\n    && DEBIAN_FRONTEND=noninteractive apt-get update \\\n    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \\\n    # Found this in other images, not sure whether it's needed, it does not come from Playwright deps\n    procps && rm -rf /var/lib/apt/lists/*;\n\nRUN groupadd -r myuser && useradd -r -g myuser -G audio,video myuser \\\n    && mkdir -p /home/myuser/Downloads \\\n    && chown -R myuser:myuser /home/myuser\n\n# Globally disable the update-notifier.\nRUN npm config --global set update-notifier false\n\n# Install all required playwright dependencies for firefox\n# Keep updated from https://github.com/microsoft/playwright/blob/a06b06b82bb6b2d550f12e8b18af298f23a08828/packages/playwright-core/src/server/registry/nativeDeps.ts#L229\nRUN DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \\\n    xvfb \\\n    fonts-noto-color-emoji \\\n    ttf-unifont \\\n    libfontconfig \\\n    libfreetype6 \\\n    xfonts-cyrillic \\\n    xfonts-scalable \\\n    fonts-liberation \\\n    fonts-ipafont-gothic \\\n    fonts-wqy-zenhei \\\n    fonts-tlwg-loma-otf \\\n    ttf-ubuntu-font-family \\\n    ffmpeg \\\n    libatk1.0-0 \\\n    libcairo-gobject2 \\\n    libcairo2 \\\n    libdbus-1-3 \\\n    libdbus-glib-1-2 \\\n    libfontconfig1 \\\n    libfreetype6 \\\n    libgdk-pixbuf2.0-0 \\\n    libglib2.0-0 \\\n    libgtk-3-0 \\\n    libpango-1.0-0 \\\n    libpangocairo-1.0-0 \\\n    libpangoft2-1.0-0 \\\n    libx11-6 \\\n    libx11-xcb1 \\\n    libxcb-shm0 \\\n    libxcb1 \\\n    libxcomposite1 \\\n    libxcursor1 \\\n    libxdamage1 \\\n    libxext6 \\\n    libxfixes3 \\\n    libxi6 \\\n    libxrender1 \\\n    libxt6 \\\n    libxtst6 && rm -rf /var/lib/apt/lists/*;\n\n# Cleanup time\nRUN rm -rf /var/lib/apt/lists/* \\\n    && rm -rf /src/*.deb \\\n    # This is needed to remove an annoying error message when running headful.\n    && mkdir -p /tmp/.X11-unix \\\n    && chmod 1777 /tmp/.X11-unix\n\n# Run everything after as non-privileged user.\nUSER myuser\nWORKDIR /home/myuser\n\nENV PLAYWRIGHT_BROWSERS_PATH=/home/myuser/pw-browsers\nRUN mkdir ${PLAYWRIGHT_BROWSERS_PATH}\n\n# Copy source code and xvfb script\nCOPY --chown=myuser:myuser package.json main.js firefox_test.js start_xvfb_and_run_cmd.sh /home/myuser/\n\n# Tell Node.js this is a production environemnt\nENV NODE_ENV=production\n\n# Enable Node.js process to use a lot of memory (actor has limit of 32GB)\n# Increases default size of headers. The original limit was 80kb, but from node 10+ they decided to lower it to 8kb.\n# However they did not think about all the sites there with large headers,\n# so we put back the old limit of 80kb, which seems to work just fine.\nENV NODE_OPTIONS=\"--max_old_space_size=30000 --max-http-header-size=80000\"\n\n# Install default dependencies, print versions of everything\nRUN npm --quiet set progress=false \\\n    && npm install --only=prod --no-optional --no-package-lock --prefer-online \\\n    && echo \"Installed NPM packages:\" \\\n    && (npm list --only=prod --no-optional || true) \\\n    && echo \"Node.js version:\" \\\n    && node --version \\\n    && echo \"NPM version:\" \\\n    && npm --version && npm cache clean --force;\n\n# symlink the firefox binary to the root folder in order to bypass the versioning and resulting browser launch crashes.\nRUN ln -s ${PLAYWRIGHT_BROWSERS_PATH}/firefox-*/firefox/firefox ${PLAYWRIGHT_BROWSERS_PATH}/\n\nENV APIFY_DEFAULT_BROWSER_PATH=${PLAYWRIGHT_BROWSERS_PATH}/firefox\n\n# Playwright allows donwloading only one browser through separate package with same export. So we rename it to just playwright.\nRUN mv ./node_modules/playwright-firefox ./node_modules/playwright && rm -rf ./node_modules/playwright-firefox\n\n# Prevent installing of browsers by future `npm install`.\nENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD 1\n\n# We should you the autodisplay detection as suggested here: https://github.com/microsoft/playwright/issues/2728#issuecomment-678083619\nENV DISPLAY=:99\nENV XVFB_WHD=1280x720x16\n# Uncomment this line if you want to run browser in headful mode by default.\n# ENV APIFY_XVFB=1\n\n# NOTEs:\n# - This needs to be compatible with CLI.\n# - Using CMD instead of ENTRYPOINT, to allow manual overriding\nCMD ./start_xvfb_and_run_cmd.sh && npm start --silent\n"
+}

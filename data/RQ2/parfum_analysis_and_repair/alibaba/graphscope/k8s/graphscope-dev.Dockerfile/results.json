@@ -1,0 +1,71 @@
+{
+  "startTime": 1674250013353,
+  "endTime": 1674250014672,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 31,
+        "lineEnd": 31,
+        "columnStart": 4,
+        "columnEnd": 30
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 32,
+        "lineEnd": 32,
+        "columnStart": 4,
+        "columnEnd": 60
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 38,
+        "lineEnd": 38,
+        "columnStart": 4,
+        "columnEnd": 35
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 41,
+        "lineEnd": 41,
+        "columnStart": 4,
+        "columnEnd": 60
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 70,
+        "lineEnd": 70,
+        "columnStart": 27,
+        "columnEnd": 47
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 71,
+        "lineEnd": 71,
+        "columnStart": 32,
+        "columnEnd": 52
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 69,
+        "lineEnd": 69,
+        "columnStart": 9,
+        "columnEnd": 112
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# the graphscope image is built from graphscope-vineyard, and is assembled based on\n# graphscope-runtime.\n#\n# the result image includes all runtime stuffs of graphscope, with analytical engine,\n# learning engine and interactive engine installed.\n\nARG BASE_VERSION=v0.6.0\nFROM registry.cn-hongkong.aliyuncs.com/graphscope/graphscope-vineyard:$BASE_VERSION as builder\n\nARG NETWORKX=ON\nENV NETWORKX=$NETWORKX\n\nARG profile=release\nENV profile=$profile\n\n# change bash as default\nSHELL [\"/bin/bash\", \"-c\"]\n\nCOPY . /home/graphscope/gs\n\n# build & install graph-learn library\nRUN sudo mkdir -p /opt/graphscope && \\\n    sudo chown -R $(id -u):$(id -g) ${HOME}/gs /opt/graphscope && \\\n    cd ${HOME}/gs && make gle\n\n# build analytical engine\nRUN cd ${HOME}/gs && make gae\n\n# build python bdist_wheel\nRUN export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/opt/graphscope/lib:/opt/graphscope/lib64 && \\\n    cd ${HOME}/gs/python && \\\n    pip3 install --no-cache-dir -U setuptools && \\\n    pip3 install --no-cache-dir -r requirements.txt -r && \\\n    sudo rm -fr build dist && \\\n    python3 setup.py bdist_wheel && \\\n    cd ./dist && \\\n    auditwheel repair --plat=manylinux2014_x86_64 ./*.whl || true && \\\n    mkdir -p /opt/graphscope/dist && cp ./wheelhouse/* /opt/graphscope/dist/ && \\\n    pip3 install --no-cache-dir ./wheelhouse/*.whl || true && \\\n    cd ${HOME}/gs/coordinator && \\\n    sudo rm -fr build dist && \\\n    pip3 install --no-cache-dir -r requirements.txt -r && \\\n    python3 setup.py bdist_wheel && \\\n    cp ./dist/* /opt/graphscope/dist/ && \\\n    echo \"Build python bdist_wheel done.\"\n\n# build maxgraph engine: compile maxgraph rust\nRUN source ~/.bashrc \\\n    && echo \"build with profile: $profile\" \\\n    && cd ${HOME}/gs && make BUILD_TYPE=$profile gie\n\n\n# # # # # # # # # # # # # # # # # # # # # #\n# generate final runtime image\nFROM registry.cn-hongkong.aliyuncs.com/graphscope/graphscope-runtime:latest\n\nARG profile=release\n\n# install vineyard into /usr/local\nCOPY --from=builder /opt/vineyard/ /usr/local/\nCOPY --from=builder /opt/graphscope /opt/graphscope\nCOPY --from=builder /home/graphscope/gs/k8s/precompile.py /tmp/precompile.py\nCOPY --from=builder /home/graphscope/gs/k8s/kube_ssh /opt/graphscope/bin/kube_ssh\nCOPY --from=builder /home/graphscope/gs/interactive_engine/executor/target/$profile/gaia_executor /opt/graphscope/bin/gaia_executor\nCOPY --from=builder /home/graphscope/gs/interactive_engine/assembly/target/maxgraph-assembly-0.0.1-SNAPSHOT.tar.gz /opt/graphscope/maxgraph-assembly-0.0.1-SNAPSHOT.tar.gz\n\n# install mars\nRUN python3 -m pip install pymars==0.8.0\n\nRUN sudo tar -xf /opt/graphscope/maxgraph-assembly-0.0.1-SNAPSHOT.tar.gz --strip-components 1 -C /opt/graphscope \\\n  && cd /usr/local/dist && pip3 install --no-cache-dir ./*.whl \\\n  && cd /opt/graphscope/dist && pip3 install --no-cache-dir ./*.whl \\\n  && sudo ln -sf /opt/graphscope/bin/* /usr/local/bin/ \\\n  && sudo ln -sfn /opt/graphscope/include/graphscope /usr/local/include/graphscope \\\n  && sudo ln -sf /opt/graphscope/lib/*so* /usr/local/lib \\\n  && sudo ln -sf /opt/graphscope/lib64/*so* /usr/local/lib64 \\\n  && sudo ln -sfn /opt/graphscope/lib64/cmake/graphscope-analytical /usr/local/lib64/cmake/graphscope-analytical \\\n  && python3 /tmp/precompile.py && sudo rm -fr /tmp/precompile.py /usr/local/dist /opt/graphscope/dist/*.whl && rm /opt/graphscope/maxgraph-assembly-0.0.1-SNAPSHOT.tar.gz\n\n# enable debugging\nENV RUST_BACKTRACE=1\nENV GRAPHSCOPE_HOME=/opt/graphscope\n"
+}

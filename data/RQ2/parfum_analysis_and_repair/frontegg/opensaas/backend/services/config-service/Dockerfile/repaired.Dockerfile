@@ -1,0 +1,21 @@
+FROM node:12.22 as base
+
+FROM base as builder
+
+WORKDIR /usr/src/app
+COPY package.json .
+RUN npm install --production && npm cache clean --force;
+COPY . .
+RUN npm run build
+
+
+FROM base as final
+
+WORKDIR /usr/src/app
+COPY package.json .
+COPY entrypoint.sh .
+COPY --from=builder /usr/src/app/dist /usr/src/app/dist
+COPY --from=builder /usr/src/app/node_modules /usr/src/app/node_modules
+
+CMD [ "/bin/bash", "./entrypoint.sh"]
+EXPOSE 5002

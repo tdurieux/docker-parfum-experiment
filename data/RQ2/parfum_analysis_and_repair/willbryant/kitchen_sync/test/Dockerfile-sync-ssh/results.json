@@ -1,0 +1,17 @@
+{
+  "startTime": 1674254446785,
+  "endTime": 1674254448020,
+  "originalSmells": [
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 8,
+        "lineEnd": 10,
+        "columnStart": 1,
+        "columnEnd": 33
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# this dockerfile builds kitchen sync and runs a single sync from database to database over SSH.\n# it needs to be built with the project repo root as the buildroot.\n# note that the test is run as part of the build, you don't need to run anything afterwards.\n\nFROM ubuntu:20.04\n\nRUN DEBIAN_FRONTEND=noninteractive apt-get update && \\\n\tDEBIAN_FRONTEND=noninteractive apt-get upgrade -y && \\\n\tDEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \\\n\t\tbuild-essential cmake openssh-server openssh-client \\\n\t\tmysql-server libmysqlclient-dev && \\\n\tapt-get clean -y && \\\n\trm -rf /var/cache/apt/archives/* && rm -rf /var/lib/apt/lists/*;\n\nADD CMakeLists.txt /tmp/CMakeLists.txt\nADD cmake /tmp/cmake/\nADD src /tmp/src/\n\nWORKDIR /tmp/build\nRUN mkdir /tmp/test\nRUN touch /tmp/test/CMakeLists.txt\nRUN cmake .. && make\nRUN make install\n\nADD test/sync-test-source.sql /tmp/source.sql\n\nRUN echo 'starting mysql' && \\\n\t\tmkdir -p /var/run/mysqld && \\\n\t\tchown mysql:mysql /var/run/mysqld && \\\n\t\t(/usr/sbin/mysqld --skip-grant-tables &) && \\\n\techo 'waiting for mysql to start' && \\\n\t\tmysqladmin --wait=30 ping && \\\n\techo 'creating mysql databases' && \\\n\t\tmysqladmin create source && \\\n\t\tmysqladmin create target && \\\n\techo 'populating source database' && \\\n\t\tmysql -u root source </tmp/source.sql && \\\n\techo 'checking builds' && \\\n\t\tls -al /tmp/build && \\\n\t\tmysql -V && \\\n\techo 'starting SSH server' && \\\n\t\tmkdir /run/sshd && \\\n\t\t/usr/sbin/sshd && \\\n\techo 'configuring SSH' && \\\n\t\tmkdir ~/.ssh && \\\n\t\tssh-keyscan localhost >~/.ssh/known_hosts && \\\n\t\tssh-keygen -f ~/.ssh/id_rsa && \\\n\t\tcp ~/.ssh/id_rsa.pub ~/.ssh/authorized_keys && \\\n\techo 'running sync' && \\\n\t\tks --via localhost --from mysql://root@localhost/source --to mysql://root@localhost/target --alter --workers 4 --verbose && \\\n\techo 'comparing result' && \\\n\t\tmysqldump -u root --compact source >a.sql && \\\n\t\tmysqldump -u root --compact target >b.sql && \\\n\t\tdiff a.sql b.sql && \\\n\techo 'syncing both directions to check compatibility of created schema' && \\\n\t\tks --via localhost --from mysql://root@localhost/source --to mysql://root@localhost/target --workers 4 --verbose && \\\n\t\tks --via localhost --from mysql://root@localhost/target --to mysql://root@localhost/source --workers 4 --verbose\n"
+}

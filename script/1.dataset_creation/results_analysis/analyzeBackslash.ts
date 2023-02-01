@@ -70,7 +70,7 @@ import config from "../../../config";
       // all entries done - lets finalize it
       console.log(JSON.stringify(results, null, 2));
     });
-    fs.createReadStream(join(config.dataFolder, "github.tar.xz"))
+    fs.createReadStream(join(config.datasetFolder, "binnacle/github.tar.xz"))
       .pipe(lzma.createDecompressor())
       .pipe(extract)
       .on("finish", () => resolve());

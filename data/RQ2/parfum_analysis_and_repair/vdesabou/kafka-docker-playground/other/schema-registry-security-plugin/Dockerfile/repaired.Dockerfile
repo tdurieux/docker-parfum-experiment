@@ -1,0 +1,1 @@
+# workaround for https://github.com/vdesabou/kafka-docker-playground/issues/1494#issuecomment-965573878

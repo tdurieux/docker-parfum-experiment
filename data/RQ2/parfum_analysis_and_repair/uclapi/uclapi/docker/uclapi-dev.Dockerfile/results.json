@@ -1,0 +1,26 @@
+{
+  "startTime": 1674250577010,
+  "endTime": 1674250577600,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 26,
+        "lineEnd": 40,
+        "columnStart": 4,
+        "columnEnd": 31
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 26,
+        "lineEnd": 40,
+        "columnStart": 4,
+        "columnEnd": 31
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM ubuntu:20.04\n\n#################################\n######## Main Parameters ########\n#################################\n\nENV ORACLE_VERSION 12_2\nENV ORACLE_SO_VERSION 12.1\nENV ORACLE_INSTANTCLIENT_BASIC_URL https://s3.eu-west-2.amazonaws.com/uclapi-static/instantclient-basic-linux.x64-12.2.0.1.0.zip\nENV ORACLE_INSTANTCLIENT_SDK_URL https://s3.eu-west-2.amazonaws.com/uclapi-static/instantclient-sdk-linux.x64-12.2.0.1.0.zip\n\nENV ORACLE_INSTALL_DIR /opt/oracle\nENV ORACLE_HOME ${ORACLE_INSTALL_DIR}/instantclient_${ORACLE_VERSION}\n\nARG UCLAPI_BRANCH\nENV UCLAPI_BRANCH ${UCLAPI_BRANCH}\nARG UCLAPI_REVISION_SHA1\nENV UCLAPI_REVISION_SHA1 ${UCLAPI_REVISION_SHA1}\n\n#################################\n########### Let's go! ###########\n#################################\n\nRUN mkdir -p /opt/oracle\n\nRUN apt-get update && \\\n    apt-get install --no-install-recommends -y python3.7 \\\n                       python3-distutils \\\n                       libaio1 \\\n                       wget \\\n                       git \\\n                       libpq-dev \\\n                       libpq5 \\\n                       libpython3.7-dev \\\n                       unzip \\\n                       build-essential \\\n                       libpcre3 \\\n                       libpcre3-dev \\\n                       sed \\\n                       locales \\\n                       liblz4-1 && \\\n    apt-get clean && rm -rf /var/lib/apt/lists/*;\n\n# Fix up the language / encoding environment variables to stop Pip complaining later\nRUN locale-gen en_GB.UTF-8\nENV LANG en_GB.UTF-8\nENV LANGUAGE en_GB:en\nENV LC_ALL en_GB.UTF-8\n\n# Install the latest version of Pip from the repo\n# Using ADD means that when the installation script changes remotely the container will\n# rebuild from this stage. Otherwise, it should progress.\nADD https://bootstrap.pypa.io/get-pip.py get-pip.py\nRUN python3.7 get-pip.py\n\n# Install Oracle. This does the following:\n# - Downloads and unzips the instant client\n# - Downloads and unzips the instant client SDK\n# - Symlinks the required library files\n# - Updates the symbol cache\n# - Installs the ORACLE_HOME into the system environment variables\n# - Sets up ld so that future lookups for .so files will be resolvable using the Oracle directory\nRUN wget -O instantclient.zip ${ORACLE_INSTANTCLIENT_BASIC_URL} && \\\r\n    unzip -d/opt/oracle instantclient.zip && \\\r\n    wget -O instantclientsdk.zip ${ORACLE_INSTANTCLIENT_SDK_URL} && \\\r\n    unzip -d/opt/oracle instantclientsdk.zip && \\\r\n    rm instantclient.zip && \\\r\n    rm instantclientsdk.zip && \\\r\n    ln -s ${ORACLE_HOME}/libclntsh.so.$ORACLE_SO_VERSION ${ORACLE_HOME}/libclntsh.so && \\\r\n    ln -s ${ORACLE_HOME}/libocci.so.$ORACLE_SO_VERSION ${ORACLE_HOME}/libocci.so && \\\r\n    ln -s ${ORACLE_HOME}/libclntshcore.so.$ORACLE_SO_VERSION ${ORACLE_HOME}/libclntshcore.so && \\\r\n    export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:${ORACLE_HOME} && \\\r\n    ldconfig && \\\r\n    grep -q -F \"ORACLE_HOME=${ORACLE_HOME}\" /etc/environment || echo \"ORACLE_HOME=${ORACLE_HOME}\" >> /etc/environment && \\\r\n    echo \"${ORACLE_HOME}\" > /etc/ld.so.conf.d/oracle.conf && \\\r\n    ldconfig\n\nCOPY backend/uclapi/requirements.txt requirements.txt\n\nRUN pip3.7 install --no-cache-dir -r requirements.txt\n\nEXPOSE 8000\n\nCMD echo \"Migrating Main DB\"; \\\r\n    python3.7 /web/uclapi/backend/uclapi/manage.py migrate; \\\r\n    echo \"Migrating Gencache DB\"; \\\r\n    python3.7 /web/uclapi/backend/uclapi/manage.py migrate --database gencache; \\\r\n    echo \"Running Development Environment Setup\"; \\\r\n    python3.7 /web/uclapi/backend/uclapi/manage.py dev_environment_setup; \\\r\n    echo \"Starting Django on Port 8000\"; \\\r\n    python3.7 /web/uclapi/backend/uclapi/manage.py runserver 0.0.0.0:8000\n"
+}

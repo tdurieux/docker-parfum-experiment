@@ -1,0 +1,17 @@
+{
+  "startTime": 1674250636838,
+  "endTime": 1674250637971,
+  "originalSmells": [
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 21,
+        "lineEnd": 21,
+        "columnStart": 4,
+        "columnEnd": 48
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# SPDX-License-Identifier: MIT OR LGPL-2.0-or-later\n# SPDX-FileCopyrightText: 2020 Philip Chimento <philip.chimento@gmail.com>\n\n# === Build stage ===\n\nFROM registry.fedoraproject.org/fedora:33 AS build\nARG MOZJS_BRANCH=mozjs78\nARG MOZJS_BUILDDEPS=${MOZJS_BRANCH}\nARG BUILD_OPTS=\n\nENV SHELL=/bin/bash\n\nRUN dnf -y install 'dnf-command(builddep)' autoconf213 clang-devel cmake git \\\n    llvm-devel make ninja-build which\nRUN dnf -y builddep ${MOZJS_BUILDDEPS}\n\nWORKDIR /root\n\nRUN mkdir -p include-what-you-use/_build\nADD https://include-what-you-use.org/downloads/include-what-you-use-0.15.src.tar.gz /root/include-what-you-use/\nWORKDIR /root/include-what-you-use\nRUN tar xzf include-what-you-use-0.15.src.tar.gz && rm include-what-you-use-0.15.src.tar.gz\n\nWORKDIR /root/include-what-you-use/_build\n\nRUN cmake -G Ninja -DCMAKE_INSTALL_PREFIX=/usr ..\nRUN ninja\nRUN DESTDIR=/root/iwyu-install ninja install\n\nWORKDIR /root\n\nRUN git clone --no-tags --depth 1 https://github.com/ptomato/mozjs.git -b ${MOZJS_BRANCH}\nRUN mkdir -p mozjs/_build\n\nWORKDIR /root/mozjs/_build\n\nRUN ../js/src/configure --prefix=/usr --libdir=/usr/lib64 --disable-jemalloc \\\n    --with-system-zlib --with-intl-api --enable-debug AUTOCONF=autoconf \\\n    ${BUILD_OPTS}\nRUN make -j$(nproc)\nRUN DESTDIR=/root/mozjs-install make install\nRUN rm -f /root/mozjs-install/usr/lib64/libjs_static.ajs\n\n# === Actual Docker image ===\n\nFROM registry.fedoraproject.org/fedora:33\n\nENV SHELL=/bin/bash\n\n# List is comprised of base dependencies for CI scripts, gjs, and debug packages\n# needed for informative stack traces, e.g. in Valgrind.\n#\n# Do everything in one RUN command so that the dnf cache is not cached in the\n# final Docker image.\nRUN dnf -y install --enablerepo=fedora-debuginfo,updates-debuginfo \\\n    binutils cairo-debuginfo cairo-debugsource cairo-gobject-devel clang \\\n    compiler-rt dbus-daemon dbus-x11 diffutils fontconfig-debuginfo \\\n    fontconfig-debugsource gcc-c++ git glib2-debuginfo glib2-debugsource \\\n    glib2-devel glibc-debuginfo glibc-debuginfo-common gnome-desktop-testing \\\n    gobject-introspection-debuginfo gobject-introspection-debugsource \\\n    gobject-introspection-devel gtk3-debuginfo gtk3-debugsource gtk3-devel \\\n    gtk4-debuginfo gtk4-debugsource gtk4-devel lcov libasan libubsan libtsan \\\n    meson ninja-build pkgconf readline-devel sysprof-devel systemtap-sdt-devel \\\n    valgrind which Xvfb xz && \\\n    dnf clean all && rm -rf /var/cache/dnf\n\nCOPY --from=build /root/mozjs-install/usr /usr\nCOPY --from=build /root/iwyu-install/usr /usr\nRUN ln -s /usr/bin/iwyu_tool.py /usr/bin/iwyu_tool\n\n# Enable sudo for wheel users\nRUN sed -i -e 's/# %wheel/%wheel/' -e '0,/%wheel/{s/%wheel/# %wheel/}' \\\n    /etc/sudoers\n\nENV HOST_USER_ID 5555\nRUN useradd -u $HOST_USER_ID -G wheel -ms /bin/bash user\n\nUSER user\nWORKDIR /home/user\n\nENV LANG C.UTF-8\n"
+}

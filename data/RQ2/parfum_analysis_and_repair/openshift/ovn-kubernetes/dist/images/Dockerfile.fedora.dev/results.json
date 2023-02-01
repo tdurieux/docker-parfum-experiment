@@ -1,0 +1,26 @@
+{
+  "startTime": 1674255695514,
+  "endTime": 1674255696239,
+  "originalSmells": [
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 43,
+        "lineEnd": 43,
+        "columnStart": 4,
+        "columnEnd": 15
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 58,
+        "lineEnd": 58,
+        "columnStart": 4,
+        "columnEnd": 44
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "#\n# This Dockerfile builds the development image of Kubernetes OVN CNI networking\n# stack. It provides the OVN-Kubernetes CNI plugin (OVN-Kubernetes) and all the\n# required binaries from OVN and OVS. By default OVN and OVS binaries are built\n# using the master branch of the respective projects.\n#\n# NOTE:\n# 1) Binaries are built using the version specified using OVN-BRANCH,\n# OVS-BRANCH args below in the Dockerfile. By default the branch is set to\n# master, so it will build OVN and OVS binaries from the master branch code.\n# Please change the branch name if image needs to be build with different\n# branch.\n#\n# 2) This image is only for development environment, so please DO NOT DEPLOY\n# this image in any production environment.\n#\n\nFROM fedora:34 AS ovnbuilder\n\nUSER root\n\nENV PYTHONDONTWRITEBYTECODE yes\n\n# Install tools that are required for building ovs/ovn.\nRUN INSTALL_PKGS=\" \\\n    python3-pyyaml bind-utils procps-ng openssl numactl-libs firewalld-filesystem \\\n    libpcap hostname \\\n    python3-openvswitch python3-pyOpenSSL \\\n    autoconf automake libtool g++ gcc fedora-packager rpmdevtools \\\n    unbound unbound-devel groff python3-sphinx graphviz openssl openssl-devel \\\n    checkpolicy libcap-ng-devel selinux-policy-devel\" && \\\n    dnf install --best --refresh -y --setopt=tsflags=nodocs $INSTALL_PKGS && \\\n    dnf clean all && rm -rf /var/cache/dnf/*\n\n# Clone OVS Source Code.\nARG OVS_REPO=https://github.com/openvswitch/ovs.git\nARG OVS_BRANCH=master\nWORKDIR /root\nRUN git clone $OVS_REPO --single-branch --branch=$OVS_BRANCH\n\n# Build OVS rpms.\nWORKDIR /root/ovs\nRUN ./boot.sh\nRUN ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\"\nRUN make rpm-fedora\nRUN rm rpm/rpmbuild/RPMS/x86_64/*debug*\nRUN rm rpm/rpmbuild/RPMS/x86_64/*devel*\nRUN git log -n 1\n\n# Clone OVN Source Code.\nARG OVN_REPO=https://github.com/ovn-org/ovn.git\nARG OVN_BRANCH=main\nWORKDIR /root\nRUN git clone $OVN_REPO --single-branch --branch=$OVN_BRANCH\n\n# Build OVN rpms.\nWORKDIR /root/ovn/\nRUN ./boot.sh\nRUN ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" --with-ovs-source=/root/ovs/\nRUN make rpm-fedora\nRUN rm rpm/rpmbuild/RPMS/x86_64/*debug*\nRUN rm rpm/rpmbuild/RPMS/x86_64/*docker*\nRUN git log -n 1\n\n# Build the final image\nFROM fedora:34\n\n# Install needed dependencies.\nRUN INSTALL_PKGS=\" \\\n    iptables iproute iputils hostname unbound-libs kubernetes-client kmod\" && \\\n    dnf install --best --refresh -y --setopt=tsflags=nodocs $INSTALL_PKGS && \\\n    dnf clean all && rm -rf /var/cache/dnf/*\n\nRUN mkdir -p /var/run/openvswitch\n\n# Install openvswitch and ovn rpms built in previous stages.\nCOPY --from=ovnbuilder /root/ovn/rpm/rpmbuild/RPMS/x86_64/*rpm ./\nCOPY --from=ovnbuilder /root/ovs/rpm/rpmbuild/RPMS/x86_64/*rpm ./\nCOPY --from=ovnbuilder /root/ovs/rpm/rpmbuild/RPMS/noarch/*rpm ./\nRUN dnf install -y *.rpm && rm -f *.rpm\n\n# Install ovn-kubernetes binaries built in previous stage.\nRUN mkdir -p /usr/libexec/cni/\nCOPY ovnkube /usr/bin/\nCOPY ovn-kube-util /usr/bin/\nCOPY ovndbchecker /usr/bin/\nCOPY ovn-k8s-cni-overlay /usr/libexec/cni/ovn-k8s-cni-overlay\n\n# ovnkube.sh is the entry point. This script examines environment\n# variables to direct operation and configure ovn.\nCOPY ovnkube.sh /root/\nCOPY ovndb-raft-functions.sh /root/\nCOPY iptables-scripts /usr/sbin/\n\nRUN getent group openvswitch >/dev/null || groupadd -r openvswitch\nRUN getent passwd openvswitch >/dev/null || useradd -r -g openvswitch -d / -s /sbin/nologin -c \"Open vSwitch Daemons\" openvswitch\n\nLABEL io.k8s.display-name=\"ovn-kubernetes-master\" \\\n      io.k8s.description=\"OVN based Kubernetes CNI Plugin stack. Image contains latest code of all the components in the stack (OVN-kubernetes, OVN, OVS).\" \\\n      maintainer=\"Anil Vishnoi (vishnoianil@gmail.com)\"\n\nWORKDIR /root\nENTRYPOINT /root/ovnkube.sh\n"
+}

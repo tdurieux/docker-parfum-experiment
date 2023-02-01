@@ -1,0 +1,62 @@
+{
+  "startTime": 1674253395238,
+  "endTime": 1674253396819,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 23,
+        "lineEnd": 23,
+        "columnStart": 4,
+        "columnEnd": 94
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 25,
+        "lineEnd": 25,
+        "columnStart": 4,
+        "columnEnd": 24
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 26,
+        "lineEnd": 26,
+        "columnStart": 4,
+        "columnEnd": 23
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 79,
+        "lineEnd": 79,
+        "columnStart": 2,
+        "columnEnd": 29
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 81,
+        "lineEnd": 90,
+        "columnStart": 2,
+        "columnEnd": 23
+      }
+    },
+    {
+      "rule": "yumInstallRmVarCacheYum",
+      "position": {
+        "lineStart": 95,
+        "lineEnd": 95,
+        "columnStart": 4,
+        "columnEnd": 38
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Copyright 2019 Amazon.com, Inc. or its affiliates. All Rights Reserved.\n#\n# Licensed under the Apache License, Version 2.0 (the \"License\").\n# You may not use this file except in compliance with the License.\n# A copy of the License is located at\n#\n#     http://www.apache.org/licenses/LICENSE-2.0\n#\n# or in the \"license\" file accompanying this file. This file is distributed\n# on an \"AS IS\" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either\n# express or implied. See the License for the specific language governing\n# permissions and limitations under the License.\n\n################################################################################\n# Build stage 0 `prep_es_files`:\n# Extract elasticsearch artifact\n# Install required plugins\n# Set gid=0 and make group perms==owner perms\n################################################################################\n\nFROM centos:7 AS prep_es_files\n\nENV PATH /usr/share/elasticsearch/bin:$PATH\nRUN curl -f -s https://download.java.net/java/GA/jdk11/13/GPL/openjdk-11.0.1_linux-x64_bin.tar.gz | tar -C /opt -zxf -\nENV JAVA_HOME /opt/jdk-11.0.1\nRUN yum install -y unzip && rm -rf /var/cache/yum\nRUN yum install -y lsof && rm -rf /var/cache/yum\n\nRUN groupadd -g 1000 elasticsearch && \\\n    adduser -u 1000 -g 1000 -d /usr/share/elasticsearch elasticsearch\n\nUSER 1000\n\n\nWORKDIR /usr/share/elasticsearch\n\n# Bust cache for wgets\nENV BUST_CACHE 1576286189\n\n# Download and extract defined ES version.\nRUN curl -fsSL https://artifacts.elastic.co/downloads/elasticsearch/elasticsearch-oss-7.10.2-linux-x86_64.tar.gz | \\\n    tar zx --strip-components=1\n\nRUN set -ex && for esdirs in config data logs; do \\\n        mkdir -p \"$esdirs\"; \\\n    done\n\nCOPY --chown=1000:0 elasticsearch.yml log4j2.properties config/\n\nCOPY --chown=1000:0 performance-analyzer-rca.zip config/\n\nCOPY --chown=1000:0 opendistro-performance-analyzer-1.13.0.0-SNAPSHOT.zip /tmp/\n\nRUN elasticsearch-plugin install --batch file:///tmp/opendistro-performance-analyzer-1.13.0.0-SNAPSHOT.zip; \\\n        rm /tmp/opendistro-performance-analyzer-1.13.0.0-SNAPSHOT.zip\n\nUSER 0\n\n# Set gid to 0 for opendistroforelasticsearch and make group permission similar to that of user\nRUN chown -R elasticsearch:0 . && \\\n    chmod -R g=u /usr/share/elasticsearch\n\nRUN unzip config/performance-analyzer-rca.zip\n\nRUN cp -r performance-analyzer-rca/* plugins/opendistro-performance-analyzer/\nRUN chmod 755 /usr/share/elasticsearch/plugins/opendistro-performance-analyzer/pa_bin/performance-analyzer-agent\nRUN chmod -R 755 /dev/shm\n################################################################################\n# Build stage 1 (the actual opendistroforelasticsearch image):\n# Copy opendistroforelasticsearch from stage 0\n# Add entrypoint\n################################################################################\n\nFROM centos:7\n\nENV ELASTIC_CONTAINER true\n\nRUN \\\n  rpm --rebuilddb && yum clean all && \\\n  yum install -y epel-release && \\\n  yum update -y && \\\n  yum install -y \\\n                  iproute \\\n                  python-setuptools \\\n                  hostname \\\n                  inotify-tools \\\n                  yum-utils \\\n                  which \\\n                  jq \\\n                  lsof \\\n                  rsync && \\\n  yum clean all && \\\n  easy_install supervisor && rm -rf /var/cache/yum\n\nRUN yum update -y && \\\n    yum install -y nc unzip wget which && \\\n    yum clean all && rm -rf /var/cache/yum\nCOPY CENTOS_LICENSING.txt /root\nCOPY --from=prep_es_files --chown=1000:0 /opt/jdk-11.0.1 /opt/jdk-11.0.1\nENV JAVA_HOME /opt/jdk-11.0.1\n\n# Replace OpenJDK's built-in CA certificate keystore with the one from the OS\n# vendor. The latter is superior in several ways.\nRUN ln -sf /etc/pki/ca-trust/extracted/java/cacerts /opt/jdk-11.0.1/lib/security/cacerts\n\nENV PATH $PATH:$JAVA_HOME/bin\n\nRUN mkdir /usr/share/elasticsearch && \\\n    groupadd -g 1000 elasticsearch && \\\n    adduser -u 1000 -g 1000 -G 0 -d /usr/share/elasticsearch elasticsearch && \\\n    chmod 0775 /usr/share/elasticsearch && \\\n    chgrp 0 /usr/share/elasticsearch\n\nRUN mkdir -p /usr/share/supervisor/performance_analyzer\n\nWORKDIR /usr/share/elasticsearch\nCOPY --from=prep_es_files --chown=1000:0 /usr/share/elasticsearch /usr/share/elasticsearch\nENV PATH /usr/share/elasticsearch/bin:$PATH\n\nADD --chown=1000:0 docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh\n\n# Openshift overrides USER and uses ones with randomly uid>1024 and gid=0\n# Allow ENTRYPOINT (and ES) to run even with a different user\nRUN chgrp 0 /usr/local/bin/docker-entrypoint.sh && \\\n    chmod g=u /etc/passwd && \\\n    chmod 0775 /usr/local/bin/docker-entrypoint.sh\n\n# Bind to all interfaces so that the docker container is accessible from the host machine\nRUN sed -i \"s|#webservice-bind-host =|webservice-bind-host = 0.0.0.0|g\" /usr/share/elasticsearch/plugins/opendistro-performance-analyzer/pa_config/performance-analyzer.properties\n\nEXPOSE 9200 9300 9600 9650\n\nLABEL org.label-schema.schema-version=\"1.0\" \\\n  org.label-schema.name=\"opendistroforelasticsearch\" \\\n  org.label-schema.version=\"1.2.0\" \\\n  org.label-schema.url=\"https://opendistro.github.io\" \\\n  org.label-schema.vcs-url=\"https://github.com/opendistro-for-elasticsearch/opendistro-build\" \\\n  org.label-schema.license=\"Apache-2.0\" \\\n  org.label-schema.vendor=\"Amazon\" \\\n  org.label-schema.build-date=\"19.12.13\"\n\nENTRYPOINT [\"/usr/local/bin/docker-entrypoint.sh\"]\n# Dummy overridable parameter parsed by entrypoint\nCMD [\"eswrapper\"]\n"
+}

@@ -1,0 +1,53 @@
+{
+  "startTime": 1674215834029,
+  "endTime": 1674215835822,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 39,
+        "lineEnd": 39,
+        "columnStart": 4,
+        "columnEnd": 51
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 67,
+        "lineEnd": 67,
+        "columnStart": 4,
+        "columnEnd": 51
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 78,
+        "lineEnd": 78,
+        "columnStart": 4,
+        "columnEnd": 95
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 34,
+        "lineEnd": 34,
+        "columnStart": 4,
+        "columnEnd": 46
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 52,
+        "lineEnd": 52,
+        "columnStart": 4,
+        "columnEnd": 46
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Highly-Optimized Docker Image of pyLoad (alpine variant)\n#       ____________\n#   ___/       |    \\_____________ _                 _ ___\n#  /        ___/    |    _ __ _  _| |   ___  __ _ __| |   \\\n# /    \\___/  ______/   | '_ \\ || | |__/ _ \\/ _` / _` |    \\\n# \\            ◯ |      | .__/\\_, |____\\___/\\__,_\\__,_|    /\n#  \\_______\\    /_______|_|   |__/________________________/\n#           \\  /\n#            \\/\n\nARG IMAGE_TAG=\"3.13\"\nARG IMAGE_CREATED\nARG IMAGE_AUTHORS=\"Walter Purcaro <vuolter@gmail.com>\"\nARG IMAGE_URL=\"https://github.com/pyload/pyload\"\nARG IMAGE_DOCUMENTATION=\"https://github.com/pyload/pyload/blob/main/README.md\"\nARG IMAGE_SOURCE=\"https://github.com/pyload/pyload/blob/main/Dockerfile.alpine\"\nARG IMAGE_VERSION=\"2.0.0\"\nARG IMAGE_REVISION\nARG IMAGE_VENDOR=\"pyload\"\nARG IMAGE_LICENSES=\"ISC\"\nARG IMAGE_TITLE=\"pyLoad\"\nARG IMAGE_DESCRIPTION=\"The free and open-source Download Manager written in pure Python\"\n\n\nARG APK_INSTALL_OPTIONS=\"--no-cache\"\nARG PIP_INSTALL_OPTIONS=\"--disable-pip-version-check --no-cache-dir --no-compile --upgrade\"\n\n\nFROM lsiobase/alpine:$IMAGE_TAG AS builder\n\nARG APK_PACKAGES=\"python3 openssl sqlite tesseract-ocr unrar curl-dev\"\nARG PIP_PACKAGES=\"pip setuptools wheel\"\n\nRUN echo \"**** install binary packages ****\" && \\\n    apk add --no-cache $APK_INSTALL_OPTIONS $APK_PACKAGES && \\\n\n    echo \"**** install pip packages ****\" && \\\n    python3 -m ensurepip && \\\n    rm -rf /usr/lib/python*/ensurepip && \\\n    pip3 install --no-cache-dir $PIP_INSTALL_OPTIONS $PIP_PACKAGES\n\n\nFROM builder AS wheels_builder\n\nARG APK_PACKAGES=\"gcc g++ musl-dev python3-dev libffi-dev openssl-dev jpeg-dev zlib-dev libxml2-dev libxslt-dev cargo\"\n\nENV PYCURL_SSL_LIBRARY=\"openssl\"\n\nCOPY setup.cfg /source/setup.cfg\nWORKDIR /wheels\n\nRUN echo \"**** install build packages ****\" && \\\n    apk add --no-cache $APK_INSTALL_OPTIONS $APK_PACKAGES && \\\n\n    echo \"**** build pyLoad dependencies ****\" && \\\n    python3 -c \"import configparser as cp; c = cp.ConfigParser(); c.read('/source/setup.cfg'); plugins = '\\\\n'.join([l for l in c['options.extras_require']['plugins'].strip().split('\\\\n') if 'platform_system' not in l]); print(c['options']['install_requires'] + plugins)\" | \\\n    xargs pip3 wheel --wheel-dir=.\n\n\nFROM builder AS source_builder\n\nARG PIP_PACKAGES=\"Babel Jinja2==3.0.3\"\n\nCOPY . /source\nWORKDIR /source\n\nRUN echo \"**** build pyLoad locales ****\" && \\\n    pip3 install --no-cache-dir $PIP_INSTALL_OPTIONS $PIP_PACKAGES && \\\n    python3 setup.py build_locale\n\n\nFROM builder AS package_builder\n\nCOPY --from=wheels_builder /wheels /wheels\nCOPY --from=source_builder /source /source\nWORKDIR /package\n\nRUN echo \"**** build pyLoad package ****\" && \\\n    pip3 install --no-cache-dir $PIP_INSTALL_OPTIONS --find-links=/wheels --no-index --prefix=. /source[extra]\n\n\nFROM builder\n\n# Set Python to force stdin, stdout and stderr to be totally unbuffered.\nENV PYTHONUNBUFFERED=\"1\"\n\n# Stop if any script (fix-attrs or cont-init) has failed.\nENV S6_BEHAVIOUR_IF_STAGE2_FAILS=\"2\"\n\n# Set Python to use UTF-8 encoding rather than ASCII.\nENV LANG=\"C.UTF-8\"\n\nARG TEMPDIR=\"/root/.cache /tmp/* /var/tmp/*\"\n\nRUN echo \"**** create s6 fix-attr script ****\" && \\\n    echo -e \"/config true abc 0644 0755\\n \\\n    /downloads false abc 0644 0755\" > /etc/fix-attrs.d/10-run && \\\n    \\\n    echo \"**** create s6 service script ****\" && \\\n    mkdir -p /etc/services.d/pyload && \\\n    echo -e \"#!/usr/bin/with-contenv bash\\n\\n \\\n    umask 022\\n \\\n    export PYTHONPATH=\\$PYTHONPATH:/usr/local/lib/python3.8/site-packages\\n \\\n    export HOME=/config\\n \\\n    exec s6-setuidgid abc pyload --userdir /config --storagedir /downloads\" > /etc/services.d/pyload/run && \\\n    \\\n    echo \"**** cleanup ****\" && \\\n    rm -rf $TEMPDIR && \\\n    \\\n    echo \"**** finalize ****\"\n\nCOPY --from=package_builder /package /usr/local\n\nEXPOSE 8000 9666\n\nVOLUME /config /downloads\n\nLABEL org.opencontainers.image.created=$IMAGE_CREATED\nLABEL org.opencontainers.image.authors=$IMAGE_AUTHORS\nLABEL org.opencontainers.image.url=$IMAGE_URL\nLABEL org.opencontainers.image.documentation=$IMAGE_DOCUMENTATION\nLABEL org.opencontainers.image.source=$IMAGE_SOURCE\nLABEL org.opencontainers.image.version=$IMAGE_VERSION\nLABEL org.opencontainers.image.revision=$IMAGE_REVISION\nLABEL org.opencontainers.image.vendor=$IMAGE_VENDOR\nLABEL org.opencontainers.image.licenses=$IMAGE_LICENSES\nLABEL org.opencontainers.image.title=$IMAGE_TITLE\nLABEL org.opencontainers.image.description=$IMAGE_DESCRIPTION\n"
+}

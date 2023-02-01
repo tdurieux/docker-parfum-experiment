@@ -1,0 +1,62 @@
+{
+  "startTime": 1674255207470,
+  "endTime": 1674255208284,
+  "originalSmells": [
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 8,
+        "lineEnd": 8,
+        "columnStart": 4,
+        "columnEnd": 88
+      }
+    },
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 9,
+        "lineEnd": 9,
+        "columnStart": 4,
+        "columnEnd": 28
+      }
+    },
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 18,
+        "lineEnd": 18,
+        "columnStart": 4,
+        "columnEnd": 28
+      }
+    },
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 71,
+        "lineEnd": 71,
+        "columnStart": 4,
+        "columnEnd": 22
+      }
+    },
+    {
+      "rule": "sha256sumEchoOneSpaces",
+      "position": {
+        "lineStart": 61,
+        "lineEnd": 61,
+        "columnStart": 4,
+        "columnEnd": 53
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 3,
+        "lineEnd": 3,
+        "columnStart": 4,
+        "columnEnd": 19
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM node:10-alpine AS env_builder\n\nRUN apk update && \\\n    apk add --no-cache jq bash\n\nCOPY wicked.haufe.io/src/node-sdk /usr/src/app/node-sdk\nRUN cd /usr/src/app/node-sdk && \\\n    npm config set unsafe-perm true && \\\n    npm install -g typescript@$(jq .devDependencies.typescript package.json | tr -d '\"') && \\\n    npm install --production && \\\n    tsc && \\\n    cp $(npm pack) ../wicked-sdk.tgz && npm cache clean --force;\n\nCOPY wicked.haufe.io/src/env /usr/src/app/env\nWORKDIR /usr/src/app/env\nRUN npm pack && cp portal-env*.tgz ../portal-env.tgz\nRUN cp package.all.json package.json && \\\n    cp ../wicked-sdk.tgz . && \\\n    npm install --production && npm cache clean --force;\n\nCOPY wicked.haufe.io/src/kong-adapter /usr/src/app/kong-adapter\nWORKDIR /usr/src/app/kong-adapter\nRUN ln -s /usr/src/app/env/node_modules ./node_modules\nRUN npm run build\n\nCOPY wicked.haufe.io/src/auth /usr/src/app/auth\nWORKDIR /usr/src/app/auth\nRUN ln -s /usr/src/app/env/node_modules ./node_modules\nRUN npm run build\n\n# ======================================================\n\nFROM node:10-alpine\n\nENV KONG_VERSION 0.14.1\nENV KONG_SHA256 e29937c5117ac2debcffe0d0016996dd5f0c516ef628f1edc029138715981387\n\nENV KONG_ADMIN_ACCESS_LOG \"/tmp/stdout\"\nENV KONG_ADMIN_ERROR_LOG \"/tmp/stderr\"\nENV KONG_PROXY_ACCESS_LOG \"/tmp/stdout\"\nENV KONG_PROXY_ERROR_LOG \"/tmp/stderr\"\n\n# This will work on Docker for Mac and Docker for Windows, but currently\n# NOT on Docker for Linux, see https://github.com/docker/for-linux/issues/264\nENV KONG_PG_HOST host.docker.internal\n# Default settings, may be overridden\nENV KONG_PG_USER kong\nENV KONG_PG_PASSWORD kong\n# Default env for wicked-in-a-box, may also be overridden\nENV NODE_ENV box\n# See https://github.com/Haufe-Lexware/wicked.haufe.io/issues/196\nENV ALLOW_ANY_REDIRECT_URI \"\"\n\n# Hack output of KONG to the output of PID 1, which is what docker\n# outputs as logs.\nRUN ln -sf /proc/1/fd/1 /tmp/stdout && \\\n    ln -sf /proc/1/fd/2 /tmp/stderr\n\nRUN apk add --no-cache --virtual .build-deps wget tar ca-certificates \\\n\t&& apk add --no-cache libgcc openssl pcre perl tzdata curl bash dumb-init redis \\\n\t&& wget -O kong.tar.gz \"https://bintray.com/kong/kong-community-edition-alpine-tar/download_file?file_path=kong-community-edition-$KONG_VERSION.apk.tar.gz\" \\\n\t&& echo \"$KONG_SHA256  *kong.tar.gz\" | sha256sum -c - \\\n\t&& tar -xzf kong.tar.gz -C /tmp \\\n\t&& rm -f kong.tar.gz \\\n\t&& cp -R /tmp/usr / \\\n\t&& rm -rf /tmp/usr \\\n\t&& cp -R /tmp/etc / \\\n\t&& rm -rf /tmp/etc \\\n\t&& apk del .build-deps\n\nRUN npm config set unsafe-perm true\nRUN npm install -g pm2 && npm cache clean --force;\n\n# This does not work on Jenkins, and I do not know why. It was downloaded manually and\n# put into the \"resources\" sub directory.\n# RUN wget -O /usr/local/bin/wtfc.sh https://raw.githubusercontent.com/typekpb/wtfc/1607d27280ba1ee8a74d74d97a1f9de6a6d38486/wtfc.sh \\\n#     && chmod +x /usr/local/bin/wtfc.sh\n\nCOPY wicked.haufe.io/src /usr/src/app\nCOPY resources /usr/src/app/resources\nCOPY docker-startup.sh /usr/src/app\nCOPY pm2.config.js /usr/src/app\nCOPY --from=env_builder /usr/src/app/env/node_modules /usr/src/app/env/node_modules\nCOPY --from=env_builder /usr/src/app/kong-adapter/dist /usr/src/app/kong-adapter/dist\nCOPY --from=env_builder /usr/src/app/auth/dist /usr/src/app/auth/dist\n\nRUN for r in api ui auth kong-adapter mailer chatbot; do \\\n        echo \"Linking node_modules for wicked.${r}\" && \\\n        cd /usr/src/app/${r} && \\\n        ln -s /usr/src/app/env/node_modules ./node_modules; \\\n    done\n\nEXPOSE 8000 8001 3000 3001 3002 3003 3004 3005 3010\n\nENTRYPOINT [\"/usr/src/app/docker-startup.sh\"]\n"
+}

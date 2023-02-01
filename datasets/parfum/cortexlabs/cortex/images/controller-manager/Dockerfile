@@ -1,0 +1,38 @@
+# Copyright 2022 Cortex Labs, Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+FROM golang:1.17.3 as builder
+
+WORKDIR /workspace
+COPY go.mod go.mod
+COPY go.sum go.sum
+RUN go mod download
+
+COPY pkg/config pkg/config
+COPY pkg/consts pkg/consts
+COPY pkg/crds pkg/crds
+COPY pkg/lib pkg/lib
+COPY pkg/types pkg/types
+COPY pkg/workloads pkg/workloads
+
+WORKDIR /workspace/pkg/crds
+
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 GO111MODULE=on go build -a -o /workspace/bin/manager main.go
+
+FROM gcr.io/distroless/static:nonroot
+WORKDIR /
+COPY --from=builder /workspace/bin/manager .
+USER 65532:65532
+
+ENTRYPOINT ["/manager"]

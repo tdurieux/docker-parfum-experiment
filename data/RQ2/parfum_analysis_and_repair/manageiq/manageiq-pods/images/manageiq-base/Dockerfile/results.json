@@ -1,0 +1,35 @@
+{
+  "startTime": 1674252483656,
+  "endTime": 1674252484752,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 9,
+        "lineEnd": 9,
+        "columnStart": 74,
+        "columnEnd": 169
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 38,
+        "lineEnd": 38,
+        "columnStart": 4,
+        "columnEnd": 116
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 45,
+        "lineEnd": 45,
+        "columnStart": 4,
+        "columnEnd": 118
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM registry.access.redhat.com/ubi8/ubi:latest as appliance_build\n\nARG BUILD_REF=master\nARG BUILD_ORG=ManageIQ\nARG CORE_REPO_NAME=manageiq\nARG GIT_HOST=github.com\nARG GIT_AUTH\n\nRUN mkdir build && \\\n    if [[ -n \"$GIT_AUTH\" ]]; then GIT_HOST=${GIT_AUTH}@${GIT_HOST}; fi && curl -f -L https://${GIT_HOST}/${BUILD_ORG}/${CORE_REPO_NAME}-appliance-build/tarball/${BUILD_REF} | tar vxz -C build --strip 1\n\n################################################################################\n\nFROM registry.access.redhat.com/ubi8/ubi\nMAINTAINER ManageIQ https://manageiq.org\n\nARG ARCH=x86_64\nARG LOCAL_RPM\nARG RELEASE_BUILD\nARG RPM_PREFIX=manageiq\n\nENV TERM=xterm \\\n    CONTAINER=true \\\n    APP_ROOT=/var/www/miq/vmdb\n\nLABEL name=\"manageiq-base\" \\\n      vendor=\"ManageIQ\" \\\n      url=\"https://manageiq.org/\" \\\n      summary=\"ManageIQ base application image\" \\\n      description=\"ManageIQ is a management and automation platform for virtual, private, and hybrid cloud infrastructures.\" \\\n      io.k8s.display-name=\"ManageIQ\" \\\n      io.k8s.description=\"ManageIQ is a management and automation platform for virtual, private, and hybrid cloud infrastructures.\" \\\n      io.openshift.tags=\"ManageIQ,miq,manageiq\"\n\nRUN chmod -R g+w /etc/pki/ca-trust && \\\n    chmod -R g+w /usr/share/pki/ca-trust-legacy\n\n# Install dumb-init to be used as the entrypoint\nRUN curl -f -L -o /usr/bin/dumb-init https://github.com/Yelp/dumb-init/releases/download/v1.2.2/dumb-init_1.2.2_${ARCH} && \\\n    chmod +x /usr/bin/dumb-init\n\nCOPY rpms/* /tmp/rpms/\nCOPY container-assets/create_local_yum_repo.sh /\nCOPY container-assets/clean_dnf_rpm /usr/local/bin/\n\nRUN curl -f -L https://releases.ansible.com/ansible-runner/ansible-runner.el8.repo > /etc/yum.repos.d/ansible-runner.repo\n\nRUN dnf config-manager --setopt=tsflags=nodocs --setopt=install_weak_deps=False --save && \\\n    dnf -y --disableplugin=subscription-manager install \\\n      httpd \\\n      mod_ssl && \\\n    if [ ${ARCH} != \"s390x\" ] ; then \\\n      dnf -y remove *subscription-manager* && \\\n      dnf -y install \\\n        http://mirror.centos.org/centos/8-stream/BaseOS/${ARCH}/os/Packages/centos-stream-repos-8-2.el8.noarch.rpm \\\n        http://mirror.centos.org/centos/8-stream/BaseOS/${ARCH}/os/Packages/centos-gpg-keys-8-2.el8.noarch.rpm && \\\n      dnf config-manager --setopt=appstream*.exclude=*httpd*,mod_ssl --save \\\n    ; fi && \\\n    dnf -y install \\\n      https://dl.fedoraproject.org/pub/epel/epel-release-latest-8.noarch.rpm \\\n      https://rpm.manageiq.org/release/15-oparin/el8/noarch/manageiq-release-15.0-1.el8.noarch.rpm && \\\n    dnf -y module enable ruby:2.7 && \\\n    if [[ \"$RELEASE_BUILD\" != \"true\" ]]; then dnf config-manager --enable manageiq-15-oparin-nightly; fi && \\\n    dnf config-manager --setopt=ubi-8-*.exclude=dracut*,net-snmp*,perl-*,redhat-release* --save && \\\n    if [[ \"$LOCAL_RPM\" = \"true\" ]]; then /create_local_yum_repo.sh; fi && \\\n    dnf -y install \\\n      ${RPM_PREFIX}-pods \\\n      python3-devel && \\\n    clean_dnf_rpm && \\\n    chgrp -R 0 $APP_ROOT && \\\n    chmod -R g=u $APP_ROOT\n\n# Add in the container_env file now that the APP_ROOT is created from the RPM\nADD container-assets/container_env ${APP_ROOT}\n\n# Install python packages the same way the appliance does\nCOPY --from=appliance_build build/kickstarts/partials/post/python_modules.ks.erb /tmp/python_modules\nRUN bash /tmp/python_modules && \\\n    rm -f /tmp/python_modules && \\\n    rm -rf /root/.cache/pip && \\\n    clean_dnf_rpm\n\n# Build the RPM manifest\nRUN source /etc/default/evm && \\\n    /usr/bin/generate_rpm_manifest.sh && \\\n    clean_dnf_rpm\n\nENTRYPOINT [\"/usr/bin/dumb-init\", \"--single-child\", \"--\"]\n"
+}

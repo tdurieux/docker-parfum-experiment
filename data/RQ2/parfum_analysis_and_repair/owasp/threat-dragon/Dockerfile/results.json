@@ -1,0 +1,17 @@
+{
+  "startTime": 1674251026600,
+  "endTime": 1674251027530,
+  "originalSmells": [
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 6,
+        "lineEnd": 6,
+        "columnStart": 12,
+        "columnEnd": 36
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "ARG         NODE_VERSION=16\n\n# The base image with updates applied\nFROM        node:$NODE_VERSION-alpine as base-node\nRUN         apk -U upgrade\nWORKDIR     /app\nRUN npm i -g npm@latest pnpm && npm cache clean --force;\nRUN         mkdir -p td.server td.vue\nRUN         chown -R node:node /app\nUSER        node\n\n\n# Build the front and back-end.  This needs devDependencies which do not\n# need to be included in the final image\nFROM        base-node as build\nRUN         mkdir boms\n\nCOPY        pnpm_workspace.yaml pnpm-lock.yaml package.json /app/\nCOPY        ./td.server/pnpm-lock.yaml ./td.server/package.json ./td.server/\nCOPY        ./td.vue/pnpm-lock.yaml ./td.vue/package.json ./td.vue/\n\nCOPY        ./td.server/.babelrc ./td.server/\nCOPY        ./td.server/src/ ./td.server/src/\nCOPY        ./td.vue/src/ ./td.vue/src/\nCOPY        ./td.vue/public/ ./td.vue/public/\nCOPY        ./td.vue/*.config.js ./td.vue/\n\nRUN         pnpm install -r --frozen-lockfile\nRUN         npm run build\n\n# Build Software BOMs\nRUN         npx cyclonedx-bom -o boms/server_xml_bom.xml ./td.server\nRUN         npx cyclonedx-bom -o boms/site_xml_bom.xml ./td.vue\n\n\n# Build the canonical SBOM.\nFROM        cyclonedx/cyclonedx-cli:0.15.0 as build-canonical-bom\nRUN         mkdir boms\nCOPY        --from=build /app/boms/* ./boms/\nRUN         ./cyclonedx convert \\\n                --input-file boms/site_xml_bom.xml \\\n                --output-file boms/site_json_bom.json\nRUN         ./cyclonedx convert \\\n                --input-file boms/server_xml_bom.xml \\\n                --output-file boms/server_json_bom.json\nRUN         ./cyclonedx merge \\\n                --input-files boms/site_json_bom.json boms/server_json_bom.json \\\n                --output-file boms/canonical_json_bom.json\nRUN         ./cyclonedx convert \\\n                --input-file boms/canonical_json_bom.json \\\n                --output-file boms/canonical_xml_bom.xml\n\n\n# Builds the docs, including the SBOMs from this build\nFROM        imoshtokill/jekyll-bundler as build-docs\nWORKDIR     /td.docs\nCOPY        ./docs/Gemfile* ./\nRUN         bundle install\nCOPY        ./docs .\nRUN         mkdir _data\nRUN         mkdir downloads\nCOPY        --from=build-canonical-bom boms/canonical_json_bom.json _data/canonical_json_bom.json\nCOPY        --from=build-canonical-bom boms/* downloads/\nRUN         bundle exec jekyll build -b docs/\n\n\n# Build the final, production image.\n# TODO: App no longer being served, docs are working as expected though\nFROM        base-node\nCOPY        --from=build-docs /td.docs/_site /app/docs\nCOPY        ./td.server/package*.json ./td.server/pnpm-lock.yaml ./td.server/\nRUN         cd td.server && pnpm install --prod --frozen-lockfile --ignore-scripts\nCOPY        --from=build /app/td.server/dist ./td.server/dist\nCOPY        --from=build /app/td.vue/dist ./dist\nCOPY        ./td.server/index.js ./td.server/index.js\n\nHEALTHCHECK --interval=10s --timeout=2s --start-period=2s CMD [\"/nodejs/bin/node\", \"./td.server/dist/healthcheck.js\"]\nCMD         [\"td.server/index.js\"]\n"
+}

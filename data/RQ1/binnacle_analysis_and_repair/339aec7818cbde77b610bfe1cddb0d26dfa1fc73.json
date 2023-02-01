@@ -1,0 +1,35 @@
+{
+  "startTime": 1674243151384,
+  "endTime": 1674243151784,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 43,
+        "lineEnd": 43,
+        "columnStart": 4,
+        "columnEnd": 44
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 85,
+        "lineEnd": 85,
+        "columnStart": 4,
+        "columnEnd": 79
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 60,
+        "lineEnd": 60,
+        "columnStart": 4,
+        "columnEnd": 86
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM python:3.5.6\n\nLABEL vendor=\"NLnet Labs\" \\\n      license=\"Apache License, Version 2.0\"\n\nARG BRANCH\nENV APP_PATH /app\nENV DEBIAN_FRONTEND noninteractive\nENV BRANCH ${BRANCH:-master}\n\n# Make port 8080 available to the world outside this container\nEXPOSE 8080\n\n# Install required dependencies\n# swig is needed to build Unbound with Python bindings\n# gettext is needed by python manage.py compilemessages\n# libwww-perl is needed by make update_cert_fingerprints\nRUN apt-get update && \\\n    apt-get upgrade -y && \\\n    apt-get install --no-install-recommends -y \\\n        curl \\\n        gettext \\\n        git \\\n        ldnsutils \\\n        libhiredis-dev \\\n        libwww-perl \\\n        postgresql-server-dev-9.6 \\\n        swig3.0 \\\n        sudo && \\\n    rm -rf /var/lib/apt/lists/*\n\n# Create a user for the internetnl app to run as\nRUN useradd -ms /bin/bash -G sudo internetnl && echo \"internetnl ALL=(ALL) NOPASSWD:ALL\" > /etc/sudoers.d/internetnl\n\n# Install forked pythonwhois\nRUN git clone -b timeout https://github.com/ralphdolmans/python-whois.git /tmp/python-whois\nWORKDIR /tmp/python-whois\nRUN python setup.py install\n\n# Build nassl from sources for deprecated protocol support and \"extra features\" compared to the stock package\nRUN git clone -b free_bsd https://github.com/gthess/nassl.git /tmp/nassl_freebsd\nWORKDIR /tmp/nassl_freebsd\nRUN mkdir -p bin/openssl-legacy/freebsd64 && mkdir -p bin/openssl-modern/freebsd64\nRUN curl -f https://zlib.net/zlib-1.2.11.tar.gz | tar zx && \\\n    git clone -b 1.0.2-chacha https://github.com/PeterMosmans/openssl.git openssl-1.0.2e && \\\n    git clone https://github.com/openssl/openssl.git openssl-master && \\\n    cd openssl-master && \\\n    git checkout 1f5878b8e25a785dde330bf485e6ed5a6ae09a1a && \\\n    cd .. && \\\n    python build_from_scratch.py && \\\n    python setup.py install\n\n# Unbound\n# See: https://github.com/ralphdolmans/unbound/blob/internetnl/README.md\n# TODO: edit internetnl/internetnl.c to match our deployment of Internet.nl\nRUN git clone -b internetnl https://github.com/ralphdolmans/unbound.git /tmp/unbound\nWORKDIR /tmp/unbound\nRUN patch -p0 -i ./unbound_1.8.0_patch_unsupported_ds.diff && \\\n    ln -s /usr/local/bin/python3.5 /usr/local/bin/python3.5.6 && \\\n    ln -s /usr/bin/swig3.0 /usr/bin/swig && \\\n    ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" --enable-internetnl --with-pyunbound --with-libevent --with-libhiredis && \\\n    make && \\\n    make install\n\n# Point unbound-anchor and Python at the standard location for the unbound lib\nENV LD_LIBRARY_PATH /usr/local/lib\n\n# Configure Unbound for use by Internet.nl, in particular so that LDNS-DANE can depend on a resolver that is DNSSEC\n# enabled, which might not be true of the host resolver made available by Docker by default.\nWORKDIR /usr/local/etc/unbound\nRUN useradd unbound && \\\n    cp unbound.conf unbound.conf.org && \\\n    sed -e 's/# auto-trust-anchor-file:/auto-trust-anchor-file:/' \\\n        -e 's/# control-enable: no/control-enable: yes/' \\\n        unbound.conf.org > unbound.conf && \\\n    unbound-control-setup && \\\n    unbound-anchor || test $? -eq 1 && \\\n    chown -R unbound: .\n\nWORKDIR ${APP_PATH}\n#RUN chown -R internetnl:internetnl ${APP_PATH}\n\n# Fetch the Internet.nl web application files and install Python dependencies\nCOPY --chown=internetnl:internetnl . ${APP_PATH}\nRUN chown -R internetnl: ${APP_PATH}\nRUN pip install --no-cache-dir --trusted-host pypi.python.org -r ./python-pip-requirements.txt\n\nUSER internetnl\n\n# Configure internetnl to know where LDNS-DANE is installed\nRUN sed -i -e \"s|LDNS_DANE = .*|LDNS_DANE = '/usr/bin/ldns-dane'|g\" ${APP_PATH}/internetnl/settings.py-dist\n\n# Prepare translations\nRUN make translations\n\n# Cleanup\nRUN sudo rm -rf ${APP_PATH}/.git /tmp/unbound /tmp/nassl_freebsd /tmp/python-whois\n\n# Setup the entrypoint command which will be executed when a container built from this image is run\nENTRYPOINT ${APP_PATH}/docker/entrypoint.sh\n"
+}

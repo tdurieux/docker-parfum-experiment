@@ -1,0 +1,44 @@
+{
+  "startTime": 1674250141045,
+  "endTime": 1674250142347,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 46,
+        "lineEnd": 47,
+        "columnStart": 4,
+        "columnEnd": 99
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 32,
+        "lineEnd": 32,
+        "columnStart": 4,
+        "columnEnd": 71
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 51,
+        "lineEnd": 51,
+        "columnStart": 4,
+        "columnEnd": 25
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 56,
+        "lineEnd": 56,
+        "columnStart": 4,
+        "columnEnd": 41
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM mundialis/actinia:alpine-dependencies-v1 as build-base\nFROM mundialis/grass-py3-pdal:releasebranch_8_2-alpine as grass\n\nFROM build-base as build\n\nLABEL authors=\"Carmen Tawalika,Anika Bettge,Markus Neteler,Sören Gebbert\"\nLABEL maintainer=\"tawalika@mundialis.de,weinmann@mundialis.de,neteler@mundialis.de\"\n\nCOPY . /src/actinia_core\n\nWORKDIR /src/actinia_core\n# setuptools uses this command or similar to determine app version\n# in CI environments it might not work as expected\n# RUN git describe --dirty --tags --long --first-parent\nRUN git checkout .\nRUN python3 setup.py sdist bdist_wheel -d /build\n\n\nFROM mundialis/actinia:alpine-dependencies-v1 as actinia_installation\n\nENV LC_ALL \"en_US.UTF-8\"\nENV GDAL_CACHEMAX=2000\nENV GRASS_COMPRESSOR=ZSTD\nENV GRASS_SKIP_MAPSET_OWNER_CHECK 1\nENV GISBASE \"\"\nENV ACTINIA_API_VERSION 3.1.0\n\nUSER root\n\n# GRASS GIS SETUP\nCOPY --from=grass /usr/local/bin/grass /usr/local/bin/grass\nCOPY --from=grass /usr/local/grass* /usr/local/grass/\nRUN pip3 install --no-cache-dir --upgrade pip six grass-session --ignore-installed six\nRUN ln -s /usr/local/grass `grass --config path`\nRUN grass --tmp-location EPSG:4326 --exec g.version -rge && \\\n    pdal --version && \\\n    python3 --version\n\n# install GRASS GIS addon d.rast.multi, because it is needed for STRDS render\n# endpoint\nRUN grass --tmp-location EPSG:4326 --exec g.extension -s \\\n  extension=d.rast.multi url=https://github.com/mundialis/d_rast_multi\n\n# actinia-core and actinia libs BUILD\nWORKDIR /build\nARG WHEEL_NAME=actinia_api-${ACTINIA_API_VERSION}-py3-none-any.whl\nRUN curl -f -L --output /build/${WHEEL_NAME} \\\n    https://github.com/mundialis/actinia-api/releases/download/${ACTINIA_API_VERSION}/${WHEEL_NAME}\n\n# Install actinia-core and libs\nCOPY --from=build /build/*.whl /build/\nRUN pip3 install --no-cache-dir /build/*\n\n# Duplicate install actinia_core requirements. They are already included\n# in alpine-build / alpine-runtime images, but check for updates here.\nCOPY requirements.txt /src/requirements.txt\nRUN pip3 install --no-cache-dir -r /src/requirements.txt\n\n# Copy actinia config file and start scripts + set needed envs\nCOPY docker/actinia-core-alpine/actinia.cfg /etc/default/actinia\nCOPY docker/actinia-core-alpine/start.sh /src/start.sh\n\n# Create the data directories\nRUN mkdir -p /actinia_core/grassdb && \\\n    mkdir -p /actinia_core/resources && \\\n    mkdir -p /actinia_core/workspace/tmp && \\\n    mkdir -p /actinia_core/workspace/temp_db && \\\n    mkdir -p /actinia_core/workspace/actinia && \\\n    mkdir -p /actinia_core/workspace/download_cache && \\\n    mkdir -p /actinia_core/userdata && \\\n    ln -s /actinia_core /root/actinia\n\n\nFROM actinia_installation as actinia\n\nVOLUME /grassdb\nWORKDIR /src/actinia_core\n\nENTRYPOINT [\"/bin/sh\"]\nCMD [\"/src/start.sh\"]\n\nEXPOSE 8088\n"
+}

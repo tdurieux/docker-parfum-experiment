@@ -1,0 +1,71 @@
+{
+  "startTime": 1674215402069,
+  "endTime": 1674215402888,
+  "originalSmells": [
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 108,
+        "lineEnd": 108,
+        "columnStart": 4,
+        "columnEnd": 28
+      }
+    },
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 111,
+        "lineEnd": 111,
+        "columnStart": 30,
+        "columnEnd": 41
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 100,
+        "lineEnd": 100,
+        "columnStart": 4,
+        "columnEnd": 39
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 101,
+        "lineEnd": 101,
+        "columnStart": 4,
+        "columnEnd": 56
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 119,
+        "lineEnd": 119,
+        "columnStart": 4,
+        "columnEnd": 44
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 181,
+        "lineEnd": 181,
+        "columnStart": 4,
+        "columnEnd": 51
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 16,
+        "lineEnd": 53,
+        "columnStart": 4,
+        "columnEnd": 20
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM ubuntu:focal as base\n\n# Warning: This file is experimental.\n#\n# Short-term goals:\n# * Be a suitable replacement for the `edxops/edxapp` image in devstack (in progress).\n# * Take advantage of Docker caching layers: aim to put commands in order of\n#   increasing cache-busting frequency.\n# * Related to ^, use no Ansible or Paver.\n# Long-term goal:\n# * Be a suitable base for production LMS and CMS images (THIS IS NOT YET THE CASE!).\n#\n# Install system requirements.\n# We update, upgrade, and delete lists all in one layer\n# in order to reduce total image size.\nRUN apt-get update && \\\n    DEBIAN_FRONTEND=noninteractive apt-get --no-install-recommends install --yes \\\n        # Global requirements\n        build-essential \\\n        curl \\\n        # If we don't need gcc, we should remove it.\n        g++ \\\n        gcc \\\n        git \\\n        git-core \\\n        language-pack-en \\\n        libfreetype6-dev \\\n        libmysqlclient-dev \\\n        libssl-dev \\\n        libxml2-dev \\\n        libxmlsec1-dev \\\n        libxslt1-dev \\\n        swig \\\n        # openedx requirements\n        gettext \\\n        gfortran \\\n        graphviz \\\n        libffi-dev \\\n        libfreetype6-dev \\\n        libgeos-dev \\\n        libgraphviz-dev \\\n        libjpeg8-dev \\\n        liblapack-dev \\\n        libpng-dev \\\n        libsqlite3-dev \\\n        libxml2-dev \\\n        libxmlsec1-dev \\\n        libxslt1-dev \\\n        # lynx: Required by https://github.com/edx/edx-platform/blob/b489a4ecb122/openedx/core/lib/html_to_text.py#L16\n        lynx \\\n        ntp \\\n        pkg-config \\\n        python3-dev \\\n        python3-venv && \\\n    rm -rf /var/lib/apt/lists/*\n\n# Set locale.\nRUN locale-gen en_US.UTF-8\n\n# Env vars: locale\nENV LANG='en_US.UTF-8'\nENV LANGUAGE='en_US:en'\nENV LC_ALL='en_US.UTF-8'\n\n# Env vars: configuration\nENV CONFIG_ROOT='/edx/etc'\nENV LMS_CFG=\"$CONFIG_ROOT/lms.yml\"\nENV CMS_CFG=\"$CONFIG_ROOT/cms.yml\"\nENV EDX_PLATFORM_SETTINGS='production'\n\n# Env vars: path\nENV VIRTUAL_ENV='/edx/app/edxapp/venvs/edxapp'\nENV PATH=\"$VIRTUAL_ENV/bin:$PATH\"\nENV PATH=\"/edx/app/edxapp/edx-platform/node_modules/.bin:${PATH}\"\nENV PATH=\"/edx/app/edxapp/edx-platform/bin:${PATH}\"\nENV PATH=\"/edx/app/edxapp/nodeenv/bin:${PATH}\"\n\n# Create config directory. Create, define, and switch to working directory.\nRUN mkdir -p \"$CONFIG_ROOT\"\nWORKDIR /edx/app/edxapp/edx-platform\n\n# Env vars: paver\n# We intentionally don't use paver in this Dockerfile, but Devstack may invoke paver commands\n# during provisioning. Enabling NO_PREREQ_INSTALL tells paver not to re-install Python\n# requirements for every paver command, potentially saving a lot of developer time.\nENV NO_PREREQ_INSTALL='1'\n\n# Set up a Python virtual environment.\n# It is already 'activated' because $VIRTUAL_ENV/bin was put on $PATH.\nRUN python3.8 -m venv \"$VIRTUAL_ENV\"\n\n# Install Python requirements.\n# Requires copying over requirements files, but not entire repository.\n# We filter out the local ('common/*' and 'openedx/*', and '.') Python projects,\n# because those require code in order to be installed. They will be installed\n# later. This step can be simplified when the local projects are dissolved\n# (see https://openedx.atlassian.net/browse/BOM-2579).\nCOPY requirements requirements\nRUN  sed '/^-e \\(common\\/\\|openedx\\/\\|.\\)/d' requirements/edx/base.txt \\\n  > requirements/edx/base-minus-local.txt\nRUN pip install --no-cache-dir -r requirements/pip.txt\nRUN pip install --no-cache-dir -r requirements/edx/base-minus-local.txt\n\n# Set up a Node environment and install Node requirements.\n# Must be done after Python requirements, since nodeenv is installed\n# via pip.\n# The node environment is already 'activated' because its .../bin was put on $PATH.\nRUN nodeenv /edx/app/edxapp/nodeenv --node=16.14.0 --prebuilt\nRUN npm install -g npm@8.5.x && npm cache clean --force;\nCOPY package.json package.json\nCOPY package-lock.json package-lock.json\nRUN npm set progress=false && npm install && npm cache clean --force;\n\n# Copy over remaining parts of repository (including all code).\nCOPY . .\n\n# Install Python requirements again in order to capture local projects, which\n# were skipped earlier. This should be much quicker than if were installing\n# all requirements from scratch.\nRUN pip install --no-cache-dir -r requirements/edx/base.txt\n\n##################################################\n# Define LMS docker-based non-dev target.\nFROM base as lms-docker\nENV SERVICE_VARIANT lms\nARG LMS_CFG_OVERRIDE\nRUN echo \"$LMS_CFG_OVERRIDE\"\nENV LMS_CFG=\"${LMS_CFG_OVERRIDE:-$LMS_CFG}\"\nRUN echo \"$LMS_CFG\"\nENV EDX_PLATFORM_SETTINGS='docker-production'\nENV DJANGO_SETTINGS_MODULE=\"lms.envs.$EDX_PLATFORM_SETTINGS\"\nEXPOSE 8000\nCMD gunicorn \\\n    -c /edx/app/edxapp/edx-platform/lms/docker_lms_gunicorn.py \\\n    --name lms \\\n    --bind=0.0.0.0:8000 \\\n    --max-requests=1000 \\\n    --access-logfile \\\n    - lms.wsgi:application\n\n##################################################\n# Define LMS non-dev target.\nFROM base as lms\nENV LMS_CFG=\"$CONFIG_ROOT/lms.yml\"\nENV SERVICE_VARIANT lms\nENV DJANGO_SETTINGS_MODULE=\"lms.envs.$EDX_PLATFORM_SETTINGS\"\nEXPOSE 8000\nCMD gunicorn \\\n    -c /edx/app/edxapp/edx-platform/lms/docker_lms_gunicorn.py \\\n    --name lms \\\n    --bind=0.0.0.0:8000 \\\n    --max-requests=1000 \\\n    --access-logfile \\\n    - lms.wsgi:application\n\n\n##################################################\n# Define CMS non-dev target.\nFROM base as cms\nENV SERVICE_VARIANT cms\nENV EDX_PLATFORM_SETTINGS='production'\nENV DJANGO_SETTINGS_MODULE=\"cms.envs.$EDX_PLATFORM_SETTINGS\"\nEXPOSE 8010\nCMD gunicorn \\\n    -c /edx/app/edxapp/edx-platform/cms/docker_cms_gunicorn.py \\\n    --name cms \\\n    --bind=0.0.0.0:8010 \\\n    --max-requests=1000 \\\n    --access-logfile \\\n    - cms.wsgi:application\n\n\n##################################################\n# Define intermediate dev target for LMS/CMS.\n#\n# Although it might seem more logical to forego the `dev` stage\n# and instead base `lms-dev` and `cms-dev` off of `lms` and\n# `cms`, respectively, we choose to have this `dev` stage\n# so that the installed development requirements are contained\n# in a single layer, shared between `lms-dev` and `cms-dev`.\nFROM base as dev\nRUN pip install --no-cache-dir -r requirements/edx/development.txt\n\n# Link configuration YAMLs and set EDX_PLATFORM_SE1TTINGS.\nENV EDX_PLATFORM_SETTINGS='devstack_docker'\nRUN ln -s \"$(pwd)/lms/envs/devstack-experimental.yml\" \"$LMS_CFG\"\nRUN ln -s \"$(pwd)/cms/envs/devstack-experimental.yml\" \"$CMS_CFG\"\n\n# Temporary compatibility hack while devstack is supporting\n# both the old `edxops/edxapp` image and this image:\n# Add in a dummy ../edxapp_env file.\n# The edxapp_env file was originally needed for sourcing to get\n# environment variables like LMS_CFG, but now we just set\n# those variables right in the Dockerfile.\nRUN touch ../edxapp_env\n\n\n##################################################\n#  Define LMS dev target.\nFROM dev as lms-dev\nENV SERVICE_VARIANT lms\nENV DJANGO_SETTINGS_MODULE=\"lms.envs.$EDX_PLATFORM_SETTINGS\"\nEXPOSE 18000\nCMD while true; do python ./manage.py lms runserver 0.0.0.0:18000; sleep 2; done\n\n\n##################################################\n#  Define CMS dev target.\nFROM dev as cms-dev\nENV SERVICE_VARIANT cms\nENV DJANGO_SETTINGS_MODULE=\"cms.envs.$EDX_PLATFORM_SETTINGS\"\nEXPOSE 18010\nCMD while true; do python ./manage.py cms runserver 0.0.0.0:18010; sleep 2; done\n"
+}

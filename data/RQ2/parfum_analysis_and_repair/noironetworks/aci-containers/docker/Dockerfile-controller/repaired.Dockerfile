@@ -1,0 +1,17 @@
+ARG basetag=latest
+ARG baserepo=quay.io/noirolabs
+FROM ${baserepo}/aci-containers-controller-base:${basetag}
+# Required OpenShift Labels
+LABEL name="ACI CNI Containers Controller" \
+vendor="Cisco" \
+version="v1.0.0" \
+release="1" \
+summary="This is an ACI CNI Containers Controller." \
+description="This will deploy a single instance of ACI CNI Containers Controller."
+# Required Licenses
+COPY docker/licenses /licenses
+COPY pkg/istiocrd/upstream-istio-cr.yaml /usr/local/var/lib/aci-cni/upstream-istio-ctrlplane-resource.yaml
+COPY dist-static/aci-containers-controller /usr/local/bin/
+ENV AWS_SUBNETS="None"
+ENV AWS_VPCID="None"
+ENTRYPOINT exec /usr/local/bin/aci-containers-controller -config-path /usr/local/etc/aci-containers/controller.conf -aws-subnets $AWS_SUBNETS -vpc-id $AWS_VPCID

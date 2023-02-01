@@ -1,0 +1,62 @@
+{
+  "startTime": 1674250382974,
+  "endTime": 1674250383291,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 25,
+        "lineEnd": 25,
+        "columnStart": 4,
+        "columnEnd": 21
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 36,
+        "lineEnd": 36,
+        "columnStart": 4,
+        "columnEnd": 36
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 44,
+        "lineEnd": 44,
+        "columnStart": 7,
+        "columnEnd": 33
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 88,
+        "lineEnd": 88,
+        "columnStart": 4,
+        "columnEnd": 21
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 88,
+        "lineEnd": 88,
+        "columnStart": 25,
+        "columnEnd": 57
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 43,
+        "lineEnd": 43,
+        "columnStart": 7,
+        "columnEnd": 105
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM arm32v7/python:3.5.6-slim-stretch as builder\n\n# Install dependencies needed for building and running OpenCV\nRUN apt-get update && apt-get install -y --no-install-recommends \\\n    # to build and install\n    unzip wget sed \\\n    build-essential cmake pkg-config \\\n    # to work with images (likely not necessary for optical calibration)\n    # libjpeg-dev libtiff-dev libpng-dev \\\n    # to work with video / webcam (likely not necessary for optical calibration)\n    # libavcodec-dev libavformat-dev libswscale-dev \\\n    libv4l-dev \\\n    # for opencv math operations\n    libatlas-base-dev gfortran \\\n    # thread building blocks (not availabe on the arm version of python:3.5.6-slim-stretch)\n    # libtbb2 libtbb-dev \\\n    # for gevent\n    libevent-dev \\\n    # for numpy (installs libf77blas.so.3)\n    libatlas-base-dev \\\n    # cleanup\n    && rm -rf /var/lib/apt/lists/* \\\n    && apt-get -y autoremove\n\n# OpenCV dependency\nRUN pip install --no-cache-dir numpy\n\n# Build OpenCV\nADD tools/download_build_install_opencv.sh /download_build_install_opencv.sh\nRUN chmod +x /download_build_install_opencv.sh && /download_build_install_opencv.sh\n\n# Get other python dependencies\nADD requirements.txt /requirements.txt\n# Remove opencv and numpy from requirements (since they're already installed)\nRUN sed -i '/opencv-python.*/d' /requirements.txt && sed -i '/numpy.*/d' /requirements.txt\n# TODO: Maybe we can cache wheel files outside this container, for more granular reuse when requiremnts.txt changes\nRUN pip install --no-cache-dir -r /requirements.txt\n\n# Download and compile the Arduino firmware\n# Generates the firmware as /firmware/.pioenvs/megaatmega2560/firmware.hex\n# PlatformIO doesn't support python3 yet, so also install python2 :/\n# See also: https://github.com/platformio/platformio-core/issues/895\nRUN apt-get update \\\n    && apt-get install -y --no-install-recommends python2.7 python-pip python-setuptools python-wheel git \\\n    && pip2 install --no-cache-dir -U platformio \\\n    && pio platform install --with-package framework-arduinoavr atmelavr && rm -rf /var/lib/apt/lists/*;\n\nARG madgrizzle_firmware_repo=https://github.com/madgrizzle/Firmware.git\nARG madgrizzle_firmware_sha=bf4350ffd9bc154832505fc0125abd2c4c04dba7\nRUN git clone $madgrizzle_firmware_repo firmware/madgrizzle \\\n    && cd firmware/madgrizzle \\\n    && git checkout $madgrizzle_firmware_sha \\\n    && pio run -e megaatmega2560 \\\n    && mkdir build \\\n    && mv .pioenvs/megaatmega2560/firmware.hex build/$madgrizzle_firmware_sha-$(sed -n -e 's/^.*VERSIONNUMBER //p' cnc_ctrl_v1/Maslow.h).hex\nARG maslowcnc_firmware_repo=https://github.com/MaslowCNC/Firmware.git\nARG maslowcnc_firmware_sha=d0943e2a2f29faef4c07585a00638d0f822e5daf\nRUN git clone $maslowcnc_firmware_repo firmware/maslowcnc \\\n    && cd firmware/maslowcnc \\\n    && git checkout $maslowcnc_firmware_sha \\\n    && pio run -e megaatmega2560 \\\n    && mkdir build \\\n    && mv .pioenvs/megaatmega2560/firmware.hex build/$maslowcnc_firmware_sha-$(sed -n -e 's/^.*VERSIONNUMBER //p' cnc_ctrl_v1/Maslow.h).hex\n\nADD . /WebControl\n# Clean up the /WebControl dir a bit to slim it down\n# TODO: Is there a more automatic way to do this?\nRUN rm -rf /WebControl/.venv && rm -rf /WebControl/.git\n# Pre-compile the pyc files (for faster Docker image startup)\nRUN python --version && python -m compileall /WebControl\n\n\nFROM arm32v7/python:3.5.6-slim-stretch\n\n# Pip wheels compiled in the builder\nCOPY --from=builder /root/.cache /root/.cache\n# requirements.txt with opencv and numpy removed\nCOPY --from=builder /requirements.txt /requirements.txt\n# Required shared libraries\nCOPY --from=builder /usr/local/lib/python3.5/site-packages/cv2.cpython-35m-arm-linux-gnueabihf.so /usr/local/lib/python3.5/site-packages/cv2.cpython-35m-arm-linux-gnueabihf.so\nCOPY --from=builder /usr/lib/libf77blas.so /usr/lib/libf77blas.so\nCOPY --from=builder /usr/lib/libf77blas.so.3 /usr/lib/libf77blas.so.3\nCOPY --from=builder /usr/lib/libcblas.so.3 /usr/lib/libcblas.so.3\nCOPY --from=builder /usr/lib/libatlas.so.3 /usr/lib/libatlas.so.3\nCOPY --from=builder /usr/lib/libblas.so.3 /usr/lib/libblas.so.3\nCOPY --from=builder /usr/lib/arm-linux-gnueabihf/libgfortran.so.3 /usr/lib/arm-linux-gnueabihf/libgfortran.so.3\nCOPY --from=builder /usr/lib/liblapack.so.3 /usr/lib/liblapack.so.3\n\nRUN pip install --no-cache-dir numpy && pip install --no-cache-dir -r /requirements.txt && rm -rf /root/.cache\n\n# Install avrdude\n# TODO: to speed up incremental docker builds, we can probably do this in the builder image if we can figure out\n# which files we need to copy over\nRUN apt-get update && apt-get install -y --no-install-recommends \\\n    avrdude \\\n    && rm -rf /var/lib/apt/lists/* \\\n    && apt-get -y autoremove\n# Copy in the pre-compiled firmware\nCOPY --from=builder /firmware/madgrizzle/build/* /firmware/madgrizzle/\nCOPY --from=builder /firmware/maslowcnc/build/* /firmware/maslowcnc/\n\n# Copy the pre-compiled source from the builder\nCOPY --from=builder /WebControl /WebControl\n\nWORKDIR /WebControl\nEXPOSE 5000/tcp\nCMD python /WebControl/main.py\n"
+}

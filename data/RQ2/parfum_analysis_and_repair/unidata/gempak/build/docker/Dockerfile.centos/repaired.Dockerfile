@@ -1,0 +1,29 @@
+FROM centos:7
+MAINTAINER Daryl Herzmann <akrherz@iastate.edu>
+
+# User account
+RUN useradd -ms /bin/bash gempak
+
+# Dependencies
+RUN yum --enablerepo=extras install epel-release -y && rm -rf /var/cache/yum
+RUN yum clean all
+RUN yum install openmotif libX11 libXt libXext libXp libXft libXtst xorg-x11-xbitmaps csh libgfortran which python-pip git -y && rm -rf /var/cache/yum
+
+# Latest RPM for CentOS 7
+RUN rpm -ivh https://www.unidata.ucar.edu/downloads/gempak/latest/gempak-7.15.0-1.el7.centos.x86_64.rpm
+
+# Python AWIPS Data Acess Framework
+RUN pip install --no-cache-dir six shapely numpy
+RUN git clone https://github.com/Unidata/python-awips.git
+RUN cd python-awips && python setup.py install
+RUN cp python-awips/awips/gempak/*.py /home/gempak/GEMPAK7/scripts/python/
+
+# Testing script and Gemenviron
+COPY rungempak.sh /home/gempak/
+RUN echo ". /home/gempak/GEMPAK7/Gemenviron.profile" >> /home/gempak/.bashrc
+
+RUN yum install bc -y && rm -rf /var/cache/yum
+
+USER gempak
+WORKDIR /home/gempak
+ENTRYPOINT ["/home/gempak/rungempak.sh"]

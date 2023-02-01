@@ -1,0 +1,26 @@
+{
+  "startTime": 1674215140974,
+  "endTime": 1674215142408,
+  "originalSmells": [
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 59,
+        "lineEnd": 59,
+        "columnStart": 4,
+        "columnEnd": 62
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 7,
+        "lineEnd": 12,
+        "columnStart": 22,
+        "columnEnd": 12
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM ubuntu:16.04\n\nWORKDIR /usr/src\nENV CC=clang\nENV CXX=clang++\n\n# Install tools needed\nRUN apt-get update && apt-get install --no-install-recommends -y \\\n  cmake \\\n  git \\\n  clang \\\n  libc++-dev \\\n  pkg-config \\\n  && ln -s /usr/bin/llvm-symbolizer-3.8 /usr/bin/llvm-symbolizer \\\n  && rm -rf /var/lib/apt/lists/*\n\n# Build libcxx with MSAN\nRUN git clone --depth 1 https://github.com/llvm/llvm-project.git -b llvmorg-9.0.1 \\\n\t&& cd llvm-project \\\n\t&& cp -r libcxx llvm/projects/ \\\n\t&& cp -r libcxxabi llvm/projects/ \\\n\t&& mkdir /usr/src/libcxx_msan \\\n\t&& cd /usr/src/libcxx_msan \\\n\t&& cmake ../llvm-project/llvm -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DLLVM_USE_SANITIZER=Memory \\\n\t&& make cxx -j4 \\\n\t&& rm -rf /usr/src/llvm-project\n\nENV MSAN_CFLAGS=\"-fsanitize=memory -stdlib=libc++ -L/usr/src/libcxx_msan/lib -lc++abi -I/usr/src/libcxx_msan/include -I/usr/src/libcxx_msan/include/c++/v1\"\n\n# Install gtest globally\nRUN git clone --depth 1 https://github.com/google/googletest.git -b release-1.8.0 \\\n\t&& mkdir googletest/build \\\n\t&& cd googletest/build \\\n\t&& cmake ../googletest -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_C_FLAGS=\"$MSAN_CFLAGS\" -DCMAKE_CXX_FLAGS=\"$MSAN_CFLAGS\" \\\n\t&& make -j4 \\\n\t&& make install \\\n\t&& rm -rf /usr/src/googletest\n\nENV CFLAGS=\"-fno-omit-frame-pointer -O0 -g -fsanitize=memory\"\nENV LDFLAGS=\"-fsanitize=memory\"\n\n# OpenSSL\nRUN git clone --depth 1 https://github.com/openssl/openssl.git -b OpenSSL_1_1_0l \\\n\t&& cd openssl \\\n\t&& CC=\"$CC $CFLAGS\" ./config no-asm \\\n\t&& make install \\\n\t&& rm -rf /usr/src/openssl\n\n# jsmn\nRUN git clone --depth 1 https://github.com/zserge/jsmn.git -b v1.0.0 \\\n\t&& cd jsmn \\\n\t&& CFLAGS=\"$CFLAGS -fPIC\" make \\\n\t&& cp libjsmn.a /usr/local/lib \\\n\t&& cp jsmn.h /usr/local/include \\\n\t&& rm -rf /usr/src/jsmn\n\n# libsrtp\nRUN git clone --depth 1 https://github.com/cisco/libsrtp.git -b v2.2.0 \\\n\t&& cd libsrtp \\\n\t&& ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" --enable-openssl --with-openssl-dir=/usr/local \\\n\t&& make \\\n\t&& make install \\\n\t&& rm -rf /usr/src/libsrtp\n\n\n# libwebsockets\nRUN git clone https://github.com/warmcat/libwebsockets.git \\\n\t&& cd libwebsockets \\\n\t&& git reset --hard  3179323afa81448287a15982755ed0e4a34d80cb \\\n\t&& mkdir build \\\n\t&& cd build \\\n\t&& cmake .. -DLWS_WITH_HTTP2=1         \\\n\t   -DLWS_HAVE_HMAC_CTX_new=1           \\\n\t   -DLWS_HAVE_SSL_EXTRA_CHAIN_CERTS=1  \\\n\t   -DLWS_HAVE_OPENSSL_ECDH_H=1         \\\n\t   -DLWS_HAVE_EVP_MD_CTX_free=1        \\\n\t   -DLWS_WITHOUT_SERVER=1              \\\n\t   -DLWS_WITHOUT_TESTAPPS=1            \\\n\t   -DLWS_WITH_THREADPOOL=1             \\\n\t   -DLWS_WITHOUT_TEST_SERVER_EXTPOLL=1 \\\n\t   -DLWS_WITHOUT_TEST_PING=1 \t       \\\n\t   -DLWS_WITHOUT_TEST_CLIENT=1         \\\n\t   -DLWS_WITH_SHARED=1                 \\\n\t   -DLWS_STATIC_PIC=1                  \\\n\t   -DLWS_WITH_ZLIB=0                   \\\n\t   -DOPENSSL_ROOT_DIR=/usr/local       \\\n\t&& make \\\n\t&& make install \\\n\t&& rm -rf /usr/src/libwebsockets\n\n# usrsctp\nRUN git clone https://github.com/sctplab/usrsctp.git \\\n\t&& cd usrsctp \\\n\t&& git reset --hard  913de3599feded8322882bdae69f346da5a258fc \\\n\t&& mkdir build \\\n\t&& cd build \\\n\t&& cmake .. -Dsctp_werror=0 \\\n\t&& make \\\n\t&& make install \\\n\t&& rm -rf /usr/src/usrsctp\n\nRUN git clone https://github.com/awslabs/amazon-kinesis-video-streams-pic.git \\\n\t&& cd amazon-kinesis-video-streams-pic \\\n\t&& mkdir build \\\n\t&& cd build \\\n\t&& cmake .. -DBUILD_DEPENDENCIES=FALSE -DMEMORY_SANITIZER=TRUE -DCMAKE_C_FLAGS=\"$MSAN_CFLAGS\" -DCMAKE_CXX_FLAGS=\"$MSAN_CFLAGS\" \\\n\t&& make \\\n\t&& make install \\\n\t&& rm -rf /usr/src/amazon-kinesis-video-streams-pic\n\nRUN git clone https://github.com/awslabs/amazon-kinesis-video-streams-producer-c.git \\\n\t&& cd amazon-kinesis-video-streams-producer-c \\\n\t&& mkdir build \\\n\t&& cd build \\\n\t&& cmake .. -DBUILD_COMMON_CURL=FALSE -DBUILD_COMMON_LWS=TRUE -DBUILD_DEPENDENCIES=FALSE -DMEMORY_SANITIZER=TRUE -DCMAKE_C_FLAGS=\"$MSAN_CFLAGS\" -DCMAKE_CXX_FLAGS=\"$MSAN_CFLAGS\" \\\n\t&& make \\\n\t&& make install \\\n\t&& rm -rf /usr/src/amazon-kinesis-video-streams-producer-c\n\nENV LD_LIBRARY_PATH='/usr/src/libcxx_msan/lib/'\n"
+}

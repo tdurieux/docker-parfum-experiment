@@ -1,0 +1,80 @@
+{
+  "startTime": 1674236044686,
+  "endTime": 1674236044952,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 35,
+        "lineEnd": 35,
+        "columnStart": 7,
+        "columnEnd": 61
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 81,
+        "lineEnd": 81,
+        "columnStart": 54,
+        "columnEnd": 100
+      }
+    },
+    {
+      "rule": "aptGetInstallUseY",
+      "position": {
+        "lineStart": 64,
+        "lineEnd": 64,
+        "columnStart": 26,
+        "columnEnd": 78
+      }
+    },
+    {
+      "rule": "aptGetInstallUseY",
+      "position": {
+        "lineStart": 81,
+        "lineEnd": 81,
+        "columnStart": 26,
+        "columnEnd": 50
+      }
+    },
+    {
+      "rule": "aptGetInstallUseY",
+      "position": {
+        "lineStart": 82,
+        "lineEnd": 82,
+        "columnStart": 4,
+        "columnEnd": 54
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 36,
+        "lineEnd": 38,
+        "columnStart": 7,
+        "columnEnd": 57
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 81,
+        "lineEnd": 81,
+        "columnStart": 26,
+        "columnEnd": 50
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 17,
+        "lineEnd": 20,
+        "columnStart": 7,
+        "columnEnd": 33
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM asah/pg11-plv8 as plv8\n\nFROM postgres:11\n\nARG DEBIAN_FRONTEND=noninteractive\n\nARG CITUS_VERSION=8.1.1\nENV CITUS_VERSION ${CITUS_VERSION}.citus-1\n\n#\n# install postgis\n#\nARG PG_MAJOR=11\nARG POSTGIS_MAJOR=2.5\nENV LANG en_ZA.UTF-8\nENV LANGUAGE en_ZA.UTF-8\nRUN apt-get update \\\n    && apt-get install -y --no-install-recommends \\\n                          postgresql-$PG_MAJOR-postgis-$POSTGIS_MAJOR \\\n                          postgis-$POSTGIS_MAJOR \\\n       \t       \t       \t  locales \\\n    && sed -i -e 's/# en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/' /etc/locale.gen \\\n    && sed -i -e 's/# en_ZA.UTF-8 UTF-8/en_ZA.UTF-8 UTF-8/' /etc/locale.gen \\\n    && echo 'LANG=\"en_ZA.UTF-8\"'>/etc/default/locale \\\n    && dpkg-reconfigure locales \\\n    && update-locale LANG=en_ZA.UTF-8 \\\n    && dpkg-reconfigure locales && rm -rf /var/lib/apt/lists/*;\n\n#    && rm -rf /var/lib/apt/lists/*\n\n#\n# install Citus\n#\nRUN apt-get update \\\n    && apt-get install -y --no-install-recommends ca-certificates curl \\\n    && curl -f -s https://install.citusdata.com/community/deb.sh | bash \\\n    && apt-get install --no-install-recommends -y postgresql-$PG_MAJOR-citus-8.1=$CITUS_VERSION \\\n                          postgresql-$PG_MAJOR-hll=2.12.citus-1 \\\n                          postgresql-$PG_MAJOR-topn=2.2.0 \\\n    && apt-get purge -y --auto-remove curl \\\n    && rm -rf /var/lib/apt/lists/*\n\n# add citus to default PostgreSQL config\nRUN echo \"shared_preload_libraries='citus'\" >> /usr/share/postgresql/postgresql.conf.sample && \\\n    echo \"logging_collector = on\" >> /usr/share/postgresql/postgresql.conf.sample && \\\n    echo \"log_directory = 'log'\" >> /usr/share/postgresql/postgresql.conf.sample && \\\n    echo \"log_filename = 'postgresql-%Y-%m-%d_%H%M%S.log'\" >> /usr/share/postgresql/postgresql.conf.sample && \\\n    echo \"log_file_mode = 0600\" >> /usr/share/postgresql/postgresql.conf.sample && \\\n    echo \"\" > /dev/null\n\n# add scripts to run after initdb\n# note: 002-create-postgis-extension.sql should only be run in user databases, as per postgis instructions\n# (it's also super slow...)\nCOPY docker-scripts/000-configure-stats.sh docker-scripts/001-create-citus-extension.sql /docker-entrypoint-initdb.d/\n\n# add health check script\nCOPY docker-scripts/pg_healthcheck /\n\nHEALTHCHECK --interval=4s --start-period=6s CMD ./pg_healthcheck\n\n#\n# plv8\n#\n# plv8 is dynamically linked\nRUN apt-get update -qq && apt-get install -y -qq --no-install-recommends libc++1 && \\\n    rm -rf /var/lib/apt/lists/* && apt-get -y autoremove && apt-get clean\nCOPY --from=plv8 /usr/share/postgresql/11/extension/plcoffee* /usr/share/postgresql/11/extension/\nCOPY --from=plv8 /usr/share/postgresql/11/extension/plls* /usr/share/postgresql/11/extension/\nCOPY --from=plv8 /usr/share/postgresql/11/extension/plv8* /usr/share/postgresql/11/extension/\nCOPY --from=plv8 /usr/lib/postgresql/11/lib/plv8*.so /usr/lib/postgresql/11/lib/\nCOPY --from=plv8 /var/lib/postgresql/plv8-modules /var/lib/postgresql/plv8-modules\nRUN chmod 644 /usr/share/postgresql/11/extension/plcoffee* \\\n    && chmod 644 /usr/share/postgresql/11/extension/plls* \\\n    && chmod 644 /usr/share/postgresql/11/extension/plv8* \\\n    && chmod 755 /usr/lib/postgresql/11/lib/plv8*.so\n\n#COPY ./initdb.sh /docker-entrypoint-initdb.d/postgis.sh\n\n#\n# install d3 - requires postgres startup script\n#\nRUN apt-get -qq update && apt-get install -y --no-install-recommends -qq curl && curl -f -sL https://deb.nodesource.com/setup_11.x | bash - && \\\n    apt-get install -y -qq --no-install-recommends nodejs && \\\n    su - postgres -c \"npm install d3\" && \\\n    rm -rf /var/lib/apt/lists/* && \\\n    apt-get -y autoremove && apt-get clean\n\nADD docker-scripts/plv8_add_module_simple /var/lib/postgresql/plv8-modules/bin/add_module_simple\nADD docker-scripts/install-d3.sh /var/lib/postgresql\n\n# copied from postgres, since it got flattened\n#CMD su - postgres -c \"/usr/lib/postgresql/11/bin/initdb -D /var/lib/postgresql/data; /usr/lib/postgresql/11/bin/postgres -D /var/lib/postgresql/data\"\n"
+}

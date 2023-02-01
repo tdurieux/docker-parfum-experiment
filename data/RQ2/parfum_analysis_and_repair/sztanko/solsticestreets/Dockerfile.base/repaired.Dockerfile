@@ -1,0 +1,19 @@
+FROM andrejreznik/python-gdal:py3.8.2-gdal3.0.4
+ENV PATH /usr/local/bin:$PATH
+
+RUN echo "deb http://ftp.debian.org/debian stretch-backports main"  > /etc/apt/sources.list.d/backports.list
+RUN apt-get update && apt-get install --no-install-recommends -y unzip build-essential wget virtualenv libspatialindex-dev python-rtree git osmium-tool htop jq parallel curl lsb-release apt-transport-https software-properties-common && rm -rf /var/lib/apt/lists/*;
+RUN apt -t stretch-backports -y --no-install-recommends install osmium-tool && rm -rf /var/lib/apt/lists/*;
+RUN wget -c https://github.com/cli/cli/releases/download/v1.5.0/gh_1.5.0_linux_amd64.deb  && dpkg -i gh_1.5.0_linux_amd64.deb && rm gh_1.5.0_linux_amd64.deb
+# Install terraform
+RUN curl -fsSL https://apt.releases.hashicorp.com/gpg | apt-key add -
+RUN apt-add-repository "deb [arch=amd64] https://apt.releases.hashicorp.com $(lsb_release -cs) main" && apt-get update && apt-get install -y --no-install-recommends terraform && terraform -install-autocomplete && rm -rf /var/lib/apt/lists/*;
+# Install aws
+RUN cd /tmp && curl -f "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip" && unzip awscliv2.zip && ./aws/install && rm -rf ./aws
+RUN pip install --no-cache-dir --upgrade pip
+
+# Install npm
+RUN curl -f -sL https://deb.nodesource.com/setup_15.x | bash -
+RUN curl -f -sL https://dl.yarnpkg.com/debian/pubkey.gpg | apt-key add -
+RUN echo "deb https://dl.yarnpkg.com/debian/ stable main" | tee /etc/apt/sources.list.d/yarn.list
+RUN apt-get update && apt-get install --no-install-recommends -y nodejs yarn && rm -rf /var/lib/apt/lists/*;

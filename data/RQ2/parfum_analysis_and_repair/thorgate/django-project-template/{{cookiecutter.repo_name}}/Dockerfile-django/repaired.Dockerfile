@@ -1,0 +1,60 @@
+# Development Dockerfile for Django app. Keep the first commands in sync with Dockerfile-poetry
+
+FROM {{ python_image(cookiecutter.python_version, ALPINE) }}
+
+ENV PYTHONPYCACHEPREFIX /.pycache
+
+# Let all *.pyc files stay within the container, for Python >= 3.8
+RUN mkdir -p $PYTHONPYCACHEPREFIX
+
+# Install bash, libpq, libjpeg-turbo and gettext
+# Bash is required to support `wait-for-it.sh` script, should not add too much to docker image
+RUN apk add --no-cache bash gettext libpq libjpeg-turbo
+
+# Install build dependencies and mark them as virtual packages so they could be removed together
+RUN apk add --no-cache --virtual .build-deps \
+    ca-certificates alpine-sdk postgresql-dev python3-dev linux-headers musl-dev \
+    libffi-dev libxml2-dev libxslt-dev jpeg-dev zlib-dev bash gettext rust cargo
+
+# Copy Python requirements dir and Install requirements
+RUN pip install --no-cache-dir -U pip 'setuptools<58' wheel poetry
+
+ARG DPT_VENV_CACHING
+
+# if --build-arg DPT_VENV_CACHING=1, set POETRY_VIRTUALENVS_CREATE to '1' or set to null otherwise.
+ENV POETRY_VIRTUALENVS_CREATE=${DPT_VENV_CACHING:+1}
+# if POETRY_VIRTUALENVS_CREATE is null, set it to '0' (or leave as is otherwise).
+ENV POETRY_VIRTUALENVS_CREATE=${POETRY_VIRTUALENVS_CREATE:-0}
+
+# -- begin image-specific commands
+
+COPY ./wait-for-it.sh /usr/bin/
+
+COPY ./scripts/django-dev-entrypoint.sh /usr/bin/entrypoint.sh
+
+COPY pyproject.toml /
+COPY poetry.lock /
+
+# Install all dependencies from poetry.lock (dev included by default)
+#
+# Note: Install is skipped when DPT_VENV_CACHING=1
+ENV DPT_VENV_CACHING=${DPT_VENV_CACHING:-''}
+RUN test "${DPT_VENV_CACHING}" = "1" && \
+    echo "skipped install during build" || \
+    poetry install
+
+# Set up PATH to include virtualenv path when DPT_VENV_CACHING is set
+#
+# When the project name or base python changes then ENV_FOLDER needs to be updated
+#  accordingly. New path can be generated with the command `make dev-venv-path`.
+#
+# See context here https://github.com/python-poetry/poetry/issues/1579#issuecomment-586020242
+ENV ENV_FOLDER={{ cookiecutter.repo_name | as_hostname }}-9TtSrW0h-py{{ cookiecutter.python_version }}
+ENV ENV_DIR="/root/.cache/pypoetry/virtualenvs/${ENV_FOLDER}"
+ENV VIRTUAL_ENV=${DPT_VENV_CACHING:+${ENV_DIR}}
+ENV PATH="${VIRTUAL_ENV:-'/fake'}/bin:${PATH}"
+
+# Set the default directory where CMD will execute
+WORKDIR /app
+
+CMD bash

@@ -1,0 +1,26 @@
+{
+  "startTime": 1674255863594,
+  "endTime": 1674255864831,
+  "originalSmells": [
+    {
+      "rule": "gpgUseBatchFlag",
+      "position": {
+        "lineStart": 19,
+        "lineEnd": 19,
+        "columnStart": 4,
+        "columnEnd": 93
+      }
+    },
+    {
+      "rule": "gpgUseBatchFlag",
+      "position": {
+        "lineStart": 20,
+        "lineEnd": 20,
+        "columnStart": 4,
+        "columnEnd": 100
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM golang:1.18 AS go_builder\nWORKDIR /go/src/github.com/percona/percona-xtradb-cluster-operator/src\n\nRUN export GO111MODULE=off \\\n    && go get k8s.io/apimachinery/pkg/util/sets \\\n    && curl -Lf -o /go/src/github.com/percona/percona-xtradb-cluster-operator/src/peer-list.go https://raw.githubusercontent.com/percona/percona-xtradb-cluster-operator/main/cmd/peer-list/main.go \\\n    && go build peer-list.go\n\nFROM redhat/ubi8-minimal AS ubi8\n\nLABEL name=\"HAproxy\" \\\n      description=\"TCP proxy loadbalancer for Percona Xtradb Cluster\" \\\n      vendor=\"Percona\" \\\n      summary=\"TCP proxy for mysql protocol\" \\\n      org.opencontainers.image.authors=\"info@percona.com\"\n\n# check repository package signature in secure way\nRUN export GNUPGHOME=\"$(mktemp -d)\" \\\n\t&& microdnf install -y findutils \\\n\t&& gpg --batch --keyserver keyserver.ubuntu.com --recv-keys 430BDF5C56E7C94E848EE60C1C4CBDCDCD2EFD2A \\\n\t&& gpg --batch --export --armor 430BDF5C56E7C94E848EE60C1C4CBDCDCD2EFD2A > ${GNUPGHOME}/RPM-GPG-KEY-Percona \\\n\t&& rpmkeys --import ${GNUPGHOME}/RPM-GPG-KEY-Percona \\\n\t&& curl -Lf -o /tmp/percona-release.rpm https://repo.percona.com/yum/percona-release-latest.noarch.rpm \\\n\t&& rpmkeys --checksig /tmp/percona-release.rpm \\\n\t&& rpm -i /tmp/percona-release.rpm \\\n\t&& rm -rf \"$GNUPGHOME\" /tmp/percona-release.rpm \\\n\t&& rpm --import /etc/pki/rpm-gpg/PERCONA-PACKAGING-KEY \\\n\t&& percona-release setup pdpxc-8.0.27\n\n# install exact version of PS for repeatability\nENV PERCONA_VERSION 8.0.27-18.1.el8\n\nRUN set -ex; \\\n    microdnf install -y \\\n        shadow-utils \\\n        percona-haproxy \\\n        percona-xtradb-cluster-client-${PERCONA_VERSION} \\\n        which \\\n        tar \\\n        socat \\\n        procps-ng \\\n        vim-minimal \\\n        policycoreutils; \\\n    \\\n    microdnf clean all; \\\n    rm -rf /var/cache\n\nRUN groupadd -g 1001 mysql\nRUN useradd -u 1001 -r -g 1001 -s /sbin/nologin \\\n        -c \"Default Application User\" mysql\n\nSTOPSIGNAL SIGUSR1\n\nRUN set -ex; \\\n    mkdir -p /etc/haproxy/pxc /etc/haproxy-custom; \\\n    chown -R 1001:1001 /run /etc/haproxy /etc/haproxy/pxc /etc/haproxy-custom\nCOPY LICENSE /licenses/LICENSE.Dockerfile\nRUN cp /usr/share/licenses/percona-haproxy/LICENSE /licenses/LICENSE.haproxy\n\nCOPY dockerdir /\nCOPY --from=go_builder /go/src/github.com/percona/percona-xtradb-cluster-operator/src/peer-list /usr/bin/\n\nRUN set -ex; \\\n    chown 1001:1001 /etc/haproxy/haproxy.cfg /etc/haproxy/haproxy-global.cfg /usr/local/bin/check_pxc.sh\n\nUSER 1001\n\nVOLUME [\"/etc/haproxy/pxc\"]\n\nENTRYPOINT [\"/entrypoint.sh\"]\nCMD [\"haproxy\"]\n"
+}

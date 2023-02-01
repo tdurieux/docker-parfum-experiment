@@ -1,0 +1,51 @@
+# STklos Dockerfile
+#
+# Build an STklos image on top of Alpine Linux
+#
+#           Author: Erick Gallesio [eg@unice.fr]
+#    Creation date:  3-Jun-2019 11:28
+# Last file update:  3-Dec-2021 18:40 (eg)
+
+# The image is created from a released version of STklos
+# The version number must be passed on the command line
+#
+# To build an image on your machine of STklos version 1.XY,
+# place yourself in this directory and type (don't forget the final dot)
+#    $ VERS=1.XY
+#    $ docker build --build-arg version=$VERS -f Dockerfile.stable -t stklos:$VERS .
+#
+# To run the image:
+#    $ docker run -ti stklos:$VERS
+#
+
+# ---------- Build stage
+FROM alpine:3.15 AS build
+RUN apk update && \
+    apk add --no-cache build-base gc-dev gmp-dev libffi-dev pcre-dev git
+
+ARG version
+WORKDIR /build
+RUN wget https://stklos.net/download/stklos-${version}.tar.gz
+RUN tar xvfz stklos-${version}.tar.gz && rm stklos-${version}.tar.gz
+
+WORKDIR /build/stklos-${version}
+RUN env CFLAGS=-O3 ./configure \
+    --without-provided-bignum \
+    --without-provided-gc     \
+    --without-provided-regexp \
+    --without-provided-ffi
+RUN env TERM="dumb" make all tests install
+
+# ---------- Running stage
+FROM alpine:3.15
+RUN apk update && \
+    apk add --no-cache gc gmp libffi pcre readline
+COPY --from=build /usr/local/ /usr/local/
+RUN ln -s /usr/lib/libreadline.so.8.1 /usr/lib/libreadline.so
+WORKDIR /home
+CMD ["stklos", "--utf8-encoding=yes"]
+
+# Local Variables:
+# mode: dockerfile
+# coding: utf-8
+# End:

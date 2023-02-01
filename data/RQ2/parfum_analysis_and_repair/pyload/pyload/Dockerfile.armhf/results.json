@@ -1,0 +1,62 @@
+{
+  "startTime": 1674252309347,
+  "endTime": 1674252310156,
+  "originalSmells": [
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 38,
+        "lineEnd": 38,
+        "columnStart": 4,
+        "columnEnd": 51
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 59,
+        "lineEnd": 59,
+        "columnStart": 4,
+        "columnEnd": 51
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 70,
+        "lineEnd": 70,
+        "columnStart": 4,
+        "columnEnd": 95
+      }
+    },
+    {
+      "rule": "aptGetInstallUseY",
+      "position": {
+        "lineStart": 35,
+        "lineEnd": 35,
+        "columnStart": 4,
+        "columnEnd": 54
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 35,
+        "lineEnd": 35,
+        "columnStart": 4,
+        "columnEnd": 54
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 35,
+        "lineEnd": 35,
+        "columnStart": 4,
+        "columnEnd": 54
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Highly-Optimized Docker Image of pyLoad (ubuntu-arm32v7 variant)\n#       ____________\n#   ___/       |    \\_____________ _                 _ ___\n#  /        ___/    |    _ __ _  _| |   ___  __ _ __| |   \\\n# /    \\___/  ______/   | '_ \\ || | |__/ _ \\/ _` / _` |    \\\n# \\            ◯ |      | .__/\\_, |____\\___/\\__,_\\__,_|    /\n#  \\_______\\    /_______|_|   |__/________________________/\n#           \\  /\n#            \\/\n\nARG IMAGE_TAG=\"arm32v7-bionic\"\nARG IMAGE_CREATED\nARG IMAGE_AUTHORS=\"Walter Purcaro <vuolter@gmail.com>\"\nARG IMAGE_URL=\"https://github.com/pyload/pyload\"\nARG IMAGE_DOCUMENTATION=\"https://github.com/pyload/pyload/blob/main/README.md\"\nARG IMAGE_SOURCE=\"https://github.com/pyload/pyload/blob/main/Dockerfile.armhf\"\nARG IMAGE_VERSION=\"2.0.0\"\nARG IMAGE_REVISION\nARG IMAGE_VENDOR=\"pyload\"\nARG IMAGE_LICENSES=\"ISC\"\nARG IMAGE_TITLE=\"pyLoad\"\nARG IMAGE_DESCRIPTION=\"The free and open-source Download Manager written in pure Python\"\n\n\nARG APT_INSTALL_OPTIONS=\"--no-install-recommends --assume-yes\"\nARG PIP_INSTALL_OPTIONS=\"--disable-pip-version-check --no-cache-dir --no-compile --upgrade\"\n\n\nFROM lsiobase/ubuntu:$IMAGE_TAG AS builder\n\nARG APT_PACKAGES=\"python3 python3-distutils python3-pip python3-pycurl openssl sqlite tesseract-ocr unrar\"\nARG PIP_PACKAGES=\"pip setuptools wheel\"\n\nRUN echo \"**** install binary packages ****\" && \\\n    apt-get update && \\\n    apt-get install -y --no-install-recommends $APT_INSTALL_OPTIONS $APT_PACKAGES && \\\n\n    echo \"**** install pip package ****\" && \\\n    pip3 install --no-cache-dir $PIP_INSTALL_OPTIONS $PIP_PACKAGES && rm -rf /var/lib/apt/lists/*;\n\n\nFROM builder AS wheels_builder\n\nCOPY setup.cfg /source/setup.cfg\nWORKDIR /wheels\n\nRUN echo \"**** build pyLoad dependencies ****\" && \\\n    python3 -c \"import configparser as cp; c = cp.ConfigParser(); c.read('/source/setup.cfg'); print(c['options']['install_requires'] + c['options.extras_require']['extra'])\" | \\\n    xargs pip3 wheel --wheel-dir=.\n\n\nFROM builder AS source_builder\n\nARG PIP_PACKAGES=\"Babel Jinja2\"\n\nCOPY . /source\nWORKDIR /source\n\nRUN echo \"**** build pyLoad locales ****\" && \\\n    pip3 install --no-cache-dir $PIP_INSTALL_OPTIONS $PIP_PACKAGES && \\\n    python3 setup.py build_locale\n\n\nFROM builder AS package_builder\n\nCOPY --from=wheels_builder /wheels /wheels\nCOPY --from=source_builder /source /source\nWORKDIR /package\n\nRUN echo \"**** build pyLoad package ****\" && \\\n    pip3 install --no-cache-dir $PIP_INSTALL_OPTIONS --find-links=/wheels --no-index --prefix=. /source[extra]\n\n\nFROM builder\n\n# Set Python to force stdin, stdout and stderr to be totally unbuffered.\nENV PYTHONUNBUFFERED=\"1\"\n\n# Stop if any script (fix-attrs or cont-init) has failed.\nENV S6_BEHAVIOUR_IF_STAGE2_FAILS=\"2\"\n\nARG TEMPDIR=\"/root/.cache /tmp/* /var/lib/apt/lists/* /var/tmp/*\"\n\nRUN echo \"**** create s6 fix-attr script ****\" && \\\n    echo -e \"/config true abc 0644 0755\\n \\\n    /downloads false abc 0644 0755\" > /etc/fix-attrs.d/10-run && \\\n    \\\n    echo \"**** create s6 service script ****\" && \\\n    mkdir -p /etc/services.d/pyload && \\\n    echo -e \"#!/usr/bin/with-contenv bash\\n\\n \\\n    umask 022\\n \\\n    exec s6-setuidgid abc pyload --userdir /config --storagedir /downloads\" > /etc/services.d/pyload/run && \\\n    \\\n    echo \"**** cleanup ****\" && \\\n    apt-get clean && \\\n    rm -rf $TEMPDIR && \\\n    \\\n    echo \"**** finalize ****\"\n\nCOPY --from=package_builder /package /usr/local\n\nEXPOSE 8000 9666\n\nVOLUME /config /downloads\n\nLABEL org.opencontainers.image.created=$IMAGE_CREATED\nLABEL org.opencontainers.image.authors=$IMAGE_AUTHORS\nLABEL org.opencontainers.image.url=$IMAGE_URL\nLABEL org.opencontainers.image.documentation=$IMAGE_DOCUMENTATION\nLABEL org.opencontainers.image.source=$IMAGE_SOURCE\nLABEL org.opencontainers.image.version=$IMAGE_VERSION\nLABEL org.opencontainers.image.revision=$IMAGE_REVISION\nLABEL org.opencontainers.image.vendor=$IMAGE_VENDOR\nLABEL org.opencontainers.image.licenses=$IMAGE_LICENSES\nLABEL org.opencontainers.image.title=$IMAGE_TITLE\nLABEL org.opencontainers.image.description=$IMAGE_DESCRIPTION\n"
+}

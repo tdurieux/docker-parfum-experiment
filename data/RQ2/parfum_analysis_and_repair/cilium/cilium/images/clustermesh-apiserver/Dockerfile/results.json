@@ -1,0 +1,35 @@
+{
+  "startTime": 1674215547462,
+  "endTime": 1674215547915,
+  "originalSmells": [
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 49,
+        "lineEnd": 49,
+        "columnStart": 22,
+        "columnEnd": 93
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 49,
+        "lineEnd": 49,
+        "columnStart": 22,
+        "columnEnd": 93
+      }
+    },
+    {
+      "rule": "apkAddUseNoCache",
+      "position": {
+        "lineStart": 40,
+        "lineEnd": 40,
+        "columnStart": 4,
+        "columnEnd": 36
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Copyright Authors of Cilium\n# SPDX-License-Identifier: Apache-2.0\n\nARG BASE_IMAGE=scratch\nARG GOLANG_IMAGE=docker.io/library/golang:1.18.3@sha256:b203dc573d81da7b3176264bfa447bd7c10c9347689be40540381838d75eebef\nARG ALPINE_IMAGE=docker.io/library/alpine:3.16.0@sha256:686d8c9dfa6f3ccfc8230bc3178d23f84eeaf7e457f36f271ab1acc53015037c\n\n# BUILDPLATFORM is an automatic platform ARG enabled by Docker BuildKit.\n# Represents the plataform where the build is happening, do not mix with\n# TARGETARCH\nFROM --platform=${BUILDPLATFORM} ${GOLANG_IMAGE} as builder\n\n# TARGETOS is an automatic platform ARG enabled by Docker BuildKit.\nARG TARGETOS\n# TARGETARCH is an automatic platform ARG enabled by Docker BuildKit.\nARG TARGETARCH\nARG NOSTRIP\nARG NOOPT\nARG LOCKDEBUG\nARG RACE\n\nWORKDIR /go/src/github.com/cilium/cilium/clustermesh-apiserver\nRUN --mount=type=bind,readwrite,target=/go/src/github.com/cilium/cilium --mount=target=/root/.cache,type=cache --mount=target=/go/pkg,type=cache \\\n    mkdir -p /out/${TARGETOS}/${TARGETARCH} && cp etcd-config.yaml /out/${TARGETOS}/${TARGETARCH}/etcd-config.yaml\nRUN --mount=type=bind,readwrite,target=/go/src/github.com/cilium/cilium --mount=target=/root/.cache,type=cache --mount=target=/go/pkg,type=cache \\\n    make GOARCH=${TARGETARCH} RACE=${RACE} NOSTRIP=${NOSTRIP} NOOPT=${NOOPT} LOCKDEBUG=${LOCKDEBUG} \\\n    && mkdir -p /out/${TARGETOS}/${TARGETARCH}/usr/bin && mv clustermesh-apiserver /out/${TARGETOS}/${TARGETARCH}/usr/bin\n\nWORKDIR /go/src/github.com/cilium/cilium\n# licenses-all is a \"script\" that executes \"go run\" so its ARCH should be set\n# to the same ARCH specified in the base image of this Docker stage (BUILDARCH)\nRUN --mount=type=bind,readwrite,target=/go/src/github.com/cilium/cilium --mount=target=/root/.cache,type=cache --mount=target=/go/pkg,type=cache \\\n    make GOARCH=${BUILDARCH} licenses-all && mv LICENSE.all /out/${TARGETOS}/${TARGETARCH}\n\n# BUILDPLATFORM is an automatic platform ARG enabled by Docker BuildKit.\n# Represents the plataform where the build is happening, do not mix with\n# TARGETARCH\nFROM --platform=${BUILDPLATFORM} ${ALPINE_IMAGE} as certs\nRUN apk --update --no-cache add ca-certificates\n\n# BUILDPLATFORM is an automatic platform ARG enabled by Docker BuildKit.\n# Represents the plataform where the build is happening, do not mix with\n# TARGETARCH\nFROM --platform=${BUILDPLATFORM} ${GOLANG_IMAGE} as gops\n\n# build-gops.sh will build both archs at the same time\nWORKDIR /go/src/github.com/cilium/cilium/images/runtime\nRUN apt-get update && apt-get install --no-install-recommends -y binutils-aarch64-linux-gnu binutils-x86-64-linux-gnu && rm -rf /var/lib/apt/lists/*;\nRUN --mount=type=bind,readwrite,target=/go/src/github.com/cilium/cilium --mount=target=/root/.cache,type=cache --mount=target=/go/pkg,type=cache \\\n    ./build-gops.sh\n\nFROM ${BASE_IMAGE}\n# TARGETOS is an automatic platform ARG enabled by Docker BuildKit.\nARG TARGETOS\n# TARGETARCH is an automatic platform ARG enabled by Docker BuildKit.\nARG TARGETARCH\nLABEL maintainer=\"maintainer@cilium.io\"\nCOPY --from=certs /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt\nCOPY --from=gops /out/${TARGETOS}/${TARGETARCH}/bin/gops /bin/gops\nCOPY --from=builder /out/${TARGETOS}/${TARGETARCH}/etcd-config.yaml /var/lib/cilium/etcd-config.yaml\nCOPY --from=builder /out/${TARGETOS}/${TARGETARCH}/usr/bin/clustermesh-apiserver /usr/bin/clustermesh-apiserver\nCOPY --from=builder /out/${TARGETOS}/${TARGETARCH}/LICENSE.all /LICENSE.all\nWORKDIR /\nENV GOPS_CONFIG_DIR=/\nENTRYPOINT [\"/usr/bin/clustermesh-apiserver\"]\n"
+}

@@ -1,0 +1,89 @@
+{
+  "startTime": 1674253964702,
+  "endTime": 1674253966003,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 44,
+        "lineEnd": 44,
+        "columnStart": 4,
+        "columnEnd": 99
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 45,
+        "lineEnd": 45,
+        "columnStart": 4,
+        "columnEnd": 109
+      }
+    },
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 64,
+        "lineEnd": 64,
+        "columnStart": 4,
+        "columnEnd": 116
+      }
+    },
+    {
+      "rule": "curlUseHttpsUrl",
+      "position": {
+        "lineStart": 64,
+        "lineEnd": 64,
+        "columnStart": 4,
+        "columnEnd": 116
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 78,
+        "lineEnd": 78,
+        "columnStart": 4,
+        "columnEnd": 35
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 89,
+        "lineEnd": 89,
+        "columnStart": 4,
+        "columnEnd": 87
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 95,
+        "lineEnd": 95,
+        "columnStart": 4,
+        "columnEnd": 39
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 101,
+        "lineEnd": 101,
+        "columnStart": 4,
+        "columnEnd": 39
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 65,
+        "lineEnd": 65,
+        "columnStart": 20,
+        "columnEnd": 44
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "# Defining environment\nARG APP_ENV=dev\n\n\n####\n# Build stage 0:\n# - Install apt build dependencies\n# - Download and build tini\n# - Download and build bomutils and xar\n# - Make venv and install common requirements\n#\n\nFROM python:3.9-buster AS base-builder\n\n# zentral apt dependencies\nRUN apt-get update && \\\n    apt-get autoremove -y && \\\n    apt-get install -y --no-install-recommends \\\n# xar to build the packages\n            libbz2-dev \\\n# extra dependencies for python crypto / WebAuthn\n            libssl-dev \\\n            libffi-dev \\\n            python3-dev \\\n# dep for psycopg2\n            libpq-dev \\\n# dep for pylibmc\n            libmemcached-dev \\\n# dep for python-ldap\n            libldap2-dev \\\n            libsasl2-dev && \\\n# clean cache\n    rm -rf /var/lib/apt/lists/*\n\n# tini\n# see https://github.com/elastic/dockerfiles/blob/23f38a8a9f825c21784a02dde18dea0e54c88bbc/elasticsearch/Dockerfile#L21\nRUN set -eux ; \\\n\n    tini_bin=\"\" ; \\\n    case \"$(arch)\" in \\\n        aarch64) tini_bin='tini-arm64' ;; \\\n        x86_64)  tini_bin='tini-amd64' ;; \\\n        *) echo >&2 ; echo >&2 \"Unsupported architecture $(arch)\" ; echo >&2 ; exit 1 ;; \\\n    esac ; \\\n    curl -f --retry 8 -S -L -O https://github.com/krallin/tini/releases/download/v0.19.0/${tini_bin}; \\\n    curl -f --retry 8 -S -L -O https://github.com/krallin/tini/releases/download/v0.19.0/${tini_bin}.sha256sum; \\\n    sha256sum -c ${tini_bin}.sha256sum ; \\\n    rm ${tini_bin}.sha256sum ; \\\n    mv ${tini_bin} /tini ; \\\n    chmod +x /tini\n\n# bomutils & xar build (to generate the pkg files with zentral)\n# as seen in https://github.com/boot2docker/osx-installer/blob/master/Dockerfile\nRUN set -eux ; \\\n    \\\n    curl -fsSL https://github.com/zentralopensource/bomutils/archive/master.tar.gz | tar xvz ; \\\n    cd bomutils-* ; \\\n    make ; make install ; \\\n    cd .. ; rm -rf bomutils-*\nRUN set -eux ; \\\n\n    curl -fsSL https://github.com/mackyle/xar/archive/xar-1.6.1.tar.gz | tar xvz; \\\n    cd xar-*/xar ; \\\n    sed -i 's/OpenSSL_add_all_ciphers/CRYPTO_new_ex_data/' configure.ac ; \\\n    curl -f -L -o config.guess 'https://git.savannah.gnu.org/gitweb/?p=config.git;a=blob_plain;f=config.guess;hb=HEAD'; \\\n    ./autogen.sh && ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" --with-bzip2; \\\n    if [ \"$(arch)\" = \"aarch64\" ] ; then \\\n      sed -i 's/CPPFLAGS :=/CPPFLAGS := -fsigned-char/' Makefile ; \\\n      sed -i 's/CFLAGS :=/CFLAGS := -fsigned-char/' Makefile ; \\\n    fi ; \\\n    make ; make install ; \\\n    cd ../.. ; rm -rf xar-*\n\n# Create a virtualenv and use it\nRUN python -m venv /opt/venv && /opt/venv/bin/pip install -U pip setuptools wheel\nENV PATH=\"/opt/venv/bin:$PATH\"\n\nCOPY constraints.txt requirements.txt ./\nRUN pip install --no-cache-dir -r requirements.txt\n\n\n####\n# Build stage 1:\n# - install extra APP_ENV requirements\n#\n\n# Installing the extra requirements for dev\nFROM base-builder as dev-builder\nCOPY constraints.txt requirements_*.txt ./\nRUN pip install --no-cache-dir -r requirements_dev.txt -r -r\n\n\n# Installing the extra requirements for aws\nFROM base-builder as aws-builder\nCOPY constraints.txt requirements_aws.txt ./\nRUN pip install --no-cache-dir -r requirements_aws.txt\n\n\n# Installing the extra requirements for gcp\nFROM base-builder as gcp-builder\nCOPY constraints.txt requirements_gcp.txt ./\nRUN pip install --no-cache-dir -r requirements_gcp.txt\n\n\n#####\n# Build stage 2:\n# - install apt dependencies\n# - add zentral user & home\n# - create common app dirs\n# - copy tini, mkbom and xar from stage 0\n#\n\nFROM python:3.9-slim-buster as base-runner\n\n# zentral apt dependencies\nRUN apt-get update && \\\n    apt-get autoremove -y && \\\n    apt-get install -y --no-install-recommends \\\n# xar to build the packages\n            libbz2-1.0 \\\n# bsdcpio to generate the pkg files\n            bsdcpio \\\n# xmlsec1 for PySAML2\n            xmlsec1 \\\n# libpq5 for psycopg2\n            libpq5 \\\n# extra dependencies for python crypto / WebAuthn\n            libssl1.1 \\\n            libffi6 \\\n# dep for python-ldap\n            libldap-2.4-2 \\\n            libsasl2-2 && \\\n# clean cache\n    rm -rf /var/lib/apt/lists/*\n\n# zentral user and group\nRUN groupadd -g 999 zentral && \\\n    useradd -u 999 -g 999 -m -d /zentral zentral\n\n# common app dirs\nRUN mkdir /zentral_static && chown zentral:zentral /zentral_static\nRUN mkdir /var/zentral && chown zentral:zentral /var/zentral\n\n# copy files from builder\nCOPY --from=base-builder /tini /tini\nCOPY --from=base-builder /usr/bin/mkbom /usr/bin/mkbom\nCOPY --from=base-builder /usr/local/lib/libxar.so.1 /usr/local/lib/libxar.so.1\nCOPY --from=base-builder /usr/local/bin/xar /usr/local/bin/xar\n\n\n####\n# Build stage 3:\n# - run extra APP_ENV setup\n# - copy venv from APP_ENV builder\n#\n\nFROM base-runner as dev-runner\nCOPY ./tests /zentral/tests\nRUN mkdir /prometheus_sd && chown zentral:zentral /prometheus_sd\nCOPY --from=dev-builder /opt/venv /opt/venv\n# extra zentral apt dependencies\nRUN apt-get update && \\\n    apt-get autoremove -y && \\\n    apt-get install -y --no-install-recommends \\\n            # pycurl for kombu[sqs]\n            libcurl4-openssl-dev \\\n            # for pylibmc\n            libmemcached11 && \\\n# clean cache\n    rm -rf /var/lib/apt/lists/*\n\n\nFROM base-runner as aws-runner\nCOPY --from=aws-builder /opt/venv /opt/venv\n# extra zentral apt dependencies\nRUN apt-get update && \\\n    apt-get autoremove -y && \\\n    apt-get install -y --no-install-recommends \\\n            # pycurl for kombu[sqs]\n            libcurl4-openssl-dev \\\n            # for pylibmc\n            libmemcached11 && \\\n# clean cache\n    rm -rf /var/lib/apt/lists/*\n\n\nFROM base-runner as gcp-runner\nCOPY --from=gcp-builder /opt/venv /opt/venv\n\n\n####\n# Build stage 4:\n# - copy the app\n# - set workdir, user, port, env, and entrypoint\n#\n\nFROM ${APP_ENV}-runner as final\nLABEL maintainer=\"Éric Falconnier <eric@zentral.pro>\"\n\nCOPY docker-entrypoint.py /zentral/\nCOPY ./server /zentral/server\nCOPY ./zentral /zentral/zentral\n\nWORKDIR /zentral\nUSER zentral\nEXPOSE 8000\nENV PATH=\"/opt/venv/bin:$PATH\"\nENTRYPOINT [\"/tini\", \"--\", \"/zentral/docker-entrypoint.py\"]\n"
+}

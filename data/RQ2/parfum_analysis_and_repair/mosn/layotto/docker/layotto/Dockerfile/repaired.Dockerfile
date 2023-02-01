@@ -1,0 +1,1 @@
+# A simplified docker file for building layotto base image

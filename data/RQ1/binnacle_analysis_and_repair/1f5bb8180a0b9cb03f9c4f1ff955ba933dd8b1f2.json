@@ -1,0 +1,80 @@
+{
+  "startTime": 1674251759609,
+  "endTime": 1674251760123,
+  "originalSmells": [
+    {
+      "rule": "wgetUseHttpsUrl",
+      "position": {
+        "lineStart": 40,
+        "lineEnd": 40,
+        "columnStart": 4,
+        "columnEnd": 67
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 80,
+        "lineEnd": 80,
+        "columnStart": 4,
+        "columnEnd": 28
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 81,
+        "lineEnd": 81,
+        "columnStart": 4,
+        "columnEnd": 36
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 91,
+        "lineEnd": 91,
+        "columnStart": 4,
+        "columnEnd": 28
+      }
+    },
+    {
+      "rule": "configureShouldUseBuildFlag",
+      "position": {
+        "lineStart": 52,
+        "lineEnd": 52,
+        "columnStart": 4,
+        "columnEnd": 100
+      }
+    },
+    {
+      "rule": "tarSomethingRmTheSomething",
+      "position": {
+        "lineStart": 41,
+        "lineEnd": 41,
+        "columnStart": 4,
+        "columnEnd": 32
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 5,
+        "lineEnd": 32,
+        "columnStart": 26,
+        "columnEnd": 14
+      }
+    },
+    {
+      "rule": "aptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 5,
+        "lineEnd": 32,
+        "columnStart": 26,
+        "columnEnd": 14
+      }
+    }
+  ],
+  "repairedSmells": [],
+  "repairedDockerfile": "FROM ubuntu:18.04\nmaintainer yancy ribbens \"yribbens@credly.com\"\n\nVOLUME /home/.bitcoin\n\nRUN apt-get update -qq && apt-get install --no-install-recommends -y git \\\n\twget \\\n\tbuild-essential \\\n\tlibtool \\\n\tautotools-dev \\\n\tautomake \\\n\tpkg-config \\\n\tlibssl-dev \\\n\tlibevent-dev \\\n\tbsdmainutils \\\n\tpython3 \\\n\tlibboost-all-dev \\\n\tlibminiupnpc-dev \\\n\tlibzmq3-dev \\\n\tpython3-pip \\\n\tlocales \\\n\tvim \\\n\tpython3.6 \\\n\tpython3.6-dev \\\n\tuwsgi \\\n\tuwsgi-src \\\n\tuuid-dev \\\n\tlibcap-dev \\\n\tlibpcre3-dev \\\n\tpython-pip \\\n\tpython-dev \\\n\tnginx \\\n\tapache2-utils && rm -rf /var/lib/apt/lists/*;\n\n# Checkout bitcoin source\nRUN mkdir /bitcoin-source\nWORKDIR /bitcoin-source\nRUN git clone https://github.com/bitcoin/bitcoin.git\n\n# Install Berkley Database\nRUN wget https://download.oracle.com/berkeley-db/db-4.8.30.NC.tar.gz\nRUN tar -xvf db-4.8.30.NC.tar.gz && rm db-4.8.30.NC.tar.gz\nWORKDIR /bitcoin-source/db-4.8.30.NC/build_unix\nRUN mkdir -p build\nRUN BDB_PREFIX=$(pwd)/build\nRUN ../dist/configure --disable-shared --enable-cxx --with-pic --prefix=$BDB_PREFIX\nRUN make install\n\n# install bitcoin 0.16.3\nWORKDIR /bitcoin-source/bitcoin\nRUN git checkout tags/v0.16.3\nRUN ./autogen.sh\nRUN ./configure --build=\"$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)\" CPPFLAGS=\"-I${BDB_PREFIX}/include/ -O2\" LDFLAGS=\"-L${BDB_PREFIX}/lib/\" --without-gui\nRUN make\nRUN make install\n\n# configure bitcoin network\nARG NETWORK=regtest\nARG RPC_USER=foo\nARG RPC_PASSWORD=bar\nRUN mkdir -p ~/.bitcoin\nRUN echo \"rpcuser=${RPC_USER}\\nrpcpassword=${RPC_PASSWORD}\\n${NETWORK}=1\\nrpcport=8332\\nrpcallowip=127.0.0.1\\nrpcconnect=127.0.0.1\\n\" > /root/.bitcoin/bitcoin.conf\n\n# default to UTF8 character set\nENV LANGUAGE en_US.UTF-8\nENV LC_ALL en_US.UTF-8\nENV LANG en_US.UTF-8\nENV LC_TYPE en_US.UTF-8\nRUN locale-gen en_US.UTF-8\n\n# configure cert-issuer\nARG ISSUER=<issuing-address>\nARG KEY=cert.key\nARG CRT=cert.crt\nCOPY . /cert-issuer\nCOPY conf_regtest.ini /etc/cert-issuer/conf.ini\nCOPY $CRT /etc/ssl/certs/$CRT\nCOPY $KEY /etc/ssl/private/$KEY\nRUN mkdir -p /etc/cert-issuer/\nWORKDIR /cert-issuer\nRUN pip3 install --no-cache-dir cert-issuer\nRUN pip3 install --no-cache-dir -r requirements.txt\nRUN sed -i.bak \"s/<issuing-address>/$ISSUER/g\" /etc/cert-issuer/conf.ini\n\n# configure wsgi\nENV PYTHON python3.6\nWORKDIR /root\nRUN uwsgi --build-plugin \"/usr/src/uwsgi/plugins/python python36\"\nRUN cp /root/python36_plugin.so /cert-issuer\nRUN chmod 644 /cert-issuer/python36_plugin.so\nRUN virtualenv -p python3 venv\nRUN pip3 install --no-cache-dir uwsgi flask\n\n# configure nginx\nARG SERVER=<server-name>\nEXPOSE 443\nWORKDIR /cert-issuer\nCOPY cert_issuer_tls_site /etc/nginx/sites-available\nCOPY .htpasswd /etc/nginx/htpasswd\nRUN chmod -R 640 /etc/nginx/htpasswd\nRUN chown :www-data /etc/nginx/htpasswd\nRUN ln -s /etc/nginx/sites-available/cert_issuer_tls_site /etc/nginx/sites-enabled\nRUN sed -i.bak \"s/<server-name>/$SERVER/g\" /etc/nginx/sites-available/cert_issuer_tls_site\nRUN sed -i.bak \"s/<cert-crt-name>/$CRT/g\" /etc/nginx/sites-available/cert_issuer_tls_site\nRUN sed -i.bak \"s/<cert-key-name>/$KEY/g\" /etc/nginx/sites-available/cert_issuer_tls_site\nRUN sed -i.bak \"s/# server_names_hash_bucket_size 64/server_names_hash_bucket_size 128/g\" /etc/nginx/nginx.conf\n\nENTRYPOINT bitcoind -daemon && service nginx start && uwsgi --ini wsgi.ini\n"
+}

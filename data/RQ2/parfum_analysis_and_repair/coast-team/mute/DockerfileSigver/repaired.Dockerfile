@@ -1,0 +1,19 @@
+FROM node:8-alpine
+
+LABEL maintainer="Baptiste Hubert <baptiste.hubert@inria.fr>"
+LABEL org.opencontainers.description a scalable collaborative document editor with CRDT, P2P and E2EE
+LABEL org.opencontainers.authors https://github.com/coast-team/sigver/graphs/contributors
+LABEL org.opencontainers.source https://github.com/coast-team/sigver
+LABEL org.opencontainers.image.vendor COAST
+
+# Mandatory for e2e github script
+RUN npm config set unsafe-perm true
+
+COPY process.yml /
+
+RUN npm install pm2@^3 -g && npm cache clean --force;
+RUN npm install sigver -g && npm cache clean --force;
+
+EXPOSE 8010
+
+CMD ["pm2-runtime", "start", "process.yml", "--only", "mute-signaling-docker"]

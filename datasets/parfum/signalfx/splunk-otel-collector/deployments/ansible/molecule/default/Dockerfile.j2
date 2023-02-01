@@ -1,0 +1,39 @@
+{% if item.image not in ["opensuse12", "opensuse15"] %}
+FROM geerlingguy/docker-{{ item.image }}-ansible:latest
+{% if item.image == "centos8" %}
+RUN sed -i 's|#mirrorlist|mirrorlist|g' /etc/yum.repos.d/CentOS*.repo
+RUN sed -i 's|^baseurl|#baseurl|' /etc/yum.repos.d/CentOS*.repo
+RUN sed -i 's|\$releasever|8-stream|g' /etc/yum.repos.d/CentOS*.repo
+{% endif %}
+{% else %}
+{% if item.image == "opensuse12" %}
+FROM opensuse/leap:42
+RUN sed -i 's|download.opensuse.org|ftp5.gwdg.de/pub/opensuse/discontinued|' /etc/zypp/repos.d/*.repo
+RUN zypper -n clean && zypper -n refresh
+RUN zypper -n install -l ansible dbus-1 rpm-python sudo systemd-sysvinit
+{% else %}
+FROM opensuse/leap:15
+RUN sed -i 's|download.opensuse.org|provo-mirror.opensuse.org|' /etc/zypp/repos.d/*.repo
+RUN zypper -n install -l ansible dbus-1 python3-rpm sudo systemd-sysvinit
+{% endif %}
+
+ENV container docker
+
+RUN (cd /usr/lib/systemd/system/sysinit.target.wants/; for i in *; do [ $i = \
+    "systemd-tmpfiles-setup.service" ] || rm -f $i; done); \
+    rm -f /usr/lib/systemd/system/multi-user.target.wants/*;\
+    rm -f /usr/lib/systemd/system/local-fs.target.wants/*; \
+    rm -f /usr/lib/systemd/system/sockets.target.wants/*udev*; \
+    rm -f /usr/lib/systemd/system/sockets.target.wants/*initctl*; \
+    rm -f /usr/lib/systemd/system/basic.target.wants/*;
+
+# Disable requiretty.
+RUN sed -i -e 's/^\(Defaults\s*requiretty\)/#--- \1/'  /etc/sudoers
+
+# Install Ansible inventory file.
+RUN mkdir -p /etc/ansible
+RUN echo -e '[local]\nlocalhost ansible_connection=local' > /etc/ansible/hosts
+
+VOLUME [ "/sys/fs/cgroup" ]
+CMD ["/sbin/init"]
+{% endif %}

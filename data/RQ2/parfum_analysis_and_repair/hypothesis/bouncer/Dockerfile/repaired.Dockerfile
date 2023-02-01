@@ -1,0 +1,29 @@
+FROM python:3.8.12-alpine3.13
+MAINTAINER Hypothes.is Project and contributors
+
+# Install system build and runtime dependencies.
+RUN apk add --no-cache \
+  curl \
+  nodejs \
+  nodejs-npm \
+  supervisor
+
+# Create the bouncer user, group, home directory and package directory.
+RUN addgroup -S bouncer \
+  && adduser -S -G bouncer -h /var/lib/bouncer bouncer
+WORKDIR /var/lib/bouncer
+
+# Copy packaging
+COPY README.md package.json requirements/requirements.txt ./
+
+RUN npm install --production && npm cache clean --force;
+
+RUN pip3 install --no-cache-dir -U pip \
+  && pip3 install --no-cache-dir -r requirements.txt
+
+COPY . .
+
+# Start the web server by default
+EXPOSE 8000
+USER bouncer
+CMD ["bin/init-env", "supervisord", "-c" , "conf/supervisord.conf"]

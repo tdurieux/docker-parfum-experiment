@@ -1,0 +1,81 @@
+{
+  "startTime": 1674254080496,
+  "endTime": 1674254081521,
+  "originalSmells": [
+    {
+      "rule": "curlUseFlagF",
+      "position": {
+        "lineStart": 11,
+        "lineEnd": 11,
+        "columnStart": 4,
+        "columnEnd": 49
+      }
+    },
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 18,
+        "lineEnd": 18,
+        "columnStart": 4,
+        "columnEnd": 34
+      }
+    },
+    {
+      "rule": "npmCacheCleanAfterInstall",
+      "position": {
+        "lineStart": 69,
+        "lineEnd": 69,
+        "columnStart": 4,
+        "columnEnd": 15
+      }
+    },
+    {
+      "rule": "pipUseNoCacheDir",
+      "position": {
+        "lineStart": 78,
+        "lineEnd": 78,
+        "columnStart": 4,
+        "columnEnd": 35
+      }
+    },
+    {
+      "rule": "aptGetInstallUseNoRec",
+      "position": {
+        "lineStart": 12,
+        "lineEnd": 12,
+        "columnStart": 4,
+        "columnEnd": 76
+      }
+    },
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 12,
+        "lineEnd": 12,
+        "columnStart": 4,
+        "columnEnd": 76
+      }
+    },
+    {
+      "rule": "ruleAptGetInstallThenRemoveAptLists",
+      "position": {
+        "lineStart": 12,
+        "lineEnd": 12,
+        "columnStart": 4,
+        "columnEnd": 76
+      }
+    }
+  ],
+  "repairedSmells": [
+    {
+      "rule": "aptGetUpdatePrecedesInstall",
+      "position": {
+        "lineStart": 12,
+        "lineEnd": 12,
+        "columnStart": 4,
+        "columnEnd": 100
+      }
+    }
+  ],
+  "repairedDockerfile": "FROM python:2.7\n\n# By setting the PORT environment var to 8000, nginx will listen on that port\nENV PORT 8000\n\n\n# Install `build-essential`, `libmemcache` (headers), `ruby`, `gifsicle`, and\n# `nodejs`\n# We need ruby to compile our nginx config, libmemcache to compile connect,\n# node to compile static assets, and gifsicle to resize animated gifs\n# The node build script runs `apt-get update`, saving us that step\nRUN curl -f -sL https://deb.nodesource.com/setup_5.x | bash - && \\\n    apt-get install --no-install-recommends -y nodejs build-essential libmemcached-dev ruby gifsicle && \\\n    apt-get clean && rm -rf /var/lib/apt/lists/*;\n\n\n# Install `grunt` and `bower`, command-line node packages which handle\n# dependency management and tasks such as compilation\nRUN npm install -g bower grunt-cli && npm cache clean --force;\n\n\n# Create a script called \"proclaunch\" that will let you launch a line from the\n# heroku 'Procfile' by running \"proclaunch {process}\". So to run the \"web\"\n# process just run \"proclaunch web\"\nRUN printf '#!/bin/bash\\ncd /app/ && eval \"$(grep -i \"^$1: \" /app/Procfile | awk -F'\\'': '\\'' '\\''{print $2}'\\'')\"' > /bin/proclaunch && \\\n    chmod +x /bin/proclaunch\n\n\n# Move to the '/app' folder, where all of connect's files will live\nRUN mkdir /app\nWORKDIR /app\n\n\n# We'll run our app entirely as the user 'appuser'\n# As we build the app, we'll keep changing the owner of whatever we do to\n# 'appuser'. By doing this as part of each RUN, instead of in one large\n# RUN, we reduce the total size of the image.\nRUN adduser --disabled-password --gecos '' appuser && \\\n    chown -R --from=root:root appuser:appuser /app\n\n\n# Install 2 buildpacks\n\n# nginx-buildpack: This will proxy gunicorn (the python http server) behind\n# nginx, significantly speeding up and improving scalability of connect.\nRUN git clone https://github.com/ryandotsmith/nginx-buildpack.git nginx-buildpack && \\\n    cd nginx-buildpack && \\\n    git checkout 005ca0374e3cf61a29fb0f9041a7315677af1972 && \\\n    STACK=cedar-14 bash bin/compile '/app' && \\\n    cd .. && rm -r nginx-buildpack && \\\n    chown -R --from=root:root appuser:appuser /app\n\n\n# pgbouncer buildpack: By default each request to connect will open a new\n# connection to the postgresql database. Instead of relying on django's built-\n# in persistent database connections, we can run pgbouncer locally and make\n# those per-request connections lightning-fast, while limiting the connections\n# to our database to one-per-container.\nRUN git clone https://github.com/ofa/heroku-buildpack-pgbouncer.git pgbouncer-buildpack && \\\n    cd pgbouncer-buildpack && \\\n    git checkout cb5656d70991e98a1bf3f55a66b843939e3384e1 && \\\n    STACK=cedar-14 bash bin/compile '/app' && \\\n    cd .. && rm -r pgbouncer-buildpack && chown -R --from=root:root appuser:appuser /app\n\n\n# Install node packages. This can be slow, so caching it is useful.\n# We'll uninstall phantomjs, since it's large and unnecessary for the build\n# process.\nADD package.json /app/package.json\nRUN npm install && rm -r ~/.npm && npm uninstall phantomjs && \\\n    chown -R --from=root:root appuser:appuser /app && npm cache clean --force;\n\n\n# We run pip as root so that python packages are available for all (and thus\n# we can skip worrying about virtualenv.)\n# Because we're adding requirements.txt separately Docker is smart and will\n# cache this entire step until you change requirements.txt (or clear the cache)\nADD *requirements.txt /app/\nRUN pip install --no-cache-dir -r requirements.txt && rm -r ~/.cache\n\n\n# Install bower packages. Change this file to break the built-in cache.\nADD bower.json /app/bower.json\nRUN bower install --allow-root && rm -r ~/.cache && \\\n    chown -R --from=root:root appuser:appuser /app\n\n\n# Add the Connect app to the `/app/` folder. This step will likely prevent the\n# rest of the build from being cached. So any part of this build process that\n# rarely changes should be above this line.\nADD . /app/\n\nRUN chown -R --from=root:root appuser:appuser /app\n\n\n# Drop down into a local user. From here on out we'll only run things in /app/\n# as the user 'appuser'\nUSER appuser\n\n\n# Compile frontend assets. Remember, you can set the environment variable\n# `CONNECT_APP` to have this step run the compile step for a specific private\n# version of connect.\nRUN grunt\n\n# We tell nginx to serve on port 8000, so we'll need this port exposed\nEXPOSE 8000\n"
+}

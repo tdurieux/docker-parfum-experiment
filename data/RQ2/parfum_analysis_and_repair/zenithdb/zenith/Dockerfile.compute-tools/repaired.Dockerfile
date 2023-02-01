@@ -1,0 +1,15 @@
+# First transient image to build compute_tools binaries
+# NB: keep in sync with rust image version in .circle/config.yml
+FROM neondatabase/rust:1.58 AS rust-build
+
+ARG CACHEPOT_BUCKET=zenith-rust-cachepot
+ARG AWS_ACCESS_KEY_ID
+ARG AWS_SECRET_ACCESS_KEY
+
+COPY . .
+
+RUN set -e \
+    && sudo -E "PATH=$PATH" mold -run cargo build -p compute_tools --release \
+    && cachepot -s
+
+# Final image that only has one binary
