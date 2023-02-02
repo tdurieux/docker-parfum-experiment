@@ -93,7 +93,7 @@ angular
       });
     }
     function getSamples() {
-      $http.get("/data/ground-truth/dockerfiles.json").then((res) => {
+      $http.get("./data/ground-truth/dockerfiles.json").then((res) => {
         $scope.samples = res.data.map((sample) => ({
           name: sample.replace(".Dockerfile", ""),
         }));
@@ -103,7 +103,7 @@ angular
     function getBinnacleResults(sample) {
       $scope.binnacleResults = [];
       $http
-        .get("/data/results/binnacle/" + sample.name + ".json")
+        .get("./data/results/binnacle/" + sample.name + ".json")
         .then((res) => {
           $scope.$evalAsync(() => {
             $scope.binnacleResults = [];
@@ -119,14 +119,14 @@ angular
     function getGroundTruth(sample) {
       $scope.parfumResults = [];
       $http
-        .get("/data/ground-truth/smells/" + sample.name + ".json")
+        .get("./data/ground-truth/smells/" + sample.name + ".json")
         .then((res) => {
           sample.groundtruth = res.data;
         });
     }
     function getParfumResults(sample) {
       $scope.parfumResults = [];
-      $http.get("/data/results/parfum/" + sample.name + ".json").then((res) => {
+      $http.get("./data/results/parfum/" + sample.name + ".json").then((res) => {
         $scope.$evalAsync(() => {
           $scope.parfumResults = res.data;
         });
@@ -156,7 +156,7 @@ angular
     $scope.loadSample = (sample) => {
       monacoEditor.getModel().setValue("");
       $http
-        .get("/data/ground-truth/dockerfiles/" + sample.name + ".Dockerfile")
+        .get("./data/ground-truth/dockerfiles/" + sample.name + ".Dockerfile")
         .then((res) => {
           $scope.selectedSample = sample;
           getGroundTruth(sample);
