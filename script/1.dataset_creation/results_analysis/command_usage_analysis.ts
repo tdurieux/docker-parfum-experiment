@@ -1,9 +1,9 @@
 import { readFile } from "fs/promises";
-import { supportedCommands } from "dinghy-enricher";
 import { percent } from "../../utils";
+import parfum from "@tdurieux/docker-parfum";
 
 (async () => {
-  const supportedCommandNames: string[] = supportedCommands
+  const supportedCommandNames: string[] = parfum.enricher.supportedCommands
     .map((cmd) => cmd.providerFor)
     .flat();
 
