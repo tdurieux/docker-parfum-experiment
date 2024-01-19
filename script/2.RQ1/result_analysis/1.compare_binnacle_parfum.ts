@@ -40,6 +40,7 @@ function distribution(vulnerabilityDistribution) {
   return nbContract;
 }
 (async () => {
+  const smellNames = utils.SIZE_RULES.map((rule) => rule.name);
   const binnacleViolations = join(
     config.dataFolder,
     "dataset/binnacle/results-github-individual.txt"
@@ -64,6 +65,7 @@ function distribution(vulnerabilityDistribution) {
       } = JSON.parse(line);
       let countViol = 0;
       for (const viol in info.all_violations) {
+        if (!smellNames.includes(utils.smellName(viol))) continue;
         binnacleVulnerabilityCount[utils.smellName(viol)] =
           binnacleVulnerabilityCount[utils.smellName(viol)]
             ? binnacleVulnerabilityCount[utils.smellName(viol)] +
@@ -113,7 +115,13 @@ function distribution(vulnerabilityDistribution) {
     violationsFiles,
     10,
     async (path, _, callback) => {
-      const [owner, repo] = path.replace(".json", "").split("/").slice(-2);
+      if (!path.endsWith("results.json")) {
+        return callback();
+      }
+      const [owner, repo, file] = path
+        .replace(".json", "")
+        .split("/")
+        .slice(-3);
 
       try {
         const info = await utils.readAnalsysiResults(path);
@@ -153,10 +161,7 @@ function distribution(vulnerabilityDistribution) {
     },
     () => {
       console.log("\n ## Results RQ1 \n");
-      const violationNames = Object.keys(binnacleVulnerabilityCount);
-      violationNames.sort(
-        (a, b) => binnacleVulnerabilityCount[b] - binnacleVulnerabilityCount[a]
-      );
+      const violationNames = utils.SIZE_RULES.map((rule) => rule.name);
 
       let nbViolation = 0;
       let nbViolationBinnacle = 0;
@@ -164,12 +169,12 @@ function distribution(vulnerabilityDistribution) {
       let totalDockerDiff = 0;
       for (let name of violationNames) {
         nbViolation += vulnerabilityCount[name] || 0;
-        nbViolationBinnacle += binnacleVulnerabilityCount[name];
+        nbViolationBinnacle += binnacleVulnerabilityCount[name] || 0;
 
         const diff =
-          vulnerabilityCount[name] - binnacleVulnerabilityCount[name];
+          vulnerabilityCount[name] - binnacleVulnerabilityCount[name] || 0;
         const smellyDockerDiff =
-          smellyDockerCount[name] - binnacleSmellyDockerCount[name];
+          smellyDockerCount[name] - binnacleSmellyDockerCount[name] || 0;
 
         totalDiff += Math.abs(diff);
         totalDockerDiff += Math.abs(smellyDockerDiff);

@@ -42,10 +42,6 @@ async function main() {
       alias: "p",
     })
     .parse();
-  // const dockerhubLogin = await dockerhub.login(
-  //   argv.dockerhubUsername,
-  //   argv.dockerhubPassword
-  // );
 
   const repositoryList = (
     await readFile(argv.repositories, { encoding: "utf-8" })
@@ -66,7 +62,7 @@ async function main() {
       "RQ4/dockerhub_info",
       `${owner}-${repo}.json`
     );
-    let hubImage = undefined;
+    let hubImage: any = undefined;
     if (existsSync(dockerhubInfoPath)) {
       hubImage = JSON.parse(await readFile(dockerhubInfoPath, "utf-8"));
       if (hubImage.detail == "Rate limit exceeded") {
@@ -95,15 +91,14 @@ async function main() {
       `${owner}-${repo}.json`
     );
 
-    let repoInfo: Awaited<ReturnType<typeof downloadGithubRepository>> =
-      undefined;
+    let repoInfo: Awaited<ReturnType<typeof downloadGithubRepository>>;
     if (existsSync(repoInfoPath)) {
       repoInfo = JSON.parse(await readFile(repoInfoPath, "utf-8"));
     } else {
       try {
         repoInfo = await downloadGithubRepository(
           `${owner}/${repo}`,
-          argv.token
+          argv.token || ""
         );
         if (!existsSync(dirname(repoInfoPath))) {
           await mkdir(dirname(repoInfoPath), { recursive: true });
@@ -119,10 +114,9 @@ async function main() {
       config.defaultBuildDockerfileOutputPath,
       `${owner}/${repo}.json`
     );
-    let repairInfo: RepositoryAnalysisResult = undefined;
-    if (existsSync(repairInfoPath)) {
-      repairInfo = JSON.parse(await readFile(repairInfoPath, "utf-8"));
-    }
+    let repairInfo: RepositoryAnalysisResult = JSON.parse(
+      await readFile(repairInfoPath, "utf-8")
+    );
     const oneMonthAgo = new Date();
     oneMonthAgo.setMonth(oneMonthAgo.getMonth() - 1);
     const lastYear = new Date();
@@ -141,10 +135,13 @@ async function main() {
       hubImage.status_description == "active" &&
       new Date(hubImage.last_updated) > lastYear &&
       repairInfo &&
-      repairInfo.repair.violations.length > 0 &&
-      repairInfo.repair.violations.length < 10 &&
+      repairInfo.repair?.violations.length &&
+      repairInfo.repair?.violations.length > 0 &&
+      repairInfo.repair?.violations.length < 10 &&
       repairInfo.repairedBuild?.imageSize !== undefined &&
-      repairInfo.originalBuild.imageSize - repairInfo.repairedBuild.imageSize >
+      repairInfo.originalBuild?.imageSize !== undefined &&
+      repairInfo.originalBuild?.imageSize -
+        repairInfo.repairedBuild?.imageSize >
         1024
     ) {
       organizations.add(owner);

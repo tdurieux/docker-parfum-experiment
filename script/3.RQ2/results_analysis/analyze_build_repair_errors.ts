@@ -3,7 +3,7 @@ import { join } from "path";
 import { RepositoryAnalysisResult } from "../repair_repository_dockerfile";
 import Yargs from "yargs/yargs";
 import config from "../../../config";
-import { smellName } from "../../utils";
+import { SIZE_RULES, smellName } from "../../utils";
 
 (async () => {
   const argv = await Yargs(process.argv.slice(2))
@@ -14,6 +14,8 @@ import { smellName } from "../../utils";
       default: config.defaultBuildDockerfileOutputPath,
     })
     .parse();
+
+  const smellNames = SIZE_RULES.map((rule) => rule.name);
 
   const owners = await readdir(argv.resultPath);
   const errors: { [key: string]: number } = {};
@@ -28,10 +30,16 @@ import { smellName } from "../../utils";
       const results: RepositoryAnalysisResult = JSON.parse(
         await readFile(path, "utf-8")
       );
+      if (
+        results.repair?.violations.filter((v) => smellNames.includes(v.name))
+          .length === 0
+      )
+        continue;
       countBuildedDockerfile++;
       if (results.originalBuild.error || !results.repairedBuild) continue;
       new Set(results.repair.violations.map((v) => smellName(v.name))).forEach(
         (v) => {
+          if (!smellNames.includes(v)) return;
           totalRepair[v] = totalRepair[v] + 1 || 1;
         }
       );
@@ -52,6 +60,7 @@ import { smellName } from "../../utils";
       }
       new Set(results.repair.violations.map((v) => smellName(v.name))).forEach(
         (v) => {
+          if (!smellNames.includes(v)) return;
           errors[v] = errors[v] + 1 || 1;
         }
       );
@@ -66,6 +75,7 @@ import { smellName } from "../../utils";
   for (const rule of Object.keys(errors).sort(
     (a, b) => errors[b] - errors[a]
   )) {
+    if (!smellNames.includes(rule)) continue;
     console.log(`${rule} & \\percent{${errors[rule]}}{\\countBuildError} \\\\`);
   }
 

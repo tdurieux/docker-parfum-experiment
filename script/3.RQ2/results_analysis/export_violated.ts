@@ -5,9 +5,6 @@ import yargs from "yargs";
 import config from "../../../config";
 
 (async () => {
-  // console.log(
-  //   `url,dockerfile_path,nb_original_violations,nb_repaired_violations`
-  // );
   const argv = await yargs(process.argv.slice(2))
     .option("resultPath", {
       type: "string",

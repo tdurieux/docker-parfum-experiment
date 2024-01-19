@@ -1,11 +1,10 @@
 import { join } from "path";
-import { msToReadableTime } from "../../utils";
+import { SIZE_RULES, msToReadableTime } from "../../utils";
 import { writeFileSync } from "fs";
 import Yargs from "yargs/yargs";
 import config from "../../../config";
 import { readAnalsysiResults, smellName, walk } from "../../utils";
 import { rm } from "fs/promises";
-import { BINNACLE_RULES } from "@tdurieux/docker-parfum";
 
 (async () => {
   const argv = await Yargs(process.argv.slice(2))
@@ -111,7 +110,7 @@ import { BINNACLE_RULES } from "@tdurieux/docker-parfum";
   async function analyzeBinnacleResults() {
     console.log("Analyzing Binnacle results");
     await walk(config.defaultBinnacleAnalysisAndRepairPath, async (path) => {
-      if (!path.endsWith(".json")) {
+      if (!path.endsWith("results.json")) {
         return;
       }
       await analyzeResult(path, "binnacle");
@@ -207,8 +206,7 @@ import { BINNACLE_RULES } from "@tdurieux/docker-parfum";
   //   (path) => path.endsWith("violations.json")
   // );
 
-  const smellNames = BINNACLE_RULES.map((v) => smellName(v.name));
-  smellNames.sort((a, b) => smellCount[b] - smellCount[a]);
+  const smellNames = SIZE_RULES.map((v) => smellName(v.name));
 
   let nbSmell = 0;
   for (const name of smellNames) {

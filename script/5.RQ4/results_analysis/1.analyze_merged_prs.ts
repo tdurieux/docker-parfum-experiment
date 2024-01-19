@@ -8,11 +8,18 @@ import {
   bytesToSize,
   latexBytesToSize,
   latexPercent,
+  SIZE_RULES,
+  smellName,
 } from "../../utils";
 import { RestEndpointMethodTypes } from "@octokit/rest";
 
 (async () => {
   const argv = await Yargs(process.argv.slice(2))
+    .option("anonymous", {
+      type: "boolean",
+      demandOption: false,
+      alias: "a",
+    })
     .option("results", {
       type: "string",
       demandOption: false,
@@ -55,6 +62,7 @@ import { RestEndpointMethodTypes } from "@octokit/rest";
     prInfos.push({ gh: r.data, anoUrl });
   }
 
+  let totalSpace = 0;
   let totalSpaceMerged = 0;
   let totalSpaceSavedPerWeek = 0;
   let nbAcceptedPR = 0;
@@ -62,8 +70,11 @@ import { RestEndpointMethodTypes } from "@octokit/rest";
   let nbMergedRepairedSmell = 0;
   let downloadTimePerWeek: number[] = [];
 
+  const mergedSmellRepair: { [key: string]: number } = {};
+
   let mdOutput = "| URL | # Repaired Smells | PR Status |\n|----|---|---|";
 
+  let prNumber = 1;
   for (const prInfo of prInfos.sort((a, b) => {
     if (a.gh.merged && !b.gh.merged) {
       return -1;
@@ -106,7 +117,7 @@ import { RestEndpointMethodTypes } from "@octokit/rest";
     const diff =
       buildInfo.originalBuild.imageSize - buildInfo.repairedBuild.imageSize;
 
-    mdOutput += `\n| ${prInfo.anoUrl} | ${
+    mdOutput += `\n| ${prInfo.gh.html_url} | ${
       buildInfo.repair.violations.length
     } | ${
       prInfo.gh.merged
@@ -117,23 +128,43 @@ import { RestEndpointMethodTypes } from "@octokit/rest";
     } |`;
     if (prInfo.gh.merged) {
       nbAcceptedPR += 1;
+      totalSpace += buildInfo.originalBuild.imageSize;
       totalSpaceMerged += diff;
       totalSpaceSavedPerWeek +=
         (diff * avgPullPerDay * 7) / argv.compressionRatio;
       downloadTimePerWeek.push(avgPullPerDay * 7);
       nbMergedRepairedSmell += buildInfo.repair.violations.length;
+
+      for (const smell of buildInfo.repair.violations) {
+        if (!mergedSmellRepair[smellName(smell.name)]) {
+          mergedSmellRepair[smellName(smell.name)] = 0;
+        }
+        mergedSmellRepair[smellName(smell.name)] += 1;
+      }
     } else if (prInfo.gh.state === "closed") {
       nbRefusedPR += 1;
     } else {
       continue;
     }
 
+    let repoName = prInfo.gh.base.repo.full_name.replace("_", "\\_");
+    let url = prInfo.gh.html_url;
+    let PRID = prInfo.gh.number.toString();
+    if (argv.anonymous) {
+      repoName = "XXXX";
+      url = prInfo.anoUrl;
+      PRID = "X";
+    }
+    if (prInfo.gh.merged) {
+    }
     console.log(
-      `\\href{${prInfo.anoUrl}}{XXXX} & ${
+      `${prNumber++} & \\href{${url}}{${repoName}} & ${
         prInfo.gh.base.repo.stargazers_count
       } & \\np{${hubInfo.pull_count}} & \\np{${Math.round(
         avgPullPerDay * 7
-      )}} & ${latexBytesToSize(buildInfo.originalBuild.imageSize)} & X & ${
+      )}} & ${latexBytesToSize(
+        buildInfo.originalBuild.imageSize
+      )} & ${PRID} & ${
         prInfo.gh.merged
           ? "Merged"
           : prInfo.gh.state == "open"
@@ -148,28 +179,22 @@ import { RestEndpointMethodTypes } from "@octokit/rest";
         (diff * avgPullPerDay * 7) / argv.compressionRatio
       )} \\\\`
     );
-    // console.log(
-    //   `${prInfo.gh.base.repo.full_name.replace("_", "\\_")} & ${
-    //     prInfo.gh.base.repo.stargazers_count
-    //   } & \\np{${hubInfo.pull_count}} & \\np{${Math.round(
-    //     avgPullPerDay * 7
-    //   )}} & ${latexBytesToSize(buildInfo.originalBuild.imageSize)} & ${
-    //     prInfo.gh.number
-    //   } & ${prInfo.gh.merged ? "Merged" : "Closed"} & ${
-    //     buildInfo.repair.violations.length
-    //   } & ${bytesToSize(diff)} (${latexPercent(
-    //     diff,
-    //     buildInfo.originalBuild.imageSize
-    //   )}) & ${latexBytesToSize(diff * avgPullPerDay * 7)} \\\\`
-    // );
   }
 
   console.log(mdOutput);
+
+  for (const smell of SIZE_RULES) {
+    if (!mergedSmellRepair[smell.name]) {
+      continue;
+    }
+    console.log(`${smell.name} & \\np{${mergedSmellRepair[smell.name]}} \\\\`);
+  }
 
   console.log(`\\def\\nbPRs{${prInfos.length}}`);
   console.log(`\\def\\nbAcceptedPR{${nbAcceptedPR}}`);
   console.log(`\\def\\nbRefusedPR{${nbRefusedPR}}`);
   console.log(`\\def\\nbMergedRepairedSmell{${nbMergedRepairedSmell}}`);
+  console.log(`\\def\\totalSpacePR{${latexBytesToSize(totalSpace)}}`);
   console.log(`\\def\\totalSpaceMerged{${latexBytesToSize(totalSpaceMerged)}}`);
   console.log(
     `\\def\\totalSpaceSavedPerWeek{${latexBytesToSize(totalSpaceSavedPerWeek)}}`

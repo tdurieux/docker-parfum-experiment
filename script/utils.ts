@@ -15,6 +15,39 @@ import ProgressBar from "progress";
 import async from "async";
 
 import config from "../config";
+import {
+  pipUseNoCacheDir,
+  npmCacheCleanUseForce,
+  mkdirUsrSrcThenRemove,
+  rmRecursiveAfterMktempD,
+  tarSomethingRmTheSomething,
+  apkAddUseNoCache,
+  aptGetInstallUseNoRec,
+  aptGetInstallThenRemoveAptLists,
+  gpgVerifyAscRmAsc,
+  npmCacheCleanAfterInstall,
+  gemUpdateSystemRmRootGem,
+  gemUpdateNoDocument,
+  yumInstallRmVarCacheYum,
+} from "@tdurieux/docker-parfum/build/rules/binnacle";
+import { yarnCacheCleanAfterInstall } from "@tdurieux/docker-parfum/build/rules/parfum";
+
+export const SIZE_RULES = [
+  pipUseNoCacheDir,
+  npmCacheCleanUseForce,
+  mkdirUsrSrcThenRemove,
+  rmRecursiveAfterMktempD,
+  tarSomethingRmTheSomething,
+  apkAddUseNoCache,
+  aptGetInstallUseNoRec,
+  aptGetInstallThenRemoveAptLists,
+  gpgVerifyAscRmAsc,
+  npmCacheCleanAfterInstall,
+  gemUpdateSystemRmRootGem,
+  gemUpdateNoDocument,
+  yumInstallRmVarCacheYum,
+  yarnCacheCleanAfterInstall,
+];
 
 interface RepositoryInfo {
   name: string;

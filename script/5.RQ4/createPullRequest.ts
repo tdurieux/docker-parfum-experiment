@@ -7,11 +7,11 @@ import inquirer from "inquirer";
 import * as diff from "diff";
 
 import { File, parseDocker, nodeType } from "@tdurieux/dinghy";
-import { Matcher, Violation, rules } from "@tdurieux/docker-parfum";
+import { BINNACLE_RULES, Matcher, Violation } from "@tdurieux/docker-parfum";
 
 import {
   RepositoryAnalysisResult,
-  analyze,
+  analyzeDockerImage,
 } from "../3.RQ2/repair_repository_dockerfile";
 import { bytesToSize, percent, createOctokit, wait } from "../utils";
 import config from "../../config";
@@ -44,7 +44,7 @@ async function getFile(
 async function forkRepository(
   repositoryUrl: string,
   token: string,
-  organization: string
+  organization: string | undefined
 ) {
   // fork a repository using the GitHub API
   const octokit = createOctokit(token);
@@ -149,7 +149,9 @@ function generatePRBody(
   repo: string,
   violationsToRepair: Violation[]
 ) {
-  const sizeDiff = info.originalBuild.imageSize - info.repairedBuild.imageSize;
+  const originalSize = info.originalBuild?.imageSize || 0;
+  const repairedSize = info.repairedBuild?.imageSize || 0;
+  const sizeDiff = originalSize - repairedSize;
   let body = `Hi there,
 
 I've made a small improvement to the Dockerfile that I think could `;
@@ -181,11 +183,11 @@ I've made a small improvement to the Dockerfile that I think could `;
 
   if (sizeDiff > 100) {
     body += `\nImpact on the image size:
-* Image size before repair: ${bytesToSize(info.originalBuild.imageSize)}
-* Image size after repair: ${bytesToSize(info.repairedBuild.imageSize)}
+* Image size before repair: ${bytesToSize(originalSize)}
+* Image size after repair: ${bytesToSize(repairedSize)}
 * Difference: ${bytesToSize(sizeDiff)} (${percent(
       sizeDiff,
-      info.originalBuild.imageSize
+      originalSize
     )})\n\n`;
   }
 
@@ -249,7 +251,7 @@ async function getRepositoryAnalysisResults(repositoryUrl: string) {
       await readFile(path, "utf-8")
     ) as RepositoryAnalysisResult;
   } catch (error) {
-    return null;
+    return undefined;
   }
 }
 // read arguments from command line that requires a repository url using yargs
@@ -301,7 +303,17 @@ async function main() {
   const organization = argv.o;
   const path = argv.p.startsWith("/") ? argv.p.substring(1) : argv.p;
 
-  const output = {
+  const output: {
+    startTime: Date;
+    endTime: number | undefined;
+    repository: string;
+    branch: string | undefined;
+    organization: string | undefined;
+    dockerfilePath: string;
+    dockerfile_sha: string | undefined;
+    dockerfile: string | undefined;
+    error: Error | undefined;
+  } = {
     startTime: new Date(),
     endTime: undefined,
     repository,
@@ -318,38 +330,10 @@ async function main() {
     output.dockerfile_sha = sha;
     output.dockerfile = file;
 
-    const ast = await parseDocker(new File(null, file));
+    const ast = await parseDocker(new File(undefined, file));
 
     const violationsToRepair: Violation[] = [];
-    const violations: Violation[] = [];
-
-    const consideredRules = [
-      rules.npmCacheCleanAfterInstall,
-      rules.npmCacheCleanUseForce,
-      rules.rmRecursiveAfterMktempD,
-      rules.curlUseHttpsUrl,
-      rules.wgetUseHttpsUrl,
-      rules.pipUseNoCacheDir,
-      rules.mkdirUsrSrcThenRemove,
-      rules.configureShouldUseBuildFlag,
-      rules.gemUpdateSystemRmRootGem,
-      rules.sha256sumEchoOneSpaces,
-      rules.gemUpdateNoDocument,
-      rules.gpgVerifyAscRmAsc,
-      rules.yumInstallForceYes,
-      rules.yumInstallRmVarCacheYum,
-      rules.tarSomethingRmTheSomething,
-      rules.gpgUseBatchFlag,
-      rules.gpgUseHaPools,
-      rules.aptGetInstallUseY,
-      rules.aptGetInstallUseNoRec,
-      rules.aptGetUpdatePrecedesInstall,
-      rules.aptGetInstallThenRemoveAptLists,
-      rules.apkAddUseNoCache,
-    ];
-    for (const rule of consideredRules) {
-      new Matcher(ast).match(rule).forEach((v) => violations.push(v));
-    }
+    const violations: Violation[] = new Matcher(ast).matchAll(BINNACLE_RULES);
 
     const allViolations = await inquirer.prompt([
       {
@@ -365,7 +349,12 @@ async function main() {
           clone: true,
         });
         console.log(v.toString());
-        displayDiff(file, newAst.getParent(nodeType.DockerFile).toString(true));
+        const dockerFile = newAst.getParent(nodeType.DockerFile);
+        if (!dockerFile) {
+          console.error("[ERROR] No Dockerfile found after repair");
+          continue;
+        }
+        displayDiff(file, dockerFile.toString(true));
 
         const confirm = await inquirer.prompt([
           {
@@ -416,12 +405,16 @@ async function main() {
     }
     if (reexecute) {
       console.log(`Executing analysis on ${repository}.`);
-      info = await analyze({
+      info = await analyzeDockerImage({
         repository: `https://github.com/${owner}/${repo}`,
         dockerfilePath: path,
         workdirectory: join("/tmp", "dinghy-analysis", owner),
         repairedDockerfile: ast.toString(true),
       });
+    }
+    if (!info) {
+      console.error("[ERROR] No analysis results found for this repository.");
+      return;
     }
     const analysisPath = join(outputPath, owner, repo, "analysis.json");
     await mkdir(dirname(analysisPath), { recursive: true });

@@ -2,77 +2,11 @@ import lzma from "lzma-native";
 import tar from "tar-stream";
 import fs from "fs";
 import { join, resolve } from "path";
-import * as dockerfile from "@tdurieux/dinghy";
 import ProgressBar from "progress";
-import { File } from "@tdurieux/dinghy";
-import { BINNACLE_RULES, Matcher, Violation } from "@tdurieux/docker-parfum";
 import config from "../../config";
-import { readFile, writeFile } from "fs/promises";
-import { smell2JSON } from "../utils";
+import { readFile } from "fs/promises";
+import { analyzeDockerfile } from "./2.analyze_repair_new_dataset";
 
-async function analyze(fileName: string, fileContent: string) {
-  const output = {
-    startTime: Date.now(),
-    endTime: undefined,
-    error: undefined,
-    originalSmells: undefined,
-    repairedSmells: undefined,
-    repairedDockerfile: undefined,
-  };
-  const outputPath = join(
-    config.defaultBinnacleAnalysisAndRepairPath,
-    fileName + ".json"
-  );
-  const dockerParser = new dockerfile.DockerParser(
-    new File(fileName, fileContent)
-  );
-  try {
-    const ast = await dockerParser.parse();
-    if (dockerParser.errors.length > 0) {
-      for (const error of dockerParser.errors) {
-        console.log("[AST ERROR]", error.message);
-      }
-      // console.log(fileContent);
-    }
-    const matcher = new Matcher(ast);
-    const violations: Violation[] = [];
-    for (const rule of BINNACLE_RULES) {
-      matcher.match(rule).forEach((e) => violations.push(e));
-    }
-    output.originalSmells = violations.map(smell2JSON);
-    if (violations.length === 0) {
-      return;
-    }
-    try {
-      for (const violation of violations) {
-        try {
-          await violation.repair();
-        } catch (error) {
-          console.error(error);
-        }
-      }
-      const repairedAst = await new dockerfile.DockerParser(
-        new File(fileName, ast.toString(true))
-      ).parse();
-      output.repairedDockerfile = repairedAst.position.file.content;
-      const repairedMatcher = new Matcher(repairedAst);
-      const repairedViolations: Violation[] = [];
-      for (const rule of BINNACLE_RULES) {
-        repairedMatcher.match(rule).forEach((e) => repairedViolations.push(e));
-      }
-      output.repairedSmells = repairedViolations.map(smell2JSON);
-    } catch (error) {
-      console.error("\n" + fileName, error);
-    }
-  } catch (error) {
-    console.error(`\nERROR at ${fileName}`);
-    console.error(error);
-    output.error = error.message;
-  } finally {
-    output.endTime = Date.now();
-    await writeFile(outputPath, JSON.stringify(output, null, 2), "utf-8");
-  }
-}
 export async function analyzeZip(toAnalyze: (filename: string) => boolean) {
   return new Promise<void>(() => {
     const bar = new ProgressBar(
@@ -99,10 +33,10 @@ export async function analyzeZip(toAnalyze: (filename: string) => boolean) {
       }
       const outputPath = join(
         config.defaultBinnacleAnalysisAndRepairPath,
-        fileName + ".json"
+        fileName
       );
 
-      if (fs.existsSync(outputPath)) {
+      if (fs.existsSync(join(outputPath, "results.json"))) {
         stream.resume();
         return next();
       }
@@ -118,17 +52,8 @@ export async function analyzeZip(toAnalyze: (filename: string) => boolean) {
       });
 
       stream.on("end", async () => {
-        // if (
-        //   fileContent == "" ||
-        //   fileContent.includes("FROM microsoft") ||
-        //   fileContent.includes("powershell") ||
-        //   fileContent.includes("FROM mcr.microsoft.com")
-        // ) {
-        //   return next();
-        // }
-
         try {
-          await analyze(fileName, fileContent);
+          await analyzeDockerfile(fileContent, fileName, outputPath);
         } catch (error) {
           console.error(error);
         } finally {

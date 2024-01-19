@@ -20,7 +20,7 @@ import { readFile } from "fs/promises";
     if (line.trim().length == 0) continue;
     try {
       const info = JSON.parse(line);
-      for (const rule of BINNACLE_RULES) {
+      for (const rule of utils.SIZE_RULES) {
         let name = utils.smellName(rule.name);
         if (!info.all_violations[name]) {
           name = "rule" + name[0].toUpperCase() + name.slice(1);
@@ -65,6 +65,7 @@ import { readFile } from "fs/promises";
     violationsFiles,
     10,
     async (path, _, callback) => {
+      if (!path.endsWith("results.json")) return callback();
       const filename = basename(path).replace(".json", "");
       bar.tick({ step: `${filename}` });
       if (!mapVuln[filename]) return callback();

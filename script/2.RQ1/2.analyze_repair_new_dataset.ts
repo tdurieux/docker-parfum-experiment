@@ -4,6 +4,7 @@ import { join } from "path";
 import ProgressBar from "progress";
 import async from "async";
 import Yargs from "yargs/yargs";
+import { createHash } from "crypto";
 import { Matcher, Violation, BINNACLE_RULES } from "@tdurieux/docker-parfum";
 import * as dockerfile from "@tdurieux/dinghy";
 import { File } from "@tdurieux/dinghy";
@@ -36,7 +37,17 @@ export async function analyzeDockerfile(
       new File(filepath, fileContent)
     );
     let repairedViolations: Violation[] = [];
-    const ast = await dockerParser.parse();
+    let ast = null;
+    try {
+      ast = dockerParser.parse();
+    } catch (error) {
+      if (error.ast) {
+        ast = error.ast;
+      } else {
+        output.error = error;
+      }
+      return;
+    }
     // if (dockerParser.errors.length > 0) {
     //   for (const error of dockerParser.errors) {
     //     console.log(error.message);
@@ -45,7 +56,7 @@ export async function analyzeDockerfile(
     // }
     const matcher = new Matcher(ast);
     const violations: Violation[] = [];
-    for (const rule of BINNACLE_RULES) {
+    for (const rule of utils.SIZE_RULES) {
       try {
         matcher.match(rule).forEach((e) => violations.push(e));
       } catch (error) {}
@@ -85,22 +96,39 @@ export async function analyzeDockerfile(
         new File(repairedDockerfilePath, repaired_filecontent)
       );
 
+      let originalDockerfilePath = filepath;
+      if (!filepath.includes("/")) {
+        originalDockerfilePath = join(outputPath, "original.Dockerfile");
+        await writeFile(originalDockerfilePath, fileContent, {
+          encoding: "utf-8",
+        });
+      }
+
       // execute git diff between original and repaired dockerfile
       const diff = await utils.executeCommand(
-        `git --no-pager diff --no-index --color=never "${filepath}" "${repairedDockerfilePath}"`
+        `git --no-pager diff --no-index --color=never "${originalDockerfilePath}" "${repairedDockerfilePath}"`
       );
       await writeFile(join(outputPath, "repair.patch"), diff);
 
-      const repairedAst = await repairedDockerParser.parse();
-      const repairedMatcher = new Matcher(repairedAst);
-      for (const rule of BINNACLE_RULES) {
-        try {
-          repairedMatcher
-            .match(rule)
-            .forEach((e) => repairedViolations.push(e));
-        } catch (error) {}
+      let repairedAst = null;
+      try {
+        repairedAst = repairedDockerParser.parse();
+      } catch (error) {
+        if (error.ast) {
+          repairedAst = error.ast;
+        }
       }
-      output.repairedSmells = repairedViolations.map(utils.smell2JSON);
+      if (repairedAst !== null) {
+        const repairedMatcher = new Matcher(repairedAst);
+        for (const rule of utils.SIZE_RULES) {
+          try {
+            repairedMatcher
+              .match(rule)
+              .forEach((e) => repairedViolations.push(e));
+          } catch (error) {}
+        }
+        output.repairedSmells = repairedViolations.map(utils.smell2JSON);
+      }
     }
   } catch (error) {
     console.log(error);
@@ -145,7 +173,7 @@ if (require.main === module) {
       })
       .parse();
     const repoFileLists = utils.walkSync(argv.dockerfilePath);
-    repoFileLists.sort(() => (Math.random() > 0.5 ? 1 : -1));
+    // repoFileLists.sort(() => (Math.random() > 0.5 ? 1 : -1));
 
     const bar = new ProgressBar(
       "[:bar] :current/:total :rate/bps :percent :etas :step",
@@ -157,29 +185,34 @@ if (require.main === module) {
       }
     );
 
+    const uniqueFile = new Set<string>();
+
     async.forEachOfLimit(
       repoFileLists,
       argv.process,
       async (path, _, callback) => {
         const filename = path.replace(argv.dockerfilePath + "/", "");
         bar.tick({ step: filename });
-        // console.log(filename);
+        
+        const content = await readFile(path, "utf-8");
+        const hash = createHash("sha1").update(content).digest("base64");
+        if (uniqueFile.has(hash)) return callback();
+        uniqueFile.add(hash);
 
         const outputPath = join(argv.output, filename);
         if (argv.skipExisting && existsSync(join(outputPath, "results.json")))
           return callback();
 
         try {
-          await analyzeDockerfile(
-            await readFile(path, "utf-8"),
-            path,
-            outputPath
-          );
+          await analyzeDockerfile(content, path, outputPath);
         } catch (e) {
           console.error(e);
         } finally {
           callback();
         }
+      },
+      () => {
+        console.log(`[Done] Unique Dockerfiles: ${uniqueFile.size}`);
       }
     );
   })();

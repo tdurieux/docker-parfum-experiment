@@ -8,7 +8,7 @@ import Yargs from "yargs/yargs";
 
 import { Violation } from "@tdurieux/docker-parfum";
 
-import { analyze } from "./repair_repository_dockerfile";
+import { analyzeDockerImage } from "./repair_repository_dockerfile";
 import config from "../../config";
 import { iterateVulnerabilityAnalysis } from "../utils";
 
@@ -122,7 +122,7 @@ if (require.main === module) {
       async (repo, _, callback) => {
         const [owner, repoName] = repo.repositoryUrl.split("/").slice(-2);
         try {
-          const outputR = await analyze({
+          const outputR = await analyzeDockerImage({
             repository: repo.repositoryUrl,
             dockerfilePath: repo.dockerfilePath,
             workdirectory: join(argv.workdir, owner),

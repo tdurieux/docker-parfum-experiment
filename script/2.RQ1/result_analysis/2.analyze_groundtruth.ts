@@ -1,6 +1,6 @@
 import { basename, join } from "path";
-import config from "../../config";
-import { readAnalsysiResults, smellName, walk, walkSync } from "../utils";
+import config from "../../../config";
+import { readAnalsysiResults, smellName, walk, walkSync } from "../../utils";
 import { readFile, writeFile } from "fs/promises";
 import { Position } from "@tdurieux/dinghy/build/docker-type";
 
@@ -45,13 +45,13 @@ async function main() {
   await writeFile(
     join(config.docsFolder, `data/ground-truth/dockerfiles.json`),
     JSON.stringify(
-      walkSync(config.groundTrustDockerfiles).map((x) => basename(x)),
+      walkSync(config.groundTruthDockerfiles).map((x) => basename(x)),
       null,
       2
     )
   );
 
-  await walk(config.groundTrusts, async (path) => {
+  await walk(config.groundTruthSmells, async (path) => {
     const groundTrust: { [key: string]: Partial<Position>[] } = JSON.parse(
       await readFile(path, "utf-8")
     );
@@ -100,7 +100,8 @@ async function main() {
 
     const parfumResultPath = join(
       config.defaultBinnacleAnalysisAndRepairPath,
-      basename(path)
+      basename(path).replace(/\.json$/, ""),
+      "results.json"
     );
     try {
       const parfumResult = await readAnalsysiResults(parfumResultPath);

@@ -7,7 +7,7 @@ import { parseDocker } from "@tdurieux/dinghy";
 import { Matcher, Violation } from "@tdurieux/docker-parfum";
 
 import yargs from "yargs/yargs";
-import { bytesToSize, msToReadableTime, percent } from "../utils";
+import { SIZE_RULES, bytesToSize, msToReadableTime, percent } from "../utils";
 import config from "../../config";
 
 function repoName(repository: string) {
@@ -149,14 +149,23 @@ export async function repair({
 
   const outputR: Awaited<ReturnType<typeof repair>> = {
     startTime: new Date().getTime(),
-    endTime: undefined,
+    endTime: -1,
     violations: [],
     repairedDockerfile: repairedDockerfile || "",
   };
   const dockerfile = join(workdirectory, repo, dockerfilePath);
   try {
-    const ast = await parseDocker(dockerfile);
-    const violations = new Matcher(ast).matchAll();
+    let ast = null;
+    try {
+      ast = parseDocker(dockerfile);
+    } catch (error) {
+      if (error.ast) {
+        ast = error.ast;
+      } else {
+        throw error;
+      }
+    }
+    const violations = new Matcher(ast).matchAll(SIZE_RULES);
 
     if (!repairedDockerfile) {
       for (const v of violations) {
@@ -250,7 +259,7 @@ export interface RepositoryAnalysisResult {
   repairedBuild?: Awaited<ReturnType<typeof buildDockerImage>>;
   repair?: Awaited<ReturnType<typeof repair>>;
 }
-export async function analyze({
+export async function analyzeDockerImage({
   repository,
   dockerfilePath,
   workdirectory,
@@ -403,7 +412,7 @@ async function main() {
   );
   const workdirectory = argv.workdirectory;
 
-  const outputR = await analyze({
+  const outputR = await analyzeDockerImage({
     repository,
     dockerfilePath: dockerfile,
     workdirectory,
